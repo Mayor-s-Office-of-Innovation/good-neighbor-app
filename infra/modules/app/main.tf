@@ -57,12 +57,12 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 }
 
 resource "aws_sqs_queue" "submissions" {
-  name                              = "${local.name_prefix}-submissions"
-  kms_master_key_id                 = "alias/aws/sqs"
-  message_retention_seconds         = 345600
-  visibility_timeout_seconds        = 60
-  sqs_managed_sse_enabled           = true
-  tags                              = var.tags
+  name                       = "${local.name_prefix}-submissions"
+  kms_master_key_id          = "alias/aws/sqs"
+  message_retention_seconds  = 345600
+  visibility_timeout_seconds = 60
+  sqs_managed_sse_enabled    = true
+  tags                       = var.tags
 }
 
 resource "aws_cognito_user_pool" "users" {
@@ -204,4 +204,3 @@ resource "aws_wafv2_web_acl" "web" {
 
   tags = var.tags
 }
-

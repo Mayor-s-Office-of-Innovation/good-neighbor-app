@@ -41,9 +41,8 @@ locals {
 module "app" {
   source = "../../modules/app"
 
-  application        = var.application
-  environment        = var.environment
+  application         = var.application
+  environment         = var.environment
   data_classification = var.data_classification
-  tags               = local.common_tags
+  tags                = local.common_tags
 }
-
