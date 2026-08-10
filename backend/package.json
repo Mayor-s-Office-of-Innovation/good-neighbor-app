@@ -24,7 +24,7 @@
     "@typescript-eslint/parser": "8.4.0",
     "eslint": "9.9.1",
     "prisma": "5.19.1",
-    "typescript": "5.5.4",
+    "typescript": "7.0.2",
     "vitest": "4.1.10"
   }
 }
