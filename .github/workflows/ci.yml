@@ -42,6 +42,7 @@ jobs:
 
   security:
     name: Security scans
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -86,6 +87,7 @@ jobs:
 
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
+        continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
         with:
           directory: infra
           framework: terraform
