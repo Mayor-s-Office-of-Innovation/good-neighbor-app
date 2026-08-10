@@ -61,7 +61,6 @@ resource "aws_sqs_queue" "submissions" {
   kms_master_key_id          = "alias/aws/sqs"
   message_retention_seconds  = 345600
   visibility_timeout_seconds = 60
-  sqs_managed_sse_enabled    = true
   tags                       = var.tags
 }
 
