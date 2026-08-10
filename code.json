@@ -1,0 +1,36 @@
+{
+  "version": "2.0",
+  "agency": "City and County of San Francisco",
+  "organization": "Mayor's Office of Innovation",
+  "name": "good-neighbor-app",
+  "description": "Level 2 deployed system scaffold for the Good Neighbor App.",
+  "status": "Development",
+  "permissions": {
+    "licenses": [
+      {
+        "name": "MIT",
+        "URL": "https://opensource.org/licenses/MIT"
+      }
+    ],
+    "usageType": "openSource"
+  },
+  "tags": [
+    "aws",
+    "lambda",
+    "api-gateway",
+    "sqs",
+    "bedrock",
+    "cognito",
+    "postgres",
+    "prisma",
+    "web-components",
+    "workbox",
+    "terraform"
+  ],
+  "contact": {
+    "email": "innovation@sfgov.org"
+  },
+  "repositoryURL": "https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app",
+  "vcs": "git",
+  "laborHours": 0
+}

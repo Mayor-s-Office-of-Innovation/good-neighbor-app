@@ -1,0 +1,30 @@
+{
+  "name": "@good-neighbor/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1106.0",
+    "@aws-sdk/client-s3": "3.1106.0",
+    "@aws-sdk/client-sqs": "3.1106.0",
+    "@prisma/client": "5.19.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.145",
+    "@types/node": "22.5.4",
+    "@typescript-eslint/eslint-plugin": "8.4.0",
+    "@typescript-eslint/parser": "8.4.0",
+    "eslint": "9.9.1",
+    "prisma": "5.19.1",
+    "typescript": "5.5.4",
+    "vitest": "4.1.10"
+  }
+}

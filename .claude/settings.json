@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(terraform -chdir=infra/environments/dev plan)",
+      "Bash(terraform -chdir=infra/environments/dev validate)",
+      "Bash(pre-commit run --all-files)"
+    ],
+    "deny": [
+      "Bash(terraform apply *)",
+      "Bash(aws iam create-access-key *)",
+      "Bash(aws secretsmanager get-secret-value *)"
+    ]
+  },
+  "enabledSkills": ["web-dev", "dashboard-review"]
+}

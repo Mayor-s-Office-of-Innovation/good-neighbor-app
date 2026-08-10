@@ -1,0 +1,31 @@
+{
+  "name": "good-neighbor-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Level 2 CCSF SDLC scaffold for Good Neighbor App.",
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",
+    "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate"
+  },
+  "devDependencies": {
+    "prettier": "3.3.3"
+  },
+  "overrides": {
+    "esbuild": "0.27.2",
+    "vite": "8.2.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
