@@ -22,7 +22,7 @@ resource "aws_kms_key" "app" {
       }
     ]
   })
-  tags                    = var.tags
+  tags = var.tags
 }
 
 resource "aws_kms_alias" "app" {
