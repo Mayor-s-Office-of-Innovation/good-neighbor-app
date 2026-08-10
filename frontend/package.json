@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@awesome.me/webawesome": "3.0.0-beta.4",
+    "@awesome.me/webawesome": "3.11.0",
     "workbox-background-sync": "7.4.1",
     "workbox-core": "7.4.1",
     "workbox-precaching": "7.4.1",
