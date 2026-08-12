@@ -1,5 +1,7 @@
 # Database Decision: DynamoDB instead of Postgres
 
+*DynamoDB planning set (doc 1 of 5) · [index & read order](./README.md) · next → [data model](./dynamodb-data-model.md)*
+
 **Status:** Proposed — for team discussion / buy-in
 **Date:** 2026-08-12
 **Affects:** [AGENTS.md](../AGENTS.md) standing choices (Prisma, managed Postgres), the

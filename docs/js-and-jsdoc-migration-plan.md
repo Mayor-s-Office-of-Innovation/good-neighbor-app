@@ -1,10 +1,22 @@
 # Plan: JavaScript + JSDoc (drop TypeScript syntax, keep type safety)
 
-Status: proposed
+Status: **DONE (backend + repo config)** — landed 2026-08-12 as migration Step 1.
 Date: 2026-08-11
 Supersedes: the "Use TypeScript for frontend and backend code" standing choice in
 [AGENTS.md](../AGENTS.md). No ADR currently mandates TypeScript, so only AGENTS.md
 needs to change.
+
+> **Completion note (2026-08-12).** Step 1 of the 3-step migration is done and
+> committed. What landed here: all 7 backend `.ts` → `.js` with JSDoc, both
+> tsconfigs on `allowJs`/`checkJs`/`noEmit`, both workspaces switched to the
+> JS-native ESLint flat config (`@eslint/js` + `eslint-plugin-jsdoc`, minus
+> `@typescript-eslint/*`), CI Typecheck step added, and AGENTS.md updated. Backend
+> **packaging** was resolved as **option 2 (no build step** — `build` is a no-op
+> echo; deploy raw `src/*.js`); the esbuild option remains a possible follow-up, not
+> a blocker. The **frontend half of this plan is executed by** the Step 2 doc, not
+> here — see [gnp-frontend-migration-plan.md](gnp-frontend-migration-plan.md). The
+> `strict: true` frontend tsconfig shown below is still the **end state**: Step 2
+> landed at `strict: false` + `@ts-nocheck` baseline, ratcheting per file afterward.
 
 ## Decision
 

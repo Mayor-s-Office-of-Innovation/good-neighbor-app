@@ -1,5 +1,7 @@
 # Plan: Local Development Environment for the Lambda Backend
 
+*DynamoDB planning set (doc 4 of 5) · [index](./README.md) · ← [analytics addendum](./analytics-plane-addendum.md) · next → [buildout plan](./dynamodb-buildout-plan.md)*
+
 **Status:** Proposed — runnable plan, pending the database decision
 **Date:** 2026-08-12
 **Depends on:** [dynamodb-database-decision.md](./dynamodb-database-decision.md). This plan
@@ -192,6 +194,26 @@ test hits the real API Gateway endpoint.
 4. `npm test` runs the exact handler code against local services and passes.
 5. No click-ops anywhere: local resources are created by `local-bootstrap.mjs`, real
    resources by Terraform.
+
+## Alternatives considered (and why not)
+
+Recorded so we don't relitigate. All three are good tools; each lost on a specific point.
+
+- **Architect (arc.codes).** Excellent DX — its Sandbox (DynamoDB Local + an in-process event
+  router) is the experience we're deliberately rebuilding here. Rejected as our tooling because
+  it owns its **own infrastructure manifest** (`app.arc` → CloudFormation), a second source of
+  truth competing with Terraform. We reuse its *ideas*, not its infra ownership.
+- **AWS SAM CLI** (`sam local start-api --hook-name terraform`). Can read our Terraform and runs
+  the real Lambda runtime — but it's **Docker-required**. Worth revisiting only if we ever want
+  container-fidelity local API Gateway.
+- **LocalStack + `tflocal`.** Highest fidelity — applies the *real Terraform* locally — but
+  **Docker-required**, and Cognito (our authorizer) is Pro-tier. This was the original Layer 2
+  before the Docker-free constraint.
+
+**Chosen:** standalone emulators (DynamoDB Local / ElasticMQ) + an in-process router, with
+infra-wiring validation moved to the cloud dev account (Phase 10). The trade is explicit —
+**"Docker-free" and "run the real Terraform locally" are mutually exclusive today**, and we
+picked Docker-free, which aligns with the architecture standard's "validate in a cloud env."
 
 ## Fork: if we stay on Postgres
 

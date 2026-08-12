@@ -1,7 +1,30 @@
 # Plan: migrate the `gnp` prototype in as the frontend
 
-Status: proposed
+Status: **partially DONE** — the frontend port (Step 2) landed 2026-08-12; the
+backend/auth/deploy seams remain open.
 Date: 2026-08-11
+
+> **Completion note (2026-08-12).** The **UI port itself is done and green**
+> (format/lint/typecheck/test/build across workspaces); `gnp` now lives in
+> `frontend/`. What landed: **M1** (WA `^3.11`), **M3** (self-hosted fonts + vendored
+> theme + local icon library), **M4** (workspace/tooling align, spike + transcription
+> docs carried), **M5** (JS+JSDoc lenient landing — `strict:false` + `@ts-nocheck`
+> baseline on 11 files), and the **routing half of I2** (History-API routing +
+> `base:'/'` + a delegated link interceptor; the CloudFront `index.html` fallback is
+> still I1).
+>
+> **Deliberately deferred to a post-MVP "offline pass"** (product decision — avoid
+> stale-cache/complexity while screens iterate): **M2** (PWA/`vite-plugin-pwa` is
+> carried into devDeps but **un-wired — no service worker ships**) and its
+> background-sync write-queue, plus **I3** (CSP hash for the inline theme script — the
+> script ships un-hashed for now). Those two land together when offline is turned on.
+>
+> **Still open / not started:** all design decisions that gate backend work — **D1**
+> (auth / server-mediated analysis), **D2** (backend contract + `sync.js`), **D3**
+> (data-classification security review), **D4** (DynamoDB-vs-Postgres, parked) — and
+> **I1** (frontend build→S3/CloudFront deploy stage). The services
+> (`analyzer`/`transcribe`/`onboarding`) remain **mocked**. See memory
+> `step2-gnp-port-scope` for the exact landed state.
 
 Tracks everything that must be resolved to bring the `gnp` Phase-1 prototype
 (`../gnp`) in as the frontend of this repo. `gnp` is a well-built vanilla-web-
