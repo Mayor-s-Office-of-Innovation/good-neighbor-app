@@ -1,10 +1,15 @@
-export type AppConfig = {
-  bedrockModelId: string;
-  uploadBucket: string;
-  queueUrl: string;
-};
+/**
+ * @typedef {object} AppConfig
+ * @property {string} bedrockModelId
+ * @property {string} uploadBucket
+ * @property {string} queueUrl
+ */
 
-export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {AppConfig}
+ */
+export function getConfig(env = process.env) {
   const required = {
     bedrockModelId: env.BEDROCK_MODEL_ID,
     uploadBucket: env.S3_UPLOAD_BUCKET,
@@ -17,5 +22,5 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     }
   }
 
-  return required as AppConfig;
+  return /** @type {AppConfig} */ (required);
 }

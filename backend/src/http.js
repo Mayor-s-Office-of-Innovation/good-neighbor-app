@@ -1,9 +1,9 @@
-import type { APIGatewayProxyResult } from "aws-lambda";
-
-export function jsonResponse(
-  statusCode: number,
-  body: unknown,
-): APIGatewayProxyResult {
+/**
+ * @param {number} statusCode
+ * @param {unknown} body
+ * @returns {import("aws-lambda").APIGatewayProxyResult}
+ */
+export function jsonResponse(statusCode, body) {
   return {
     statusCode,
     headers: {

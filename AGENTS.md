@@ -2,9 +2,26 @@
 
 This repo follows the CCSF Software Development Lifecycle Standard for a Level 2 deployed system.
 
+## Active Plans
+
+Migration is in progress. Read these before following the standing choices below —
+some choices are being revised:
+
+- [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) — replace
+  TypeScript syntax with JavaScript + JSDoc (type safety via `tsc --checkJs`, no transpile).
+  **Step 1 done: the backend is converted and the `typecheck` gate is in CI.** The
+  frontend is still `.ts` scaffolding, converted wholesale in the next step.
+- [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) — bring the
+  `gnp` prototype in as the frontend (**next**); tracks every open item, decision, and status.
+
 ## Standing Project Choices
 
-- Use TypeScript for frontend and backend code.
+- Write application code in JavaScript (ES modules), not TypeScript. Get type safety
+  without a transpile step by type-checking `.js` files with the TypeScript compiler in
+  `checkJs` mode, expressing types in JSDoc. `tsc --noEmit` (run as `npm run typecheck`
+  in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
+  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md). (Backend is
+  migrated; the frontend is still `.ts` scaffolding pending the gnp adoption step.)
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and managed Postgres.

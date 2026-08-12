@@ -8,6 +8,14 @@ Good Neighbor App is a new City and County of San Francisco Level 2 deployed sys
 - Auth: Amazon Cognito.
 - Infrastructure: Terraform, applied only through GitHub Actions.
 
+## Active Work
+
+Frontend migration is being planned (not yet implemented). See
+[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) for the
+tracked plan, decisions, and status, and
+[docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) for the
+planned move from TypeScript to JavaScript + JSDoc.
+
 ## SDLC Tier
 
 - Project tier: Level 2, deployed system.

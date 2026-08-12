@@ -1,13 +1,11 @@
-import type { APIGatewayProxyHandlerV2WithJWTAuthorizer } from "aws-lambda";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { getConfig } from "../config.js";
 import { jsonResponse } from "../http.js";
 
 const sqs = new SQSClient({});
 
-export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
-  event,
-) => {
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
+export const handler = async (event) => {
   const config = getConfig();
   const subject = event.requestContext.authorizer.jwt.claims.sub;
   const requestId = event.headers["idempotency-key"];
