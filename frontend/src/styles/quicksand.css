@@ -1,0 +1,36 @@
+/*
+  Self-hosted Quicksand — the only font the Web Awesome "awesome" theme actually
+  renders (it maps body + headings to Quicksand; its other family, Crimson Pro, is
+  assigned to a "longform" role we never use, so it's omitted). Vendoring this lets
+  us drop the theme's remote bunny.net @import: no external request, works offline,
+  and no render-blocking font hop. Latin subset only (the app's content is English).
+  font-display: swap keeps text visible immediately (good LCP/CLS).
+*/
+@font-face {
+  font-family: "Quicksand";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/quicksand-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Quicksand";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/quicksand-latin-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Quicksand";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/quicksand-latin-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Quicksand";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/quicksand-latin-700.woff2") format("woff2");
+}

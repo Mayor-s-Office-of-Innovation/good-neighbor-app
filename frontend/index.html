@@ -1,13 +1,85 @@
 <!doctype html>
-<html lang="en">
+<html
+  lang="en"
+  class="wa-light wa-theme-awesome wa-palette-bright wa-brand-blue"
+>
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1f6f8b" />
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f172a" />
     <title>Good Neighbor App</title>
+
+    <!--
+      Theme init — runs synchronously BEFORE first paint to avoid a flash of the
+      wrong theme. Mirrors the intervention-evaluation pattern: OS default via
+      matchMedia, manual override in localStorage['theme-override'], applied by
+      toggling .wa-dark / .wa-light on <html>. Exposes window.__theme for the
+      theme-toggle component. Kept inline (classic script) on purpose — a deferred
+      module would paint first.
+    -->
+    <script>
+      (function () {
+        var KEY = "theme-override"; // 'dark' | 'light' | null (follow OS)
+        var mq = window.matchMedia("(prefers-color-scheme: dark)");
+        function override() {
+          try {
+            return localStorage.getItem(KEY);
+          } catch (e) {
+            return null;
+          }
+        }
+        function isDark() {
+          var o = override();
+          return o ? o === "dark" : mq.matches;
+        }
+        function apply() {
+          var dark = isDark(),
+            el = document.documentElement;
+          el.classList.toggle("wa-dark", dark);
+          el.classList.toggle("wa-light", !dark);
+          window.dispatchEvent(
+            new CustomEvent("themechange", {
+              detail: { dark: dark, following: !override() },
+            }),
+          );
+        }
+        window.__theme = {
+          isDark: isDark,
+          following: function () {
+            return !override();
+          },
+          // cycle: light -> dark -> follow OS -> ...
+          toggle: function () {
+            var o = override();
+            try {
+              if (o === null)
+                localStorage.setItem(KEY, mq.matches ? "light" : "dark");
+              else if (o !== (mq.matches ? "light" : "dark"))
+                localStorage.removeItem(KEY);
+              else localStorage.setItem(KEY, o === "dark" ? "light" : "dark");
+            } catch (e) {}
+            apply();
+          },
+          set: function (mode) {
+            try {
+              if (mode === "os") localStorage.removeItem(KEY);
+              else localStorage.setItem(KEY, mode);
+            } catch (e) {}
+            apply();
+          },
+        };
+        apply();
+        mq.addEventListener("change", function () {
+          if (!override()) apply();
+        });
+      })();
+    </script>
   </head>
   <body>
-    <good-neighbor-app></good-neighbor-app>
-    <script type="module" src="/src/main.ts"></script>
+    <app-root></app-root>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>
