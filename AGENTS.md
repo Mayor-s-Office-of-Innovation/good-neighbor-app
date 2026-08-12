@@ -2,17 +2,33 @@
 
 This repo follows the CCSF Software Development Lifecycle Standard for a Level 2 deployed system.
 
+## Orientation — read order
+
+New here? Get your bearings in this order:
+
+1. **This file (AGENTS.md)** — standing choices, SDLC rules, and what's in flight (below).
+2. **[docs/README.md](docs/README.md)** — the docs map: every planning thread with its own
+   ordered read path and status. Go here to find the right doc for the area you're in.
+3. **The thread you're working in** — follow the order `docs/README.md` gives for that area
+   (frontend migration, database direction, transcription, …), then the file-level detail.
+
 ## Active Plans
 
-Migration is in progress. Read these before following the standing choices below —
-some choices are being revised:
+Migration is in progress; read the linked plans before following the standing choices below
+— some of those choices are being revised.
 
-- [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) — replace
-  TypeScript syntax with JavaScript + JSDoc (type safety via `tsc --checkJs`, no transpile).
-  **Step 1 done: the backend is converted and the `typecheck` gate is in CI.** The
-  frontend is still `.ts` scaffolding, converted wholesale in the next step.
-- [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) — bring the
-  `gnp` prototype in as the frontend (**next**); tracks every open item, decision, and status.
+- **Frontend migration (JS+JSDoc, then `gnp` adoption): Steps 1 & 2 DONE (2026-08-12).** The
+  backend is JavaScript + JSDoc with the `typecheck` gate in CI, and the `gnp` prototype is
+  now the `frontend/` — built and green under a lenient `checkJs` gate. See
+  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) (Step 1) and
+  [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2 — still
+  the tracker for the open backend/auth/deploy decisions D1–D4 and I1).
+- **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
+  for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
+  offline pass (details in the Step 2 doc).
+- **Parked: DynamoDB vs managed Postgres.** An active planning thread may reverse the
+  Postgres/Prisma standing choice below; see the database thread in
+  [docs/README.md](docs/README.md).
 
 ## Standing Project Choices
 
