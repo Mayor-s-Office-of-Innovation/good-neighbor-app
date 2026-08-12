@@ -36,8 +36,8 @@ Migration is in progress; read the linked plans before following the standing ch
   without a transpile step by type-checking `.js` files with the TypeScript compiler in
   `checkJs` mode, expressing types in JSDoc. `tsc --noEmit` (run as `npm run typecheck`
   in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
-  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md). (Backend is
-  migrated; the frontend is still `.ts` scaffolding pending the gnp adoption step.)
+  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md). (Both backend
+  and frontend are now migrated to JS+JSDoc — see Active Plans above.)
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and managed Postgres.

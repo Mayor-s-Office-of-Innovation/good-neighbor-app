@@ -10,11 +10,17 @@ Good Neighbor App is a new City and County of San Francisco Level 2 deployed sys
 
 ## Active Work
 
-Frontend migration is being planned (not yet implemented). See
-[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) for the
-tracked plan, decisions, and status, and
-[docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) for the
-planned move from TypeScript to JavaScript + JSDoc.
+**[docs/README.md](docs/README.md) is the docs map** — every planning thread with its
+ordered read path and current status. Start there to find your way around.
+
+The **frontend migration is done** (Aug 2026): the backend moved to JavaScript + JSDoc and
+the `gnp` prototype is now the `frontend/`, built and green — see
+[docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) (Step 1) and
+[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2). Still
+in planning: the **database direction** (a possible move to DynamoDB) and the
+**backend/auth/deploy** seams — tracked in the docs map above. Note two consequences of the
+current MVP not yet reflected in the architecture summary above: **offline/Workbox is
+deferred** (no service worker ships yet) and the **Postgres vs DynamoDB** choice is open.
 
 ## SDLC Tier
 
