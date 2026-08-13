@@ -65,7 +65,7 @@ seams have a decided direction and **no build plan yet**:
 
 From [dynamodb-buildout-plan.md](./dynamodb-buildout-plan.md). Local-dev harness ([plan](./local-dev-environment-plan.md)) supports Phases 2–3/5.
 
-- [ ] **Phase 1 — DynamoDB table (Terraform):** `aws_dynamodb_table` (pk/sk, on-demand, SSE-KMS), GSI1 (checks timeline) + GSI2 (site worklist), PITR + Streams on, TTL wired, CCSF tags. Applied in CI.
+- [~] **Phase 1 — DynamoDB table (Terraform):** `aws_dynamodb_table` (pk/sk, on-demand, SSE-KMS), GSI1 (checks timeline) + GSI2 (site worklist), PITR + Streams on, TTL wired-but-inactive, CCSF tags — written in [infra/modules/app](../infra/modules/app/main.tf) + outputs (`dynamodb_table_name`, `dynamodb_table_stream_arn`); checkov policy check clean. **Remaining:** CI `terraform plan/apply` to the dev account (no local TF/Docker to prove it here).
 - [ ] **Phase 2 — app cutover Prisma → DynamoDB SDK:** replace `db.js` with `@aws-sdk/lib-dynamodb`; rewrite worker upsert as conditional `Put`/`Update`; remove Prisma entirely; keep `typecheck` green. Local-testable on DynamoDB Local.
 - [ ] **External dependency — stand up the analyzer service** (ours, from streetconditions.org; separate repo, not yet checked out or deployed standalone). The analyze path can't run end-to-end until it's deployed on AWS with an IAM-authorized invoke path for our Lambda's role. — [D1](./gnp-frontend-migration-plan.md)
 - [ ] **Implement the analysis backend Lambdas** (per the plan written above): presigned upload, server-mediated analyze (IAM/SigV4 to our analyzer) + delete, perimeter-check CRUD/list endpoints, DynamoDB read/write.

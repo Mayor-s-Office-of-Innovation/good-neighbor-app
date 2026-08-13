@@ -18,15 +18,33 @@
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite, getChecksForSite } from "../db.js";
 import { navigate } from "../router.js";
-import { getCurrentCheck, allItems, clearCheck } from "../state/check-session.js";
+import {
+  getCurrentCheck,
+  allItems,
+  clearCheck,
+} from "../state/check-session.js";
 
-const NUM_WORD = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const NUM_WORD = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+];
 const word = (n) => NUM_WORD[n] || String(n);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Representative, deterministic confidence (no live scoring in this build).
 function confidence(f, i) {
-  return 62 + ((f.rating * 9 + (f.category ? f.category.length : 0) * 3 + i * 7) % 36);
+  return (
+    62 +
+    ((f.rating * 9 + (f.category ? f.category.length : 0) * 3 + i * 7) % 36)
+  );
 }
 
 class CheckResults extends HTMLElement {
@@ -46,7 +64,9 @@ class CheckResults extends HTMLElement {
     } else {
       const checks = (await getChecksForSite(this._site.id))
         .filter((c) => c.status === "submitted")
-        .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
+        .sort((a, b) =>
+          (b.submittedAt || "").localeCompare(a.submittedAt || ""),
+        );
       const latest = checks[0];
       if (!latest) {
         navigate("/today");
@@ -66,12 +86,18 @@ class CheckResults extends HTMLElement {
     this.innerHTML = html`
       <div class="flow view-results">
         <div class="topbar">
-          <button class="topbar__back" id="back" type="button" aria-label="Back">
+          <button
+            class="topbar__back"
+            id="back"
+            type="button"
+            aria-label="Back"
+          >
             <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
           </button>
           <div class="topbar__titles">
             <h1 class="topbar__title">
-              Evening check${session && session.submittedAt
+              Evening
+              check${session && session.submittedAt
                 ? ` · ${timeOf(session.submittedAt)}`
                 : ""}
             </h1>
@@ -91,18 +117,18 @@ class CheckResults extends HTMLElement {
 
         ${total === 0
           ? html`<div class="rowcard">
-                <div class="rowcard__row">
-                  <span class="rowcard__thumb"
-                    ><wa-icon name="circle-check"></wa-icon
-                  ></span>
-                  <div class="rowcard__body">
-                    <p class="rowcard__title">All clear</p>
-                    <p class="rowcard__detail">
-                      No conditions found this walk. Nice work.
-                    </p>
-                  </div>
+              <div class="rowcard__row">
+                <span class="rowcard__thumb"
+                  ><wa-icon name="circle-check"></wa-icon
+                ></span>
+                <div class="rowcard__body">
+                  <p class="rowcard__title">All clear</p>
+                  <p class="rowcard__detail">
+                    No conditions found this walk. Nice work.
+                  </p>
                 </div>
-              </div>`
+              </div>
+            </div>`
           : ""}
         ${evidence && (evidence.photos || evidence.voice || evidence.notes)
           ? this._evidence(evidence, items)
@@ -118,11 +144,7 @@ class CheckResults extends HTMLElement {
               </button>`
             : ""}
           ${handle.length
-            ? html`<button
-                class="btn-outline"
-                id="mark-handled"
-                type="button"
-              >
+            ? html`<button class="btn-outline" id="mark-handled" type="button">
                 Mark my ${word(handle.length)} handled &amp; close
               </button>`
             : ""}
@@ -163,7 +185,9 @@ class CheckResults extends HTMLElement {
     }
     const parts = [];
     if (city.length)
-      parts.push(`${word(city.length)} need${city.length === 1 ? "s" : ""} a city crew`);
+      parts.push(
+        `${word(city.length)} need${city.length === 1 ? "s" : ""} a city crew`,
+      );
     if (handle.length)
       parts.push(
         `${word(handle.length)} ${handle.length === 1 ? "is" : "are"} yours to handle`,
@@ -177,13 +201,17 @@ class CheckResults extends HTMLElement {
     if (e.photos) parts.push(`${e.photos} photo${e.photos === 1 ? "" : "s"}`);
     if (e.voice) parts.push(`${e.voice} voice`);
     if (e.notes) parts.push(`${e.notes} note${e.notes === 1 ? "" : "s"}`);
-    const photos = items.filter((i) => i.kind === "photo" && i.thumbUrl).slice(0, 4);
+    const photos = items
+      .filter((i) => i.kind === "photo" && i.thumbUrl)
+      .slice(0, 4);
     const thumbs = photos.length
       ? photos
           .map(
             (p, i) =>
               html`<img
-                class="evidence__thumb ${i < 2 ? "evidence__thumb--active" : ""}"
+                class="evidence__thumb ${i < 2
+                  ? "evidence__thumb--active"
+                  : ""}"
                 src="${p.thumbUrl}"
                 alt=""
               />`,
@@ -284,10 +312,11 @@ class CheckResults extends HTMLElement {
         <ul class="noted__list">
           ${noted
             .map(
-              (f, i) => html`<li class="noted__row">
-                <span class="noted__name">${escapeHtml(f.category)}</span>
-                <span class="noted__pct">${confidence(f, i)}%</span>
-              </li>`,
+              (f, i) =>
+                html`<li class="noted__row">
+                  <span class="noted__name">${escapeHtml(f.category)}</span>
+                  <span class="noted__pct">${confidence(f, i)}%</span>
+                </li>`,
             )
             .join("")}
         </ul>
@@ -297,7 +326,10 @@ class CheckResults extends HTMLElement {
 }
 
 function timeOf(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 customElements.define("check-results", CheckResults);

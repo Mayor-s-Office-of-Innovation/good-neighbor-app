@@ -867,9 +867,18 @@ theme-toggle {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(to top right, transparent calc(50% - 0.5px), var(--c-line) 50%, transparent calc(50% + 0.5px)),
-    linear-gradient(to bottom right, transparent calc(50% - 0.5px), var(--c-line) 50%, transparent calc(50% + 0.5px));
+  background: linear-gradient(
+      to top right,
+      transparent calc(50% - 0.5px),
+      var(--c-line) 50%,
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(
+      to bottom right,
+      transparent calc(50% - 0.5px),
+      var(--c-line) 50%,
+      transparent calc(50% + 0.5px)
+    );
   pointer-events: none;
 }
 .viewfinder::after {

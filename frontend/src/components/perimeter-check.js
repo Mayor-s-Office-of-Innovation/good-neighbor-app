@@ -192,7 +192,9 @@ class PerimeterCheck extends HTMLElement {
       GUIDANCE[this._side] || "";
 
     const isLast = applicable.indexOf(this._side) === applicable.length - 1;
-    const nextSide = isLast ? null : applicable[applicable.indexOf(this._side) + 1];
+    const nextSide = isLast
+      ? null
+      : applicable[applicable.indexOf(this._side) + 1];
     this.querySelector("#next-side").textContent = isLast
       ? "Review & submit"
       : `Next side · ${nextSide}`;

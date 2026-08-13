@@ -51,7 +51,9 @@ export const shell = ({ siteName, started }) => html`
         <span class="capture__label">Photo</span>
       </button>
       <button class="capture__tile" id="note-tile" type="button">
-        <span class="capture__box capture__box--note" aria-hidden="true">T</span>
+        <span class="capture__box capture__box--note" aria-hidden="true"
+          >T</span
+        >
         <span class="capture__label">Note</span>
       </button>
     </div>
@@ -109,7 +111,9 @@ export const itemRow = (item) => {
     detail = "Uploaded";
     action = "Remove";
   } else if (item.kind === "voice") {
-    detail = item.transcript ? `“${escapeHtml(item.transcript)}”` : "Transcribing…";
+    detail = item.transcript
+      ? `“${escapeHtml(item.transcript)}”`
+      : "Transcribing…";
     action = "Play";
   } else {
     detail = escapeHtml(item.text || "");
@@ -134,11 +138,7 @@ export const itemRow = (item) => {
         </p>
         <p class="sideitem__detail">${detail}</p>
       </div>
-      <button
-        class="sideitem__action"
-        type="button"
-        data-remove="${item.id}"
-      >
+      <button class="sideitem__action" type="button" data-remove="${item.id}">
         ${action}<span class="visually-hidden"> ${KIND_LABEL[item.kind]}</span>
       </button>
     </li>

@@ -212,6 +212,87 @@ resource "aws_sqs_queue" "submissions" {
   tags                       = var.tags
 }
 
+resource "aws_dynamodb_table" "app" {
+  # Single-table store (data-model doc). pk/sk carry every entity; sparse GSIs
+  # index only the item types that set their keys, so each listing is a clean
+  # query with no filtering.
+  name         = "${local.name_prefix}-app"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+
+  # GSI1 keys — set only on check headers (checks timeline).
+  attribute {
+    name = "gsi1pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi1sk"
+    type = "S"
+  }
+
+  # GSI2 keys — set only on tasks (per-site worklist by severity).
+  attribute {
+    name = "gsi2pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi2sk"
+    type = "S"
+  }
+
+  # GSI1 — checks timeline: SITE#<siteId> / <startedAt ISO>. (AP6, AP12)
+  global_secondary_index {
+    name            = "GSI1"
+    hash_key        = "gsi1pk"
+    range_key       = "gsi1sk"
+    projection_type = "ALL"
+  }
+
+  # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <severity>#<createdAt>. (AP10)
+  # GSI3 (cross-site escalation queue) is sparse and deferred to Phase 7 — it can
+  # be added to the live table later with no rebuild.
+  global_secondary_index {
+    name            = "GSI2"
+    hash_key        = "gsi2pk"
+    range_key       = "gsi2sk"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app.arn
+  }
+
+  # TTL attribute wired but inactive — activation deferred to the post-MVP
+  # retention pass (test data is disposable, cleared between cycles).
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = false
+  }
+
+  tags = var.tags
+}
+
 resource "aws_cognito_user_pool" "users" {
   name = "${local.name_prefix}-users"
 

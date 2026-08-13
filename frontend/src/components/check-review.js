@@ -40,9 +40,16 @@ function summarize(sideState) {
 // A representative thumbnail for a side: its first photo, else a kind glyph.
 function sideThumb(sideState) {
   const photo = sideState.items.find((i) => i.kind === "photo" && i.thumbUrl);
-  if (photo) return html`<img class="rowcard__thumb" src="${photo.thumbUrl}" alt="" />`;
+  if (photo)
+    return html`<img class="rowcard__thumb" src="${photo.thumbUrl}" alt="" />`;
   const first = sideState.items[0];
-  const glyph = !first ? "" : first.kind === "note" ? "T" : first.kind === "voice" ? "♪" : "▦";
+  const glyph = !first
+    ? ""
+    : first.kind === "note"
+      ? "T"
+      : first.kind === "voice"
+        ? "♪"
+        : "▦";
   return html`<span class="rowcard__thumb">${glyph}</span>`;
 }
 
@@ -90,7 +97,9 @@ class CheckReview extends HTMLElement {
             ${ready ? "Perimeter walked" : "Almost there"}
           </p>
           <h2 class="flow-hero__headline">
-            ${ready ? `All ${NUM_WORD[total]} sides covered` : "Finish the walk"}
+            ${ready
+              ? `All ${NUM_WORD[total]} sides covered`
+              : "Finish the walk"}
           </h2>
           <p class="flow-hero__body">
             ${ready
@@ -111,7 +120,9 @@ class CheckReview extends HTMLElement {
             >${plural(itemCount, "item")} uploaded ·
             ${ready ? "analysis ready" : "keep going"}</span
           >
-          <a class="infostrip__link" id="review-all" href="/check">Review all</a>
+          <a class="infostrip__link" id="review-all" href="/check"
+            >Review all</a
+          >
         </div>
 
         <button

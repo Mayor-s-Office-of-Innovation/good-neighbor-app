@@ -72,7 +72,9 @@ class TodayView extends HTMLElement {
       if (!c.submittedAt) continue;
       const d = new Date(c.submittedAt);
       const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      const ago = Math.round((todayStart.getTime() - dStart.getTime()) / 86400000);
+      const ago = Math.round(
+        (todayStart.getTime() - dStart.getTime()) / 86400000,
+      );
       const idx = days - 1 - ago;
       if (idx >= 0 && idx < days) counts[idx] += 1;
     }
@@ -399,7 +401,9 @@ class TodayView extends HTMLElement {
           <span class="actioncard__type">${escapeHtml(meta.role)}</span>
           <span class="pill pill--${meta.status}">${label}</span>
         </div>
-        <h3 class="actioncard__title">${escapeHtml(f.category || "Finding")}</h3>
+        <h3 class="actioncard__title">
+          ${escapeHtml(f.category || "Finding")}
+        </h3>
         <p class="actioncard__detail">
           ${descriptor} · ${escapeHtml(meta.ticket)}
         </p>

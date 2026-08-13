@@ -13,6 +13,16 @@ output "submission_queue_url" {
   value       = aws_sqs_queue.submissions.url
 }
 
+output "dynamodb_table_name" {
+  description = "Single-table DynamoDB store name (DYNAMO_TABLE)."
+  value       = aws_dynamodb_table.app.name
+}
+
+output "dynamodb_table_stream_arn" {
+  description = "DynamoDB Streams ARN for the Phase 5 aggregator."
+  value       = aws_dynamodb_table.app.stream_arn
+}
+
 output "cognito_user_pool_id" {
   description = "Cognito user pool id."
   value       = aws_cognito_user_pool.users.id
