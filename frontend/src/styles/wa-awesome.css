@@ -1,10 +1,10 @@
 /*
   VENDORED from @awesome.me/webawesome@3.11.0 dist/styles/themes/awesome.css.
-  Only change vs upstream: the remote https://fonts.bunny.net font @import is
-  removed (we self-host Quicksand via ./quicksand.css) and the two sibling
-  @imports are rewritten to package paths. Re-vendor if you bump the WA version.
+  Changes vs upstream: the remote https://fonts.bunny.net font @import is removed
+  and the two sibling @imports are rewritten to package paths. We also drop the
+  theme's Quicksand entirely — --wa-font-family-body below points at our system
+  --font-sans stack, so no webfont is loaded. Re-vendor if you bump the WA version.
 */
-@import './quicksand.css';
 @import '@awesome.me/webawesome/dist/styles/layers.css';
 @import '@awesome.me/webawesome/dist/styles/color/palettes/bright.css';
 
@@ -192,10 +192,13 @@
     font-family: var(--wa-font-family-body);
 
     /* #region Fonts ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
-    --wa-font-family-body: 'Quicksand', sans-serif;
+    /* App-wide default: use our system --font-sans stack (no webfont). Heading +
+       longform inherit from body, so this one line re-fonts every screen and every
+       WA component (buttons, inputs, badges, callouts) consistently. */
+    --wa-font-family-body: var(--font-sans);
     --wa-font-family-heading: var(--wa-font-family-body);
     --wa-font-family-code: ui-monospace, monospace;
-    --wa-font-family-longform: 'Crimson Pro', serif;
+    --wa-font-family-longform: var(--wa-font-family-body);
 
     /* Font sizes use a ratio of 1.125 to scale sizes proportionally.
      * For larger font sizes, each size is twice 1.125x larger to maximize impact.

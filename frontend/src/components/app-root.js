@@ -48,12 +48,19 @@ class AppRoot extends HTMLElement {
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
     this._view = this.querySelector("#view");
+    this._shell = this.querySelector(".app");
   }
 
   _renderView() {
     const route = currentRoute();
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
+    // Every screen owns its own header now (design port): the home hub has its
+    // site header, and each flow screen has a .topbar. So the shell chrome stays
+    // hidden throughout — the shell is just the routing container.
+    if (this._shell) {
+      this._shell.classList.add("app--chromeless");
+    }
     // Always mount a fresh element (each screen reads current state on connect).
     this._view.replaceChildren(document.createElement(tag));
     this._view.focus();

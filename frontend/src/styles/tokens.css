@@ -36,6 +36,12 @@
   --surface-3: #f0f0f0; /* grey pill */
   --c-line: #e5e5e5;
 
+  /* Ink pill — the design's primary CTA. Measured from the wireframe: #262626
+     charcoal (deliberately lighter than --text), white label (15:1, AA). Dark
+     mode inverts to a light pill. Reused by the check-flow CTAs (screens 14–16). */
+  --ink: #262626;
+  --on-ink: #ffffff;
+
   /* Text */
   --text: #171717; /* ~16:1 on --surface */
   --text-secondary: #666666; /* >=5:1 on every surface above */
@@ -68,6 +74,10 @@ html.wa-dark {
   --surface-2: #242424;
   --surface-3: #2a2a2a;
   --c-line: #333333;
+
+  /* Ink pill inverts on dark: light pill, dark label (16:1, AA). */
+  --ink: #ededed;
+  --on-ink: #131313;
 
   --text: #ededed; /* ~14:1 on --surface */
   --text-secondary: #a8a8a8; /* ~6:1 on --surface */

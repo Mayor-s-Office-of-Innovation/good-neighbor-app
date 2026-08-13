@@ -1,9 +1,9 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  check-review — 5d. The per-side coverage ledger, then submit. No second capture
-  step: everything was captured per side, this just shows how each side got covered
-  and files the check. On submit we run the (mock) analyzer over every item, derive
-  findings, persist the check, and hand off to 5e.
+  check-review — 5d (design port, screen 15). The per-side coverage ledger, then
+  submit. No second capture step: everything was captured per side; this shows how
+  each side got covered and files the check. On submit we run the (mock) analyzer
+  over every item, derive findings, persist the check, and hand off to 5e.
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite, addCheck } from "../db.js";
@@ -18,18 +18,32 @@ import {
   markSubmitted,
 } from "../state/check-session.js";
 
+const NUM_WORD = ["zero", "one", "two", "three", "four"];
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+// Per-side one-line summary from real item counts.
 function summarize(sideState) {
-  if (!sideState.applicable) return "Not applicable";
+  if (!sideState.applicable) return "Marked not applicable";
   if (!sideState.items.length) return "Not covered yet";
   const counts = { photo: 0, voice: 0, note: 0 };
   for (const it of sideState.items) counts[it.kind]++;
   const parts = [];
-  if (counts.photo)
-    parts.push(`${counts.photo} photo${counts.photo === 1 ? "" : "s"}`);
+  if (counts.photo) parts.push(plural(counts.photo, "photo"));
   if (counts.voice) parts.push(`${counts.voice} voice`);
-  if (counts.note)
-    parts.push(`${counts.note} note${counts.note === 1 ? "" : "s"}`);
+  if (counts.note) parts.push(plural(counts.note, "note"));
   return parts.join(" · ");
+}
+
+// A representative thumbnail for a side: its first photo, else a kind glyph.
+function sideThumb(sideState) {
+  const photo = sideState.items.find((i) => i.kind === "photo" && i.thumbUrl);
+  if (photo) return html`<img class="rowcard__thumb" src="${photo.thumbUrl}" alt="" />`;
+  const first = sideState.items[0];
+  const glyph = !first ? "" : first.kind === "note" ? "T" : first.kind === "voice" ? "♪" : "▦";
+  return html`<span class="rowcard__thumb">${glyph}</span>`;
 }
 
 class CheckReview extends HTMLElement {
@@ -41,85 +55,114 @@ class CheckReview extends HTMLElement {
       return;
     }
 
-    const covered = SIDES.filter(isSideCovered).length;
+    const covered = SIDES.filter((s) => isSideCovered(s)).length;
     const total = SIDES.length;
-    const itemCount = allItems().length;
+    const items = allItems();
+    const itemCount = items.length;
     const ready = covered === total && itemCount > 0;
 
+    const counts = { photo: 0, voice: 0, note: 0 };
+    for (const it of items) counts[it.kind]++;
+    const evidenceParts = [];
+    if (counts.photo) evidenceParts.push(plural(counts.photo, "photo"));
+    if (counts.voice) evidenceParts.push(plural(counts.voice, "voice note"));
+    if (counts.note) evidenceParts.push(plural(counts.note, "written note"));
+
     this.innerHTML = html`
-      <div class="stack view-review">
-        <header class="check-head">
-          <h2>Review</h2>
-          <p class="hint">
-            ${covered} of ${total} sides · ${itemCount}
-            item${itemCount === 1 ? "" : "s"}
-          </p>
-        </header>
+      <div class="flow view-review">
+        <div class="topbar">
+          <button
+            class="topbar__back"
+            id="back"
+            type="button"
+            aria-label="Back"
+          >
+            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+          </button>
+          <div class="topbar__titles">
+            <h1 class="topbar__title">Review</h1>
+          </div>
+          <span class="topbar__meta">${covered} of ${total} sides</span>
+        </div>
 
-        <section class="card">
-          <h3>${ready ? "Perimeter walked" : "Finish the walk"}</h3>
-          <p class="hint">
+        <div class="flow-hero">
+          <p class="flow-hero__eyebrow">
+            ${ready ? "Perimeter walked" : "Almost there"}
+          </p>
+          <h2 class="flow-hero__headline">
+            ${ready ? `All ${NUM_WORD[total]} sides covered` : "Finish the walk"}
+          </h2>
+          <p class="flow-hero__body">
             ${ready
-              ? "Every side is covered. All of it feeds the analysis."
-              : 'Cover every side (or mark it "can\'t cover") before submitting.'}
+              ? html`${evidenceParts.join(", ")}. All of it feeds the analysis.`
+              : html`Cover every side (or mark it “can’t cover”) before
+                submitting.`}
           </p>
-          <ul class="ledger">
-            ${SIDES.map((side) => this._sideRow(side, check.sides[side])).join(
-              "",
-            )}
-          </ul>
-        </section>
+        </div>
 
-        <wa-button
+        <div class="rowcard">
+          ${SIDES.map((side) => this._sideRow(side, check.sides[side])).join(
+            "",
+          )}
+        </div>
+
+        <div class="infostrip">
+          <span
+            >${plural(itemCount, "item")} uploaded ·
+            ${ready ? "analysis ready" : "keep going"}</span
+          >
+          <a class="infostrip__link" id="review-all" href="/check">Review all</a>
+        </div>
+
+        <button
+          class="btn-ink"
           id="submit"
-          variant="neutral"
-          appearance="accent"
-          size="large"
-          class="cta"
+          type="button"
           ${ready ? "" : "disabled"}
         >
           Submit check &amp; see results
-        </wa-button>
-        <p class="hint center">Your report is filed either way.</p>
+        </button>
+        <p class="flow-foot">Your report is filed either way.</p>
       </div>
     `;
 
     this.querySelector("#submit").addEventListener("click", () =>
       this._submit(),
     );
-    this.querySelector(".ledger").addEventListener("click", (e) => {
-      if (e.target.closest("[data-add]")) navigate("/check");
+    this.querySelector("#back").addEventListener("click", () =>
+      navigate("/check"),
+    );
+    this.querySelector(".rowcard").addEventListener("click", (e) => {
+      if (e.target.closest("[data-add]")) {
+        e.preventDefault();
+        navigate("/check");
+      }
     });
   }
 
   _sideRow(side, state) {
-    const covered = isSideCovered(state) || !state.applicable;
     return html`
-      <li class="ledger__row">
-        <wa-icon
-          class="ledger__mark ${covered ? "is-ok" : ""}"
-          name="${covered ? "circle-check" : "circle-plus"}"
-          aria-hidden="true"
-        ></wa-icon>
-        <div class="ledger__body">
-          <p class="ledger__side">${escapeHtml(side)}</p>
-          <p class="hint">${escapeHtml(summarize(state))}</p>
+      <div class="rowcard__row">
+        ${sideThumb(state)}
+        <div class="rowcard__body">
+          <p class="rowcard__title">${escapeHtml(side)}</p>
+          <p class="rowcard__detail">${escapeHtml(summarize(state))}</p>
         </div>
-        <wa-button
+        <button
+          class="rowcard__action"
           type="button"
-          appearance="plain"
-          size="small"
           data-add="${escapeHtml(side)}"
-          >Add</wa-button
         >
-      </li>
+          Add
+        </button>
+      </div>
     `;
   }
 
   async _submit() {
     const btn = this.querySelector("#submit");
-    btn.setAttribute("loading", "");
     btn.setAttribute("disabled", "");
+    btn.textContent = "Filing…";
 
     const items = allItems();
     const scorecard = await analyzeCheck(items);

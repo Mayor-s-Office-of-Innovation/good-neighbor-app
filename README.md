@@ -72,6 +72,26 @@ Run the frontend locally:
 npm run dev -w frontend
 ```
 
+### Clearing the local site binding
+
+First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
+binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current` — the
+site name plus the setup code). To get the setup screen back, delete that one record
+(surgical — leaves any saved checks intact):
+
+- **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` → right-click
+  the `current` row → Delete, then reload.
+- **Console:**
+  ```js
+  indexedDB.open('conditions-reporter').onsuccess = e =>
+    e.target.result.transaction('site', 'readwrite').objectStore('site').delete('current');
+  ```
+  then reload.
+
+To wipe everything (binding **and** saved checks) instead: `indexedDB.deleteDatabase('conditions-reporter')`
+then reload. (The app holds an open connection, so a full delete may block until you reload or
+close the tab — the surgical per-record delete above does not.)
+
 ## Deployment Model
 
 All infrastructure changes are made in Terraform and reviewed through pull requests. GitHub Actions runs `terraform fmt`, `terraform validate`, Checkov, and a Terraform plan for pull requests. Applies are reserved for protected environments and should use GitHub OIDC, not long-lived AWS keys.
