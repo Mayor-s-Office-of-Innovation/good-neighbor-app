@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted — **datastore choice superseded by [ADR 0002](0002-datastore-dynamodb.md)**
+(managed Postgres + Prisma → single-table DynamoDB, 2026-08-13). The rest of the stack
+stands.
 
 ## Context
 
@@ -11,6 +13,10 @@ The project is a CCSF SDLC Level 2 deployed system using AWS-managed services an
 ## Decision
 
 Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, managed Postgres, Prisma, Terraform, GitHub Actions, web components, Web Awesome, and Workbox.
+
+> **Superseded (2026-08-13):** managed Postgres + Prisma were replaced by a single-table
+> DynamoDB design accessed through the AWS SDK — see [ADR 0002](0002-datastore-dynamodb.md).
+> The remaining stack choices are unchanged.
 
 ## Consequences
 

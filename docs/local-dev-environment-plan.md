@@ -5,9 +5,10 @@
 **Status:** Built & verified E2E (2026-08-13) — DynamoDB adopted; harness live under `npm run dev -w backend`
 **Date:** 2026-08-12 (verified 2026-08-13)
 **Depends on:** [dynamodb-database-decision.md](./dynamodb-database-decision.md). This plan
-describes the **Docker-free** path, which is unlocked *by* adopting DynamoDB. If the team
-keeps Postgres, see [Fork: if we stay on Postgres](#fork-if-we-stay-on-postgres) at the end —
-the shape is the same but a container (or local Postgres install) comes back.
+describes the **Docker-free** path, which is unlocked *by* adopting DynamoDB — the decided
+direction (see [ADR 0002](./adr/0002-datastore-dynamodb.md)). The now-moot Postgres alternative
+is kept for the record in [Fork: if we stay on Postgres](#fork-if-we-stay-on-postgres) at the
+end (the shape is the same but a container / local Postgres install would have come back).
 
 ## Goal
 
@@ -260,8 +261,12 @@ the single source of truth, and the only thing to keep in step is the route tabl
 
 ## Fork: if we stay on Postgres
 
-If the DynamoDB decision does **not** land, this plan still applies with two changes, and
-Docker (or a local Postgres install) comes back:
+> **Superseded (2026-08-13):** DynamoDB was adopted (see
+> [ADR 0002](./adr/0002-datastore-dynamodb.md)), so this fork did **not** happen. Kept as an
+> alternative-considered record.
+
+Had the DynamoDB decision **not** landed, this plan would still apply with two changes, and
+Docker (or a local Postgres install) would come back:
 
 - **Datastore:** run Postgres locally (Docker Compose or a native install); keep Prisma.
   Phase 2 becomes `prisma migrate`/`prisma db push` instead of a DynamoDB table create.

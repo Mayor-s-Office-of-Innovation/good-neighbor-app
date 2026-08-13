@@ -16,11 +16,12 @@ ordered read path and current status. Start there to find your way around.
 The **frontend migration is done** (Aug 2026): the backend moved to JavaScript + JSDoc and
 the `gnp` prototype is now the `frontend/`, built and green — see
 [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) (Step 1) and
-[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2). Still
-in planning: the **database direction** (a possible move to DynamoDB) and the
-**backend/auth/deploy** seams — tracked in the docs map above. Note two consequences of the
-current MVP not yet reflected in the architecture summary above: **offline/Workbox is
-deferred** (no service worker ships yet) and the **Postgres vs DynamoDB** choice is open.
+[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2). The
+**datastore direction is decided — DynamoDB** (replacing managed Postgres/Prisma; see
+[ADR 0002](docs/adr/0002-datastore-dynamodb.md)); the **backend/auth/deploy** seams are still
+in planning — tracked in the docs map above. Note one consequence of the current MVP not yet
+reflected in the architecture summary above: **offline/Workbox is deferred** (no service
+worker ships yet).
 
 ## SDLC Tier
 

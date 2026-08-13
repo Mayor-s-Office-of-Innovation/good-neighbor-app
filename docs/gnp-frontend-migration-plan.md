@@ -19,10 +19,10 @@ Date: 2026-08-11
 > background-sync write-queue, plus **I3** (CSP hash for the inline theme script — the
 > script ships un-hashed for now). Those two land together when offline is turned on.
 >
-> **Still open / not started:** all design decisions that gate backend work — **D1**
+> **Still open / not started:** the design decisions that gate backend work — **D1**
 > (auth / server-mediated analysis), **D2** (backend contract + `sync.js`), **D3**
-> (data-classification security review), **D4** (DynamoDB-vs-Postgres, parked) — and
-> **I1** (frontend build→S3/CloudFront deploy stage). The services
+> (data-classification security review) — and **I1** (frontend build→S3/CloudFront deploy
+> stage). **D4 (datastore) is resolved: DynamoDB** — see the section below. The services
 > (`analyzer`/`transcribe`/`onboarding`) remain **mocked**. See memory
 > `step2-gnp-port-scope` for the exact landed state.
 
@@ -215,7 +215,7 @@ lifecycle; the analyzer still gets base64 only and never touches our bucket). It
 server-mediated branch, chosen over client-direct because a public client can't be trusted to hold
 the analyzer key.
 
-Note: the data-layer shape (Prisma models vs DynamoDB items) is pending **D4**.
+Note: the data-layer shape is **DynamoDB items** (D4 resolved — see below).
 
 ### D3. Data classification — photos of people and hazards
 
@@ -272,23 +272,24 @@ Consequences and things that must hold:
   classification acceptable for the testing phase, and record it in
   [docs/security-review.md](security-review.md).
 
-### D4. Database — DynamoDB vs managed Postgres (PARKED)
+### D4. Database — DynamoDB vs managed Postgres (RESOLVED → DynamoDB)
 
-**Status:** parked — revisit soon
+**Status:** resolved — **DynamoDB** replaces managed Postgres/Prisma (2026-08-13)
 
-We want to explore using **DynamoDB instead of managed Postgres/Prisma** for the cloud
-database. Pinned for now; revisit before D2's data layer is built.
+We adopted **DynamoDB instead of managed Postgres/Prisma** for the cloud database. The full
+analysis lives in the DynamoDB planning set — [decision](dynamodb-database-decision.md),
+[data model](dynamodb-data-model.md) — and is recorded in
+[ADR 0002](adr/0002-datastore-dynamodb.md).
 
-Context for when we revisit:
+What the decision changed (the cutover, now done in docs):
 
-- This reverses a standing choice: [AGENTS.md](../AGENTS.md) and
-  [ADR 0001](adr/0001-architecture-stack.md) specify managed Postgres + Prisma.
-  (Notably the `web-dev` skill default was already DynamoDB; the project overrode it to
-  Postgres — so this would revert to the skill default.) Switching means updating
-  AGENTS.md, superseding the ADR, and removing Prisma.
-- Initial read: access patterns look DynamoDB-friendly — everything is site-scoped and
-  time-ordered (partition key `siteId`, sort key `runAt`), with the citywide reporting
-  read model designed as a GSI or a separate aggregation. No obvious relational joins.
+- [AGENTS.md](../AGENTS.md) and [ADR 0001](adr/0001-architecture-stack.md) previously specified
+  managed Postgres + Prisma. AGENTS.md now names DynamoDB, and ADR 0001's datastore choice is
+  superseded by ADR 0002. Prisma is removed from the backend (Phase 2 cutover).
+  (The `web-dev` skill default was already DynamoDB, so this reverts to the skill default.)
+- Access patterns are DynamoDB-friendly — everything is site-scoped and time-ordered
+  (single-table `SITE#<siteId>` partition, time-sortable sort keys), with citywide reporting
+  served by a CQRS read plane (GSIs + a Streams-fed analytics lake). No relational joins.
 
 ---
 
