@@ -7,12 +7,12 @@ flowchart LR
   cloudfront --> api["API Gateway"]
   api --> cognito["Cognito authorizer"]
   api --> lambda["Lambda app handlers"]
-  lambda --> postgres["Managed Postgres"]
+  lambda --> dynamodb["DynamoDB (single table)"]
   lambda --> s3["S3 object storage"]
   lambda --> sqs["SQS queue"]
   lambda --> bedrock["Amazon Bedrock"]
   sqs --> worker["Lambda worker"]
-  worker --> postgres
+  worker --> dynamodb
   worker --> s3
   worker --> bedrock
 ```

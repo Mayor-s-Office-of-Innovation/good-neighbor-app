@@ -26,9 +26,10 @@ Migration is in progress; read the linked plans before following the standing ch
 - **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
   for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
   offline pass (details in the Step 2 doc).
-- **Parked: DynamoDB vs managed Postgres.** An active planning thread may reverse the
-  Postgres/Prisma standing choice below; see the database thread in
-  [docs/README.md](docs/README.md).
+- **Datastore: DynamoDB (decided).** The project moved off managed Postgres/Prisma to a
+  single-table DynamoDB design; the standing choice below reflects this. See the database
+  thread in [docs/README.md](docs/README.md) and
+  [ADR 0002](docs/adr/0002-datastore-dynamodb.md).
 
 ## Standing Project Choices
 
@@ -40,8 +41,10 @@ Migration is in progress; read the linked plans before following the standing ch
   and frontend are now migrated to JS+JSDoc — see Active Plans above.)
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.
-- Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and managed Postgres.
-- Use Prisma for schema and migrations.
+- Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and DynamoDB.
+- Use a single-table DynamoDB design accessed through the AWS SDK (`@aws-sdk/lib-dynamodb`
+  Document Client); schema/indexes are defined in Terraform. See
+  [docs/dynamodb-data-model.md](docs/dynamodb-data-model.md).
 - Use Terraform for all infrastructure and GitHub Actions for CI/CD.
 
 ## SDLC Rules
@@ -64,6 +67,6 @@ Project-local skills are vendored under `.claude/skills` from:
 - `Mayor-s-Office-of-Innovation/skills/dashboard-review`
 - `Mayor-s-Office-of-Innovation/skills/web-dev`
 
-Use the `web-dev` skill for frontend work. User architecture overrides the skill defaults where they differ: this project uses AWS hosting and Postgres/Prisma instead of GitHub Pages and DynamoDB.
+Use the `web-dev` skill for frontend work. User architecture overrides the skill defaults where they differ: this project uses AWS hosting instead of GitHub Pages (the DynamoDB datastore now matches the skill default).
 
 Use the `dashboard-review` skill only after dashboards or data visualizations exist and need source, denominator, tone, and clarity review.

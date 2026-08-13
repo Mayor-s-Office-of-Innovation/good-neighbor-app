@@ -16,6 +16,24 @@ First run shows the site-setup screen. To get it back after binding a site, clea
 binding — see [Clearing the local site binding](../README.md#clearing-the-local-site-binding)
 in the root README.
 
+## Demo mode (screen states without a backend)
+
+The app has no backend dependency — onboarding and the analyzer are mocked, and every screen
+renders off IndexedDB. A `?demo=` query param (read once at boot, see
+[src/demo/seed.js](./src/demo/seed.js)) seeds representative data straight into IndexedDB so any
+screen state is reachable without completing real checks. It's a no-op unless the param is
+present, and the param is stripped from the URL after seeding so a refresh won't re-seed.
+
+| URL | Lands on |
+| --- | --- |
+| `/?demo=uptodate` | Home **"Up to date"** (5b) — populated donut, streak sparkline, and both worklist groups (city actions + you-can-handle) |
+| `/?demo=due` | Home **"Check due now"** (5a) — with real history behind it and the footer's city/handle counts |
+| `/results?demo=due` | **Results** (5e) directly — hazard / you-can-handle / noted buckets, no walk needed |
+| `/?demo=reset` | Wipes the site + checks → back to the first-run setup / enter-code screen |
+
+From any seeded state you can click the live flow (**Start check** → capture → review → results,
+since the analyzer is mocked) or type routes directly: `/today`, `/check`, `/review`, `/results`.
+
 ## Layout
 
 ```text
@@ -24,6 +42,7 @@ src/
   styles/       tokens.css (design tokens) · app.css (component classes) · wa-*.css (vendored WA)
   services/     backend/analyzer/onboarding calls
   state/        check-session and other app state
+  demo/         demo seed — ?demo= param populates IndexedDB for stakeholder demos
   lib/          html tag helper, escaping
   db.js         IndexedDB (site binding + saved checks)
   router.js     tiny History-API router
