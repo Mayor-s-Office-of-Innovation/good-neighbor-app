@@ -11,6 +11,12 @@
 > which is where the open decisions live. New work most likely starts in one of the first
 > two threads below.
 
+## MVP tracker (start here for "what's left")
+
+**[MVP-TODO.md](./MVP-TODO.md)** — the single task list on the way to a deployed MVP, at the
+plan level. Groups done work, blocking decisions, plans still to write, the DynamoDB critical
+path, deploy/harden gates, and post-MVP tracks. Each item links to the plan that backs it.
+
 ## Migration — frontend (DONE, Aug 2026)
 
 The completed 3-step frontend migration, in order:

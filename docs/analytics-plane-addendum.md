@@ -23,15 +23,20 @@ new check  ──Streams──▶  aggregator Lambda  ──UpdateItem ADD──
                               report read  ◀──── single Query (pre-summed) ┘
 ```
 
-**Counter item design** (one shared partition per period so all sites rank in one query):
+**Counter item design** — **daily grain** (one shared partition per day so all sites rank in
+one query). Daily is deliberate: the legal 3×/day duty with no grace is a per-day question, so
+the day is the atomic counter; longer windows roll up a date range. Counters hold **raw
+components, never a finished score** — cleanliness/compliance are computed at read by the
+shared scoring module (see the [data model](./dynamodb-data-model.md) *Metric definitions*).
 
-| `pk` | `sk` | Attributes |
+| `pk` | `sk` | Attributes (raw components) |
 |---|---|---|
-| `STATS#<yyyy-mm>` | `SITE#<siteId>` | checksCompleted, checksExpected, issueCount, severitySum, cleanlinessScore |
+| `STATS#<yyyy-mm-dd>` | `SITE#<siteId>` | checksCompleted, severitySum, issueCount, hazardCount |
 
-- **Rank all ~400 sites** (best/worst, compliance leaders): one `Query pk = STATS#2026-08`,
-  sort ~400 tiny rows in memory. No scan, no GSI needed.
-- **One site's month:** `GetItem`.
+- **Rank all ~400 sites for a day** (best/worst): one `Query pk = STATS#2026-08-12`, sort ~400
+  tiny rows in memory. No scan, no GSI needed.
+- **A month/quarter view:** roll up the daily items across the date range.
+- **One site's day:** `GetItem`.
 
 **The correctness gotcha:** Streams can deliver an event twice and `ADD` is not idempotent, so
 the Lambda guards each event (e.g. conditional marker per `checkId`) to avoid double-counting.
@@ -49,7 +54,8 @@ builds; **start with the simpler one.**
 Native DynamoDB "Export to S3" — no stream processing, almost no code. A scheduled job exports
 the table (full or incremental) to S3; Athena queries it with SQL.
 
-- **Latency:** batch. A **daily** export is fine — city reports aren't real-time.
+- **Latency:** batch. **Incremental export every 6 hours** (settled) — city reports aren't
+  real-time, and Tier-1 counters cover live KPIs.
 - **Requires** point-in-time recovery (PITR) on the table — which we want for backups anyway.
 - **Complexity: low-moderate**, mostly Terraform wiring.
 
@@ -123,13 +129,13 @@ Postgres instance alone would typically exceed this entire stack.
 
 ## Prototype build order (T2a)
 
-Goal: experience the daily-export → SQL-query loop for real.
+Goal: experience the scheduled-export → SQL-query loop for real.
 
 1. **Enable PITR + Streams** on the table (Terraform flags).
 2. **Aggregator Lambda + counter items** (Tier 1) — reuses the worker pattern; gives instant
    KPI reads immediately.
-3. **S3 analytics bucket** (KMS, lifecycle) + a scheduled **DynamoDB S3 Export** (EventBridge
-   daily).
+3. **S3 analytics bucket** (KMS, lifecycle) + a scheduled **incremental DynamoDB S3 Export**
+   (EventBridge, every 6 hours).
 4. **Glue table** describing the export schema; **Athena workgroup** + results bucket.
 5. **Run the three queries above** in the Athena console to feel the query experience.
 6. *(Optional)* QuickSight, or render charts in the app via the Athena API — decide after
@@ -149,8 +155,16 @@ Glue, and Athena are cloud-only (LocalStack Pro emulates some, but not for free)
 
 ## Open decisions
 
-1. **Metric formulas** (blocking) — agree definitions for *cleanliness score* and *regularity*
-   before building; the SQL above is illustrative until then.
-2. **Export frequency** — daily to start? Hourly later?
+1. **Metric formulas** — ✅ **settled 2026-08-12.** Cleanliness = unweighted average severity
+   per check (`sum(severitySum)/sum(checksCompleted)`); compliance = compliant-days ÷ total
+   days, where a day is compliant iff ≥ 3 checks (legal 3×/day, no grace). Computed at read via
+   the shared scoring module; the SQL above mirrors it. See the [data model](./dynamodb-data-model.md)
+   *Metric definitions*.
+2. **Export frequency** — ✅ **settled 2026-08-12: incremental exports every 6 hours**
+   (EventBridge). Incremental (not full) so cost tracks changed-data volume, not cadence;
+   requires PITR (already enabled). Tier-1 counters already serve live KPIs, so 6h is ample
+   freshness for the ad-hoc Athena lake.
 3. **QuickSight or app-rendered charts** — decide after step 5.
-4. **Retention** — S3 lifecycle for exports + DynamoDB TTL (ties to the model doc's open Q2).
+4. **Retention** — ⏭ **deferred to post-MVP.** No deletion or retention windows during the
+   initial testing phase (test data is disposable, cleared between cycles). S3-export lifecycle
+   + DynamoDB TTL land after testing. Baseline staging-bucket controls still apply meanwhile.

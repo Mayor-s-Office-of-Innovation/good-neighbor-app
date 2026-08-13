@@ -81,8 +81,9 @@ flow**:
 1. Client requests a **scoped, short-expiry presigned PUT URL** and uploads photo(s) to
    a transient S3 staging bucket.
 2. Client calls our **Lambda** (in this repo) with the `bucket/key` reference.
-3. The Lambda calls the **external analysis API** with a **server-held credential**
-   (Secrets Manager) — the external API trusts only our Lambda, never the client.
+3. The Lambda calls the **analysis API** — a **separate service of ours on AWS** (own repo)
+   — authenticating via **IAM (SigV4)**; the analyzer trusts only our Lambda's role, never
+   the client. (No shared secret; see the resolved fork below.)
 4. Lambda returns the analysis JSON to the client.
 5. **Lambda deletes the staged object as soon as it has the response** (on success _and_
    failure).
@@ -97,8 +98,21 @@ deterrence-grade, acceptable for a demo; real per-device identity arrives with v
 provisioning. Staging bucket: block-public-access, SSE-KMS, TLS-only, Lambda-role-only
 access, no object-content logging.
 
-**Small open fork:** if the analyzer is _ours on AWS_, the Lambda can authenticate via
-IAM instead of a Secrets Manager credential. TBD which.
+> **Auth posture reconciled (2026-08-12).** The "deterrence-grade guest Identity Pool"
+> above is the **demo** posture only — it does **not** prevent a public caller from
+> polluting a site's dataset. The **real-data** posture is **Option 3: the device is
+> authenticated as the site** (STS creds carrying `custom:siteId`, `siteId` server-derived
+> and `dynamodb:LeadingKeys`-enforced; the client never asserts its own site on a write),
+> matching the [data model](dynamodb-data-model.md)'s identity model. Full threat, invariant,
+> rejected alternatives, and cross-cutting hardening are recorded in
+> [security-review.md](security-review.md); tracked in [MVP-TODO](MVP-TODO.md).
+
+**Fork — resolved (2026-08-12):** the analyzer **is ours on AWS**, so the Lambda authenticates
+via **IAM (SigV4)** — no Secrets Manager credential. The analyzer is the scorecard service
+previously part of **streetconditions.org**, used exactly as we plan to use it; it lives in a
+**separate repo (not yet checked out) and is not yet deployed as a standalone service.** Standing
+it up as its own deployable is therefore an **external dependency of the analyze path** (tracked
+in [MVP-TODO](MVP-TODO.md)).
 
 ### D2. Backend contract — perimeter-checks system of record
 
@@ -134,8 +148,8 @@ there is no `sync.js` in `gnp` today (records are flagged `synced:false` for it)
 
 **Who calls the analysis service? — resolved (server-mediated).** The client uploads
 media to a transient S3 staging bucket (presigned PUT), then calls our Lambda with the
-`bucket/key`; the Lambda calls the external analyzer with a server-held credential and
-returns the JSON. This is what makes caller-auth possible (only our Lambda holds a real
+`bucket/key`; the Lambda calls our analyzer service (a separate repo of ours on AWS) via
+**IAM (SigV4)** and returns the JSON. This is what makes caller-auth possible (only our Lambda holds a real
 secret) — see **D1** for the full flow, deletion, and lifecycle requirements. It is the
 server-mediated branch, chosen over client-direct because a public client can't
 authenticate to the analyzer.
@@ -158,6 +172,14 @@ external analyzer. The minimization now depends on **removal actually happening*
 Lambda deletes the object as soon as it has the analyzer response, and an S3 lifecycle
 rule (~1 hour, incl. noncurrent versions + delete markers) is the backstop. Get that
 right or the "no photo storage" property is fiction.
+
+> **MVP testing-phase note (2026-08-12):** implementation of the deletion + lifecycle is
+> **deferred to a post-MVP retention pass** (see [MVP-TODO](MVP-TODO.md)). During initial
+> testing, staged photos may persist — accepted because test data is disposable and cleared
+> between cycles. So the "no photo storage" property is **not yet delivered during testing**;
+> the baseline staging-bucket controls (block-public-access, SSE-KMS, TLS-only,
+> Lambda-role-only) must still hold, and this must be revisited (and recorded in
+> [security-review.md](security-review.md)) before any real (non-test) user data.
 
 Consequences and things that must hold for the decision to actually deliver on its
 intent:

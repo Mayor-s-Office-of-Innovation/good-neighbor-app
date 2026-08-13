@@ -109,6 +109,21 @@ stays small and every listing is a clean query with no filtering.
 | AP12 | Compliance: 3 checks on date D? | `Query` **GSI1** date range, count |
 | AP13 | Cross-site analytics / rollups | **not native** — see R2 |
 
+### Task ownership & escalation — scope (decided 2026-08-12)
+
+Each task's owner is decided by **app logic in this repo**, not the analyzer. After the AI
+analysis returns, the app derives findings, creates the action items, classifies each as
+`onsite` or `city_escalation`, assigns them, and **batch-inserts** them (AP9 `TransactWrite`) —
+the owner is resolved *before* the task is shown to the user. The `type` stamp is
+**point-in-time**: routing rules may change later, but a task is classified once at creation and
+never re-classified — old tasks will already be closed by the time rules change. So `type` lands
+on the task item from **Phase 1** (it's just an attribute; no index needed for it).
+
+- **In MVP:** the classification logic + the per-site worklist (GSI2, AP10).
+- **Post-MVP:** the escalation **integrations** (dispatch/routing to city teams and any external
+  systems) *and* the cross-site city-queue view (**GSI3**, AP11). GSI3 is sparse and can be
+  added to the live table later with **no rebuild**, so deferring it costs nothing now.
+
 ## Scale sanity check
 
 - 400 sites × 3 checks/day = **1,200 checks/day** ≈ 438k/year. Trivial for DynamoDB.
@@ -151,11 +166,16 @@ A Streams-triggered Lambda maintains rollup items as checks and analyses land:
 
 | Item | `pk` | `sk` | Serves |
 |---|---|---|---|
-| Per-site period stats | `SITE#<siteId>` | `#STATS#<yyyy-mm>` | checksCompleted vs expected, issueCount, severity sum, cleanliness score |
-| Cross-site ranking | `STATS#<yyyy-mm>` | `<score>#<siteId>` | rank all ~400 sites in **one query** (best/worst, compliance leaders) |
+| Per-site **daily** stats | `SITE#<siteId>` | `#STATS#<yyyy-mm-dd>` | **raw components**: `checksCompleted`, `severitySum`, `issueCount`, `hazardCount` |
+| Cross-site daily ranking | `STATS#<yyyy-mm-dd>` | `<score>#<siteId>` | rank all ~400 sites for a day in **one query**; month/quarter views roll up a date range |
 
-Cheap, real-time-ish, single-query. Good for the first two questions when the report shape is
-stable.
+**Daily grain is deliberate** (see *Metric definitions* below): the legal 3×/day duty with no
+grace is a per-day question, so the day is the atomic counter. Longer windows (month, quarter)
+aggregate the daily items across a date range — the base counter never bakes in a period.
+
+The counters store **raw components, never a finished score**. The cleanliness/compliance
+numbers are computed *at read* by a single shared scoring module, so a formula change is a
+one-function edit with no pipeline rebuild. Cheap, real-time-ish, single-query.
 
 **Tier 2 — analytical lake for open-ended reports** (the third question, and anything
 city leaders dream up later):
@@ -197,15 +217,31 @@ we've hit — in a relational store these reports are just SQL, no pipeline. Wei
   scale. If the team would rather avoid running *any* streaming pipeline, the fork is
   "Postgres as a single store for both" — documented in the decision doc's Postgres fork.
 
-### Metric definitions are a prerequisite (product, not database)
+### Metric definitions (settled 2026-08-12 — product decision)
 
-"Best cleanliness record" and "regularity" are undefined until we agree on formulas — the
-reports are meaningless without them. To settle before building:
+"Best cleanliness record" and "regularity" were undefined; these are the agreed MVP formulas.
+Both are computed **at read** from the raw daily-counter components by a single shared scoring
+module (`scoring`, imported by the Tier-1 aggregator and the KPI read endpoints), so a
+definition change is a one-function edit — no stored score to migrate, and the Tier-2 Athena
+SQL simply mirrors the module.
 
-- **Cleanliness score** — severity-weighted issues per check over a period? Trend direction?
-  Weighting of open vs resolved action items?
-- **Regularity / compliance** — completed ÷ expected (3×/day) over what window? Grace for
-  device outages?
+- **Cleanliness score — unweighted.** All 12 categories count equally (no per-category
+  weights). Per check the raw component is `severitySum` = plain sum of the 12 ratings (0–36).
+  Site/period cleanliness = `sum(severitySum) / sum(checksCompleted)` = **average severity per
+  check**; lower = cleaner. `issueCount` (ratings > 0) and `hazardCount` (hazard = true) are
+  also stored as raw components for alternate formulas later, but are not in the headline
+  number.
+- **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
+  constant (legal requirement); there is **no grace period** for device outages. Because the
+  duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3
+  checks**. Compliance over a window = `compliant_days / total_days`. (A flat
+  `completed ÷ (3 × days)` ratio is rejected — it would let a surplus on one day mask a
+  violation on another.)
+
+**Easy to change later.** These defaults are intentionally simple and swappable: counters hold
+raw components (never a baked score), the formula lives in one module, and — since initial
+testing data is disposable (cleared between test cycles) — formulas can be reshaped during
+testing at zero migration cost.
 
 ### Infra this adds (all Terraform, no click-ops)
 

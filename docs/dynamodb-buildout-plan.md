@@ -19,13 +19,15 @@ Nothing below starts until the **DynamoDB decision is signed off**. Per-phase ga
 
 | Decision | Blocks | Status |
 |---|---|---|
-| DynamoDB adopted (vs Postgres) | everything | pending team sign-off |
-| City cross-site queue needed? | Phase 7 (GSI3) | assumed yes |
-| Metric formulas (cleanliness, regularity) | Phase 4 *reports* (not the pipe) | **blocking for real reports** |
-| Retention policy | TTL in Phase 1, lifecycle in Phase 4 | pending |
+| DynamoDB adopted (vs Postgres) | everything | ✅ decided (2026-08-12) |
+| City escalation scope | Phase 7 (GSI3) + integrations | ✅ settled — task `type` classification in MVP (app logic); escalation integrations + GSI3 queue view **post-MVP** |
+| Metric formulas (cleanliness, regularity) | Phase 4 *reports* (not the pipe) | ✅ settled (2026-08-12) — see [data model](./dynamodb-data-model.md) *Metric definitions* |
+| Retention policy | TTL in Phase 1, lifecycle in Phase 4 | ⏭ deferred to post-MVP (no deletion/retention windows during testing) |
 
-The pipe (Phases 1–5) can be built with **placeholder** metric formulas; the *reports* aren't
-meaningful until the formulas are agreed.
+Metrics are now settled (unweighted cleanliness; legal 3×/day compliance, no grace) and
+computed at read from raw daily counters via a shared scoring module — so Phases 1–5 build the
+real formulas, not placeholders. Retention wiring (TTL, S3 lifecycle) is **out of MVP scope**;
+initial testing data is disposable and cleared between cycles.
 
 ---
 
@@ -38,7 +40,7 @@ meaningful until the formulas are agreed.
 - **GSI1** (checks timeline) and **GSI2** (site worklist). *GSI3 deferred to Phase 7.*
 - **PITR enabled** (required for the Phase 4 export; also our backup story).
 - **Streams enabled** (`NEW_AND_OLD_IMAGES`) for Phase 5's aggregator.
-- **TTL attribute** wired (activated only once retention is decided).
+- **TTL attribute** wired but left **inactive** — activation is deferred to the post-MVP retention pass.
 - All **CCSF tags** (`Application`, `ApplicationOwner`, `Environment`, `DataClassification`,
   `InternetExposure`, `AssetCriticality`, `Compliance`).
 
@@ -78,7 +80,7 @@ in the dev environment. No local state, no click-ops.
 
 - `aws_s3_bucket` for the analytics lake (KMS, public-access-block, lifecycle — mirror the
   existing bucket patterns).
-- Scheduled **DynamoDB S3 Export** (EventBridge rule, daily to start).
+- Scheduled **incremental DynamoDB S3 Export** (EventBridge rule, **every 6 hours**; requires PITR).
 - **Glue** database + table describing the export schema.
 - **Athena** workgroup + results bucket (encrypted).
 - Run the three queries from the [addendum](./analytics-plane-addendum.md) in the Athena console.
@@ -86,13 +88,15 @@ in the dev environment. No local state, no click-ops.
 **Local-testable:** ❌ cloud-only (export/Glue/Athena). This is the infra-wiring the local-dev
 plan says belongs in the **cloud dev account**.
 
-**Done when:** a daily export lands in S3, Glue sees it, and the three city-report queries
-return results in Athena. **At this point you can feel the system end to end.**
+**Done when:** a scheduled 6-hour incremental export lands in S3, Glue sees it, and the three
+city-report queries return results in Athena. **At this point you can feel the system end to end.**
 
 ## Phase 5 — Tier 1 live aggregates
 
-- Aggregator **Lambda** subscribed to the table Stream; maintains `STATS#<period>/SITE#<id>`
-  counter items via atomic `ADD`, guarded for **idempotent** reprocessing.
+- Aggregator **Lambda** subscribed to the table Stream; maintains **daily** `STATS#<yyyy-mm-dd>/SITE#<id>`
+  counter items (raw components: checksCompleted, severitySum, issueCount, hazardCount) via
+  atomic `ADD`, guarded for **idempotent** reprocessing. Scores are computed at read via the
+  shared scoring module, not stored.
 - Wire the app's KPI reads (best/worst, compliance) to a single `Query` on the counter items.
 
 **Local-testable:** partially — the aggregator logic runs against DynamoDB Local; real Stream
@@ -114,9 +118,14 @@ per-site stats without a scan.
 
 **Done when:** a token scoped to site A cannot read site B's items (verified negative test).
 
-## Phase 7 — GSI3 city escalation queue *(gated on Phase 0 city-queue decision)*
+## Phase 7 — GSI3 city escalation queue *(post-MVP)*
 
-- Add GSI3 (sparse, `city_escalation` tasks) to the table; wire the city queue view (AP11).
+Task `type` (`onsite` | `city_escalation`) is classified by app logic and stamped from Phase 1;
+this phase adds the **cross-site queue view and escalation integrations** on top, and is
+deferred to post-MVP.
+
+- Add GSI3 (sparse, `city_escalation` tasks) to the table — addable to the live table with no
+  rebuild; wire the city queue view (AP11).
 
 **Done when:** an escalated task appears in the cross-site `ESCALATION#open` query.
 
@@ -139,15 +148,15 @@ per-site stats without a scan.
 
 1. Table + GSIs + PITR + Streams live in the dev account via CI (Phase 1).
 2. App runs on DynamoDB with Prisma removed; local tests pass on DynamoDB Local (Phase 2).
-3. Daily export → Athena answers the three city-report queries (Phase 4). 🎯
+3. 6-hour incremental export → Athena answers the three city-report queries (Phase 4). 🎯
 4. Live KPI counters update on write and read without scans (Phase 5).
 5. Cross-tenant isolation enforced in IAM, verified by a negative test (Phase 6).
 6. No click-ops anywhere; every resource is Terraform, every apply is in CI.
 
 ## Open decisions (carried from Phase 0)
 
-1. DynamoDB sign-off.
-2. City cross-site queue (Phase 7 on/off).
-3. Metric formulas — blocking for meaningful reports.
-4. Retention → TTL + S3 lifecycle.
-5. Export cadence (daily to start?) and QuickSight vs app-rendered charts.
+1. ✅ DynamoDB sign-off — decided.
+2. ✅ City escalation — task `type` classification in MVP; escalation integrations + GSI3 queue view post-MVP (see [data model](./dynamodb-data-model.md) *Task ownership & escalation*).
+3. ✅ Metric formulas — settled (see [data model](./dynamodb-data-model.md) *Metric definitions*).
+4. ⏭ Retention → TTL + S3 lifecycle — deferred to post-MVP.
+5. ✅ Export cadence — incremental every 6 hours (settled). QuickSight vs app-rendered charts still open.
