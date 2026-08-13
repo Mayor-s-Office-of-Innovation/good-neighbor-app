@@ -76,36 +76,62 @@ login. So **shelve the scaffold's Cognito User Pools JWT authorizer**
 
 The real v1 auth need is **authenticating calls to the external analysis API**. A public
 client (PWA on a shared iPad) cannot hold a real secret, so we use a **server-mediated
-flow** — and (revised 2026-08-13) we post the image **base64-inline through our Lambda**,
-with **no S3 staging bucket**:
+flow** — and (revised 2026-08-13 PM) the client uploads media to **our own S3 bucket** via a
+**presigned PUT**, and our backend reads it back to feed the analyzer:
 
-1. Client **downscales** each capture (≤~1568px / ~1–2 MB JPEG) and calls our **Lambda**
-   (in this repo) with the image **base64-inline** in the request body — **one call per
-   artifact** (per-artifact; see D2).
-2. The Lambda calls the **analysis API** — a **standalone shared service of ours on AWS**
-   (own repo) — authenticating as a consumer with an **API key** (`x-api-key`, held
-   server-side in Secrets Manager); the analyzer trusts only holders of a valid consumer key,
-   and the key never leaves our Lambda — the client never sees it. It sends
-   **`storage.store_input:false` + `return_signed_urls:false`** so the analyzer keeps no copy.
-   (See the revised fork below.)
-3. Lambda returns the analysis JSON to the client. **Nothing is persisted at rest** — the
-   image lives only transiently in-memory for the request.
+1. Client requests a **presigned PUT URL** from our **Lambda** and uploads each capture
+   **directly to GNP's own S3 media bucket** (one object per artifact). Because the upload goes
+   straight to S3, there is **no Lambda ~6 MB payload ceiling on media** — large photos/audio
+   upload fine (the origin app's proven pattern). The Lambda records the returned S3 **key** on
+   the artifact; the client never holds any AWS secret (the presigned URL is a scoped,
+   short-lived capability).
+2. Analysis runs **asynchronously**: registering an artifact enqueues an analyze job; a
+   **worker** (in this repo) GETs the object from **our own bucket** using its **execution-role
+   IAM** (same account — no presigned URL needed for ourselves), **downscales** it to ≤~1568px,
+   **base64-encodes** it, and calls the **analysis API** — a **standalone shared service of ours
+   on AWS** (own repo) — **once per artifact**, authenticating with an **API key** (`x-api-key`,
+   held server-side in Secrets Manager; the key never leaves our backend). It sends
+   **`storage.store_input:false` + `return_signed_urls:false`** so the analyzer keeps **no**
+   copy — GNP owns the only copy of the media. (See the revised fork below.)
+3. The worker **adapts + persists** the scorecard to DynamoDB (storing the S3 **key**, not the
+   bytes); the client polls `GET /v1/checks/{checkId}` for results. The media **stays in our
+   bucket** under an **S3 lifecycle rule (~7 days)** so **site admins can review the AI output
+   against the source media**, then it auto-expires.
 
-**Why no S3 (revised 2026-08-13).** Bedrock caps images at 5 MB and downscales anything over
-~1568px, so a staging bucket + presigned upload + an `image_s3` service input buys little, and
-the analyzer's base64 input path already exists. The binding size limit is **AWS Lambda's ~6 MB
-sync payload** (tighter than Bedrock's 5 MB after ~33% base64 inflation, and it applies on both
-the client→Lambda and Lambda→analyzer hops), so **the client must downscale before posting** —
-which is optimal anyway. Dropping S3 also **removes person-images at rest entirely**: with no
-bucket and `store_input:false`, images are never durably stored, delivering the "no
-person-images at rest → Level 2" property directly rather than via a deferred retention pass.
+**Why our own S3 bucket (revised 2026-08-13 PM — reverses the 2026-08-13 "no S3 / base64 from the
+client" design).** Media is uploaded by the client via **presigned PUT to a bucket GNP owns**, and
+the backend reads it back to call the analyzer. Rationale:
 
-Client→Lambda hop is gated with API Gateway + WAF + throttling (optionally a Cognito
-**Identity Pool** guest identity for IAM-authorized calls — still no login). This is
-deterrence-grade, acceptable for a demo; real per-device identity arrives with v2 iPad
-provisioning. No staging bucket exists to harden; the residual media controls are **no
-request-body logging** (API GW + Lambda), analyzer-account **Bedrock invocation logging off**,
-and posted-image **validation** (magic-byte + size + count caps).
+- **Large uploads.** Presigned PUT goes client→S3 directly, so the **Lambda ~6 MB sync-payload
+  ceiling no longer bounds media** (it did on the base64-through-Lambda design). This is the proven
+  `../street-conditions` origin pattern (`POST /api/upload-url` → PUT → analyze reads the key).
+- **Async falls out naturally.** S3 is the durable home a worker reads later — the analyze path is
+  now **asynchronous** (enqueue on upload, worker processes), which is what we want.
+- **Admin review against media (the product driver).** Keeping the media briefly lets **site admins
+  review the AI scorecard against the source photo** — impossible under "no media at rest."
+- **GNP owns retention.** Because the bucket is **ours**, we set the KMS key, tenant isolation, and
+  an **S3 lifecycle rule (~7 days)** we can change at will — not coupled to the analyzer's
+  evidence-bucket policy. Beaudry is separately defining the analyzer's retention (~1 week); ours is
+  independent.
+
+**The analyzer still never touches our bucket.** Bedrock (behind the analyzer) accepts **base64
+sources only** — there is no URL/S3 input path (the `image_s3` idea was dropped) — so we give the
+analyzer **no presigned URL and no cross-account IAM grant**. Our worker reads our own bucket with
+its execution-role IAM, downscales to ≤~1568px (Bedrock's cap), and posts **base64 inline** with
+`store_input:false`. Presigned URLs appear only at the **client upload** (PUT) and **admin review**
+(on-demand GET) edges — never toward the analyzer.
+
+**Cost of the reversal:** person-images **are now at rest** (~7 days) — so the data classification
+goes back up and a photo-retention control is back in scope, but as a **declarative S3 lifecycle
+rule**, not app-level delete code. Recorded in [security-review.md](security-review.md).
+
+Client→backend hops (presigned-URL request + artifact register) are gated with API Gateway + WAF +
+throttling (optionally a Cognito **Identity Pool** guest identity for IAM-authorized calls — still
+no login). This is deterrence-grade, acceptable for a demo; real per-device identity arrives with v2
+iPad provisioning. The **media bucket must be hardened** (block-public-access, SSE-KMS, TLS-only,
+presigned PUT scoped to `content-type` + size, ~7-day lifecycle); residual controls also include
+**no request/media-body logging**, analyzer-account **Bedrock invocation logging off**, and
+**uploaded-media validation** (magic-byte + size + count caps) before the analyzer call.
 
 > **Auth posture reconciled (2026-08-12).** The "deterrence-grade guest Identity Pool"
 > above is the **demo** posture only — it does **not** prevent a public caller from
@@ -143,7 +169,7 @@ in, a structured **analysis report as JSON** (issues + types) back. This app is 
 **system of record** — it tracks every analysis result received, when each perimeter
 check was run, and the history per site.
 
-What our backend persists (no raw media — see D3), via a **caller-side adapter** that maps the
+What our backend persists (media in GNP's own S3 bucket; items store the keys — see D3), via a **caller-side adapter** that maps the
 service contract to our shape (revised 2026-08-13; the rubric + data format are **owned by the
 analysis service** — ground truth is `street-conditions-analysis/contract/openapi.yaml`):
 
@@ -177,64 +203,73 @@ check, list checks for a site, fetch one, plus the citywide reporting read API. 
 `gnp` client maps the scorecard → findings locally; a sync layer is future work —
 there is no `sync.js` in `gnp` today (records are flagged `synced:false` for it).
 
-**Who calls the analysis service? — resolved (server-mediated, base64, no S3).** The client
-downscales each capture and posts it **base64-inline** to our Lambda (one call per artifact); the
-Lambda calls our analyzer service (a standalone shared service of ours on AWS) with GNP's
-**consumer API key** (`x-api-key`, held in Secrets Manager) and returns the JSON. This is what
-makes caller-auth possible (only our Lambda holds the key) — see **D1** for the full flow and the
-no-media-at-rest rationale (revised 2026-08-13: dropped the S3 staging bucket — Bedrock's 5 MB cap
-made it low-value, and the binding limit is Lambda's ~6 MB payload). It is the server-mediated
-branch, chosen over client-direct because a public client can't be trusted to hold the analyzer key.
+**Who calls the analysis service? — resolved (server-mediated, base64 from our S3, async).** The
+client uploads each capture to **our own S3 bucket** (presigned PUT); a **worker** reads the object
+back, downscales + base64-encodes it, and calls our analyzer service (a standalone shared service of
+ours on AWS) **once per artifact** with GNP's **consumer API key** (`x-api-key`, held in Secrets
+Manager), sending `store_input:false` so the analyzer keeps no copy. Results are persisted and the
+client polls for them. This is what makes caller-auth possible (only our backend holds the key) —
+see **D1** for the full flow and the **GNP-owns-the-media** rationale (revised 2026-08-13 PM:
+presigned PUT to our bucket for large-upload support + admin-review-against-media + a ~7-day
+lifecycle; the analyzer still gets base64 only and never touches our bucket). It is the
+server-mediated branch, chosen over client-direct because a public client can't be trusted to hold
+the analyzer key.
 
 Note: the data-layer shape (Prisma models vs DynamoDB items) is pending **D4**.
 
 ### D3. Data classification — photos of people and hazards
 
-**Status:** resolved — no cloud photo storage in v1
+**Status:** resolved — **media stored in GNP's own S3 bucket with a ~7-day lifecycle** (revised 2026-08-13 PM)
 
-Decision: **do not persist photos in the cloud for v1.** A photo is submitted for
-analysis, then discarded; we persist only the **analysis document** (whether issues
-were found and their types). This is deliberate data minimization to avoid holding PII
-images at rest.
+Decision: **store captured media in an S3 bucket GNP owns**, keep it briefly, and **auto-expire it
+via an S3 lifecycle rule (~7 days)**. The items in DynamoDB store the **S3 keys**, never the bytes
+(matches the [data model](dynamodb-data-model.md) R4). This reverses the interim 2026-08-13 "no
+media at rest / base64-from-the-client" design.
 
-**Deliberate relaxation (see D1):** the chosen server-mediated flow means photos _do_
-transit a **transient S3 staging bucket** — they are not "never in the cloud," but
-"briefly staged, then removed." This is an accepted trade to enable caller-auth to the
-external analyzer. The minimization now depends on **removal actually happening**: the
-Lambda deletes the object as soon as it has the analyzer response, and an S3 lifecycle
-rule (~1 hour, incl. noncurrent versions + delete markers) is the backstop. Get that
-right or the "no photo storage" property is fiction.
+**Why the reversal.** Three drivers (full rationale in D1):
 
-> **MVP testing-phase note (2026-08-12):** implementation of the deletion + lifecycle is
-> **deferred to a post-MVP retention pass** (see [MVP-TODO](MVP-TODO.md)). During initial
-> testing, staged photos may persist — accepted because test data is disposable and cleared
-> between cycles. So the "no photo storage" property is **not yet delivered during testing**;
-> the baseline staging-bucket controls (block-public-access, SSE-KMS, TLS-only,
-> Lambda-role-only) must still hold, and this must be revisited (and recorded in
-> [security-review.md](security-review.md)) before any real (non-test) user data.
+- **Large-upload support** — presigned PUT client→S3 removes the Lambda ~6 MB media ceiling.
+- **Admin review against media** — site admins can compare the AI scorecard to the source photo
+  during the retention window; this is the product driver, and it's impossible with no media at rest.
+- **GNP owns retention** — our bucket, our KMS key, our lifecycle window (changeable at will),
+  independent of the analyzer's evidence-bucket policy.
 
-Consequences and things that must hold for the decision to actually deliver on its
-intent:
+This is also the **existing production norm**: the deployed origin app `../street-conditions`
+stores media in S3 (presigned PUT → `uploads/…`) and reads it back for analysis.
 
-- **The image must be truly transient in the backend.** No S3 write. Also no
-  _incidental_ persistence: do not put the image bytes on SQS with long retention,
-  do not log the image (CloudWatch), and disable/scope Bedrock model-invocation
-  logging so request images aren't captured. This directly shapes D2 — the analyze
-  path should stream the image to Bedrock in-memory and return issues, separate from
-  any durable queue.
-- **What we store is the analysis doc** (`{ total_score, status_label,
-ratings_details:[{category, rating, hazard, …}], siteId, timestamp }`) — still
-  `sensitive` (conditions tied to a site), but not image PII.
-- **On-device: no photo/audio bytes are persisted.** `gnp` holds captured photo/audio
-  Blobs **in memory only** for the duration of a walk (component state + the
-  `check-session` singleton) and discards them after submit. Only capture **metadata**
-  (`kind`, `size`, note text, transcript) and the scorecard are written to IndexedDB
-  (the `checks` store) — no image/audio bytes at rest on-device, so there is no local
-  media-retention policy to set.
-- **Level 3 check:** not storing person-images at rest is the key mitigation to stay
-  at Level 2, but we still _process_ them transiently. Confirm with security that
-  transient analysis (no retention, no logging) keeps us out of the Level 3 trigger,
-  and record the classification + the no-storage design in
+**What is at rest, and for how long.** Person-images and audio live in our bucket for **~7 days**,
+then an **S3 lifecycle expiration** (including noncurrent versions + delete markers) removes them —
+a **declarative bucket rule, no app-level delete code**. DynamoDB keeps the **analysis document +
+the S3 key** indefinitely (the scorecard is `sensitive` — conditions tied to a site — but not image
+PII). Because media is now at rest, this is a **retention control back in scope** (it was removed
+under the no-media design); see [security-review.md](security-review.md) for the classification and
+controls.
+
+**The analyzer keeps no copy.** Every analyzer call sends `storage.store_input:false` +
+`return_signed_urls:false`, and the analyzer receives **base64 our worker produced from our bucket**
+— it is never given a presigned URL or IAM access to our bucket (Bedrock accepts base64 sources
+only; there is no S3/URL input path). So the **only** durable copy of the media is in **our** bucket,
+under **our** lifecycle rule.
+
+Consequences and things that must hold:
+
+- **Media bucket hardening (now in scope):** block-public-access, SSE-KMS (app key), TLS-only,
+  Lambda/worker-role-only access, presigned PUT scoped to `content-type` + size, and the **~7-day
+  lifecycle rule** as the backstop that actually delivers "not kept forever." Get the lifecycle
+  right or the retention property is fiction.
+- **No incidental second copy.** Do not put media bytes on SQS (enqueue the **S3 key**, not the
+  bytes), do not log the base64 (CloudWatch), and keep analyzer-account Bedrock model-invocation
+  logging off so request images aren't captured there.
+- **Admin review is served via on-demand presigned GET** minted by our Lambda — the browser never
+  gets long-lived bucket access.
+- **On-device: no photo/audio bytes are persisted.** `gnp` holds captured photo/audio Blobs **in
+  memory only** for the duration of a walk (component state + the `check-session` singleton) and
+  discards them after upload. Only capture **metadata** (`kind`, `size`, note text, transcript) and
+  the scorecard are written to IndexedDB (the `checks` store) — no image/audio bytes at rest
+  on-device, so there is no local media-retention policy to set.
+- **Level 3 check:** person-images are now at rest (briefly). Confirm with security that a short,
+  access-controlled, auto-expiring retention window in our own KMS-encrypted bucket keeps the
+  classification acceptable for the testing phase, and record it in
   [docs/security-review.md](security-review.md).
 
 ### D4. Database — DynamoDB vs managed Postgres (PARKED)
