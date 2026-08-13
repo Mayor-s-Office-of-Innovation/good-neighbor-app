@@ -47,7 +47,7 @@ class TodayView extends HTMLElement {
 
     this.innerHTML = due
       ? this._dueView({ streakDays, last: submitted[0], submitted })
-      : this._upToDateView({ recent: submitted.slice(0, 6), streakDays });
+      : this._upToDateView({ recent: submitted.slice(0, 6) });
 
     const start = this.querySelector("#start-check");
     if (start) {
@@ -251,7 +251,7 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _upToDateView({ recent, streakDays }) {
+  _upToDateView({ recent }) {
     const b = this._buckets(recent);
 
     // Open work items from the most recent checks, split city (hazard -> 311)

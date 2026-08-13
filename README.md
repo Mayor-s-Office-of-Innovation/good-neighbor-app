@@ -34,12 +34,16 @@ deferred** (no service worker ships yet) and the **Postgres vs DynamoDB** choice
 
 ```text
 backend/        Lambda handlers, Prisma client access, async workers
-frontend/       Web components frontend and Workbox service worker
+frontend/       Web components frontend — see frontend/README.md
 infra/          Terraform modules and environment roots
 docs/           SDLC, architecture, runbooks, ADRs, security evidence
 .claude/skills/ Project-local Mayor's Office of Innovation skills
 .github/        CI/CD, Dependabot, CODEOWNERS
 ```
+
+The **[frontend/README.md](frontend/README.md)** is the frontend entry point — how to run it,
+its layout, and the **[design system guide](docs/frontend-design-system.md)** for building new
+screens to spec.
 
 ## Local Development
 

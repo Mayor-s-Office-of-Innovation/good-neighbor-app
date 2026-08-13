@@ -164,42 +164,35 @@ form > wa-button[type="submit"] {
   width: 100%;
 }
 
-/* ---- First-run setup / onboarding ---- */
-.setup {
-  margin-top: 0.5rem;
-}
-/* Stack the action buttons full-width for thumb reach. */
-.setup > wa-button {
-  display: block;
+/* ---- First-run setup / onboarding ----
+   Onboarding reuses the home-hub card system (.home > .screen > .screen__sec),
+   the brand .sitehead, the centered .hero, and the ink/outline pills — so first
+   run matches the today/flow screens (see site-setup.templates.js). Only two
+   setup-specific needs remain here. */
+/* Full-width CTAs — a single dominant action per step, sized for thumb reach. */
+.setup .btn-ink,
+.setup .btn-outline {
   width: 100%;
 }
-.setup__center {
-  align-items: center;
-  text-align: center;
-  padding: 2.5rem 1rem;
-}
-.setup__site {
+/* Stacked confirm actions (primary + "use a different code"). */
+.setup__actions {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 1.25rem;
-  font-weight: 650;
+  flex-direction: column;
+  gap: 0.6rem;
 }
-.setup__site wa-icon {
-  color: var(--c-blue);
-}
+/* "Don't have a code?" disclosure — the manual-picker fallback. */
 .setup__manual {
   margin-top: 0.25rem;
 }
 .setup__manual summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 0.9rem;
   padding: 0.35rem 0;
   width: max-content;
 }
 .setup__manual summary:focus-visible {
-  outline: 2px solid var(--c-blue);
+  outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
   border-radius: 4px;
 }
