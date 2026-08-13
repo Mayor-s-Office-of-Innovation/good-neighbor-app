@@ -15,6 +15,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "npm run dev --workspace backend",
     "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",
     "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate"
   },

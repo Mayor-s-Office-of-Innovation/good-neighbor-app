@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transcription spike — live streaming to Amazon Transcribe</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+    body { max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.3rem; }
+    .note { font-size: .875rem; opacity: .8; }
+    fieldset { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 8px; margin: 1rem 0; }
+    legend { font-weight: 600; padding: 0 .4rem; }
+    label { display: block; font-size: .8rem; font-weight: 600; margin-top: .6rem; }
+    input { width: 100%; padding: .5rem; font: inherit; box-sizing: border-box;
+      border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: 6px;
+      background: color-mix(in srgb, currentColor 5%, transparent); color: inherit; }
+    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+    button { font: inherit; padding: .55rem 1.1rem; border-radius: 6px; cursor: pointer;
+      border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
+    button:disabled { opacity: .45; cursor: default; }
+    #stop { border-color: #d33; color: #d33; }
+    #status { font-size: .9rem; padding: .35rem .6rem; border-radius: 6px; }
+    #status[data-kind="live"] { background: color-mix(in srgb, green 25%, transparent); }
+    #status[data-kind="error"] { background: color-mix(in srgb, #d33 30%, transparent); }
+    #timer { font-variant-numeric: tabular-nums; opacity: .7; }
+    .transcript { min-height: 5rem; max-height: 16rem; overflow-y: auto; padding: .75rem;
+      border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+      background: color-mix(in srgb, currentColor 4%, transparent); }
+    #partial { opacity: .6; font-style: italic; }
+    .lbl { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; opacity: .6; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Transcription spike — live streaming to Amazon Transcribe</h1>
+  <p class="note">
+    Proves the client-direct pipeline: microphone → AudioWorklet (16&nbsp;kHz PCM) →
+    <code>@aws-sdk/client-transcribe-streaming</code> → live partial results. Throwaway; no app or
+    backend code involved. Paste <strong>temporary</strong> AWS credentials — see the README for the
+    one-line command to mint them. Must be served over <code>localhost</code> or HTTPS (mic + worklet
+    need a secure context).
+  </p>
+
+  <fieldset>
+    <legend>Temporary AWS credentials</legend>
+    <label for="region">Region</label>
+    <input id="region" value="us-west-2" autocomplete="off" spellcheck="false" />
+    <label for="akid">Access Key ID</label>
+    <input id="akid" placeholder="ASIA…" autocomplete="off" spellcheck="false" />
+    <label for="secret">Secret Access Key</label>
+    <input id="secret" type="password" autocomplete="off" spellcheck="false" />
+    <label for="token">Session Token</label>
+    <input id="token" placeholder="required for temporary (STS) creds" autocomplete="off" spellcheck="false" />
+  </fieldset>
+
+  <div class="row">
+    <button id="start">Start recording</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="clear">Clear transcript</button>
+    <span id="timer">0:00</span>
+    <span id="status" data-kind="">idle</span>
+  </div>
+
+  <div class="lbl">Partial (interim)</div>
+  <div id="partial" class="transcript" aria-live="polite"></div>
+
+  <div class="lbl">Final transcript</div>
+  <div id="final" class="transcript" aria-live="polite"></div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
