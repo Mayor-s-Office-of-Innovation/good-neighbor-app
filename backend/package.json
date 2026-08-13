@@ -4,26 +4,35 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "echo 'backend: no build step (JSDoc, deployed as source)'",
     "lint": "eslint src",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "typecheck": "tsc -p tsconfig.json",
+    "local:ddb": "node scripts/local-ddb.mjs",
+    "local:mq": "node scripts/local-mq.mjs",
+    "local:services": "concurrently -k -n ddb,mq \"npm:local:ddb\" \"npm:local:mq\"",
+    "local:bootstrap": "node --env-file=../.env.local scripts/local-bootstrap.mjs",
+    "local:api": "node --env-file=../.env.local scripts/local-api.mjs",
+    "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",
+    "db:gui": "DYNAMO_ENDPOINT=http://localhost:8000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local dynamodb-admin",
+    "dev": "concurrently -k -n svc,api,worker \"npm:local:services\" \"npm:local:api\" \"npm:local:worker\""
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1106.0",
+    "@aws-sdk/client-dynamodb": "3.1106.0",
     "@aws-sdk/client-s3": "3.1106.0",
     "@aws-sdk/client-sqs": "3.1106.0",
-    "@prisma/client": "5.19.1"
+    "@aws-sdk/lib-dynamodb": "3.1106.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.9.1",
     "@types/aws-lambda": "8.10.145",
     "@types/node": "22.5.4",
-    "@typescript-eslint/eslint-plugin": "8.4.0",
-    "@typescript-eslint/parser": "8.4.0",
+    "concurrently": "10.0.4",
+    "dynamodb-admin": "5.3.3",
+    "dynamodb-local": "0.0.38",
     "eslint": "9.9.1",
-    "prisma": "5.19.1",
+    "eslint-plugin-jsdoc": "50.2.2",
     "typescript": "5.5.4",
     "vitest": "4.1.10"
   }

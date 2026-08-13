@@ -21,8 +21,7 @@
     "sqs",
     "bedrock",
     "cognito",
-    "postgres",
-    "prisma",
+    "dynamodb",
     "web-components",
     "workbox",
     "terraform"

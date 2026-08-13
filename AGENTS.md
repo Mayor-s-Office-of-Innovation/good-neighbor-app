@@ -2,9 +2,42 @@
 
 This repo follows the CCSF Software Development Lifecycle Standard for a Level 2 deployed system.
 
+## Orientation — read order
+
+New here? Get your bearings in this order:
+
+1. **This file (AGENTS.md)** — standing choices, SDLC rules, and what's in flight (below).
+2. **[docs/README.md](docs/README.md)** — the docs map: every planning thread with its own
+   ordered read path and status. Go here to find the right doc for the area you're in.
+3. **The thread you're working in** — follow the order `docs/README.md` gives for that area
+   (frontend migration, database direction, transcription, …), then the file-level detail.
+
+## Active Plans
+
+Migration is in progress; read the linked plans before following the standing choices below
+— some of those choices are being revised.
+
+- **Frontend migration (JS+JSDoc, then `gnp` adoption): Steps 1 & 2 DONE (2026-08-12).** The
+  backend is JavaScript + JSDoc with the `typecheck` gate in CI, and the `gnp` prototype is
+  now the `frontend/` — built and green under a lenient `checkJs` gate. See
+  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) (Step 1) and
+  [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2 — still
+  the tracker for the open backend/auth/deploy decisions D1–D4 and I1).
+- **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
+  for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
+  offline pass (details in the Step 2 doc).
+- **Parked: DynamoDB vs managed Postgres.** An active planning thread may reverse the
+  Postgres/Prisma standing choice below; see the database thread in
+  [docs/README.md](docs/README.md).
+
 ## Standing Project Choices
 
-- Use TypeScript for frontend and backend code.
+- Write application code in JavaScript (ES modules), not TypeScript. Get type safety
+  without a transpile step by type-checking `.js` files with the TypeScript compiler in
+  `checkJs` mode, expressing types in JSDoc. `tsc --noEmit` (run as `npm run typecheck`
+  in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
+  [docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md). (Both backend
+  and frontend are now migrated to JS+JSDoc — see Active Plans above.)
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and managed Postgres.

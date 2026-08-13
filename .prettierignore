@@ -5,3 +5,17 @@ coverage/
 .claude/skills/
 package-lock.json
 
+# Markdown is prose, not code — prettier's reflowing/normalizing fights the
+# hand-authored docs and adds churn without value. Format .md by hand.
+*.md
+
+# Vendored copy of Web Awesome's awesome.css — keep byte-close to upstream for
+# easy re-vendoring on a WA version bump (see frontend/src/main.js / gnp CLAUDE.md).
+frontend/src/styles/wa-awesome.css
+# Self-hosted binary font files.
+frontend/src/styles/fonts
+
+# Forward-looking transcription spike (ported from gnp, not wired into Phase 1).
+# Kept byte-close to the original spike; not maintained under this repo's style.
+spike/
+

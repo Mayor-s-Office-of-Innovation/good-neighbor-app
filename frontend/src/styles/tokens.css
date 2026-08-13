@@ -1,0 +1,88 @@
+/*
+  Design tokens — Take 5 "Neutral system": greyscale surfaces + text, with BLUE
+  reserved for status/interactive (links, the one status accent, active states).
+  Severity is never carried by color alone — grouping + labels do that (WCAG 1.4.1);
+  color only reinforces.
+
+  Light values live in :root; dark overrides live in html.wa-dark and redefine ONLY
+  the semantic tokens that change. Web Awesome components re-theme off the same
+  .wa-dark / .wa-light class, so one class toggle re-themes our UI and WA together.
+
+  Accessibility: the greyscale values below are AA-checked against the worst-case
+  background each sits on (see docs/take5-plan.md "Accessible palette").
+    - --text-secondary #666666 : >=5.0:1 on #fff / #fafafa / #f5f5f5 / #f0f0f0
+    - --brand-blue    #155fce  : 5.90:1 on white, 5.15:1 on the pale-blue pill
+    - --text-faint    #767676  : 4.54:1 on white; used only where shape/height also
+                                  conveys the state (streak bars) — never sole carrier
+*/
+:root {
+  color-scheme: light;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+
+  /* Interactive / status accent — the ONLY chromatic color in the neutral system */
+  --brand-blue: #155fce;
+  --brand-blue-bg: #e8f0fe; /* pale pill behind brand-blue text/badges */
+
+  /* Severity reinforcement (never the sole carrier — grouping + labels lead) */
+  --c-hazard: #b42318; /* 5.9:1 on white; pairs with the "Hazard" label + icon */
+  --c-hazard-bg: #fdecea;
+
+  /* Neutral surfaces */
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f5f5f5;
+  --surface-3: #f0f0f0; /* grey pill */
+  --c-line: #e5e5e5;
+
+  /* Ink pill — the design's primary CTA. Measured from the wireframe: #262626
+     charcoal (deliberately lighter than --text), white label (15:1, AA). Dark
+     mode inverts to a light pill. Reused by the check-flow CTAs (screens 14–16). */
+  --ink: #262626;
+  --on-ink: #ffffff;
+
+  /* Text */
+  --text: #171717; /* ~16:1 on --surface */
+  --text-secondary: #666666; /* >=5:1 on every surface above */
+  --text-faint: #767676; /* decorative/reinforcing only */
+
+  /* ---- Back-compat aliases (existing components reference these names) ---- */
+  --c-blue: var(--brand-blue);
+  --muted: var(--text-secondary);
+  --c-red: var(--c-hazard);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+  --shadow-lift: 0 4px 10px rgba(16, 24, 40, 0.1),
+    0 12px 24px rgba(16, 24, 40, 0.1);
+}
+
+html.wa-dark {
+  color-scheme: dark;
+
+  --brand-blue: #6ba7f0; /* brightened for dark surfaces, keeps hue */
+  --brand-blue-bg: #17273d;
+
+  --c-hazard: #f2938a;
+  --c-hazard-bg: #2a1614;
+
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface-2: #242424;
+  --surface-3: #2a2a2a;
+  --c-line: #333333;
+
+  /* Ink pill inverts on dark: light pill, dark label (16:1, AA). */
+  --ink: #ededed;
+  --on-ink: #131313;
+
+  --text: #ededed; /* ~14:1 on --surface */
+  --text-secondary: #a8a8a8; /* ~6:1 on --surface */
+  --text-faint: #8f8f8f;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.5);
+}

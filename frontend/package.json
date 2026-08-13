@@ -4,27 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build && node scripts/generate-service-worker.mjs",
+    "build": "vite build",
     "dev": "vite --host 127.0.0.1",
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@awesome.me/webawesome": "3.0.0-beta.4",
-    "workbox-background-sync": "7.4.1",
-    "workbox-core": "7.4.1",
-    "workbox-precaching": "7.4.1",
-    "workbox-routing": "7.4.1",
-    "workbox-strategies": "7.4.1"
+    "@awesome.me/webawesome": "^3.11.0"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "8.4.0",
-    "@typescript-eslint/parser": "8.4.0",
+    "@eslint/js": "9.9.1",
     "eslint": "9.9.1",
+    "eslint-plugin-jsdoc": "50.2.2",
+    "globals": "15.9.0",
     "typescript": "5.5.4",
     "vite": "8.2.1",
-    "vitest": "4.1.10",
-    "workbox-build": "7.4.1"
+    "vite-plugin-pwa": "1.3.0",
+    "vitest": "4.1.10"
   }
 }
