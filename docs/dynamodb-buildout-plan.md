@@ -67,6 +67,24 @@ in the dev environment. No local state, no click-ops.
 **Done when:** `npm test` passes against DynamoDB Local; a submission flows curl → SQS → worker
 → DynamoDB item locally; Prisma is fully removed and `typecheck` is green.
 
+**As-built (2026-08-12 — the code cutover, minus the local harness):** Prisma is fully removed
+(dependency, `prisma/`, `DATABASE_URL`, scripts); [db.js](../backend/src/db.js) exports a shared
+`@aws-sdk/lib-dynamodb` Document Client; `getConfig()` carries `dynamoTable` (`DYNAMO_TABLE`); the
+worker's old `upsert` is now a conditional `PutCommand` (`attribute_not_exists(pk)`) with an
+`UpdateCommand` replay branch that stamps `duplicate_replay` — same idempotency semantics as
+before, keyed on `requestId`. Two things are **deliberately deferred**, not done here:
+
+- **Interim item shape.** The worker writes an idempotency **receipt** item —
+  `pk = SUBMISSION#<requestId>`, `sk = #RECEIPT` — the direct DynamoDB successor to the old
+  `OfflineSubmission` row. It is **not** yet the `SITE#`/`CHECK#` check/artifact/analysis model in
+  the [data model](./dynamodb-data-model.md); `requestId` is the client idempotency-key (== the
+  future ULID `checkId`), so the receipt is forward-compatible, but growing it into the real check
+  item (which needs a `siteId` in the payload) belongs to the **analysis-backend Lambdas** plan.
+- **Test depth.** The worker is proven by a **dependency-free unit test** (mocked Document Client,
+  asserts the conditional `Put` and the replay `Update`). The end-to-end `curl → SQS → worker →
+  DynamoDB Local` loop waits on the **Docker-free local harness** (its own MVP-TODO line / the
+  [local-dev plan](./local-dev-environment-plan.md)).
+
 ## Phase 3 — Seed representative data
 
 - `scripts/local-seed.mjs` (local) and a small dev-account seeder so exports/queries have

@@ -3,6 +3,7 @@
  * @property {string} bedrockModelId
  * @property {string} uploadBucket
  * @property {string} queueUrl
+ * @property {string} dynamoTable
  */
 
 /**
@@ -14,6 +15,7 @@ export function getConfig(env = process.env) {
     bedrockModelId: env.BEDROCK_MODEL_ID,
     uploadBucket: env.S3_UPLOAD_BUCKET,
     queueUrl: env.SQS_QUEUE_URL,
+    dynamoTable: env.DYNAMO_TABLE,
   };
 
   for (const [name, value] of Object.entries(required)) {

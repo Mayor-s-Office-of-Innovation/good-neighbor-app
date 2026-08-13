@@ -140,6 +140,15 @@ conditional write (`attribute_not_exists`), so an offline replay can't create du
 exactly what `workers/process-submission.js` does today with `requestId`. AI analysis stays
 async through the existing SQS → worker path.
 
+> **Current state (Phase 2 cutover, 2026-08-12).** The item types above are the **target**
+> model. As of the Prisma→DynamoDB cutover the worker writes only an interim idempotency
+> **receipt** item — `pk = SUBMISSION#<requestId>`, `sk = #RECEIPT` (the direct successor to the
+> old `OfflineSubmission` row) — so a live table during testing will show `SUBMISSION#…` items
+> that aren't in the table above. `requestId` is the client idempotency-key (== the future ULID
+> `checkId`), so this is forward-compatible; it becomes the `SITE#`/`CHECK#` header + artifacts
+> once the submit payload carries a `siteId` and the **analysis-backend Lambdas** parse the check.
+> See [buildout plan Phase 2 · As-built](./dynamodb-buildout-plan.md).
+
 ## City-wide reporting & analytics (the CQRS read plane)
 
 City leaders will want cross-site analytical reports — e.g.:

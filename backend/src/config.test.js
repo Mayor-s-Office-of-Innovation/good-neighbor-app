@@ -14,11 +14,13 @@ describe("getConfig", () => {
         BEDROCK_MODEL_ID: "model",
         S3_UPLOAD_BUCKET: "bucket",
         SQS_QUEUE_URL: "queue",
+        DYNAMO_TABLE: "table",
       }),
     ).toEqual({
       bedrockModelId: "model",
       uploadBucket: "bucket",
       queueUrl: "queue",
+      dynamoTable: "table",
     });
   });
 });

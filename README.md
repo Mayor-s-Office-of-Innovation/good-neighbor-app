@@ -4,7 +4,7 @@ Good Neighbor App is a new City and County of San Francisco Level 2 deployed sys
 
 - Frontend: web components, Web Awesome, Workbox, hosted on AWS S3/CloudFront.
 - Backend: AWS Lambda behind API Gateway, async work through SQS, AI calls through Amazon Bedrock.
-- Data: managed Postgres with Prisma migrations, object storage in S3.
+- Data: DynamoDB single-table store (`@aws-sdk/lib-dynamodb`), object storage in S3.
 - Auth: Amazon Cognito.
 - Infrastructure: Terraform, applied only through GitHub Actions.
 
@@ -33,7 +33,7 @@ deferred** (no service worker ships yet) and the **Postgres vs DynamoDB** choice
 ## Repository Layout
 
 ```text
-backend/        Lambda handlers, Prisma client access, async workers
+backend/        Lambda handlers, DynamoDB access (@aws-sdk/lib-dynamodb), async workers
 frontend/       Web components frontend — see frontend/README.md
 infra/          Terraform modules and environment roots
 docs/           SDLC, architecture, runbooks, ADRs, security evidence
