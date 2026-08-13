@@ -112,6 +112,10 @@ arrival.
 `typescript` (the checker), `@types/node`, `@types/aws-lambda`, `@prisma/client`
 (generated types). These are consumed through JSDoc `import('...')` types.
 
+> _Historical:_ `@prisma/client` was kept for Step 1 but has since been **removed** in the
+> DynamoDB cutover (Postgres/Prisma → DynamoDB) — see
+> [ADR 0002](./adr/0002-datastore-dynamodb.md).
+
 ### Remove these dependencies
 
 `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser` from both workspaces

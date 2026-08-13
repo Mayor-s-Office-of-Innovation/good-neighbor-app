@@ -7,9 +7,10 @@
 >
 > **Current state (2026-08-12):** the frontend migration (Steps 1 & 2) is **done** — the
 > backend is JS+JSDoc and the `gnp` prototype is now `frontend/`, built and green. The
-> **database direction (DynamoDB) and the backend/auth/deploy seams are still in planning**,
-> which is where the open decisions live. New work most likely starts in one of the first
-> two threads below.
+> **database direction is decided — DynamoDB** (replacing Postgres/Prisma; see
+> [ADR 0002](./adr/0002-datastore-dynamodb.md)); the **backend/auth/deploy seams are still in
+> planning**, which is where the remaining open decisions live. New work most likely starts in
+> one of the first two threads below.
 
 ## MVP tracker (start here for "what's left")
 
@@ -34,8 +35,10 @@ Step 3 (continue features from `gnp`'s design docs) has not started.
 
 These five docs form one thread: the decision to move from Postgres/Prisma to **DynamoDB**,
 the data model, city-wide reporting, how to run the backend locally, and how to build it all.
-All are **Proposed** — pending team sign-off and three open decisions (metric formulas, city
-cross-site queue, retention). **Read them in this order:**
+The **direction is decided** (DynamoDB — [ADR 0002](./adr/0002-datastore-dynamodb.md)); the
+three once-open decisions are settled too (metric formulas settled; city cross-site queue
+deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
+in this order:**
 
 1. **[dynamodb-database-decision.md](./dynamodb-database-decision.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"

@@ -86,7 +86,7 @@ From [dynamodb-buildout-plan.md](./dynamodb-buildout-plan.md). Local-dev harness
 - [ ] 🔒 **Shrink the SF city-seal asset to a PNG** (blocks go-live weight/Core Web Vitals): the Wikimedia seal SVG is **2.3MB** (only ~1.1MB after `svgo`) but renders at **44px** in the today-view header. Replace with a ~132px (3×) optimized PNG (~5–15KB) — or a hand-simplified SVG — before ship. Don't inline the raw SVG.
 - [ ] **Security review recorded** ([security-review.md](./security-review.md)) + run checkov/SAST on new Terraform and the new Lambdas.
 - [ ] **Go-live gates** ([README](../README.md#required-reviews-before-go-live)): Mozilla Observatory A+, SSL Labs A+, Core Web Vitals, WCAG 2.2 AA + keyboard pass, CCSF tag verification, pin GitHub Actions to commit SHAs.
-- [ ] **Docs cutover:** drop Prisma/Postgres standing choices from [AGENTS.md](../AGENTS.md); supersede [ADR 0001](./adr/0001-architecture-stack.md); scrub Prisma refs in migration plans.
+- [x] **Docs cutover** *(done 2026-08-13)*: dropped Prisma/Postgres standing choices from [AGENTS.md](../AGENTS.md); superseded [ADR 0001](./adr/0001-architecture-stack.md)'s datastore choice via new [ADR 0002](./adr/0002-datastore-dynamodb.md); scrubbed stale current-state refs (architecture diagram, root README, SECURITY.md, D4, docs/README). Legitimate decision-narrative refs (decision/buildout/data-model docs) kept.
 
 ---
 
