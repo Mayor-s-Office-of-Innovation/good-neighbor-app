@@ -55,6 +55,16 @@ cross-site queue, retention). **Read them in this order:**
 **Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3, then the open
 decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as needed.
 
+## Backend build plans (seams with a decided direction)
+
+- **[analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md)** — the perimeter-check
+  API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
+  an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
+  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
+  via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
+  deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
+  [data model](./dynamodb-data-model.md).
+
 ## Other docs in this directory
 
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
