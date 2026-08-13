@@ -23,7 +23,7 @@ Report security issues to `innovation@sfgov.org` and include:
 - Secrets are stored in AWS Secrets Manager or SSM Parameter Store.
 - Authentication uses Cognito.
 - Backend authorization is enforced in Lambda handlers and API Gateway authorizers.
-- Managed Postgres, S3, and Terraform state are encrypted at rest.
+- DynamoDB, S3, and Terraform state are encrypted at rest.
 - Public web traffic is served over TLS through CloudFront and protected by WAF.
 - CI runs dependency, secret, SAST, and Terraform scans before deployment.
 - Production deploys require protected GitHub environments.

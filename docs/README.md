@@ -7,9 +7,10 @@
 >
 > **Current state (2026-08-12):** the frontend migration (Steps 1 & 2) is **done** — the
 > backend is JS+JSDoc and the `gnp` prototype is now `frontend/`, built and green. The
-> **database direction (DynamoDB) and the backend/auth/deploy seams are still in planning**,
-> which is where the open decisions live. New work most likely starts in one of the first
-> two threads below.
+> **database direction is decided — DynamoDB** (replacing Postgres/Prisma; see
+> [ADR 0002](./adr/0002-datastore-dynamodb.md)); the **backend/auth/deploy seams are still in
+> planning**, which is where the remaining open decisions live. New work most likely starts in
+> one of the first two threads below.
 
 ## MVP tracker (start here for "what's left")
 
@@ -34,8 +35,10 @@ Step 3 (continue features from `gnp`'s design docs) has not started.
 
 These five docs form one thread: the decision to move from Postgres/Prisma to **DynamoDB**,
 the data model, city-wide reporting, how to run the backend locally, and how to build it all.
-All are **Proposed** — pending team sign-off and three open decisions (metric formulas, city
-cross-site queue, retention). **Read them in this order:**
+The **direction is decided** (DynamoDB — [ADR 0002](./adr/0002-datastore-dynamodb.md)); the
+three once-open decisions are settled too (metric formulas settled; city cross-site queue
+deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
+in this order:**
 
 1. **[dynamodb-database-decision.md](./dynamodb-database-decision.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
@@ -54,6 +57,16 @@ cross-site queue, retention). **Read them in this order:**
 
 **Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3, then the open
 decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as needed.
+
+## Backend build plans (seams with a decided direction)
+
+- **[analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md)** — the perimeter-check
+  API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
+  an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
+  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
+  via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
+  deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
+  [data model](./dynamodb-data-model.md).
 
 ## Other docs in this directory
 

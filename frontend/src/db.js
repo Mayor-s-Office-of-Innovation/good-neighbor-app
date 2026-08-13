@@ -109,3 +109,6 @@ export async function getChecksForSite(siteId) {
     reqToPromise(os.index("bySite").getAll(siteId)),
   );
 }
+export async function clearChecks() {
+  return tx("checks", "readwrite", (os) => os.clear());
+}
