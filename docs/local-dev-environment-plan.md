@@ -2,8 +2,8 @@
 
 *DynamoDB planning set (doc 4 of 5) · [index](./README.md) · ← [analytics addendum](./analytics-plane-addendum.md) · next → [buildout plan](./dynamodb-buildout-plan.md)*
 
-**Status:** Proposed — runnable plan, pending the database decision
-**Date:** 2026-08-12
+**Status:** Built & verified E2E (2026-08-13) — DynamoDB adopted; harness live under `npm run dev -w backend`
+**Date:** 2026-08-12 (verified 2026-08-13)
 **Depends on:** [dynamodb-database-decision.md](./dynamodb-database-decision.md). This plan
 describes the **Docker-free** path, which is unlocked *by* adopting DynamoDB. If the team
 keeps Postgres, see [Fork: if we stay on Postgres](#fork-if-we-stay-on-postgres) at the end —
@@ -194,6 +194,14 @@ test hits the real API Gateway endpoint.
 4. `npm test` runs the exact handler code against local services and passes.
 5. No click-ops anywhere: local resources are created by `local-bootstrap.mjs`, real
    resources by Terraform.
+
+**Verified 2026-08-13** against JRE 17+ (Temurin 25 LTS): (1) `npm run dev -w backend` brought
+up DynamoDB Local + ElasticMQ + router + worker Docker-free; (2) `GET /health`→200, unknown
+route→404 match the deployed handlers; (3) `POST /submissions` flowed curl → SQS → worker →
+DynamoDB Local, writing `SUBMISSION#t1 / #RECEIPT` (`status=received`, stub `sub`=`dev`), and a
+same-key re-POST flipped it to `duplicate_replay` (conditional-Put replay branch); (4) `npm test`
+(incl. the `buildProxyEvent` unit test) passes; (5) holds by construction. Clean SIGINT teardown
+left no orphaned JVM/node processes. S3/MinIO remains deferred (handlers don't touch S3 yet).
 
 ## Alternatives considered (and why not)
 

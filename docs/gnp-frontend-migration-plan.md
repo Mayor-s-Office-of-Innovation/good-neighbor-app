@@ -76,27 +76,36 @@ login. So **shelve the scaffold's Cognito User Pools JWT authorizer**
 
 The real v1 auth need is **authenticating calls to the external analysis API**. A public
 client (PWA on a shared iPad) cannot hold a real secret, so we use a **server-mediated
-flow**:
+flow** — and (revised 2026-08-13) we post the image **base64-inline through our Lambda**,
+with **no S3 staging bucket**:
 
-1. Client requests a **scoped, short-expiry presigned PUT URL** and uploads photo(s) to
-   a transient S3 staging bucket.
-2. Client calls our **Lambda** (in this repo) with the `bucket/key` reference.
-3. The Lambda calls the **analysis API** — a **separate service of ours on AWS** (own repo)
-   — authenticating via **IAM (SigV4)**; the analyzer trusts only our Lambda's role, never
-   the client. (No shared secret; see the resolved fork below.)
-4. Lambda returns the analysis JSON to the client.
-5. **Lambda deletes the staged object as soon as it has the response** (on success _and_
-   failure).
-6. Backstopped by an **S3 lifecycle rule** expiring objects well under a day (target
-   ~1 hour), and it **must also expire noncurrent versions and delete markers** —
-   versioning is enabled, so a plain delete only writes a delete marker and the PII
-   persists without this.
+1. Client **downscales** each capture (≤~1568px / ~1–2 MB JPEG) and calls our **Lambda**
+   (in this repo) with the image **base64-inline** in the request body — **one call per
+   artifact** (per-artifact; see D2).
+2. The Lambda calls the **analysis API** — a **standalone shared service of ours on AWS**
+   (own repo) — authenticating as a consumer with an **API key** (`x-api-key`, held
+   server-side in Secrets Manager); the analyzer trusts only holders of a valid consumer key,
+   and the key never leaves our Lambda — the client never sees it. It sends
+   **`storage.store_input:false` + `return_signed_urls:false`** so the analyzer keeps no copy.
+   (See the revised fork below.)
+3. Lambda returns the analysis JSON to the client. **Nothing is persisted at rest** — the
+   image lives only transiently in-memory for the request.
+
+**Why no S3 (revised 2026-08-13).** Bedrock caps images at 5 MB and downscales anything over
+~1568px, so a staging bucket + presigned upload + an `image_s3` service input buys little, and
+the analyzer's base64 input path already exists. The binding size limit is **AWS Lambda's ~6 MB
+sync payload** (tighter than Bedrock's 5 MB after ~33% base64 inflation, and it applies on both
+the client→Lambda and Lambda→analyzer hops), so **the client must downscale before posting** —
+which is optimal anyway. Dropping S3 also **removes person-images at rest entirely**: with no
+bucket and `store_input:false`, images are never durably stored, delivering the "no
+person-images at rest → Level 2" property directly rather than via a deferred retention pass.
 
 Client→Lambda hop is gated with API Gateway + WAF + throttling (optionally a Cognito
 **Identity Pool** guest identity for IAM-authorized calls — still no login). This is
 deterrence-grade, acceptable for a demo; real per-device identity arrives with v2 iPad
-provisioning. Staging bucket: block-public-access, SSE-KMS, TLS-only, Lambda-role-only
-access, no object-content logging.
+provisioning. No staging bucket exists to harden; the residual media controls are **no
+request-body logging** (API GW + Lambda), analyzer-account **Bedrock invocation logging off**,
+and posted-image **validation** (magic-byte + size + count caps).
 
 > **Auth posture reconciled (2026-08-12).** The "deterrence-grade guest Identity Pool"
 > above is the **demo** posture only — it does **not** prevent a public caller from
@@ -107,12 +116,19 @@ access, no object-content logging.
 > rejected alternatives, and cross-cutting hardening are recorded in
 > [security-review.md](security-review.md); tracked in [MVP-TODO](MVP-TODO.md).
 
-**Fork — resolved (2026-08-12):** the analyzer **is ours on AWS**, so the Lambda authenticates
-via **IAM (SigV4)** — no Secrets Manager credential. The analyzer is the scorecard service
-previously part of **streetconditions.org**, used exactly as we plan to use it; it lives in a
-**separate repo (not yet checked out) and is not yet deployed as a standalone service.** Standing
-it up as its own deployable is therefore an **external dependency of the analyze path** (tracked
-in [MVP-TODO](MVP-TODO.md)).
+**Fork — resolved 2026-08-12; revised 2026-08-13:** ~~IAM (SigV4), no Secrets Manager
+credential~~ → **API key per consumer, held in Secrets Manager.** The premise changed: "ours"
+means we own the code + deploy, but the analyzer is a **standalone shared service** — the
+scorecard service previously part of **streetconditions.org**, which will consume it as an
+external service once stood up, alongside possibly other (non-AWS) consumers. For a shared
+service with heterogeneous consumers, **API-key-per-consumer** is the right auth boundary
+(per-consumer identity, revocation, throttling; no cross-account IAM coupling). GNP's key is a
+**backend-to-backend credential**: our Lambda holds it server-side (Secrets Manager, fetched via
+the Lambda role), TLS-only; the **field device never holds it**, so server-mediation is
+unchanged. The service lives in a **separate repo (checked out at `../street-conditions-analysis`)
+and is not yet deployed as a standalone service.** Standing it up — and issuing GNP a consumer
+key — is an **external dependency of the analyze path** (tracked in [MVP-TODO](MVP-TODO.md)).
+(Optional future: its API GW could add IAM auth alongside keys for AWS consumers; not built now.)
 
 ### D2. Backend contract — perimeter-checks system of record
 
@@ -127,15 +143,30 @@ in, a structured **analysis report as JSON** (issues + types) back. This app is 
 **system of record** — it tracks every analysis result received, when each perimeter
 check was run, and the history per site.
 
-What our backend persists (no raw media — see D3):
+What our backend persists (no raw media — see D3), via a **caller-side adapter** that maps the
+service contract to our shape (revised 2026-08-13; the rubric + data format are **owned by the
+analysis service** — ground truth is `street-conditions-analysis/contract/openapi.yaml`):
 
 - Perimeter check: `{ id, siteId, runAt, inputsSummary (photo count, hasAudio, hasText), status }`
-- Analysis result: the analyzer's scorecard — `{ checkId, total_score, status_label,
-ratings_details: [{ category, rating 0-3, hazard, explanation, evidence_indices }] }`
-  (always 12 categories). Severity is `rating` + `hazard`; **there is no `confidence`
-  field** (see `gnp/src/services/analyzer.js`)
+- Analysis result (**per artifact** — see note below): our projection of the service scorecard —
+  `{ checkId, artifactId, rubricVersion, ratings_details: [{ category, rating, hazard, explanation,
+  evidence_indices }] }` (always 12 categories). **Adapter mapping:** service `categories`→
+  `ratings_details`, `label`→`category`, `severity`→`rating`, `description`→`explanation`,
+  `hazard_detected`→`hazard`. The severity scale is **rubric-owned (0–5 today), not a fixed 0–3** —
+  carry it through, don't hard-code the band count. The service returns an optional `confidence`
+  we **drop**. It does **not** return `total_score`/`status_label` — **we compute** those in our
+  scoring module (matches the "raw components, compute at read" data-model decision). Stamp
+  `rubricVersion` so aggregates never mix scales across a version bump.
 - Query/history: list checks for a site, time-ordered; per-site and citywide read
   models for the reporting API.
+
+**Per-artifact analysis (resolved 2026-08-13).** One analyzer call per photo/text artifact → one
+per-artifact `ANALYSIS` item ([data model](dynamodb-data-model.md)). The UI still consumes a single
+**check-level** scorecard: the adapter synthesizes it by taking, per category, the **max `rating`
+and OR of `hazard`** across the check's artifacts and unioning the evidence, attributing each
+finding to its source artifact directly (not the model's per-call `evidence_indices`).
+Batch-per-modality (one call for all a check's photos) is the documented fallback if the analyzer
+usage-plan quota/cost bites — at the cost of per-photo attribution.
 
 This persisted shape is deliberately a **lean projection** of `gnp`'s local check
 (which carries per-side `items[]`, the cadence `window`, and timestamps): the backend
@@ -146,13 +177,14 @@ check, list checks for a site, fetch one, plus the citywide reporting read API. 
 `gnp` client maps the scorecard → findings locally; a sync layer is future work —
 there is no `sync.js` in `gnp` today (records are flagged `synced:false` for it).
 
-**Who calls the analysis service? — resolved (server-mediated).** The client uploads
-media to a transient S3 staging bucket (presigned PUT), then calls our Lambda with the
-`bucket/key`; the Lambda calls our analyzer service (a separate repo of ours on AWS) via
-**IAM (SigV4)** and returns the JSON. This is what makes caller-auth possible (only our Lambda holds a real
-secret) — see **D1** for the full flow, deletion, and lifecycle requirements. It is the
-server-mediated branch, chosen over client-direct because a public client can't
-authenticate to the analyzer.
+**Who calls the analysis service? — resolved (server-mediated, base64, no S3).** The client
+downscales each capture and posts it **base64-inline** to our Lambda (one call per artifact); the
+Lambda calls our analyzer service (a standalone shared service of ours on AWS) with GNP's
+**consumer API key** (`x-api-key`, held in Secrets Manager) and returns the JSON. This is what
+makes caller-auth possible (only our Lambda holds the key) — see **D1** for the full flow and the
+no-media-at-rest rationale (revised 2026-08-13: dropped the S3 staging bucket — Bedrock's 5 MB cap
+made it low-value, and the binding limit is Lambda's ~6 MB payload). It is the server-mediated
+branch, chosen over client-direct because a public client can't be trusted to hold the analyzer key.
 
 Note: the data-layer shape (Prisma models vs DynamoDB items) is pending **D4**.
 

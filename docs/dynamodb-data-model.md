@@ -235,11 +235,13 @@ definition change is a one-function edit — no stored score to migrate, and the
 SQL simply mirrors the module.
 
 - **Cleanliness score — unweighted.** All 12 categories count equally (no per-category
-  weights). Per check the raw component is `severitySum` = plain sum of the 12 ratings (0–36).
+  weights). Per check the raw component is `severitySum` = plain sum of the 12 ratings.
   Site/period cleanliness = `sum(severitySum) / sum(checksCompleted)` = **average severity per
-  check**; lower = cleaner. `issueCount` (ratings > 0) and `hazardCount` (hazard = true) are
-  also stored as raw components for alternate formulas later, but are not in the headline
-  number.
+  check**; lower = cleaner. The formula is **scale-agnostic**; the per-category rating range is
+  **owned by the analysis-service rubric** (0–5 today → max `severitySum` = 60; earlier assumed
+  0–3 → 36). Stamp `rubricVersion` on `ANALYSIS` items and never mix scales within one rollup.
+  `issueCount` (ratings > 0) and `hazardCount` (hazard = true) are also stored as raw components
+  for alternate formulas later, but are not in the headline number.
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the
   duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3

@@ -7,40 +7,44 @@ Status: in progress — testing-phase data-handling decision recorded (2026-08-1
 - Frontend static web app hosted on AWS.
 - API Gateway and Lambda handlers.
 - SQS asynchronous processing.
-- Analysis API (ours on AWS, separate repo) — Lambda authenticates via IAM/SigV4.
+- Analysis API (a standalone shared service — ours to own/deploy, also consumed by streetconditions.org) — our Lambda authenticates as a consumer via an **API key** held in Secrets Manager (revised 2026-08-13; was IAM/SigV4).
 - DynamoDB (single-table) via the AWS SDK.
-- S3 storage — including the **transient photo staging bucket** (see data-handling note below).
+- S3 storage — analytics export bucket only. **No photo staging bucket** (dropped 2026-08-13; images post base64-inline through our Lambda — see data-handling note below).
 - Cognito authentication and authorization.
 - Terraform and GitHub Actions deployment pipeline.
 
-## Data classification & photo handling — testing phase (decided 2026-08-12)
+## Data classification & photo handling — no media at rest (revised 2026-08-13)
 
-The server-mediated analyze flow ([D1/D3](gnp-frontend-migration-plan.md)) stages captured
-photos in a transient S3 bucket before analysis. The intended data-minimization design is
-immediate Lambda deletion after analysis + an S3 lifecycle backstop (incl. noncurrent versions
-and delete markers).
+**Superseded (2026-08-12 → 2026-08-13).** The original design staged captured photos in a
+transient S3 bucket and deferred deletion/lifecycle to a post-MVP retention pass (disposable test
+data, wiped between cycles). That staging bucket has been **dropped**
+([D1](gnp-frontend-migration-plan.md)): Bedrock's 5 MB image cap made a bucket + presigned upload
+low-value, so the client posts each image **base64-inline through our Lambda**, which relays it to
+the analyzer and returns the result. (Binding size limit is Lambda's ~6 MB sync payload → the
+client downscales before posting.)
 
-**Decision:** for the **initial testing phase**, implementation of photo deletion and all
-retention/lifecycle windows is **deferred** ([MVP-TODO](MVP-TODO.md) post-MVP retention pass).
-Test photos may persist in the staging bucket and are removed by a **wholesale wipe of all test
-data between cycles**. This is accepted **because the data is disposable test data**, on the
-condition that the following access controls are in place during testing:
+**Result — person-images are never at rest.** With no bucket and `storage.store_input:false` +
+`return_signed_urls:false` on every analyzer call, images exist only **transiently in-memory** for
+the request. The "no person-images at rest → Level 2" property is now **delivered directly**, not
+deferred — this removes the photo half of the post-MVP retention pass.
 
-- [ ] Staging bucket **Block Public Access** (all four settings) — bucket contents not publicly browseable.
-- [ ] **SSE-KMS** encryption at rest (existing app KMS key).
-- [ ] **TLS-only** access (`aws:SecureTransport` deny).
-- [ ] **Least-privilege**: only the analyze Lambda's role can read/write; no other principals.
-- [ ] No object-content logging (photos not captured in CloudWatch / access logs).
+**Controls that apply during testing (and after):**
 
-**Before go-live / any real (non-test) user data:** the strict retention rules (immediate
-Lambda delete + S3 lifecycle incl. noncurrent versions + delete markers) must be implemented and
-this classification **re-reviewed** — the "no person-images at rest" property that keeps us at
-Level 2 is not delivered until then.
+- [ ] Analyzer calls always send **`store_input:false` + `return_signed_urls:false`** (analyzer keeps no copy).
+- [ ] **No request-body logging** — the base64 image is not captured in API Gateway exec/access logs or our Lambda logs.
+- [ ] Analyzer-account **Bedrock model-invocation logging is OFF** (confirm with the service owner).
+- [ ] **Posted-image validation** in the Lambda before the analyzer call: magic-byte / content-type sniff, size cap, per-check artifact-count cap.
+- [ ] **TLS-only** on both hops (client→Lambda, Lambda→analyzer).
+
+**Before go-live / any real (non-test) user data:** re-review this classification against the
+as-built handler — confirm no incidental persistence or logging of image bytes anywhere in the
+path. No S3 photo-retention rules are needed because no photo bucket exists.
 
 ## API write authorization & dataset-pollution risk (decided 2026-08-12)
 
-**Threat.** The analyzer itself is protected — only our Lambda can call it (IAM/SigV4), never
-the client. But the **client→Lambda hop is a public endpoint**. Without a site-scoped caller
+**Threat.** The analyzer itself is protected — only our Lambda can call it (it holds GNP's
+consumer **API key** server-side, in Secrets Manager), never the client. But the **client→Lambda
+hop is a public endpoint**. Without a site-scoped caller
 identity, anyone who reaches it can (a) **pollute a site's dataset** with unwanted
 checks/images and (b) **drive analyzer/Bedrock cost** through volume. Rate limits and WAF slow
 this; they do **not** prevent it.
@@ -82,11 +86,10 @@ needs ([MVP-TODO](MVP-TODO.md)) — track it as a **shared dependency**, not tra
 
 - [ ] Write handler **derives `siteId` from the principal**, never from the request body (the
   invariant above) — do this even in the demo wherever a principal exists.
-- [ ] **Constrain the presigned PUT**: `content-length-range`, content-type condition, single
-  key, short expiry — the URL can't be reused to dump oversized or arbitrary objects.
-- [ ] **Validate the staged object in the Lambda before calling the analyzer**: magic-byte /
-  content-type sniff (is it really an image?), size cap, per-check artifact-count cap. Direct
-  mitigation for "unwanted images."
+- [ ] **Validate the posted image in the Lambda before calling the analyzer**: magic-byte /
+  content-type sniff (is it really an image?), size cap (reject oversized base64 bodies), per-check
+  artifact-count cap. Direct mitigation for "unwanted images" and oversized payloads — this is the
+  control that replaces the dropped presigned-PUT constraints.
 - [ ] **Artifacts attach only to a check the same principal created** (conditional write) — no
   grafting images onto another device's check.
 - [ ] **Rate-limit per identity + per site** (WAF rate rules + API Gateway usage plans) to cap
@@ -109,7 +112,7 @@ point here.
 - [ ] S3 public access blocks verified.
 - [ ] CloudFront security headers verified.
 - [ ] WAF rules and rate limits verified.
-- [ ] Dataset-pollution controls verified: device-as-site auth (Option 3), server-derived `siteId` + `LeadingKeys`, presigned-PUT constraints, staged-object validation, per-site rate limits.
+- [ ] Dataset-pollution controls verified: device-as-site auth (Option 3), server-derived `siteId` + `LeadingKeys`, posted-image validation (magic-byte + size + count caps), per-site rate limits.
 - [ ] Mozilla Observatory A+.
 - [ ] SSL Labs A+.
 - [ ] Accessibility review passed.
