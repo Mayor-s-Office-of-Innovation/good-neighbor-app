@@ -215,6 +215,41 @@ infra-wiring validation moved to the cloud dev account (Phase 10). The trade is 
 **"Docker-free" and "run the real Terraform locally" are mutually exclusive today**, and we
 picked Docker-free, which aligns with the architecture standard's "validate in a cloud env."
 
+### The turnkey "arc-equivalent" local runtimes (compared 2026-08-13)
+
+The original comparison above weighed Architect/SAM/LocalStack as *infra tools*. It never
+compared the class of **turnkey local runtimes** that give the in-process "run my handlers
+behind a local event router" experience — the thing that made Architect's Sandbox appealing.
+Doing that now, so the choice to **hand-roll a thin router** (rather than adopt one) is on the
+record:
+
+| Tool | The Sandbox-style experience | Why not adopted |
+|---|---|---|
+| **Architect Sandbox** (`@architect/sandbox`) | Gold standard — in-process router + DynamoDB Local, no Docker | Coupled to an `app.arc` manifest → a second source of truth competing with Terraform |
+| **Serverless Framework + `serverless-offline`** (+ `-sqs`, + `serverless-dynamodb`) | Closest turnkey match to *our* stack (HTTP API v2 + JWT-authorizer stub + SQS→Lambda + DynamoDB Local); one command | Needs a **dev-only `serverless.yml`** (competing manifest); 3 plugins of varying maintenance; **still launches the same JVM jars underneath** — it wraps the JVM, doesn't remove it |
+| **SST** (`sst dev` Live Lambda) | Excellent DX | Not a local emulator — proxies to *real* AWS Lambda; needs an account + its own CDK/Pulumi config; not Terraform |
+
+**Finding:** every turnkey arc-equivalent either owns a competing IaC manifest (Architect,
+Serverless, SST) or needs Docker (SAM, LocalStack), and **none removes the JVM**. So the real
+fork was *turnkey-framework-with-a-second-manifest* vs *thin-code-we-own*. We chose the
+hand-rolled router (~150 lines over the real handlers): no manifest lock-in, Terraform stays
+the single source of truth, and the only thing to keep in step is the route table.
+
+### As-built specifics (verified 2026-08-13)
+
+- **DynamoDB Local** via the `dynamodb-local` npm package (0.0.38), launched with **`-sharedDb`**
+  (without it, data is partitioned by access-key+region and bootstrap/handlers can diverge).
+  **Requires JRE 17+** (DynamoDB Local 2.x) — not just "a JVM".
+- **ElasticMQ** has no maintained npm server helper; the harness downloads the official fat jar
+  (`elasticmq-server-all-1.7.1.jar`) into git-ignored `backend/.local/` on first run and spawns
+  `java -jar`. Bound to `127.0.0.1` (a small `backend/elasticmq.conf`) to avoid the macOS
+  firewall prompt.
+- **SDK redirection is env-only** (no `backend/src` change): `AWS_ENDPOINT_URL_DYNAMODB` /
+  `AWS_ENDPOINT_URL_SQS` (service-specific beats the global `AWS_ENDPOINT_URL`), plus
+  `AWS_REGION` and dummy credentials (v3 throws without them, even against local jars).
+- **Env loading** uses Node 22's native `--env-file=.env.local` (no `dotenv` dep). Copy
+  `.env.example` → `.env.local` once.
+
 ## Fork: if we stay on Postgres
 
 If the DynamoDB decision does **not** land, this plan still applies with two changes, and

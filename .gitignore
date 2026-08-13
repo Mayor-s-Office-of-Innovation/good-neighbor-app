@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Local dev harness (downloaded ElasticMQ jar, DynamoDB Local data)
+backend/.local/
+
 # Builds
 dist/
 coverage/

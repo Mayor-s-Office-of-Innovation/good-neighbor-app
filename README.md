@@ -54,6 +54,14 @@ Prerequisites:
 - Terraform 1.9 or newer
 - pre-commit
 - AWS access only for approved operators; developers should work through Git and CI
+- **JRE 17+ — only for the backend local harness** (below). DynamoDB Local and ElasticMQ ship
+  as Java jars; DynamoDB Local 2.x needs Java 17 or newer. Note: `java.com`'s manual download
+  is Java **8** and will not work. Install a current LTS build:
+  - macOS: `brew install --cask temurin` (Eclipse Temurin), then confirm `java -version`
+    reports 17+ (not `1.8.x`).
+  - Or the Adoptium `.pkg` for your arch: <https://adoptium.net/temurin/releases/> — Apple
+    Silicon = `aarch64`, Intel = `x64`.
+  The frontend, tests, lint, and typecheck do **not** need Java.
 
 Install dependencies:
 
@@ -75,6 +83,33 @@ Run the frontend locally:
 ```bash
 npm run dev -w frontend
 ```
+
+### Run the backend locally (Docker-free harness)
+
+Runs the exact Lambda handler + worker code against Docker-free emulators (DynamoDB Local +
+ElasticMQ). Needs **JRE 17+** (see Prerequisites). Full design:
+[docs/local-dev-environment-plan.md](docs/local-dev-environment-plan.md).
+
+```bash
+cp .env.example .env.local     # one-time (git-ignored; dummy local values)
+npm run dev -w backend         # starts DynamoDB Local, ElasticMQ, the API router, and the worker
+```
+
+Then, in another terminal:
+
+```bash
+# POST a submission → 202 queued
+curl -s -X POST localhost:3000/submissions \
+  -H 'idempotency-key: t1' -H 'X-Debug-Sub: dev' \
+  -H 'content-type: application/json' -d '{"hello":"world"}'
+
+npm run db:gui -w backend      # browse the local table at http://localhost:8001
+```
+
+A submission flows `curl → SQS → worker → DynamoDB`. Re-POSTing with the same `idempotency-key`
+flips the stored item's status to `duplicate_replay` (the conditional-write replay branch).
+The `X-Debug-Sub` header stands in for the Cognito JWT `sub` locally (defaults to `DEBUG_SUB`
+from `.env.local`).
 
 ### Clearing the local site binding
 
