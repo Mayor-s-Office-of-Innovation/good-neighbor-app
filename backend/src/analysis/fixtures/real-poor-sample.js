@@ -1,0 +1,126 @@
+// Golden fixture: a REAL `good-neighbor-app` v1.0.0 response captured from the
+// deployed analyzer (see docs/analysis.json), verbatim — not hand-authored.
+// Use it as a conformance anchor: our adapter must map real service output, not
+// just our idealized fixtures. Intentionally left unaltered, including the
+// `\nOR\n` template artifact in general_conditions.description (a service-side
+// bug reported upstream) and the non-GNP caller.app_id — a golden sample is
+// whatever the service actually produced.
+
+/** @type {import("../contract.js").AnalysisResponse} */
+export const realPoorSampleResponse = {
+  analysis_id: "ana_20260814_54234580279c",
+  rubric: { id: "good-neighbor-app", version: "1.0.0" },
+  created_at: "2026-08-14T19:07:38.712Z",
+  model: { provider: "bedrock", model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0" },
+  caller: { app_id: "street-conditions-web", request_id: "local-1786734457402" },
+  input_storage: [
+    {
+      index: 0,
+      type: "text",
+      content_type: "text/plain; charset=utf-8",
+      s3_uri:
+        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-0.txt",
+    },
+    {
+      index: 1,
+      type: "image",
+      content_type: "image/jpeg",
+      s3_uri:
+        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-1.jpg",
+    },
+    {
+      index: 2,
+      type: "image",
+      content_type: "image/jpeg",
+      s3_uri:
+        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-2.jpg",
+    },
+    {
+      index: 3,
+      type: "image",
+      content_type: "image/jpeg",
+      s3_uri:
+        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-3.jpg",
+    },
+  ],
+  assessment: {
+    metadata: {
+      reported_at: "2026-08-15T02:06:00.000Z",
+      latitude: 37.7749,
+      longitude: -122.4194,
+      position_descriptor: "outside front door",
+      notes: "",
+    },
+    general_conditions: {
+      label: "Poor",
+      description:
+        "The perimeter has significant concerns that need attention: Empty soft drink cans and scattered paper visible around tent area and near furniture; Large black leather chair abandoned on sidewalk near tree; Large pile of feces reported outside front door; Multiple tents set up along sidewalk with belongings arranged for living \nOR\nThe perimeter is showing several concerns of moderate severity: Empty soft drink cans and scattered paper visible around tent area and near furniture; Large black leather chair abandoned on sidewalk near tree; Large pile of feces reported outside front door; Multiple tents set up along sidewalk with belongings arranged for living",
+    },
+    identified_conditions_of_concern: [
+      {
+        category: "Litter",
+        definition: "Scattered small refuse or litter that does not obstruct movement.",
+        severity: 2,
+        severity_label: "Minor: Increasing quantity, size, or spatial impact",
+        description: "Empty soft drink cans and scattered paper visible around tent area and near furniture",
+        evidence_indices: [0, 1, 2],
+      },
+      {
+        category: "Large waste",
+        definition: "Bulky items or materials that are difficult to move and visually dominate space.",
+        severity: 3,
+        severity_label: "Moderate: Increasing quantity, size, or spatial impact",
+        description: "Large black leather chair abandoned on sidewalk near tree",
+        evidence_indices: [2],
+      },
+      {
+        category: "Feces and urine",
+        definition: "Visible feces, urine staining, or biological waste residue.",
+        severity: 3,
+        severity_label: "Moderate: Increasing amount, spread, or proximity to pedestrians",
+        description: "Large pile of feces reported outside front door",
+        evidence_indices: [0],
+      },
+      {
+        category: "Temporary shelters",
+        definition: "Visible evidence of people living or sleeping in public spaces without shelter.",
+        severity: 4,
+        severity_label: "Elevated: Increasing number, density, or permanence",
+        description: "Multiple tents set up along sidewalk with belongings arranged for living",
+        evidence_indices: [1],
+      },
+      {
+        category: "Graffiti",
+        definition:
+          "Intentional, expressive markings (writing, symbols, or drawings) applied to surfaces not designed for such use, without clear indicators of official or authorized purpose.",
+        severity: 1,
+        severity_label:
+          "Minimal: A single small tag or mark, negligible surface coverage, easily overlooked",
+        description: "Some markings visible on building walls",
+        evidence_indices: [1],
+      },
+      {
+        category: "Blocking access",
+        definition: "Physical blockage limiting pedestrian, wheelchair, or vehicle access.",
+        severity: 3,
+        severity_label:
+          "Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path",
+        description: "Multiple tents and large furniture blocking significant portions of sidewalk",
+        evidence_indices: [1, 2],
+      },
+      {
+        category: "Dangerous animals",
+        definition:
+          "Animals that are unleashed, unattended, or where conditions are unsafe for an animal or the public",
+        severity: 2,
+        severity_label: "Moderate: Clear safety concern (unleashed near traffic, inadequate shelter)",
+        description: "Multiple dogs off-leash in street area near traffic",
+        evidence_indices: [3],
+      },
+    ],
+  },
+  result_storage: {
+    s3_uri:
+      "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/result.json",
+  },
+};

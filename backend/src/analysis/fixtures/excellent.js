@@ -10,7 +10,12 @@ export const excellentResponse = {
   model: { provider: "bedrock", model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0" },
   caller: { app_id: "good-neighbor-app", request_id: "chk_01#art_01" },
   assessment: {
-    metadata: { position_descriptor: "North side, main entrance" },
+    metadata: {
+      reported_at: "2026-08-14T14:59:00.000Z",
+      latitude: 37.7749,
+      longitude: -122.4194,
+      position_descriptor: "North side, main entrance",
+    },
     general_conditions: {
       label: "Excellent",
       description:

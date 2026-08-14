@@ -9,7 +9,12 @@ export const singleLowConcernResponse = {
   model: { provider: "bedrock", model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0" },
   caller: { app_id: "good-neighbor-app", request_id: "chk_01#art_02" },
   assessment: {
-    metadata: { position_descriptor: "East side, along the curb" },
+    metadata: {
+      reported_at: "2026-08-14T15:04:00.000Z",
+      latitude: 37.7749,
+      longitude: -122.4194,
+      position_descriptor: "East side, along the curb",
+    },
     general_conditions: {
       label: "Fair",
       description:

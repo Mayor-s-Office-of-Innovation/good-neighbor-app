@@ -37,8 +37,15 @@
  */
 
 /**
+ * Request metadata echoed back on the response. The service owns this shape; we
+ * only read `position_descriptor` today, but the real response also carries the
+ * report's timestamp and GPS (mirroring the required request metadata).
  * @typedef {object} AssessmentMetadata
  * @property {string} position_descriptor
+ * @property {string} reported_at
+ * @property {number} latitude
+ * @property {number} longitude
+ * @property {string} [notes]
  */
 
 /**
@@ -49,13 +56,25 @@
  */
 
 /**
+ * One stored input artifact (image or text) echoed back on the response,
+ * pointing at where the service persisted it. We don't read these today.
+ * @typedef {object} InputStorageItem
+ * @property {number} index
+ * @property {string} type
+ * @property {string} content_type
+ * @property {string} s3_uri
+ */
+
+/**
  * @typedef {object} AnalysisResponse
  * @property {string} analysis_id
  * @property {RubricRef} rubric
  * @property {string} created_at
  * @property {ModelRef} model
  * @property {{ app_id: string, request_id?: string }} [caller]
+ * @property {InputStorageItem[]} [input_storage]
  * @property {Assessment} assessment
+ * @property {{ s3_uri: string }} [result_storage]
  */
 
 /** @type {string} */
