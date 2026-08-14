@@ -333,6 +333,18 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   Conditional writes for idempotency/ownership; the worker is idempotent on `checkId#artifactId`.
   Unit-tested with a mocked Document Client + mocked S3/analyzer (as `process-submission.test.js`
   does today).
+  > **As-built (2026-08-14):** shipped under `backend/src/` — `handlers/checks.js`
+  > (`createCheck`, `completeCheck`, `listChecks`, `getCheck`), `handlers/artifacts.js`
+  > (`presignUpload`, `registerArtifact`, `presignMedia`), `workers/analyze-artifact.js`,
+  > plus shared `handlers/keys.js`, `lib/principal.js`, `s3.js`, `media/downscale.js`,
+  > `analysis/task-routing.js`, `analysis/api-key.js`. All conditional/transactional writes
+  > and worker idempotency are covered by mocked-SDK Vitest specs; `lint`/`typecheck`/`test`
+  > (79 tests)/`prettier --check` green. **Deferred to E/F as planned:** `downscaleImage` is a
+  > passthrough seam (real `sharp` resize is Step E packaging); `getAnalyzerApiKey()` reads
+  > `ANALYZER_API_KEY` from env (Secrets Manager fetch is Step E); the escalation matrix in
+  > `task-routing.js` is a **placeholder** pending the product team's real mapping. The old
+  > `submissions.js`/`process-submission.js` receipt path is left intact (router swap is Step D).
+  > See [architecture.md](./architecture.md) for the as-built container + sequence + ER diagrams.
 - **D. Local harness wiring** — add the routes to the in-process `local-api` router, a **local S3**
   (MinIO — previously deferred) for presigned PUT/GET + the worker's GET, and a stub analyzer
   endpoint, so `curl → create → presign → PUT to S3 → register → worker analyzes (stub) → complete →
