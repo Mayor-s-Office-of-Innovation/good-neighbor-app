@@ -81,8 +81,7 @@ class TodayView extends HTMLElement {
     return counts;
   }
 
-  // Site header: seal + name + last-check time. Seal is a placeholder wa-icon
-  // until the optimized SF-seal PNG lands (see MVP-TODO go-live item).
+  // Site header: pin marker + name + last-check time.
   _siteHeader(last) {
     const name = (this._site && this._site.name) || "Your site";
     const meta =
@@ -91,7 +90,7 @@ class TodayView extends HTMLElement {
         : "No check yet today";
     return html`
       <div class="screen__sec sitehead">
-        <span class="sitehead__seal" aria-hidden="true">
+        <span class="sitehead__pin" aria-hidden="true">
           <wa-icon name="location-dot"></wa-icon>
         </span>
         <div>

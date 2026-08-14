@@ -11,11 +11,11 @@
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
-/* Brand header — the seal + wordmark, standing in for the site header the app
-   shows once bound. (Seal is the shared placeholder until the SF-seal PNG lands.) */
+/* Brand header — the pin marker + wordmark, standing in for the site header the
+   app shows once bound. */
 const brandHead = () => html`
   <div class="screen__sec sitehead">
-    <span class="sitehead__seal" aria-hidden="true">
+    <span class="sitehead__pin" aria-hidden="true">
       <wa-icon name="location-dot"></wa-icon>
     </span>
     <div>

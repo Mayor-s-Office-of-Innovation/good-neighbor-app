@@ -270,13 +270,13 @@ theme-toggle {
   border-top: 1px solid var(--c-line);
 }
 
-/* Site header (seal + name + last check) */
+/* Site header (pin marker + name + last check) */
 .sitehead {
   display: flex;
   align-items: center;
   gap: 0.8rem;
 }
-.sitehead__seal {
+.sitehead__pin {
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
@@ -286,8 +286,7 @@ theme-toggle {
   border: 1.5px solid var(--text);
   color: var(--text);
 }
-/* Placeholder seal — the optimized SF seal PNG drops in here (MVP-TODO). */
-.sitehead__seal wa-icon {
+.sitehead__pin wa-icon {
   font-size: 1.2rem;
 }
 .sitehead__name {
