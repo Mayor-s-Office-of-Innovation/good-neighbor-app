@@ -38,13 +38,6 @@
     .summary { font-size:29px; font-weight:700; letter-spacing:-0.02em; line-height:1.2; margin:10px 0 0; }
     .byline { font-size:13px; color:var(--faint); margin:12px 0 0; }
     .space { flex:1; }
-    .recfoot { display:flex; align-items:center; justify-content:space-between; padding-bottom:16px; }
-    .recfoot .n { font-size:13px; color:var(--muted); }
-    .bars-mini { display:flex; gap:3px; align-items:flex-end; height:22px; width:130px; }
-    .bar { flex:1; background:var(--ink); border-radius:2.5px 2.5px 1px 1px; }
-    .bar.p { background:var(--g3); }
-    .bar.t { background:transparent; border:1.5px dashed var(--blue); height:100%; display:flex; align-items:flex-end; padding:1.5px; border-radius:3px; }
-    .bar.t .f { width:100%; background:var(--blue); border-radius:1px; transition:height .4s ease; }
     .pill { width:100%; border-radius:999px; padding:17px; display:flex; align-items:center; justify-content:center; gap:11px; font-size:17px; font-weight:500; transition:transform .12s ease; }
     .pill:active { transform:scale(0.97); }
     .pill.pri { background:var(--ink); color:var(--sheet); }
@@ -124,10 +117,6 @@
         <button class="pill pri" id="resumeBtn">Resume check</button>
         <button class="startover" id="startOverBtn">Start a new check instead</button>
       </div>
-      <div class="recfoot">
-        <span class="n"><b id="recDays">14</b> days on record</span>
-        <div class="bars-mini" id="miniBars"></div>
-      </div>
       <button class="pill pri" id="startBtn">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.2-1.8A1.5 1.5 0 0 1 9.55 3.5h4.9c.5 0 .97.25 1.25.7L16.9 6h1.6A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-8Z"/><circle cx="12" cy="12.5" r="3.4"/></svg>
         Start check
@@ -174,9 +163,7 @@
     (function () {
       var N = 4;
       var TAGS = ['Street looks clear','Trash on the street','Graffiti','Poop on the ground','Bulky items dumped','Tents','Drug use on the street','Sidewalk blocked by someone','Someone in distress'];
-      var HIST = [3,3,1,3,3,2,3,3,3,3,3,3,3]; // 13 prior days; today is the 14th bar
-      var HPCT = {0:0.12,1:0.4,2:0.7,3:1};
-      var sides, current, inProgress = false, picked = [], checksToday = 0;
+      var sides, current, inProgress = false, picked = [];
       var lastLog = null; // {stamp, summary, byline}
 
       function fresh(){ sides=[]; for(var i=0;i<N;i++) sides.push({photos:0, skipped:false}); current=0; picked=[]; }
@@ -196,14 +183,6 @@
         var st=document.getElementById('logStamp'), su=document.getElementById('logSummary'), by=document.getElementById('logByline');
         if(!lastLog){ st.textContent='Last log · —'; su.textContent='No check yet'; by.textContent='Start a perimeter check.'; }
         else { st.textContent=lastLog.stamp; su.textContent=lastLog.summary; by.textContent=lastLog.byline; }
-        renderBars();
-      }
-      function renderBars(){
-        var el=document.getElementById('miniBars'); el.innerHTML='';
-        HIST.forEach(function(v){ var b=document.createElement('div'); b.className='bar'+(v<3?' p':''); b.style.height=(HPCT[v]*100)+'%'; el.appendChild(b); });
-        var t=document.createElement('div'); t.className='bar t';
-        var f=document.createElement('div'); f.className='f'; f.style.height=(Math.min(checksToday,3)/3*100)+'%';
-        t.appendChild(f); el.appendChild(t);
       }
 
       /* ---------- CAPTURE ---------- */
@@ -257,7 +236,6 @@
           ? issues.slice(0,3).join(', ') + (issues.length>3?' +'+(issues.length-3):'') + '.'
           : 'Perimeter clear — no trash, graffiti, or obstructions.';
         lastLog = { stamp:'Last log · Today · '+now(), summary:summary, byline:'Logged just now' };
-        checksToday=Math.min(checksToday+1,3);
         inProgress=false;
         var sy=document.getElementById('synth'); sy.classList.add('on');
         setTimeout(function(){ sy.classList.remove('on'); fresh(); clearStrip(); renderHome(); show('home'); },1800);

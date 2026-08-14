@@ -41,3 +41,12 @@ follow-through they imply. For the development team to review.
     draft vs. server-side draft — matters for tablet swaps mid-check).
   - "Report a street issue" is a separate lightweight entity from checks
     (no streak credit, no sides); stubbed as a toast in the prototype.
+
+## 2026-08-14 — Perimeter check prototype: streak/record removed for now
+
+- **UI change:** Removed the "N days on record" bar chart from the prototype
+  home (`docs/prototypes/perimeter-check.html`); "Report a street issue" is
+  now a secondary pill button. The record/streak may return later.
+- **Backend ramifications:** The days-on-record / per-day check-count
+  aggregation noted above is **deferred** — no need to build it for this
+  iteration. Everything else in the previous entry stands.
