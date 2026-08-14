@@ -7,7 +7,10 @@ export const excellentResponse = {
   analysis_id: "ana_20260814_clean01",
   rubric: { id: "good-neighbor-app", version: "1.0.0" },
   created_at: "2026-08-14T15:00:00.000Z",
-  model: { provider: "bedrock", model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0" },
+  model: {
+    provider: "bedrock",
+    model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+  },
   caller: { app_id: "good-neighbor-app", request_id: "chk_01#art_01" },
   assessment: {
     metadata: {

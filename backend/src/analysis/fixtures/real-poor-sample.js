@@ -11,8 +11,14 @@ export const realPoorSampleResponse = {
   analysis_id: "ana_20260814_54234580279c",
   rubric: { id: "good-neighbor-app", version: "1.0.0" },
   created_at: "2026-08-14T19:07:38.712Z",
-  model: { provider: "bedrock", model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0" },
-  caller: { app_id: "street-conditions-web", request_id: "local-1786734457402" },
+  model: {
+    provider: "bedrock",
+    model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+  },
+  caller: {
+    app_id: "street-conditions-web",
+    request_id: "local-1786734457402",
+  },
   input_storage: [
     {
       index: 0,
@@ -59,34 +65,43 @@ export const realPoorSampleResponse = {
     identified_conditions_of_concern: [
       {
         category: "Litter",
-        definition: "Scattered small refuse or litter that does not obstruct movement.",
+        definition:
+          "Scattered small refuse or litter that does not obstruct movement.",
         severity: 2,
         severity_label: "Minor: Increasing quantity, size, or spatial impact",
-        description: "Empty soft drink cans and scattered paper visible around tent area and near furniture",
+        description:
+          "Empty soft drink cans and scattered paper visible around tent area and near furniture",
         evidence_indices: [0, 1, 2],
       },
       {
         category: "Large waste",
-        definition: "Bulky items or materials that are difficult to move and visually dominate space.",
+        definition:
+          "Bulky items or materials that are difficult to move and visually dominate space.",
         severity: 3,
-        severity_label: "Moderate: Increasing quantity, size, or spatial impact",
-        description: "Large black leather chair abandoned on sidewalk near tree",
+        severity_label:
+          "Moderate: Increasing quantity, size, or spatial impact",
+        description:
+          "Large black leather chair abandoned on sidewalk near tree",
         evidence_indices: [2],
       },
       {
         category: "Feces and urine",
-        definition: "Visible feces, urine staining, or biological waste residue.",
+        definition:
+          "Visible feces, urine staining, or biological waste residue.",
         severity: 3,
-        severity_label: "Moderate: Increasing amount, spread, or proximity to pedestrians",
+        severity_label:
+          "Moderate: Increasing amount, spread, or proximity to pedestrians",
         description: "Large pile of feces reported outside front door",
         evidence_indices: [0],
       },
       {
         category: "Temporary shelters",
-        definition: "Visible evidence of people living or sleeping in public spaces without shelter.",
+        definition:
+          "Visible evidence of people living or sleeping in public spaces without shelter.",
         severity: 4,
         severity_label: "Elevated: Increasing number, density, or permanence",
-        description: "Multiple tents set up along sidewalk with belongings arranged for living",
+        description:
+          "Multiple tents set up along sidewalk with belongings arranged for living",
         evidence_indices: [1],
       },
       {
@@ -101,11 +116,13 @@ export const realPoorSampleResponse = {
       },
       {
         category: "Blocking access",
-        definition: "Physical blockage limiting pedestrian, wheelchair, or vehicle access.",
+        definition:
+          "Physical blockage limiting pedestrian, wheelchair, or vehicle access.",
         severity: 3,
         severity_label:
           "Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path",
-        description: "Multiple tents and large furniture blocking significant portions of sidewalk",
+        description:
+          "Multiple tents and large furniture blocking significant portions of sidewalk",
         evidence_indices: [1, 2],
       },
       {
@@ -113,7 +130,8 @@ export const realPoorSampleResponse = {
         definition:
           "Animals that are unleashed, unattended, or where conditions are unsafe for an animal or the public",
         severity: 2,
-        severity_label: "Moderate: Clear safety concern (unleashed near traffic, inadequate shelter)",
+        severity_label:
+          "Moderate: Clear safety concern (unleashed near traffic, inadequate shelter)",
         description: "Multiple dogs off-leash in street area near traffic",
         evidence_indices: [3],
       },

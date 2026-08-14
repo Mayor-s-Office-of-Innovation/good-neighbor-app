@@ -30,7 +30,8 @@ describe("adaptAssessment", () => {
       category: "Litter",
       rating: 2,
       ratingLabel: "Minor: Increasing quantity, size, or spatial impact",
-      explanation: "Several wrappers and a plastic bag scattered along the curb.",
+      explanation:
+        "Several wrappers and a plastic bag scattered along the curb.",
       evidenceIndices: [0],
     });
     expect(adapted.issueCount).toBe(1);

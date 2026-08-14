@@ -81,7 +81,10 @@ export function synthesizeCheck(artifacts) {
   }
 
   const categories = [...byCategory.values()];
-  const maxSeverity = categories.reduce((max, c) => Math.max(max, c.maxRating), 0);
+  const maxSeverity = categories.reduce(
+    (max, c) => Math.max(max, c.maxRating),
+    0,
+  );
 
   return {
     grade,
