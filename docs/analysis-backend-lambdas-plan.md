@@ -320,8 +320,8 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   > `npm run test/typecheck/lint -w backend` (and the root `npm test`) are green (20 tests). The
   > adapted per-artifact list is named `concerns[]`. **Simplified 2026-08-14:** an earlier draft also
   > vendored a `rubric-meta.js` weighting map (+ unknown-category flagging); it was dropped — the
-  > service owns the rubric/grade and returns no weighting, so we carry no cross-repo copy. B–F not
-  > started.
+  > service owns the rubric/grade and returns no weighting, so we carry no cross-repo copy. B and C
+  > are now landed too (see their as-built notes); D–F remain.
 - **B. Analyzer client** — a thin `analyzer-client` (base URL + `x-api-key` from Secrets Manager,
   `storage:false`, retry/backoff, error mapping). Behind an interface so tests inject a **stub**
   (mirrors the analyzer's own fake-model-client testing approach). Runs green before the service
