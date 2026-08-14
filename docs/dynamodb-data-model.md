@@ -73,14 +73,26 @@ without a separate timestamp in the key.
 | Site config | `SITE#<siteId>` | `#META` | name, address, timezone, setup state |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
-| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, sides, issueCount, maxSeverity |
+| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, sides, issueCount, maxSeverity; **+ synthesized scorecard at `complete`** (see note) |
 | **Artifact** (per side) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<side>#<artifactId>` | S3 keys, text, capturedAt |
-| **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | issues[], severity |
+| **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | type (onsite\|city_escalation), category, severity, status |
 
 Because the header and its children all begin with `CHECK#<checkId>`, the **check detail
 screen is a single query**: `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")` returns the
 header, every artifact, and every analysis together.
+
+> **Synthesis lives on the header (decided 2026-08-14).** One `CHECK#<checkId>` = **one full
+> perimeter run across all sides**; there is **no separate "perimeter synthesis" item**. At
+> `complete`, the analysis-backend worker writes the synthesized check-level scorecard **onto the
+> existing header**: `grade` (worst of Excellent<Good<Fair<Poor<Very Poor across the check's
+> artifacts — adopted from the service `general_conditions.label`), a per-category rollup
+> `[{ category, weighting, maxRating, sourceArtifactIds }]`, `rubricVersion`, and `synthesizedAt`.
+> Point-in-time, written once. **Why on the header:** the checks list view (AP6) is a single **GSI1**
+> query over *headers only* — putting `grade` on the header means the list shows each check's grade
+> with no per-check fan-out into `ANALYSIS#` items. Raw per-artifact output stays in the
+> `ANALYSIS#` items (`concerns[]`); the header is the synthesis of them. See
+> [analysis-backend plan](./analysis-backend-lambdas-plan.md) § adapter/synthesis.
 
 ### Global secondary indexes
 
@@ -244,6 +256,20 @@ SQL simply mirrors the module.
   0–3 → 36). Stamp `rubricVersion` on `ANALYSIS` items and never mix scales within one rollup.
   `issueCount` (ratings > 0) and `hazardCount` (hazard = true) are also stored as raw components
   for alternate formulas later, but are not in the headline number.
+
+  > **⚠ Superseded 2026-08-14 — this "unweighted average of 12 category severities" formula no
+  > longer holds.** The GNA rubric (`good-neighbor-app` v1.0.0) merged in Beaudry's analyzer, and
+  > the service now returns an **exceptions list** (`identified_conditions_of_concern[]`) — only
+  > categories of concern, not a severity for every category — plus a **server-computed overall
+  > grade** `general_conditions.label` (Excellent/Good/Fair/Poor/Very Poor, from all category
+  > severities × per-category `weighting`). **We adopt that `label` as the check `grade`** rather
+  > than averaging: an unweighted mean across a fixed 12 categories is undefined when most
+  > categories return no severity, and categories are now explicitly *weighted*. The check `grade`
+  > therefore lives on the `CHECK#` header (see synthesis note above), not a computed `severitySum`
+  > average. `issueCount`/`maxSeverity` (from the concerns list) survive as raw components. The
+  > `hazardCount` component is retired — `hazard_detected` is gone from the contract; category
+  > `weighting` is its replacement. The compliance/regularity metric below is **unaffected**. See
+  > [analysis-backend plan](./analysis-backend-lambdas-plan.md) § adapter.
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the
   duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3

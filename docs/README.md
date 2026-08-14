@@ -68,6 +68,20 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
   [data model](./dynamodb-data-model.md).
 
+## Deploy & CI/CD (plan, Aug 2026)
+
+- **[deploy-cicd-plan.md](./deploy-cicd-plan.md)** — the plan to move from manual, single-role,
+  dev/prod-only deploys to a **3-environment (`dev`/`staging`/`prod`), gated, auto-promoting**
+  pipeline: `main`→dev auto, tag→staging, tag→prod behind two-admin approval; OIDC-only creds;
+  per-env S3/CloudFront with env-scoped invalidation; branch/environment protection; Terraform
+  rollback runbook. Its one external blocker is the **admin-account bootstrap contract** (role
+  ARNs + remote state). Gates the deploy items in [MVP-TODO](./MVP-TODO.md); closes the open
+  [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
+- **[deploy-admin-bootstrap.md](./deploy-admin-bootstrap.md)** — the hand-to-the-AWS-admin
+  runbook that clears that blocker: step-by-step OIDC provider + Terraform state backend +
+  per-env deploy roles (with copy-paste CLI and trust/permissions JSON), then the maintainer
+  follow-up (GitHub Environments, secrets, backend enable, OIDC smoke test).
+
 ## Other docs in this directory
 
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
