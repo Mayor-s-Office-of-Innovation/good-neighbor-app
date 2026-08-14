@@ -183,7 +183,7 @@ class TodayView extends HTMLElement {
               clean conditions too.
             </p>
             <button id="start-check" class="btn-ink" type="button">
-              Start check
+              Start Perimeter Check
             </button>
             <p class="hero__meta">Window closes 7:00 PM · about 4 minutes</p>
           </div>
