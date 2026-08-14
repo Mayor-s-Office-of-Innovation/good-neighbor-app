@@ -30,9 +30,9 @@ execute. Adjust if account/org policy requires — just tell us what you changed
 |---|---|---|
 | 1 | Scope of bootstrap | Admin creates **all four**: the GitHub OIDC provider, the deploy role(s), **and** the Terraform state bucket + lock table. (State backends can't bootstrap themselves, so they must be admin-created.) |
 | 2 | One role or per-env | **One deploy role per environment** (`dev`, `prod`; `staging` later). Separation is at the role, and each is bound to its GitHub Environment. |
-| 3 | Read-only plan role | **Yes, one read-only role** for PR `terraform plan` previews (optional but recommended; can be added later without redoing anything). |
+| 3 | Read-only plan role | **No — PRs get no AWS credentials.** The PR path runs only unauthenticated checks; the real plan runs at deploy time. (A read-only role can be added later if PR previews are ever wanted.) |
 | 4 | State layout | **One state bucket, per-env keys.** Bucket `good-neighbor-app-terraform-state`, keys `dev/terraform.tfstate` + `prod/terraform.tfstate`, lock table `good-neighbor-app-terraform-locks`, region `us-west-2`. (These names already appear in the commented backend blocks in the repo.) |
-| 5 | Trust-policy scope | Scope each deploy role's trust to **this repo + a GitHub Environment** (`environment:dev`, `environment:prod`). This makes the prod approval gate cryptographically enforced — GitHub won't mint a token for `environment:prod` until the environment's required reviewers approve. The plan role is scoped to **pull requests**. |
+| 5 | Trust-policy scope | Scope each deploy role's trust to **this repo + a GitHub Environment** (`environment:dev`, `environment:prod`). This makes the prod approval gate cryptographically enforced — GitHub won't mint a token for `environment:prod` until the environment's required reviewers approve. |
 
 **Why environment-scoped trust (fact #5) matters:** GNP's deploy workflow sets
 `environment: <env>` on each job, and prod will require reviewer approval. Because the role's
@@ -237,49 +237,21 @@ Repeat 3a + 3b with `prod` in place of `dev` for the `good-neighbor-app-deploy-p
 
 ---
 
-## Step 4 — (Optional, recommended) Read-only plan role for PR previews
+## Step 4 — Do **not** create a PR/plan role (deliberate)
 
-Lets PRs show a `terraform plan` diff without any write access. Trust is scoped to **pull
-requests** on this repo, and permissions are read-only + state access.
+Nothing to build here — this step exists to make the omission explicit, so it reads as a
+decision rather than an oversight. **PR builds get no AWS credentials at all.** Pull requests run
+only the **unauthenticated** Terraform checks already in
+[`ci.yml`](../.github/workflows/ci.yml) (`fmt`, `validate`, `checkov`, all with
+`-backend=false`) — no role assumption, no state access, nothing a PR (including one from a fork)
+could exfiltrate.
 
-`trust-plan.json`:
+The real `terraform plan` runs at **deploy time** under the environment's deploy role, and the
+[promotion model](./deploy-cicd-plan.md) validates each commit on `dev` (and later `staging`)
+before it reaches `prod`. That real-world validation stands in for a PR-time plan preview.
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:Mayor-s-Office-of-Innovation/good-neighbor-app:pull_request"
-        }
-      }
-    }
-  ]
-}
-```
-
-```sh
-aws iam create-role \
-  --role-name good-neighbor-app-plan \
-  --assume-role-policy-document file://trust-plan.json \
-  --max-session-duration 3600
-
-# Read-only app inspection + read/write on state (plan needs the state lock)
-aws iam attach-role-policy \
-  --role-name good-neighbor-app-plan \
-  --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess
-```
-
-The plan role also needs the `TerraformState` + `TerraformLock` statements from Step 3b
-(attach them as an inline policy on `good-neighbor-app-plan`), since `terraform plan` reads
-state and takes the lock.
+If PR-time plan previews are ever wanted, a read-only role scoped to `…:pull_request` can be
+added later with no change to anything above.
 
 ---
 
@@ -295,7 +267,6 @@ State bucket       : good-neighbor-app-terraform-state
 Lock table         : good-neighbor-app-terraform-locks
 dev deploy role    : arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-deploy-dev
 prod deploy role   : arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-deploy-prod
-plan role (if made): arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-plan
 Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
 ```
 
@@ -311,8 +282,6 @@ Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
    `vars.AWS_REGION`):
    - Secret `AWS_DEPLOY_ROLE_ARN` → that env's deploy role ARN.
    - Variable `AWS_REGION` → `us-west-2`.
-   - (If the plan role was created, set repo-level secret `AWS_DEV_PLAN_ROLE_ARN` for the
-     PR-plan job when Phase 2 of the deploy plan lands.)
 3. **Enable the S3 backend** in Terraform: uncomment the `backend "s3"` block in
    [infra/environments/dev/main.tf](../infra/environments/dev/main.tf) and
    [infra/environments/prod/main.tf](../infra/environments/prod/main.tf) (the values already
@@ -349,6 +318,9 @@ Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
 
 - **No long-lived keys.** Do not create an IAM user or access keys for CI. OIDC role assumption
   is the whole point.
+- **The PR path holds no AWS credentials.** [`ci.yml`](../.github/workflows/ci.yml) grants no
+  `id-token: write`, so PR-triggered jobs can't federate to AWS at all — the only AWS-touching
+  workflow is the gated Deploy. There is deliberately no read-only plan role (Step 4).
 - **Scope stays tight on trust, broad only on permissions.** The trust policy `sub` conditions
   (exact repo + environment / pull_request) are what prevent another repo — or a fork — from
   assuming these roles. Keep those exact-match; don't loosen to a wildcard repo.

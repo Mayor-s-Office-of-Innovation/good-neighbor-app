@@ -3,14 +3,13 @@
 // directly onto the CHECK# header extension persisted at `complete` (see
 // docs/dynamodb-data-model.md § synthesis-on-header): one CHECK# = one full run.
 //
-// This is the seam the deferred escalation classifier will consume — it exposes
-// exactly the signals the classifier needs (per-category weighting + max rating
-// + source artifacts). The classifier itself is NOT built here (Step C).
+// The service grades each analyzed position; rolling those up into one perimeter
+// grade (worst across sides) is GNP synthesis, so it lives here. This is also the
+// seam the deferred escalation classifier (Step C) consumes — per-category max
+// rating + source artifacts, keyed off the category identity the service returns.
 
 /** @typedef {import("./adapt-scorecard.js").AdaptedAssessment} AdaptedAssessment */
-/** @typedef {import("./adapt-scorecard.js").AdaptedConcern} AdaptedConcern */
 /** @typedef {import("./contract.js").GeneralConditionsLabel} GeneralConditionsLabel */
-/** @typedef {import("./rubric-meta.js").Weighting} Weighting */
 
 /**
  * @typedef {object} AnalyzedArtifact
@@ -22,7 +21,6 @@
 /**
  * @typedef {object} CategoryRollup
  * @property {string} category
- * @property {Weighting | null} weighting
  * @property {number} maxRating
  * @property {string[]} sourceArtifactIds
  */
@@ -75,7 +73,6 @@ export function synthesizeCheck(artifacts) {
       } else {
         byCategory.set(concern.category, {
           category: concern.category,
-          weighting: concern.weighting,
           maxRating: concern.rating,
           sourceArtifactIds: [artifactId],
         });

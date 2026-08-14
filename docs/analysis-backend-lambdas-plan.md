@@ -103,8 +103,10 @@ Re-pinned from `../street-conditions-analysis/contract/` (openapi.yaml + JSON sc
   - **`identified_conditions_of_concern[]`** is an **exceptions list** (only categories of concern,
     not a full per-category scorecard). Each: `{ category (free-text label), definition,
     severity(0–5), severity_label?, description, evidence_indices, confidence? }`.
-  - **`hazard_detected` is gone** — the per-category **`weighting`** (rubric data) is its
-    structural replacement for "how serious is this category".
+  - **`hazard_detected` is gone.** "How serious is this category" now lives in the per-category
+    **`weighting`**, which the service applies **server-side** when computing
+    `general_conditions.label` — it is **not** returned on each concern, and we don't re-derive it
+    (see the "No vendored rubric" note below).
 - **Error codes we must handle:** `400` invalid request, `401` bad/missing key, `403` rubric not
   allowed, `413` `input_too_large` (downscale further), `422` invalid model response, `429`
   `model_throttled` (**retry w/ exponential backoff**), `502` model invocation failed.
@@ -112,44 +114,54 @@ Re-pinned from `../street-conditions-analysis/contract/` (openapi.yaml + JSON sc
 ### The adapter (service assessment → our persisted shape)
 
 A **caller-side adapter** (`adapt-scorecard`) maps the service `assessment` to our per-artifact
-`ANALYSIS` projection. **Re-pinned mapping (2026-08-14 — supersedes the 2026-08-13 `categories[]`
-table):**
+`ANALYSIS` projection. It is a **thin projection** — the service totally owns the rubric, the grade,
+and the concerns; we only reshape to our naming, drop fields we don't persist, and precompute two
+rollups. Keeping it thin decouples our stored item shape from the wire shape, so a contract tweak
+doesn't ripple into DynamoDB items. **Mapping (re-pinned 2026-08-14; simplified 2026-08-14 — see the
+"no vendored rubric" note below):**
 
 | service field | our field | note |
 |---|---|---|
 | `assessment.general_conditions.label` | `grade` | Excellent…Very Poor — **service-computed overall grade, adopted as-is** |
 | `assessment.general_conditions.description` | `gradeDescription` | |
 | `assessment.identified_conditions_of_concern[].category` | `concerns[].category` | free-text label; no stable id in the response |
-| *(rubric-meta lookup on category)* | `concerns[].weighting` | Low/Moderate/High — from `rubric-meta`, **replaces `hazard`**; `null` flags unknown category |
 | `…of_concern[].severity` | `concerns[].rating` | 0–5, rubric-owned scale |
 | `…of_concern[].severity_label` | `concerns[].ratingLabel` | optional |
 | `…of_concern[].description` | `concerns[].explanation` | |
 | `…of_concern[].evidence_indices` | `concerns[].evidenceIndices` | per-call; check-level attribution is by artifact |
-| `rubric.version` | `rubricVersion` | **stamp on every ANALYSIS item** — never mix scales/versions in a rollup |
+| `rubric.version` | `rubricVersion` | **stamp on every ANALYSIS item** — provenance; never mix scales/versions in a rollup |
 | `analysis_id` | `analysisId` | |
 | `model` | `model` | `{provider, model_id}` — provenance |
 | `…of_concern[].confidence`, `.definition` | — | **dropped** |
 
-The adapted list is **`concerns[]`** (this supersedes the old `ratings_details[]` / `issues[]`
-names). We adopt the service `grade` directly and **do not** compute a `total_score` — the previous
-"compute a cleanliness average at read" plan is superseded (see [data model](./dynamodb-data-model.md)
-§ Metric definitions, 2026-08-14 note): the response is an **exceptions list**, not a per-category
-scorecard, so not every category carries a severity and an unweighted average no longer applies.
+The adapter also precomputes `issueCount` (concerns with `rating > 0`) and `maxSeverity` off the
+concerns list. The adapted list is **`concerns[]`** (this supersedes the old `ratings_details[]` /
+`issues[]` names). We adopt the service `grade` directly and **do not** compute a `total_score` — the
+previous "compute a cleanliness average at read" plan is superseded (see
+[data model](./dynamodb-data-model.md) § Metric definitions, 2026-08-14 note): the response is an
+**exceptions list**, not a per-category scorecard, so not every category carries a severity and an
+unweighted average no longer applies.
 
-**Adapter is category-agnostic.** It iterates *whatever concerns the response carries* rather than
-expecting a fixed category set or IDs, joins each to `rubric-meta` for its `weighting`, and stamps
-`rubricVersion`. An **unknown category** (not in the pinned rubric-meta for that version) yields
-`weighting: null` and is surfaced as a flag — so rubric drift is *visible*, never silently
-mis-weighted. A category-set change is then a rubric-version bump (one added `rubric-meta` entry),
-not a code change.
+> **No vendored rubric (decided 2026-08-14).** An earlier draft joined each concern to a
+> `rubric-meta` map (a hand-copied subset of the analysis repo's rubric) to attach a `weighting`
+> (Low/Moderate/High) — the intended replacement for the removed `hazard_detected`. **Dropped.** The
+> service response carries no `weighting`, and it doesn't need to: `general_conditions.label` is
+> *already* computed server-side from every category's severity × weighting, so the grade we adopt
+> bakes weighting in. The only prospective consumer was the deferred escalation classifier — and
+> escalation routing is **GNP business policy** (which categories warrant a city escalation), keyed
+> off the category *identity* the service already returns, not a copy of the vendor's rubric weights.
+> So we depend cleanly on the service for rubric + grade + concerns, and carry no cross-repo data to
+> keep in sync. If the classifier ever genuinely needs the rubric weightings, source them from the
+> service (`GET /v1/rubrics/{id}/versions/{version}`, or ask for a `weighting` field on each concern)
+> rather than re-vendoring the JSON.
 
-**Check-level synthesis** (`synthesize-check`, for the UI's single scorecard): the check `grade` is
-the **worst grade across the check's artifacts** (Excellent < Good < Fair < Poor < Very Poor), and
-per category we take the **max `rating`** with its `weighting`, attributing each finding to its
-**source artifact** (not the model's per-call `evidence_indices`). This output shape maps directly
-onto the `CHECK#` header extension (see [data model](./dynamodb-data-model.md)). Documented fallback
-if the analyzer usage-plan quota bites: batch-per-modality (one call for all a check's photos),
-losing per-photo attribution.
+**Check-level synthesis** (`synthesize-check`, for the UI's single scorecard): the service grades
+each analyzed position; the check `grade` is the **worst grade across the check's artifacts**
+(Excellent < Good < Fair < Poor < Very Poor) — a GNP perimeter rollup. Per category we take the
+**max `rating`**, attributing each finding to its **source artifact** (not the model's per-call
+`evidence_indices`). This output shape maps directly onto the `CHECK#` header extension (see
+[data model](./dynamodb-data-model.md)). Documented fallback if the analyzer usage-plan quota bites:
+batch-per-modality (one call for all a check's photos), losing per-photo attribution.
 
 ---
 
@@ -219,7 +231,7 @@ is the device-as-site STS claim — the handler code is identical.
   `complete` the header also holds the synthesized check-level scorecard** — this header *is* the
   perimeter synthesis (one `CHECK#` = one full run across all sides; no separate synthesis item):
   `grade` (worst across artifacts, on the header so the GSI1 list view has it without a fan-out),
-  a per-category rollup `[{ category, weighting, maxRating, sourceArtifactIds }]`, `rubricVersion`,
+  a per-category rollup `[{ category, maxRating, sourceArtifactIds }]`, `rubricVersion`,
   and `synthesizedAt`. Point-in-time, written once at `complete`.
 - **Artifact** `SITE#<siteId>` / `CHECK#<checkId>#ART#<side>#<artifactId>` — `capturedAt`, `side`,
   text (if any), the **S3 key** (media in GNP's bucket, ~7-day lifecycle — never the bytes), plus
@@ -234,15 +246,17 @@ is the device-as-site STS claim — the handler code is identical.
 
 **Task classification** (`classify-task`) is **deferred to Step C and lives in THIS repo** — Step A
 only builds the *seam* (`synthesize-check` exposes exactly the signals the classifier consumes:
-per-category `weighting` + `maxRating`). When built, it maps a synthesized finding
-(category + `rating` + `weighting`) → `onsite` or `city_escalation`. The escalation set is **data,
-versioned in-repo, keyed by rubric version** — *not* baked category IDs, because the rubric wording
-churns (CSV-generated). It keys off the finding's **`weighting` + `rating` threshold**
-(rubric-stable signals — `weighting` is the structural replacement for the removed `hazard_detected`)
-plus a small per-rubric-version allow/deny list for any category needing special routing. When the
-rubric bumps, update that one data file for the new version; closed tasks keep their point-in-time
-`type`. The **exact escalation mapping over the 13 categories is an open product decision** (see
-open questions). Unit-tested against contract fixtures for the pinned version(s).
+per-category `maxRating` keyed off the **category identity** the service returns). When built, it
+maps a synthesized finding (category + `rating`) → `onsite` or `city_escalation`. This is **GNP
+business policy** — *which* categories warrant a city escalation — not rubric data: the escalation
+set is **data, versioned in-repo, keyed by rubric version**, *not* baked category IDs (the rubric
+wording churns — CSV-generated). It keys off the category identity plus a `rating` threshold, with a
+small per-rubric-version routing table. If a rule ever needs the rubric's own `weighting`, source it
+from the service (`GET /v1/rubrics/{id}/versions/{version}`) rather than re-vendoring the JSON — the
+grade already bakes weighting in server-side, so we carry no cross-repo rubric copy. When the rubric
+bumps, update that one data file for the new version; closed tasks keep their point-in-time `type`.
+The **exact escalation mapping over the 13 categories is an open product decision** (see open
+questions). Unit-tested against contract fixtures for the pinned version(s).
 
 ---
 
@@ -295,18 +309,19 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
 
 - **A. Contract + adapter, pure & offline** *(re-pinned 2026-08-14 to GNA rubric v1.0.0)* — under
   `backend/src/analysis/`: `contract.js` (vendored response `@typedef`s + `RUBRIC_ID`/`RUBRIC_VERSION`),
-  `rubric-meta.js` (versioned 13-category `{id,label,weighting}` map + `weightingFor(label)`),
   `adapt-scorecard.js` (`adaptAssessment` → per-artifact `concerns[]` projection, iterating whatever
   concerns the response carries), `synthesize-check.js` (`synthesizeCheck` → worst-grade +
   per-category max-rating across artifacts), and GNA-flavored `fixtures/`. **Dependency-free unit
-  tests.** *No AWS, no live analyzer.* Because the adapter is category-agnostic and joins weightings
-  via `rubric-meta`, a rubric bump is a fixture + `rubric-meta`-entry refresh, not a rewrite — if it
-  forces handler changes, the adapter wasn't rubric-driven enough.
-  > **As-built (2026-08-14):** all five modules + three GNA fixtures + three dependency-free Vitest
-  > specs exist under `backend/src/analysis/`; `npm run test/typecheck/lint -w backend` (and the root
-  > `npm test`) are green (25 tests). The adapted per-artifact list is named `concerns[]`; unknown
-  > categories surface via `adaptAssessment().unknownCategories` rather than being silently
-  > mis-weighted. B–F not started.
+  tests.** *No AWS, no live analyzer.* The adapter is a **thin, category-agnostic projection** — it
+  carries no vendored rubric data (see the "No vendored rubric" note above), so a rubric bump is a
+  fixture refresh, not a rewrite — if it forces handler changes, the adapter wasn't thin enough.
+  > **As-built (2026-08-14):** the modules (`contract.js`, `adapt-scorecard.js`, `synthesize-check.js`)
+  > + three GNA fixtures + dependency-free Vitest specs exist under `backend/src/analysis/`;
+  > `npm run test/typecheck/lint -w backend` (and the root `npm test`) are green (20 tests). The
+  > adapted per-artifact list is named `concerns[]`. **Simplified 2026-08-14:** an earlier draft also
+  > vendored a `rubric-meta.js` weighting map (+ unknown-category flagging); it was dropped — the
+  > service owns the rubric/grade and returns no weighting, so we carry no cross-repo copy. B–F not
+  > started.
 - **B. Analyzer client** — a thin `analyzer-client` (base URL + `x-api-key` from Secrets Manager,
   `storage:false`, retry/backoff, error mapping). Behind an interface so tests inject a **stub**
   (mirrors the analyzer's own fake-model-client testing approach). Runs green before the service
@@ -362,9 +377,10 @@ so the adapter, synthesis, and persistence are exercised without Bedrock or a ke
 1. **Sync-vs-async** — ~~open~~ **decided 2026-08-13 PM: async via the SQS worker reading from GNP's
    own S3 bucket** (see the Architecture section). The worker is back on the MVP path; no longer open.
 2. **Task classification / escalation rules** — **deferred; classifier lives in this repo** (Step C,
-   not Step A). The `onsite | city_escalation` mapping keys off category `weighting` + `rating`
-   threshold (rubric-stable) plus a per-version category list. Confirm the exact escalation set over
-   the **13 GNA categories** with the product owner — an open product decision.
+   not Step A). The `onsite | city_escalation` mapping keys off **category identity** + a `rating`
+   threshold, held in a per-rubric-version routing table (GNP policy, not rubric data). Confirm the
+   exact escalation set over the **13 GNA categories** with the product owner — an open product
+   decision.
 3. **Audio** — the rubric contract exposes `image` and `text` inputs only; there is a
    `street-conditions-transcript-v1` rubric. Confirm whether MVP analyzes audio (via transcript →
    text input) or defers audio analysis to the transcription workstream (post-MVP). Assume

@@ -19,16 +19,14 @@ describe("adaptAssessment", () => {
     expect(adapted.concerns).toEqual([]);
     expect(adapted.issueCount).toBe(0);
     expect(adapted.maxSeverity).toBe(0);
-    expect(adapted.unknownCategories).toEqual([]);
   });
 
-  it("maps a concern's fields and joins weighting from rubric-meta", () => {
+  it("projects a concern's fields to our naming", () => {
     const adapted = adaptAssessment(singleLowConcernResponse);
     expect(adapted.concerns).toHaveLength(1);
     const [concern] = adapted.concerns;
     expect(concern).toEqual({
       category: "Litter",
-      weighting: "Low",
       rating: 2,
       ratingLabel: "Minor: Increasing quantity, size, or spatial impact",
       explanation: "Several wrappers and a plastic bag scattered along the curb.",
@@ -38,42 +36,29 @@ describe("adaptAssessment", () => {
     expect(adapted.maxSeverity).toBe(2);
   });
 
-  it("does not compute a total_score (grade comes from the service)", () => {
+  it("drops confidence/definition and does not compute a total_score", () => {
     const adapted = adaptAssessment(multiHighConcernResponse);
     expect(adapted).not.toHaveProperty("totalScore");
+    expect(adapted.concerns[0]).not.toHaveProperty("confidence");
+    expect(adapted.concerns[0]).not.toHaveProperty("definition");
+    expect(adapted.concerns[0]).not.toHaveProperty("weighting");
     expect(adapted.grade).toBe("Very Poor");
   });
 
-  it("weights every concern and rolls up issueCount / maxSeverity", () => {
+  it("rolls up issueCount / maxSeverity across concerns", () => {
     const adapted = adaptAssessment(multiHighConcernResponse);
-    expect(adapted.concerns.map((c) => [c.category, c.weighting, c.rating])).toEqual([
-      ["Needles", "High", 5],
-      ["Temporary shelters", "High", 3],
-      ["Litter", "Low", 2],
+    expect(adapted.concerns.map((c) => [c.category, c.rating])).toEqual([
+      ["Needles", 5],
+      ["Temporary shelters", 3],
+      ["Litter", 2],
     ]);
     expect(adapted.issueCount).toBe(3);
     expect(adapted.maxSeverity).toBe(5);
-    expect(adapted.unknownCategories).toEqual([]);
   });
 
-  it("flags an unknown category with null weighting instead of guessing", () => {
-    const drifted = {
-      ...multiHighConcernResponse,
-      assessment: {
-        ...multiHighConcernResponse.assessment,
-        identified_conditions_of_concern: [
-          {
-            category: "Rogue drones",
-            definition: "Not in the pinned rubric.",
-            severity: 4,
-            description: "A category the rubric-meta map does not know.",
-            evidence_indices: [0],
-          },
-        ],
-      },
-    };
-    const adapted = adaptAssessment(drifted);
-    expect(adapted.concerns[0].weighting).toBeNull();
-    expect(adapted.unknownCategories).toEqual(["Rogue drones"]);
+  it("omits ratingLabel when the service does not provide one", () => {
+    const adapted = adaptAssessment(multiHighConcernResponse);
+    const litter = adapted.concerns.find((c) => c.category === "Litter");
+    expect(litter).not.toHaveProperty("ratingLabel");
   });
 });

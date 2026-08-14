@@ -46,7 +46,6 @@ describe("synthesizeCheck", () => {
     const litter = scorecard.categories.find((c) => c.category === "Litter");
     expect(litter).toEqual({
       category: "Litter",
-      weighting: "Low",
       maxRating: 2,
       sourceArtifactIds: ["art_02", "art_03"],
     });
@@ -54,7 +53,6 @@ describe("synthesizeCheck", () => {
     const needles = scorecard.categories.find((c) => c.category === "Needles");
     expect(needles).toEqual({
       category: "Needles",
-      weighting: "High",
       maxRating: 5,
       sourceArtifactIds: ["art_03"],
     });
