@@ -58,11 +58,7 @@
         "severity": 2,
         "severity_label": "Minor: Increasing quantity, size, or spatial impact",
         "description": "Empty soft drink cans and scattered paper visible around tent area and near furniture",
-        "evidence_indices": [
-          0,
-          1,
-          2
-        ]
+        "evidence_indices": [0, 1, 2]
       },
       {
         "category": "Large waste",
@@ -70,9 +66,7 @@
         "severity": 3,
         "severity_label": "Moderate: Increasing quantity, size, or spatial impact",
         "description": "Large black leather chair abandoned on sidewalk near tree",
-        "evidence_indices": [
-          2
-        ]
+        "evidence_indices": [2]
       },
       {
         "category": "Feces and urine",
@@ -80,9 +74,7 @@
         "severity": 3,
         "severity_label": "Moderate: Increasing amount, spread, or proximity to pedestrians",
         "description": "Large pile of feces reported outside front door",
-        "evidence_indices": [
-          0
-        ]
+        "evidence_indices": [0]
       },
       {
         "category": "Temporary shelters",
@@ -90,9 +82,7 @@
         "severity": 4,
         "severity_label": "Elevated: Increasing number, density, or permanence",
         "description": "Multiple tents set up along sidewalk with belongings arranged for living",
-        "evidence_indices": [
-          1
-        ]
+        "evidence_indices": [1]
       },
       {
         "category": "Graffiti",
@@ -100,9 +90,7 @@
         "severity": 1,
         "severity_label": "Minimal: A single small tag or mark, negligible surface coverage, easily overlooked",
         "description": "Some markings visible on building walls",
-        "evidence_indices": [
-          1
-        ]
+        "evidence_indices": [1]
       },
       {
         "category": "Blocking access",
@@ -110,10 +98,7 @@
         "severity": 3,
         "severity_label": "Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path",
         "description": "Multiple tents and large furniture blocking significant portions of sidewalk",
-        "evidence_indices": [
-          1,
-          2
-        ]
+        "evidence_indices": [1, 2]
       },
       {
         "category": "Dangerous animals",
@@ -121,9 +106,7 @@
         "severity": 2,
         "severity_label": "Moderate: Clear safety concern (unleashed near traffic, inadequate shelter)",
         "description": "Multiple dogs off-leash in street area near traffic",
-        "evidence_indices": [
-          3
-        ]
+        "evidence_indices": [3]
       }
     ]
   },
@@ -131,4 +114,3 @@
     "s3_uri": "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/result.json"
   }
 }
- 

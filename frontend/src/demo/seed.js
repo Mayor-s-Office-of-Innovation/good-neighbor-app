@@ -28,7 +28,14 @@ const SIDES = ["North", "East", "South", "West"];
 const STATUS_LABELS = ["Excellent", "Good", "Fair", "Poor", "Very poor"];
 
 // A finding shaped exactly like domain/findings.js:scorecardToFindings output.
-function finding(category, rating, hazard, explanation, side, sourceKind = "photo") {
+function finding(
+  category,
+  rating,
+  hazard,
+  explanation,
+  side,
+  sourceKind = "photo",
+) {
   return {
     category,
     rating,
@@ -45,17 +52,61 @@ function finding(category, rating, hazard, explanation, side, sourceKind = "phot
 // (check-results.js): hazard -> "City action", rating>=2 non-hazard -> "You can handle",
 // rating 1 non-hazard -> "Noted, no action".
 const HAZARD = [
-  finding("Sharps", 3, true, "Two syringes near the tree well — do not handle.", "South"),
-  finding("Human and Animal Waste", 3, true, "Human waste in the doorway; steam-clean warranted.", "North"),
-  finding("Fire & Safety Hazards", 2, true, "Combustible material stacked against an exit.", "West"),
+  finding(
+    "Sharps",
+    3,
+    true,
+    "Two syringes near the tree well — do not handle.",
+    "South",
+  ),
+  finding(
+    "Human and Animal Waste",
+    3,
+    true,
+    "Human waste in the doorway; steam-clean warranted.",
+    "North",
+  ),
+  finding(
+    "Fire & Safety Hazards",
+    2,
+    true,
+    "Combustible material stacked against an exit.",
+    "West",
+  ),
 ];
 const HANDLE = [
-  finding("Furniture & Large Debris", 2, false, "A discarded chair partially blocking the walkway.", "East"),
-  finding("Waste & Small Debris", 2, false, "Cups, paper and loose litter along the gutter line.", "North"),
+  finding(
+    "Furniture & Large Debris",
+    2,
+    false,
+    "A discarded chair partially blocking the walkway.",
+    "East",
+  ),
+  finding(
+    "Waste & Small Debris",
+    2,
+    false,
+    "Cups, paper and loose litter along the gutter line.",
+    "North",
+  ),
 ];
 const NOTED = [
-  finding("Graffiti", 1, false, "Tagging on the transformer box.", "West", "note"),
-  finding("Access Obstruction", 1, false, "Construction fencing narrowing the accessible path.", "West", "note"),
+  finding(
+    "Graffiti",
+    1,
+    false,
+    "Tagging on the transformer box.",
+    "West",
+    "note",
+  ),
+  finding(
+    "Access Obstruction",
+    1,
+    false,
+    "Construction fencing narrowing the accessible path.",
+    "West",
+    "note",
+  ),
 ];
 
 // A specific calendar day/time, `daysAgo` back, at `hour:minute` local.
