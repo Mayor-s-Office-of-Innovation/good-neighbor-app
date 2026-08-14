@@ -87,7 +87,7 @@ header, every artifact, and every analysis together.
 > `complete`, the analysis-backend worker writes the synthesized check-level scorecard **onto the
 > existing header**: `grade` (worst of Excellent<Good<Fair<Poor<Very Poor across the check's
 > artifacts — adopted from the service `general_conditions.label`), a per-category rollup
-> `[{ category, weighting, maxRating, sourceArtifactIds }]`, `rubricVersion`, and `synthesizedAt`.
+> `[{ category, maxRating, sourceArtifactIds }]`, `rubricVersion`, and `synthesizedAt`.
 > Point-in-time, written once. **Why on the header:** the checks list view (AP6) is a single **GSI1**
 > query over *headers only* — putting `grade` on the header means the list shows each check's grade
 > with no per-check fan-out into `ANALYSIS#` items. Raw per-artifact output stays in the
@@ -267,8 +267,9 @@ SQL simply mirrors the module.
   > categories return no severity, and categories are now explicitly *weighted*. The check `grade`
   > therefore lives on the `CHECK#` header (see synthesis note above), not a computed `severitySum`
   > average. `issueCount`/`maxSeverity` (from the concerns list) survive as raw components. The
-  > `hazardCount` component is retired — `hazard_detected` is gone from the contract; category
-  > `weighting` is its replacement. The compliance/regularity metric below is **unaffected**. See
+  > `hazardCount` component is retired — `hazard_detected` is gone from the contract; per-category
+  > `weighting` now lives server-side (baked into the grade), so we store no weighting of our own.
+  > The compliance/regularity metric below is **unaffected**. See
   > [analysis-backend plan](./analysis-backend-lambdas-plan.md) § adapter.
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the

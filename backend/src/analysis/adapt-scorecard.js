@@ -1,24 +1,22 @@
-import { weightingFor } from "./rubric-meta.js";
-
 // Caller-side adapter: analysis-service `assessment` -> our per-artifact
-// projection (the shape persisted on an ANALYSIS# item). Category-agnostic — it
-// iterates whatever concerns the response carries rather than expecting a fixed
-// category set, and joins each to `rubric-meta` for its weighting. An unknown
-// category yields `weighting: null` and is surfaced in `unknownCategories`, so
-// rubric drift is visible, never silently mis-weighted.
+// projection (the shape persisted on an ANALYSIS# item). A thin projection —
+// the service totally owns the rubric, the grade, and the concerns; we only
+// reshape to our naming, drop fields we don't persist (confidence/definition),
+// and precompute two rollups. Keeping it thin decouples our stored item shape
+// from the wire shape, so a contract tweak doesn't ripple into DynamoDB items.
 //
 // We adopt the service `grade` (`general_conditions.label`) directly and do NOT
-// compute a total_score: the response is an exceptions list, not a per-category
-// scorecard, so an unweighted average no longer applies (see the 2026-08-14
-// note in docs/dynamodb-data-model.md § Metric definitions).
+// compute a total_score: the grade is already computed server-side from every
+// category's severity × weighting, so no rubric data needs to live here. (An
+// escalation classifier — deferred, Step C — will route concerns via a
+// GNP-owned policy keyed off category + severity, sourcing any rubric weightings
+// from the service rather than a vendored copy.)
 
 /** @typedef {import("./contract.js").AnalysisResponse} AnalysisResponse */
-/** @typedef {import("./rubric-meta.js").Weighting} Weighting */
 
 /**
  * @typedef {object} AdaptedConcern
  * @property {string} category
- * @property {Weighting | null} weighting
  * @property {number} rating
  * @property {string} [ratingLabel]
  * @property {string} explanation
@@ -35,7 +33,6 @@ import { weightingFor } from "./rubric-meta.js";
  * @property {AdaptedConcern[]} concerns
  * @property {number} issueCount
  * @property {number} maxSeverity
- * @property {string[]} unknownCategories
  */
 
 /**
@@ -43,20 +40,12 @@ import { weightingFor } from "./rubric-meta.js";
  * @returns {AdaptedAssessment}
  */
 export function adaptAssessment(response) {
-  const { assessment, rubric } = response;
-  const rubricVersion = rubric.version;
-
-  /** @type {string[]} */
-  const unknownCategories = [];
+  const { assessment } = response;
 
   const concerns = assessment.identified_conditions_of_concern.map((c) => {
-    const weighting = weightingFor(c.category, rubricVersion);
-    if (weighting === null) unknownCategories.push(c.category);
-
     /** @type {AdaptedConcern} */
     const concern = {
       category: c.category,
-      weighting,
       rating: c.severity,
       explanation: c.description,
       evidenceIndices: c.evidence_indices ?? [],
@@ -69,13 +58,12 @@ export function adaptAssessment(response) {
 
   return {
     analysisId: response.analysis_id,
-    rubricVersion,
+    rubricVersion: response.rubric.version,
     model: response.model,
     grade: assessment.general_conditions.label,
     gradeDescription: assessment.general_conditions.description,
     concerns,
     issueCount: concerns.filter((c) => c.rating > 0).length,
     maxSeverity,
-    unknownCategories,
   };
 }
