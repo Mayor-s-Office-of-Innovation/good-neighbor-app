@@ -13,6 +13,11 @@ export default [
         process: "readonly",
         Buffer: "readonly",
         console: "readonly",
+        // Web-platform globals provided by the Node runtime (Node 18+).
+        fetch: "readonly",
+        Response: "readonly",
+        URL: "readonly",
+        setTimeout: "readonly",
       },
     },
     settings: {
@@ -25,7 +30,10 @@ export default [
       "jsdoc/require-returns-description": "off",
       "jsdoc/require-property-description": "off",
       // Ambient NodeJS.* types resolve under tsc, not eslint's type table.
-      "jsdoc/no-undefined-types": ["warn", { definedTypes: ["NodeJS"] }],
+      "jsdoc/no-undefined-types": [
+        "warn",
+        { definedTypes: ["NodeJS", "fetch", "Response"] },
+      ],
     },
   },
 ];
