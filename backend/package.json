@@ -15,6 +15,7 @@
     "local:api": "node --env-file=../.env.local scripts/local-api.mjs",
     "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",
     "db:gui": "DYNAMO_ENDPOINT=http://localhost:8000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local dynamodb-admin",
+    "analyze:smoke": "node --env-file=.env scripts/analyze-smoke.mjs",
     "dev": "concurrently -k -n svc,api,worker \"npm:local:services\" \"npm:local:api\" \"npm:local:worker\""
   },
   "dependencies": {
