@@ -164,6 +164,200 @@ form > wa-button[type="submit"] {
   width: 100%;
 }
 
+/* ---- Code login ---- */
+.app__main:has(.login) {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: #ffffff;
+}
+.login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: #000000;
+  padding: 2rem 1rem;
+}
+.login__panel {
+  width: min(100%, 620px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.login__mark {
+  width: 160px;
+  height: 160px;
+  margin-bottom: 2.2rem;
+  border-radius: 4px;
+  background-color: #f6f6f6;
+  background-image:
+    linear-gradient(45deg, #eeeeee 25%, transparent 25%),
+    linear-gradient(-45deg, #eeeeee 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eeeeee 75%),
+    linear-gradient(-45deg, transparent 75%, #eeeeee 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.login__copy h1 {
+  margin: 0;
+  color: #000000;
+  font-size: 1.9rem;
+  font-weight: 750;
+  line-height: 1.15;
+}
+.login__copy p {
+  max-width: 29rem;
+  margin: 0.25rem auto 0;
+  color: #000000;
+  font-size: 1.9rem;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+.login__form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 2.2rem;
+}
+.code-boxes {
+  display: grid;
+  grid-template-columns: repeat(3, 48px) 28px repeat(3, 48px);
+  column-gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.code-cell {
+  position: relative;
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+.code-box {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  padding: 5px 0;
+  border: 1px solid #dee2e6;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: #000000;
+  font: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  text-align: center;
+}
+.code-cell__pin {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #c9cfd6;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.code-box:focus {
+  border-color: var(--brand-blue);
+  outline: 2px solid color-mix(in srgb, var(--brand-blue), transparent 72%);
+  outline-offset: 0;
+}
+.code-box--error {
+  border-color: #ff474d;
+  color: #ff333a;
+}
+.code-boxes__dash {
+  width: 15px;
+  height: 28px;
+  color: #000000;
+  font-family: Roboto, var(--font-sans);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
+  letter-spacing: 0;
+  text-align: center;
+  justify-self: center;
+}
+.login__error {
+  min-height: 1.5rem;
+  margin: 1rem 0 0;
+  color: #ff333a;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.login__error[hidden] {
+  display: block;
+  visibility: hidden;
+}
+.login__continue {
+  display: inline-grid;
+  place-items: center;
+  width: 144px;
+  height: 56px;
+  min-width: 144px;
+  min-height: 56px;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  background: #212529;
+  color: #ffffff;
+  font-size: 1.125rem;
+  font-weight: 400;
+  margin-top: 1.45rem;
+}
+.login__form--error .login__continue {
+  margin-top: 2.1rem;
+}
+.login__continue:disabled {
+  cursor: not-allowed;
+  background: #e9ecef;
+  color: #a8b0ba;
+}
+.login__continue:not(:disabled) {
+  cursor: pointer;
+  background: #212529;
+  color: #ffffff;
+}
+.login__continue wa-spinner {
+  font-size: 1.45rem;
+  color: #a8b0ba;
+  --track-width: 3px;
+}
+
+@media (max-width: 480px) {
+  .login {
+    padding-inline: 0;
+  }
+  .login__mark {
+    width: 132px;
+    height: 132px;
+    margin-bottom: 1.8rem;
+  }
+  .login__copy h1,
+  .login__copy p {
+    font-size: 1.65rem;
+  }
+  .code-boxes {
+    grid-template-columns: repeat(3, 44px) 22px repeat(3, 44px);
+    column-gap: 7px;
+  }
+  .code-cell {
+    width: 44px;
+    height: 48px;
+  }
+}
+
 /* ---- First-run setup / onboarding ----
    Onboarding reuses the home-hub card system (.home > .screen > .screen__sec),
    the brand .sitehead, the centered .hero, and the ink/outline pills — so first

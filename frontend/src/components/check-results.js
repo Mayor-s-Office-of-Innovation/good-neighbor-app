@@ -50,6 +50,7 @@ function confidence(f, i) {
 class CheckResults extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
+    this._siteId = this._site.siteId || this._site.id;
 
     const session = getCurrentCheck();
     let findings, evidence, items;
@@ -62,7 +63,7 @@ class CheckResults extends HTMLElement {
         notes: items.filter((i) => i.kind === "note").length,
       };
     } else {
-      const checks = (await getChecksForSite(this._site.id))
+      const checks = (await getChecksForSite(this._siteId))
         .filter((c) => c.status === "submitted")
         .sort((a, b) =>
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),

@@ -40,7 +40,8 @@ const FRONTAGE = {
 class PerimeterCheck extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    const check = ensureCheck(this._site.id);
+    this._siteId = this._site.siteId || this._site.id;
+    const check = ensureCheck(this._siteId);
     this._sideIndex = 0;
     this._recording = false;
 
