@@ -85,6 +85,9 @@ Run the frontend locally:
 npm run dev -w frontend
 ```
 
+The first screen asks for a provider-site code. With the local backend running,
+`123-456` is seeded as an active code and `000-000` is seeded as inactive.
+
 ### Run the backend locally (Docker-free harness)
 
 Runs the exact Lambda handler + worker code against Docker-free emulators (DynamoDB Local +
@@ -96,11 +99,13 @@ cp .env.example .env.local     # one-time (git-ignored; dummy local values)
 npm run dev -w backend         # starts DynamoDB Local, ElasticMQ, the API router, and the worker
 ```
 
+The local API router listens on `LOCAL_API_PORT` from `.env.local` (`3001` by default).
+
 Then, in another terminal:
 
 ```bash
 # POST a submission → 202 queued
-curl -s -X POST localhost:3000/submissions \
+curl -s -X POST localhost:3001/submissions \
   -H 'idempotency-key: t1' -H 'X-Debug-Sub: dev' \
   -H 'content-type: application/json' -d '{"hello":"world"}'
 

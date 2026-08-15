@@ -1,99 +1,124 @@
-// @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+// @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR.
 /*
-  site-setup — first-run onboarding. Instead of picking a location, the staffer
-  arrives from an emailed link that carries a setup code tied to their site
-  (…/?code=HCM-4820), or types that code in. We validate the code against the
-  (mocked) backend, confirm the resolved site, then bind the device to it. No
-  login — the code is the identity check.
-
-  States: checking → confirm  (happy path, code present in URL)
-          code-entry → checking → confirm  (typed code)
-  A "Don't have a code?" disclosure keeps a manual site picker as a fallback so
-  setup is never a dead end (prototype convenience).
-
-  Markup lives in site-setup.templates.js; this file is logic + event wiring only.
-  Dispatches 'sitebound' once the device is bound so app-root can render the app.
+  site-setup - code-based login. Staff enter the six-character site code they
+  were given; the backend verifies the code is active and returns the provider
+  site this shared device should operate as.
 */
 import { setSite } from "../db.js";
-import { validateSetupCode } from "../services/onboarding.js";
-import {
-  checkingView,
-  confirmView,
-  codeEntryView,
-} from "./site-setup.templates.js";
+import { formatSiteCode, validateSetupCode } from "../services/onboarding.js";
+import { codeEntryView } from "./site-setup.templates.js";
 
-// Fallback manual site list — only surfaced behind the "Don't have a code?"
-// disclosure. In a later phase the real list comes from the backend.
-const SITES = [
-  "City Hall",
-  "Main Library",
-  "Public Works HQ",
-  "Health Center — Mission",
-  "Transit Center",
-  "Community Center — Bayview",
-];
+const CODE_LENGTH = 6;
+const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 
 class SiteSetup extends HTMLElement {
   connectedCallback() {
-    const code = readCodeFromUrl();
-    if (code) this._validate(code);
-    else this._renderCodeEntry();
-  }
-
-  _renderChecking() {
-    this.innerHTML = checkingView();
-  }
-
-  async _validate(code) {
-    this._renderChecking();
-    let res;
-    try {
-      res = await validateSetupCode(code);
-    } catch {
-      res = { ok: false, reason: "network" };
+    const code = formatSiteCode(readCodeFromUrl());
+    this._digits = code.padEnd(CODE_LENGTH, " ").slice(0, CODE_LENGTH).split("");
+    this._digits = this._digits.map((digit) => digit.trim());
+    this._checking = false;
+    this._error = "";
+    this._render();
+    if (code.length === CODE_LENGTH) {
+      this._validate();
     }
-    if (res.ok) {
-      this._pending = res;
-      this._renderConfirm();
-    } else {
-      this._renderCodeEntry({
-        value: code,
-        error:
-          res.reason === "empty"
-            ? "Enter the setup code from your email."
-            : "We couldn’t reach the server. Check your connection and try again.",
+  }
+
+  _render(focusIndex = nextEmptyIndex(this._digits)) {
+    this.innerHTML = codeEntryView({
+      digits: this._digits,
+      error: this._error,
+      checking: this._checking,
+    });
+
+    this.querySelector("#code-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      this._validate();
+    });
+
+    this.querySelectorAll(".code-box").forEach((input, index) => {
+      input.addEventListener("input", (e) => this._onInput(e, index));
+      input.addEventListener("keydown", (e) => this._onKeydown(e, index));
+      input.addEventListener("paste", (e) => this._onPaste(e, index));
+    });
+
+    if (!this._checking) {
+      requestAnimationFrame(() => {
+        this.querySelector(`#code-${focusIndex}`)?.focus();
       });
     }
   }
 
-  _renderConfirm() {
-    const { site, code } = this._pending;
-    this.innerHTML = confirmView({ site, code });
-    this.querySelector("#confirm").addEventListener("click", () =>
-      this._bind(site, { code }),
-    );
-    this.querySelector("#use-code").addEventListener("click", () =>
-      this._renderCodeEntry(),
-    );
+  _onInput(event, index) {
+    const input = event.currentTarget;
+    const value = formatSiteCode(input.value);
+    if (!value) {
+      this._digits[index] = "";
+      this._clearErrorAndRender(index);
+      return;
+    }
+    this._applyCode(value, index);
   }
 
-  _renderCodeEntry(opts = {}) {
-    this.innerHTML = codeEntryView({ ...opts, sites: SITES });
-    const form = this.querySelector("#code-form");
-    const input = this.querySelector("#code");
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      this._validate(input.value);
-    });
-    this.querySelector("#manual-bind").addEventListener("click", () => {
-      this._bind(this.querySelector("#site-select").value, {});
-    });
-    requestAnimationFrame(() => input.focus());
+  _onKeydown(event, index) {
+    if (event.key !== "Backspace") return;
+    if (this._digits[index]) return;
+    if (index <= 0) return;
+    event.preventDefault();
+    this._digits[index - 1] = "";
+    this._clearErrorAndRender(index - 1);
   }
 
-  async _bind(name, meta) {
-    stripCodeFromUrl(); // don't leave the one-time code sitting in the address bar
-    const site = await setSite(name, meta);
+  _onPaste(event, index) {
+    const text = event.clipboardData?.getData("text");
+    if (!text) return;
+    event.preventDefault();
+    this._applyCode(text, index);
+  }
+
+  _applyCode(value, startIndex) {
+    const chars = formatSiteCode(value).split("");
+    const digits = [...this._digits];
+    chars.forEach((char, offset) => {
+      const target = startIndex + offset;
+      if (target < CODE_LENGTH) digits[target] = char;
+    });
+    this._digits = digits;
+    this._error = "";
+    this._render(Math.min(startIndex + chars.length, CODE_LENGTH - 1));
+  }
+
+  _clearErrorAndRender(focusIndex) {
+    this._error = "";
+    this._render(focusIndex);
+  }
+
+  async _validate() {
+    const code = this._digits.join("");
+    if (code.length < CODE_LENGTH || this._checking) return;
+
+    this._checking = true;
+    this._error = "";
+    this._render();
+
+    const result = await validateSetupCode(code);
+    if (!result.ok) {
+      this._checking = false;
+      this._error =
+        result.reason === "network"
+          ? "We couldn't check the code. Try again in a moment."
+          : INVALID_MESSAGE;
+      this._render(CODE_LENGTH - 1);
+      return;
+    }
+
+    stripCodeFromUrl();
+    const providerSite = result.providerSite;
+    const site = await setSite(providerSite.name, {
+      code: result.code,
+      providerSiteId: providerSite.id,
+      siteId: providerSite.siteId,
+    });
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
@@ -101,19 +126,18 @@ class SiteSetup extends HTMLElement {
 }
 customElements.define("site-setup", SiteSetup);
 
-// Read the setup code from the emailed link. Supports ?code=… as well as the
-// hash forms (#…?code=… / #code=…) so it works under hash-based routing too.
+/**
+ * @param {string[]} digits
+ * @returns {number}
+ */
+function nextEmptyIndex(digits) {
+  const index = digits.findIndex((digit) => !digit);
+  return index >= 0 ? index : CODE_LENGTH - 1;
+}
+
 function readCodeFromUrl() {
   const fromSearch = new URLSearchParams(location.search).get("code");
-  if (fromSearch) return fromSearch.trim();
-  const hash = location.hash.replace(/^#/, "");
-  const q = hash.indexOf("?");
-  if (q >= 0) {
-    const c = new URLSearchParams(hash.slice(q + 1)).get("code");
-    if (c) return c.trim();
-  }
-  const m = hash.match(/(?:^|&)code=([^&]+)/);
-  return m ? decodeURIComponent(m[1]).trim() : "";
+  return fromSearch ? fromSearch.trim() : "";
 }
 
 function stripCodeFromUrl() {

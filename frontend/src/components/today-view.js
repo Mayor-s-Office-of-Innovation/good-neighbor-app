@@ -36,7 +36,8 @@ function dayKey(iso) {
 class TodayView extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    const checks = (await getChecksForSite(this._site.id)).sort((a, b) =>
+    this._siteId = this._site.siteId || this._site.id;
+    const checks = (await getChecksForSite(this._siteId)).sort((a, b) =>
       (b.submittedAt || "").localeCompare(a.submittedAt || ""),
     );
     const submitted = checks.filter((c) => c.status === "submitted");
@@ -52,7 +53,7 @@ class TodayView extends HTMLElement {
     const start = this.querySelector("#start-check");
     if (start) {
       start.addEventListener("click", () => {
-        startCheck(this._site.id);
+        startCheck(this._siteId);
         navigate("/check");
       });
     }
