@@ -617,7 +617,8 @@ theme-toggle {
   color: var(--brand-blue);
   background: var(--brand-blue-bg);
 }
-.pill--pending {
+.pill--pending,
+.pill--sev {
   color: var(--text-secondary);
   background: var(--surface-3);
 }
@@ -943,10 +944,6 @@ theme-toggle {
   overflow: hidden;
   text-align: center;
 }
-.addshot__icon {
-  font-size: 1.35rem;
-  color: var(--brand-blue);
-}
 .addshot__label {
   font-weight: 600;
   font-size: 0.72rem;
@@ -961,9 +958,6 @@ theme-toggle {
   width: min(100%, 260px);
   padding: 2.4rem 1.5rem;
   gap: 0.5rem;
-}
-.addshot--empty .addshot__icon {
-  font-size: 2.2rem;
 }
 .addshot--empty .addshot__label {
   font-size: 1.05rem;

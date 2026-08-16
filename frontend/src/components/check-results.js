@@ -17,8 +17,11 @@
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite } from "../db.js";
-import { listChecks, getCheck } from "../services/api.js";
-import { adaptCheckDetail } from "../domain/check-adapter.js";
+import { listChecks, getCheck, listTasks } from "../services/api.js";
+import {
+  adaptCheckDetail,
+  cityCategoriesForCheck,
+} from "../domain/check-adapter.js";
 import { navigate } from "../router.js";
 import {
   getCurrentCheck,
@@ -76,8 +79,15 @@ class CheckResults extends HTMLElement {
           navigate("/today");
           return;
         }
-        const detail = await getCheck(latestHeader.checkId);
-        findings = adaptCheckDetail(detail).findings;
+        const [detail, { tasks }] = await Promise.all([
+          getCheck(latestHeader.checkId),
+          listTasks({ status: "open" }),
+        ]);
+        const cityCategories = cityCategoriesForCheck(
+          tasks,
+          latestHeader.checkId,
+        );
+        findings = adaptCheckDetail(detail, cityCategories).findings;
       } catch (err) {
         console.error("failed to load latest check", err);
         navigate("/today");

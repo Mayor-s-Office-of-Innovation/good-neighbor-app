@@ -53,7 +53,13 @@ function route(method, pattern, handler) {
       return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     })
     .join("");
-  return { method, pattern, regex: new RegExp(`^${regexStr}$`), names, handler };
+  return {
+    method,
+    pattern,
+    regex: new RegExp(`^${regexStr}$`),
+    names,
+    handler,
+  };
 }
 
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
