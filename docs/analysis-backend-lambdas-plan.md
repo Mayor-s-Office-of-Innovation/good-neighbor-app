@@ -4,7 +4,7 @@
 builds on [data model](./dynamodb-data-model.md) · reconciles with
 [buildout Phase 2](./dynamodb-buildout-plan.md)*
 
-**Status:** Proposed — runnable build plan · **Date:** 2026-08-13 (contract re-pinned 2026-08-14) · **Owner:** team
+**Status:** In build — Steps A–D + C shipped & green; the **live analyze path is proven end-to-end via the local harness (2026-08-16)** against the deployed analyzer (presign → worker → `x-api-key` call → `ANALYSIS#`/`TASK#`). **Remaining:** Step E (Terraform packaging + Secrets Manager key retrieval + real `sharp` resize) and the prod-only bits (real per-photo GPS). · **Date:** 2026-08-13 (contract re-pinned 2026-08-14; status updated 2026-08-16) · **Owner:** team
 
 This is the missing build doc for the seam that turns a captured perimeter check into persisted,
 scored, per-site data. The **direction** is fully decided across D1 (server-mediated, **presigned
