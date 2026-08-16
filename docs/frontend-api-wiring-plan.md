@@ -1,6 +1,6 @@
 # Plan: wire the field app to the backend (online `api.js`, no sync system)
 
-**Status:** Built — 2026-08-15. The online write+read cutover shipped and is green (typecheck + `vite build`); the `create → complete → list → get` slice is verified against DynamoDB Local. The in-browser **photo-upload leg** is wired but **verified pending a MinIO harness restart** (see [minio-local-s3.md](./minio-local-s3.md)). As-built gaps live in [Known gaps](#known-gaps-as-built) below.
+**Status:** Built — 2026-08-15. The online write+read cutover shipped and is green (typecheck + `vite build`); the `create → complete → list → get` slice is verified against DynamoDB Local. The in-browser **photo-upload leg is now verified end-to-end (2026-08-16)** — presign → `PUT` to MinIO → register → SQS → worker → the **deployed analyzer** → `ANALYSIS#` + `TASK#` items, driven from the real screens. Remaining as-built gaps live in [Known gaps](#known-gaps-as-built) below.
 **Depends on:** analysis-backend Lambdas Step C endpoints ([plan](./analysis-backend-lambdas-plan.md)) — **built and routed** (handlers in [checks.js](../backend/src/handlers/checks.js) / [artifacts.js](../backend/src/handlers/artifacts.js), wired into [local-api.mjs](../backend/scripts/local-api.mjs)).
 **Grounds in:** [D2 backend contract](./gnp-frontend-migration-plan.md) · [data model](./dynamodb-data-model.md)
 
@@ -19,8 +19,9 @@ screen loads; the in-progress walk stays local.
   wire and **verify `create → complete → list → get` end-to-end against DynamoDB Local**. Wire
   the photo-upload leg (presign → PUT → register). **MinIO landed 2026-08-15 (harness Step D)**
   and the S3 seam is verified through the real `s3.js` wrappers — presign → PUT (200) →
-  worker read-back match, cross-origin preflight 204. The full browser-driven upload leg still
-  awaits the `api.js` cutover + a real `ANALYZER_API_KEY` in `.env.local`. See
+  worker read-back match, cross-origin preflight 204. The full browser-driven upload leg is
+  **now verified end-to-end (2026-08-16)** against the deployed analyzer, with a real
+  `ANALYZER_API_KEY` + `AWS_ENDPOINT_URL_S3` in `.env.local`. See
   [minio-local-s3.md](./minio-local-s3.md).
 ### Blockers cleared — fileset re-review (2026-08-15)
 
@@ -146,10 +147,10 @@ push. Those return only if/when offline does — same concern, deferred together
 the post-submit poll. No `synced:false`, no queue.
 
 **Met (2026-08-15)** for the write+read slice — `api.js` exists, `/today` and results read from
-DynamoDB, no `synced:false`/queue. The **one criterion still open**: a submit that carries photos
-end-to-end (write → presigned PUT → worker → analysis → poll) hasn't been exercised in the browser,
-because that needs a MinIO-enabled harness restart with an updated `.env.local`
-(see [minio-local-s3.md](./minio-local-s3.md)). The MinIO-independent slice is verified.
+DynamoDB, no `synced:false`/queue. The photo-carrying submit path (write → presigned PUT → worker →
+analysis → poll) is **now also verified end-to-end in the browser (2026-08-16)** against the deployed
+analyzer — the harness needed a MinIO-enabled `.env.local` (`AWS_ENDPOINT_URL_S3` + a real
+`ANALYZER_API_KEY`; see [minio-local-s3.md](./minio-local-s3.md)). All acceptance criteria met.
 
 ## Known gaps (as-built)
 
