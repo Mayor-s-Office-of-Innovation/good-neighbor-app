@@ -87,10 +87,15 @@ export const checkAnalysisPrefix = (checkId) => `CHECK#${checkId}#ANALYSIS#`;
  */
 export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 
-// GSI names — the single source of truth the Step E Terraform must match when
-// it creates the indexes. GSI1 backs the newest-first checks list (AP6); GSI2
-// backs the per-status staff worklist (AP10, its reader lands with that step).
-export const GSI1_NAME = "gsi1";
+// GSI names — must match the index names the table is created with: Terraform
+// (infra/modules/app/main.tf) and the local harness (scripts/lib/ensure-infra.mjs)
+// both create them uppercase, and DynamoDB index names are case-sensitive, so
+// these constants must be uppercase too. GSI1 backs the newest-first checks list
+// (AP6); GSI2 backs the per-status staff worklist (AP10).
+export const GSI1_NAME = "GSI1";
+
+/** The per-status worklist index (AP10); see taskWorklistGsi. */
+export const GSI2_NAME = "GSI2";
 
 /**
  * GSI1 (checks timeline) attributes for a check header. Sparse — only headers
@@ -105,6 +110,16 @@ export const checkTimelineGsi = (siteId, startedAt) => ({
 });
 
 /**
+ * GSI2 partition key for a site's worklist at one status — the value the reader
+ * (AP10) queries and the writer stamps. One place for the convention.
+ * @param {string} siteId
+ * @param {string} status
+ * @returns {string}
+ */
+export const taskWorklistPk = (siteId, status) =>
+  `SITE#${siteId}#TASK#${status}`;
+
+/**
  * GSI2 (site worklist) attributes for a task. Partitioned by status so the
  * staff worklist (AP10) reads one status at a time, sorted by severity#createdAt.
  * @param {string} siteId
@@ -114,6 +129,6 @@ export const checkTimelineGsi = (siteId, startedAt) => ({
  * @returns {{ gsi2pk: string, gsi2sk: string }}
  */
 export const taskWorklistGsi = (siteId, status, severity, createdAt) => ({
-  gsi2pk: `SITE#${siteId}#TASK#${status}`,
+  gsi2pk: taskWorklistPk(siteId, status),
   gsi2sk: `${severity}#${createdAt}`,
 });

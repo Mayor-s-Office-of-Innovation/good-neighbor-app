@@ -20,11 +20,13 @@ Date: 2026-08-11
 > script ships un-hashed for now). Those two land together when offline is turned on.
 >
 > **Still open / not started:** the design decisions that gate backend work — **D1**
-> (auth / server-mediated analysis), **D2** (backend contract + `sync.js`), **D3**
-> (data-classification security review) — and **I1** (frontend build→S3/CloudFront deploy
-> stage). **D4 (datastore) is resolved: DynamoDB** — see the section below. The services
-> (`analyzer`/`transcribe`/`onboarding`) remain **mocked**. See memory
-> `step2-gnp-port-scope` for the exact landed state.
+> (auth / server-mediated analysis) and **D3** (data-classification security review) — and
+> **I1** (frontend build→S3/CloudFront deploy stage). **D2 (backend contract) is resolved and
+> built:** the online `api.js` shipped 2026-08-15 — there is **no `sync.js`**; the sync *system*
+> is deferred with offline (see the D2 section + [frontend-api-wiring-plan.md](./frontend-api-wiring-plan.md)).
+> **D4 (datastore) is resolved: DynamoDB** — see the section below. `transcribe`/`onboarding`
+> remain **mocked**; the `analyzer` is now called through the backend (D2), not the local mock.
+> See memory `step2-gnp-port-scope` for the exact landed state.
 
 Tracks everything that must be resolved to bring the `gnp` Phase-1 prototype
 (`../gnp`) in as the frontend of this repo. `gnp` is a well-built vanilla-web-
@@ -200,8 +202,10 @@ keeps summary counts + the scorecard, not the full walk structure.
 
 Endpoints replace the generic `POST /api/submissions`: create/complete a perimeter
 check, list checks for a site, fetch one, plus the citywide reporting read API. The
-`gnp` client maps the scorecard → findings locally; a sync layer is future work —
-there is no `sync.js` in `gnp` today (records are flagged `synced:false` for it).
+`gnp` client maps the scorecard → findings locally. The client↔backend transport is the
+online **`api.js`** (shipped 2026-08-15); there is **no `sync.js`** — a background-sync
+*system* (queue + `synced:false` reconciliation) is deferred **with offline** to post-MVP,
+not built now. See [frontend-api-wiring-plan.md](./frontend-api-wiring-plan.md).
 
 **Who calls the analysis service? — resolved (server-mediated, base64 from our S3, async).** The
 client uploads each capture to **our own S3 bucket** (presigned PUT); a **worker** reads the object
@@ -408,7 +412,7 @@ Bring both across regardless of other choices.
 
 **Status:** resolved (planned)
 
-Covered by [docs/js-and-jsdoc-migration-plan.md](js-and-jsdoc-migration-plan.md). `gnp`
+Covered by [docs/js-and-jsdoc-migration-plan.md](archive/js-and-jsdoc-migration-plan.md). `gnp`
 is already all JS, but its JSDoc is thin (6 of 22 files carry any; the other 16 — all
 12 components plus core infra like db/router/main — carry none), so the frontend does
 **not** land green under `strict` +
@@ -433,6 +437,6 @@ ethos, and interior checking isn't wanted).
    script (I3). Use the file-level map in
    [`../gnp/docs/migration-port-manifest.md`](../../gnp/docs/migration-port-manifest.md)
    for exactly which files land where (carry-as-is vs transform vs don't-carry).
-4. Build the backend contract and `sync.js` (D2) and wire auth (D1).
+4. Build the backend contract and the online `api.js` (D2 — no `sync.js`; sync system deferred with offline) and wire auth (D1).
 5. Add the frontend deploy stage (I1).
 6. Confirm data classification and security review (D3) before production capture.

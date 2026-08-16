@@ -18,6 +18,11 @@ import {
   ListQueuesCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
+import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -98,6 +103,7 @@ const TABLE_SCHEMA = {
 export async function ensureLocalInfra() {
   const tableName = process.env.DYNAMO_TABLE;
   const queueUrl = process.env.SQS_QUEUE_URL;
+  const uploadBucket = process.env.S3_UPLOAD_BUCKET;
   if (!tableName) throw new Error("DYNAMO_TABLE is not set");
   if (!queueUrl) throw new Error("SQS_QUEUE_URL is not set");
 
@@ -147,6 +153,46 @@ export async function ensureLocalInfra() {
       console.log(`[bootstrap] SQS queue "${queueName}" already exists`);
     } else {
       throw err;
+    }
+  }
+
+  // S3 (MinIO): only when the local S3 endpoint is set — otherwise the client
+  // would point at real AWS and creating a bucket there is not what "local
+  // bootstrap" means. Just an idempotent bucket create; CORS for the browser's
+  // cross-origin presigned PUT is handled globally by MinIO's
+  // MINIO_API_CORS_ALLOW_ORIGIN env var (set in local-minio.mjs), since MinIO
+  // returns 501 NotImplemented for the per-bucket PutBucketCors API.
+  if (process.env.AWS_ENDPOINT_URL_S3) {
+    if (!uploadBucket) throw new Error("S3_UPLOAD_BUCKET is not set");
+    const s3 = new S3Client({ forcePathStyle: true });
+
+    await waitForService(
+      () => s3.send(new HeadBucketCommand({ Bucket: uploadBucket })),
+      "MinIO",
+    ).catch((err) => {
+      // A reachable MinIO answering 404/NoSuchBucket still means it's up.
+      const name = /** @type {Error} */ (err).name;
+      const status =
+        /** @type {{ $metadata?: { httpStatusCode?: number } }} */ (err)
+          .$metadata?.httpStatusCode;
+      if (name !== "NotFound" && name !== "NoSuchBucket" && status !== 404) {
+        throw err;
+      }
+    });
+
+    try {
+      await s3.send(new CreateBucketCommand({ Bucket: uploadBucket }));
+      console.log(`[bootstrap] created S3 bucket "${uploadBucket}"`);
+    } catch (err) {
+      const name = /** @type {Error} */ (err).name;
+      if (
+        name === "BucketAlreadyOwnedByYou" ||
+        name === "BucketAlreadyExists"
+      ) {
+        console.log(`[bootstrap] S3 bucket "${uploadBucket}" already exists`);
+      } else {
+        throw err;
+      }
     }
   }
 
