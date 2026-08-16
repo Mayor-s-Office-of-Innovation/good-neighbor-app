@@ -1,9 +1,5 @@
 # Developer command reference
 
-Concise "what to run to do what." For the *why* behind the backend harness, see
-[local-dev-environment-plan.md](./archive/local-dev-environment-plan.md); for the full docs map, see
-[README.md](./README.md).
-
 **Prereqs:** Node 22 LTS+, npm 10+. The backend local harness also needs **JRE 17+** (DynamoDB
 Local + ElasticMQ are Java jars) — install with `brew install --cask temurin`, confirm
 `java -version` reports 17+. The frontend, tests, lint, and typecheck do **not** need Java.
