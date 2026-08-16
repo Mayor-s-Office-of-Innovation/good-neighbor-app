@@ -2,7 +2,7 @@
   api.js — the field app's thin online client for the GNP backend.
 
   Plain request/response, NOT a sync layer: writes fire when the user acts, reads
-  fire when a screen loads (see docs/frontend-api-wiring-plan.md). Offline is
+  fire when a screen loads (see docs/archive/frontend-api-wiring-plan.md). Offline is
   deferred to post-MVP, so there is no local queue and no `synced` reconciliation —
   every call throws `ApiError` on a non-2xx or network failure so callers surface
   an error instead of silently degrading.

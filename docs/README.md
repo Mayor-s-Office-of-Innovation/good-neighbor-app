@@ -69,12 +69,15 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
   [data model](./dynamodb-data-model.md).
 
-## Frontend ↔ backend wiring (plan, Aug 2026)
+## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
 
-- **[frontend-api-wiring-plan.md](./frontend-api-wiring-plan.md)** — wire the field app to the
-  backend with a **thin online `api.js`** (write-on-submit, read-on-load, one short poll for
-  async results) rather than a sync system. The `synced:false` / sync-layer machinery is
-  offline-only, so it defers with offline. Depends on the analysis-backend Step C endpoints.
+- **[archive/frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md)** — wire the field
+  app to the backend with a **thin online `api.js`** (write-on-submit, read-on-load, one short poll
+  for async results) rather than a sync system. The `synced:false` / sync-layer machinery is
+  offline-only, so it defers with offline. Depended on the analysis-backend Step C endpoints.
+  **Done for MVP (2026-08-16)** — write+read cutover, photo leg E2E, worklist on real `listTasks`,
+  hazard triage off the authoritative `TASK#.type` (client mirror deleted); only the post-MVP
+  confidence-% placeholder remains. **Archived.**
 
 ## Frontend — design & UI
 
