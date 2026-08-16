@@ -1,22 +1,30 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  The in-progress perimeter check — held in memory for the duration of a walk.
+  The in-progress perimeter check — the walk's working state.
 
-  Deliberately light (docs/take5-plan.md: "just enough local state to move a check
-  through the flow"). It survives hash-route changes (no reload) as a module
-  singleton; only the SUBMITTED check is persisted (via db.addCheck) so 5b/history
-  and the streak have something real to read. The normalized item/finding stores
-  arrive at migration.
+  Held in memory as a module singleton (survives hash-route changes, no reload) AND
+  mirrored to IndexedDB (db.js `draft` store) on every mutation, so a walk survives
+  reload / app-close and can be resumed from home. Only the SUBMITTED check is copied
+  into the `checks` store (via db.addCheck) so 5b/history + the last-log summary have
+  something real to read.
 
-  A check has four fixed sides (N/E/S/W). Each side can be covered by any mix of
-  photo / voice / note items, or marked "not applicable" (excluded from coverage).
+  A check has four fixed sides (N/E/S/W). Each side is covered by photo captures, or
+  marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose:
+  voice/note capture is out of the MVP UI (photo-only) but the plumbing is left intact
+  for the post-MVP pass — see docs/mvp-design-trim-plan.md.
 */
-import { newId } from "../db.js";
+import { newId, saveDraft, clearDraft, getDraft } from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
 
-/** @type {null | {id,siteId,window,startedAt,sides:Record<string,{items:any[],applicable:boolean}>,status,submittedAt?}} */
+/** @type {null | {id,siteId,window,startedAt,sides:Record<string,{items:any[],skipped:boolean}>,status,submittedAt?}} */
 let current = null;
+
+// Fire-and-forget mirror of the in-memory check to the draft store. Renders read
+// the synchronous `current`; persistence catches up in the background.
+function persist() {
+  if (current) void saveDraft(current);
+}
 
 /** Which cadence window we're in (pilot: fixed thirds of the day). */
 function currentWindow() {
@@ -28,7 +36,7 @@ function currentWindow() {
 
 export function startCheck(siteId) {
   const sides = {};
-  for (const s of SIDES) sides[s] = { items: [], applicable: true };
+  for (const s of SIDES) sides[s] = { items: [], skipped: false };
   current = {
     id: newId(),
     siteId,
@@ -37,6 +45,7 @@ export function startCheck(siteId) {
     sides,
     status: "in-progress",
   };
+  persist();
   return current;
 }
 
@@ -44,11 +53,23 @@ export function getCurrentCheck() {
   return current;
 }
 
+/**
+ * Hydrate the in-memory check from the persisted draft (after a reload). If a check
+ * is already in memory it wins (no clobbering a live walk). Returns the active check
+ * or null. Awaited at /check boot and by home to detect a resumable draft.
+ */
+export async function loadDraft() {
+  if (current) return current;
+  const draft = await getDraft();
+  if (draft) current = draft;
+  return current;
+}
+
 export function ensureCheck(siteId) {
   return current || startCheck(siteId);
 }
 
-/** Add a capture item to a side. `item` = {kind:'photo'|'voice'|'note', ...}. */
+/** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
 export function addItem(side, item) {
   if (!current) return null;
   const record = {
@@ -58,6 +79,7 @@ export function addItem(side, item) {
     ...item,
   };
   current.sides[side].items.push(record);
+  persist();
   return record;
 }
 
@@ -65,26 +87,25 @@ export function removeItem(side, itemId) {
   if (!current) return;
   const s = current.sides[side];
   s.items = s.items.filter((i) => i.id !== itemId);
+  persist();
 }
 
-export function setSideApplicable(side, applicable) {
+/** Mark a side skipped (still counted in the fixed 4). */
+export function skipSide(side) {
   if (!current) return;
-  current.sides[side].applicable = applicable;
+  current.sides[side].skipped = true;
+  persist();
 }
 
-/** A side counts as covered if it has >=1 item or is marked not-applicable. */
+/** A side is "done" once it has >=1 photo or was skipped. */
 export function isSideCovered(side) {
   if (!current) return false;
   const s = current.sides[side];
-  return !s.applicable || s.items.length > 0;
+  return s.skipped || s.items.length > 0;
 }
 
 export function coveredCount() {
   return SIDES.filter(isSideCovered).length;
-}
-
-export function applicableSides() {
-  return SIDES.filter((s) => current && current.sides[s].applicable);
 }
 
 /** Flat list of all capture items across sides, in side order. */
@@ -101,6 +122,8 @@ export function markSubmitted(findings) {
   return current;
 }
 
+/** Drop the walk from memory AND the persisted draft (submit or discard). */
 export function clearCheck() {
   current = null;
+  void clearDraft();
 }

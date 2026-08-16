@@ -341,7 +341,7 @@ describe("listChecks", () => {
     expect(res.statusCode).toBe(200);
     const q = send.mock.calls[0][0];
     expect(q).toBeInstanceOf(QueryCommand);
-    expect(q.input.IndexName).toBe("gsi1");
+    expect(q.input.IndexName).toBe("GSI1");
     expect(q.input.KeyConditionExpression).toBe("gsi1pk = :pk");
     expect(q.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
     expect(q.input.ScanIndexForward).toBe(false);

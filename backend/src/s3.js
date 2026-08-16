@@ -5,11 +5,16 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-// Single shared S3 client, mirroring db.js. Region/credentials come from the
-// environment (and AWS_ENDPOINT_URL_S3 locally), so pointing at MinIO in the
-// Step D harness needs no code change. Handlers and the analyze worker go
-// through the wrappers below so tests can vi.mock this one module.
-const client = new S3Client({});
+// Single shared S3 client, mirroring db.js. Region/credentials/endpoint come
+// from the environment (AWS_ENDPOINT_URL_S3 redirects at MinIO in the Step D
+// harness). MinIO on localhost only speaks path-style addressing (virtual-host
+// `bucket.localhost` won't resolve), and the SDK has no env var for that — so
+// flip forcePathStyle on only when an S3 endpoint override is present. Real AWS
+// (no override) is untouched. Handlers and the analyze worker go through the
+// wrappers below so tests can vi.mock this one module.
+const client = new S3Client(
+  process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
+);
 
 /**
  * Presign a PUT so the device can upload media straight to S3. The content-type

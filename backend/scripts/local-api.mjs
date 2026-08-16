@@ -10,17 +10,93 @@
 import { createServer } from "node:http";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
+import {
+  createCheck,
+  completeCheck,
+  listChecks,
+  getCheck,
+} from "../src/handlers/checks.js";
+import {
+  presignUpload,
+  registerArtifact,
+  presignMedia,
+} from "../src/handlers/artifacts.js";
+import { listTasks } from "../src/handlers/tasks.js";
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 
 const PORT = 3000;
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 
+// Compile a route pattern into a matcher. Patterns use `{name}` for path params
+// (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
+// last segment (e.g. `/v1/checks/{checkId}/artifacts:presign`), exactly like the
+// API Gateway route keys. Anchored regex, so `/artifacts` and `/artifacts:presign`
+// never collide and segment count disambiguates list vs. get.
+/**
+ * @param {string} method
+ * @param {string} pattern
+ * @param {(event: any) => Promise<any>} handler
+ */
+function route(method, pattern, handler) {
+  /** @type {string[]} */
+  const names = [];
+  const regexStr = pattern
+    .split(/(\{[^}]+\})/)
+    .map((part) => {
+      const m = /^\{([^}]+)\}$/.exec(part);
+      if (m) {
+        names.push(m[1]);
+        return "([^/]+)";
+      }
+      // Escape regex metacharacters in literal chunks (`:` is already literal).
+      return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
+  return { method, pattern, regex: new RegExp(`^${regexStr}$`), names, handler };
+}
+
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
-  { method: "POST", path: "/submissions", handler: submissionsHandler },
-  { method: "GET", path: "/health", handler: healthHandler },
+  // Perimeter checks (analysis-backend Step C)
+  route("POST", "/v1/checks", createCheck),
+  route("GET", "/v1/checks", listChecks),
+  route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
+  route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
+  route("POST", "/v1/checks/{checkId}/complete", completeCheck),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}:media",
+    presignMedia,
+  ),
+  route("GET", "/v1/checks/{checkId}", getCheck),
+  // Staff worklist (AP10)
+  route("GET", "/v1/tasks", listTasks),
+  // Legacy demo submission loop + health
+  route("POST", "/submissions", submissionsHandler),
+  route("GET", "/health", healthHandler),
 ];
+
+/**
+ * Find the first route whose method + compiled regex match, returning the route
+ * plus the extracted path parameters.
+ * @param {string} method
+ * @param {string} pathname
+ */
+function matchRoute(method, pathname) {
+  for (const r of routes) {
+    if (r.method !== method) continue;
+    const m = r.regex.exec(pathname);
+    if (!m) continue;
+    /** @type {Record<string, string>} */
+    const pathParameters = {};
+    r.names.forEach((name, i) => {
+      pathParameters[name] = decodeURIComponent(m[i + 1]);
+    });
+    return { route: r, pathParameters };
+  }
+  return null;
+}
 
 /** @param {import("node:http").IncomingMessage} req */
 function readBody(req) {
@@ -34,10 +110,11 @@ function readBody(req) {
 
 const server = createServer(async (req, res) => {
   const method = req.method ?? "GET";
-  const path = new URL(req.url ?? "/", "http://localhost").pathname;
-  const route = routes.find((r) => r.method === method && r.path === path);
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const path = url.pathname;
+  const matched = matchRoute(method, path);
 
-  if (!route) {
+  if (!matched) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "not found", method, path }));
     return;
@@ -45,17 +122,32 @@ const server = createServer(async (req, res) => {
 
   try {
     const body = await readBody(req);
+
+    // Flatten the query string to a first-value-wins map (API Gateway v2
+    // behavior), omitted entirely when there is none.
+    /** @type {Record<string, string>} */
+    const queryStringParameters = {};
+    for (const [k, v] of url.searchParams) {
+      if (!(k in queryStringParameters)) queryStringParameters[k] = v;
+    }
+    const hasQuery = Object.keys(queryStringParameters).length > 0;
+
     const event = buildProxyEvent({
       method,
       path,
       headers: req.headers,
       body,
       defaultSub: DEFAULT_SUB,
+      pathParameters: matched.route.names.length
+        ? matched.pathParameters
+        : undefined,
+      queryStringParameters: hasQuery ? queryStringParameters : undefined,
+      rawQueryString: url.search.replace(/^\?/, ""),
     });
 
     // The real handler. Second/third args (context/callback) are unused by our
     // async handlers.
-    const result = await route.handler(
+    const result = await matched.route.handler(
       /** @type {any} */ (event),
       /** @type {any} */ ({}),
       () => {},
@@ -77,7 +169,7 @@ async function main() {
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(
-      `[api] routes: ${routes.map((r) => `${r.method} ${r.path}`).join(", ")}`,
+      `[api] routes:\n${routes.map((r) => `  ${r.method} ${r.pattern}`).join("\n")}`,
     );
   });
 }
