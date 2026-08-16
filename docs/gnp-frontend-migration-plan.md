@@ -23,7 +23,7 @@ Date: 2026-08-11
 > (auth / server-mediated analysis) and **D3** (data-classification security review) — and
 > **I1** (frontend build→S3/CloudFront deploy stage). **D2 (backend contract) is resolved and
 > built:** the online `api.js` shipped 2026-08-15 — there is **no `sync.js`**; the sync *system*
-> is deferred with offline (see the D2 section + [frontend-api-wiring-plan.md](./frontend-api-wiring-plan.md)).
+> is deferred with offline (see the D2 section + [frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md), now done & archived).
 > **D4 (datastore) is resolved: DynamoDB** — see the section below. `transcribe`/`onboarding`
 > remain **mocked**; the `analyzer` is now called through the backend (D2), not the local mock.
 > See memory `step2-gnp-port-scope` for the exact landed state.
@@ -205,7 +205,7 @@ check, list checks for a site, fetch one, plus the citywide reporting read API. 
 `gnp` client maps the scorecard → findings locally. The client↔backend transport is the
 online **`api.js`** (shipped 2026-08-15); there is **no `sync.js`** — a background-sync
 *system* (queue + `synced:false` reconciliation) is deferred **with offline** to post-MVP,
-not built now. See [frontend-api-wiring-plan.md](./frontend-api-wiring-plan.md).
+not built now. See [frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md) (done & archived).
 
 **Who calls the analysis service? — resolved (server-mediated, base64 from our S3, async).** The
 client uploads each capture to **our own S3 bucket** (presigned PUT); a **worker** reads the object

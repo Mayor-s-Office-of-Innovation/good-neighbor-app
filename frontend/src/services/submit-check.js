@@ -3,7 +3,7 @@
   submitCheck — file the in-progress walk against the backend (online cutover).
 
   The single seam that turns a captured walk into a persisted, analyzed record. The
-  mock analyzer + local `checks` persistence are gone (docs/frontend-api-wiring-plan.md):
+  mock analyzer + local `checks` persistence are gone (docs/archive/frontend-api-wiring-plan.md):
     1. create the check (client-minted id → `idempotency-key`)
     2. per photo: presign → PUT to S3 → register (each register enqueues the
        artifact's async analysis)

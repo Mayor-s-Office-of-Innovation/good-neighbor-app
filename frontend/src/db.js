@@ -11,7 +11,7 @@
 
   Submitted checks now live in the backend (DynamoDB), written on submit and read
   on load via services/api.js — the app is online-only for the submit/review path
-  (docs/frontend-api-wiring-plan.md). The local `checks` store is retained only as
+  (docs/archive/frontend-api-wiring-plan.md). The local `checks` store is retained only as
   demo/seed scaffolding (demo/seed.js) and is not on the submit path; there is no
   `synced` flag or sync queue, because offline is deferred to post-MVP.
 */
