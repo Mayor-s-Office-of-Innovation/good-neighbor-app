@@ -18,40 +18,45 @@
     - list reads (listChecks, headers only) build lite findings from the header's
       category rollup (no explanation/side) — enough for the donut + last-log.
 
-  HAZARD is derived here by mirroring the backend's placeholder escalation matrix
-  (backend/src/analysis/task-routing.js): a concern is "city action" when its
-  category name hints hazardous/toxic material AND its severity ≥ 3. This keeps the
-  results screen's city/handle/noted buckets consistent with the tasks the backend
-  actually minted. TODO(product): when the real escalation matrix + a tasks-driven
-  results view land, read hazard from TASK# items instead of re-deriving it.
+  HAZARD ("city action") is read from the authoritative TASK# items, never derived
+  here. The backend stamps each task's `type` at creation (backend/src/analysis/
+  task-routing.js) — `city_escalation` vs `onsite` — so callers fetch the site's
+  tasks (listTasks), reduce them to the set of city-escalation category names per
+  check via `cityCategoriesByCheck`/`cityCategoriesForCheck`, and pass that set in.
+  A finding is a "city action" iff its category is in that set. This keeps the
+  worklist + results buckets in lockstep with the tasks the backend actually minted
+  (no client-side copy of the escalation rule to drift).
 */
 import { severityWord } from "../config/scorecard.js";
 
-// Mirror of task-routing.js ESCALATION_HINTS + ESCALATE_MIN_SEVERITY. Kept in
-// lockstep with the backend placeholder until the real matrix replaces both.
-const ESCALATION_HINTS = [
-  "hazard",
-  "toxic",
-  "biohazard",
-  "chemical",
-  "needle",
-  "syringe",
-  "waste",
-  "spill",
-  "drug",
-];
-const ESCALATE_MIN_SEVERITY = 3;
+/**
+ * Reduce a site's TASK# items to the city-escalation category names per check.
+ * The backend classifies each task once at creation (task-routing.js), so this is
+ * the source of truth for "which findings are the city's to handle" — read it
+ * instead of re-deriving the escalation rule client-side.
+ * @param {any[]} [tasks]  TASK# items (from listTasks)
+ * @returns {Map<string, Set<string>>}  checkId -> set of escalated category names
+ */
+export function cityCategoriesByCheck(tasks = []) {
+  /** @type {Map<string, Set<string>>} */
+  const byCheck = new Map();
+  for (const t of tasks) {
+    if (t.type !== "city_escalation") continue;
+    let set = byCheck.get(t.checkId);
+    if (!set) byCheck.set(t.checkId, (set = new Set()));
+    set.add(t.category);
+  }
+  return byCheck;
+}
 
 /**
- * Would this category+severity escalate to the city (vs. become on-site upkeep)?
- * @param {string} category
- * @param {number} rating
- * @returns {boolean}
+ * The city-escalation category names for a single check.
+ * @param {any[]} tasks  TASK# items (from listTasks)
+ * @param {string} checkId
+ * @returns {Set<string>}
  */
-function isCityAction(category, rating) {
-  if (!rating || rating < ESCALATE_MIN_SEVERITY) return false;
-  const name = String(category || "").toLowerCase();
-  return ESCALATION_HINTS.some((hint) => name.includes(hint));
+export function cityCategoriesForCheck(tasks, checkId) {
+  return cityCategoriesByCheck(tasks).get(checkId) || new Set();
 }
 
 /**
@@ -74,9 +79,10 @@ function occurredAt(header) {
  * finding per concern with rating ≥ 1, carrying the concern's explanation and the
  * artifact's side.
  * @param {any[]} analyses  ANALYSIS# items from getCheck
+ * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {Array<object>}
  */
-export function analysesToFindings(analyses = []) {
+export function analysesToFindings(analyses = [], cityCategories = new Set()) {
   /** @type {Array<object>} */
   const findings = [];
   for (const a of analyses) {
@@ -87,7 +93,7 @@ export function analysesToFindings(analyses = []) {
         category: c.category,
         rating: c.rating,
         severity: severityWord(c.rating),
-        hazard: isCityAction(c.category, c.rating),
+        hazard: cityCategories.has(c.category),
         explanation: c.explanation || "",
         side: a.side || null,
         sourceKind: "photo",
@@ -102,16 +108,17 @@ export function analysesToFindings(analyses = []) {
  * Lite findings from a CHECK# header's category rollup (the list read — headers
  * carry no explanation or side). Enough for today-view's donut + last-log.
  * @param {any} header
+ * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {Array<object>}
  */
-export function headerToFindings(header) {
+export function headerToFindings(header, cityCategories = new Set()) {
   return (header.categories || [])
     .filter((c) => (c.maxRating || 0) >= 1)
     .map((c) => ({
       category: c.category,
       rating: c.maxRating,
       severity: severityWord(c.maxRating),
-      hazard: isCityAction(c.category, c.maxRating),
+      hazard: cityCategories.has(c.category),
       explanation: "",
       side: null,
       sourceKind: null,
@@ -122,9 +129,10 @@ export function headerToFindings(header) {
  * Adapt a CHECK# header (from listChecks) into a UI check record shaped like the
  * pre-cutover local record, with lite header-derived findings.
  * @param {any} header
+ * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {object}
  */
-export function adaptCheckHeader(header) {
+export function adaptCheckHeader(header, cityCategories = new Set()) {
   return {
     id: header.checkId,
     status: uiStatus(header.status),
@@ -133,7 +141,7 @@ export function adaptCheckHeader(header) {
     grade: header.grade ?? null,
     issueCount: header.issueCount ?? 0,
     maxSeverity: header.maxSeverity ?? 0,
-    findings: headerToFindings(header),
+    findings: headerToFindings(header, cityCategories),
   };
 }
 
@@ -141,9 +149,13 @@ export function adaptCheckHeader(header) {
  * Adapt a getCheck detail payload ({ check, artifacts, analyses }) into a UI check
  * record with rich per-artifact findings.
  * @param {{ check: any, artifacts?: any[], analyses?: any[] }} detail
+ * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {object}
  */
-export function adaptCheckDetail({ check, analyses = [] }) {
+export function adaptCheckDetail(
+  { check, analyses = [] },
+  cityCategories = new Set(),
+) {
   return {
     id: check.checkId,
     status: uiStatus(check.status),
@@ -152,6 +164,6 @@ export function adaptCheckDetail({ check, analyses = [] }) {
     grade: check.grade ?? null,
     issueCount: check.issueCount ?? 0,
     maxSeverity: check.maxSeverity ?? 0,
-    findings: analysesToFindings(analyses),
+    findings: analysesToFindings(analyses, cityCategories),
   };
 }

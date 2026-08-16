@@ -23,8 +23,12 @@ import {
   waitForAnalyses,
   completeCheck,
   getCheck,
+  listTasks,
 } from "./api.js";
-import { analysesToFindings } from "../domain/check-adapter.js";
+import {
+  analysesToFindings,
+  cityCategoriesForCheck,
+} from "../domain/check-adapter.js";
 import {
   SIDES,
   allItems,
@@ -66,9 +70,15 @@ export async function submitCheck() {
   await completeCheck(active.id);
 
   // 4. Read the authoritative completed check + analyses and adapt to findings.
-  //    5e reads these findings + the session photos, then clears the session.
-  const detail = await getCheck(active.id);
-  markSubmitted(analysesToFindings(detail.analyses));
+  //    complete just minted the TASK# items, so fetch them to classify each
+  //    finding city-vs-handle from the backend's stamped `type` (no client-side
+  //    escalation rule). 5e reads these findings + the session photos.
+  const [detail, { tasks }] = await Promise.all([
+    getCheck(active.id),
+    listTasks({ status: "open" }),
+  ]);
+  const cityCategories = cityCategoriesForCheck(tasks, active.id);
+  markSubmitted(analysesToFindings(detail.analyses, cityCategories));
 
   // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
   await clearDraft();

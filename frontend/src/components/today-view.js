@@ -13,8 +13,12 @@
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite, getDraft } from "../db.js";
-import { listChecks } from "../services/api.js";
-import { adaptCheckHeader } from "../domain/check-adapter.js";
+import { listChecks, listTasks } from "../services/api.js";
+import {
+  adaptCheckHeader,
+  cityCategoriesByCheck,
+} from "../domain/check-adapter.js";
+import { severityWord } from "../config/scorecard.js";
 import { startCheck, clearCheck } from "../state/check-session.js";
 import { navigate } from "../router.js";
 
@@ -35,19 +39,26 @@ class TodayView extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
 
-    // Checks are read from the backend on load (AP6) — newest first, adapted to
-    // the UI record shape. Online-only: on failure show an error, not a crash.
-    let submitted;
+    // Checks + the open worklist are read from the backend on load (AP6/AP10) —
+    // newest first, adapted to the UI record shape. Each check's findings are
+    // classified city-vs-handle from the authoritative TASK# items (no client-side
+    // escalation rule). Online-only: on failure show an error, not a crash.
+    let submitted, tasks;
     try {
-      const { checks } = await listChecks({ limit: 30 });
+      const [{ checks }, tasksResult] = await Promise.all([
+        listChecks({ limit: 30 }),
+        listTasks({ status: "open", limit: 50 }),
+      ]);
+      tasks = tasksResult.tasks || [];
+      const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
-        .map(adaptCheckHeader)
+        .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
         .filter((c) => c.status === "submitted")
         .sort((a, b) =>
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
         );
     } catch (err) {
-      console.error("listChecks failed", err);
+      console.error("listChecks/listTasks failed", err);
       this._renderError();
       return;
     }
@@ -61,7 +72,7 @@ class TodayView extends HTMLElement {
 
     this.innerHTML = due
       ? this._dueView({ last: submitted[0], hasDraft })
-      : this._upToDateView({ recent: submitted.slice(0, 6) });
+      : this._upToDateView({ recent: submitted.slice(0, 6), tasks });
 
     const start = this.querySelector("#start-check");
     if (start) {
@@ -107,11 +118,7 @@ class TodayView extends HTMLElement {
             <h1 class="lastlog__headline">Checks are unavailable</h1>
           </div>
           <div class="screen__sec home-cta">
-            <button
-              id="retry"
-              class="btn-ink btn-ink--block"
-              type="button"
-            >
+            <button id="retry" class="btn-ink btn-ink--block" type="button">
               Try again
             </button>
           </div>
@@ -134,18 +141,18 @@ class TodayView extends HTMLElement {
           ${this._siteHeader()}
           <div class="screen__sec lastlog">
             ${log.eyebrow
-              ? html`<p class="lastlog__eyebrow">
-                  ${escapeHtml(log.eyebrow)}
-                </p>`
+              ? html`<p class="lastlog__eyebrow">${escapeHtml(log.eyebrow)}</p>`
               : ""}
             <h1 class="lastlog__headline">${escapeHtml(log.headline)}</h1>
           </div>
           <div class="screen__sec home-cta">
-            <button id="start-check" class="btn-ink btn-ink--block" type="button">
+            <button
+              id="start-check"
+              class="btn-ink btn-ink--block"
+              type="button"
+            >
               <wa-icon name="camera" aria-hidden="true"></wa-icon>
-              ${hasDraft
-                ? "Resume perimeter check"
-                : "Start a perimeter check"}
+              ${hasDraft ? "Resume perimeter check" : "Start a perimeter check"}
             </button>
             ${hasDraft
               ? html`<button
@@ -238,41 +245,21 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _upToDateView({ recent }) {
+  _upToDateView({ recent, tasks = [] }) {
     const b = this._buckets(recent);
 
-    // Open work items from the most recent checks, split city (hazard -> 311)
-    // vs self-serviceable. NOTE: ticket #, status, and reported-time are not in
-    // the findings model yet (post-MVP 311 integration) — rendered here from
-    // clearly representative placeholders so the workflow is visible end-to-end.
-    const flat = recent.flatMap((c) =>
-      (c.findings || []).map((f) => ({ ...f, checkAt: c.submittedAt })),
-    );
-    const cityItems = flat.filter((f) => f.hazard);
-    const handleItems = flat.filter((f) => !f.hazard);
+    // Open work items are the site's real TASK# items (AP10), split by the
+    // backend-stamped `type`: city_escalation -> 311 crew, onsite -> staff can
+    // handle. Most-severe-first ordering is preserved from the server query.
+    const cityItems = tasks.filter((t) => t.type === "city_escalation");
+    const handleItems = tasks.filter((t) => t.type === "onsite");
 
     const cityCards = cityItems
-      .map((f, i) =>
-        this._actionCard(f, {
-          role: "City action",
-          ticket: `#SF-${4471 + i}`, // MOCK ticket
-          status: i % 2 === 0 ? "route" : "pending", // MOCK lifecycle
-          reported: "Reported 12:04 PM", // MOCK time
-          confirm: false,
-        }),
-      )
+      .map((t) => this._actionCard(t, "City action"))
       .join("");
 
     const handleCards = handleItems
-      .map((f, i) =>
-        this._actionCard(f, {
-          role: "Yours",
-          ticket: `#SF-${4318 + i}`, // MOCK ticket
-          status: "confirm",
-          reported: "City closed it out — verify it's gone", // MOCK
-          confirm: true,
-        }),
-      )
+      .map((t) => this._actionCard(t, "Yours"))
       .join("");
 
     return html`
@@ -367,45 +354,24 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  // A single work item. `meta` carries the (currently representative) 311
-  // lifecycle fields; `confirm` toggles the self-serviceable resolve actions.
-  _actionCard(f, meta) {
-    const label =
-      meta.status === "route"
-        ? "En route"
-        : meta.status === "pending"
-          ? "Pending"
-          : "Confirm";
-    // Descriptor before the ticket: real side/explanation where we have it,
-    // otherwise the representative line supplied by meta.reported.
-    const descriptor =
-      (f.side && `${escapeHtml(f.side)} side`) ||
-      (f.explanation && escapeHtml(f.explanation)) ||
-      escapeHtml(meta.reported);
+  // A single open work item, rendered from a real TASK# item: the category, its
+  // severity word, and when it was flagged. `role` is the group label (City
+  // action / Yours). The 311 ticket lifecycle + resolve flow are post-MVP, so no
+  // ticket #, status pill, or resolve buttons are shown yet — only real fields.
+  _actionCard(task, role) {
+    const severity = severityWord(task.severity || 0);
     return html`
       <div class="actioncard">
         <div class="actioncard__head">
-          <span class="actioncard__type">${escapeHtml(meta.role)}</span>
-          <span class="pill pill--${meta.status}">${label}</span>
+          <span class="actioncard__type">${escapeHtml(role)}</span>
+          <span class="pill pill--sev">${escapeHtml(severity)}</span>
         </div>
         <h3 class="actioncard__title">
-          ${escapeHtml(f.category || "Finding")}
+          ${escapeHtml(task.category || "Finding")}
         </h3>
-        <p class="actioncard__detail">
-          ${descriptor} · ${escapeHtml(meta.ticket)}
+        <p class="actioncard__foot">
+          Flagged ${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}
         </p>
-        ${meta.confirm
-          ? html`
-              <div class="actioncard__actions">
-                <button class="btn-ink btn-ink--sm" type="button">
-                  It's gone
-                </button>
-                <button class="btn-outline btn-outline--sm" type="button">
-                  Still there
-                </button>
-              </div>
-            `
-          : html`<p class="actioncard__foot">${escapeHtml(meta.reported)}</p>`}
       </div>
     `;
   }

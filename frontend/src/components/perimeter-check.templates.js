@@ -20,7 +20,9 @@ export const shell = () => html`
         <wa-icon name="chevron-left" aria-hidden="true"></wa-icon> Cancel
       </button>
       <span class="check__side" id="side-progress"></span>
-      <button class="check__skip" id="skip-side" type="button">Skip side</button>
+      <button class="check__skip" id="skip-side" type="button">
+        Skip side
+      </button>
     </div>
 
     <div class="segbar" id="segbar" aria-label="Perimeter sides"></div>
@@ -39,7 +41,12 @@ export const shell = () => html`
     />
 
     <div class="check__actions">
-      <button class="check__next" id="next-side" type="button" disabled></button>
+      <button
+        class="check__next"
+        id="next-side"
+        type="button"
+        disabled
+      ></button>
     </div>
 
     <!-- AI summary loading state, shown during submit. -->
@@ -90,7 +97,6 @@ export const addTile = (empty) => html`
     id="add-photo"
     type="button"
   >
-    <wa-icon class="addshot__icon" name="camera" aria-hidden="true"></wa-icon>
     <span class="addshot__label">Add photo</span>
     ${empty
       ? html`<span class="addshot__hint">Tap to open your camera</span>`

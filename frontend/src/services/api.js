@@ -175,9 +175,13 @@ export function presignArtifact(checkId, body) {
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
-  return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/artifacts`, {
-    body,
-  });
+  return request(
+    "POST",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
+    {
+      body,
+    },
+  );
 }
 
 /**
