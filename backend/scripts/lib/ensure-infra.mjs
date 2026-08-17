@@ -13,6 +13,7 @@ import {
   DescribeTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import {
   CreateQueueCommand,
   ListQueuesCommand,
@@ -108,6 +109,9 @@ export async function ensureLocalInfra() {
   if (!queueUrl) throw new Error("SQS_QUEUE_URL is not set");
 
   const ddb = new DynamoDBClient({});
+  const docDdb = DynamoDBDocumentClient.from(ddb, {
+    marshallOptions: { removeUndefinedValues: true },
+  });
   const sqs = new SQSClient({});
 
   // DynamoDB: wait for reachability, then create-if-absent.
@@ -132,6 +136,8 @@ export async function ensureLocalInfra() {
       throw err;
     }
   }
+
+  await seedLocalSiteCodes(docDdb, tableName);
 
   // SQS: derive the queue name from the configured URL's last path segment.
   const queueName = queueUrl.split("/").filter(Boolean).pop();
@@ -197,4 +203,54 @@ export async function ensureLocalInfra() {
   }
 
   return { tableName, queueUrl };
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ */
+async function seedLocalSiteCodes(docDdb, tableName) {
+  const now = new Date().toISOString();
+  const items = [
+    {
+      pk: "SITE_CODE#123456",
+      sk: "#META",
+      type: "providerSiteCode",
+      code: "123456",
+      active: true,
+      providerSiteId: "provider-site-health-center-mission",
+      siteId: "site-health-center-mission",
+      siteName: "Health Center Mission",
+      seededAt: now,
+    },
+    {
+      pk: "SITE_CODE#000000",
+      sk: "#META",
+      type: "providerSiteCode",
+      code: "000000",
+      active: false,
+      providerSiteId: "provider-site-inactive",
+      siteId: "site-inactive",
+      siteName: "Inactive Test Site",
+      seededAt: now,
+    },
+  ];
+
+  for (const Item of items) {
+    await docDdb
+      .send(
+        new PutCommand({
+          TableName: tableName,
+          Item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      )
+      .catch((err) => {
+        if (
+          /** @type {Error} */ (err).name !== "ConditionalCheckFailedException"
+        ) {
+          throw err;
+        }
+      });
+  }
 }

@@ -36,9 +36,11 @@ import {
 class PerimeterCheck extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
+    this._siteId =
+      this._site.siteId || this._site.providerSiteId || this._site.id;
     // Resume a persisted draft if one exists; else start fresh.
     const check = getCurrentCheck() || (await loadDraft()) || null;
-    if (!check) ensureCheck(this._site.id);
+    if (!check) ensureCheck(this._siteId);
 
     // Resume at the first side that still needs attention (else the first side).
     const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));

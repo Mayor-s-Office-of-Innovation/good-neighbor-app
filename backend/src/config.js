@@ -39,3 +39,14 @@ export function getConfig(env = process.env) {
 
   return config;
 }
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function getDynamoTableName(env = process.env) {
+  if (!env.DYNAMO_TABLE) {
+    throw new Error("Missing required environment variable for dynamoTable");
+  }
+  return env.DYNAMO_TABLE;
+}

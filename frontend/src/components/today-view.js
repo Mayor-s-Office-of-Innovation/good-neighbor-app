@@ -38,6 +38,8 @@ function isToday(iso) {
 class TodayView extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
+    this._siteId =
+      this._site.siteId || this._site.providerSiteId || this._site.id;
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Each check's findings are
@@ -79,7 +81,7 @@ class TodayView extends HTMLElement {
       start.addEventListener("click", () => {
         // Resume just re-opens /check (the draft hydrates there); a fresh start
         // seeds a new in-progress check.
-        if (!hasDraft) startCheck(this._site.id);
+        if (!hasDraft) startCheck(this._siteId);
         navigate("/check");
       });
     }
@@ -87,7 +89,7 @@ class TodayView extends HTMLElement {
     if (over) {
       over.addEventListener("click", () => {
         clearCheck(); // discard the draft
-        startCheck(this._site.id);
+        startCheck(this._siteId);
         navigate("/check");
       });
     }

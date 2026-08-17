@@ -88,6 +88,9 @@ Run the frontend locally:
 npm run dev -w frontend
 ```
 
+The first screen asks for a provider-site code. With the local backend running,
+`123-456` is seeded as an active code and `000-000` is seeded as inactive.
+
 ### Run the backend locally (Docker-free harness)
 
 Runs the exact Lambda handler + worker code against Docker-free emulators (DynamoDB Local +
@@ -101,6 +104,29 @@ npm run dev -w backend         # starts DynamoDB Local, ElasticMQ, the API route
 Commands, ports, the curl loop, and the GUI are in the
 **[developer command reference](docs/dev-commands.md)**; the design rationale is in
 [docs/archive/local-dev-environment-plan.md](docs/archive/local-dev-environment-plan.md).
+
+The local API router listens on `LOCAL_API_PORT` from `.env.local` (`3001` by default).
+
+### Clearing the local site binding
+
+First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
+binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current`).
+To get the setup screen back, delete that one record (surgical — leaves any saved checks
+intact):
+
+- **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
+  right-click the `current` row → Delete, then reload.
+- **Console:**
+  ```js
+  indexedDB.open('conditions-reporter').onsuccess = e =>
+    e.target.result.transaction('site', 'readwrite').objectStore('site').delete('current');
+  ```
+  then reload.
+
+To wipe everything (binding **and** saved checks) instead:
+`indexedDB.deleteDatabase('conditions-reporter')` then reload. (The app holds an open
+connection, so a full delete may block until you reload or close the tab — the surgical
+per-record delete above does not.)
 
 ## Deployment Model
 
