@@ -41,7 +41,7 @@ describe("validateSetupCode", () => {
     expect(fetch.mock.calls[0][0]).toBe("/site-code");
   });
 
-  it("targets the local API port when the frontend runs on localhost", async () => {
+  it("uses the same-origin API path when the frontend runs on localhost", async () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -52,7 +52,7 @@ describe("validateSetupCode", () => {
 
     await validateSetupCode("654321");
 
-    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:3001/site-code");
+    expect(fetch.mock.calls[0][0]).toBe("/site-code");
   });
 
   it("maps inactive codes to invalid", async () => {
