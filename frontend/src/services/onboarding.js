@@ -67,19 +67,8 @@ export function formatSiteCode(code) {
 
 function apiBaseUrl() {
   const env =
-    /** @type {{ env?: { VITE_API_BASE_URL?: string } }} */ (import.meta).env ||
-    {};
-  const configured = env.VITE_API_BASE_URL;
+    /** @type {{ env?: { VITE_API_BASE?: string } }} */ (import.meta).env || {};
+  const configured = env.VITE_API_BASE;
   if (configured) return configured.replace(/\/$/, "");
-  return isLocalHost() ? localDevApiBaseUrl() : "";
-}
-
-function localDevApiBaseUrl() {
-  const host = globalThis.location?.hostname || "127.0.0.1";
-  return `http://${host}:3001`;
-}
-
-function isLocalHost() {
-  const host = globalThis.location?.hostname;
-  return host === "127.0.0.1" || host === "localhost";
+  return "";
 }
