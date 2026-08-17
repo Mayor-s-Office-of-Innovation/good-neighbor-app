@@ -82,10 +82,13 @@ const server = createServer(async (req, res) => {
     );
 
     const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
-    res.writeHead(statusCode, /** @type {any} */ ({
-      ...headers,
-      ...LOCAL_CORS_HEADERS,
-    }));
+    res.writeHead(
+      statusCode,
+      /** @type {any} */ ({
+        ...headers,
+        ...LOCAL_CORS_HEADERS,
+      }),
+    );
     res.end(resBody);
     console.log(`[api] ${method} ${path} → ${statusCode}`);
   } catch (err) {

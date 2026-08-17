@@ -45,7 +45,10 @@ export const codeEntryView = ({
                   />
                   ${digit
                     ? ""
-                    : html`<span class="code-cell__pin" aria-hidden="true"></span>`}
+                    : html`<span
+                        class="code-cell__pin"
+                        aria-hidden="true"
+                      ></span>`}
                 </span>
                 ${index === 2
                   ? html`<span class="code-boxes__dash" aria-hidden="true"

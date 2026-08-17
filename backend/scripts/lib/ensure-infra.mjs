@@ -191,16 +191,20 @@ async function seedLocalSiteCodes(docDdb, tableName) {
   ];
 
   for (const Item of items) {
-    await docDdb.send(
-      new PutCommand({
-        TableName: tableName,
-        Item,
-        ConditionExpression: "attribute_not_exists(pk)",
-      }),
-    ).catch((err) => {
-      if (/** @type {Error} */ (err).name !== "ConditionalCheckFailedException") {
-        throw err;
-      }
-    });
+    await docDdb
+      .send(
+        new PutCommand({
+          TableName: tableName,
+          Item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      )
+      .catch((err) => {
+        if (
+          /** @type {Error} */ (err).name !== "ConditionalCheckFailedException"
+        ) {
+          throw err;
+        }
+      });
   }
 }
