@@ -105,8 +105,6 @@ Commands, ports, the curl loop, and the GUI are in the
 **[developer command reference](docs/dev-commands.md)**; the design rationale is in
 [docs/archive/local-dev-environment-plan.md](docs/archive/local-dev-environment-plan.md).
 
-The local API router listens on `LOCAL_API_PORT` from `.env.local` (`3001` by default).
-
 ### Clearing the local site binding
 
 First run shows the site-setup ("code") screen and, once you confirm a site, writes a single

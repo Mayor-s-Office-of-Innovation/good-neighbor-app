@@ -26,13 +26,8 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 
-const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
+const PORT = 3000;
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
-const LOCAL_CORS_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "content-type,idempotency-key,x-debug-sub",
-};
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -126,22 +121,10 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
 
-  if (method === "OPTIONS") {
-    res.writeHead(204, {
-      ...LOCAL_CORS_HEADERS,
-      "access-control-max-age": "86400",
-    });
-    res.end();
-    return;
-  }
-
   const matched = matchRoute(method, path);
 
   if (!matched) {
-    res.writeHead(404, {
-      "content-type": "application/json",
-      ...LOCAL_CORS_HEADERS,
-    });
+    res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "not found", method, path }));
     return;
   }
@@ -180,21 +163,12 @@ const server = createServer(async (req, res) => {
     );
 
     const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
-    res.writeHead(
-      statusCode,
-      /** @type {any} */ ({
-        ...headers,
-        ...LOCAL_CORS_HEADERS,
-      }),
-    );
+    res.writeHead(statusCode, /** @type {any} */ (headers));
     res.end(resBody);
     console.log(`[api] ${method} ${path} → ${statusCode}`);
   } catch (err) {
     console.error(`[api] ${method} ${path} threw:`, err);
-    res.writeHead(500, {
-      "content-type": "application/json",
-      ...LOCAL_CORS_HEADERS,
-    });
+    res.writeHead(500, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "internal error" }));
   }
 });
