@@ -1,87 +1,69 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  perimeter-check — 5c capture (design port, screen 14). Walk the four sides
-  (N/E/S/W); cover each with any mix of photo / voice / note, or mark a side
-  "can't cover" (sticky N/A). Captures upload immediately and analysis is sealed
-  until submit — no findings shown here.
+  perimeter-check — 5c capture (MVP native-camera port). Walk the four sides
+  (numbered "Side N of 4"); cover each with one or more photos, or Skip a side.
+  Cancel leaves the walk but keeps the draft (resume from home). After the last
+  side, submit runs the (mock) analyzer and hands off to 5e.
 
-  The design's Voice / Photo / Note tiles are plain buttons that DRIVE the hidden
-  <capture-photo>/<capture-audio> controllers (mounted once so an in-progress
-  recording or picked photo is never nuked). Only the stepper + item list
-  re-render on change.
+  Capture is a native camera handoff: the ＋ "Add photo" tile clicks a hidden
+  <input type="file" accept="image/*" capture="environment">, so users get their
+  device's full camera (zoom / focus / flash / lens). On desktop the same input is
+  a file picker. The returned file is read to a JPEG data-URL, which serializes
+  straight into the IndexedDB draft and matches the analyzer's base64 flow.
+  Photo-only by design — voice/note capture is deferred post-MVP (its plumbing is
+  left intact but unused). See docs/mvp-design-trim-plan.md.
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { transcribe } from "../services/transcribe.js";
+import { submitCheck } from "../services/submit-check.js";
 import {
   SIDES,
   ensureCheck,
+  loadDraft,
   getCurrentCheck,
   addItem,
   removeItem,
-  setSideApplicable,
-  applicableSides,
+  skipSide,
+  isSideCovered,
 } from "../state/check-session.js";
-import { shell, itemRow, step } from "./perimeter-check.templates.js";
-
-const GUIDANCE = {
-  North: "Curb to building line. Include the gutter and any doorway.",
-  East: "Curb to building line. Include the gutter and doorway.",
-  South: "Curb to building line. Include the tree well and doorway.",
-  West: "Curb to building line. Note any construction fencing.",
-};
-const FRONTAGE = {
-  North: "North frontage",
-  East: "Mission St frontage",
-  South: "South frontage",
-  West: "West frontage",
-};
+import {
+  shell,
+  segment,
+  shotTile,
+  addTile,
+} from "./perimeter-check.templates.js";
 
 class PerimeterCheck extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    this._siteId = this._site.siteId || this._site.id;
-    const check = ensureCheck(this._siteId);
-    this._sideIndex = 0;
-    this._recording = false;
+    this._siteId =
+      this._site.siteId || this._site.providerSiteId || this._site.id;
+    // Resume a persisted draft if one exists; else start fresh.
+    const check = getCurrentCheck() || (await loadDraft()) || null;
+    if (!check) ensureCheck(this._siteId);
 
-    this.innerHTML = shell({
-      siteName: this._site.name,
-      started: timeOf(check.startedAt),
-    });
-    this._photo = this.querySelector("capture-photo");
-    this._audio = this.querySelector("capture-audio");
-    this._note = this.querySelector("#note-input");
-    this._composer = this.querySelector("#note-composer");
+    // Resume at the first side that still needs attention (else the first side).
+    const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
+    this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
 
-    // Trio tiles proxy to the hidden capture controllers.
-    this.querySelector("#photo-tile").addEventListener("click", () =>
-      this._photo.querySelector("#photo-input").click(),
-    );
-    this.querySelector("#voice-tile").addEventListener("click", () =>
-      this._toggleVoice(),
-    );
-    this.querySelector("#note-tile").addEventListener("click", () =>
-      this._toggleComposer(),
-    );
+    this.innerHTML = shell();
+    this._fileInput = this.querySelector("#file-input");
 
-    this._photo.addEventListener("change", () => this._onPhoto());
-    this._audio.addEventListener("change", () => this._onAudio());
-    this.querySelector("#add-note").addEventListener("click", () =>
-      this._onNote(),
+    this.querySelector("#cancel").addEventListener("click", () =>
+      this._cancel(),
     );
-    this.querySelector("#na-side").addEventListener("click", () =>
-      this._onNoCover(),
+    this.querySelector("#skip-side").addEventListener("click", () =>
+      this._skip(),
     );
     this.querySelector("#next-side").addEventListener("click", () =>
-      this._onNext(),
+      this._forward(),
     );
-    this.querySelector("#back").addEventListener("click", () =>
-      navigate("/today"),
+    // The ＋ tile and per-shot delete are re-rendered each change, so delegate.
+    this.querySelector("#shotgrid").addEventListener("click", (e) =>
+      this._onGridClick(e),
     );
-    this.querySelector("#item-list").addEventListener("click", (e) =>
-      this._onItemClick(e),
-    );
+    // A photo came back from the camera / file picker.
+    this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._renderSide();
   }
@@ -89,148 +71,142 @@ class PerimeterCheck extends HTMLElement {
   get _side() {
     return SIDES[this._sideIndex];
   }
-
-  _toggleComposer() {
-    const open = this._composer.hidden;
-    this._composer.hidden = !open;
-    if (open) this._note.focus?.();
+  get _isLast() {
+    return this._sideIndex === SIDES.length - 1;
+  }
+  _sideState() {
+    return getCurrentCheck().sides[this._side];
   }
 
-  // Proxy a click to the hidden recorder's own toggle button; reflect state on
-  // the Voice tile. The recorder fires "change" on stop -> _onAudio finalizes.
-  _toggleVoice() {
-    this._audio.querySelector("#rec-btn")?.click();
-    this._recording = !this._recording;
-    const tile = this.querySelector("#voice-tile");
-    tile.classList.toggle("is-recording", this._recording);
-    this.querySelector("#voice-label").textContent = this._recording
-      ? "Stop"
-      : "Voice";
+  /* ---- capture (native handoff) ---- */
+  // Open the device camera (phone) / file picker (desktop).
+  _openCamera() {
+    this._fileInput.value = ""; // allow re-picking the same file
+    this._fileInput.click();
   }
 
-  _onPhoto() {
-    const f = this._photo.file;
-    if (!f) return;
-    const thumbUrl = URL.createObjectURL(f);
-    addItem(this._side, { kind: "photo", size: f.size, thumbUrl });
-    this._photo.reset();
-    this._renderItems();
-    this._renderStepper();
+  _onFilePicked() {
+    const file = this._fileInput.files && this._fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      addItem(this._side, { kind: "photo", dataUrl: reader.result });
+      this._renderSegments();
+      this._renderShots();
+      this._syncControls();
+    };
+    reader.readAsDataURL(file);
   }
 
-  async _onAudio() {
-    const blob = this._audio.blob;
-    // Reset the Voice tile regardless (recording just ended).
-    this._recording = false;
-    this.querySelector("#voice-tile").classList.remove("is-recording");
-    this.querySelector("#voice-label").textContent = "Voice";
-    if (!blob) return;
-    const item = addItem(this._side, { kind: "voice", size: blob.size });
-    this._audio.reset();
-    this._renderItems();
-    this._renderStepper();
-    // Mock transcription resolves shortly; patch the item + re-render in place.
-    const text = await transcribe(blob);
-    item.transcript = text;
-    this._renderItems();
-  }
-
-  _onNote() {
-    const text = (this._note.value || "").trim();
-    if (!text) return;
-    addItem(this._side, { kind: "note", text });
-    this._note.value = "";
-    this._composer.hidden = true;
-    this._renderItems();
-    this._renderStepper();
-  }
-
-  _onItemClick(e) {
-    const btn = e.target.closest("[data-remove]");
-    if (!btn) return;
-    removeItem(this._side, btn.getAttribute("data-remove"));
-    this._renderItems();
-    this._renderStepper();
-  }
-
-  _onNoCover() {
-    setSideApplicable(this._side, false);
-    this._advance();
-  }
-
-  _onNext() {
-    this._advance();
-  }
-
-  _advance() {
-    // Reset per-side capture controls before moving on.
-    this._photo.reset();
-    this._audio.reset();
-    this._note.value = "";
-    this._composer.hidden = true;
-
-    // Next applicable side after the current one; if none remain, go to review.
-    for (let i = this._sideIndex + 1; i < SIDES.length; i++) {
-      if (getCurrentCheck().sides[SIDES[i]].applicable) {
-        this._sideIndex = i;
-        this._renderSide();
-        this.scrollTo?.({ top: 0 });
-        window.scrollTo?.({ top: 0 });
-        return;
-      }
+  /* ---- grid interactions (add + delete, delegated) ---- */
+  _onGridClick(e) {
+    if (e.target.closest("#add-photo")) {
+      this._openCamera();
+      return;
     }
-    navigate("/review");
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      removeItem(this._side, del.getAttribute("data-del"));
+      this._renderSegments();
+      this._renderShots();
+      this._syncControls();
+    }
   }
 
+  /* ---- navigation ---- */
+  _skip() {
+    skipSide(this._side);
+    this._afterSide();
+  }
+
+  _forward() {
+    // Enabled only once the side has a photo (Skip covers the no-photo path).
+    this._afterSide();
+  }
+
+  // Advance to the next side, or submit after the last.
+  _afterSide() {
+    if (this._isLast) {
+      this._submit();
+      return;
+    }
+    this._sideIndex += 1;
+    this._renderSide();
+    window.scrollTo?.({ top: 0 });
+  }
+
+  async _submit() {
+    const overlay = this.querySelector("#summarising");
+    overlay.hidden = false;
+    try {
+      await submitCheck();
+      navigate("/results");
+    } catch (err) {
+      // Online-only: on any backend/network failure hide the summarising overlay
+      // and surface a retryable error (no local queue — offline is post-MVP).
+      console.error("submitCheck failed", err);
+      overlay.hidden = true;
+      this._showSubmitError();
+    }
+  }
+
+  _showSubmitError() {
+    let el = this.querySelector(".check__error");
+    if (!el) {
+      el = document.createElement("p");
+      el.className = "check__error flow-error";
+      el.setAttribute("role", "alert");
+      this.querySelector(".check__actions")?.insertAdjacentElement(
+        "afterend",
+        el,
+      );
+    }
+    el.textContent =
+      "Couldn’t file this check — the server didn’t respond. Try again.";
+  }
+
+  _cancel() {
+    // Draft is already persisted — leaving keeps it for resume from home.
+    navigate("/today");
+  }
+
+  /* ---- render ---- */
   _renderSide() {
-    const applicable = applicableSides();
-    const stepNum = applicable.indexOf(this._side) + 1;
     this.querySelector("#side-progress").textContent =
-      `Side ${stepNum} of ${applicable.length}`;
-    this.querySelector("#side-title").textContent =
-      `${this._side} side · ${FRONTAGE[this._side]}`;
-    this.querySelector("#side-guidance").textContent =
-      GUIDANCE[this._side] || "";
-
-    const isLast = applicable.indexOf(this._side) === applicable.length - 1;
-    const nextSide = isLast
-      ? null
-      : applicable[applicable.indexOf(this._side) + 1];
-    this.querySelector("#next-side").textContent = isLast
-      ? "Review & submit"
-      : `Next side · ${nextSide}`;
-
-    this._renderStepper();
-    this._renderItems();
+      `Side ${this._sideIndex + 1} of ${SIDES.length}`;
+    this._renderSegments();
+    this._renderShots();
+    this._syncControls();
   }
 
-  _renderStepper() {
+  _renderSegments() {
     const check = getCurrentCheck();
-    this.querySelector("#stepper").innerHTML = SIDES.map((side) =>
-      step({
-        side,
-        current: side === this._side,
-        applicable: check.sides[side].applicable,
-        items: check.sides[side].items,
-      }),
-    ).join("");
+    this.querySelector("#segbar").innerHTML = SIDES.map((side, index) => {
+      const s = check.sides[side];
+      let state;
+      if (index === this._sideIndex) state = "current";
+      else if (s.items.length) state = "captured";
+      else if (s.skipped) state = "skipped";
+      else state = "pending";
+      return segment({ index, state });
+    }).join("");
   }
 
-  _renderItems() {
-    const items = getCurrentCheck().sides[this._side].items;
-    this.querySelector("#item-count").textContent =
-      `${items.length} item${items.length === 1 ? "" : "s"}`;
-    this.querySelector("#item-list").innerHTML = items.map(itemRow).join("");
-    // Upload/analysis reassurance appears once the side has evidence. The live
-    // percentage is representative — in this build captures upload instantly.
-    this.querySelector("#uploadbar").hidden = items.length === 0;
+  // This side's shots as an inline grid, followed by the ＋ "Add photo" tile.
+  // Empty side → the tile stands alone (larger, with a hint).
+  _renderShots() {
+    const items = this._sideState().items;
+    const grid = this.querySelector("#shotgrid");
+    grid.classList.toggle("shotgrid--empty", items.length === 0);
+    grid.innerHTML = items.map(shotTile).join("") + addTile(items.length === 0);
   }
-}
-function timeOf(iso) {
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+
+  _syncControls() {
+    const hasPhoto = this._sideState().items.length > 0;
+    const next = this.querySelector("#next-side");
+    next.disabled = !hasPhoto;
+    next.textContent = this._isLast ? "Submit check" : "Next side ›";
+  }
 }
 
 customElements.define("perimeter-check", PerimeterCheck);

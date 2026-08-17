@@ -10,9 +10,31 @@ import {
 } from "@aws-sdk/client-sqs";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
 import { handler as processSubmission } from "../src/workers/process-submission.js";
+import { handler as analyzeArtifact } from "../src/workers/analyze-artifact.js";
 
 const sqs = new SQSClient({});
 let running = true;
+
+/**
+ * Both flows share SQS_QUEUE_URL, so the local pump — standing in for two
+ * separate Lambda event-source mappings — picks the handler by message shape.
+ * The register handler enqueues an analyze message carrying s3Key + artifactId;
+ * the demo /submissions flow does not. Anything without both goes to the
+ * submission handler (unchanged default).
+ * @param {string | undefined} body
+ * @returns {import("aws-lambda").SQSHandler}
+ */
+function pickHandler(body) {
+  try {
+    const msg = JSON.parse(body ?? "");
+    if (typeof msg?.s3Key === "string" && typeof msg?.artifactId === "string") {
+      return analyzeArtifact;
+    }
+  } catch {
+    // Non-JSON body → fall through to the submission handler.
+  }
+  return processSubmission;
+}
 
 /**
  * Wrap one SQS message in the SQSEvent shape the worker expects.
@@ -56,11 +78,8 @@ async function poll(queueUrl) {
 
     for (const msg of received.Messages ?? []) {
       try {
-        await processSubmission(
-          toSqsEvent(msg),
-          /** @type {any} */ ({}),
-          () => {},
-        );
+        const handler = pickHandler(msg.Body);
+        await handler(toSqsEvent(msg), /** @type {any} */ ({}), () => {});
         // Delete with THIS receive's ReceiptHandle, only on success.
         await sqs.send(
           new DeleteMessageCommand({

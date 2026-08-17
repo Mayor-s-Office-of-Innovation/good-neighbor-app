@@ -5,8 +5,9 @@
 //
 // The service grades each analyzed position; rolling those up into one perimeter
 // grade (worst across sides) is GNP synthesis, so it lives here. This is also the
-// seam the deferred escalation classifier (Step C) consumes — per-category max
-// rating + source artifacts, keyed off the category identity the service returns.
+// seam the escalation classifier (built in handlers/checks.js via task-routing.js,
+// still a placeholder matrix) consumes — per-category max rating + source
+// artifacts, keyed off the category identity the service returns.
 
 /** @typedef {import("./adapt-scorecard.js").AdaptedAssessment} AdaptedAssessment */
 /** @typedef {import("./contract.js").GeneralConditionsLabel} GeneralConditionsLabel */

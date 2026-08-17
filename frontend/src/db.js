@@ -5,18 +5,22 @@
   Stores:
     - site   (keyPath 'id')   : single record, the site this device is bound to
     - checks (keyPath 'id')   : submitted perimeter checks + their findings
+    - draft  (out-of-line)    : the single in-progress check (key 'current'), so a
+                                walk survives reload / app-close and can be resumed
+                                from home. Photos ride inline as JPEG data-URLs.
 
-  A submitted check record is self-contained for v1 (its sides/items summary and
-  findings live on the record) — deliberately NOT normalized into separate item/
-  finding stores yet. The normalized schema is reworked against the backend at
-  migration (see docs/take5-plan.md: "keep it light — don't over-build the DB").
-
-  Records except 'site' carry siteId + synced:false so a later sync layer drops in
-  without touching the UI.
+  Submitted checks now live in the backend (DynamoDB), written on submit and read
+  on load via services/api.js — the app is online-only for the submit/review path
+  (docs/archive/frontend-api-wiring-plan.md). The local `checks` store is retained only as
+  demo/seed scaffolding (demo/seed.js) and is not on the submit path; there is no
+  `synced` flag or sync queue, because offline is deferred to post-MVP.
 */
 
 const DB_NAME = "conditions-reporter";
-const DB_VERSION = 2; // v2: dropped prototype reports/tasks stores, added checks
+// v4: `draft` store. (Bumped past 3 to force onupgradeneeded to re-run for anyone
+// whose DB recorded v3 during development before the draft store landed — the
+// creation below is idempotent, so a fresh install and any older version converge.)
+const DB_VERSION = 4;
 
 let _dbPromise = null;
 
@@ -38,9 +42,28 @@ function openDb() {
         s.createIndex("bySite", "siteId");
         s.createIndex("bySubmittedAt", "submittedAt");
       }
+      // Out-of-line key: the check keeps its own generated `id`, and there is only
+      // ever one active draft, stored under the fixed key "current".
+      if (!db.objectStoreNames.contains("draft")) {
+        db.createObjectStore("draft");
+      }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // If another tab later requests a newer version, don't wedge its upgrade —
+      // close this connection so the version change can proceed.
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
+    // A stale connection in another tab is holding the old version open. Surface it
+    // rather than hanging silently; the versionchange handler above prevents it.
+    req.onblocked = () =>
+      reject(
+        new Error(
+          "IndexedDB upgrade blocked — close other tabs of this app and reload.",
+        ),
+      );
   });
   return _dbPromise;
 }
@@ -111,4 +134,16 @@ export async function getChecksForSite(siteId) {
 }
 export async function clearChecks() {
   return tx("checks", "readwrite", (os) => os.clear());
+}
+
+/* ---- draft (single resumable in-progress check, key 'current') ---- */
+export async function getDraft() {
+  return tx("draft", "readonly", (os) => reqToPromise(os.get("current")));
+}
+export async function saveDraft(check) {
+  await tx("draft", "readwrite", (os) => os.put(check, "current"));
+  return check;
+}
+export async function clearDraft() {
+  return tx("draft", "readwrite", (os) => os.delete("current"));
 }

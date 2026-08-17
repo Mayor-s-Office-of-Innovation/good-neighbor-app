@@ -16,9 +16,21 @@ import { randomUUID } from "node:crypto";
  * @param {Record<string, string | string[] | undefined>} args.headers  Node req.headers (already lowercased)
  * @param {string} [args.body]    Raw request body
  * @param {string} args.defaultSub  Fallback `sub` when no X-Debug-Sub header is present
+ * @param {Record<string, string>} [args.pathParameters]  Path params extracted by the router (e.g. `{ checkId }`)
+ * @param {Record<string, string>} [args.queryStringParameters]  Parsed query string (undefined when empty)
+ * @param {string} [args.rawQueryString]  The raw query string (without the leading "?")
  * @returns {object} an APIGatewayProxyEventV2WithJWTAuthorizer-shaped event
  */
-export function buildProxyEvent({ method, path, headers, body, defaultSub }) {
+export function buildProxyEvent({
+  method,
+  path,
+  headers,
+  body,
+  defaultSub,
+  pathParameters,
+  queryStringParameters,
+  rawQueryString = "",
+}) {
   // Node lowercases header names already; normalize to plain strings so the
   // handler's `event.headers["idempotency-key"]` lookup matches API Gateway,
   // which delivers header names lowercased.
@@ -38,8 +50,12 @@ export function buildProxyEvent({ method, path, headers, body, defaultSub }) {
     version: "2.0",
     routeKey: `${method} ${path}`,
     rawPath: path,
-    rawQueryString: "",
+    rawQueryString,
     headers: flatHeaders,
+    // API Gateway omits these keys entirely when there are no params; handlers
+    // read them with optional chaining, so mirror that (undefined, not {}).
+    ...(pathParameters ? { pathParameters } : {}),
+    ...(queryStringParameters ? { queryStringParameters } : {}),
     requestContext: {
       accountId: "000000000000",
       apiId: "local",

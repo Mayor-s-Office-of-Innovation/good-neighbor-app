@@ -1,7 +1,7 @@
 # Transcription spike (throwaway)
 
 Proves the **client-direct** live-transcription pipeline before we touch the app or build the
-backend — see `../../docs/transcription-architecture.md` §5.1.
+backend — see `../../docs/archive/transcription-architecture.md` §5.1.
 
 ```
 mic ─getUserMedia─▶ AudioContext ─▶ pcm-worklet (16 kHz Int16 PCM)
