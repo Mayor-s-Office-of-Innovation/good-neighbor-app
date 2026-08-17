@@ -27,6 +27,7 @@ export default defineConfig({
     // S3 PUTs go straight to their own origin and never touch this proxy.
     proxy: {
       "/v1": "http://localhost:3000",
+      "/site-code": "http://localhost:3000",
       "/health": "http://localhost:3000",
     },
   },
