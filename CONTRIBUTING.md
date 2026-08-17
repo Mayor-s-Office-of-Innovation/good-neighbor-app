@@ -29,7 +29,7 @@ When you write a comment, issue, or PR description, use your own words. Grammar 
 2. Never let an LLM think for you
 Feel free to use AI to write code, tests, or point you in the right direction. But always understand what it's written before contributing it. Take personal responsibility for your contributions. Don't say "ChatGPT says..." – tell us what you think.
 
-For more context, see Using AI in open source.
+For more context, see Using <a href="https://roe.dev/blog/using-ai-in-open-source">AI in open source</a>.
 
 ## Commit Signing
 
