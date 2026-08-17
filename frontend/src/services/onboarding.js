@@ -67,8 +67,8 @@ export function formatSiteCode(code) {
 
 function apiBaseUrl() {
   const env =
-    /** @type {{ env?: { VITE_API_BASE_URL?: string } }} */ (import.meta)
-      .env || {};
+    /** @type {{ env?: { VITE_API_BASE_URL?: string } }} */ (import.meta).env ||
+    {};
   const configured = env.VITE_API_BASE_URL;
   if (configured) return configured.replace(/\/$/, "");
   return isLocalHost() ? localDevApiBaseUrl() : "";

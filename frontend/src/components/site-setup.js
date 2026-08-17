@@ -14,7 +14,10 @@ const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 class SiteSetup extends HTMLElement {
   connectedCallback() {
     const code = formatSiteCode(readCodeFromUrl());
-    this._digits = code.padEnd(CODE_LENGTH, " ").slice(0, CODE_LENGTH).split("");
+    this._digits = code
+      .padEnd(CODE_LENGTH, " ")
+      .slice(0, CODE_LENGTH)
+      .split("");
     this._digits = this._digits.map((digit) => digit.trim());
     this._checking = false;
     this._error = "";
