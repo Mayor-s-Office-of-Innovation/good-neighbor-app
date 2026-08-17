@@ -180,16 +180,16 @@ form > wa-button[type="submit"] {
   padding: 2rem 1rem;
 }
 .login__panel {
-  width: min(100%, 620px);
+  width: min(100%, 440px);
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 32px;
   text-align: center;
 }
 .login__mark {
   width: 160px;
   height: 160px;
-  margin-bottom: 2.2rem;
   border-radius: 4px;
   background-color: #f6f6f6;
   background-image:
@@ -207,28 +207,28 @@ form > wa-button[type="submit"] {
 .login__copy h1 {
   margin: 0;
   color: #000000;
-  font-size: 1.9rem;
-  font-weight: 750;
-  line-height: 1.15;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 40px;
 }
 .login__copy p {
-  max-width: 29rem;
-  margin: 0.25rem auto 0;
+  max-width: 100%;
+  margin: 0;
   color: #000000;
-  font-size: 1.9rem;
-  line-height: 1.18;
+  font-size: 32px;
+  line-height: 40px;
   text-wrap: balance;
 }
 .login__form {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 2.2rem;
+  margin-top: 0;
 }
 .code-boxes {
   display: grid;
-  grid-template-columns: repeat(3, 48px) 28px repeat(3, 48px);
-  column-gap: 10px;
+  grid-template-columns: repeat(3, 48px) 15px repeat(3, 48px);
+  column-gap: 8px;
   align-items: center;
   justify-content: space-between;
   margin: 0;
@@ -254,29 +254,29 @@ form > wa-button[type="submit"] {
   background: transparent;
   box-shadow: none;
   color: #000000;
-  font: inherit;
-  font-size: 1.15rem;
-  line-height: 1;
+  font-family: Roboto, var(--font-sans);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
   text-align: center;
 }
 .code-cell__pin {
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
   border: 2px solid #c9cfd6;
   border-radius: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 .code-box:focus {
-  border-color: var(--brand-blue);
-  outline: 2px solid color-mix(in srgb, var(--brand-blue), transparent 72%);
-  outline-offset: 0;
+  border-color: #4c6ef5;
+  outline: none;
 }
 .code-box--error {
-  border-color: #ff474d;
-  color: #ff333a;
+  border-color: #fa5252;
+  color: #fa5252;
 }
 .code-boxes__dash {
   width: 15px;
@@ -291,47 +291,47 @@ form > wa-button[type="submit"] {
   justify-self: center;
 }
 .login__error {
-  min-height: 1.5rem;
-  margin: 1rem 0 0;
-  color: #ff333a;
-  font-size: 1rem;
-  line-height: 1.4;
+  margin: 32px 0 0;
+  color: #fa5252;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
 }
 .login__error[hidden] {
-  display: block;
-  visibility: hidden;
+  display: none;
 }
-.login__continue {
+.btn-ink.login__continue {
   display: inline-grid;
   place-items: center;
-  width: 144px;
-  height: 56px;
-  min-width: 144px;
-  min-height: 56px;
-  padding: 0;
-  border-radius: var(--radius-pill);
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 32px;
+  border-radius: 32px;
   background: #212529;
-  color: #ffffff;
-  font-size: 1.125rem;
+  color: #f8f9fa;
+  font-size: 20px;
   font-weight: 400;
-  margin-top: 1.45rem;
+  line-height: 32px;
+  margin-top: 32px;
 }
-.login__form--error .login__continue {
-  margin-top: 2.1rem;
+.login__form--error .btn-ink.login__continue {
+  margin-top: 16px;
 }
-.login__continue:disabled {
+.btn-ink.login__continue:disabled {
   cursor: not-allowed;
   background: #e9ecef;
-  color: #a8b0ba;
+  color: #adb5bd;
 }
-.login__continue:not(:disabled) {
+.btn-ink.login__continue:not(:disabled) {
   cursor: pointer;
   background: #212529;
-  color: #ffffff;
+  color: #f8f9fa;
 }
-.login__continue wa-spinner {
-  font-size: 1.45rem;
-  color: #a8b0ba;
+.btn-ink.login__continue wa-spinner {
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+  color: #adb5bd;
   --track-width: 3px;
 }
 
@@ -342,7 +342,6 @@ form > wa-button[type="submit"] {
   .login__mark {
     width: 132px;
     height: 132px;
-    margin-bottom: 1.8rem;
   }
   .login__copy h1,
   .login__copy p {
