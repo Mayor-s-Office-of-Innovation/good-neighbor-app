@@ -237,10 +237,10 @@ theme-toggle {
 }
 
 /* ==================================================================
-   Home hub — screen (12) "check due" (design port). One bordered card,
-   hairline-divided sections: site header / status hero / streak
-   sparkline / city-actions footer. All values from tokens.css; button
-   size + fill measured from the wireframe PNG (#262626, ~46px, ~1rem).
+   Home hub — screen (12) "check due" (MVP design trim). One bordered
+   card: global site header, the last-log summary, and a bottom-pinned
+   full-width Start button. All values from tokens.css; button size +
+   fill measured from the wireframe PNG (#262626, ~46px, ~1rem).
    ================================================================== */
 
 /* The shell header is hidden on the home route (each screen owns its header,
@@ -270,35 +270,23 @@ theme-toggle {
   border-top: 1px solid var(--c-line);
 }
 
-/* Site header (seal + name + last check) */
+/* Global site header (neutral avatar + name) */
 .sitehead {
   display: flex;
   align-items: center;
   gap: 0.8rem;
 }
-.sitehead__seal {
+.sitehead__avatar {
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 1.5px solid var(--text);
-  color: var(--text);
-}
-/* Placeholder seal — the optimized SF seal PNG drops in here (MVP-TODO). */
-.sitehead__seal wa-icon {
-  font-size: 1.2rem;
+  background: var(--surface-3);
 }
 .sitehead__name {
   font-size: 1.2rem;
   font-weight: 600;
   line-height: 1.2;
-}
-.sitehead__meta {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  margin: 0.1rem 0 0;
 }
 
 /* Status hero (centered) */
@@ -362,91 +350,71 @@ theme-toggle {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
 }
-
-/* Streak sparkline — multi-day compliance history */
-.streakhead {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.streakhead__label {
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-}
-.streakhead__count {
-  font-weight: 700;
-  font-size: 1.25rem;
-}
-.spark {
-  position: relative;
-  margin: 1.4rem 0 0.3rem;
-}
-.spark__guide {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  border-top: 1px dashed var(--c-line);
-}
-.spark__guide span {
-  position: absolute;
-  top: -1.15rem;
-  left: 0;
-  font-size: 0.8rem;
-  color: var(--text-faint);
-}
-.spark__bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 5px;
-  height: 84px;
-  padding-top: 4px;
-}
-.spark__bar {
-  flex: 1;
-  border-radius: 3px;
-  background: var(--text);
-  min-height: 3px;
-}
-/* Solid faint fill (no opacity) so partial days meet 1.4.11 non-text 3:1. */
-.spark__bar--partial {
-  background: var(--text-faint);
-}
-.spark__bar--today {
-  background: transparent;
-  border: 1.5px dashed var(--brand-blue);
-}
-.spark__axis {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-faint);
-  font-size: 0.82rem;
-  margin-top: 0.5rem;
-}
-
-/* City-actions footer */
-.cityfoot {
+/* Full-width variant with a leading icon (home Start button). */
+.btn-ink--block {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  justify-content: center;
+  gap: 0.55rem;
+  width: 100%;
 }
-.cityfoot__text {
-  font-size: 1rem;
+.btn-ink--block wa-icon {
+  font-size: 1.15rem;
 }
-.cityfoot__link {
-  color: var(--brand-blue);
+
+/* "Check due" screen (MVP design trim): a tall card with the last-log summary
+   pinned to the top and the Start button to the bottom. No section dividers. */
+.screen--due {
+  display: flex;
+  flex-direction: column;
+  min-height: min(78vh, 620px);
+}
+.screen--due .screen__sec + .screen__sec {
+  border-top: 0;
+}
+.screen--due .home-cta {
+  margin-top: auto; /* push the Start button to the bottom of the card */
+}
+/* "Start over" — a faint secondary link under the Resume button (draft present). */
+.home-cta__link {
+  display: block;
+  width: 100%;
+  margin-top: 0.7rem;
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
   font-weight: 600;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px; /* WCAG 2.2 AA 2.5.8 target size */
-  padding: 0 0.35rem;
+  color: var(--text-secondary);
+  padding: 0.3rem;
+  box-shadow: none;
+  height: auto;
 }
-.cityfoot__link:focus-visible {
+.home-cta__link:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
   border-radius: 6px;
+}
+
+/* Last-log summary block */
+.lastlog {
+  padding-top: 0.5rem;
+}
+.lastlog__eyebrow {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin: 0 0 0.6rem;
+}
+.lastlog__headline {
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+  text-wrap: balance;
 }
 
 /* ==================================================================
@@ -649,7 +617,8 @@ theme-toggle {
   color: var(--brand-blue);
   background: var(--brand-blue-bg);
 }
-.pill--pending {
+.pill--pending,
+.pill--sev {
   color: var(--text-secondary);
   background: var(--surface-3);
 }
@@ -780,6 +749,16 @@ theme-toggle {
   color: var(--text-secondary);
   font-size: 0.95rem;
 }
+/* Submit failure (online-only path): a retryable error shown above the CTA. */
+.flow-error {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.6rem;
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+  font-size: 0.95rem;
+  text-align: center;
+}
 /* A two-part footer: a link on the left, a faint note on the right (screen 14) */
 .flow-foot--split {
   display: flex;
@@ -804,303 +783,250 @@ theme-toggle {
   border-radius: 4px;
 }
 
-/* ---- Screen (14) capture: stepper ---- */
-.stepper {
-  display: flex;
-  gap: 0.55rem;
-  margin-bottom: 1.1rem;
-}
-.step {
-  flex: 1;
-  min-width: 0;
-  text-align: center;
-}
-.step__track {
-  height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  margin-bottom: 0.5rem;
-}
-.step--done .step__track {
-  background: var(--ink);
-}
-.step--current .step__track {
-  background: var(--brand-blue);
-}
-.step__name {
-  font-weight: 600;
-  font-size: 0.98rem;
-  color: var(--text);
-}
-.step--current .step__name,
-.step--current .step__state {
-  color: var(--brand-blue);
-}
-.step--todo .step__name {
-  color: var(--text-secondary);
-}
-.step__state {
-  font-size: 0.88rem;
-  color: var(--text-secondary);
-}
+/* ==================================================================
+   Screen 5c capture — native camera handoff (MVP). A 3-part top bar, a
+   4-segment progress pill, then a per-side photo grid whose ＋ tile opens
+   the device camera / file picker. Replaces the earlier in-app live
+   viewfinder + shutter (see docs/mvp-design-trim-plan.md).
+   ================================================================== */
 
-/* ---- Screen (14) capture: GPS-locked viewfinder ---- */
-.viewfinder {
-  position: relative;
-  background: var(--surface-3);
-  border-radius: 18px;
-  padding: 1rem;
-  min-height: 240px;
-  overflow: hidden;
-  margin-bottom: 1.4rem;
-}
-/* Faint X guides + dashed frame — decorative viewfinder chrome */
-.viewfinder::before,
-.viewfinder::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-      to top right,
-      transparent calc(50% - 0.5px),
-      var(--c-line) 50%,
-      transparent calc(50% + 0.5px)
-    ),
-    linear-gradient(
-      to bottom right,
-      transparent calc(50% - 0.5px),
-      var(--c-line) 50%,
-      transparent calc(50% + 0.5px)
-    );
-  pointer-events: none;
-}
-.viewfinder::after {
-  inset: 26% 18%;
-  background: none;
-  border: 1.5px dashed var(--text-faint);
-  border-radius: 14px;
-  opacity: 0.55;
-}
-.viewfinder__card {
-  position: relative;
-  z-index: 1;
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
-  box-shadow: var(--shadow);
-}
-.viewfinder__title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.viewfinder__guidance {
-  margin: 0.25rem 0 0;
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-  line-height: 1.4;
-}
-.viewfinder__gps {
-  position: absolute;
-  z-index: 1;
-  left: 1rem;
-  bottom: 1rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow);
-}
-
-/* ---- Screen (14) capture: the Voice / Photo / Note trio ---- */
-.capture {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  justify-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-.capture__tile {
-  appearance: none;
+/* The screen is a full-height column: fixed top bar + pill, then the camera
+   flex-grows to fill everything above the shot strip + shutter row. */
+.view-check.check {
   display: flex;
   flex-direction: column;
+  min-height: 100dvh;
+  padding-bottom: 1rem;
+}
+
+/* The check screen owns its own top bar (not the shared .topbar): Cancel /
+   "Side N of 4" / Skip side. */
+.check__bar {
+  display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 0 0.9rem;
+}
+.check__cancel,
+.check__skip {
+  appearance: none;
   background: none;
   border: 0;
   cursor: pointer;
   font: inherit;
-  color: var(--text);
+  font-weight: 600;
+  color: var(--brand-blue);
+  padding: 0.2rem 0;
   box-shadow: none;
   margin: 0;
-  padding: 0;
   height: auto;
-}
-.capture__box {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 68px;
-  border-radius: 16px;
-  border: 1.5px solid var(--c-line);
-  background: var(--surface);
-  font-size: 1.3rem;
-  color: var(--text);
+  gap: 0.15rem;
 }
-.capture__box--note {
-  font-weight: 700;
-  font-size: 1.5rem;
-}
-/* Photo is the primary: a big filled ink circle with a thin ring */
-.capture__box--photo {
-  width: 92px;
-  height: 92px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--on-ink);
-  border: 3px solid var(--surface);
-  box-shadow: 0 0 0 2px var(--ink);
-  font-size: 1.6rem;
-}
-.capture__label {
-  font-size: 0.95rem;
-}
-.capture__tile:focus-visible .capture__box {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-}
-/* Voice tile while recording: ink dot pulses to a hazard-red square cue */
-.capture__tile.is-recording .capture__box {
-  border-color: var(--c-hazard);
-  color: var(--c-hazard);
-}
-
-/* Note composer (revealed when the Note tile is tapped) */
-.note-composer {
-  margin-bottom: 1.4rem;
-}
-.note-composer[hidden] {
-  display: none;
-}
-.note-composer wa-textarea {
-  width: 100%;
-  display: block;
-  margin-bottom: 0.6rem;
-}
-
-/* ---- Screen (14) capture: on-this-side items ---- */
-.sideitems__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.7rem;
-}
-.sideitems__title {
-  font-weight: 700;
+.check__cancel wa-icon {
   font-size: 1rem;
 }
-.sideitems__hint {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-}
-.sideitems {
-  list-style: none;
-  margin: 0 0 1.2rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-}
-.sideitem {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: 14px;
-  padding: 0.8rem 0.9rem;
-}
-.sideitem__thumb {
-  flex: 0 0 auto;
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
-  object-fit: cover;
-  background: var(--surface-3);
-}
-.sideitem__icon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
-  background: var(--surface-3);
-  color: var(--text-secondary);
-  font-size: 1.2rem;
-}
-.sideitem__body {
-  flex: 1;
-  min-width: 0;
-}
-.sideitem__title {
-  margin: 0;
+.check__side {
   font-weight: 700;
-  font-size: 1.02rem;
+  font-size: 1.05rem;
 }
-.sideitem__detail {
-  margin: 0.15rem 0 0;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  overflow-wrap: anywhere;
-}
-.sideitem__action {
-  flex: 0 0 auto;
-  appearance: none;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font: inherit;
-  padding: 0.3rem 0.4rem;
-  box-shadow: none;
-  margin: 0;
-  height: auto;
-}
-.sideitem__action:focus-visible {
+.check__cancel:focus-visible,
+.check__skip:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
   border-radius: 6px;
 }
 
-/* Upload progress line (61% pill + status text) */
-.uploadbar {
+/* 4-segment progress pill. Color reinforces; each segment also carries an
+   aria-label state (never color alone — WCAG 1.4.1). */
+.segbar {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.1rem;
+}
+.seg {
+  flex: 1;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+}
+.seg--captured {
+  background: var(--ink);
+}
+.seg--current {
+  background: var(--brand-blue);
+}
+.seg--skipped {
+  background: none;
+  border: 1.5px dashed var(--text-faint);
+  height: 2px;
+}
+
+/* This side's shots as a responsive grid; the ＋ tile is the last cell. The grid
+   flex-grows to fill the space the viewfinder used to, scrolling if it overflows. */
+.shotgrid {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 220px;
+  margin-bottom: 1rem;
+}
+/* Empty side: the lone ＋ tile stands centered instead of tiling. */
+.shotgrid--empty {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  margin-bottom: 1.3rem;
+  justify-content: center;
 }
-.uploadbar__pct {
-  flex: 0 0 auto;
-  background: var(--brand-blue-bg);
+
+/* A captured shot tile: square photo + a delete button. */
+.shot {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.shot__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.shot__del {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+}
+.shot__del:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+/* ＋ "Add photo" tile — opens the native camera (phone) / file picker (desktop).
+   Compact grid cell by default; larger + centered with a hint on an empty side. */
+.addshot {
+  appearance: none;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: 2px dashed var(--c-line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  box-shadow: none;
+  margin: 0;
+  padding: 0.4rem;
+  min-width: 0;
+  overflow: hidden;
+  text-align: center;
+}
+.addshot__label {
+  font-weight: 600;
+  font-size: 0.72rem;
+  line-height: 1.15;
+}
+.addshot__hint {
+  font-size: 0.85rem;
+  color: var(--text-faint);
+}
+.addshot--empty {
+  aspect-ratio: auto;
+  width: min(100%, 260px);
+  padding: 2.4rem 1.5rem;
+  gap: 0.5rem;
+}
+.addshot--empty .addshot__label {
+  font-size: 1.05rem;
+}
+.addshot:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+/* Bottom action row: full-width forward button ("Next side ›" / "Submit check"). */
+.check__actions {
+  padding-top: 0.2rem;
+}
+.check__next {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  width: 100%;
+  background: var(--ink);
+  color: var(--on-ink);
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius-pill);
+  height: auto;
+  box-shadow: none;
+  margin: 0;
+}
+.check__next:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.check__next:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+/* AI-summary loading state shown during submit (the cheap "Summarising…"). */
+.summarising {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: var(--bg);
+  text-align: center;
+}
+.summarising[hidden] {
+  display: none;
+}
+.summarising__eyebrow {
+  margin: 0;
   color: var(--brand-blue);
   font-weight: 700;
-  font-size: 0.9rem;
-  padding: 0.3rem 0.55rem;
-  border-radius: 8px;
+  letter-spacing: 0.04em;
+  font-size: 0.95rem;
 }
-.uploadbar__text {
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-  line-height: 1.35;
+.summarising__spinner {
+  font-size: 2rem;
+  --track-width: 3px;
+}
+.summarising__text {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
 }
 
 /* ---- Screen (15) review + (16) results: coverage / evidence rows ---- */

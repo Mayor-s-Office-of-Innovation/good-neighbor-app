@@ -4,7 +4,7 @@
 builds on [data model](./dynamodb-data-model.md) · reconciles with
 [buildout Phase 2](./dynamodb-buildout-plan.md)*
 
-**Status:** Proposed — runnable build plan · **Date:** 2026-08-13 (contract re-pinned 2026-08-14) · **Owner:** team
+**Status:** In build — Steps A–D + C shipped & green; the **live analyze path is proven end-to-end via the local harness (2026-08-16)** against the deployed analyzer (presign → worker → `x-api-key` call → `ANALYSIS#`/`TASK#`). **Remaining:** Step E (Terraform packaging + Secrets Manager key retrieval + real `sharp` resize) and the prod-only bits (real per-photo GPS). · **Date:** 2026-08-13 (contract re-pinned 2026-08-14; status updated 2026-08-16) · **Owner:** team
 
 This is the missing build doc for the seam that turns a captured perimeter check into persisted,
 scored, per-site data. The **direction** is fully decided across D1 (server-mediated, **presigned
@@ -320,8 +320,8 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   > `npm run test/typecheck/lint -w backend` (and the root `npm test`) are green (20 tests). The
   > adapted per-artifact list is named `concerns[]`. **Simplified 2026-08-14:** an earlier draft also
   > vendored a `rubric-meta.js` weighting map (+ unknown-category flagging); it was dropped — the
-  > service owns the rubric/grade and returns no weighting, so we carry no cross-repo copy. B–F not
-  > started.
+  > service owns the rubric/grade and returns no weighting, so we carry no cross-repo copy. B and C
+  > are now landed too (see their as-built notes); D–F remain.
 - **B. Analyzer client** — a thin `analyzer-client` (base URL + `x-api-key` from Secrets Manager,
   `storage:false`, retry/backoff, error mapping). Behind an interface so tests inject a **stub**
   (mirrors the analyzer's own fake-model-client testing approach). Runs green before the service
@@ -333,6 +333,18 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   Conditional writes for idempotency/ownership; the worker is idempotent on `checkId#artifactId`.
   Unit-tested with a mocked Document Client + mocked S3/analyzer (as `process-submission.test.js`
   does today).
+  > **As-built (2026-08-14):** shipped under `backend/src/` — `handlers/checks.js`
+  > (`createCheck`, `completeCheck`, `listChecks`, `getCheck`), `handlers/artifacts.js`
+  > (`presignUpload`, `registerArtifact`, `presignMedia`), `workers/analyze-artifact.js`,
+  > plus shared `handlers/keys.js`, `lib/principal.js`, `s3.js`, `media/downscale.js`,
+  > `analysis/task-routing.js`, `analysis/api-key.js`. All conditional/transactional writes
+  > and worker idempotency are covered by mocked-SDK Vitest specs; `lint`/`typecheck`/`test`
+  > (79 tests)/`prettier --check` green. **Deferred to E/F as planned:** `downscaleImage` is a
+  > passthrough seam (real `sharp` resize is Step E packaging); `getAnalyzerApiKey()` reads
+  > `ANALYZER_API_KEY` from env (Secrets Manager fetch is Step E); the escalation matrix in
+  > `task-routing.js` is a **placeholder** pending the product team's real mapping. The old
+  > `submissions.js`/`process-submission.js` receipt path is left intact (router swap is Step D).
+  > See [architecture.md](./architecture.md) for the as-built container + sequence + ER diagrams.
 - **D. Local harness wiring** — add the routes to the in-process `local-api` router, a **local S3**
   (MinIO — previously deferred) for presigned PUT/GET + the worker's GET, and a stub analyzer
   endpoint, so `curl → create → presign → PUT to S3 → register → worker analyzes (stub) → complete →
