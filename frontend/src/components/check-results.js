@@ -55,6 +55,7 @@ function confidence(f, i) {
 class CheckResults extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
+    this._siteId = this._site.siteId || this._site.id;
 
     const session = getCurrentCheck();
     let findings, evidence, items;

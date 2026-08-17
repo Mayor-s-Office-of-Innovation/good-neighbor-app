@@ -24,9 +24,15 @@ import {
 import { listTasks } from "../src/handlers/tasks.js";
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
+import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 
-const PORT = 3000;
+const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
+const LOCAL_CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "content-type,idempotency-key,x-debug-sub",
+};
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -64,6 +70,7 @@ function route(method, pattern, handler) {
 
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
+  route("POST", "/site-code", siteCodeHandler),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
@@ -118,10 +125,23 @@ const server = createServer(async (req, res) => {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
+
+  if (method === "OPTIONS") {
+    res.writeHead(204, {
+      ...LOCAL_CORS_HEADERS,
+      "access-control-max-age": "86400",
+    });
+    res.end();
+    return;
+  }
+
   const matched = matchRoute(method, path);
 
   if (!matched) {
-    res.writeHead(404, { "content-type": "application/json" });
+    res.writeHead(404, {
+      "content-type": "application/json",
+      ...LOCAL_CORS_HEADERS,
+    });
     res.end(JSON.stringify({ error: "not found", method, path }));
     return;
   }
@@ -160,12 +180,21 @@ const server = createServer(async (req, res) => {
     );
 
     const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
-    res.writeHead(statusCode, /** @type {any} */ (headers));
+    res.writeHead(
+      statusCode,
+      /** @type {any} */ ({
+        ...headers,
+        ...LOCAL_CORS_HEADERS,
+      }),
+    );
     res.end(resBody);
     console.log(`[api] ${method} ${path} → ${statusCode}`);
   } catch (err) {
     console.error(`[api] ${method} ${path} threw:`, err);
-    res.writeHead(500, { "content-type": "application/json" });
+    res.writeHead(500, {
+      "content-type": "application/json",
+      ...LOCAL_CORS_HEADERS,
+    });
     res.end(JSON.stringify({ error: "internal error" }));
   }
 });

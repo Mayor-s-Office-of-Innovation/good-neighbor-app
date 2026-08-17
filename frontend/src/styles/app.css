@@ -164,6 +164,198 @@ form > wa-button[type="submit"] {
   width: 100%;
 }
 
+/* ---- Code login ---- */
+.app__main:has(.login) {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: #ffffff;
+}
+.login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: #000000;
+  padding: 2rem 1rem;
+}
+.login__panel {
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  text-align: center;
+}
+.login__mark {
+  width: 160px;
+  height: 160px;
+  border-radius: 4px;
+  background-color: #f6f6f6;
+  background-image: linear-gradient(45deg, #eeeeee 25%, transparent 25%),
+    linear-gradient(-45deg, #eeeeee 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eeeeee 75%),
+    linear-gradient(-45deg, transparent 75%, #eeeeee 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.login__copy h1 {
+  margin: 0;
+  color: #000000;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 40px;
+}
+.login__copy p {
+  max-width: 100%;
+  margin: 0;
+  color: #000000;
+  font-size: 32px;
+  line-height: 40px;
+  text-wrap: balance;
+}
+.login__form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 0;
+}
+.code-boxes {
+  display: grid;
+  grid-template-columns: repeat(3, 48px) 15px repeat(3, 48px);
+  column-gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.code-cell {
+  position: relative;
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+.code-box {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  padding: 5px 0;
+  border: 1px solid #dee2e6;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: #000000;
+  font-family: Roboto, var(--font-sans);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
+  text-align: center;
+}
+.code-cell__pin {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 17px;
+  height: 17px;
+  border: 2px solid #c9cfd6;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.code-box:focus {
+  border-color: #4c6ef5;
+  outline: none;
+}
+.code-box--error {
+  border-color: #fa5252;
+  color: #fa5252;
+}
+.code-boxes__dash {
+  width: 15px;
+  height: 28px;
+  color: #000000;
+  font-family: Roboto, var(--font-sans);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 28px;
+  letter-spacing: 0;
+  text-align: center;
+  justify-self: center;
+}
+.login__error {
+  margin: 32px 0 0;
+  color: #fa5252;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+.login__error[hidden] {
+  display: none;
+}
+.btn-ink.login__continue {
+  display: inline-grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 32px;
+  border-radius: 32px;
+  background: #212529;
+  color: #f8f9fa;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 32px;
+  margin-top: 32px;
+}
+.login__form--error .btn-ink.login__continue {
+  margin-top: 16px;
+}
+.btn-ink.login__continue:disabled {
+  cursor: not-allowed;
+  background: #e9ecef;
+  color: #adb5bd;
+}
+.btn-ink.login__continue:not(:disabled) {
+  cursor: pointer;
+  background: #212529;
+  color: #f8f9fa;
+}
+.btn-ink.login__continue wa-spinner {
+  width: 32px;
+  height: 32px;
+  font-size: 32px;
+  color: #adb5bd;
+  --track-width: 3px;
+}
+
+@media (max-width: 480px) {
+  .login {
+    padding-inline: 0;
+  }
+  .login__mark {
+    width: 132px;
+    height: 132px;
+  }
+  .login__copy h1,
+  .login__copy p {
+    font-size: 1.65rem;
+  }
+  .code-boxes {
+    grid-template-columns: repeat(3, 44px) 22px repeat(3, 44px);
+    column-gap: 7px;
+  }
+  .code-cell {
+    width: 44px;
+    height: 48px;
+  }
+}
+
 /* ---- First-run setup / onboarding ----
    Onboarding reuses the home-hub card system (.home > .screen > .screen__sec),
    the brand .sitehead, the centered .hero, and the ink/outline pills — so first
