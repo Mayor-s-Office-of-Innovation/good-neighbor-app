@@ -1,12 +1,12 @@
 # Plan: DynamoDB Buildout (table → app cutover → analytics)
 
-*DynamoDB planning set (doc 5 of 5) · [index](./README.md) · ← [local-dev plan](./local-dev-environment-plan.md)*
+*DynamoDB planning set (doc 5 of 5) · [index](./README.md) · ← [local-dev plan](./archive/local-dev-environment-plan.md)*
 
-**Status:** Proposed — runnable build plan, pending decisions in Phase 0
+**Status:** Accepted — direction decided ([ADR 0002](./adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
 **Date:** 2026-08-12
 **Ties together:** the [decision](./dynamodb-database-decision.md), the
 [data model](./dynamodb-data-model.md), the [analytics addendum](./analytics-plane-addendum.md),
-and the local/cloud split in the [local-dev plan](./local-dev-environment-plan.md).
+and the local/cloud split in the [local-dev plan](./archive/local-dev-environment-plan.md).
 
 End-to-end plan to stand up DynamoDB as the operational store and the city-wide reporting
 plane — all in Terraform, applied through CI (never local `apply`), per the architecture
@@ -83,7 +83,7 @@ before, keyed on `requestId`. Two things are **deliberately deferred**, not done
 - **Test depth.** The worker is proven by a **dependency-free unit test** (mocked Document Client,
   asserts the conditional `Put` and the replay `Update`). The end-to-end `curl → SQS → worker →
   DynamoDB Local` loop waits on the **Docker-free local harness** (its own MVP-TODO line / the
-  [local-dev plan](./local-dev-environment-plan.md)).
+  [local-dev plan](./archive/local-dev-environment-plan.md)).
 
 ## Phase 3 — Seed representative data
 

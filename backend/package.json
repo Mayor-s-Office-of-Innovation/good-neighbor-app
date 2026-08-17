@@ -10,11 +10,13 @@
     "typecheck": "tsc -p tsconfig.json",
     "local:ddb": "node scripts/local-ddb.mjs",
     "local:mq": "node scripts/local-mq.mjs",
-    "local:services": "concurrently -k -n ddb,mq \"npm:local:ddb\" \"npm:local:mq\"",
+    "local:minio": "node --env-file=../.env.local scripts/local-minio.mjs",
+    "local:services": "concurrently -k -n ddb,mq,minio \"npm:local:ddb\" \"npm:local:mq\" \"npm:local:minio\"",
     "local:bootstrap": "node --env-file=../.env.local scripts/local-bootstrap.mjs",
     "local:api": "node --env-file=../.env.local scripts/local-api.mjs",
     "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",
     "db:gui": "DYNAMO_ENDPOINT=http://localhost:8000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local dynamodb-admin",
+    "analyze:smoke": "node --env-file=.env scripts/analyze-smoke.mjs",
     "dev": "concurrently -k -n svc,api,worker \"npm:local:services\" \"npm:local:api\" \"npm:local:worker\""
   },
   "dependencies": {
@@ -22,7 +24,8 @@
     "@aws-sdk/client-dynamodb": "3.1106.0",
     "@aws-sdk/client-s3": "3.1106.0",
     "@aws-sdk/client-sqs": "3.1106.0",
-    "@aws-sdk/lib-dynamodb": "3.1106.0"
+    "@aws-sdk/lib-dynamodb": "3.1106.0",
+    "@aws-sdk/s3-request-presigner": "3.1106.0"
   },
   "devDependencies": {
     "@eslint/js": "9.9.1",

@@ -22,9 +22,9 @@ path, deploy/harden gates, and post-MVP tracks. Each item links to the plan that
 
 The completed 3-step frontend migration, in order:
 
-1. **[js-and-jsdoc-migration-plan.md](./js-and-jsdoc-migration-plan.md)** — _Step 1._ Drop
+1. **[js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md)** — _Step 1._ Drop
    TypeScript syntax for JavaScript + JSDoc (type safety via `tsc --checkJs`, no transpile).
-   _Done — backend + repo config._
+   _Done — backend + repo config; the standing choice is codified in [AGENTS.md](../AGENTS.md). Archived._
 2. **[gnp-frontend-migration-plan.md](./gnp-frontend-migration-plan.md)** — _Step 2._ Adopt
    the `gnp` prototype as `frontend/`. _Frontend port done and green; still the tracker for
    the open backend/auth/deploy decisions (D1–D4, I1) and the deferred offline pass._
@@ -48,9 +48,10 @@ in this order:**
 3. **[analytics-plane-addendum.md](./analytics-plane-addendum.md)** — city-wide reporting:
    Tier 1 live counters + Tier 2 (S3-export → Athena), with complexity and cost (~$5–15/mo).
    Extends doc 2. The "how reporting works."
-4. **[local-dev-environment-plan.md](./local-dev-environment-plan.md)** — the Docker-free local
+4. **[local-dev-environment-plan.md](./archive/local-dev-environment-plan.md)** — the Docker-free local
    harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why not Architect /
-   SAM / LocalStack). The "how we run it locally."
+   SAM / LocalStack). The "how we run it locally." _Harness built & verified; run commands live in
+   [dev-commands.md](./dev-commands.md). Archived — kept for the alternatives-considered rationale._
 5. **[dynamodb-buildout-plan.md](./dynamodb-buildout-plan.md)** — _capstone._ The phased
    Terraform + code build plan (table → app cutover → analytics), sequenced to a queryable
    Athena prototype. References docs 1–4. The "how we build it."
@@ -67,6 +68,25 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
   [data model](./dynamodb-data-model.md).
+
+## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
+
+- **[archive/frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md)** — wire the field
+  app to the backend with a **thin online `api.js`** (write-on-submit, read-on-load, one short poll
+  for async results) rather than a sync system. The `synced:false` / sync-layer machinery is
+  offline-only, so it defers with offline. Depended on the analysis-backend Step C endpoints.
+  **Done for MVP (2026-08-16)** — write+read cutover, photo leg E2E, worklist on real `listTasks`,
+  hazard triage off the authoritative `TASK#.type` (client mirror deleted); only the post-MVP
+  confidence-% placeholder remains. **Archived.**
+
+## Frontend — design & UI
+
+- **[frontend-design-system.md](./frontend-design-system.md)** — living reference for building a
+  screen to spec from the token/class system (`tokens.css` / `app.css` are the source of truth).
+- **[mvp-design-trim-plan.md](./mvp-design-trim-plan.md)** — screen-by-screen trim of prototype
+  features down to the MVP surface (partly built; some screens still planned).
+- **[page-transitions-plan.md](./page-transitions-plan.md)** — View Transitions API screen
+  animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
@@ -85,5 +105,15 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 ## Other docs in this directory
 
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
+- [dev-commands.md](./dev-commands.md) — developer command reference (setup, CI checks, local harness)
+- [minio-local-s3.md](./minio-local-s3.md) — local S3 via MinIO (harness Step D): why it's needed with a remote analyzer, the full media loop, gotchas, and the required `.env.local` edits
 - [sdlc-level-2-checklist.md](./sdlc-level-2-checklist.md), [security-review.md](./security-review.md) — SDLC / security process
-- [transcription-architecture.md](./transcription-architecture.md), [transcription-STATUS.md](./transcription-STATUS.md) — transcription feature docs (forward-looking; not wired into Phase 1)
+
+## Archive
+
+Docs whose work is **done and codified elsewhere**, or **deferred post-MVP** — kept for the
+historical/design record, not part of the active plan set. See [archive/](./archive/):
+
+- [archive/js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md) — Step 1 migration (done; standing choice now in [AGENTS.md](../AGENTS.md)).
+- [archive/local-dev-environment-plan.md](./archive/local-dev-environment-plan.md) — local harness (built; commands in [dev-commands.md](./dev-commands.md)).
+- [archive/transcription-architecture.md](./archive/transcription-architecture.md), [archive/transcription-STATUS.md](./archive/transcription-STATUS.md) — transcription feature docs (forward-looking; post-MVP, not wired into Phase 1).

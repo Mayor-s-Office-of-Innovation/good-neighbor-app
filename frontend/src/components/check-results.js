@@ -16,7 +16,12 @@
   persisted check so the home "View" link still lands somewhere real.
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite, getChecksForSite } from "../db.js";
+import { getSite } from "../db.js";
+import { listChecks, getCheck, listTasks } from "../services/api.js";
+import {
+  adaptCheckDetail,
+  cityCategoriesForCheck,
+} from "../domain/check-adapter.js";
 import { navigate } from "../router.js";
 import {
   getCurrentCheck,
@@ -62,17 +67,32 @@ class CheckResults extends HTMLElement {
         notes: items.filter((i) => i.kind === "note").length,
       };
     } else {
-      const checks = (await getChecksForSite(this._site.id))
-        .filter((c) => c.status === "submitted")
-        .sort((a, b) =>
-          (b.submittedAt || "").localeCompare(a.submittedAt || ""),
+      // No just-submitted session (e.g. a "View" link for the latest check):
+      // read the newest completed check from the backend. Photos aren't inlined
+      // in the read model, so there's no evidence strip on this path.
+      try {
+        const { checks } = await listChecks({ limit: 10 });
+        const latestHeader = (checks || []).find(
+          (c) => c.status === "completed",
         );
-      const latest = checks[0];
-      if (!latest) {
+        if (!latestHeader) {
+          navigate("/today");
+          return;
+        }
+        const [detail, { tasks }] = await Promise.all([
+          getCheck(latestHeader.checkId),
+          listTasks({ status: "open" }),
+        ]);
+        const cityCategories = cityCategoriesForCheck(
+          tasks,
+          latestHeader.checkId,
+        );
+        findings = adaptCheckDetail(detail, cityCategories).findings;
+      } catch (err) {
+        console.error("failed to load latest check", err);
         navigate("/today");
         return;
       }
-      findings = latest.findings || [];
       items = [];
       evidence = null;
     }
@@ -202,7 +222,7 @@ class CheckResults extends HTMLElement {
     if (e.voice) parts.push(`${e.voice} voice`);
     if (e.notes) parts.push(`${e.notes} note${e.notes === 1 ? "" : "s"}`);
     const photos = items
-      .filter((i) => i.kind === "photo" && i.thumbUrl)
+      .filter((i) => i.kind === "photo" && i.dataUrl)
       .slice(0, 4);
     const thumbs = photos.length
       ? photos
@@ -212,7 +232,7 @@ class CheckResults extends HTMLElement {
                 class="evidence__thumb ${i < 2
                   ? "evidence__thumb--active"
                   : ""}"
-                src="${p.thumbUrl}"
+                src="${p.dataUrl}"
                 alt=""
               />`,
           )

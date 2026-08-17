@@ -12,7 +12,7 @@
   mounts. It is a no-op unless the param is present, so it never touches a normal run.
 
     /?demo=uptodate   home "Up to date" (5b): 3 checks in today + history, so the
-                      donut, streak sparkline, and both worklist groups populate.
+                      donut and both worklist groups populate.
     /?demo=due        home "Check due now" (5a): populated history but 0 checks today.
     /results?demo=due jump straight to Results (5e) — it reads the latest seeded check.
     /?demo=reset      wipe the site + checks (back to the first-run setup screen).
@@ -146,8 +146,9 @@ function buildCheck(siteId, when, findings) {
   };
 }
 
-// Prior-day history: enough spread for a believable streak sparkline and a
-// last-6 mix that fills both worklist groups. Shared by both scenarios.
+// Prior-day history: a believable spread whose most recent check feeds the
+// home "last log" summary, and a last-6 mix that fills both worklist groups.
+// Shared by both scenarios.
 function historyChecks(siteId) {
   return [
     buildCheck(siteId, at(1, 9, 5), []),

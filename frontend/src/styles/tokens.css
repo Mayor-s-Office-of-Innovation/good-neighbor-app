@@ -12,8 +12,8 @@
   background each sits on (see docs/take5-plan.md "Accessible palette").
     - --text-secondary #666666 : >=5.0:1 on #fff / #fafafa / #f5f5f5 / #f0f0f0
     - --brand-blue    #155fce  : 5.90:1 on white, 5.15:1 on the pale-blue pill
-    - --text-faint    #767676  : 4.54:1 on white; used only where shape/height also
-                                  conveys the state (streak bars) — never sole carrier
+    - --text-faint    #767676  : 4.54:1 on white; used only where shape/text also
+                                  conveys the state (donut segments, legend dots) — never sole carrier
 */
 :root {
   color-scheme: light;
