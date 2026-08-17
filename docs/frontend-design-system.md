@@ -71,7 +71,7 @@ dashboards (today-view, onboarding).
 
 ## Headers
 
-- **`.sitehead`** — round seal + name + meta line. The identity header on hub screens.
+- **`.sitehead`** — round pin marker + name + meta line. The identity header on hub screens.
 - **`.hero`** — centered `hero__eyebrow` / `hero__headline` (big) / `hero__body` / `hero__meta`.
   The status/heading block inside a `.screen` card.
 - **`.flow-hero`** — the flow-column equivalent (eyebrow / headline / body).

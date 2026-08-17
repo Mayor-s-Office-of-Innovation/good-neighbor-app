@@ -6,16 +6,14 @@
   over every item, derive findings, persist the check, and hand off to 5e.
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite, addCheck } from "../db.js";
+import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { analyzeCheck } from "../services/analyzer.js";
-import { scorecardToFindings } from "../domain/findings.js";
+import { submitCheck } from "../services/submit-check.js";
 import {
   SIDES,
   getCurrentCheck,
   isSideCovered,
   allItems,
-  markSubmitted,
 } from "../state/check-session.js";
 
 const NUM_WORD = ["zero", "one", "two", "three", "four"];
@@ -24,33 +22,19 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-// Per-side one-line summary from real item counts.
+// Per-side one-line summary from real photo counts.
 function summarize(sideState) {
-  if (!sideState.applicable) return "Marked not applicable";
+  if (sideState.skipped) return "Skipped";
   if (!sideState.items.length) return "Not covered yet";
-  const counts = { photo: 0, voice: 0, note: 0 };
-  for (const it of sideState.items) counts[it.kind]++;
-  const parts = [];
-  if (counts.photo) parts.push(plural(counts.photo, "photo"));
-  if (counts.voice) parts.push(`${counts.voice} voice`);
-  if (counts.note) parts.push(plural(counts.note, "note"));
-  return parts.join(" · ");
+  return plural(sideState.items.length, "photo");
 }
 
-// A representative thumbnail for a side: its first photo, else a kind glyph.
+// A representative thumbnail for a side: its first photo, else a placeholder glyph.
 function sideThumb(sideState) {
-  const photo = sideState.items.find((i) => i.kind === "photo" && i.thumbUrl);
+  const photo = sideState.items.find((i) => i.dataUrl);
   if (photo)
-    return html`<img class="rowcard__thumb" src="${photo.thumbUrl}" alt="" />`;
-  const first = sideState.items[0];
-  const glyph = !first
-    ? ""
-    : first.kind === "note"
-      ? "T"
-      : first.kind === "voice"
-        ? "♪"
-        : "▦";
-  return html`<span class="rowcard__thumb">${glyph}</span>`;
+    return html`<img class="rowcard__thumb" src="${photo.dataUrl}" alt="" />`;
+  return html`<span class="rowcard__thumb">▦</span>`;
 }
 
 class CheckReview extends HTMLElement {
@@ -172,34 +156,38 @@ class CheckReview extends HTMLElement {
 
   async _submit() {
     const btn = this.querySelector("#submit");
+    const label = btn.textContent;
     btn.setAttribute("disabled", "");
     btn.textContent = "Filing…";
+    this._clearError();
+    try {
+      await submitCheck();
+      navigate("/results");
+    } catch (err) {
+      // Online-only: on any backend/network failure surface an error and let the
+      // user retry (no local queue — offline is post-MVP).
+      console.error("submitCheck failed", err);
+      btn.removeAttribute("disabled");
+      btn.textContent = label;
+      this._showError(
+        "Couldn’t file this check — the server didn’t respond. Check your connection and try again.",
+      );
+    }
+  }
 
-    const items = allItems();
-    const scorecard = await analyzeCheck(items);
-    const findings = scorecardToFindings(scorecard, items);
-    const check = markSubmitted(findings);
+  _showError(msg) {
+    let el = this.querySelector(".flow-error");
+    if (!el) {
+      el = document.createElement("p");
+      el.className = "flow-error";
+      el.setAttribute("role", "alert");
+      this.querySelector("#submit").insertAdjacentElement("beforebegin", el);
+    }
+    el.textContent = msg;
+  }
 
-    // Persist a self-contained summary (see db.js) so 5b/history + streak can read it.
-    await addCheck({
-      id: check.id,
-      siteId: check.siteId,
-      window: check.window,
-      startedAt: check.startedAt,
-      submittedAt: check.submittedAt,
-      status: "submitted",
-      statusLabel: scorecard.status_label,
-      totalScore: scorecard.total_score,
-      sides: SIDES.map((s) => ({
-        side: s,
-        applicable: check.sides[s].applicable,
-        itemCount: check.sides[s].items.length,
-      })),
-      findings,
-      synced: false,
-    });
-
-    navigate("/results");
+  _clearError() {
+    this.querySelector(".flow-error")?.remove();
   }
 }
 customElements.define("check-review", CheckReview);

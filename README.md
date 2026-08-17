@@ -15,7 +15,7 @@ ordered read path and current status. Start there to find your way around.
 
 The **frontend migration is done** (Aug 2026): the backend moved to JavaScript + JSDoc and
 the `gnp` prototype is now the `frontend/`, built and green — see
-[docs/js-and-jsdoc-migration-plan.md](docs/js-and-jsdoc-migration-plan.md) (Step 1) and
+[docs/archive/js-and-jsdoc-migration-plan.md](docs/archive/js-and-jsdoc-migration-plan.md) (Step 1) and
 [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2). The
 **datastore direction is decided — DynamoDB** (replacing managed Postgres/Prisma; see
 [ADR 0002](docs/adr/0002-datastore-dynamodb.md)); the **backend/auth/deploy** seams are still
@@ -47,6 +47,9 @@ its layout, and the **[design system guide](docs/frontend-design-system.md)** fo
 screens to spec.
 
 ## Local Development
+
+> **Quick command reference:** [docs/dev-commands.md](docs/dev-commands.md) — a concise
+> cheat-sheet of what to run to do what (setup, checks, frontend, and the backend harness).
 
 Prerequisites:
 
@@ -91,41 +94,28 @@ The first screen asks for a provider-site code. With the local backend running,
 ### Run the backend locally (Docker-free harness)
 
 Runs the exact Lambda handler + worker code against Docker-free emulators (DynamoDB Local +
-ElasticMQ). Needs **JRE 17+** (see Prerequisites). Full design:
-[docs/local-dev-environment-plan.md](docs/local-dev-environment-plan.md).
+ElasticMQ). Needs **JRE 17+** (see Prerequisites).
 
 ```bash
 cp .env.example .env.local     # one-time (git-ignored; dummy local values)
 npm run dev -w backend         # starts DynamoDB Local, ElasticMQ, the API router, and the worker
 ```
 
+Commands, ports, the curl loop, and the GUI are in the
+**[developer command reference](docs/dev-commands.md)**; the design rationale is in
+[docs/archive/local-dev-environment-plan.md](docs/archive/local-dev-environment-plan.md).
+
 The local API router listens on `LOCAL_API_PORT` from `.env.local` (`3001` by default).
-
-Then, in another terminal:
-
-```bash
-# POST a submission → 202 queued
-curl -s -X POST localhost:3001/submissions \
-  -H 'idempotency-key: t1' -H 'X-Debug-Sub: dev' \
-  -H 'content-type: application/json' -d '{"hello":"world"}'
-
-npm run db:gui -w backend      # browse the local table at http://localhost:8001
-```
-
-A submission flows `curl → SQS → worker → DynamoDB`. Re-POSTing with the same `idempotency-key`
-flips the stored item's status to `duplicate_replay` (the conditional-write replay branch).
-The `X-Debug-Sub` header stands in for the Cognito JWT `sub` locally (defaults to `DEBUG_SUB`
-from `.env.local`).
 
 ### Clearing the local site binding
 
 First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
-binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current` — the
-site name plus the setup code). To get the setup screen back, delete that one record
-(surgical — leaves any saved checks intact):
+binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current`).
+To get the setup screen back, delete that one record (surgical — leaves any saved checks
+intact):
 
-- **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` → right-click
-  the `current` row → Delete, then reload.
+- **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
+  right-click the `current` row → Delete, then reload.
 - **Console:**
   ```js
   indexedDB.open('conditions-reporter').onsuccess = e =>
@@ -133,9 +123,10 @@ site name plus the setup code). To get the setup screen back, delete that one re
   ```
   then reload.
 
-To wipe everything (binding **and** saved checks) instead: `indexedDB.deleteDatabase('conditions-reporter')`
-then reload. (The app holds an open connection, so a full delete may block until you reload or
-close the tab — the surgical per-record delete above does not.)
+To wipe everything (binding **and** saved checks) instead:
+`indexedDB.deleteDatabase('conditions-reporter')` then reload. (The app holds an open
+connection, so a full delete may block until you reload or close the tab — the surgical
+per-record delete above does not.)
 
 ## Deployment Model
 

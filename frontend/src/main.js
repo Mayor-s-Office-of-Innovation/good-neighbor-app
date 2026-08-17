@@ -52,7 +52,6 @@ import "./styles/app.css";
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
-import "./components/capture-photo.js";
 import "./components/capture-audio.js";
 import "./components/today-view.js";
 import "./components/perimeter-check.js";

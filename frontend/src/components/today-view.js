@@ -2,17 +2,24 @@
   today-view — the home hub (Take 5, screens 5a + 5b).
 
   One component, two states driven by real data:
-    - 5a "Check due now"  : today's cadence (3 checks) isn't complete -> Start check.
+    - 5a "Check due now"  : today's cadence (3 checks) isn't complete -> last log + Start.
     - 5b "Up to date"     : all of today's checks are in -> last-6 summary + open items.
 
   Cadence is a fixed pilot value (3/day, decision #3); overdue/missed states are out
-  of v1. The streak is kept but restrained (decision #4) — motivational count only, no
-  points/badges/pressure. Markup is inline via the `html` tag (barebones screen; split
-  into a .templates.js file if it grows — see CLAUDE.md convention).
+  of v1. Per the MVP design trim (docs/mvp-design-trim-plan.md) the "check due" screen
+  is pared to just the last-log summary + a Start button; no streak, no status hero.
+  Markup is inline via the `html` tag (barebones screen; split into a .templates.js
+  file if it grows — see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite, getChecksForSite } from "../db.js";
-import { startCheck } from "../state/check-session.js";
+import { getSite, getDraft } from "../db.js";
+import { listChecks, listTasks } from "../services/api.js";
+import {
+  adaptCheckHeader,
+  cityCategoriesByCheck,
+} from "../domain/check-adapter.js";
+import { severityWord } from "../config/scorecard.js";
+import { startCheck, clearCheck } from "../state/check-session.js";
 import { navigate } from "../router.js";
 
 const CADENCE = 3; // checks per day (pilot, hardcoded)
@@ -28,170 +35,158 @@ function isToday(iso) {
   );
 }
 
-function dayKey(iso) {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
-
 class TodayView extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    this._siteId = this._site.siteId || this._site.id;
-    const checks = (await getChecksForSite(this._siteId)).sort((a, b) =>
-      (b.submittedAt || "").localeCompare(a.submittedAt || ""),
-    );
-    const submitted = checks.filter((c) => c.status === "submitted");
+    this._siteId =
+      this._site.siteId || this._site.providerSiteId || this._site.id;
+
+    // Checks + the open worklist are read from the backend on load (AP6/AP10) —
+    // newest first, adapted to the UI record shape. Each check's findings are
+    // classified city-vs-handle from the authoritative TASK# items (no client-side
+    // escalation rule). Online-only: on failure show an error, not a crash.
+    let submitted, tasks;
+    try {
+      const [{ checks }, tasksResult] = await Promise.all([
+        listChecks({ limit: 30 }),
+        listTasks({ status: "open", limit: 50 }),
+      ]);
+      tasks = tasksResult.tasks || [];
+      const cityByCheck = cityCategoriesByCheck(tasks);
+      submitted = (checks || [])
+        .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
+        .filter((c) => c.status === "submitted")
+        .sort((a, b) =>
+          (b.submittedAt || "").localeCompare(a.submittedAt || ""),
+        );
+    } catch (err) {
+      console.error("listChecks/listTasks failed", err);
+      this._renderError();
+      return;
+    }
+
     const todayCount = submitted.filter((c) => isToday(c.submittedAt)).length;
-    const streakDays = new Set(submitted.map((c) => dayKey(c.submittedAt)))
-      .size;
     const due = todayCount < CADENCE;
 
+    // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA into
+    // Resume + "Start over" (docs/mvp-design-trim-plan.md).
+    const hasDraft = !!(await getDraft());
+
     this.innerHTML = due
-      ? this._dueView({ streakDays, last: submitted[0], submitted })
-      : this._upToDateView({ recent: submitted.slice(0, 6) });
+      ? this._dueView({ last: submitted[0], hasDraft })
+      : this._upToDateView({ recent: submitted.slice(0, 6), tasks });
 
     const start = this.querySelector("#start-check");
     if (start) {
       start.addEventListener("click", () => {
+        // Resume just re-opens /check (the draft hydrates there); a fresh start
+        // seeds a new in-progress check.
+        if (!hasDraft) startCheck(this._siteId);
+        navigate("/check");
+      });
+    }
+    const over = this.querySelector("#start-over");
+    if (over) {
+      over.addEventListener("click", () => {
+        clearCheck(); // discard the draft
         startCheck(this._siteId);
         navigate("/check");
       });
     }
   }
 
-  // Per-day submitted-check counts for the last `days` days, oldest first,
-  // last element = today. Feeds the streak sparkline.
-  _dayCounts(submitted, days) {
-    const counts = new Array(days).fill(0);
-    const now = new Date();
-    const todayStart = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-    );
-    for (const c of submitted) {
-      if (!c.submittedAt) continue;
-      const d = new Date(c.submittedAt);
-      const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      const ago = Math.round(
-        (todayStart.getTime() - dStart.getTime()) / 86400000,
-      );
-      const idx = days - 1 - ago;
-      if (idx >= 0 && idx < days) counts[idx] += 1;
-    }
-    return counts;
-  }
-
-  // Site header: seal + name + last-check time. Seal is a placeholder wa-icon
-  // until the optimized SF-seal PNG lands (see MVP-TODO go-live item).
-  _siteHeader(last) {
+  // Global site header: neutral avatar circle + site name. No meta subline
+  // (MVP design trim — docs/mvp-design-trim-plan.md). Shared with the
+  // up-to-date view.
+  _siteHeader() {
     const name = (this._site && this._site.name) || "Your site";
-    const meta =
-      last && isToday(last.submittedAt)
-        ? `Last check: ${timeOf(last.submittedAt)}`
-        : "No check yet today";
     return html`
       <div class="screen__sec sitehead">
-        <span class="sitehead__seal" aria-hidden="true">
-          <wa-icon name="location-dot"></wa-icon>
-        </span>
-        <div>
-          <div class="sitehead__name">${escapeHtml(name)}</div>
-          <p class="sitehead__meta">${escapeHtml(meta)}</p>
-        </div>
+        <span class="sitehead__avatar" aria-hidden="true"></span>
+        <div class="sitehead__name">${escapeHtml(name)}</div>
       </div>
     `;
   }
 
-  // Multi-day compliance sparkline: one bar per day, height = checks/cadence.
-  // Full days solid, partial days a solid faint fill (1.4.11 non-text 3:1),
-  // today a dashed outline. Bars are decorative; the count + axis carry meaning.
-  _sparkline(submitted, streakDays) {
-    const counts = this._dayCounts(submitted, 14);
-    const bars = counts
-      .map((n, i) => {
-        const today = i === counts.length - 1;
-        const pct =
-          n === 0 ? 8 : Math.round((Math.min(n, CADENCE) / CADENCE) * 100);
-        const cls = today
-          ? "spark__bar spark__bar--today"
-          : n >= CADENCE
-            ? "spark__bar"
-            : "spark__bar spark__bar--partial";
-        return html`<div
-          class="${cls}"
-          style="height:${today ? 100 : pct}%"
-        ></div>`;
-      })
-      .join("");
-
-    const start = new Date();
-    start.setDate(start.getDate() - (counts.length - 1));
-    const startLabel = start.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-    });
-
-    return html`
-      <div class="screen__sec">
-        <div class="streakhead">
-          <span class="streakhead__label"
-            >Streak · ${CADENCE} checks a day</span
-          >
-          <span class="streakhead__count"
-            >${streakDays} ${streakDays === 1 ? "day" : "days"}</span
-          >
-        </div>
-        <div class="spark">
-          <div class="spark__guide"><span>${CADENCE} of ${CADENCE}</span></div>
-          <div class="spark__bars" aria-hidden="true">${bars}</div>
-        </div>
-        <div class="spark__axis">
-          <span>${escapeHtml(startLabel)}</span><span>today</span>
-        </div>
-      </div>
-    `;
-  }
-
-  // City-actions footer: split last check's findings into city-owned (hazards)
-  // vs self-serviceable. Hidden when the last check had no findings.
-  _footer(last) {
-    const findings = (last && last.findings) || [];
-    if (!findings.length) return "";
-    const city = findings.filter((f) => f.hazard).length;
-    const handle = findings.length - city;
-    const parts = [];
-    if (city) parts.push(`${city} city action${city === 1 ? "" : "s"}`);
-    if (handle) parts.push(`${handle} you can handle`);
-    return html`
-      <div class="screen__sec cityfoot">
-        <span class="cityfoot__text">${parts.join(" · ")}</span>
-        <a class="cityfoot__link" href="/results">View</a>
-      </div>
-    `;
-  }
-
-  _dueView({ streakDays, last, submitted }) {
-    return html`
+  // Backend unreachable on load. Online-only: surface it with a retry rather than
+  // silently degrading (offline is post-MVP; no local read fallback).
+  _renderError() {
+    this.innerHTML = html`
       <div class="home">
         <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader(last)}
-          <div class="screen__sec hero">
-            <p class="hero__eyebrow">Perimeter status</p>
-            <h1 class="hero__headline">Check due now</h1>
-            <p class="hero__body">
-              Walk the site perimeter and document current conditions. Report
-              clean conditions too.
-            </p>
-            <button id="start-check" class="btn-ink" type="button">
-              Start Perimeter Check
-            </button>
-            <p class="hero__meta">Window closes 7:00 PM · about 4 minutes</p>
+          ${this._siteHeader()}
+          <div class="screen__sec lastlog">
+            <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
+            <h1 class="lastlog__headline">Checks are unavailable</h1>
           </div>
-          ${this._sparkline(submitted, streakDays)} ${this._footer(last)}
+          <div class="screen__sec home-cta">
+            <button id="retry" class="btn-ink btn-ink--block" type="button">
+              Try again
+            </button>
+          </div>
         </div>
       </div>
     `;
+    this.querySelector("#retry")?.addEventListener("click", () =>
+      this.connectedCallback(),
+    );
+  }
+
+  // "Check due" screen (5a): just the last-log summary + the Start button.
+  // The last log is the most recent submitted check, summarized by its worst
+  // finding (see _lastLog); with no checks yet it reads "No activity recorded yet".
+  _dueView({ last, hasDraft }) {
+    const log = this._lastLog(last);
+    return html`
+      <div class="home">
+        <div class="screen screen--due" role="group" aria-label="Today">
+          ${this._siteHeader()}
+          <div class="screen__sec lastlog">
+            ${log.eyebrow
+              ? html`<p class="lastlog__eyebrow">${escapeHtml(log.eyebrow)}</p>`
+              : ""}
+            <h1 class="lastlog__headline">${escapeHtml(log.headline)}</h1>
+          </div>
+          <div class="screen__sec home-cta">
+            <button
+              id="start-check"
+              class="btn-ink btn-ink--block"
+              type="button"
+            >
+              <wa-icon name="camera" aria-hidden="true"></wa-icon>
+              ${hasDraft ? "Resume perimeter check" : "Start a perimeter check"}
+            </button>
+            ${hasDraft
+              ? html`<button
+                  id="start-over"
+                  class="home-cta__link"
+                  type="button"
+                >
+                  Start over
+                </button>`
+              : ""}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Summarize the last submitted check as a one-line activity log:
+  //   eyebrow = "LAST LOG · <relative day> · <time>"
+  //   headline = "<worst finding category> — <triage status>", or "All clear"
+  // No submitted check yet -> no eyebrow, headline "No activity recorded yet".
+  _lastLog(last) {
+    if (!last || !last.submittedAt) {
+      return { eyebrow: "", headline: "No activity recorded yet" };
+    }
+    const eyebrow = `LAST LOG · ${relativeDay(last.submittedAt)} · ${timeOf(
+      last.submittedAt,
+    )}`;
+    const worst = worstFinding(last.findings || []);
+    const headline = worst
+      ? `${worst.category || "Finding"} — ${triageStatus(worst)}`
+      : "All clear";
+    return { eyebrow, headline };
   }
 
   // Categorize each recent check into one bucket by its worst outcome:
@@ -252,47 +247,27 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _upToDateView({ recent }) {
+  _upToDateView({ recent, tasks = [] }) {
     const b = this._buckets(recent);
 
-    // Open work items from the most recent checks, split city (hazard -> 311)
-    // vs self-serviceable. NOTE: ticket #, status, and reported-time are not in
-    // the findings model yet (post-MVP 311 integration) — rendered here from
-    // clearly representative placeholders so the workflow is visible end-to-end.
-    const flat = recent.flatMap((c) =>
-      (c.findings || []).map((f) => ({ ...f, checkAt: c.submittedAt })),
-    );
-    const cityItems = flat.filter((f) => f.hazard);
-    const handleItems = flat.filter((f) => !f.hazard);
+    // Open work items are the site's real TASK# items (AP10), split by the
+    // backend-stamped `type`: city_escalation -> 311 crew, onsite -> staff can
+    // handle. Most-severe-first ordering is preserved from the server query.
+    const cityItems = tasks.filter((t) => t.type === "city_escalation");
+    const handleItems = tasks.filter((t) => t.type === "onsite");
 
     const cityCards = cityItems
-      .map((f, i) =>
-        this._actionCard(f, {
-          role: "City action",
-          ticket: `#SF-${4471 + i}`, // MOCK ticket
-          status: i % 2 === 0 ? "route" : "pending", // MOCK lifecycle
-          reported: "Reported 12:04 PM", // MOCK time
-          confirm: false,
-        }),
-      )
+      .map((t) => this._actionCard(t, "City action"))
       .join("");
 
     const handleCards = handleItems
-      .map((f, i) =>
-        this._actionCard(f, {
-          role: "Yours",
-          ticket: `#SF-${4318 + i}`, // MOCK ticket
-          status: "confirm",
-          reported: "City closed it out — verify it's gone", // MOCK
-          confirm: true,
-        }),
-      )
+      .map((t) => this._actionCard(t, "Yours"))
       .join("");
 
     return html`
       <div class="home">
         <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader(recent[0])}
+          ${this._siteHeader()}
           <div class="screen__sec hero">
             <p class="hero__eyebrow">Perimeter status</p>
             <h1 class="hero__headline">Up to date</h1>
@@ -381,55 +356,63 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  // A single work item. `meta` carries the (currently representative) 311
-  // lifecycle fields; `confirm` toggles the self-serviceable resolve actions.
-  _actionCard(f, meta) {
-    const label =
-      meta.status === "route"
-        ? "En route"
-        : meta.status === "pending"
-          ? "Pending"
-          : "Confirm";
-    // Descriptor before the ticket: real side/explanation where we have it,
-    // otherwise the representative line supplied by meta.reported.
-    const descriptor =
-      (f.side && `${escapeHtml(f.side)} side`) ||
-      (f.explanation && escapeHtml(f.explanation)) ||
-      escapeHtml(meta.reported);
+  // A single open work item, rendered from a real TASK# item: the category, its
+  // severity word, and when it was flagged. `role` is the group label (City
+  // action / Yours). The 311 ticket lifecycle + resolve flow are post-MVP, so no
+  // ticket #, status pill, or resolve buttons are shown yet — only real fields.
+  _actionCard(task, role) {
+    const severity = severityWord(task.severity || 0);
     return html`
       <div class="actioncard">
         <div class="actioncard__head">
-          <span class="actioncard__type">${escapeHtml(meta.role)}</span>
-          <span class="pill pill--${meta.status}">${label}</span>
+          <span class="actioncard__type">${escapeHtml(role)}</span>
+          <span class="pill pill--sev">${escapeHtml(severity)}</span>
         </div>
         <h3 class="actioncard__title">
-          ${escapeHtml(f.category || "Finding")}
+          ${escapeHtml(task.category || "Finding")}
         </h3>
-        <p class="actioncard__detail">
-          ${descriptor} · ${escapeHtml(meta.ticket)}
+        <p class="actioncard__foot">
+          Flagged ${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}
         </p>
-        ${meta.confirm
-          ? html`
-              <div class="actioncard__actions">
-                <button class="btn-ink btn-ink--sm" type="button">
-                  It's gone
-                </button>
-                <button class="btn-outline btn-outline--sm" type="button">
-                  Still there
-                </button>
-              </div>
-            `
-          : html`<p class="actioncard__foot">${escapeHtml(meta.reported)}</p>`}
       </div>
     `;
   }
 }
 
 function timeOf(iso) {
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return new Date(iso)
+    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .replace(/\s/g, "")
+    .toUpperCase();
+}
+
+// "TODAY" / "YESTERDAY" for the last 2 days, else the uppercase weekday.
+function relativeDay(iso) {
+  const d = new Date(iso);
+  const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const ago = Math.round((todayStart.getTime() - dStart.getTime()) / 86400000);
+  if (ago <= 0) return "TODAY";
+  if (ago === 1) return "YESTERDAY";
+  return d.toLocaleDateString([], { weekday: "long" }).toUpperCase();
+}
+
+// The check's most notable finding: hazards first, then highest rating.
+function worstFinding(findings) {
+  if (!findings.length) return null;
+  return [...findings].sort(
+    (a, b) =>
+      Number(b.hazard) - Number(a.hazard) || (b.rating || 0) - (a.rating || 0),
+  )[0];
+}
+
+// The triage bucket phrase for a finding (mirrors check-results.js buckets):
+//   hazard -> city action · non-hazard rating>=2 -> handle · rating 1 -> noted.
+function triageStatus(f) {
+  if (f.hazard) return "escalated to 311";
+  if ((f.rating || 0) >= 2) return "flagged to handle";
+  return "noted, no action";
 }
 
 customElements.define("today-view", TodayView);
