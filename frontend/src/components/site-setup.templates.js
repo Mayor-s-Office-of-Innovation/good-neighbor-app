@@ -49,7 +49,7 @@ export const codeEntryView = ({
                 </span>
                 ${index === 2
                   ? html`<span class="code-boxes__dash" aria-hidden="true"
-                      >-</span
+                      >&mdash;</span
                     >`
                   : ""}
               `,
