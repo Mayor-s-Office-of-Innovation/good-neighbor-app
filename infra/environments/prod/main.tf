@@ -6,20 +6,34 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.64"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 
-  # Configure before first production deployment.
-  # backend "s3" {
-  #   bucket         = "good-neighbor-app-terraform-state"
-  #   key            = "prod/terraform.tfstate"
-  #   region         = "us-west-2"
-  #   dynamodb_table = "good-neighbor-app-terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "good-neighbor-app-terraform-state"
+    key            = "prod/terraform.tfstate"
+    region         = "us-west-2"
+    dynamodb_table = "good-neighbor-app-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = local.common_tags
+  }
+}
+
+# CLOUDFRONT-scoped WAF must be created in us-east-1; the module takes this as an
+# aliased provider.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
 
   default_tags {
     tags = local.common_tags
@@ -40,6 +54,11 @@ locals {
 
 module "app" {
   source = "../../modules/app"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
 
   application         = var.application
   environment         = var.environment

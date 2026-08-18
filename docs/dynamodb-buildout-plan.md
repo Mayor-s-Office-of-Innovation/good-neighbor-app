@@ -4,7 +4,7 @@
 
 **Status:** Accepted — direction decided ([ADR 0002](./adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
 **Date:** 2026-08-12
-**Ties together:** the [decision](./dynamodb-database-decision.md), the
+**Ties together:** the [decision](./archive/dynamodb-database-decision.md), the
 [data model](./dynamodb-data-model.md), the [analytics addendum](./analytics-plane-addendum.md),
 and the local/cloud split in the [local-dev plan](./archive/local-dev-environment-plan.md).
 

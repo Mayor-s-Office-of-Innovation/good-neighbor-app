@@ -1,249 +1,304 @@
 # Plan: Deploy & CI/CD — environments, promotion, protection
 
-**Status:** Plan (not yet executed) · **Date:** 2026-08-14 · **Owner:** team ·
-[index](./README.md)
+**Status:** In progress — bootstrap done, backend enabled, deploy workflows built (Phase 3),
+**frontend publish + API/Lambdas in Terraform built (Phase 4)** — CloudFront + API Gateway v2 +
+Lambdas provisioned, deploy job builds/syncs/invalidates and runs the now-wired `/health` smoke
+test; `main` Phase 5 protection done (`main` admins-only, prod tags-`v*` + required reviewers with
+self-review allowed per P5); remaining: first `terraform init`/apply + OIDC smoke, rollback
+dry-run · **Date:** 2026-08-18 · **Owner:** team · [index](./README.md)
 
-The plan to take GNP from *manual, single-role, dev/prod-only* deploys to a **3-environment,
-gated, auto-promoting** pipeline. It fills the deploy gaps tracked in
-[MVP-TODO → deploy & harden](./MVP-TODO.md#mvp-critical-path--deploy--harden) and closes the
-open items in the [SDLC Level 2 checklist](./sdlc-level-2-checklist.md) (branch protection,
-GitHub environments, remote state). The reference model is the sibling analyzer service
-(`../street-conditions-analysis`, `docs/deployment.md` + `docs/branch-protection.md`), adapted
-from **CDK → Terraform** and from a 2-tier to a **2-branch-plus-gates** promotion flow.
+The plan to take GNP from *manual, single-role* deploys to a **2-environment, branch-and-release
+promoted** pipeline. It fills the deploy gaps tracked in
+[MVP-TODO → deploy & harden](./MVP-TODO.md#mvp-critical-path--deploy--harden) and closes the open
+items in the [SDLC Level 2 checklist](./sdlc-level-2-checklist.md) (branch protection, GitHub
+environments, remote state). The AWS side is already scaffolded — see
+[deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md).
 
-> **What this is not.** This is a *deploy mechanics* plan. It does not decide app features,
-> data model, or the auth posture (those live in their own docs). It assumes the
-> [DynamoDB table](./dynamodb-buildout-plan.md) and [analysis Lambdas](./analysis-backend-lambdas-plan.md)
-> land through the pipeline this plan builds.
+> **Supersedes the 2026-08-14 model.** The original plan proposed **three** environments
+> (`dev`/`staging`/`prod`) promoted by **git tags** off a single `main` trunk. We've simplified to
+> **two long-lived branches + two environments**: a `dev` integration branch that auto-deploys the
+> dev environment, and `main` (admins-only) whose **GitHub Releases** deploy prod. This matches
+> what the admin actually bootstrapped (only `dev` + `prod` roles) and the team's familiar
+> branch-per-environment workflow. Tag-based promotion and the `staging` tier are dropped; a
+> `staging` env can be added later as a peer if a real pre-prod need appears.
 
 ---
 
-## Decisions locked (2026-08-14)
+## Decisions locked (2026-08-18)
 
 | # | Decision | Choice |
 |---|---|---|
-| **P1** | Promotion model | **2 long-lived branches + gates.** `main` is trunk. No `dev`/`stage` integration branches. |
-| **P2** | Environments | **`dev`, `staging`, `prod`** — three Terraform env roots, three GitHub Environments. |
-| **P3** | dev deploy trigger | **Auto** on push/merge to `main`. |
-| **P4** | staging / prod triggers | **Promote by git tag** (`staging-*` → staging, `v*` → prod), plus `workflow_dispatch` reruns. No third branch to keep in sync. |
-| **P5** | prod gate | **GitHub Environment required reviewers = @you + @beaudry**, with **"prevent self-review" ON** (release pusher can't approve their own deploy). |
+| **P1** | Promotion model | **2 long-lived branches.** `dev` is the integration branch (all feature PRs target it); `main` is the release branch, admins-only. |
+| **P2** | Environments | **`dev`, `prod`** — two Terraform env roots, two GitHub Environments, one-to-one. |
+| **P3** | dev deploy trigger | **Auto** on merge to `dev`. |
+| **P4** | prod deploy trigger | **GitHub Release published** from `main` (`on: release: [published]`). Release is cut after `dev`→`main` merge. |
+| **P5** | prod gate | **GitHub Environment required reviewers = @you + @beaudry** (only one need approve). **"Prevent self-review" OFF** (revised 2026-08-18) so a single admin can approve + deploy when the other is unavailable — a deliberate 2-person-team availability trade; the approval *pause* + named-approver audit record stay. **Re-enable prevent-self-review when the team grows past two.** |
 | **P6** | Frontend | **Per-env S3 bucket + CloudFront distribution + domain.** Each deploy syncs that env's bucket and **invalidates only that env's distribution.** |
-| **P7** | Credentials | **AWS OIDC only** (no long-lived keys, no laptop deploys). Per-env deploy role + a read-only plan role for PR diffs. |
+| **P7** | Credentials | **AWS OIDC only** (no long-lived keys). Per-env deploy role, trust **scoped to the GitHub Environment** — so the trigger mechanism is a repo-side choice needing no AWS changes. |
 
-Why not 3 branches (`dev → stage → main`): three long-lived branches buy promotion overhead,
-drift, and back-merge pain. Environments are cheap; long-lived branches are not. Tag-based
-promotion gives the same "explicit gate before staging/prod" without a third branch to
-reconcile. A `stage` branch can be added later if a real pre-prod integration need appears.
+Why two branches (not tag-promotion off one trunk): the team already runs a branch-per-environment
+flow and finds it familiar; `dev` is already PR- and CI-protected. A release off `main` still
+creates a tag, so "what's in prod" stays a `git describe` away without the overhead of a hand-cut
+promotion tag. The one cost — a second long-lived branch — is accepted (see *Hotfixes* below).
 
 ---
 
-## ⛔ The one blocking dependency: the admin bootstrap contract
+## Prerequisites — admin bootstrap (DONE)
 
-GNP's org uses an **admin/landing-zone account that runs a one-time scaffolding step per new
-deploy target**; after that, all environments are deployable from CI. Nothing in this repo
-documents that step's **interface**, and the pipeline can't assume real AWS credentials until
-we have it. **These five facts must be confirmed with whoever owns the admin account** before
-the deploy workflows can be filled in (everything else in this plan can be built without them):
+The one-time AWS scaffolding in [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) is
+**complete**. We have: the GitHub OIDC provider ARN, the Terraform state bucket
+(`good-neighbor-app-terraform-state`) + lock table (`good-neighbor-app-terraform-locks`) in
+`us-west-2`, and **per-env deploy roles** (`good-neighbor-app-deploy-dev` / `-prod`) whose trust
+policy `sub` is scoped to `repo:…good-neighbor-app:environment:dev` / `:environment:prod`.
 
-1. **Scope of the bootstrap** — does the admin step create the **GitHub OIDC identity
-   provider**, the **deploy role(s)**, *and* the **Terraform state bucket + DynamoDB lock
-   table**? Or only some (and we create the rest per-env)?
-2. **One role or per-env roles** — does it hand back a **single assumable role reaching all
-   envs**, or **one deploy role per env** (`dev`/`staging`/`prod`)? This decides how many
-   GitHub Environment secrets we set and whether separation is at the role or the environment.
-3. **Read-only plan role** — is there (or can there be) a **least-privilege role for PR
-   `terraform plan`**, separate from the deploy role?
-4. **State layout** — one state bucket with per-env keys (`dev/`, `staging/`, `prod/`
-   — matching the commented `backend "s3"` blocks already in
-   [infra/environments/*/main.tf](../infra/environments/dev/main.tf)) or per-env buckets?
-   Confirm **bucket name, region, lock table name**.
-5. **Trust-policy scope** — is the OIDC role's trust condition scoped to this repo **and which
-   refs** (branches / tags / environments)? Tag-based promotion (P4) only works if the trust
-   policy permits assuming the role from **tag pushes and the `staging`/`prod` environments**.
-
-**Interim posture until confirmed:** keep deploys on the existing manual
-[`workflow_dispatch`](../.github/workflows/deploy.yml) path; build and merge everything in
-Phases 1–3 below (staging env root, plan-on-PR job, protection rules, frontend publish, smoke
-tests) with role ARNs / backend values left as documented placeholders.
+**That environment-scoped trust is the load-bearing fact for this plan:** a deploy job can assume
+its role *only* when it declares `environment: dev` (or `prod`). The trust policy doesn't care what
+*triggered* the job (branch push, release, dispatch) — only that the job runs in the named GitHub
+Environment. So switching from the old tag model to this branch+release model needs **zero
+AWS-side changes**.
 
 ---
 
 ## Target-state model
 
 ```
- PR  ──▶ CI (lint/type/test/build + tf fmt/validate/checkov)   ← required to merge
-     └─▶ terraform plan (read-only role, infra/** paths)        ← preview, non-blocking
+ PR to dev ──▶ CI (lint/type/test/build + tf fmt/validate/checkov)   ← required to merge (in place)
 
- merge to main ──▶ deploy DEV        (auto, environment: dev)     + /health smoke
- tag staging-*  ──▶ deploy STAGING   (environment: staging)       + /health smoke
- tag v*         ──▶ deploy PROD       (environment: prod, APPROVAL) + /health smoke
+ merge to dev ─────────▶ deploy DEV   (auto, environment: dev)              + /health smoke
+ dev ──▶ main (admins) ─▶ [main = release source]
+ Release published ────▶ deploy PROD  (environment: prod, APPROVAL gate)    + /health smoke
 ```
 
 **Environments** (Terraform env roots + GitHub Environments, one-to-one):
 
 | Env | Trigger | GH Environment protection | Data classification | Hostname |
 |---|---|---|---|---|
-| `dev` | push to `main` | none (fast inner loop) | low / disposable test data | execute-api URL + dev frontend domain |
-| `staging` | tag `staging-*` | branch/tag restriction to release tags | mirrors prod | staging frontend domain |
-| `prod` | tag `v*` | **required reviewers (you + beaudry), no self-review**; tag restriction | prod | prod frontend domain |
+| `dev` | merge to `dev` | none (fast inner loop) | low / disposable test data | execute-api URL + dev frontend domain |
+| `prod` | Release published (from `main`) | **required reviewers (you + beaudry); self-review allowed** (single approver, per P5); deployment **tag** rule restricts to `v*` | prod | prod frontend domain |
 
-**Promotion is a tag, not a merge.** `main` is always the source; a release is cutting a tag
-off a `main` commit. `staging-2026.08.14` deploys staging; after validation, `v2026.08.14`
-(the same commit) deploys prod behind approval. This keeps one lineage and makes "what's in
-prod" a `git describe` away.
+**A release is a tag.** A GitHub Release points at a tag on a `main` commit, so prod lineage is a
+`git describe` away and prod always ships a reviewed `main` commit — never `dev`'s tip.
 
 ---
 
-## Phase 1 — Terraform: add the `staging` env root + remote state
+## ⚠️ The one deployment-protection gotcha — RESOLVED 2026-08-18
 
-- Add **`infra/environments/staging/`** as a peer of `dev`/`prod` (copy `dev`, set
-  `environment = "staging"`, backend key `staging/terraform.tfstate`, and prod-like
-  `data_classification` / `internet_exposure` / `asset_criticality`). Today `dev` and `prod`
-  are byte-identical bar a comment; `staging` follows the same shape.
-- **Uncomment and fill the `backend "s3"` blocks** in all three env roots with the bucket /
-  region / lock-table values from **bootstrap fact #4**. This is the SDLC-checklist "remote
-  Terraform state" item.
-- Extend [`infra/modules/app`](../infra/modules/app/main.tf) as needed so the module is
-  env-parameterized (it already keys resource names off `${application}-${environment}`).
-- **Done when:** `terraform init` + `validate` pass in all three roots and `terraform plan`
-  (once the plan role exists) is clean per env.
+For a `release: [published]` trigger, `github.ref` is the **tag ref** (`refs/tags/<tag>`), *not*
+`refs/heads/main`. So restricting the `prod` Environment's deployments to the **`main` branch** would
+**block** release-triggered runs. **Resolved:** the `prod` Environment's "deployment branches and
+tags" is set to **tags only, pattern `v*`** — release deploys pass; a branch ref (incl. manual
+`workflow_dispatch` from `main`) is refused, so prod is reachable **only** via a `v*` tag. Two
+consequences: release tags **must** match `v*`, and manual prod reruns must replay the tag-triggered
+run (re-run jobs), not dispatch from a branch.
 
-## Phase 2 — CI: add `terraform plan` preview on PRs
+---
 
-- Add a **`terraform-plan`** job to [`ci.yml`](../.github/workflows/ci.yml), path-filtered to
-  `infra/**`, that assumes the **read-only plan role** (bootstrap fact #3) via OIDC and runs
-  `terraform plan` against the `dev` state, posting/printing the diff. This is the Terraform
-  analog of the sibling repo's `cdk-diff.yml`.
-- Guard it like the sibling does: **skip cleanly when the plan-role ARN is unset** (so PRs
-  from forks / pre-bootstrap don't fail) — print "set `AWS_DEV_PLAN_ROLE_ARN` to enable
-  authenticated plans."
-- Keep the existing unauthenticated `terraform fmt/validate/checkov` job as-is (it already
-  runs and needs no credentials).
-- **Done when:** a PR touching `infra/**` shows a real plan diff (post-bootstrap) or the
-  skip message (pre-bootstrap), and CI stays green either way.
+## Phase 1 — GitHub Environments + secrets (repo settings)
 
-## Phase 3 — Deploy workflows: auto-dev + tag-promoted staging/prod
+- **Create Environments** `dev` and `prod` (repo → Settings → Environments).
+  - `prod`: **required reviewers** = the two admins (only one need approve); **"prevent self-review"
+    OFF** (P5 — a single admin can approve when the other is out); **deployment tag rule** = tags
+    `v*` (✅ set) — see the gotcha above.
+  - `dev`: no gate.
+- **Per-env secret + variable** in each (matches [deploy.yml](../.github/workflows/deploy.yml), which
+  reads `secrets.AWS_DEPLOY_ROLE_ARN` and `vars.AWS_REGION`):
+  - Secret `AWS_DEPLOY_ROLE_ARN` → that env's deploy role ARN.
+  - Variable `AWS_REGION` → `us-west-2`.
+- **Verify OIDC** with the throwaway `sts get-caller-identity` job from
+  [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md#after-the-admin-is-done-repo-maintainers-no-aws-admin-rights-needed)
+  before a real apply.
+- **Done when:** an `environment: dev` job assumes the dev role and prints an `AROA…` identity.
 
-Replace the single manual [`deploy.yml`](../.github/workflows/deploy.yml) with a
-**parameterized deploy** driven by triggers (a reusable workflow called by three thin trigger
-workflows, or one workflow with trigger-derived `environment`). Each deploy job:
+## Phase 2 — Enable remote Terraform state
 
-1. runs the full check suite (lint/type/test/build) — belt-and-suspenders with CI,
-2. assumes the **env's deploy role** via OIDC (`environment:` set so GH protection applies),
-3. `terraform init/plan/apply` in that env root,
-4. **frontend publish** (Phase 4),
-5. **`/health` smoke test** against the deployed API (GNP already has a `/health` handler),
-6. uses a per-env `concurrency` group so overlapping deploys queue rather than race.
+- **Uncomment the `backend "s3"` blocks** in [infra/environments/dev/main.tf](../infra/environments/dev/main.tf)
+  and [infra/environments/prod/main.tf](../infra/environments/prod/main.tf) (values already match the
+  bootstrapped bucket / region / lock table). First `terraform init -migrate-state` moves local state
+  to S3. This is the SDLC-checklist "remote Terraform state" item.
+- **Done when:** `terraform init` + `validate` pass in both roots against S3 state with locking.
 
-Trigger map (illustrative — final YAML written against confirmed roles):
+## Phase 3 — Deploy workflows: auto-dev + release-triggered prod
+
+**Built 2026-08-18.** The single manual `deploy.yml` is now a **reusable core** (`workflow_call` +
+`workflow_dispatch`) called by two thin trigger workflows:
+
+- [`deploy-dev.yml`](../.github/workflows/deploy-dev.yml) — `push` to `dev` → core with `environment: dev`.
+- [`deploy-prod.yml`](../.github/workflows/deploy-prod.yml) — `release: [published]` → core with `environment: prod`.
+- [`deploy.yml`](../.github/workflows/deploy.yml) — the reusable core; also runnable manually for reruns.
+
+The deploy job:
+
+1. ~~runs the full check suite (lint/type/test/build) — belt-and-suspenders with CI~~ **deferred** —
+   [`ci.yml`](../.github/workflows/ci.yml) now runs the full suite on every push to `dev` and `main`,
+   and branch protection gates merges, so the deploy doesn't re-run it. Add a `needs: checks` gate
+   later if the deploy should hard-gate on its own checks.
+2. ✅ assumes the **env's deploy role** via OIDC (`environment:` set so GH protection applies),
+3. ✅ bundles the api + worker Lambdas (`npm run build:lambdas`) **before** `terraform plan` so
+   `data.archive_file` can zip `backend/dist/{api,worker}`,
+4. ✅ `terraform init/plan/apply` in that env root (now also provisions CloudFront + API Gateway +
+   Lambdas),
+5. ✅ **frontend publish** (Phase 4) — builds with the per-env `api_url` baked in
+   (`VITE_API_BASE`), `aws s3 sync`s to that env's bucket, then invalidates **only that env's**
+   CloudFront distribution,
+6. ✅ **`/health` smoke test** — now wired: the env root exposes an `api_url` output, so the job
+   `curl -fsS "$api_url/health"` and fails the deploy on non-200,
+7. ✅ uses a per-env `concurrency` group so overlapping deploys queue rather than race.
+
+Trigger map (as built):
 
 ```yaml
-# dev: on push to main
-on: { push: { branches: [main] } }         # environment: dev
+# dev: on merge to dev
+on: { push: { branches: [dev] } }          # environment: dev
 
-# staging: on staging-* tags
-on: { push: { tags: ['staging-*'] } }        # environment: staging
-
-# prod: on v* tags  (GH Environment requires reviewer approval before creds are issued)
-on: { push: { tags: ['v*'] } }               # environment: prod
+# prod: on GitHub Release published (from main)
+on: { release: { types: [published] } }    # environment: prod  (checks out the release tag)
 ```
 
-- **Done when:** merging to `main` auto-deploys dev with a passing smoke test; a `staging-*`
-  tag deploys staging; a `v*` tag **pauses for approval** then deploys prod.
+- The prod job checks out the **release's tag** (its default ref), so prod builds the reviewed
+  `main` commit, not `dev`.
+- **Done when:** merging to `dev` auto-deploys dev **with a passing smoke test**; publishing a Release
+  **pauses for the other admin's approval** then deploys prod. *(Smoke test wired with Phase 4 — the
+  `api_url` output now exists; see step 6.)*
 
-## Phase 4 — Frontend build + publish (per-env, env-scoped invalidation)
+## Phase 4 — Frontend build + publish + API/Lambdas in Terraform — BUILT 2026-08-18
 
-Folds in the existing **I1** item ([MVP-TODO](./MVP-TODO.md), "frontend build + publish").
+Folds in the existing **I1** item ([MVP-TODO](./MVP-TODO.md), "frontend build + publish") **and** the
+analysis-backend "Step E — API in Terraform" work (the two are interdependent: the frontend build
+needs the API's invoke URL, and the smoke test needs it too).
 
-- Provision, per env, an **S3 bucket + CloudFront distribution + domain** in Terraform (TLS,
-  HSTS/CSP security headers, WAF managed rules, CCSF tags), with **block-public-access** and
-  CloudFront **origin access** only.
-- The deploy job builds the frontend, **`aws s3 sync`s to that env's bucket**, then creates a
-  **CloudFront invalidation scoped to that env's distribution ID only** (P6) — never a
-  cross-env invalidation.
-- Per-env frontend config (API base URL etc.) is injected at build time from the env's GitHub
-  Environment vars, so `dev`/`staging`/`prod` builds point at their own API.
-- **Done when:** each env serves its own frontend on its own domain and a deploy invalidates
-  exactly that env's cache.
+**Frontend serving (built):**
+- ✅ Per env, an **S3 bucket + CloudFront distribution** in Terraform ([cloudfront.tf](../infra/modules/app/cloudfront.tf)):
+  OAC-only origin access (bucket stays fully private + block-public-access), redirect-to-https,
+  the existing security **response-headers policy** + **CLOUDFRONT-scoped WAF** (now wired, was
+  orphaned), SPA fallback (403/404 → `/index.html`/200 for the History-API router), standard S3
+  access logging, CCSF `default_tags`.
+- ✅ **Domains: AWS-provided** (`*.cloudfront.net` + `execute-api` URL) for MVP — the domain
+  open-question is resolved to *AWS default domains; custom domains (ACM/Route53) deferred*.
+- ✅ The deploy job builds the frontend with `VITE_API_BASE="$api_url"`, **`aws s3 sync`s to that
+  env's bucket** (`--delete`), then invalidates **only that env's distribution ID** (P6).
 
-## Phase 5 — GitHub protection rules (repo settings, not code)
+**API + compute (built — "Step E"):**
+- ✅ **API Gateway v2 HTTP API** ([api.tf](../infra/modules/app/api.tf)) — one AWS_PROXY integration,
+  11 route keys mirroring `backend/scripts/local-api.mjs`, **no authorizer for MVP** (site-code flow
+  mints no JWT → requests resolve to `DEMO_SITE_ID`; tenant isolation lands with the deferred JWT
+  authorizer + `custom:siteId`), CORS scoped to the CloudFront origin, `$default` stage with
+  KMS-encrypted access logs.
+- ✅ **api + worker Lambdas** ([lambda.tf](../infra/modules/app/lambda.tf), nodejs22.x, esbuild-bundled,
+  X-Ray active, KMS-encrypted env, reserved concurrency) wired to the existing DynamoDB / S3 / SQS /
+  KMS. The worker consumes the submissions queue via an event-source mapping
+  (`ReportBatchItemFailures`) with a **DLQ** + redrive.
+- ✅ **Least-privilege IAM roles** ([iam.tf](../infra/modules/app/iam.tf)) — no wildcards.
+- ✅ **Analyzer key in Secrets Manager** ([secrets.tf](../infra/modules/app/secrets.tf)) — secret
+  created in Terraform, **value set out-of-band** (never in code/state); the worker fetches it at
+  runtime.
+- ✅ New env-root outputs: `api_url`, `cloudfront_distribution_id`, `cloudfront_domain_name`.
+- **Done when:** each env serves its own frontend from CloudFront and runs the API on Lambda +
+  API Gateway, and a deploy invalidates exactly that env's cache. *(Provisioned; awaiting the first
+  live apply per env.)*
 
-These are configured in **repo settings**; this section is the source of record until they're
-enabled, then graduates to a standalone `docs/branch-protection.md`.
+**Deferred follow-ups (tracked):** JWT authorizer + `custom:siteId` issuance + client tokens;
+custom domains (ACM + Route53); real `sharp` image downscaling (currently a passthrough); an
+optional REGIONAL WAF on the API itself.
 
-**Branch protection — `main`:**
-- Require a pull request before merging; **require ≥1 approving review**; **require review
-  from CODEOWNERS**.
-- Require the **`CI` workflow** to pass; require branches up to date when practical.
-- Restrict / disable direct pushes; no bypass for infra-sensitive changes without a recorded
-  reason.
+## Phase 5 — Branch protection (repo settings)
+
+`dev` protection is **already in place** (PR required + CI must pass). The posture enabled for `main`
+(2026-08-18) is intentionally **lighter** than the original draft — see the note below.
+
+**`main` (release branch) — enabled 2026-08-18:**
+- ✅ **Pushes restricted to repo admins only.**
+- **Deliberately deferred** (not enabled now): require-PR-before-merge, ≥1 approving review,
+  CODEOWNERS review, and required `CI` pass on `main`.
+
+> **Single-person path to prod is intentional (2026-08-18).** With `main` unreviewed *and*
+> prevent-self-review OFF (P5), one admin can push `main` → cut a `v*` release → self-approve → prod,
+> unilaterally. This is a deliberate 2-person-team availability trade, not an oversight: a gate that
+> requires a second human fails closed when only one is available. What still stands: prod is
+> reachable only via `v*` tags, `main` is admins-only (only the two admins can land code there), every
+> deploy carries a **named approver + timestamp** in the environment history, and CI *runs* on `main`
+> (not required — check it before approving). **Revisit** both `main` review and prevent-self-review
+> when the team grows past two.
+
+**`dev` (integration branch — already enforced):** PR required; CI must pass. Keep as-is.
 
 **Environment protection:**
-- **`prod`** — required reviewers **@you + @beaudry**, **"prevent self-review" ON** (P5);
-  restrict deployments to `v*` tags.
-- **`staging`** — restrict deployments to `staging-*` tags; approval optional.
-- **`dev`** — no gate (fast loop).
+- `prod` — deployment restricted to **tags `v*`** (✅ set 2026-08-18); **required reviewers = both
+  admins** (✅ set 2026-08-18; only one need approve); **prevent-self-review OFF** (P5) so a lone
+  admin can deploy. This intentionally drops the two-person control — see the note above.
+- `dev` — no gate.
 
-**CODEOWNERS caveat:** [.github/CODEOWNERS](../.github/CODEOWNERS) currently points at four
-teams (`maintainers`/`platform`/`backend`/`frontend`/`security`). CODEOWNERS review
-enforcement **only works if those GitHub teams exist and hold repo access**. Confirm they
-exist, or consolidate to a single team (the sibling repo uses one `moi-admins` team). With
-just two committers, a single owning team is the simpler choice.
+**CODEOWNERS:** **removed 2026-08-18.** With no GitHub teams and `main` locked to the two individual
+admin accounts, CODEOWNERS was redundant (the branch lock is the ownership control) and its five
+team references didn't resolve. If required review is ever enabled and code-owner review is wanted,
+re-add a minimal `.github/CODEOWNERS` naming the two admins' individual handles — not teams.
 
-- **Done when:** `main` can't be pushed to directly, a prod tag pauses for the *other* admin's
-  approval, and the SDLC-checklist "branch protections" + "GitHub environments" items flip to
-  done.
+- **Done (✅ 2026-08-18):** `main` can't be pushed to directly, prod deploys only from `v*` tags and
+  pause for a **one-click approval** (required reviewers set; either admin, self allowed). Phase 5
+  protection is in place — the SDLC-checklist "branch protections" + "GitHub environments" items can
+  flip to done.
 
 ## Phase 6 — Rollback runbook (Terraform)
 
-Source of record until enabled, then graduates to `docs/runbooks/rollback.md`. GNP is
-Terraform, so rollback is **revert-and-reapply**, not CloudFormation stack rollback:
+Source of record until enabled, then graduates to `docs/runbooks/rollback.md`. GNP is Terraform, so
+rollback is **revert-and-reapply**:
 
 1. Confirm the affected environment + the deploy run that introduced the change.
-2. **Revert the offending PR** (or cut a rollback PR) on `main`; let CI pass.
-3. For **dev**, the merge auto-redeploys. For **staging/prod**, cut a new tag off the reverted
-   commit (`v…-rollback`) and deploy through the same gated workflow.
+2. **Revert the offending PR** on `dev` (or cut a rollback PR); let CI pass.
+3. For **dev**, the merge auto-redeploys. For **prod**, merge the revert `dev`→`main` and **publish a
+   new Release** (e.g. `v…-rollback`) to deploy through the same gated workflow.
 4. Re-run the **`/health` smoke test**.
-5. **State drift / partial apply:** if an apply half-failed, re-run `terraform apply` to
-   converge; only touch state manually (`state rm`/import) with an owner's sign-off and never
-   hand-edit the state file.
+5. **State drift / partial apply:** if an apply half-failed, re-run `terraform apply` to converge;
+   only touch state manually (`state rm`/import) with an owner's sign-off and never hand-edit state.
 6. Record incident, root cause, follow-up issue.
 
-Avoid out-of-band console changes except in a declared emergency with owner approval — they
-cause the drift in step 5.
+Avoid out-of-band console changes except in a declared emergency with owner approval — they cause the
+drift in step 5.
+
+---
+
+## Hotfixes — the cost of a second long-lived branch
+
+An urgent prod fix still travels the normal path: PR → `dev` (auto-deploys dev, CI green) →
+`dev`→`main` merge → publish Release. Only in a **declared emergency** should an admin fast-track a
+fix onto `main` directly — and then `dev` must be brought back in sync (merge `main`→`dev`)
+immediately, or the branches drift. Prefer the normal path; the emergency bypass is the exception,
+not the tool.
 
 ---
 
 ## What blocks on what
 
 ```
-bootstrap contract (external)
-        │  (role ARNs, state bucket, trust scope)
-        ▼
-Phase 1 staging root ──▶ Phase 2 plan-on-PR ──▶ Phase 3 deploy workflows ──▶ Phase 4 frontend
-        │                                                │
-        └───────────────── Phase 5 protection rules ─────┴──▶ Phase 6 rollback runbook
+admin bootstrap (DONE) ──▶ Phase 1 environments ──▶ Phase 2 remote state ──▶ Phase 3 deploy workflows ──▶ Phase 4 frontend
+                                   │                                                  │
+                                   └──────────────── Phase 5 branch protection ───────┴──▶ Phase 6 rollback runbook
 ```
 
-Phases 1, 5, and 6 can be **drafted/merged now** (staging root with placeholder backend, the
-protection rules, the runbook). Phases 2–4 can be **written now** but only go live once the
-bootstrap facts fill in the role ARNs and state values.
+Phases 5 and 6 can be **drafted/merged now**. Phases 1–4 are unblocked (bootstrap is done) and can go
+live as soon as the Environments + secrets are set.
 
 ## Acceptance criteria (whole plan)
 
-1. Three Terraform env roots (`dev`/`staging`/`prod`) with remote S3 state + locking.
-2. PRs show an authenticated `terraform plan` preview; `main` merges auto-deploy dev.
-3. `staging-*` tag → staging; `v*` tag → prod **behind two-admin approval with no self-review**.
-4. Every deploy runs a `/health` smoke test and (frontend) an **env-scoped** CloudFront
-   invalidation.
-5. `main` is branch-protected (PR + CI + CODEOWNERS); prod/staging environments are
-   tag-restricted; no long-lived AWS keys anywhere.
+1. Two Terraform env roots (`dev`/`prod`) with remote S3 state + locking.
+2. Merges to `dev` auto-deploy dev; PRs run CI (in place).
+3. A published Release from `main` → prod **behind a required-reviewer approval pause** (single
+   approver; self-review allowed — 2-person availability, P5).
+4. Every deploy runs a `/health` smoke test and (frontend) an **env-scoped** CloudFront invalidation.
+5. `main` is admins-only + branch-protected (locked to the two admin accounts; PR + CI review
+   deferred for a 2-person team, no CODEOWNERS); prod environment is release-tag-restricted; no
+   long-lived AWS keys anywhere.
 6. A Terraform rollback runbook exists and has been dry-run at least once.
 
-## Open questions (beyond the bootstrap contract)
+## Open questions
 
-- **Pre-prod hostnames** — dev/staging on execute-api URLs + a dev/staging frontend domain, or
-  real subdomains? (Reserve the production hostname for prod only.)
-- **Do the CODEOWNERS teams exist**, or consolidate to one owning team (Phase 5)?
-- **Tag scheme** — `vYYYY.MM.DD` calendar tags vs semver `vX.Y.Z`? (Either works; pick one for
-  `git describe` legibility.)
+- ~~**Pre-prod / dev hostname**~~ **Resolved 2026-08-18:** both envs use **AWS default domains**
+  (CloudFront `*.cloudfront.net` + `execute-api` URL) for MVP. Custom domains (ACM + Route53) are a
+  deferred follow-up; when they land, reserve the production hostname for prod only.
+- ~~**Do the CODEOWNERS teams exist**~~ **Resolved 2026-08-18: no teams — CODEOWNERS removed.**
+  The project is a 2-person repo with no GitHub teams, and `main` is already locked to the two
+  individual admin accounts, so CODEOWNERS was redundant *and* referenced five nonexistent teams
+  (a latent trap if required review were ever enabled). `.github/CODEOWNERS` deleted; the `main`
+  branch lock is the ownership control.
+- ~~**Release tag scheme**~~ **Resolved 2026-08-18: semver `vX.Y.Z`.** Release tags follow semantic
+  versioning; the leading `v` satisfies the prod Environment's `v*` deployment-tag rule, and
+  `git describe` stays legible.

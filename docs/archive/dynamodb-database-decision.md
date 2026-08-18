@@ -1,10 +1,10 @@
 # Database Decision: DynamoDB instead of Postgres
 
-*DynamoDB planning set (doc 1 of 5) · [index & read order](./README.md) · next → [data model](./dynamodb-data-model.md)*
+*DynamoDB planning set (doc 1 of 5) · [index & read order](../README.md) · next → [data model](../dynamodb-data-model.md)*
 
-**Status:** Accepted — decided; formalized in [ADR 0002](./adr/0002-datastore-dynamodb.md) (this doc is the backing rationale)
+**Status:** Accepted — decided; formalized in [ADR 0002](../adr/0002-datastore-dynamodb.md) (this doc is the backing rationale). **Archived 2026-08-18** — ADR 0002 is the canonical record; kept here for the backing rationale.
 **Date:** 2026-08-12
-**Affects:** [AGENTS.md](../AGENTS.md) standing choices (Prisma, managed Postgres), the
+**Affects:** [AGENTS.md](../../AGENTS.md) standing choices (Prisma, managed Postgres), the
 JS/JSDoc and frontend migration plans, and the local development story.
 
 ## TL;DR
@@ -133,7 +133,7 @@ that anyway. This isn't a compromise against our standards; it's *more* aligned 
 
 ## Standing-choice changes this implies
 
-If we adopt DynamoDB, the following in [AGENTS.md](../AGENTS.md) change and should be updated
+If we adopt DynamoDB, the following in [AGENTS.md](../../AGENTS.md) change and should be updated
 deliberately, not slipped in:
 
 - "Use Prisma for schema and migrations" → **removed.** Access via `@aws-sdk/lib-dynamodb`;
