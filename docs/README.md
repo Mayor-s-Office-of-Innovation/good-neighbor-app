@@ -68,6 +68,10 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
   [data model](./dynamodb-data-model.md).
+- **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
+  rule-driven action/escalation backend that consumes analyzer assessments, applies the
+  `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
+  creates/resolves guidance tasks in a deterministic sequence. Draft design; not implemented.
 
 ## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
 
