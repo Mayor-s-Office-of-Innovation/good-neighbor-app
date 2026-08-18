@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   analysisKey,
+  assessmentConditionPrefix,
+  assessmentKey,
+  assessmentTimelineGsi,
   artifactKey,
   checkChildrenPrefix,
   checkHeaderKey,
   checkTimelineGsi,
+  conditionKey,
+  conditionTimelineGsi,
   sitePk,
   taskKey,
+  taskWorklistDateGsi,
   taskWorklistGsi,
+  unresolvedConditionGsi,
 } from "./keys.js";
 
 describe("single-table key builders", () => {
@@ -49,6 +56,64 @@ describe("single-table key builders", () => {
     expect(checkTimelineGsi("s1", "2026-08-14T00:00:00.000Z")).toEqual({
       gsi1pk: "SITE#s1",
       gsi1sk: "2026-08-14T00:00:00.000Z",
+    });
+  });
+
+  it("builds assessment and condition keys", () => {
+    expect(assessmentKey("s1", "asm1")).toEqual({
+      pk: "SITE#s1",
+      sk: "ASSESSMENT#asm1",
+    });
+    expect(conditionKey("s1", "asm1", "cond1")).toEqual({
+      pk: "SITE#s1",
+      sk: "ASSESSMENT#asm1#COND#cond1",
+    });
+    expect(assessmentConditionPrefix("asm1")).toBe("ASSESSMENT#asm1#COND#");
+  });
+
+  it("builds assessment, condition, unresolved, and date-first task GSIs", () => {
+    expect(
+      assessmentTimelineGsi("s1", "2026-08-18T00:00:00.000Z", "asm1"),
+    ).toEqual({
+      gsi1pk: "SITE#s1#ASSESSMENT",
+      gsi1sk: "2026-08-18T00:00:00.000Z#asm1",
+    });
+    expect(
+      conditionTimelineGsi(
+        "s1",
+        3,
+        "2026-08-18T00:00:00.000Z",
+        "asm1",
+        "cond1",
+      ),
+    ).toEqual({
+      gsi4pk: "SITE#s1#CONDITION#SEV#3",
+      gsi4sk: "2026-08-18T00:00:00.000Z#asm1#cond1",
+    });
+    expect(
+      unresolvedConditionGsi(
+        "s1",
+        3,
+        "2026-08-18T00:00:00.000Z",
+        "asm1",
+        "cond1",
+      ),
+    ).toEqual({
+      gsi5pk: "SITE#s1#CONDITION#UNRESOLVED",
+      gsi5sk: "2026-08-18T00:00:00.000Z#SEV#3#asm1#cond1",
+    });
+    expect(
+      taskWorklistDateGsi(
+        "s1",
+        "open",
+        "escalation",
+        4,
+        "2026-08-18T00:00:00.000Z",
+        "task1",
+      ),
+    ).toEqual({
+      gsi2pk: "SITE#s1#TASK#open",
+      gsi2sk: "2026-08-18T00:00:00.000Z#escalation#4#task1",
     });
   });
 });
