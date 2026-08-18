@@ -1190,13 +1190,15 @@ update process above and produce a new `policyVersion`.
 - Added GSI1/GSI2/GSI4/GSI5 key writes needed by the query inventory.
 - Added Terraform and local DynamoDB bootstrap definitions for GSI4/GSI5.
 
-### Phase 3 - Assessment Guidance API
+### Phase 3 - Assessment Guidance API (DONE 2026-08-18)
 
-- Add `POST /v1/assessments:evaluate`.
-- Add `GET /v1/assessments/{assessmentId}/guidance`.
-- Add answer submission.
-- Add immediate task creation for resolved conditions.
-- Add cannot-do capture.
+- Added `POST /v1/assessments:evaluate`.
+- Added `GET /v1/assessments/{assessmentId}/guidance`.
+- Added answer submission at
+  `POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers`.
+- Added immediate task creation for conditions resolved after answer submission.
+- Added cannot-do capture at `POST /v1/tasks/{taskId}/cannot-do`.
+- Added local API routes for all Phase 3 handlers.
 
 ### Phase 4 - Complete Check Integration
 

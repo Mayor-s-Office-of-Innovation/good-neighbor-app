@@ -1,8 +1,14 @@
-import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchGetCommand,
+  GetCommand,
+  QueryCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { ddb } from "../../db.js";
 import {
   assessmentKey,
+  assessmentConditionPrefix,
   assessmentTimelineGsi,
   conditionKey,
   conditionTimelineGsi,
@@ -335,4 +341,239 @@ export async function storeEvaluatedAssessment(input, options) {
   );
 
   return { assessmentItem, conditionItems, taskItems };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.assessmentId
+ * @returns {Promise<{ assessment: Record<string, unknown> | null, conditions: Record<string, unknown>[], tasks: Record<string, unknown>[] }>}
+ */
+export async function getAssessmentGuidance({ tableName, siteId, assessmentId }) {
+  const [assessmentResult, conditionsResult] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: assessmentKey(siteId, assessmentId),
+      }),
+    ),
+    ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": assessmentConditionPrefix(assessmentId),
+        },
+      }),
+    ),
+  ]);
+
+  const conditions = conditionsResult.Items ?? [];
+  const taskKeys = conditions.flatMap((condition) =>
+    /** @type {string[]} */ (condition.taskIds ?? []).map((taskId) =>
+      taskKey(siteId, taskId),
+    ),
+  );
+
+  const tasks =
+    taskKeys.length === 0
+      ? []
+      : (
+          await ddb.send(
+            new BatchGetCommand({
+              RequestItems: { [tableName]: { Keys: taskKeys } },
+            }),
+          )
+        ).Responses?.[tableName] ?? [];
+
+  return {
+    assessment: assessmentResult.Item ?? null,
+    conditions,
+    tasks,
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.assessmentId
+ * @param {string} opts.conditionId
+ * @param {Record<string, unknown>} opts.answers
+ * @param {GuidanceCatalog} [opts.catalog]
+ * @param {() => string} [opts.idFactory]
+ * @param {Date} [opts.now]
+ * @returns {Promise<{ conditionItem: Record<string, unknown>, taskItem: Record<string, unknown> | null, evaluation: EvaluationResult }>}
+ */
+export async function answerCondition(opts) {
+  const catalog = opts.catalog ?? actionsEscalationsV2Catalog;
+  const now = (opts.now ?? new Date()).toISOString();
+  const conditionResult = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: conditionKey(opts.siteId, opts.assessmentId, opts.conditionId),
+    }),
+  );
+  if (!conditionResult.Item) {
+    const err = new Error("Condition not found");
+    err.name = "NotFound";
+    throw err;
+  }
+
+  const conditionItem = conditionResult.Item;
+  const mergedAnswers = {
+    .../** @type {Record<string, unknown>} */ (conditionItem.answers ?? {}),
+    ...opts.answers,
+  };
+  const evaluation = evaluateCondition({
+    condition: {
+      category: String(conditionItem.analyzerCategory ?? conditionItem.canonicalCategory),
+      severity: Number(conditionItem.severity ?? 0),
+    },
+    answers: mergedAnswers,
+    catalog,
+  });
+
+  /** @type {Record<string, unknown> | null} */
+  let taskItem = null;
+  /** @type {string[]} */
+  let taskIds = /** @type {string[]} */ (conditionItem.taskIds ?? []);
+  if (evaluation.kind === "outcome") {
+    const taskId = (opts.idFactory ?? randomUUID)();
+    taskIds = [...taskIds, taskId];
+    taskItem = buildTaskItem({
+      siteId: opts.siteId,
+      assessmentId: opts.assessmentId,
+      checkId:
+        typeof conditionItem.checkId === "string" ? conditionItem.checkId : undefined,
+      condition: {
+        category: String(conditionItem.analyzerCategory),
+        severity: Number(conditionItem.severity),
+        sourceArtifactIds:
+          /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
+            ?.artifactIds ?? [],
+      },
+      conditionId: opts.conditionId,
+      rule: evaluation.rule,
+      taskId,
+      now,
+    });
+  }
+
+  const status =
+    evaluation.kind === "outcome"
+      ? "tasks_created"
+      : evaluation.kind === "needs_answer"
+        ? "needs_answer"
+        : evaluation.kind === "manual_review"
+          ? "manual_review"
+          : "completed";
+
+  const updatedCondition = {
+    ...conditionItem,
+    answers: mergedAnswers,
+    status,
+    selectedRuleId: evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+    outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
+    taskIds,
+    resolvedToTasks: evaluation.kind === "outcome",
+    needsAnswer: evaluation.kind === "needs_answer" ? evaluation.question : null,
+    updatedAt: now,
+  };
+  if (evaluation.kind === "outcome") {
+    const sparseCondition = /** @type {Record<string, unknown>} */ (
+      updatedCondition
+    );
+    delete sparseCondition.gsi5pk;
+    delete sparseCondition.gsi5sk;
+  }
+
+  /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
+  const tx = [
+    {
+      Put: {
+        TableName: opts.tableName,
+        Item: updatedCondition,
+        ConditionExpression: "#status = :needsAnswer",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":needsAnswer": "needs_answer" },
+      },
+    },
+  ];
+
+  if (taskItem) {
+    tx.push({
+      Put: {
+        TableName: opts.tableName,
+        Item: taskItem,
+        ConditionExpression: "attribute_not_exists(sk)",
+      },
+    });
+  }
+
+  await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
+  return { conditionItem: updatedCondition, taskItem, evaluation };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.taskId
+ * @param {string} opts.reason
+ * @param {string} [opts.note]
+ * @param {Date} [opts.now]
+ * @returns {Promise<Record<string, unknown>>}
+ */
+export async function markTaskCannotDo(opts) {
+  const now = (opts.now ?? new Date()).toISOString();
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: taskKey(opts.siteId, opts.taskId),
+    }),
+  );
+  if (!existing.Item) {
+    const err = new Error("Task not found");
+    err.name = "NotFound";
+    throw err;
+  }
+  const allowed = /** @type {string[]} */ (existing.Item.cannotDoReasons ?? []);
+  if (allowed.length > 0 && !allowed.includes(opts.reason)) {
+    const err = new Error("Invalid cannot-do reason");
+    err.name = "InvalidReason";
+    throw err;
+  }
+
+  const updated = {
+    ...existing.Item,
+    status: "cannot_do",
+    cannotDo: { reason: opts.reason, note: opts.note, recordedAt: now },
+    updatedAt: now,
+    ...taskWorklistDateGsi(
+      opts.siteId,
+      "cannot_do",
+      String(existing.Item.kind),
+      Number(existing.Item.severity ?? 0),
+      now,
+      opts.taskId,
+    ),
+  };
+
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: opts.tableName,
+            Item: updated,
+            ConditionExpression: "attribute_exists(sk)",
+          },
+        },
+      ],
+    }),
+  );
+  return updated;
 }
