@@ -21,13 +21,18 @@ export default defineConfig({
   plugins: [],
   server: {
     // Dev-only: proxy the backend API to the local harness (npm run dev -w
-    // backend, :3000) so the app calls same-origin `/v1/*` — no CORS, and the
-    // router needs no CORS headers. In production the app is built with
-    // VITE_API_BASE pointing at the API origin (see services/api.js); presigned
-    // S3 PUTs go straight to their own origin and never touch this proxy.
+    // backend, :3001) so the app calls same-origin paths — no CORS, and the
+    // router needs no CORS headers. Because the proxy runs on the dev machine
+    // and forwards to 127.0.0.1, this also works when the app is opened from a
+    // phone on the LAN (e.g. `npm run dev:lan`): the browser only ever talks to
+    // this origin. Keep this route list in step with the local-api.mjs routes.
+    // In production the app is built with VITE_API_BASE pointing at the API
+    // origin (see services/api.js + services/onboarding.js); presigned S3 PUTs
+    // go straight to their own origin and never touch this proxy.
     proxy: {
-      "/v1": "http://localhost:3000",
-      "/health": "http://localhost:3000",
+      "/v1": "http://localhost:3001",
+      "/site-code": "http://localhost:3001",
+      "/health": "http://localhost:3001",
     },
   },
 });

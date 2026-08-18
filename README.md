@@ -8,21 +8,6 @@ Good Neighbor App is a new City and County of San Francisco Level 2 deployed sys
 - Auth: Amazon Cognito.
 - Infrastructure: Terraform, applied only through GitHub Actions.
 
-## Active Work
-
-**[docs/README.md](docs/README.md) is the docs map** — every planning thread with its
-ordered read path and current status. Start there to find your way around.
-
-The **frontend migration is done** (Aug 2026): the backend moved to JavaScript + JSDoc and
-the `gnp` prototype is now the `frontend/`, built and green — see
-[docs/archive/js-and-jsdoc-migration-plan.md](docs/archive/js-and-jsdoc-migration-plan.md) (Step 1) and
-[docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2). The
-**datastore direction is decided — DynamoDB** (replacing managed Postgres/Prisma; see
-[ADR 0002](docs/adr/0002-datastore-dynamodb.md)); the **backend/auth/deploy** seams are still
-in planning — tracked in the docs map above. Note one consequence of the current MVP not yet
-reflected in the architecture summary above: **offline/Workbox is deferred** (no service
-worker ships yet).
-
 ## SDLC Tier
 
 - Project tier: Level 2, deployed system.
@@ -39,7 +24,7 @@ frontend/       Web components frontend — see frontend/README.md
 infra/          Terraform modules and environment roots
 docs/           SDLC, architecture, runbooks, ADRs, security evidence
 .claude/skills/ Project-local Mayor's Office of Innovation skills
-.github/        CI/CD, Dependabot, CODEOWNERS
+.github/        CI/CD, Dependabot
 ```
 
 The **[frontend/README.md](frontend/README.md)** is the frontend entry point — how to run it,
@@ -132,6 +117,16 @@ per-record delete above does not.)
 
 All infrastructure changes are made in Terraform and reviewed through pull requests. GitHub Actions runs `terraform fmt`, `terraform validate`, Checkov, and a Terraform plan for pull requests. Applies are reserved for protected environments and should use GitHub OIDC, not long-lived AWS keys.
 
+### Branches
+
+- dev
+
+The default branch is ```dev``` all work should branch off here and open PRs to merge back to dev. Code merged to dev will be deployed to the AWS dev environment immediately
+
+- main
+
+Only admins may update the main branch. Merge release ready code to main and tag a release with v* and a production deploy will kickoff.
+
 ## Required Reviews Before Go-Live
 
 - Security review recorded in `docs/security-review.md`.
@@ -140,3 +135,4 @@ All infrastructure changes are made in Terraform and reviewed through pull reque
 - Core Web Vitals pass for the primary user journeys.
 - Accessibility keyboard pass and WCAG 2.2 AA review.
 - Terraform resources verified for required CCSF tags.
+

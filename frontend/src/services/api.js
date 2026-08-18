@@ -14,8 +14,9 @@
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
-// Same-origin in dev (Vite proxy rewrites `/v1/*` → localhost:3000, no CORS); in
-// production the app is built with VITE_API_BASE pointing at the API origin. Cast
+// Same-origin in dev (Vite proxy forwards `/v1/*` → the local API on :3001, no
+// CORS — see vite.config.js); in production the app is built with VITE_API_BASE
+// pointing at the API origin. Shared strategy with services/onboarding.js. Cast
 // `import.meta` — Vite's env types (vite/client) aren't wired into this checkJs
 // project, so the host-injected `.env` access is typed locally.
 const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
