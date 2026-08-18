@@ -1179,13 +1179,16 @@ update process above and produce a new `policyVersion`.
 - Added pure condition evaluator.
 - Added unit/golden tests covering all 26 v2 rule rows.
 
-### Phase 2 - Assessment And Condition Persistence
+### Phase 2 - Assessment And Condition Persistence (DONE 2026-08-18)
 
-- Add DynamoDB key helpers for assessment, condition, and task query shapes.
-- Add assessment/report storage from synthesized check/analysis items or external reports.
-- Add condition creation from stored assessment reports.
-- Add idempotent assessment evaluation behavior.
-- Add GSI1/GSI2/GSI4/GSI5 key writes needed by the query inventory.
+- Added DynamoDB key helpers for assessment, condition, unresolved condition, and date-first task
+  query shapes.
+- Added assessment/report persistence from condition inputs.
+- Added condition creation from stored assessment reports.
+- Added idempotent transaction writes for assessment, condition, and immediately resolvable task
+  records.
+- Added GSI1/GSI2/GSI4/GSI5 key writes needed by the query inventory.
+- Added Terraform and local DynamoDB bootstrap definitions for GSI4/GSI5.
 
 ### Phase 3 - Assessment Guidance API
 
