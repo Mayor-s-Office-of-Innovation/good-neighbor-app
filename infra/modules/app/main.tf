@@ -432,6 +432,11 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   name = "${local.name_prefix}-security-headers"
 
   security_headers_config {
+    content_security_policy {
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      override                = true
+    }
+
     content_type_options {
       override = true
     }
