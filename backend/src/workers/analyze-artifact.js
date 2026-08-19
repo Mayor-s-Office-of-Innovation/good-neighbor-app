@@ -54,7 +54,7 @@ function buildMetadata(msg) {
     // TODO(product): real per-photo GPS. Read device coordinates AT THE MOMENT
     // EACH PHOTO IS CAPTURED (not at check start or batch submit) and stamp
     // them on the artifact so these are the true location of this photo.
-    // Pending the v1 capture-flow UI (analysis-backend-lambdas-plan.md §6);
+    // Pending the v1 capture-flow UI (per-photo GPS is a deferred follow-up);
     // 0,0 placeholder until then.
     latitude: 0,
     longitude: 0,

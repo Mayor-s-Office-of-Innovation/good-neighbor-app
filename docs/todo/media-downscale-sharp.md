@@ -1,7 +1,7 @@
 # TODO: real `sharp` media downscale (analyze worker)
 
-*[index](../README.md) · follow-up to
-[analysis-backend-lambdas-plan.md](../inprogress/analysis-backend-lambdas-plan.md)*
+*[index](../README.md) · follow-up to the analyze worker
+([architecture.md](../architecture.md))*
 
 **Status:** Deferred — **explicitly out of the current MVP** (decided 2026-08-19). The seam ships
 as a passthrough; this doc captures the real implementation for when we pick it up. · **Owner:** team

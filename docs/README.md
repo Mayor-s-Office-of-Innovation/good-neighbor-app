@@ -55,22 +55,22 @@ is designed but not yet enforced). **Read them in this order:**
    Docker-free local harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why
    not Architect / SAM / LocalStack). The "how we run it locally." Built & verified; run commands
    live in [dev-commands.md](./dev-commands.md).
-5. **[dynamodb-buildout-plan.md](./inprogress/dynamodb-buildout-plan.md)** — _capstone._ The phased
-   Terraform + code build plan (table → app cutover → analytics), sequenced to a queryable
-   Athena prototype. References docs 1–4. The "how we build it."
+5. **[dynamodb-buildout-remaining.md](./todo/dynamodb-buildout-remaining.md)** — _what's left._
+   The table and app cutover shipped; this carries the **post-MVP / pre-go-live** phases
+   (seed → analytics pipe → live aggregates → tenant isolation). References docs 1–4. The
+   "how we finish it."
 
-**Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3, then the open
-decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as needed.
+**Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3. **Building the rest?**
+5, referring back as needed.
 
 ## Backend build plans (seams with a decided direction)
 
-- **[analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)** — the perimeter-check
-  API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
-  an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
-  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
-  via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
-  deploying. Grounded in D1/D2/D3 + the
-  [data model](./dynamodb-data-model.md).
+- **Analysis backend — perimeter-check API + server-mediated analyze path** *(built 2026-08; build
+  plan retired on completion).* Client uploads via **presigned PUT to GNP's own S3 bucket** → an
+  **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
+  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (admin review via presigned GET).
+  As-built container/sequence/ER diagrams in [architecture.md](./architecture.md); item shapes in
+  the [data model](./dynamodb-data-model.md). Grounded in D1/D2/D3.
 - **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
