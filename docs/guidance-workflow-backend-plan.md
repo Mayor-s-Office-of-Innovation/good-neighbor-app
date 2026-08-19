@@ -58,7 +58,7 @@ Relevant existing backend modules:
 ## Non-Goals
 
 - Do not change the Street Conditions analyzer contract.
-- Do not implement 311, email, phone, or external escalation integrations in this plan.
+- Do not implement live email, phone, or external escalation integrations in this plan.
 - Do not build a rules admin UI yet.
 - Do not reclassify already-created tasks when rules change.
 - Do not parse arbitrary spreadsheet formulas at runtime.
@@ -632,6 +632,8 @@ stored and the rule outcome is known.
       }
     }
   ],
+  appActionStatus: "pending",
+  appActionResults: [],
   cannotDoReasons: ["We already filed a ticket"],
   sourceArtifactIds: ["<artifactId>"],
   gsi2pk: "SITE#<siteId>#TASK#open",
@@ -788,8 +790,8 @@ Marks the task completed. If app integrations exist, this endpoint records the r
   appActionResults: [
     {
       code: "create_311_ticket",
-      status: "submitted",
-      externalId: "311-123"
+      status: "skipped",
+      reason: "feature_disabled"
     }
   ]
 }
@@ -841,8 +843,10 @@ Button labels should point to action codes, not prose:
 
 Integration execution can be phased:
 
-1. MVP: return action metadata; frontend opens phone links where applicable; 311 is a placeholder.
-2. Next: backend creates 311 tickets.
+1. MVP: return action metadata; frontend opens phone links where applicable; task completion records
+   app-action audit results.
+2. Next: backend creates 311 tickets. The current backend has a feature-flagged stub behind
+   `GNP_311_SUBMISSION_ENABLED=true` using the rulebase's existing `category311` payload.
 3. Later: email/form integrations with audit records.
 
 ## Idempotency
@@ -1210,11 +1214,16 @@ update process above and produce a new `policyVersion`.
   `TASK#` items.
 - Kept city escalations on per-site GSI2 for MVP; GSI3/cross-site queue remains deferred.
 
-### Phase 5 - App Action Integrations
+### Phase 5 - App Action Integrations (DONE 2026-08-18)
 
-- Implement phone action metadata first.
-- Add 311 ticket integration behind a feature flag.
-- Add email/form integrations only after product confirms workflows and credentials.
+- Added app action status/results fields to created `TASK#` items.
+- Added deterministic app action result handling for task completion.
+- Kept phone actions as explicit user-action metadata; the backend never places calls.
+- Added 311 ticket submission as a feature-flagged stub behind `GNP_311_SUBMISSION_ENABLED=true`.
+- Left email/form integrations as `not_configured` audit results until product confirms workflows
+  and credentials.
+- Added `POST /v1/tasks/{taskId}/complete` and local API routing.
+- Added frontend API wrappers for task completion and cannot-do capture.
 
 Decision: use the existing 311 payload fields represented in the current rulebase for now. The final
 311 payload contract can be updated in a later rulebase version.

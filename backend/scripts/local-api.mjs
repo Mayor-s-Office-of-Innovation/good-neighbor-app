@@ -24,6 +24,7 @@ import {
 import { listTasks } from "../src/handlers/tasks.js";
 import {
   cannotDoTask,
+  completeTask,
   evaluateAssessment,
   getGuidance,
   submitConditionAnswers,
@@ -91,6 +92,7 @@ const routes = [
   route("GET", "/v1/checks/{checkId}", getCheck),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   // Assessment guidance workflow
   route("POST", "/v1/assessments:evaluate", evaluateAssessment),

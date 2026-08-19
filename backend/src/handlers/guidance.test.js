@@ -11,6 +11,7 @@ vi.mock("../db.js", () => ({ ddb: { send } }));
 
 const {
   cannotDoTask,
+  completeTask,
   evaluateAssessment,
   getGuidance,
   submitConditionAnswers,
@@ -50,6 +51,7 @@ describe("guidance handlers", () => {
     process.env.S3_UPLOAD_BUCKET = "bucket";
     process.env.SQS_QUEUE_URL = "queue";
     process.env.DYNAMO_TABLE = "table";
+    delete process.env.GNP_311_SUBMISSION_ENABLED;
   });
 
   it("evaluates an analyzer-style assessment and persists guidance records", async () => {
@@ -226,6 +228,47 @@ describe("guidance handlers", () => {
       status: "cannot_do",
       cannotDo: { reason: "It doesn't feel safe", note: "dark outside" },
       gsi2pk: "SITE#site-1#TASK#cannot_do",
+    });
+  });
+
+  it("completes a task and records app action results", async () => {
+    process.env.GNP_311_SUBMISSION_ENABLED = "true";
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        kind: "escalation",
+        severity: 3,
+        appActions: [
+          { code: "create_311_ticket", payload: { category311: "Cleaning" } },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(
+      completeTask,
+      event({
+        pathParameters: { taskId: "task-1" },
+        body: { completionMethod: "button" },
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const tx = send.mock.calls[1][0];
+    expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
+      status: "completed",
+      completionMethod: "button",
+      appActionStatus: "submitted",
+      gsi2pk: "SITE#site-1#TASK#completed",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          externalId: "stub-311-task-1",
+        },
+      ],
     });
   });
 });

@@ -18,6 +18,11 @@ import {
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
+import {
+  executeAppActions,
+  initialAppActionStatus,
+  summarizeAppActionResults,
+} from "./app-actions.js";
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -196,6 +201,8 @@ function buildTaskItem({
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
+    appActionStatus: initialAppActionStatus(rule.outcome.appActions),
+    appActionResults: [],
     category311: rule.outcome.category311,
     cannotDoReasons: rule.outcome.cannotDoReasons,
     sourceArtifactIds: condition.sourceArtifactIds ?? [],
@@ -555,6 +562,74 @@ export async function markTaskCannotDo(opts) {
     ...taskWorklistDateGsi(
       opts.siteId,
       "cannot_do",
+      String(existing.Item.kind),
+      Number(existing.Item.severity ?? 0),
+      now,
+      opts.taskId,
+    ),
+  };
+
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: opts.tableName,
+            Item: updated,
+            ConditionExpression: "attribute_exists(sk)",
+          },
+        },
+      ],
+    }),
+  );
+  return updated;
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.taskId
+ * @param {string} [opts.completionMethod]
+ * @param {Record<string, string | undefined>} [opts.env]
+ * @param {Date} [opts.now]
+ * @returns {Promise<Record<string, unknown>>}
+ */
+export async function completeTaskWithAppActions(opts) {
+  const nowDate = opts.now ?? new Date();
+  const now = nowDate.toISOString();
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: taskKey(opts.siteId, opts.taskId),
+    }),
+  );
+  if (!existing.Item) {
+    const err = new Error("Task not found");
+    err.name = "NotFound";
+    throw err;
+  }
+
+  const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
+    existing.Item.appActions ?? []
+  );
+  const appActionResults = executeAppActions(appActions, {
+    env: opts.env,
+    now: nowDate,
+    taskId: opts.taskId,
+  });
+
+  const updated = {
+    ...existing.Item,
+    status: "completed",
+    completedAt: now,
+    completionMethod: opts.completionMethod ?? "user_confirmed",
+    appActionStatus: summarizeAppActionResults(appActionResults),
+    appActionResults,
+    updatedAt: now,
+    ...taskWorklistDateGsi(
+      opts.siteId,
+      "completed",
       String(existing.Item.kind),
       Number(existing.Item.severity ?? 0),
       now,
