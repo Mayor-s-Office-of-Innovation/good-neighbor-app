@@ -1,0 +1,19 @@
+name: Deploy dev
+
+# Auto-deploy the dev environment on every merge to `dev`.
+# `dev` is PR- and CI-protected, so what lands here has already passed checks.
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+    secrets: inherit
