@@ -33,7 +33,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
-  "GET /v1/checks/{checkId}/artifacts/{artifactId}:media": presignMedia,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}": getCheck,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,

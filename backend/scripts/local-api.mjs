@@ -79,7 +79,7 @@ const routes = [
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",
-    "/v1/checks/{checkId}/artifacts/{artifactId}:media",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/media",
     presignMedia,
   ),
   route("GET", "/v1/checks/{checkId}", getCheck),
