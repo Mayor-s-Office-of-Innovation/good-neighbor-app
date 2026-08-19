@@ -283,7 +283,7 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI2 keys — set only on tasks (per-site worklist by severity).
+  # GSI2 keys — set only on tasks (per-site worklist).
   attribute {
     name = "gsi2pk"
     type = "S"
@@ -291,6 +291,28 @@ resource "aws_dynamodb_table" "app" {
 
   attribute {
     name = "gsi2sk"
+    type = "S"
+  }
+
+  # GSI4 keys — set only on conditions (site/date/severity condition history).
+  attribute {
+    name = "gsi4pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi4sk"
+    type = "S"
+  }
+
+  # GSI5 keys — set only on unresolved conditions.
+  attribute {
+    name = "gsi5pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi5sk"
     type = "S"
   }
 
@@ -302,13 +324,31 @@ resource "aws_dynamodb_table" "app" {
     projection_type = "ALL"
   }
 
-  # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <severity>#<createdAt>. (AP10)
+  # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <createdAt>#<kind>#<severity>#<taskId>. (AP10)
   # GSI3 (cross-site escalation queue) is sparse and deferred to Phase 7 — it can
   # be added to the live table later with no rebuild.
   global_secondary_index {
     name            = "GSI2"
     hash_key        = "gsi2pk"
     range_key       = "gsi2sk"
+    projection_type = "ALL"
+  }
+
+  # GSI4 — site condition history by severity:
+  # SITE#<siteId>#CONDITION#SEV#<severity> / <reportedAt>#<assessmentId>#<conditionId>.
+  global_secondary_index {
+    name            = "GSI4"
+    hash_key        = "gsi4pk"
+    range_key       = "gsi4sk"
+    projection_type = "ALL"
+  }
+
+  # GSI5 — sparse unresolved-condition queue:
+  # SITE#<siteId>#CONDITION#UNRESOLVED / <reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>.
+  global_secondary_index {
+    name            = "GSI5"
+    hash_key        = "gsi5pk"
+    range_key       = "gsi5sk"
     projection_type = "ALL"
   }
 
@@ -392,6 +432,11 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   name = "${local.name_prefix}-security-headers"
 
   security_headers_config {
+    content_security_policy {
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      override                = true
+    }
+
     content_type_options {
       override = true
     }

@@ -43,7 +43,7 @@ in this order:**
 1. **[dynamodb-database-decision.md](./archive/dynamodb-database-decision.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
    _(Archived — [ADR 0002](./adr/0002-datastore-dynamodb.md) is now the canonical record; kept for the backing rationale.)_
-2. **[dynamodb-data-model.md](./inprogress/dynamodb-data-model.md)** — the single-table model, access
+2. **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the single-table model, access
    patterns, GSIs, tenant isolation, and the identity model (device-as-site). The "how it's
    shaped."
 3. **[analytics-plane-addendum.md](./todo/analytics-plane-addendum.md)** — city-wide reporting:
@@ -68,7 +68,11 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
   via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
-  [data model](./inprogress/dynamodb-data-model.md).
+  [data model](./dynamodb-data-model.md).
+- **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
+  rule-driven action/escalation backend that consumes analyzer assessments, applies the
+  `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
+  creates/resolves guidance tasks in a deterministic sequence. Phases 1–7 are implemented.
 
 ## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
 
