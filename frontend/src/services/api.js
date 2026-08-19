@@ -214,7 +214,7 @@ export async function putMedia(uploadUrl, blob, contentType) {
 }
 
 /**
- * GET /v1/checks/{checkId}/artifacts/{artifactId}:media — a short-lived presigned
+ * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — a short-lived presigned
  * GET so staff can review the original photo (admin/read path).
  * @param {string} checkId
  * @param {string} artifactId
@@ -223,7 +223,7 @@ export async function putMedia(uploadUrl, blob, contentType) {
 export function getMediaUrl(checkId, artifactId) {
   return request(
     "GET",
-    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}:media`,
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
   );
 }
 

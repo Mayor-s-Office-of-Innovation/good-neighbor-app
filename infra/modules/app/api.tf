@@ -12,7 +12,7 @@ locals {
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "POST /v1/checks/{checkId}/complete",
-    "GET /v1/checks/{checkId}/artifacts/{artifactId}:media",
+    "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
     "GET /v1/checks/{checkId}",
     "GET /v1/tasks",
     "POST /submissions",
