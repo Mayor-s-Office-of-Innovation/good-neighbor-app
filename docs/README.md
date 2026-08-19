@@ -71,8 +71,7 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 - **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
-  creates/resolves guidance tasks in a deterministic sequence. Phases 1–6 are implemented; the
-  frontend test harness remains Phase 7.
+  creates/resolves guidance tasks in a deterministic sequence. Phases 1–7 are implemented.
 
 ## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
 

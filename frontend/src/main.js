@@ -59,6 +59,10 @@ import "./components/check-review.js";
 import "./components/check-results.js";
 import "./components/site-setup.js";
 
+if (import.meta.env.DEV) {
+  await import("./components/guidance-harness.js");
+}
+
 // Demo seed: a no-op unless a `?demo=` param is present (see demo/seed.js). It must
 // finish writing IndexedDB BEFORE app-root reads it, so app-root — the only element
 // already in the DOM — is imported dynamically here, after the seed resolves. Every
