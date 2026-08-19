@@ -308,6 +308,7 @@ describe("completeTaskWithAppActions", () => {
 
     expect(send).toHaveBeenCalledTimes(3);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
     const claimTx = send.mock.calls[1][0];
     expect(claimTx).toBeInstanceOf(TransactWriteCommand);
     expect(claimTx.input.TransactItems[0].Put).toMatchObject({
