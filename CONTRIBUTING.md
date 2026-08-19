@@ -2,7 +2,7 @@
 
 ## Development Workflow
 
-1. Create a branch from `main`.
+1. Create a branch from `dev`.
 2. Keep changes small and focused.
 3. Run local checks before opening a pull request.
 4. Include tests or explain why tests are not applicable.
