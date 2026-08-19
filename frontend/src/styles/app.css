@@ -114,6 +114,10 @@ body {
   padding: 1rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom));
 }
+.app__main:has(.guidance-harness) {
+  width: 100%;
+  max-width: none;
+}
 
 /* ---- Cards / surfaces ---- */
 .card {
@@ -843,6 +847,257 @@ theme-toggle {
   padding: 0.45rem 1.4rem;
   min-height: 40px;
   font-size: 0.95rem;
+}
+
+/* ==================================================================
+   Dev guidance harness — internal workbench for exercising the rule
+   workflow against the real local API. Dev route only.
+   ================================================================== */
+.guidance-harness {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 1rem 0 2rem;
+}
+.guidance-harness__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.guidance-harness__back {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-decoration: none;
+  padding: 0.35rem 0;
+}
+.guidance-harness__back:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.guidance-harness__eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.guidance-harness h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+.guidance-harness__layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+  gap: 1rem;
+  align-items: start;
+}
+.guidance-harness__editor {
+  background: var(--surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+}
+.guidance-harness__results {
+  min-width: 0;
+}
+.guidance-harness__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 0.85rem;
+}
+.guidance-harness__controls--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.guidance-harness label,
+.guidance-harness__json-label {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.guidance-harness input,
+.guidance-harness select,
+.guidance-harness textarea {
+  width: 100%;
+  margin-top: 0.35rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.guidance-harness input,
+.guidance-harness select {
+  min-height: 42px;
+  padding: 0.5rem 0.65rem;
+}
+.guidance-harness textarea {
+  min-height: 430px;
+  resize: vertical;
+  padding: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+.guidance-harness input:focus-visible,
+.guidance-harness select:focus-visible,
+.guidance-harness textarea:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.guidance-harness__actions,
+.guidance-question__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+.guidance-harness__error {
+  margin: 0.85rem 0 0;
+  color: var(--c-hazard);
+  font-weight: 700;
+}
+.guidance-harness__empty {
+  border: 1px dashed var(--c-line);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  background: var(--surface);
+}
+.guidance-harness__empty h2,
+.guidance-section h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+.guidance-harness__empty p,
+.guidance-harness__muted {
+  color: var(--text-secondary);
+  margin: 0;
+}
+.guidance-section + .guidance-section {
+  margin-top: 1.25rem;
+}
+.guidance-list {
+  display: grid;
+  gap: 0.75rem;
+}
+.guidance-card {
+  background: var(--surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+}
+.guidance-card__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+.guidance-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+.guidance-card p {
+  margin: 0.7rem 0 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.guidance-pill {
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 0.24rem 0.55rem;
+  text-transform: uppercase;
+}
+.guidance-kv {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+.guidance-kv--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.guidance-kv div {
+  min-width: 0;
+}
+.guidance-kv dt {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.guidance-kv dd {
+  margin: 0.1rem 0 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.guidance-question {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--c-line);
+}
+.guidance-question p {
+  color: var(--text);
+  font-weight: 700;
+}
+.guidance-actions {
+  margin: 0.8rem 0 0;
+  padding-left: 1.2rem;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+.guidance-actions code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.guidance-harness__raw {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+.guidance-harness__raw details {
+  background: var(--surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+}
+.guidance-harness__raw summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.guidance-harness__raw pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .guidance-harness__layout,
+  .guidance-harness__raw {
+    grid-template-columns: 1fr;
+  }
+  .guidance-harness__controls,
+  .guidance-harness__controls--three,
+  .guidance-kv,
+  .guidance-kv--compact {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ==================================================================

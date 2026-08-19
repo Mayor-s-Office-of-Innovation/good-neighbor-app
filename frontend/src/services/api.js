@@ -141,6 +141,34 @@ export function evaluateAssessment(assessment) {
 }
 
 /**
+ * GET /v1/assessments/{assessmentId}/guidance — fetch the stored assessment,
+ * conditions, and any created guidance tasks.
+ * @param {string} assessmentId
+ * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
+ */
+export function getAssessmentGuidance(assessmentId) {
+  return request(
+    "GET",
+    `/v1/assessments/${encodeURIComponent(assessmentId)}/guidance`,
+  );
+}
+
+/**
+ * POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers.
+ * @param {string} assessmentId
+ * @param {string} conditionId
+ * @param {{ answers: Record<string, unknown> }} body
+ * @returns {Promise<{ conditionItem: any, taskItem: any, evaluation: any }>}
+ */
+export function submitConditionAnswers(assessmentId, conditionId, body) {
+  return request(
+    "POST",
+    `/v1/assessments/${encodeURIComponent(assessmentId)}/conditions/${encodeURIComponent(conditionId)}/answers`,
+    { body },
+  );
+}
+
+/**
  * GET /v1/checks — the site's checks, newest `startedAt` first (GSI1), with
  * opaque cursor paging.
  * @param {{ limit?: number, nextToken?: string }} [opts]

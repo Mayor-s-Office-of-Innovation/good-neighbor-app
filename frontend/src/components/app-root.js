@@ -18,6 +18,10 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
+if (import.meta.env.DEV) {
+  ROUTE_VIEW.unshift(["/dev/guidance-harness", "guidance-harness"]);
+}
+
 class AppRoot extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();

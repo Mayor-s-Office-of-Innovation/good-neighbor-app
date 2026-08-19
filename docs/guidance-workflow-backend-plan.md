@@ -1243,16 +1243,18 @@ Decision: use the existing 311 payload fields represented in the current rulebas
 Decision: historical in-progress assessment evaluations always finish on their original
 `policyVersion`. Do not automatically supersede an in-progress evaluation onto a newer rulebase.
 
-### Phase 7 - Frontend Test Harness
+### Phase 7 - Frontend Test Harness (DONE 2026-08-19)
 
-- Add a dev-only route or standalone page, for example `/dev/guidance-harness`.
-- Provide a JSON editor/textarea with validation errors.
-- Provide fixture loading for representative assessments.
-- Call the real local `POST /v1/assessments:evaluate` endpoint.
-- Render returned assessment summary, conditions, questions, tasks, app actions, and raw JSON.
-- Support submitting answers for question-driven conditions.
-- Support refresh/reload by `assessmentId`.
-- Gate the harness out of production builds or behind a local/dev feature flag.
+- Added a dev-only route at `/dev/guidance-harness`.
+- Added representative assessment fixtures for immediate outcomes, question-driven outcomes,
+  emergency phone metadata, and analyzer category aliases.
+- Added a JSON editor with optional `assessmentId`, `checkId`, and `reportedAt` overrides.
+- Calls the real local `POST /v1/assessments:evaluate` endpoint.
+- Renders stored assessment summary, conditions, tasks, questions, selected rules, app actions,
+  and raw request/response JSON.
+- Supports answering boolean condition questions and refreshing guidance by assessment ID.
+- Gated the route and component import with `import.meta.env.DEV`, so production builds do not
+  expose the harness route.
 
 ## Settled Decisions
 
