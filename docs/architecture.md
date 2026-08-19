@@ -68,8 +68,7 @@ All tenant data lives in one DynamoDB table keyed on `pk = SITE#<siteId>`, so a 
 artifacts, and analyses share one partition and come back in a single query.
 
 See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item shapes, keys,
-GSIs, and access patterns, and [analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)
-for the analyze-path build steps.
+GSIs, and access patterns.
 
 ## Security boundaries
 

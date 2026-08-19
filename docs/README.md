@@ -64,13 +64,12 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 
 ## Backend build plans (seams with a decided direction)
 
-- **[analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)** — the perimeter-check
-  API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
-  an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
-  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
-  via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
-  deploying. Grounded in D1/D2/D3 + the
-  [data model](./dynamodb-data-model.md).
+- **Analysis backend — perimeter-check API + server-mediated analyze path** *(built 2026-08; build
+  plan retired on completion).* Client uploads via **presigned PUT to GNP's own S3 bucket** → an
+  **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
+  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (admin review via presigned GET).
+  As-built container/sequence/ER diagrams in [architecture.md](./architecture.md); item shapes in
+  the [data model](./dynamodb-data-model.md). Grounded in D1/D2/D3.
 - **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and

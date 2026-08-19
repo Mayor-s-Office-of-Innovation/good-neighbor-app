@@ -92,8 +92,9 @@ header, every artifact, and every analysis together.
 > Point-in-time, written once. **Why on the header:** the checks list view (AP6) is a single **GSI1**
 > query over *headers only* — putting `grade` on the header means the list shows each check's grade
 > with no per-check fan-out into `ANALYSIS#` items. Raw per-artifact output stays in the
-> `ANALYSIS#` items (`concerns[]`); the header is the synthesis of them. See
-> [analysis-backend plan](./inprogress/analysis-backend-lambdas-plan.md) § adapter/synthesis.
+> `ANALYSIS#` items (`concerns[]`); the header is the synthesis of them. See the adapter/synthesis
+> modules [`adapt-scorecard.js`](../backend/src/analysis/adapt-scorecard.js) +
+> [`synthesize-check.js`](../backend/src/analysis/synthesize-check.js).
 
 ### Global secondary indexes
 
@@ -272,7 +273,7 @@ SQL simply mirrors the module.
   > `hazardCount` component is retired — `hazard_detected` is gone from the contract; per-category
   > `weighting` now lives server-side (baked into the grade), so we store no weighting of our own.
   > The compliance/regularity metric below is **unaffected**. See
-  > [analysis-backend plan](./inprogress/analysis-backend-lambdas-plan.md) § adapter.
+  > [`adapt-scorecard.js`](../backend/src/analysis/adapt-scorecard.js).
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the
   duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3
