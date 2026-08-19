@@ -6,8 +6,8 @@
     - 5b "Up to date"     : all of today's checks are in -> last-6 summary + open items.
 
   Cadence is a fixed pilot value (3/day, decision #3); overdue/missed states are out
-  of v1. Per the MVP design trim (docs/mvp-design-trim-plan.md) the "check due" screen
-  is pared to just the last-log summary + a Start button; no streak, no status hero.
+  of v1. Per the MVP design trim, the "check due" screen is pared to just the
+  last-log summary + a Start button; no streak, no status hero.
   Markup is inline via the `html` tag (barebones screen; split into a .templates.js
   file if it grows — see CLAUDE.md convention).
 */
@@ -69,7 +69,7 @@ class TodayView extends HTMLElement {
     const due = todayCount < CADENCE;
 
     // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA into
-    // Resume + "Start over" (docs/mvp-design-trim-plan.md).
+    // Resume + "Start over".
     const hasDraft = !!(await getDraft());
 
     this.innerHTML = due
@@ -96,8 +96,7 @@ class TodayView extends HTMLElement {
   }
 
   // Global site header: neutral avatar circle + site name. No meta subline
-  // (MVP design trim — docs/mvp-design-trim-plan.md). Shared with the
-  // up-to-date view.
+  // (MVP design trim). Shared with the up-to-date view.
   _siteHeader() {
     const name = (this._site && this._site.name) || "Your site";
     return html`

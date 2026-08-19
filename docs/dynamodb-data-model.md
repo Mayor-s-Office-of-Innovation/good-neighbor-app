@@ -1,8 +1,8 @@
 # DynamoDB Data Model — Perimeter Checks
 
-*DynamoDB planning set (doc 2 of 5) · [index](./README.md) · ← [decision](./archive/dynamodb-database-decision.md) · next → [analytics addendum](./analytics-plane-addendum.md)*
+*DynamoDB planning set (doc 2 of 5) · [index](../README.md) · ← [decision](./adr/0002-datastore-dynamodb.md) · next → [analytics addendum](./todo/analytics-plane-addendum.md)*
 
-**Status:** Draft for review — validates the [database decision](./archive/dynamodb-database-decision.md)
+**Status:** Draft for review — validates the [database decision](./adr/0002-datastore-dynamodb.md)
 against real access patterns
 **Date:** 2026-08-12
 
@@ -34,7 +34,7 @@ all with standard mitigations documented below.
    a person. (See [Identity model](#identity-model).)
 3. **Photos/audio live in S3**, not DynamoDB (items store S3 keys). Non-negotiable — see R4.
 4. Retention: **media auto-expires at ~7 days** via an S3 lifecycle rule on GNP's own bucket
-   (decided 2026-08-13 PM — see [D3](gnp-frontend-migration-plan.md)); checks/analysis retention
+   (decided 2026-08-13 PM — see D3); checks/analysis retention
    (DynamoDB TTL) is still unspecified (post-MVP).
 
 ## Identity model (this matters as much as the tables)
@@ -92,14 +92,14 @@ header, every artifact, and every analysis together.
 > query over *headers only* — putting `grade` on the header means the list shows each check's grade
 > with no per-check fan-out into `ANALYSIS#` items. Raw per-artifact output stays in the
 > `ANALYSIS#` items (`concerns[]`); the header is the synthesis of them. See
-> [analysis-backend plan](./analysis-backend-lambdas-plan.md) § adapter/synthesis.
+> [analysis-backend plan](./inprogress/analysis-backend-lambdas-plan.md) § adapter/synthesis.
 
 ### Global secondary indexes
 
 | GSI | Partition | Sort | Sparse on | Serves |
 |---|---|---|---|---|
 | **GSI1** checks timeline | `SITE#<siteId>` | `<startedAt ISO>` | check headers | list recent checks, date ranges, "were 3 done today" |
-| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<severity>#<createdAt>` | tasks | staff's open action items by severity |
+| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<createdAt>#<kind>#<severity>#<taskId>` | tasks | staff's open action items, newest-first from the index (severity re-sorted in-app per page — see AP10) |
 | **GSI3** city queue | `ESCALATION#<status>` | `<severity>#<createdAt>#<siteId>` | `city_escalation` tasks only | cross-site toxic-cleanup queue for the city |
 
 All three are **sparse** — only the relevant item type carries the GSI keys — so each index
@@ -118,7 +118,7 @@ stays small and every listing is a clean query with no filtering.
 | AP7 | Open one check (header+artifacts+analysis) | `Query` base `SITE#x`, `begins_with(sk,"CHECK#<id>")` |
 | AP8 | AI writes analysis back | `PutItem` `…#ANALYSIS#…` + `UpdateItem` header severity/status |
 | AP9 | Generate action items | `TransactWrite` tasks |
-| AP10 | Staff worklist (open, by severity) | `Query` **GSI2** `SITE#x#TASK#open`, newest/severest first |
+| AP10 | Staff worklist (open) | `Query` **GSI2** `SITE#x#TASK#open`, newest-first; app re-sorts each page most-severe-first (date-first key ⇒ severity ranking holds within a page only — a severity-first index is deferred) |
 | AP11 | City escalation queue (all sites) | `Query` **GSI3** `ESCALATION#open` |
 | AP12 | Compliance: 3 checks on date D? | `Query` **GSI1** date range, count |
 | AP13 | Cross-site analytics / rollups | **not native** — see R2 |
@@ -148,20 +148,21 @@ on the task item from **Phase 1** (it's just an attribute; no index needed for i
 
 ## Fit with existing code
 
-This maps cleanly onto the idempotency design already in the repo: the offline app (Workbox)
-generates a ULID `checkId` client-side and sends it as the `idempotency-key`; the submit is a
-conditional write (`attribute_not_exists`), so an offline replay can't create duplicates —
-exactly what `workers/process-submission.js` does today with `requestId`. AI analysis stays
-async through the existing SQS → worker path.
+This maps cleanly onto the idempotency design already in the repo: the client mints a ULID
+`checkId` and sends it as the `idempotency-key`, and `createCheck` does a conditional write
+(`attribute_not_exists(sk)`), so a replayed request can't create a duplicate. (Full offline
+queue-and-replay — a Workbox service worker — is **deferred past MVP**; the idempotency contract
+is already in place for when it lands.) AI analysis stays async through the existing SQS → worker
+path.
 
-> **Current state (Phase 2 cutover, 2026-08-12).** The item types above are the **target**
-> model. As of the Prisma→DynamoDB cutover the worker writes only an interim idempotency
-> **receipt** item — `pk = SUBMISSION#<requestId>`, `sk = #RECEIPT` (the direct successor to the
-> old `OfflineSubmission` row) — so a live table during testing will show `SUBMISSION#…` items
-> that aren't in the table above. `requestId` is the client idempotency-key (== the future ULID
-> `checkId`), so this is forward-compatible; it becomes the `SITE#`/`CHECK#` header + artifacts
-> once the submit payload carries a `siteId` and the **analysis-backend Lambdas** parse the check.
-> See [buildout plan Phase 2 · As-built](./dynamodb-buildout-plan.md).
+> **Current state (analysis-backend Step C, built).** The item types above are now the **live**
+> model: `createCheck` / `registerArtifact` / `completeCheck` write real `SITE#`/`CHECK#`/`ART#`/
+> `ANALYSIS#` items, keyed off the client-minted ULID `checkId` (the `idempotency-key`) with
+> conditional writes. The interim idempotency **receipt** — `pk = SUBMISSION#<requestId>`,
+> `sk = #RECEIPT` (the direct successor to the old `OfflineSubmission` row) — still exists, but
+> only on the **legacy `/submissions` demo loop** (`workers/process-submission.js`), not the
+> check path; a live table may therefore still show `SUBMISSION#…` items alongside the check
+> items. See [buildout plan](./inprogress/dynamodb-buildout-plan.md).
 
 ## City-wide reporting & analytics (the CQRS read plane)
 
@@ -178,7 +179,7 @@ split the workload (CQRS) — the app store stays lean, and a read-optimized ana
 fed automatically from **DynamoDB Streams**. This is the intended pattern, not a workaround.
 
 > **Build, complexity & cost details:** see the
-> [analytics-plane addendum](./analytics-plane-addendum.md) — how Tier 1 aggregates work
+> [analytics-plane addendum](./todo/analytics-plane-addendum.md) — how Tier 1 aggregates work
 > (incremental on write, never on read), the two Tier 2 builds (start with scheduled S3
 > Export → Athena), a cost table (~$5–15/mo without dashboards), and the prototype build order.
 
@@ -270,7 +271,7 @@ SQL simply mirrors the module.
   > `hazardCount` component is retired — `hazard_detected` is gone from the contract; per-category
   > `weighting` now lives server-side (baked into the grade), so we store no weighting of our own.
   > The compliance/regularity metric below is **unaffected**. See
-  > [analysis-backend plan](./analysis-backend-lambdas-plan.md) § adapter.
+  > [analysis-backend plan](./inprogress/analysis-backend-lambdas-plan.md) § adapter.
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the
   duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3

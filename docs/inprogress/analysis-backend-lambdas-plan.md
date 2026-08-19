@@ -1,7 +1,7 @@
 # Plan: Analysis-Backend Lambdas (perimeter-check API + server-mediated analyze)
 
-*Build plan · [index](./README.md) · grounded in [D1/D2](./gnp-frontend-migration-plan.md) ·
-builds on [data model](./dynamodb-data-model.md) · reconciles with
+*Build plan · [index](../README.md) · grounded in D1/D2 ·
+builds on [data model](../dynamodb-data-model.md) · reconciles with
 [buildout Phase 2](./dynamodb-buildout-plan.md)*
 
 **Status:** In build — Steps A–D + C shipped & green; the **live analyze path is proven end-to-end via the local harness (2026-08-16)** against the deployed analyzer (presign → worker → `x-api-key` call → `ANALYSIS#`/`TASK#`). **Remaining:** Step E (Terraform packaging + Secrets Manager key retrieval + real `sharp` resize) and the prod-only bits (real per-photo GPS). · **Date:** 2026-08-13 (contract re-pinned 2026-08-14; status updated 2026-08-16) · **Owner:** team
@@ -59,7 +59,7 @@ phased plan that says *which Lambdas, which routes, which items, in what order*.
   the live end-to-end proof waits on it + an issued consumer key. — [MVP-TODO](./MVP-TODO.md)
 - **IAM tenant isolation / device-as-site (Option 3)** — Phase 6. Here we build the
   **server-derives-`siteId`** seam so the real principal drops in later without reshaping handlers;
-  in the demo the principal is deterrence-grade. — [security-review.md](./security-review.md)
+  in the demo the principal is deterrence-grade. — [security-review.md](../security-review.md)
 - **Citywide reporting API + Tier-1 KPI reads** — its own plan + buildout Phases 4–5.
 
 ---
@@ -138,7 +138,7 @@ The adapter also precomputes `issueCount` (concerns with `rating > 0`) and `maxS
 concerns list. The adapted list is **`concerns[]`** (this supersedes the old `ratings_details[]` /
 `issues[]` names). We adopt the service `grade` directly and **do not** compute a `total_score` — the
 previous "compute a cleanliness average at read" plan is superseded (see
-[data model](./dynamodb-data-model.md) § Metric definitions, 2026-08-14 note): the response is an
+[data model](../dynamodb-data-model.md) § Metric definitions, 2026-08-14 note): the response is an
 **exceptions list**, not a per-category scorecard, so not every category carries a severity and an
 unweighted average no longer applies.
 
@@ -160,7 +160,7 @@ each analyzed position; the check `grade` is the **worst grade across the check'
 (Excellent < Good < Fair < Poor < Very Poor) — a GNP perimeter rollup. Per category we take the
 **max `rating`**, attributing each finding to its **source artifact** (not the model's per-call
 `evidence_indices`). This output shape maps directly onto the `CHECK#` header extension (see
-[data model](./dynamodb-data-model.md)). Documented fallback if the analyzer usage-plan quota bites:
+[data model](../dynamodb-data-model.md)). Documented fallback if the analyzer usage-plan quota bites:
 batch-per-modality (one call for all a check's photos), losing per-photo attribution.
 
 ---
@@ -224,7 +224,7 @@ is the device-as-site STS claim — the handler code is identical.
 | `GET /v1/checks/{checkId}` | one check (header+artifacts+analyses); poll target | `Query` base `SITE#`, `begins_with(sk,"CHECK#<id>")` | AP7 |
 | `GET /v1/checks/{checkId}/artifacts/{artifactId}:media` | **presigned GET** for admin review | S3 `getSignedUrl` (GET, short-lived) | — |
 
-**Item writes** (shapes from [data model](./dynamodb-data-model.md) § Item types):
+**Item writes** (shapes from [data model](../dynamodb-data-model.md) § Item types):
 
 - **Check header** `SITE#<siteId>` / `CHECK#<checkId>` — `status`, `startedAt`, `sides`,
   `issueCount`, `maxSeverity`; carries the **GSI1** key (`startedAt` ISO) for the timeline. **At
@@ -274,7 +274,7 @@ questions). Unit-tested against contract fixtures for the pinned version(s).
 4. **Send as `x-api-key`** on `POST /v1/analyses`, TLS-only. `caller.request_id =
    <checkId>#<artifactId>`.
 
-**Config changes** ([config.js](../backend/src/config.js)): the current `getConfig()` carries
+**Config changes** ([config.js](../../backend/src/config.js)): the current `getConfig()` carries
 `bedrockModelId` (**now dead** — GNP no longer calls Bedrock directly; the analyzer owns it) and
 `uploadBucket` (**revived** — this is now GNP's media bucket for presigned PUT/GET + the worker's
 GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
@@ -344,7 +344,7 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   > `ANALYZER_API_KEY` from env (Secrets Manager fetch is Step E); the escalation matrix in
   > `task-routing.js` is a **placeholder** pending the product team's real mapping. The old
   > `submissions.js`/`process-submission.js` receipt path is left intact (router swap is Step D).
-  > See [architecture.md](./architecture.md) for the as-built container + sequence + ER diagrams.
+  > See [architecture.md](../architecture.md) for the as-built container + sequence + ER diagrams.
 - **D. Local harness wiring** — add the routes to the in-process `local-api` router, a **local S3**
   (MinIO — previously deferred) for presigned PUT/GET + the worker's GET, and a stub analyzer
   endpoint, so `curl → create → presign → PUT to S3 → register → worker analyzes (stub) → complete →

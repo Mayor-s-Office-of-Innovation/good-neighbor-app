@@ -8,14 +8,14 @@ self-review allowed per P5); **first live DEV apply GREEN 2026-08-18** — merge
 job end to end (OIDC role assumed → remote-state init → Lambda bundle → `terraform apply` →
 frontend sync + env-scoped invalidation → `/health` smoke), so OIDC smoke + the dev inner loop are
 proven; remaining: first **prod** release-deploy (release-tag path still untested) + rollback
-dry-run · **Date:** 2026-08-18 · **Owner:** team · [index](./README.md)
+dry-run · **Date:** 2026-08-18 · **Owner:** team · [index](../README.md)
 
 The plan to take GNP from *manual, single-role* deploys to a **2-environment, branch-and-release
 promoted** pipeline. It fills the deploy gaps tracked in
 [MVP-TODO → deploy & harden](./MVP-TODO.md#mvp-critical-path--deploy--harden) and closes the open
-items in the [SDLC Level 2 checklist](./sdlc-level-2-checklist.md) (branch protection, GitHub
+items in the [SDLC Level 2 checklist](../sdlc-level-2-checklist.md) (branch protection, GitHub
 environments, remote state). The AWS side is already scaffolded — see
-[deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md).
+deploy-admin-bootstrap.md.
 
 > **Supersedes the 2026-08-14 model.** The original plan proposed **three** environments
 > (`dev`/`staging`/`prod`) promoted by **git tags** off a single `main` trunk. We've simplified to
@@ -48,7 +48,7 @@ promotion tag. The one cost — a second long-lived branch — is accepted (see 
 
 ## Prerequisites — admin bootstrap (DONE)
 
-The one-time AWS scaffolding in [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) is
+The one-time AWS scaffolding in deploy-admin-bootstrap.md is
 **complete**. We have: the GitHub OIDC provider ARN, the Terraform state bucket
 (`good-neighbor-app-terraform-state`) + lock table (`good-neighbor-app-terraform-locks`) in
 `us-west-2`, and **per-env deploy roles** (`good-neighbor-app-deploy-dev` / `-prod`) whose trust
@@ -103,19 +103,19 @@ run (re-run jobs), not dispatch from a branch.
     OFF** (P5 — a single admin can approve when the other is out); **deployment tag rule** = tags
     `v*` (✅ set) — see the gotcha above.
   - `dev`: no gate.
-- **Per-env secret + variable** in each (matches [deploy.yml](../.github/workflows/deploy.yml), which
+- **Per-env secret + variable** in each (matches [deploy.yml](../../.github/workflows/deploy.yml), which
   reads `secrets.AWS_DEPLOY_ROLE_ARN` and `vars.AWS_REGION`):
   - Secret `AWS_DEPLOY_ROLE_ARN` → that env's deploy role ARN.
   - Variable `AWS_REGION` → `us-west-2`.
 - **Verify OIDC** with the throwaway `sts get-caller-identity` job from
-  [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md#after-the-admin-is-done-repo-maintainers-no-aws-admin-rights-needed)
+  deploy-admin-bootstrap.md
   before a real apply.
 - **Done when:** an `environment: dev` job assumes the dev role and prints an `AROA…` identity.
 
 ## Phase 2 — Enable remote Terraform state
 
-- **Uncomment the `backend "s3"` blocks** in [infra/environments/dev/main.tf](../infra/environments/dev/main.tf)
-  and [infra/environments/prod/main.tf](../infra/environments/prod/main.tf) (values already match the
+- **Uncomment the `backend "s3"` blocks** in [infra/environments/dev/main.tf](../../infra/environments/dev/main.tf)
+  and [infra/environments/prod/main.tf](../../infra/environments/prod/main.tf) (values already match the
   bootstrapped bucket / region / lock table). First `terraform init -migrate-state` moves local state
   to S3. This is the SDLC-checklist "remote Terraform state" item.
 - **Done when:** `terraform init` + `validate` pass in both roots against S3 state with locking.
@@ -125,14 +125,14 @@ run (re-run jobs), not dispatch from a branch.
 **Built 2026-08-18.** The single manual `deploy.yml` is now a **reusable core** (`workflow_call` +
 `workflow_dispatch`) called by two thin trigger workflows:
 
-- [`deploy-dev.yml`](../.github/workflows/deploy-dev.yml) — `push` to `dev` → core with `environment: dev`.
-- [`deploy-prod.yml`](../.github/workflows/deploy-prod.yml) — `release: [published]` → core with `environment: prod`.
-- [`deploy.yml`](../.github/workflows/deploy.yml) — the reusable core; also runnable manually for reruns.
+- [`deploy-dev.yml`](../../.github/workflows/deploy-dev.yml) — `push` to `dev` → core with `environment: dev`.
+- [`deploy-prod.yml`](../../.github/workflows/deploy-prod.yml) — `release: [published]` → core with `environment: prod`.
+- [`deploy.yml`](../../.github/workflows/deploy.yml) — the reusable core; also runnable manually for reruns.
 
 The deploy job:
 
 1. ~~runs the full check suite (lint/type/test/build) — belt-and-suspenders with CI~~ **deferred** —
-   [`ci.yml`](../.github/workflows/ci.yml) now runs the full suite on every push to `dev` and `main`,
+   [`ci.yml`](../../.github/workflows/ci.yml) now runs the full suite on every push to `dev` and `main`,
    and branch protection gates merges, so the deploy doesn't re-run it. Add a `needs: checks` gate
    later if the deploy should hard-gate on its own checks.
 2. ✅ assumes the **env's deploy role** via OIDC (`environment:` set so GH protection applies),
@@ -171,7 +171,7 @@ analysis-backend "Step E — API in Terraform" work (the two are interdependent:
 needs the API's invoke URL, and the smoke test needs it too).
 
 **Frontend serving (built):**
-- ✅ Per env, an **S3 bucket + CloudFront distribution** in Terraform ([cloudfront.tf](../infra/modules/app/cloudfront.tf)):
+- ✅ Per env, an **S3 bucket + CloudFront distribution** in Terraform ([cloudfront.tf](../../infra/modules/app/cloudfront.tf)):
   OAC-only origin access (bucket stays fully private + block-public-access), redirect-to-https,
   the existing security **response-headers policy** + **CLOUDFRONT-scoped WAF** (now wired, was
   orphaned), SPA fallback (403/404 → `/index.html`/200 for the History-API router), standard S3
@@ -182,17 +182,17 @@ needs the API's invoke URL, and the smoke test needs it too).
   env's bucket** (`--delete`), then invalidates **only that env's distribution ID** (P6).
 
 **API + compute (built — "Step E"):**
-- ✅ **API Gateway v2 HTTP API** ([api.tf](../infra/modules/app/api.tf)) — one AWS_PROXY integration,
+- ✅ **API Gateway v2 HTTP API** ([api.tf](../../infra/modules/app/api.tf)) — one AWS_PROXY integration,
   11 route keys mirroring `backend/scripts/local-api.mjs`, **no authorizer for MVP** (site-code flow
   mints no JWT → requests resolve to `DEMO_SITE_ID`; tenant isolation lands with the deferred JWT
   authorizer + `custom:siteId`), CORS scoped to the CloudFront origin, `$default` stage with
   KMS-encrypted access logs.
-- ✅ **api + worker Lambdas** ([lambda.tf](../infra/modules/app/lambda.tf), nodejs22.x, esbuild-bundled,
+- ✅ **api + worker Lambdas** ([lambda.tf](../../infra/modules/app/lambda.tf), nodejs22.x, esbuild-bundled,
   X-Ray active, KMS-encrypted env, reserved concurrency) wired to the existing DynamoDB / S3 / SQS /
   KMS. The worker consumes the submissions queue via an event-source mapping
   (`ReportBatchItemFailures`) with a **DLQ** + redrive.
-- ✅ **Least-privilege IAM roles** ([iam.tf](../infra/modules/app/iam.tf)) — no wildcards.
-- ✅ **Analyzer key in Secrets Manager** ([secrets.tf](../infra/modules/app/secrets.tf)) — secret
+- ✅ **Least-privilege IAM roles** ([iam.tf](../../infra/modules/app/iam.tf)) — no wildcards.
+- ✅ **Analyzer key in Secrets Manager** ([secrets.tf](../../infra/modules/app/secrets.tf)) — secret
   created in Terraform, **value set out-of-band** (never in code/state); the worker fetches it at
   runtime.
 - ✅ New env-root outputs: `api_url`, `cloudfront_distribution_id`, `cloudfront_domain_name`.

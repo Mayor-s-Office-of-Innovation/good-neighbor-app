@@ -11,7 +11,7 @@
   a file picker. The returned file is read to a JPEG data-URL, which serializes
   straight into the IndexedDB draft and matches the analyzer's base64 flow.
   Photo-only by design — voice/note capture is deferred post-MVP (its plumbing is
-  left intact but unused). See docs/mvp-design-trim-plan.md.
+  left intact but unused).
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";

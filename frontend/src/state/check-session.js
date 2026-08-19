@@ -11,7 +11,7 @@
   A check has four fixed sides (N/E/S/W). Each side is covered by photo captures, or
   marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose:
   voice/note capture is out of the MVP UI (photo-only) but the plumbing is left intact
-  for the post-MVP pass — see docs/mvp-design-trim-plan.md.
+  for the post-MVP pass.
 */
 import { newId, saveDraft, clearDraft, getDraft } from "../db.js";
 

@@ -1,7 +1,7 @@
 # Plan: Guidance Workflow Backend
 
 *Backend design plan · [index](./README.md) · builds on
-[analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md) and
+[analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md) and
 [dynamodb-data-model.md](./dynamodb-data-model.md)*
 
 **Status:** Design draft  

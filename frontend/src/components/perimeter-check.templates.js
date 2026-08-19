@@ -8,7 +8,6 @@
   device's full camera (zoom / focus / flash / lens). Shots for the current side
   render as an inline grid with per-tile delete. Voice + note capture and compass
   side-names are out of the MVP UI (photo-only, numbered sides).
-  See docs/mvp-design-trim-plan.md ("native camera handoff").
 */
 import { html, escapeHtml } from "../lib/html.js";
 
