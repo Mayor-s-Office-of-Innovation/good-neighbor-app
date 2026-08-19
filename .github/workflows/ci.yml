@@ -38,6 +38,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Validate guidance policy
+        run: npm run policy:validate --workspace backend
+
       - name: Test
         run: npm test
 
