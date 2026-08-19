@@ -34,8 +34,8 @@ output "cognito_client_id" {
 }
 
 output "api_url" {
-  description = "Base invoke URL of the HTTP API ($default stage)."
-  value       = aws_apigatewayv2_api.http.api_endpoint
+  description = "Base HTTPS URL for API routes through the secured CloudFront edge."
+  value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
 }
 
 output "cloudfront_distribution_id" {
@@ -52,4 +52,3 @@ output "analyzer_secret_arn" {
   description = "Secrets Manager ARN holding the analyzer x-api-key (value set out-of-band)."
   value       = aws_secretsmanager_secret.analyzer_api_key.arn
 }
-

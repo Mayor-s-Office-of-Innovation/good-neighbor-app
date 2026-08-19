@@ -118,7 +118,12 @@ function normalizeAssessmentBody(body) {
     reportedAt,
     rubricVersion:
       typeof input.rubricVersion === "string" ? input.rubricVersion : undefined,
-    grade: typeof general.label === "string" ? general.label : null,
+    grade:
+      typeof input.grade === "string"
+        ? input.grade
+        : typeof general.label === "string"
+          ? general.label
+          : null,
     rawAssessment,
     conditions,
   };
@@ -327,6 +332,11 @@ export const completeTask = async (event) => {
   } catch (err) {
     if (err instanceof Error && err.name === "NotFound") {
       return jsonResponse(404, { error: "Task not found" });
+    }
+    if (err instanceof Error && err.name === "TaskCompletionInProgress") {
+      return jsonResponse(409, {
+        error: "Task completion already in progress",
+      });
     }
     if (
       err instanceof Error &&

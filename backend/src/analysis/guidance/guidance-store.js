@@ -31,6 +31,7 @@ import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 
 const MAX_TRANSACTION_ITEMS = 100;
 const BATCH_GET_LIMIT = 100;
+const TASK_COMPLETION_LEASE_MS = 5 * 60 * 1000;
 
 /**
  * @param {number} ms
@@ -84,6 +85,15 @@ function isEmergencyTask(task) {
     (action) =>
       action.code === "open_phone" && action.payload?.phoneNumber === "911",
   );
+}
+
+/**
+ * @param {unknown} value
+ * @param {Date} now
+ * @returns {boolean}
+ */
+function isExpiredLease(value, now) {
+  return typeof value !== "string" || Date.parse(value) <= now.getTime();
 }
 
 /**
@@ -142,6 +152,7 @@ function applyAssessmentConditionDelta({
     ...assessment,
     status,
     summary,
+    assessmentRevision: Number(assessment.assessmentRevision ?? 0) + 1,
     updatedAt: now,
   };
 }
@@ -439,6 +450,7 @@ export async function storeEvaluatedAssessment(input, options) {
     policyVersion: catalog.policyVersion,
     rubricVersion: input.rubricVersion,
     grade: input.grade,
+    assessmentRevision: 0,
     reportedAt: input.reportedAt,
     rawAssessment: input.rawAssessment,
     summary: {
@@ -506,12 +518,14 @@ export async function getAssessmentGuidance({
       new GetCommand({
         TableName: tableName,
         Key: assessmentKey(siteId, assessmentId),
+        ConsistentRead: true,
       }),
     ),
     ddb.send(
       new QueryCommand({
         TableName: tableName,
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ConsistentRead: true,
         ExpressionAttributeValues: {
           ":pk": `SITE#${siteId}`,
           ":prefix": assessmentConditionPrefix(assessmentId),
@@ -553,152 +567,181 @@ export async function getAssessmentGuidance({
  */
 export async function answerCondition(opts) {
   const now = (opts.now ?? new Date()).toISOString();
-  const [assessmentResult, conditionResult] = await Promise.all([
-    ddb.send(
-      new GetCommand({
-        TableName: opts.tableName,
-        Key: assessmentKey(opts.siteId, opts.assessmentId),
-      }),
-    ),
-    ddb.send(
-      new GetCommand({
-        TableName: opts.tableName,
-        Key: conditionKey(opts.siteId, opts.assessmentId, opts.conditionId),
-      }),
-    ),
-  ]);
-  if (!assessmentResult.Item) {
-    throw namedError("NotFound", "Assessment not found");
-  }
-  if (!conditionResult.Item) {
-    throw namedError("NotFound", "Condition not found");
-  }
-
-  const assessmentItem = assessmentResult.Item;
-  const conditionItem = conditionResult.Item;
-  const policyVersion = String(
-    conditionItem.policyVersion ?? assessmentItem.policyVersion ?? "",
-  );
-  const catalog = opts.catalog ?? catalogForPolicyVersion(policyVersion);
-  const mergedAnswers = {
-    .../** @type {Record<string, unknown>} */ (conditionItem.answers ?? {}),
-    ...opts.answers,
-  };
-  const evaluation = evaluateCondition({
-    condition: {
-      category: String(
-        conditionItem.analyzerCategory ?? conditionItem.canonicalCategory,
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [assessmentResult, conditionResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: opts.tableName,
+          Key: assessmentKey(opts.siteId, opts.assessmentId),
+          ConsistentRead: true,
+        }),
       ),
-      severity: Number(conditionItem.severity ?? 0),
-    },
-    answers: mergedAnswers,
-    catalog,
-  });
+      ddb.send(
+        new GetCommand({
+          TableName: opts.tableName,
+          Key: conditionKey(opts.siteId, opts.assessmentId, opts.conditionId),
+          ConsistentRead: true,
+        }),
+      ),
+    ]);
+    if (!assessmentResult.Item) {
+      throw namedError("NotFound", "Assessment not found");
+    }
+    if (!conditionResult.Item) {
+      throw namedError("NotFound", "Condition not found");
+    }
 
-  /** @type {Record<string, unknown> | null} */
-  let taskItem = null;
-  /** @type {string[]} */
-  let taskIds = /** @type {string[]} */ (conditionItem.taskIds ?? []);
-  if (evaluation.kind === "outcome") {
-    const taskId = (opts.idFactory ?? randomUUID)();
-    taskIds = [...taskIds, taskId];
-    taskItem = buildTaskItem({
-      siteId: opts.siteId,
-      assessmentId: opts.assessmentId,
-      checkId:
-        typeof conditionItem.checkId === "string"
-          ? conditionItem.checkId
-          : undefined,
+    const assessmentItem = assessmentResult.Item;
+    const conditionItem = conditionResult.Item;
+    if (conditionItem.status !== "needs_answer") {
+      const err = namedError(
+        "TransactionCanceledException",
+        "Condition is not awaiting answers",
+      );
+      throw err;
+    }
+
+    const policyVersion = String(
+      conditionItem.policyVersion ?? assessmentItem.policyVersion ?? "",
+    );
+    const catalog = opts.catalog ?? catalogForPolicyVersion(policyVersion);
+    const mergedAnswers = {
+      .../** @type {Record<string, unknown>} */ (conditionItem.answers ?? {}),
+      ...opts.answers,
+    };
+    const evaluation = evaluateCondition({
       condition: {
-        category: String(conditionItem.analyzerCategory),
-        severity: Number(conditionItem.severity),
-        sourceArtifactIds:
-          /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
-            ?.artifactIds ?? [],
+        category: String(
+          conditionItem.analyzerCategory ?? conditionItem.canonicalCategory,
+        ),
+        severity: Number(conditionItem.severity ?? 0),
       },
-      conditionId: opts.conditionId,
-      rule: evaluation.rule,
-      taskId,
+      answers: mergedAnswers,
+      catalog,
+    });
+
+    /** @type {Record<string, unknown> | null} */
+    let taskItem = null;
+    /** @type {string[]} */
+    let taskIds = /** @type {string[]} */ (conditionItem.taskIds ?? []);
+    if (evaluation.kind === "outcome") {
+      const taskId = (opts.idFactory ?? randomUUID)();
+      taskIds = [...taskIds, taskId];
+      taskItem = buildTaskItem({
+        siteId: opts.siteId,
+        assessmentId: opts.assessmentId,
+        checkId:
+          typeof conditionItem.checkId === "string"
+            ? conditionItem.checkId
+            : undefined,
+        condition: {
+          category: String(conditionItem.analyzerCategory),
+          severity: Number(conditionItem.severity),
+          sourceArtifactIds:
+            /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
+              ?.artifactIds ?? [],
+        },
+        conditionId: opts.conditionId,
+        rule: evaluation.rule,
+        taskId,
+        now,
+      });
+    }
+
+    const status =
+      evaluation.kind === "outcome"
+        ? "tasks_created"
+        : evaluation.kind === "needs_answer"
+          ? "needs_answer"
+          : evaluation.kind === "manual_review"
+            ? "manual_review"
+            : "completed";
+
+    const updatedCondition = {
+      ...conditionItem,
+      policyVersion: catalog.policyVersion,
+      answers: mergedAnswers,
+      status,
+      selectedRuleId:
+        evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+      outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
+      taskIds,
+      resolvedToTasks: evaluation.kind === "outcome",
+      needsAnswer:
+        evaluation.kind === "needs_answer" ? evaluation.question : null,
+      updatedAt: now,
+    };
+    if (evaluation.kind === "outcome") {
+      const sparseCondition = /** @type {Record<string, unknown>} */ (
+        updatedCondition
+      );
+      delete sparseCondition.gsi5pk;
+      delete sparseCondition.gsi5sk;
+    }
+
+    const priorRevision = Number(assessmentItem.assessmentRevision ?? 0);
+    const updatedAssessment = applyAssessmentConditionDelta({
+      assessment: assessmentItem,
+      priorCondition: conditionItem,
+      nextCondition: updatedCondition,
+      taskItem,
       now,
     });
+
+    /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
+    const tx = [
+      {
+        Put: {
+          TableName: opts.tableName,
+          Item: updatedAssessment,
+          ConditionExpression:
+            "attribute_exists(sk) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
+          ExpressionAttributeNames: { "#revision": "assessmentRevision" },
+          ExpressionAttributeValues: { ":priorRevision": priorRevision },
+        },
+      },
+      {
+        Put: {
+          TableName: opts.tableName,
+          Item: updatedCondition,
+          ConditionExpression: "#status = :needsAnswer",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: { ":needsAnswer": "needs_answer" },
+        },
+      },
+    ];
+
+    if (taskItem) {
+      tx.push({
+        Put: {
+          TableName: opts.tableName,
+          Item: taskItem,
+          ConditionExpression: "attribute_not_exists(sk)",
+        },
+      });
+    }
+
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
+      return {
+        assessmentItem: updatedAssessment,
+        conditionItem: updatedCondition,
+        taskItem,
+        evaluation,
+      };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.name === "TransactionCanceledException" &&
+        attempt < 2
+      ) {
+        continue;
+      }
+      throw err;
+    }
   }
 
-  const status =
-    evaluation.kind === "outcome"
-      ? "tasks_created"
-      : evaluation.kind === "needs_answer"
-        ? "needs_answer"
-        : evaluation.kind === "manual_review"
-          ? "manual_review"
-          : "completed";
-
-  const updatedCondition = {
-    ...conditionItem,
-    policyVersion: catalog.policyVersion,
-    answers: mergedAnswers,
-    status,
-    selectedRuleId:
-      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
-    outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
-    taskIds,
-    resolvedToTasks: evaluation.kind === "outcome",
-    needsAnswer:
-      evaluation.kind === "needs_answer" ? evaluation.question : null,
-    updatedAt: now,
-  };
-  if (evaluation.kind === "outcome") {
-    const sparseCondition = /** @type {Record<string, unknown>} */ (
-      updatedCondition
-    );
-    delete sparseCondition.gsi5pk;
-    delete sparseCondition.gsi5sk;
-  }
-
-  const updatedAssessment = applyAssessmentConditionDelta({
-    assessment: assessmentItem,
-    priorCondition: conditionItem,
-    nextCondition: updatedCondition,
-    taskItem,
-    now,
-  });
-
-  /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
-  const tx = [
-    {
-      Put: {
-        TableName: opts.tableName,
-        Item: updatedAssessment,
-        ConditionExpression: "attribute_exists(sk)",
-      },
-    },
-    {
-      Put: {
-        TableName: opts.tableName,
-        Item: updatedCondition,
-        ConditionExpression: "#status = :needsAnswer",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: { ":needsAnswer": "needs_answer" },
-      },
-    },
-  ];
-
-  if (taskItem) {
-    tx.push({
-      Put: {
-        TableName: opts.tableName,
-        Item: taskItem,
-        ConditionExpression: "attribute_not_exists(sk)",
-      },
-    });
-  }
-
-  await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
-  return {
-    assessmentItem: updatedAssessment,
-    conditionItem: updatedCondition,
-    taskItem,
-    evaluation,
-  };
+  throw namedError("TransactionCanceledException", "Condition answer conflict");
 }
 
 /**
@@ -785,6 +828,9 @@ export async function markTaskCannotDo(opts) {
 export async function completeTaskWithAppActions(opts) {
   const nowDate = opts.now ?? new Date();
   const now = nowDate.toISOString();
+  const leaseExpiresAt = new Date(
+    nowDate.getTime() + TASK_COMPLETION_LEASE_MS,
+  ).toISOString();
   const existing = await ddb.send(
     new GetCommand({
       TableName: opts.tableName,
@@ -801,14 +847,45 @@ export async function completeTaskWithAppActions(opts) {
     }
     throw namedError("TerminalConflict", "Task is already completed");
   }
-  if (existing.Item.status !== "open") {
+  if (
+    existing.Item.status === "completing" &&
+    !isExpiredLease(existing.Item.completionLeaseExpiresAt, nowDate)
+  ) {
+    throw namedError("TaskCompletionInProgress", "Task completion in progress");
+  }
+  if (
+    existing.Item.status !== "open" &&
+    existing.Item.status !== "completing"
+  ) {
     throw namedError("TerminalConflict", "Task is no longer open");
   }
 
+  let claimCondition = "#status = :open";
+  /** @type {Record<string, string>} */
+  let claimExpressionAttributeNames = { "#status": "status" };
+  /** @type {Record<string, string>} */
+  let claimExpressionAttributeValues = { ":open": "open" };
+  if (existing.Item.status === "completing") {
+    claimCondition =
+      "#status = :completing AND (attribute_not_exists(#lease) OR #lease <= :now)";
+    claimExpressionAttributeNames = {
+      "#status": "status",
+      "#lease": "completionLeaseExpiresAt",
+    };
+    claimExpressionAttributeValues = {
+      ":completing": "completing",
+      ":now": now,
+    };
+  }
   const claimed = {
     ...existing.Item,
     status: "completing",
     appActionStatus: "executing",
+    completionStartedAt:
+      typeof existing.Item.completionStartedAt === "string"
+        ? existing.Item.completionStartedAt
+        : now,
+    completionLeaseExpiresAt: leaseExpiresAt,
     updatedAt: now,
     ...taskWorklistDateGsi(
       opts.siteId,
@@ -826,9 +903,9 @@ export async function completeTaskWithAppActions(opts) {
           Put: {
             TableName: opts.tableName,
             Item: claimed,
-            ConditionExpression: "#status = :open",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":open": "open" },
+            ConditionExpression: claimCondition,
+            ExpressionAttributeNames: claimExpressionAttributeNames,
+            ExpressionAttributeValues: claimExpressionAttributeValues,
           },
         },
       ],
@@ -869,9 +946,16 @@ export async function completeTaskWithAppActions(opts) {
           Put: {
             TableName: opts.tableName,
             Item: updated,
-            ConditionExpression: "#status = :completing",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":completing": "completing" },
+            ConditionExpression:
+              "#status = :completing AND #lease = :leaseExpiresAt",
+            ExpressionAttributeNames: {
+              "#status": "status",
+              "#lease": "completionLeaseExpiresAt",
+            },
+            ExpressionAttributeValues: {
+              ":completing": "completing",
+              ":leaseExpiresAt": leaseExpiresAt,
+            },
           },
         },
       ],
@@ -895,7 +979,9 @@ async function batchGetAll({ tableName, keys }) {
     for (let attempt = 0; requestKeys.length > 0; attempt += 1) {
       const result = await ddb.send(
         new BatchGetCommand({
-          RequestItems: { [tableName]: { Keys: requestKeys } },
+          RequestItems: {
+            [tableName]: { Keys: requestKeys, ConsistentRead: true },
+          },
         }),
       );
       items.push(...(result.Responses?.[tableName] ?? []));

@@ -29,13 +29,6 @@ resource "aws_apigatewayv2_api" "http" {
   name          = "${local.name_prefix}-http"
   protocol_type = "HTTP"
 
-  cors_configuration {
-    allow_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}"]
-    allow_methods = ["GET", "POST", "OPTIONS"]
-    allow_headers = ["content-type", "idempotency-key"]
-    max_age       = 3600
-  }
-
   tags = var.tags
 }
 
