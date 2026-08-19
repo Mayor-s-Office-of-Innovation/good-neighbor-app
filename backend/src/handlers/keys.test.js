@@ -13,7 +13,6 @@ import {
   sitePk,
   taskKey,
   taskWorklistDateGsi,
-  taskWorklistGsi,
   unresolvedConditionGsi,
 } from "./keys.js";
 
@@ -42,14 +41,8 @@ describe("single-table key builders", () => {
     }
   });
 
-  it("builds task keys and worklist GSI attributes", () => {
+  it("builds task keys", () => {
     expect(taskKey("s1", "t1").sk).toBe("TASK#t1");
-    expect(
-      taskWorklistGsi("s1", "open", 4, "2026-08-14T00:00:00.000Z"),
-    ).toEqual({
-      gsi2pk: "SITE#s1#TASK#open",
-      gsi2sk: "4#2026-08-14T00:00:00.000Z",
-    });
   });
 
   it("builds the checks-timeline GSI attributes", () => {
