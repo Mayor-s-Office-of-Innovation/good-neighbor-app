@@ -59,7 +59,7 @@ Convention: a component's logic lives in `<name>.js`; if its markup grows, split
 - [Frontend migration plan (Step 2)](../docs/gnp-frontend-migration-plan.md) — how `gnp` became
   `frontend/`, plus the open backend/auth/deploy decisions and the deferred offline pass.
 - [Docs map](../docs/README.md) — every planning thread with its ordered read path.
-- [MVP tracker](../docs/MVP-TODO.md) — what's left on the way to a deployed MVP.
+- [MVP tracker](../docs/inprogress/MVP-TODO.md) — what's left on the way to a deployed MVP.
 
 Design tokens and component classes themselves are documented inline in
 [src/styles/tokens.css](./src/styles/tokens.css) and [src/styles/app.css](./src/styles/app.css).

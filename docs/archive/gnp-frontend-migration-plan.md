@@ -1,7 +1,14 @@
 # Plan: migrate the `gnp` prototype in as the frontend
 
-Status: **partially DONE** — the frontend port (Step 2) landed 2026-08-12; the
-backend/auth/deploy seams remain open.
+Status: **DONE / ARCHIVED (2026-08-19)** — the frontend port (Step 2) landed 2026-08-12
+and every design decision this doc tracked is now resolved elsewhere, so it is archived as
+the historical record. **D1 (auth) → API-key-per-consumer** (server-held; see
+[MVP-TODO](../inprogress/MVP-TODO.md)); **D2 (backend contract) → online `api.js`** (shipped);
+**D4 (datastore) → DynamoDB** ([ADR 0002](../adr/0002-datastore-dynamodb.md)); **I1 (frontend
+deploy) → deploy-cicd Phase 4**. **D3 (data classification):** the media-at-rest decision is
+made (~7-day S3 lifecycle); the one still-open item is the **pre-production security sign-off**,
+which lives in [security-review.md](../security-review.md), not here. The superseded inline
+"still open" text below is kept for the record.
 Date: 2026-08-11
 
 > **Completion note (2026-08-12).** The **UI port itself is done and green**
@@ -19,9 +26,12 @@ Date: 2026-08-11
 > background-sync write-queue, plus **I3** (CSP hash for the inline theme script — the
 > script ships un-hashed for now). Those two land together when offline is turned on.
 >
-> **Still open / not started:** the design decisions that gate backend work — **D1**
-> (auth / server-mediated analysis) and **D3** (data-classification security review) — and
-> **I1** (frontend build→S3/CloudFront deploy stage). **D2 (backend contract) is resolved and
+> **Update (2026-08-19 — now archived):** the decisions that gated backend work are
+> resolved — **D1** (auth → **API-key-per-consumer**, server-held), **I1** (frontend
+> build→S3/CloudFront → **deploy-cicd Phase 4**), and **D3**'s data-at-rest decision
+> (person-images at rest ~7 days via an S3 lifecycle rule). The only genuinely-open item is
+> D3's **pre-production security sign-off**, tracked in security-review.md — not a blocker on
+> this migration plan. **D2 (backend contract) is resolved and
 > built:** the online `api.js` shipped 2026-08-15 — there is **no `sync.js`**; the sync *system*
 > is deferred with offline (see the D2 section + [frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md), now done & archived).
 > **D4 (datastore) is resolved: DynamoDB** — see the section below. `transcribe`/`onboarding`
@@ -125,7 +135,7 @@ its execution-role IAM, downscales to ≤~1568px (Bedrock's cap), and posts **ba
 
 **Cost of the reversal:** person-images **are now at rest** (~7 days) — so the data classification
 goes back up and a photo-retention control is back in scope, but as a **declarative S3 lifecycle
-rule**, not app-level delete code. Recorded in [security-review.md](security-review.md).
+rule**, not app-level delete code. Recorded in [security-review.md](../security-review.md).
 
 Client→backend hops (presigned-URL request + artifact register) are gated with API Gateway + WAF +
 throttling (optionally a Cognito **Identity Pool** guest identity for IAM-authorized calls — still
@@ -140,9 +150,9 @@ presigned PUT scoped to `content-type` + size, ~7-day lifecycle); residual contr
 > polluting a site's dataset. The **real-data** posture is **Option 3: the device is
 > authenticated as the site** (STS creds carrying `custom:siteId`, `siteId` server-derived
 > and `dynamodb:LeadingKeys`-enforced; the client never asserts its own site on a write),
-> matching the [data model](dynamodb-data-model.md)'s identity model. Full threat, invariant,
+> matching the [data model](../inprogress/dynamodb-data-model.md)'s identity model. Full threat, invariant,
 > rejected alternatives, and cross-cutting hardening are recorded in
-> [security-review.md](security-review.md); tracked in [MVP-TODO](MVP-TODO.md).
+> [security-review.md](../security-review.md); tracked in [MVP-TODO](../inprogress/MVP-TODO.md).
 
 **Fork — resolved 2026-08-12; revised 2026-08-13:** ~~IAM (SigV4), no Secrets Manager
 credential~~ → **API key per consumer, held in Secrets Manager.** The premise changed: "ours"
@@ -155,7 +165,7 @@ service with heterogeneous consumers, **API-key-per-consumer** is the right auth
 the Lambda role), TLS-only; the **field device never holds it**, so server-mediation is
 unchanged. The service lives in a **separate repo (checked out at `../street-conditions-analysis`)
 and is not yet deployed as a standalone service.** Standing it up — and issuing GNP a consumer
-key — is an **external dependency of the analyze path** (tracked in [MVP-TODO](MVP-TODO.md)).
+key — is an **external dependency of the analyze path** (tracked in [MVP-TODO](../inprogress/MVP-TODO.md)).
 (Optional future: its API GW could add IAM auth alongside keys for AWS consumers; not built now.)
 
 ### D2. Backend contract — perimeter-checks system of record
@@ -189,7 +199,7 @@ analysis service** — ground truth is `street-conditions-analysis/contract/open
   models for the reporting API.
 
 **Per-artifact analysis (resolved 2026-08-13).** One analyzer call per photo/text artifact → one
-per-artifact `ANALYSIS` item ([data model](dynamodb-data-model.md)). The UI still consumes a single
+per-artifact `ANALYSIS` item ([data model](../inprogress/dynamodb-data-model.md)). The UI still consumes a single
 **check-level** scorecard: the adapter synthesizes it by taking, per category, the **max `rating`
 and OR of `hazard`** across the check's artifacts and unioning the evidence, attributing each
 finding to its source artifact directly (not the model's per-call `evidence_indices`).
@@ -227,7 +237,7 @@ Note: the data-layer shape is **DynamoDB items** (D4 resolved — see below).
 
 Decision: **store captured media in an S3 bucket GNP owns**, keep it briefly, and **auto-expire it
 via an S3 lifecycle rule (~7 days)**. The items in DynamoDB store the **S3 keys**, never the bytes
-(matches the [data model](dynamodb-data-model.md) R4). This reverses the interim 2026-08-13 "no
+(matches the [data model](../inprogress/dynamodb-data-model.md) R4). This reverses the interim 2026-08-13 "no
 media at rest / base64-from-the-client" design.
 
 **Why the reversal.** Three drivers (full rationale in D1):
@@ -246,7 +256,7 @@ then an **S3 lifecycle expiration** (including noncurrent versions + delete mark
 a **declarative bucket rule, no app-level delete code**. DynamoDB keeps the **analysis document +
 the S3 key** indefinitely (the scorecard is `sensitive` — conditions tied to a site — but not image
 PII). Because media is now at rest, this is a **retention control back in scope** (it was removed
-under the no-media design); see [security-review.md](security-review.md) for the classification and
+under the no-media design); see [security-review.md](../security-review.md) for the classification and
 controls.
 
 **The analyzer keeps no copy.** Every analyzer call sends `storage.store_input:false` +
@@ -274,7 +284,7 @@ Consequences and things that must hold:
 - **Level 3 check:** person-images are now at rest (briefly). Confirm with security that a short,
   access-controlled, auto-expiring retention window in our own KMS-encrypted bucket keeps the
   classification acceptable for the testing phase, and record it in
-  [docs/security-review.md](security-review.md).
+  [docs/security-review.md](../security-review.md).
 
 ### D4. Database — DynamoDB vs managed Postgres (RESOLVED → DynamoDB)
 
@@ -282,12 +292,12 @@ Consequences and things that must hold:
 
 We adopted **DynamoDB instead of managed Postgres/Prisma** for the cloud database. The full
 analysis lives in the DynamoDB planning set — [decision](archive/dynamodb-database-decision.md),
-[data model](dynamodb-data-model.md) — and is recorded in
-[ADR 0002](adr/0002-datastore-dynamodb.md).
+[data model](../inprogress/dynamodb-data-model.md) — and is recorded in
+[ADR 0002](../adr/0002-datastore-dynamodb.md).
 
 What the decision changed (the cutover, now done in docs):
 
-- [AGENTS.md](../AGENTS.md) and [ADR 0001](adr/0001-architecture-stack.md) previously specified
+- [AGENTS.md](../../AGENTS.md) and [ADR 0001](../adr/0001-architecture-stack.md) previously specified
   managed Postgres + Prisma. AGENTS.md now names DynamoDB, and ADR 0001's datastore choice is
   superseded by ADR 0002. Prisma is removed from the backend (Phase 2 cutover).
   (The `web-dev` skill default was already DynamoDB, so this reverts to the skill default.)
@@ -307,7 +317,7 @@ Decision: **GitHub Pages is dropped entirely.** The deploy system is built into 
 repo, targeting S3/CloudFront. This is a TODO to implement, but the direction is
 locked.
 
-[.github/workflows/deploy.yml](../.github/workflows/deploy.yml) currently only runs
+[.github/workflows/deploy.yml](../../.github/workflows/deploy.yml) currently only runs
 `terraform apply`. Work to do:
 
 - Add a build → S3 sync → CloudFront invalidation job (OIDC role, no long-lived keys).
@@ -435,7 +445,7 @@ ethos, and interior checking isn't wanted).
 3. Bring the UI across: components + `gnp`'s offline/CSP wins (M3), reconcile PWA
    (M2), bump WA (M1), align tooling (M4), undo Pages-isms (I2), CSP for the theme
    script (I3). Use the file-level map in
-   [`../gnp/docs/migration-port-manifest.md`](../../gnp/docs/migration-port-manifest.md)
+   [`../gnp/docs/migration-port-manifest.md`](../../../gnp/docs/migration-port-manifest.md)
    for exactly which files land where (carry-as-is vs transform vs don't-carry).
 4. Build the backend contract and the online `api.js` (D2 — no `sync.js`; sync system deferred with offline) and wire auth (D1).
 5. Add the frontend deploy stage (I1).

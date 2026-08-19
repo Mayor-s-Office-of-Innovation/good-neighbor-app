@@ -104,8 +104,8 @@ erDiagram
   }
 ```
 
-See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item
-shapes and access patterns, and [analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md)
+See [dynamodb-data-model.md](./inprogress/dynamodb-data-model.md) for the authoritative item
+shapes and access patterns, and [analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)
 for the analyze-path build steps.
 
 ## Security boundaries
@@ -122,5 +122,5 @@ for the analyze-path build steps.
 Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
 replayed request can never create a duplicate. For the MVP there is **no active service
-worker** — full offline queue-and-replay is deferred (see [MVP-TODO.md](./MVP-TODO.md)) —
+worker** — full offline queue-and-replay is deferred (see [MVP-TODO.md](./inprogress/MVP-TODO.md)) —
 but the idempotency contract is already in place for when it lands.

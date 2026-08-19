@@ -1,8 +1,8 @@
 # DynamoDB Data Model — Perimeter Checks
 
-*DynamoDB planning set (doc 2 of 5) · [index](./README.md) · ← [decision](./archive/dynamodb-database-decision.md) · next → [analytics addendum](./analytics-plane-addendum.md)*
+*DynamoDB planning set (doc 2 of 5) · [index](../README.md) · ← [decision](../archive/dynamodb-database-decision.md) · next → [analytics addendum](../todo/analytics-plane-addendum.md)*
 
-**Status:** Draft for review — validates the [database decision](./archive/dynamodb-database-decision.md)
+**Status:** Draft for review — validates the [database decision](../archive/dynamodb-database-decision.md)
 against real access patterns
 **Date:** 2026-08-12
 
@@ -34,7 +34,7 @@ all with standard mitigations documented below.
    a person. (See [Identity model](#identity-model).)
 3. **Photos/audio live in S3**, not DynamoDB (items store S3 keys). Non-negotiable — see R4.
 4. Retention: **media auto-expires at ~7 days** via an S3 lifecycle rule on GNP's own bucket
-   (decided 2026-08-13 PM — see [D3](gnp-frontend-migration-plan.md)); checks/analysis retention
+   (decided 2026-08-13 PM — see [D3](../gnp-frontend-migration-plan.md)); checks/analysis retention
    (DynamoDB TTL) is still unspecified (post-MVP).
 
 ## Identity model (this matters as much as the tables)
@@ -178,7 +178,7 @@ split the workload (CQRS) — the app store stays lean, and a read-optimized ana
 fed automatically from **DynamoDB Streams**. This is the intended pattern, not a workaround.
 
 > **Build, complexity & cost details:** see the
-> [analytics-plane addendum](./analytics-plane-addendum.md) — how Tier 1 aggregates work
+> [analytics-plane addendum](../todo/analytics-plane-addendum.md) — how Tier 1 aggregates work
 > (incremental on write, never on read), the two Tier 2 builds (start with scheduled S3
 > Export → Athena), a cost table (~$5–15/mo without dashboards), and the prototype build order.
 

@@ -1,6 +1,6 @@
 # Plan: Analysis-Backend Lambdas (perimeter-check API + server-mediated analyze)
 
-*Build plan · [index](./README.md) · grounded in [D1/D2](./gnp-frontend-migration-plan.md) ·
+*Build plan · [index](../README.md) · grounded in [D1/D2](../gnp-frontend-migration-plan.md) ·
 builds on [data model](./dynamodb-data-model.md) · reconciles with
 [buildout Phase 2](./dynamodb-buildout-plan.md)*
 
@@ -59,7 +59,7 @@ phased plan that says *which Lambdas, which routes, which items, in what order*.
   the live end-to-end proof waits on it + an issued consumer key. — [MVP-TODO](./MVP-TODO.md)
 - **IAM tenant isolation / device-as-site (Option 3)** — Phase 6. Here we build the
   **server-derives-`siteId`** seam so the real principal drops in later without reshaping handlers;
-  in the demo the principal is deterrence-grade. — [security-review.md](./security-review.md)
+  in the demo the principal is deterrence-grade. — [security-review.md](../security-review.md)
 - **Citywide reporting API + Tier-1 KPI reads** — its own plan + buildout Phases 4–5.
 
 ---
@@ -274,7 +274,7 @@ questions). Unit-tested against contract fixtures for the pinned version(s).
 4. **Send as `x-api-key`** on `POST /v1/analyses`, TLS-only. `caller.request_id =
    <checkId>#<artifactId>`.
 
-**Config changes** ([config.js](../backend/src/config.js)): the current `getConfig()` carries
+**Config changes** ([config.js](../../backend/src/config.js)): the current `getConfig()` carries
 `bedrockModelId` (**now dead** — GNP no longer calls Bedrock directly; the analyzer owns it) and
 `uploadBucket` (**revived** — this is now GNP's media bucket for presigned PUT/GET + the worker's
 GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
@@ -344,7 +344,7 @@ GET). Add: `analyzerBaseUrl` (`ANALYZER_BASE_URL`), `analyzerApiKeySecretArn`
   > `ANALYZER_API_KEY` from env (Secrets Manager fetch is Step E); the escalation matrix in
   > `task-routing.js` is a **placeholder** pending the product team's real mapping. The old
   > `submissions.js`/`process-submission.js` receipt path is left intact (router swap is Step D).
-  > See [architecture.md](./architecture.md) for the as-built container + sequence + ER diagrams.
+  > See [architecture.md](../architecture.md) for the as-built container + sequence + ER diagrams.
 - **D. Local harness wiring** — add the routes to the in-process `local-api` router, a **local S3**
   (MinIO — previously deferred) for presigned PUT/GET + the worker's GET, and a stub analyzer
   endpoint, so `curl → create → presign → PUT to S3 → register → worker analyzes (stub) → complete →

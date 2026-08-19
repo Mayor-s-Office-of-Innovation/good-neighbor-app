@@ -18,7 +18,7 @@ a Tier-2 S3/Athena lake) rather than the operational table.
 
 The full analysis — including the honest Postgres fork — is in
 [dynamodb-database-decision.md](../archive/dynamodb-database-decision.md), validated against real
-access patterns in [dynamodb-data-model.md](../dynamodb-data-model.md).
+access patterns in [dynamodb-data-model.md](../inprogress/dynamodb-data-model.md).
 
 ## Decision
 

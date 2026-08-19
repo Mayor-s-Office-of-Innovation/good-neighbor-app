@@ -1,12 +1,12 @@
 # Plan: DynamoDB Buildout (table → app cutover → analytics)
 
-*DynamoDB planning set (doc 5 of 5) · [index](./README.md) · ← [local-dev plan](./archive/local-dev-environment-plan.md)*
+*DynamoDB planning set (doc 5 of 5) · [index](../README.md) · ← [local-dev plan](../archive/local-dev-environment-plan.md)*
 
-**Status:** Accepted — direction decided ([ADR 0002](./adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
+**Status:** Accepted — direction decided ([ADR 0002](../adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
 **Date:** 2026-08-12
-**Ties together:** the [decision](./archive/dynamodb-database-decision.md), the
-[data model](./dynamodb-data-model.md), the [analytics addendum](./analytics-plane-addendum.md),
-and the local/cloud split in the [local-dev plan](./archive/local-dev-environment-plan.md).
+**Ties together:** the [decision](../archive/dynamodb-database-decision.md), the
+[data model](./dynamodb-data-model.md), the [analytics addendum](../todo/analytics-plane-addendum.md),
+and the local/cloud split in the [local-dev plan](../archive/local-dev-environment-plan.md).
 
 End-to-end plan to stand up DynamoDB as the operational store and the city-wide reporting
 plane — all in Terraform, applied through CI (never local `apply`), per the architecture
@@ -33,7 +33,7 @@ initial testing data is disposable and cleared between cycles.
 
 ## Phase 1 — DynamoDB table (Terraform)
 
-**Where:** extend [infra/modules/app/main.tf](../infra/modules/app/main.tf) (reuse the existing
+**Where:** extend [infra/modules/app/main.tf](../../infra/modules/app/main.tf) (reuse the existing
 `name_prefix`, `aws_kms_key.app`, and `var.tags` patterns).
 
 - `aws_dynamodb_table` with `pk`/`sk`, on-demand billing, SSE using the existing KMS key.
@@ -49,10 +49,10 @@ in the dev environment. No local state, no click-ops.
 
 ## Phase 2 — App cutover: Prisma → DynamoDB SDK
 
-**Files:** [db.js](../backend/src/db.js), [config.js](../backend/src/config.js),
-[handlers/submissions.js](../backend/src/handlers/submissions.js),
-[workers/process-submission.js](../backend/src/workers/process-submission.js),
-[prisma/schema.prisma](../backend/prisma/schema.prisma), `backend/package.json`.
+**Files:** [db.js](../../backend/src/db.js), [config.js](../../backend/src/config.js),
+[handlers/submissions.js](../../backend/src/handlers/submissions.js),
+[workers/process-submission.js](../../backend/src/workers/process-submission.js),
+[prisma/schema.prisma](../../backend/prisma/schema.prisma), `backend/package.json`.
 
 - Replace `db.js` PrismaClient with a `@aws-sdk/lib-dynamodb` Document Client.
 - Add `dynamoTable` to `getConfig()` (env `DYNAMO_TABLE`).
@@ -68,7 +68,7 @@ in the dev environment. No local state, no click-ops.
 → DynamoDB item locally; Prisma is fully removed and `typecheck` is green.
 
 **As-built (2026-08-12 — the code cutover, minus the local harness):** Prisma is fully removed
-(dependency, `prisma/`, `DATABASE_URL`, scripts); [db.js](../backend/src/db.js) exports a shared
+(dependency, `prisma/`, `DATABASE_URL`, scripts); [db.js](../../backend/src/db.js) exports a shared
 `@aws-sdk/lib-dynamodb` Document Client; `getConfig()` carries `dynamoTable` (`DYNAMO_TABLE`); the
 worker's old `upsert` is now a conditional `PutCommand` (`attribute_not_exists(pk)`) with an
 `UpdateCommand` replay branch that stamps `duplicate_replay` — same idempotency semantics as
@@ -83,7 +83,7 @@ before, keyed on `requestId`. Two things are **deliberately deferred**, not done
 - **Test depth.** The worker is proven by a **dependency-free unit test** (mocked Document Client,
   asserts the conditional `Put` and the replay `Update`). The end-to-end `curl → SQS → worker →
   DynamoDB Local` loop waits on the **Docker-free local harness** (its own MVP-TODO line / the
-  [local-dev plan](./archive/local-dev-environment-plan.md)).
+  [local-dev plan](../archive/local-dev-environment-plan.md)).
 
 ## Phase 3 — Seed representative data
 
@@ -101,7 +101,7 @@ before, keyed on `requestId`. Two things are **deliberately deferred**, not done
 - Scheduled **incremental DynamoDB S3 Export** (EventBridge rule, **every 6 hours**; requires PITR).
 - **Glue** database + table describing the export schema.
 - **Athena** workgroup + results bucket (encrypted).
-- Run the three queries from the [addendum](./analytics-plane-addendum.md) in the Athena console.
+- Run the three queries from the [addendum](../todo/analytics-plane-addendum.md) in the Athena console.
 
 **Local-testable:** ❌ cloud-only (export/Glue/Athena). This is the infra-wiring the local-dev
 plan says belongs in the **cloud dev account**.
@@ -157,7 +157,7 @@ deferred to post-MVP.
 
 - **CI/CD:** all Terraform plan/apply runs in GitHub Actions against remote state (S3 +
   DynamoDB lock). Devs never `apply` locally.
-- **Docs to update on cutover:** [AGENTS.md](../AGENTS.md) (drop Prisma/Postgres standing
+- **Docs to update on cutover:** [AGENTS.md](../../AGENTS.md) (drop Prisma/Postgres standing
   choices), and the Prisma/Postgres references in the migration plans.
 - **Security:** run the repo's security tooling on new Terraform (checkov) and the aggregator
   Lambda; least-privilege IAM on every new role.
