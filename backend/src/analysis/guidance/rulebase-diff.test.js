@@ -116,4 +116,50 @@ describe("rulebase semantic diff", () => {
       fixtureOutcomeChanges: 1,
     });
   });
+
+  it("reports fixture impact for guidance, buttons, and cannot-do reason changes", () => {
+    const after = catalogVariant((rule) => {
+      if (rule.ruleId !== "LITTER-2") return rule;
+      return {
+        ...rule,
+        outcome: {
+          ...rule.outcome,
+          guidance: "Use a broom before making the request.",
+          buttons: ["Open 311 request", "Copy case notes"],
+          cannotDoReasons: ["Unsafe", "Blocked access"],
+        },
+      };
+    });
+
+    const impact = evaluateRulebaseImpact(actionsEscalationsV2Catalog, after, [
+      {
+        id: "litter-severity-3",
+        condition: { category: "Litter", severity: 3 },
+      },
+    ]);
+
+    expect(impact).toEqual([
+      {
+        fixtureId: "litter-severity-3",
+        before: expect.objectContaining({
+          kind: "outcome",
+          ruleId: "LITTER-2",
+          outcome: expect.objectContaining({
+            guidance: expect.any(String),
+            buttons: expect.any(Array),
+            cannotDoReasons: expect.any(Array),
+          }),
+        }),
+        after: expect.objectContaining({
+          kind: "outcome",
+          ruleId: "LITTER-2",
+          outcome: expect.objectContaining({
+            guidance: "Use a broom before making the request.",
+            buttons: ["Open 311 request", "Copy case notes"],
+            cannotDoReasons: ["Unsafe", "Blocked access"],
+          }),
+        }),
+      },
+    ]);
+  });
 });

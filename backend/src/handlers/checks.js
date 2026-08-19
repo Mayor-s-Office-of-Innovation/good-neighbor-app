@@ -162,7 +162,11 @@ export const completeCheck = async (event) => {
       return jsonResponse(200, {
         checkId,
         status: "completed",
+        grade: scorecard.grade,
+        issueCount: scorecard.issueCount,
+        maxSeverity: scorecard.maxSeverity,
         assessmentReady: true,
+        assessment,
       });
     }
     throw err;

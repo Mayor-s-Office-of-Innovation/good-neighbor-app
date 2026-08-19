@@ -17,17 +17,134 @@ import {
   unresolvedConditionGsi,
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
-import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
 import {
   executeAppActions,
   initialAppActionStatus,
   summarizeAppActionResults,
 } from "./app-actions.js";
+import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
  * @typedef {import("./evaluator.js").EvaluationResult} EvaluationResult
  */
+
+const MAX_TRANSACTION_ITEMS = 100;
+const BATCH_GET_LIMIT = 100;
+
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * @param {string} name
+ * @param {string} message
+ * @returns {Error}
+ */
+function namedError(name, message) {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {boolean}
+ */
+function isNeedsAnswer(item) {
+  return item.status === "needs_answer";
+}
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {boolean}
+ */
+function isManualReview(item) {
+  return item.status === "manual_review";
+}
+
+/**
+ * @param {Record<string, unknown>} item
+ * @returns {boolean}
+ */
+function isResolvedToTasks(item) {
+  return item.resolvedToTasks === true;
+}
+
+/**
+ * @param {Record<string, unknown>} task
+ * @returns {boolean}
+ */
+function isEmergencyTask(task) {
+  return /** @type {{ code?: string, payload?: { phoneNumber?: unknown } }[]} */ (
+    task.appActions ?? []
+  ).some(
+    (action) =>
+      action.code === "open_phone" && action.payload?.phoneNumber === "911",
+  );
+}
+
+/**
+ * @param {object} opts
+ * @param {Record<string, unknown>} opts.assessment
+ * @param {Record<string, unknown>} opts.priorCondition
+ * @param {Record<string, unknown>} opts.nextCondition
+ * @param {Record<string, unknown> | null} opts.taskItem
+ * @param {string} opts.now
+ * @returns {Record<string, unknown>}
+ */
+function applyAssessmentConditionDelta({
+  assessment,
+  priorCondition,
+  nextCondition,
+  taskItem,
+  now,
+}) {
+  const priorSummary = /** @type {Record<string, number>} */ (
+    assessment.summary ?? {}
+  );
+  const summary = {
+    totalConditions: Number(priorSummary.totalConditions ?? 0),
+    conditionsNeedAnswer:
+      Number(priorSummary.conditionsNeedAnswer ?? 0) +
+      (isNeedsAnswer(nextCondition) ? 1 : 0) -
+      (isNeedsAnswer(priorCondition) ? 1 : 0),
+    conditionsResolvedToTasks:
+      Number(priorSummary.conditionsResolvedToTasks ?? 0) +
+      (isResolvedToTasks(nextCondition) ? 1 : 0) -
+      (isResolvedToTasks(priorCondition) ? 1 : 0),
+    openTaskCount: Number(priorSummary.openTaskCount ?? 0) + (taskItem ? 1 : 0),
+    actionCount:
+      Number(priorSummary.actionCount ?? 0) +
+      (taskItem?.kind === "action" ? 1 : 0),
+    escalationCount:
+      Number(priorSummary.escalationCount ?? 0) +
+      (taskItem?.kind === "escalation" ? 1 : 0),
+    emergencyCount:
+      Number(priorSummary.emergencyCount ?? 0) +
+      (taskItem && isEmergencyTask(taskItem) ? 1 : 0),
+    manualReviewCount:
+      Number(priorSummary.manualReviewCount ?? 0) +
+      (isManualReview(nextCondition) ? 1 : 0) -
+      (isManualReview(priorCondition) ? 1 : 0),
+  };
+
+  const status =
+    summary.manualReviewCount > 0
+      ? "manual_review"
+      : summary.conditionsNeedAnswer > 0
+        ? "needs_answers"
+        : "tasks_created";
+
+  return {
+    ...assessment,
+    status,
+    summary,
+    updatedAt: now,
+  };
+}
 
 /**
  * @typedef {object} AssessmentConditionInput
@@ -82,6 +199,7 @@ export function makeConditionId(category, index) {
  * @param {string | undefined} opts.checkId
  * @param {string} opts.reportedAt
  * @param {EvaluationResult} opts.evaluation
+ * @param {string} opts.policyVersion
  * @param {string[]} opts.taskIds
  * @param {string} opts.now
  * @returns {Record<string, unknown>}
@@ -94,6 +212,7 @@ function buildConditionItem({
   checkId,
   reportedAt,
   evaluation,
+  policyVersion,
   taskIds,
   now,
 }) {
@@ -104,6 +223,7 @@ function buildConditionItem({
     conditionId,
     assessmentId,
     checkId,
+    policyVersion,
     source: {
       artifactIds: condition.sourceArtifactIds ?? [],
       evidenceIndices: condition.evidenceIndices ?? [],
@@ -229,7 +349,7 @@ function buildTaskItem({
  * @returns {Promise<{ assessmentItem: Record<string, unknown>, conditionItems: Record<string, unknown>[], taskItems: Record<string, unknown>[] }>}
  */
 export async function storeEvaluatedAssessment(input, options) {
-  const catalog = options.catalog ?? actionsEscalationsV2Catalog;
+  const catalog = options.catalog ?? activeCatalog();
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
@@ -274,6 +394,7 @@ export async function storeEvaluatedAssessment(input, options) {
         checkId: input.checkId,
         reportedAt: input.reportedAt,
         evaluation,
+        policyVersion: catalog.policyVersion,
         taskIds,
         now,
       }),
@@ -351,15 +472,19 @@ export async function storeEvaluatedAssessment(input, options) {
     },
   });
 
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        put(assessmentItem),
-        ...conditionItems.map(put),
-        ...taskItems.map(put),
-      ],
-    }),
-  );
+  const transactItems = [
+    put(assessmentItem),
+    ...conditionItems.map(put),
+    ...taskItems.map(put),
+  ];
+  if (transactItems.length > MAX_TRANSACTION_ITEMS) {
+    throw namedError(
+      "TransactionTooLarge",
+      `Assessment creates ${transactItems.length} DynamoDB transaction items; maximum is ${MAX_TRANSACTION_ITEMS}`,
+    );
+  }
+
+  await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
 
   return { assessmentItem, conditionItems, taskItems };
 }
@@ -405,13 +530,7 @@ export async function getAssessmentGuidance({
   const tasks =
     taskKeys.length === 0
       ? []
-      : ((
-          await ddb.send(
-            new BatchGetCommand({
-              RequestItems: { [tableName]: { Keys: taskKeys } },
-            }),
-          )
-        ).Responses?.[tableName] ?? []);
+      : await batchGetAll({ tableName, keys: taskKeys });
 
   return {
     assessment: assessmentResult.Item ?? null,
@@ -430,24 +549,37 @@ export async function getAssessmentGuidance({
  * @param {GuidanceCatalog} [opts.catalog]
  * @param {() => string} [opts.idFactory]
  * @param {Date} [opts.now]
- * @returns {Promise<{ conditionItem: Record<string, unknown>, taskItem: Record<string, unknown> | null, evaluation: EvaluationResult }>}
+ * @returns {Promise<{ assessmentItem: Record<string, unknown>, conditionItem: Record<string, unknown>, taskItem: Record<string, unknown> | null, evaluation: EvaluationResult }>}
  */
 export async function answerCondition(opts) {
-  const catalog = opts.catalog ?? actionsEscalationsV2Catalog;
   const now = (opts.now ?? new Date()).toISOString();
-  const conditionResult = await ddb.send(
-    new GetCommand({
-      TableName: opts.tableName,
-      Key: conditionKey(opts.siteId, opts.assessmentId, opts.conditionId),
-    }),
-  );
+  const [assessmentResult, conditionResult] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: opts.tableName,
+        Key: assessmentKey(opts.siteId, opts.assessmentId),
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: opts.tableName,
+        Key: conditionKey(opts.siteId, opts.assessmentId, opts.conditionId),
+      }),
+    ),
+  ]);
+  if (!assessmentResult.Item) {
+    throw namedError("NotFound", "Assessment not found");
+  }
   if (!conditionResult.Item) {
-    const err = new Error("Condition not found");
-    err.name = "NotFound";
-    throw err;
+    throw namedError("NotFound", "Condition not found");
   }
 
+  const assessmentItem = assessmentResult.Item;
   const conditionItem = conditionResult.Item;
+  const policyVersion = String(
+    conditionItem.policyVersion ?? assessmentItem.policyVersion ?? "",
+  );
+  const catalog = opts.catalog ?? catalogForPolicyVersion(policyVersion);
   const mergedAnswers = {
     .../** @type {Record<string, unknown>} */ (conditionItem.answers ?? {}),
     ...opts.answers,
@@ -502,6 +634,7 @@ export async function answerCondition(opts) {
 
   const updatedCondition = {
     ...conditionItem,
+    policyVersion: catalog.policyVersion,
     answers: mergedAnswers,
     status,
     selectedRuleId:
@@ -521,8 +654,23 @@ export async function answerCondition(opts) {
     delete sparseCondition.gsi5sk;
   }
 
+  const updatedAssessment = applyAssessmentConditionDelta({
+    assessment: assessmentItem,
+    priorCondition: conditionItem,
+    nextCondition: updatedCondition,
+    taskItem,
+    now,
+  });
+
   /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
   const tx = [
+    {
+      Put: {
+        TableName: opts.tableName,
+        Item: updatedAssessment,
+        ConditionExpression: "attribute_exists(sk)",
+      },
+    },
     {
       Put: {
         TableName: opts.tableName,
@@ -545,7 +693,12 @@ export async function answerCondition(opts) {
   }
 
   await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
-  return { conditionItem: updatedCondition, taskItem, evaluation };
+  return {
+    assessmentItem: updatedAssessment,
+    conditionItem: updatedCondition,
+    taskItem,
+    evaluation,
+  };
 }
 
 /**
@@ -567,15 +720,23 @@ export async function markTaskCannotDo(opts) {
     }),
   );
   if (!existing.Item) {
-    const err = new Error("Task not found");
-    err.name = "NotFound";
-    throw err;
+    throw namedError("NotFound", "Task not found");
+  }
+  if (existing.Item.status === "cannot_do") {
+    const cannotDo = /** @type {{ reason?: unknown, note?: unknown }} */ (
+      existing.Item.cannotDo ?? {}
+    );
+    if (cannotDo.reason === opts.reason && cannotDo.note === opts.note) {
+      return existing.Item;
+    }
+    throw namedError("TerminalConflict", "Task is already cannot_do");
+  }
+  if (existing.Item.status !== "open") {
+    throw namedError("TerminalConflict", "Task is no longer open");
   }
   const allowed = /** @type {string[]} */ (existing.Item.cannotDoReasons ?? []);
   if (allowed.length > 0 && !allowed.includes(opts.reason)) {
-    const err = new Error("Invalid cannot-do reason");
-    err.name = "InvalidReason";
-    throw err;
+    throw namedError("InvalidReason", "Invalid cannot-do reason");
   }
 
   const updated = {
@@ -600,7 +761,9 @@ export async function markTaskCannotDo(opts) {
           Put: {
             TableName: opts.tableName,
             Item: updated,
-            ConditionExpression: "attribute_exists(sk)",
+            ConditionExpression: "#status = :open",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":open": "open" },
           },
         },
       ],
@@ -629,10 +792,48 @@ export async function completeTaskWithAppActions(opts) {
     }),
   );
   if (!existing.Item) {
-    const err = new Error("Task not found");
-    err.name = "NotFound";
-    throw err;
+    throw namedError("NotFound", "Task not found");
   }
+  if (existing.Item.status === "completed") {
+    const method = opts.completionMethod ?? "user_confirmed";
+    if (existing.Item.completionMethod === method) {
+      return existing.Item;
+    }
+    throw namedError("TerminalConflict", "Task is already completed");
+  }
+  if (existing.Item.status !== "open") {
+    throw namedError("TerminalConflict", "Task is no longer open");
+  }
+
+  const claimed = {
+    ...existing.Item,
+    status: "completing",
+    appActionStatus: "executing",
+    updatedAt: now,
+    ...taskWorklistDateGsi(
+      opts.siteId,
+      "completing",
+      String(existing.Item.kind),
+      Number(existing.Item.severity ?? 0),
+      now,
+      opts.taskId,
+    ),
+  };
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: opts.tableName,
+            Item: claimed,
+            ConditionExpression: "#status = :open",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":open": "open" },
+          },
+        },
+      ],
+    }),
+  );
 
   const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
     existing.Item.appActions ?? []
@@ -644,7 +845,7 @@ export async function completeTaskWithAppActions(opts) {
   });
 
   const updated = {
-    ...existing.Item,
+    ...claimed,
     status: "completed",
     completedAt: now,
     completionMethod: opts.completionMethod ?? "user_confirmed",
@@ -668,11 +869,51 @@ export async function completeTaskWithAppActions(opts) {
           Put: {
             TableName: opts.tableName,
             Item: updated,
-            ConditionExpression: "attribute_exists(sk)",
+            ConditionExpression: "#status = :completing",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":completing": "completing" },
           },
         },
       ],
     }),
   );
   return updated;
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {Record<string, string>[]} opts.keys
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function batchGetAll({ tableName, keys }) {
+  /** @type {Record<string, unknown>[]} */
+  const items = [];
+
+  for (let start = 0; start < keys.length; start += BATCH_GET_LIMIT) {
+    let requestKeys = keys.slice(start, start + BATCH_GET_LIMIT);
+    for (let attempt = 0; requestKeys.length > 0; attempt += 1) {
+      const result = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: { [tableName]: { Keys: requestKeys } },
+        }),
+      );
+      items.push(...(result.Responses?.[tableName] ?? []));
+      requestKeys =
+        /** @type {{ [key: string]: { Keys?: Record<string, string>[] } } | undefined} */ (
+          result.UnprocessedKeys
+        )?.[tableName]?.Keys ?? [];
+      if (requestKeys.length > 0) {
+        if (attempt >= 5) {
+          throw namedError(
+            "BatchGetIncomplete",
+            "DynamoDB left task keys unprocessed",
+          );
+        }
+        await sleep(25 * 2 ** attempt);
+      }
+    }
+  }
+
+  return items;
 }

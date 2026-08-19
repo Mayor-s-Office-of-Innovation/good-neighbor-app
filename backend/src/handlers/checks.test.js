@@ -309,6 +309,11 @@ describe("completeCheck", () => {
       checkId: "chk_01",
       status: "completed",
       assessmentReady: true,
+      assessment: {
+        assessmentId: "chk_01",
+        checkId: "chk_01",
+        conditions: [],
+      },
     });
   });
 });

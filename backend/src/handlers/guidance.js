@@ -10,6 +10,8 @@ import {
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
 
+const MAX_ASSESSMENT_CONDITIONS = 49;
+
 /**
  * @param {unknown} body
  * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
@@ -94,6 +96,11 @@ function normalizeAssessmentBody(body) {
       },
     };
   });
+  if (conditions.length > MAX_ASSESSMENT_CONDITIONS) {
+    throw new Error(
+      `Too many conditions: maximum is ${MAX_ASSESSMENT_CONDITIONS}`,
+    );
+  }
 
   const reportedAt =
     typeof input.reportedAt === "string"
@@ -156,7 +163,13 @@ export const evaluateAssessment = async (event) => {
         siteId,
         assessmentId: input.assessmentId,
       });
-      return jsonResponse(200, existing);
+      if (existing.assessment) return jsonResponse(200, existing);
+      return jsonResponse(409, {
+        error: "Assessment evaluation was not stored",
+      });
+    }
+    if (err instanceof Error && err.name === "TransactionTooLarge") {
+      return jsonResponse(400, { error: err.message });
     }
     throw err;
   }
@@ -222,6 +235,9 @@ export const submitConditionAnswers = async (event) => {
     if (err instanceof Error && err.name === "TransactionCanceledException") {
       return jsonResponse(409, { error: "Condition is not awaiting answers" });
     }
+    if (err instanceof Error && err.name === "CatalogUnavailable") {
+      return jsonResponse(503, { error: err.message });
+    }
     throw err;
   }
 };
@@ -265,6 +281,13 @@ export const cannotDoTask = async (event) => {
     if (err instanceof Error && err.name === "InvalidReason") {
       return jsonResponse(400, { error: "Invalid cannot-do reason" });
     }
+    if (
+      err instanceof Error &&
+      (err.name === "TerminalConflict" ||
+        err.name === "TransactionCanceledException")
+    ) {
+      return jsonResponse(409, { error: "Task is no longer open" });
+    }
     throw err;
   }
 };
@@ -304,6 +327,13 @@ export const completeTask = async (event) => {
   } catch (err) {
     if (err instanceof Error && err.name === "NotFound") {
       return jsonResponse(404, { error: "Task not found" });
+    }
+    if (
+      err instanceof Error &&
+      (err.name === "TerminalConflict" ||
+        err.name === "TransactionCanceledException")
+    ) {
+      return jsonResponse(409, { error: "Task is no longer open" });
     }
     throw err;
   }

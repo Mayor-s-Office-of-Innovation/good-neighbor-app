@@ -1,4 +1,3 @@
-// @ts-nocheck -- dev harness; keep production code paths typed first.
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
   evaluateAssessment,
@@ -9,10 +8,24 @@ import { guidanceFixtures } from "../dev/guidance-fixtures.js";
 
 const DEFAULT_FIXTURE = guidanceFixtures[0];
 
+/**
+ * @typedef {{ id: string, label: string, assessment: Record<string, unknown> }} GuidanceFixture
+ * @typedef {{ assessment?: Record<string, unknown>, conditions?: Record<string, unknown>[], tasks?: Record<string, unknown>[] }} GuidanceResponse
+ * @typedef {{ ok: true, value: Record<string, unknown> } | { ok: false, error: string }} ParseResult
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function pretty(value) {
   return JSON.stringify(value, null, 2);
 }
 
+/**
+ * @param {string} text
+ * @returns {ParseResult}
+ */
 function parseJson(text) {
   try {
     return { ok: true, value: JSON.parse(text) };
@@ -24,11 +37,18 @@ function parseJson(text) {
   }
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function displayValue(value) {
   if (value === undefined || value === null || value === "") return "-";
   return String(value);
 }
 
+/**
+ * @returns {string}
+ */
 function nowSuffix() {
   return new Date()
     .toISOString()
@@ -36,10 +56,19 @@ function nowSuffix() {
     .slice(0, 14);
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} fallback
+ * @returns {string}
+ */
 function baseId(value, fallback) {
   return String(value || fallback).replace(/-\d{14}$/, "");
 }
 
+/**
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
 function freshPayload(payload) {
   const suffix = nowSuffix();
   return {
@@ -50,16 +79,44 @@ function freshPayload(payload) {
   };
 }
 
+/**
+ * @param {Element | null | undefined} element
+ * @returns {string}
+ */
+function elementValue(element) {
+  return String(/** @type {{ value?: unknown }} */ (element ?? {}).value ?? "");
+}
+
+/**
+ * @param {Element | null | undefined} element
+ * @returns {boolean}
+ */
+function elementChecked(element) {
+  return Boolean(/** @type {{ checked?: unknown }} */ (element ?? {}).checked);
+}
+
 class GuidanceHarness extends HTMLElement {
-  connectedCallback() {
+  constructor() {
+    super();
+    /** @type {GuidanceFixture} */
     this._fixture = DEFAULT_FIXTURE;
+    /** @type {string} */
     this._json = pretty(DEFAULT_FIXTURE.assessment);
+    /** @type {boolean} */
     this._freshOnEvaluate = true;
+    /** @type {Record<string, unknown> | null} */
     this._request = null;
+    /** @type {unknown} */
     this._response = null;
+    /** @type {GuidanceResponse | null} */
     this._guidance = null;
+    /** @type {string} */
     this._error = "";
+    /** @type {boolean} */
     this._busy = false;
+  }
+
+  connectedCallback() {
     this._render();
   }
 
@@ -77,80 +134,77 @@ class GuidanceHarness extends HTMLElement {
         <div class="guidance-harness__layout">
           <form class="guidance-harness__panel guidance-harness__editor">
             <div class="guidance-harness__controls">
-              <label>
-                Fixture
-                <select id="fixture">
-                  ${guidanceFixtures
-                    .map(
-                      (fixture) => html`
-                        <option
-                          value="${escapeAttr(fixture.id)}"
-                          ${fixture.id === this._fixture.id ? "selected" : ""}
-                        >
-                          ${escapeHtml(fixture.label)}
-                        </option>
-                      `,
-                    )
-                    .join("")}
-                </select>
-              </label>
-              <button
+              <wa-select id="fixture" label="Fixture">
+                ${guidanceFixtures
+                  .map(
+                    (fixture) => html`
+                      <wa-option
+                        value="${escapeAttr(fixture.id)}"
+                        ${fixture.id === this._fixture.id ? "selected" : ""}
+                      >
+                        ${escapeHtml(fixture.label)}
+                      </wa-option>
+                    `,
+                  )
+                  .join("")}
+              </wa-select>
+              <wa-button
                 type="button"
                 id="freshen"
-                class="btn-outline btn-outline--sm"
+                appearance="outlined"
+                size="small"
               >
                 Fresh IDs
-              </button>
+              </wa-button>
             </div>
 
-            <label class="guidance-harness__checkbox">
-              <input
-                id="fresh-on-evaluate"
-                type="checkbox"
-                ${this._freshOnEvaluate ? "checked" : ""}
-              />
+            <wa-checkbox
+              id="fresh-on-evaluate"
+              ${this._freshOnEvaluate ? "checked" : ""}
+            >
               Fresh IDs on evaluate
-            </label>
+            </wa-checkbox>
 
             <div
               class="guidance-harness__controls guidance-harness__controls--three"
             >
-              <label>
-                assessmentId
-                <input id="assessment-id" type="text" autocomplete="off" />
-              </label>
-              <label>
-                checkId
-                <input id="check-id" type="text" autocomplete="off" />
-              </label>
-              <label>
-                reportedAt
-                <input id="reported-at" type="text" autocomplete="off" />
-              </label>
+              <wa-input
+                id="assessment-id"
+                label="assessmentId"
+                autocomplete="off"
+              ></wa-input>
+              <wa-input
+                id="check-id"
+                label="checkId"
+                autocomplete="off"
+              ></wa-input>
+              <wa-input
+                id="reported-at"
+                label="reportedAt"
+                autocomplete="off"
+              ></wa-input>
             </div>
 
-            <label class="guidance-harness__json-label" for="assessment-json">
-              Assessment JSON
-            </label>
-            <textarea id="assessment-json" spellcheck="false">
-${escapeHtml(this._json)}</textarea
-            >
+            <wa-textarea
+              id="assessment-json"
+              label="Assessment JSON"
+              spellcheck="false"
+              resize="vertical"
+              rows="22"
+              value="${escapeAttr(this._json)}"
+            ></wa-textarea>
 
             <div class="guidance-harness__actions">
-              <button
+              <wa-button
                 type="submit"
-                class="btn-ink"
+                appearance="accent"
                 ${this._busy ? "disabled" : ""}
               >
                 Evaluate
-              </button>
-              <button
-                type="button"
-                id="refresh"
-                class="btn-outline btn-outline--sm"
-              >
+              </wa-button>
+              <wa-button type="button" id="refresh" appearance="outlined">
                 Refresh
-              </button>
+              </wa-button>
             </div>
             ${this._error
               ? html`<p class="guidance-harness__error" role="alert">
@@ -178,7 +232,7 @@ ${escapeHtml(this._json)}</textarea
     `;
 
     this.querySelector("#fixture")?.addEventListener("change", (event) => {
-      const id = event.target.value;
+      const id = elementValue(/** @type {Element} */ (event.target));
       const fixture = guidanceFixtures.find((item) => item.id === id);
       if (!fixture) return;
       this._fixture = fixture;
@@ -193,13 +247,17 @@ ${escapeHtml(this._json)}</textarea
     this.querySelector("#fresh-on-evaluate")?.addEventListener(
       "change",
       (event) => {
-        this._freshOnEvaluate = event.target.checked;
+        this._freshOnEvaluate = elementChecked(
+          /** @type {Element} */ (event.target),
+        );
       },
     );
 
     this.querySelector("#freshen")?.addEventListener("click", () => {
-      const parsed = parseJson(this.querySelector("#assessment-json").value);
-      if (!parsed.ok) {
+      const parsed = parseJson(
+        elementValue(this.querySelector("#assessment-json")),
+      );
+      if (parsed.ok === false) {
         this._error = parsed.error;
         this._render();
         return;
@@ -211,32 +269,37 @@ ${escapeHtml(this._json)}</textarea
 
     this.querySelector("form")?.addEventListener("submit", (event) => {
       event.preventDefault();
-      this._evaluate();
+      void this._evaluate();
     });
-    this.querySelector("#refresh")?.addEventListener("click", () =>
-      this._refresh(),
-    );
+    this.querySelector("#refresh")?.addEventListener("click", () => {
+      void this._refresh();
+    });
     this.querySelectorAll("[data-answer]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._answer(
-          button.dataset.assessmentId,
-          button.dataset.conditionId,
-          button.dataset.answerKey,
-          button.dataset.answer === "true",
+        void this._answer(
+          /** @type {HTMLElement} */ (button).dataset.assessmentId,
+          /** @type {HTMLElement} */ (button).dataset.conditionId,
+          /** @type {HTMLElement} */ (button).dataset.answerKey,
+          /** @type {HTMLElement} */ (button).dataset.answer === "true",
         );
       });
     });
   }
 
+  /**
+   * @returns {ParseResult}
+   */
   _payloadFromEditor() {
-    const json = this.querySelector("#assessment-json")?.value ?? "";
+    const json = elementValue(this.querySelector("#assessment-json"));
     this._json = json;
     const parsed = parseJson(json);
-    if (!parsed.ok) return parsed;
+    if (parsed.ok === false) return parsed;
     const payload = { ...parsed.value };
-    const assessmentId = this.querySelector("#assessment-id")?.value?.trim();
-    const checkId = this.querySelector("#check-id")?.value?.trim();
-    const reportedAt = this.querySelector("#reported-at")?.value?.trim();
+    const assessmentId = elementValue(
+      this.querySelector("#assessment-id"),
+    ).trim();
+    const checkId = elementValue(this.querySelector("#check-id")).trim();
+    const reportedAt = elementValue(this.querySelector("#reported-at")).trim();
     if (assessmentId) payload.assessmentId = assessmentId;
     if (checkId) payload.checkId = checkId;
     if (reportedAt) payload.reportedAt = reportedAt;
@@ -245,7 +308,7 @@ ${escapeHtml(this._json)}</textarea
 
   async _evaluate() {
     const parsed = this._payloadFromEditor();
-    if (!parsed.ok) {
+    if (parsed.ok === false) {
       this._error = parsed.error;
       this._render();
       return;
@@ -264,7 +327,7 @@ ${escapeHtml(this._json)}</textarea
     this._render();
     try {
       this._response = await evaluateAssessment(parsed.value);
-      this._guidance = this._response;
+      this._guidance = /** @type {GuidanceResponse} */ (this._response);
     } catch (err) {
       this._error = err instanceof Error ? err.message : String(err);
       this._response = { error: this._error };
@@ -278,8 +341,8 @@ ${escapeHtml(this._json)}</textarea
     const parsed = this._payloadFromEditor();
     const assessmentId =
       parsed.ok && parsed.value.assessmentId
-        ? parsed.value.assessmentId
-        : this._guidance?.assessment?.assessmentId;
+        ? String(parsed.value.assessmentId)
+        : String(this._guidance?.assessment?.assessmentId ?? "");
     if (!assessmentId) {
       this._error = "No assessmentId available to refresh.";
       this._render();
@@ -294,7 +357,7 @@ ${escapeHtml(this._json)}</textarea
     this._render();
     try {
       this._response = await getAssessmentGuidance(assessmentId);
-      this._guidance = this._response;
+      this._guidance = /** @type {GuidanceResponse} */ (this._response);
     } catch (err) {
       this._error = err instanceof Error ? err.message : String(err);
       this._response = { error: this._error };
@@ -304,7 +367,15 @@ ${escapeHtml(this._json)}</textarea
     }
   }
 
+  /**
+   * @param {string | undefined} assessmentId
+   * @param {string | undefined} conditionId
+   * @param {string | undefined} answerKey
+   * @param {boolean} value
+   * @returns {Promise<void>}
+   */
   async _answer(assessmentId, conditionId, answerKey, value) {
+    if (!assessmentId || !conditionId || !answerKey) return;
     this._busy = true;
     this._error = "";
     this._request = {
@@ -326,6 +397,9 @@ ${escapeHtml(this._json)}</textarea
     }
   }
 
+  /**
+   * @returns {string}
+   */
   _emptyView() {
     return html`
       <div class="guidance-harness__empty">
@@ -338,10 +412,13 @@ ${escapeHtml(this._json)}</textarea
     `;
   }
 
+  /**
+   * @returns {string}
+   */
   _guidanceView() {
-    const assessment = this._guidance.assessment ?? {};
-    const conditions = this._guidance.conditions ?? [];
-    const tasks = this._guidance.tasks ?? [];
+    const assessment = this._guidance?.assessment ?? {};
+    const conditions = this._guidance?.conditions ?? [];
+    const tasks = this._guidance?.tasks ?? [];
     return html`
       <section class="guidance-section" aria-labelledby="assessment-summary">
         <h2 id="assessment-summary">Assessment</h2>
@@ -387,14 +464,23 @@ ${escapeHtml(this._json)}</textarea
     `;
   }
 
+  /**
+   * @param {Record<string, unknown>} condition
+   * @returns {string}
+   */
   _conditionCard(condition) {
-    const question = condition.needsAnswer;
+    const question =
+      condition.needsAnswer && typeof condition.needsAnswer === "object"
+        ? /** @type {{ prompt?: unknown, key?: unknown }} */ (
+            condition.needsAnswer
+          )
+        : null;
     return html`
       <article class="guidance-card">
         <div class="guidance-card__top">
           <h3>${escapeHtml(displayValue(condition.canonicalCategory))}</h3>
           <span class="guidance-pill"
-            >Severity ${escapeHtml(condition.severity)}</span
+            >Severity ${escapeHtml(displayValue(condition.severity))}</span
           >
         </div>
         <dl class="guidance-kv guidance-kv--compact">
@@ -415,28 +501,30 @@ ${escapeHtml(this._json)}</textarea
         ${question
           ? html`
               <div class="guidance-question">
-                <p>${escapeHtml(question.prompt)}</p>
+                <p>${escapeHtml(displayValue(question.prompt))}</p>
                 <div class="guidance-question__actions">
-                  <button
+                  <wa-button
                     type="button"
-                    class="btn-outline btn-outline--sm"
+                    appearance="outlined"
+                    size="small"
                     data-answer="true"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
                     data-condition-id="${escapeAttr(condition.conditionId)}"
                     data-answer-key="${escapeAttr(question.key)}"
                   >
                     Yes
-                  </button>
-                  <button
+                  </wa-button>
+                  <wa-button
                     type="button"
-                    class="btn-outline btn-outline--sm"
+                    appearance="outlined"
+                    size="small"
                     data-answer="false"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
                     data-condition-id="${escapeAttr(condition.conditionId)}"
                     data-answer-key="${escapeAttr(question.key)}"
                   >
                     No
-                  </button>
+                  </wa-button>
                 </div>
               </div>
             `
@@ -445,7 +533,12 @@ ${escapeHtml(this._json)}</textarea
     `;
   }
 
+  /**
+   * @param {Record<string, unknown>} task
+   * @returns {string}
+   */
   _taskCard(task) {
+    const appActions = Array.isArray(task.appActions) ? task.appActions : [];
     return html`
       <article class="guidance-card">
         <div class="guidance-card__top">
@@ -469,18 +562,22 @@ ${escapeHtml(this._json)}</textarea
           </div>
         </dl>
         <p>${escapeHtml(displayValue(task.guidance))}</p>
-        ${task.appActions?.length
+        ${appActions.length
           ? html`
               <ul class="guidance-actions">
-                ${task.appActions
-                  .map(
-                    (action) => html`
+                ${appActions
+                  .map((action) => {
+                    const item =
+                      /** @type {{ code?: unknown, payload?: unknown }} */ (
+                        action
+                      );
+                    return html`
                       <li>
-                        <code>${escapeHtml(action.code)}</code>
-                        ${escapeHtml(pretty(action.payload ?? {}))}
+                        <code>${escapeHtml(displayValue(item.code))}</code>
+                        ${escapeHtml(pretty(item.payload ?? {}))}
                       </li>
-                    `,
-                  )
+                    `;
+                  })
                   .join("")}
               </ul>
             `
