@@ -4,7 +4,10 @@
 **frontend publish + API/Lambdas in Terraform built (Phase 4)** — CloudFront + API Gateway v2 +
 Lambdas provisioned, deploy job builds/syncs/invalidates and runs the now-wired `/health` smoke
 test; `main` Phase 5 protection done (`main` admins-only, prod tags-`v*` + required reviewers with
-self-review allowed per P5); remaining: first `terraform init`/apply + OIDC smoke, rollback
+self-review allowed per P5); **first live DEV apply GREEN 2026-08-18** — merge-to-`dev` ran the full
+job end to end (OIDC role assumed → remote-state init → Lambda bundle → `terraform apply` →
+frontend sync + env-scoped invalidation → `/health` smoke), so OIDC smoke + the dev inner loop are
+proven; remaining: first **prod** release-deploy (release-tag path still untested) + rollback
 dry-run · **Date:** 2026-08-18 · **Owner:** team · [index](./README.md)
 
 The plan to take GNP from *manual, single-role* deploys to a **2-environment, branch-and-release
@@ -158,7 +161,8 @@ on: { release: { types: [published] } }    # environment: prod  (checks out the 
   `main` commit, not `dev`.
 - **Done when:** merging to `dev` auto-deploys dev **with a passing smoke test**; publishing a Release
   **pauses for the other admin's approval** then deploys prod. *(Smoke test wired with Phase 4 — the
-  `api_url` output now exists; see step 6.)*
+  `api_url` output now exists; see step 6.)* ✅ **dev half proven 2026-08-18** — a merge to `dev` ran
+  the full job green (apply + smoke). The prod release-trigger + approval pause is still **untested**.
 
 ## Phase 4 — Frontend build + publish + API/Lambdas in Terraform — BUILT 2026-08-18
 
@@ -193,8 +197,17 @@ needs the API's invoke URL, and the smoke test needs it too).
   runtime.
 - ✅ New env-root outputs: `api_url`, `cloudfront_distribution_id`, `cloudfront_domain_name`.
 - **Done when:** each env serves its own frontend from CloudFront and runs the API on Lambda +
-  API Gateway, and a deploy invalidates exactly that env's cache. *(Provisioned; awaiting the first
-  live apply per env.)*
+  API Gateway, and a deploy invalidates exactly that env's cache. *(✅ **dev applied live 2026-08-18**;
+  prod awaits its first release-deploy.)*
+
+> **First-apply fixes (2026-08-18).** The initial dev `apply` surfaced two errors, both fixed:
+> (1) the media route key `…/artifacts/{artifactId}:media` was rejected by API Gateway v2 — a
+> custom-method colon can't sit on a segment holding a `{param}` (the sibling `artifacts:presign`
+> is fine because it's a fully static segment). Reshaped to a `/media` **sub-resource**
+> (`…/artifacts/{artifactId}/media`) across the four in-sync spots (api.tf, `backend/src/lambda/api.js`,
+> `backend/scripts/local-api.mjs`, `frontend/src/services/api.js`). (2) the `submissions` queue's
+> visibility timeout (60s) was below the worker Lambda timeout (120s), which the SQS event-source
+> mapping rejects — raised to **720s** (AWS-recommended 6×).
 
 **Deferred follow-ups (tracked):** JWT authorizer + `custom:siteId` issuance + client tokens;
 custom domains (ACM + Route53); real `sharp` image downscaling (currently a passthrough); an
