@@ -16,7 +16,7 @@ Status: in progress — testing-phase data-handling decision recorded (2026-08-1
 ## Data classification & media handling — GNP-owned bucket, ~7-day lifecycle (revised 2026-08-13 PM)
 
 **Supersedes the 2026-08-13 "no media at rest" note.** The interim design dropped the media bucket
-and posted images base64-inline from the client. That is **reversed** ([D1/D3](gnp-frontend-migration-plan.md)):
+and posted images base64-inline from the client. That is **reversed** (D1/D3):
 captured media is uploaded via **presigned PUT to an S3 bucket GNP owns**, the backend reads it back
 to call the analyzer, and an **S3 lifecycle rule expires it after ~7 days**. Drivers: **large-upload
 support** (presigned PUT bypasses the Lambda ~6 MB payload ceiling), **admin review of AI output
@@ -112,7 +112,7 @@ needs ([MVP-TODO](./inprogress/MVP-TODO.md)) — track it as a **shared dependen
 - [ ] **Rate-limit per identity + per site** (WAF rate rules + API Gateway usage plans) to cap
   analyzer/Bedrock spend and volume.
 
-**Doc reconciliation.** [D1](gnp-frontend-migration-plan.md) previously described only the
+**Doc reconciliation.** D1 previously described only the
 "Cognito Identity Pool guest, deterrence-grade" posture; that is the **demo** posture. The
 **real-data** posture is Option 3 here, plus the data model's identity model. Both docs now
 point here.

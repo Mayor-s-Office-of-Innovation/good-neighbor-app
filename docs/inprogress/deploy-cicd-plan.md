@@ -15,7 +15,7 @@ promoted** pipeline. It fills the deploy gaps tracked in
 [MVP-TODO → deploy & harden](./MVP-TODO.md#mvp-critical-path--deploy--harden) and closes the open
 items in the [SDLC Level 2 checklist](../sdlc-level-2-checklist.md) (branch protection, GitHub
 environments, remote state). The AWS side is already scaffolded — see
-[deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md).
+deploy-admin-bootstrap.md.
 
 > **Supersedes the 2026-08-14 model.** The original plan proposed **three** environments
 > (`dev`/`staging`/`prod`) promoted by **git tags** off a single `main` trunk. We've simplified to
@@ -48,7 +48,7 @@ promotion tag. The one cost — a second long-lived branch — is accepted (see 
 
 ## Prerequisites — admin bootstrap (DONE)
 
-The one-time AWS scaffolding in [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) is
+The one-time AWS scaffolding in deploy-admin-bootstrap.md is
 **complete**. We have: the GitHub OIDC provider ARN, the Terraform state bucket
 (`good-neighbor-app-terraform-state`) + lock table (`good-neighbor-app-terraform-locks`) in
 `us-west-2`, and **per-env deploy roles** (`good-neighbor-app-deploy-dev` / `-prod`) whose trust
@@ -108,7 +108,7 @@ run (re-run jobs), not dispatch from a branch.
   - Secret `AWS_DEPLOY_ROLE_ARN` → that env's deploy role ARN.
   - Variable `AWS_REGION` → `us-west-2`.
 - **Verify OIDC** with the throwaway `sts get-caller-identity` job from
-  [deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md#after-the-admin-is-done-repo-maintainers-no-aws-admin-rights-needed)
+  deploy-admin-bootstrap.md
   before a real apply.
 - **Done when:** an `environment: dev` job assumes the dev role and prints an `AROA…` identity.
 

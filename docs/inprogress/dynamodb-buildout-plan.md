@@ -1,12 +1,12 @@
 # Plan: DynamoDB Buildout (table → app cutover → analytics)
 
-*DynamoDB planning set (doc 5 of 5) · [index](../README.md) · ← [local-dev plan](../archive/local-dev-environment-plan.md)*
+*DynamoDB planning set (doc 5 of 5) · [index](../README.md) · ← [local-dev plan](../adr/0006-docker-free-local-dev-harness.md)*
 
 **Status:** Accepted — direction decided ([ADR 0002](../adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
 **Date:** 2026-08-12
-**Ties together:** the [decision](../archive/dynamodb-database-decision.md), the
+**Ties together:** the [decision](../adr/0002-datastore-dynamodb.md), the
 [data model](../dynamodb-data-model.md), the [analytics addendum](../todo/analytics-plane-addendum.md),
-and the local/cloud split in the [local-dev plan](../archive/local-dev-environment-plan.md).
+and the local/cloud split in the [local-dev plan](../adr/0006-docker-free-local-dev-harness.md).
 
 End-to-end plan to stand up DynamoDB as the operational store and the city-wide reporting
 plane — all in Terraform, applied through CI (never local `apply`), per the architecture
@@ -52,7 +52,7 @@ in the dev environment. No local state, no click-ops.
 **Files:** [db.js](../../backend/src/db.js), [config.js](../../backend/src/config.js),
 [handlers/submissions.js](../../backend/src/handlers/submissions.js),
 [workers/process-submission.js](../../backend/src/workers/process-submission.js),
-[prisma/schema.prisma](../../backend/prisma/schema.prisma), `backend/package.json`.
+prisma/schema.prisma, `backend/package.json`.
 
 - Replace `db.js` PrismaClient with a `@aws-sdk/lib-dynamodb` Document Client.
 - Add `dynamoTable` to `getConfig()` (env `DYNAMO_TABLE`).
@@ -83,7 +83,7 @@ before, keyed on `requestId`. Two things are **deliberately deferred**, not done
 - **Test depth.** The worker is proven by a **dependency-free unit test** (mocked Document Client,
   asserts the conditional `Put` and the replay `Update`). The end-to-end `curl → SQS → worker →
   DynamoDB Local` loop waits on the **Docker-free local harness** (its own MVP-TODO line / the
-  [local-dev plan](../archive/local-dev-environment-plan.md)).
+  [local-dev plan](../adr/0006-docker-free-local-dev-harness.md)).
 
 ## Phase 3 — Seed representative data
 

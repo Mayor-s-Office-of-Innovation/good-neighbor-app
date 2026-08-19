@@ -1,6 +1,6 @@
 # Addendum: Analytics Plane — Build, Complexity & Cost
 
-*DynamoDB planning set (doc 3 of 5) · [index](../README.md) · ← [data model](../dynamodb-data-model.md) · next → [local-dev plan](../archive/local-dev-environment-plan.md)*
+*DynamoDB planning set (doc 3 of 5) · [index](../README.md) · ← [data model](../dynamodb-data-model.md) · next → [local-dev plan](../adr/0006-docker-free-local-dev-harness.md)*
 
 **Status:** Draft for review + prototype build guide
 **Date:** 2026-08-12
@@ -149,7 +149,7 @@ Glue, and Athena are cloud-only (LocalStack Pro emulates some, but not for free)
 - **Locally:** prototype the **Tier 1 aggregator + counter items** against DynamoDB Local —
   that loop is fully local.
 - **To feel Tier 2 (export → Athena):** deploy to the **cloud dev account via Terraform in
-  CI**, per the [local-dev plan](../archive/local-dev-environment-plan.md)'s local/cloud split. This is
+  CI**, per the [local-dev plan](../adr/0006-docker-free-local-dev-harness.md)'s local/cloud split. This is
   exactly the kind of infra-wiring validation that plan says belongs in the cloud env, not
   local.
 
