@@ -9,6 +9,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
 
 const {
+  answerCondition,
   completeTaskWithAppActions,
   getAssessmentGuidance,
   markTaskCannotDo,
@@ -76,6 +77,7 @@ describe("storeEvaluatedAssessment", () => {
       entityType: "ASSESSMENT",
       status: "needs_answers",
       policyVersion: "actions-escalations-v2",
+      assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
       summary: {
@@ -168,6 +170,108 @@ describe("storeEvaluatedAssessment", () => {
   });
 });
 
+describe("answerCondition", () => {
+  beforeEach(() => {
+    send.mockReset();
+  });
+
+  it("retries parent assessment revision conflicts with a fresh summary", async () => {
+    const assessmentBase = {
+      pk: "SITE#site-1",
+      sk: "ASSESSMENT#asm-1",
+      assessmentId: "asm-1",
+      status: "needs_answers",
+      policyVersion: "actions-escalations-v2",
+      summary: {
+        totalConditions: 2,
+        conditionsNeedAnswer: 2,
+        conditionsResolvedToTasks: 0,
+        openTaskCount: 0,
+        actionCount: 0,
+        escalationCount: 0,
+        emergencyCount: 0,
+        manualReviewCount: 0,
+      },
+    };
+    const condition = {
+      pk: "SITE#site-1",
+      sk: "ASSESSMENT#asm-1#COND#cond-2",
+      conditionId: "cond-2",
+      assessmentId: "asm-1",
+      checkId: "chk-1",
+      policyVersion: "actions-escalations-v2",
+      status: "needs_answer",
+      analyzerCategory: "Graffiti",
+      canonicalCategory: "Graffiti",
+      severity: 2,
+      answers: {},
+      taskIds: [],
+      source: { artifactIds: ["art-1"] },
+      gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
+      gsi5sk: "x",
+    };
+    send.mockResolvedValueOnce({
+      Item: { ...assessmentBase, assessmentRevision: 0 },
+    });
+    send.mockResolvedValueOnce({ Item: condition });
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("revision conflict"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    send.mockResolvedValueOnce({
+      Item: {
+        ...assessmentBase,
+        assessmentRevision: 1,
+        summary: {
+          ...assessmentBase.summary,
+          conditionsNeedAnswer: 1,
+          conditionsResolvedToTasks: 1,
+          openTaskCount: 1,
+          escalationCount: 1,
+        },
+      },
+    });
+    send.mockResolvedValueOnce({ Item: condition });
+    send.mockResolvedValueOnce({});
+
+    const idFactory = vi
+      .fn()
+      .mockReturnValueOnce("task-conflicted")
+      .mockReturnValueOnce("task-2");
+
+    const result = await answerCondition({
+      tableName: "table",
+      siteId: "site-1",
+      assessmentId: "asm-1",
+      conditionId: "cond-2",
+      answers: { onsite: false },
+      idFactory,
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(send).toHaveBeenCalledTimes(6);
+    const finalTx = send.mock.calls[5][0];
+    expect(finalTx).toBeInstanceOf(TransactWriteCommand);
+    expect(finalTx.input.TransactItems[0].Put).toMatchObject({
+      ConditionExpression:
+        "attribute_exists(sk) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
+      ExpressionAttributeValues: { ":priorRevision": 1 },
+    });
+    expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
+      assessmentRevision: 2,
+      status: "tasks_created",
+      summary: {
+        conditionsNeedAnswer: 0,
+        conditionsResolvedToTasks: 2,
+        openTaskCount: 2,
+        escalationCount: 2,
+      },
+    });
+    expect(result.taskItem).toMatchObject({ taskId: "task-2" });
+  });
+});
+
 describe("completeTaskWithAppActions", () => {
   beforeEach(() => {
     send.mockReset();
@@ -213,13 +317,20 @@ describe("completeTaskWithAppActions", () => {
     expect(claimTx.input.TransactItems[0].Put.Item).toMatchObject({
       status: "completing",
       appActionStatus: "executing",
+      completionStartedAt: "2026-08-18T12:02:00.000Z",
     });
+    expect(
+      claimTx.input.TransactItems[0].Put.Item.completionLeaseExpiresAt,
+    ).toBe("2026-08-18T12:07:00.000Z");
 
     const finalTx = send.mock.calls[2][0];
     expect(finalTx).toBeInstanceOf(TransactWriteCommand);
     expect(finalTx.input.TransactItems[0].Put).toMatchObject({
-      ConditionExpression: "#status = :completing",
-      ExpressionAttributeValues: { ":completing": "completing" },
+      ConditionExpression: "#status = :completing AND #lease = :leaseExpiresAt",
+      ExpressionAttributeValues: {
+        ":completing": "completing",
+        ":leaseExpiresAt": "2026-08-18T12:07:00.000Z",
+      },
     });
     expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
       status: "completed",
@@ -286,6 +397,69 @@ describe("completeTaskWithAppActions", () => {
       }),
     ).rejects.toMatchObject({ name: "TerminalConflict" });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an active completing task without re-running app actions", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completing",
+        completionLeaseExpiresAt: "2026-08-18T12:03:00.000Z",
+      },
+    });
+
+    await expect(
+      completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "button",
+        now: new Date("2026-08-18T12:02:00.000Z"),
+      }),
+    ).rejects.toMatchObject({ name: "TaskCompletionInProgress" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reclaims an expired completing task", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completing",
+        completionStartedAt: "2026-08-18T11:55:00.000Z",
+        completionLeaseExpiresAt: "2026-08-18T12:00:00.000Z",
+        kind: "action",
+        severity: 2,
+        appActions: [],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "button",
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    const claimTx = send.mock.calls[1][0];
+    expect(claimTx.input.TransactItems[0].Put).toMatchObject({
+      ConditionExpression:
+        "#status = :completing AND (attribute_not_exists(#lease) OR #lease <= :now)",
+      ExpressionAttributeValues: {
+        ":completing": "completing",
+        ":now": "2026-08-18T12:02:00.000Z",
+      },
+    });
+    expect(task).toMatchObject({
+      status: "completed",
+      completionStartedAt: "2026-08-18T11:55:00.000Z",
+    });
   });
 });
 
@@ -372,5 +546,7 @@ describe("getAssessmentGuidance", () => {
       { taskId: "task-1" },
       { taskId: "task-100" },
     ]);
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
+    expect(send.mock.calls[1][0].input.ConsistentRead).toBe(true);
   });
 });

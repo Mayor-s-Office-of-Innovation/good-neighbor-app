@@ -102,6 +102,33 @@ describe("guidance handlers", () => {
     expect(parse(res).tasks).toHaveLength(1);
   });
 
+  it("preserves top-level grade from explicit check-completion assessments", async () => {
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "chk-1",
+          checkId: "chk-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          grade: "Poor",
+          conditions: [{ category: "Litter", severity: 3 }],
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(201);
+    const writes = /** @type {any[]} */ (
+      send.mock.calls[0][0].input.TransactItems
+    );
+    expect(writes[0].Put.Item).toMatchObject({
+      assessmentId: "chk-1",
+      checkId: "chk-1",
+      grade: "Poor",
+    });
+  });
+
   it("returns existing guidance on idempotent evaluate replay", async () => {
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
@@ -195,6 +222,8 @@ describe("guidance handlers", () => {
     expect(res.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
+    expect(send.mock.calls[1][0].input.ConsistentRead).toBe(true);
     expect(send.mock.calls[2][0]).toBeInstanceOf(BatchGetCommand);
     expect(parse(res)).toMatchObject({
       assessment: { assessmentId: "asm-1" },
@@ -350,6 +379,31 @@ describe("guidance handlers", () => {
           reason: "311_client_unavailable",
         },
       ],
+    });
+  });
+
+  it("reports an active task completion lease as in progress", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completing",
+        completionLeaseExpiresAt: "2999-08-18T12:03:00.000Z",
+      },
+    });
+
+    const res = await invoke(
+      completeTask,
+      event({
+        pathParameters: { taskId: "task-1" },
+        body: { completionMethod: "button" },
+      }),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(parse(res)).toEqual({
+      error: "Task completion already in progress",
     });
   });
 });
