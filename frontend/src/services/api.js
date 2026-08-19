@@ -122,12 +122,22 @@ export function createCheck(checkId, body = {}) {
 
 /**
  * POST /v1/checks/{checkId}/complete — close the run: fold analyzed artifacts
- * into one scorecard and mint tasks. Idempotent-once server-side.
+ * into one scorecard and return an assessment envelope for guidance evaluation.
  * @param {string} checkId
- * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, taskCount?: number }>}
+ * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, assessmentReady?: boolean, assessment?: any }>}
  */
 export function completeCheck(checkId) {
   return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`);
+}
+
+/**
+ * POST /v1/assessments:evaluate — store an assessment/report, evaluate
+ * conditions, and create any immediately resolvable guidance tasks.
+ * @param {unknown} assessment
+ * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
+ */
+export function evaluateAssessment(assessment) {
+  return request("POST", "/v1/assessments:evaluate", { body: assessment });
 }
 
 /**
