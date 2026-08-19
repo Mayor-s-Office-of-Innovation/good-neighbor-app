@@ -1200,14 +1200,15 @@ update process above and produce a new `policyVersion`.
 - Added cannot-do capture at `POST /v1/tasks/{taskId}/cannot-do`.
 - Added local API routes for all Phase 3 handlers.
 
-### Phase 4 - Complete Check Integration
+### Phase 4 - Complete Check Integration (DONE 2026-08-18)
 
-- Update `completeCheck` to return `assessmentReady: true` after synthesis.
-- Add the separate assessment evaluation flow selected in Option B.
-- Stop creating placeholder routed tasks directly from `classifyTask`.
-- Preserve existing frontend compatibility by continuing to expose `TASK#` items through GSI2.
-- Keep city escalations on per-site GSI2 for MVP; defer GSI3/cross-site queue work.
-- Return assessment guidance summary from `POST /v1/assessments:evaluate`.
+- Updated `completeCheck` to return `assessmentReady: true` plus an assessment envelope after
+  synthesis.
+- Added the separate assessment evaluation call in the frontend submit flow.
+- Stopped creating placeholder routed tasks directly from `classifyTask` during check completion.
+- Preserved frontend compatibility by evaluating the returned assessment before fetching open
+  `TASK#` items.
+- Kept city escalations on per-site GSI2 for MVP; GSI3/cross-site queue remains deferred.
 
 ### Phase 5 - App Action Integrations
 
