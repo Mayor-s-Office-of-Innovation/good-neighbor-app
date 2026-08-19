@@ -110,9 +110,21 @@ describe("listTasks", () => {
   it("slices to `limit` AFTER the severity sort, keeping an old high-severity task", async () => {
     send.mockResolvedValueOnce({
       Items: [
-        { taskId: "t-new-low-1", severity: 1, createdAt: "2026-08-19T00:00:00.000Z" },
-        { taskId: "t-new-low-2", severity: 1, createdAt: "2026-08-18T00:00:00.000Z" },
-        { taskId: "t-old-high", severity: 5, createdAt: "2026-08-01T00:00:00.000Z" },
+        {
+          taskId: "t-new-low-1",
+          severity: 1,
+          createdAt: "2026-08-19T00:00:00.000Z",
+        },
+        {
+          taskId: "t-new-low-2",
+          severity: 1,
+          createdAt: "2026-08-18T00:00:00.000Z",
+        },
+        {
+          taskId: "t-old-high",
+          severity: 5,
+          createdAt: "2026-08-01T00:00:00.000Z",
+        },
       ],
     });
 
@@ -131,7 +143,9 @@ describe("listTasks", () => {
   it("warns (does not silently truncate) when the partition exceeds one page", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     send.mockResolvedValueOnce({
-      Items: [{ taskId: "t1", severity: 3, createdAt: "2026-08-19T00:00:00.000Z" }],
+      Items: [
+        { taskId: "t1", severity: 3, createdAt: "2026-08-19T00:00:00.000Z" },
+      ],
       LastEvaluatedKey: { gsi2pk: "SITE#site-1#TASK#open" },
     });
 
