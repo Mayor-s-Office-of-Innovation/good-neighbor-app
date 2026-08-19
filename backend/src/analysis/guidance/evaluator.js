@@ -109,7 +109,11 @@ export function evaluateCondition({
 }) {
   const severity = conditionSeverity(condition);
   if (severity <= 0) {
-    return { kind: "no_guidance", category: condition.category, reason: "severity_zero" };
+    return {
+      kind: "no_guidance",
+      category: condition.category,
+      reason: "severity_zero",
+    };
   }
 
   const resolved = resolveCategory(condition.category, catalog);
@@ -134,7 +138,9 @@ export function evaluateCondition({
   }
 
   for (const group of rulesByEvaluationOrder(matchingRules).values()) {
-    const missing = group.map((rule) => firstMissingQuestion(rule, answers)).find(Boolean);
+    const missing = group
+      .map((rule) => firstMissingQuestion(rule, answers))
+      .find(Boolean);
     if (missing) {
       return {
         kind: "needs_answer",

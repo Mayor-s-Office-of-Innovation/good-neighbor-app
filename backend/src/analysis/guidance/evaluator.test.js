@@ -75,13 +75,7 @@ describe("evaluateCondition", () => {
     ],
     ["Blocked doorway or sidewalk", 3, {}, "BLOCK-3", "escalation"],
     ["Public drug use", 3, { affiliated: true }, "DRUG-1", "action"],
-    [
-      "Public drug use",
-      3,
-      { affiliated: false },
-      "DRUG-2",
-      "escalation",
-    ],
+    ["Public drug use", 3, { affiliated: false }, "DRUG-2", "escalation"],
     ["Public drug use", 4, {}, "DRUG-3", "escalation"],
     ["Someone in distress", 4, {}, "DISTRESS-1", "escalation"],
     ["Someone in distress", 3, { affiliated: true }, "DISTRESS-2", "action"],
@@ -93,13 +87,7 @@ describe("evaluateCondition", () => {
       "escalation",
     ],
     ["Aggressive animals", 2, { affiliated: true }, "ANIMAL-1", "action"],
-    [
-      "Aggressive animals",
-      2,
-      { affiliated: false },
-      "ANIMAL-2",
-      "escalation",
-    ],
+    ["Aggressive animals", 2, { affiliated: false }, "ANIMAL-2", "escalation"],
     ["Aggressive animals", 3, {}, "ANIMAL-3", "escalation"],
     ["Medical emergency", 1, {}, "MED-1", "action"],
     ["Medical emergency", 2, {}, "MED-2", "escalation"],
@@ -122,7 +110,9 @@ describe("evaluateCondition", () => {
   );
 
   it("evaluates analyzer aliases through the canonical rule category", () => {
-    expect(evalRule("Large waste", 3, { provider_generated: false })).toMatchObject({
+    expect(
+      evalRule("Large waste", 3, { provider_generated: false }),
+    ).toMatchObject({
       kind: "outcome",
       category: "Bulky items",
       rule: { ruleId: "BULKY-2" },

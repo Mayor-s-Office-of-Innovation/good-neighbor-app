@@ -34,7 +34,8 @@ function normalizeAssessmentBody(body) {
       ? /** @type {Record<string, unknown>} */ (assessment.metadata)
       : {};
   const general =
-    assessment?.general_conditions && typeof assessment.general_conditions === "object"
+    assessment?.general_conditions &&
+    typeof assessment.general_conditions === "object"
       ? /** @type {Record<string, unknown>} */ (assessment.general_conditions)
       : {};
 
@@ -49,7 +50,9 @@ function normalizeAssessmentBody(body) {
 
   const sourceConditions = explicitConditions ?? analyzerConditions;
   if (!sourceConditions) {
-    throw new Error("Expected conditions[] or assessment.identified_conditions_of_concern[]");
+    throw new Error(
+      "Expected conditions[] or assessment.identified_conditions_of_concern[]",
+    );
   }
 
   const conditions = sourceConditions.map((condition, index) => {
@@ -101,7 +104,9 @@ function normalizeAssessmentBody(body) {
 
   return {
     assessmentId:
-      typeof input.assessmentId === "string" ? input.assessmentId : randomUUID(),
+      typeof input.assessmentId === "string"
+        ? input.assessmentId
+        : randomUUID(),
     checkId: typeof input.checkId === "string" ? input.checkId : undefined,
     reportedAt,
     rubricVersion:
@@ -165,14 +170,16 @@ export const getGuidance = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
   const assessmentId = event.pathParameters?.assessmentId;
-  if (!assessmentId) return jsonResponse(400, { error: "Missing assessmentId" });
+  if (!assessmentId)
+    return jsonResponse(400, { error: "Missing assessmentId" });
 
   const result = await getAssessmentGuidance({
     tableName: dynamoTable,
     siteId,
     assessmentId,
   });
-  if (!result.assessment) return jsonResponse(404, { error: "Assessment not found" });
+  if (!result.assessment)
+    return jsonResponse(404, { error: "Assessment not found" });
   return jsonResponse(200, result);
 };
 
@@ -281,8 +288,9 @@ export const completeTask = async (event) => {
       return jsonResponse(400, { error: "Invalid JSON body" });
     }
   }
-  const { completionMethod } =
-    /** @type {{ completionMethod?: unknown }} */ (body ?? {});
+  const { completionMethod } = /** @type {{ completionMethod?: unknown }} */ (
+    body ?? {}
+  );
 
   try {
     const task = await completeTaskWithAppActions({

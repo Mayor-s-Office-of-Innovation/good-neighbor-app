@@ -26,9 +26,9 @@ describe("app action execution", () => {
   });
 
   it("skips 311 submission unless the feature flag is enabled", () => {
-    expect(is311SubmissionEnabled({ GNP_311_SUBMISSION_ENABLED: "false" })).toBe(
-      false,
-    );
+    expect(
+      is311SubmissionEnabled({ GNP_311_SUBMISSION_ENABLED: "false" }),
+    ).toBe(false);
     expect(
       executeAppActions(
         [{ code: "create_311_ticket", payload: { category311: "Cleaning" } }],

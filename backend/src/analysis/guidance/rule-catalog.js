@@ -44,6 +44,7 @@
 /**
  * @typedef {object} GuidanceCatalog
  * @property {string} policyVersion
+ * @property {{ sourceAsset: string, effectiveDate: string, createdAt: string, changelogPath?: string }} metadata
  * @property {GuidanceRule[]} rules
  * @property {{ analyzerCategory: string, canonicalCategory: string }[]} aliases
  */
@@ -174,9 +175,7 @@ export function parseAppActions(raw, category311) {
       return {
         code: "open_phone",
         payload: {
-          phoneNumber: phone
-            ? `(${phone[1]}) ${phone[2]}-${phone[3]}`
-            : "911",
+          phoneNumber: phone ? `(${phone[1]}) ${phone[2]}-${phone[3]}` : "911",
         },
       };
     }
@@ -199,13 +198,20 @@ export function parseAppActions(raw, category311) {
 /**
  * @param {object} opts
  * @param {string} opts.policyVersion
+ * @param {{ sourceAsset: string, effectiveDate: string, createdAt: string, changelogPath?: string }} [opts.metadata]
  * @param {string[][]} opts.rows
  * @param {{ analyzerCategory: string, canonicalCategory: string }[]} opts.aliases
  * @returns {GuidanceCatalog}
  */
-export function buildCatalog({ policyVersion, rows, aliases }) {
+export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
   return {
     policyVersion,
+    metadata: {
+      sourceAsset: "inline",
+      effectiveDate: "unknown",
+      createdAt: "unknown",
+      ...(metadata ?? {}),
+    },
     aliases,
     rules: rows.map((row) => {
       const [
@@ -263,14 +269,19 @@ export function validateCatalog(catalog) {
 
   for (const rule of catalog.rules) {
     if (!rule.ruleId) errors.push("Rule is missing ruleId");
-    if (ruleIds.has(rule.ruleId)) errors.push(`Duplicate ruleId ${rule.ruleId}`);
+    if (ruleIds.has(rule.ruleId))
+      errors.push(`Duplicate ruleId ${rule.ruleId}`);
     ruleIds.add(rule.ruleId);
 
     if (!["Low", "Moderate", "High"].includes(rule.weighting)) {
       errors.push(`${rule.ruleId} has invalid weighting ${rule.weighting}`);
     }
-    if (!["action", "escalation", "manual_review"].includes(rule.outcome.kind)) {
-      errors.push(`${rule.ruleId} has invalid outcome kind ${rule.outcome.kind}`);
+    if (
+      !["action", "escalation", "manual_review"].includes(rule.outcome.kind)
+    ) {
+      errors.push(
+        `${rule.ruleId} has invalid outcome kind ${rule.outcome.kind}`,
+      );
     }
     if (!Number.isInteger(rule.evaluationOrder) || rule.evaluationOrder < 1) {
       errors.push(`${rule.ruleId} has invalid evaluationOrder`);
@@ -287,7 +298,9 @@ export function validateCatalog(catalog) {
     const questionKeys = new Set(rule.requiredQuestions.map((q) => q.key));
     for (const clause of rule.predicate.all) {
       if (!questionKeys.has(clause.fact)) {
-        errors.push(`${rule.ruleId} predicate references undeclared ${clause.fact}`);
+        errors.push(
+          `${rule.ruleId} predicate references undeclared ${clause.fact}`,
+        );
       }
     }
   }
