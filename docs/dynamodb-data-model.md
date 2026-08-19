@@ -1,8 +1,8 @@
 # DynamoDB Data Model — Perimeter Checks
 
-*DynamoDB planning set (doc 2 of 5) · [index](./README.md) · ← [decision](./dynamodb-database-decision.md) · next → [analytics addendum](./analytics-plane-addendum.md)*
+*DynamoDB planning set (doc 2 of 5) · [index](./README.md) · ← [decision](./archive/dynamodb-database-decision.md) · next → [analytics addendum](./analytics-plane-addendum.md)*
 
-**Status:** Draft for review — validates the [database decision](./dynamodb-database-decision.md)
+**Status:** Draft for review — validates the [database decision](./archive/dynamodb-database-decision.md)
 against real access patterns
 **Date:** 2026-08-12
 

@@ -196,7 +196,7 @@ export const registerArtifact = async (event) => {
 };
 
 /**
- * GET /v1/checks/{checkId}/artifacts/{artifactId}:media — mint a short-lived
+ * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — mint a short-lived
  * presigned GET so staff can review the original photo. The route carries only
  * checkId + artifactId, but the sort key embeds `side`, so we query this check's
  * ART# items and match on `artifactId` (rather than reconstruct the key). Scoped

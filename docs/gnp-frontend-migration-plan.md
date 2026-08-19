@@ -281,7 +281,7 @@ Consequences and things that must hold:
 **Status:** resolved — **DynamoDB** replaces managed Postgres/Prisma (2026-08-13)
 
 We adopted **DynamoDB instead of managed Postgres/Prisma** for the cloud database. The full
-analysis lives in the DynamoDB planning set — [decision](dynamodb-database-decision.md),
+analysis lives in the DynamoDB planning set — [decision](archive/dynamodb-database-decision.md),
 [data model](dynamodb-data-model.md) — and is recorded in
 [ADR 0002](adr/0002-datastore-dynamodb.md).
 
