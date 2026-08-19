@@ -934,6 +934,18 @@ theme-toggle {
   min-height: 42px;
   padding: 0.5rem 0.65rem;
 }
+.guidance-harness__checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+.guidance-harness__checkbox input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
 .guidance-harness textarea {
   min-height: 430px;
   resize: vertical;

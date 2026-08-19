@@ -36,10 +36,25 @@ function nowSuffix() {
     .slice(0, 14);
 }
 
+function baseId(value, fallback) {
+  return String(value || fallback).replace(/-\d{14}$/, "");
+}
+
+function freshPayload(payload) {
+  const suffix = nowSuffix();
+  return {
+    ...payload,
+    assessmentId: `${baseId(payload.assessmentId, "dev-guidance")}-${suffix}`,
+    checkId: `${baseId(payload.checkId, "dev-check")}-${suffix}`,
+    reportedAt: new Date().toISOString(),
+  };
+}
+
 class GuidanceHarness extends HTMLElement {
   connectedCallback() {
     this._fixture = DEFAULT_FIXTURE;
     this._json = pretty(DEFAULT_FIXTURE.assessment);
+    this._freshOnEvaluate = true;
     this._request = null;
     this._response = null;
     this._guidance = null;
@@ -87,6 +102,15 @@ class GuidanceHarness extends HTMLElement {
                 Fresh IDs
               </button>
             </div>
+
+            <label class="guidance-harness__checkbox">
+              <input
+                id="fresh-on-evaluate"
+                type="checkbox"
+                ${this._freshOnEvaluate ? "checked" : ""}
+              />
+              Fresh IDs on evaluate
+            </label>
 
             <div
               class="guidance-harness__controls guidance-harness__controls--three"
@@ -166,6 +190,13 @@ ${escapeHtml(this._json)}</textarea
       this._render();
     });
 
+    this.querySelector("#fresh-on-evaluate")?.addEventListener(
+      "change",
+      (event) => {
+        this._freshOnEvaluate = event.target.checked;
+      },
+    );
+
     this.querySelector("#freshen")?.addEventListener("click", () => {
       const parsed = parseJson(this.querySelector("#assessment-json").value);
       if (!parsed.ok) {
@@ -173,13 +204,7 @@ ${escapeHtml(this._json)}</textarea
         this._render();
         return;
       }
-      const suffix = nowSuffix();
-      this._json = pretty({
-        ...parsed.value,
-        assessmentId: `${parsed.value.assessmentId || "dev-guidance"}-${suffix}`,
-        checkId: `${parsed.value.checkId || "dev-check"}-${suffix}`,
-        reportedAt: new Date().toISOString(),
-      });
+      this._json = pretty(freshPayload(parsed.value));
       this._error = "";
       this._render();
     });
@@ -204,9 +229,9 @@ ${escapeHtml(this._json)}</textarea
   }
 
   _payloadFromEditor() {
-    const parsed = parseJson(
-      this.querySelector("#assessment-json")?.value ?? "",
-    );
+    const json = this.querySelector("#assessment-json")?.value ?? "";
+    this._json = json;
+    const parsed = parseJson(json);
     if (!parsed.ok) return parsed;
     const payload = { ...parsed.value };
     const assessmentId = this.querySelector("#assessment-id")?.value?.trim();
@@ -225,6 +250,10 @@ ${escapeHtml(this._json)}</textarea
       this._render();
       return;
     }
+    if (this._freshOnEvaluate) {
+      parsed.value = freshPayload(parsed.value);
+    }
+    this._json = pretty(parsed.value);
     this._busy = true;
     this._error = "";
     this._request = {
