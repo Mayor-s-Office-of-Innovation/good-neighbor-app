@@ -5,7 +5,7 @@
 **Status:** Accepted — direction decided ([ADR 0002](../adr/0002-datastore-dynamodb.md)); Phase 0 decisions settled; Phases 1–2 built, 3–8 remain
 **Date:** 2026-08-12
 **Ties together:** the [decision](../archive/dynamodb-database-decision.md), the
-[data model](./dynamodb-data-model.md), the [analytics addendum](../todo/analytics-plane-addendum.md),
+[data model](../dynamodb-data-model.md), the [analytics addendum](../todo/analytics-plane-addendum.md),
 and the local/cloud split in the [local-dev plan](../archive/local-dev-environment-plan.md).
 
 End-to-end plan to stand up DynamoDB as the operational store and the city-wide reporting
@@ -21,7 +21,7 @@ Nothing below starts until the **DynamoDB decision is signed off**. Per-phase ga
 |---|---|---|
 | DynamoDB adopted (vs Postgres) | everything | ✅ decided (2026-08-12) |
 | City escalation scope | Phase 7 (GSI3) + integrations | ✅ settled — task `type` classification in MVP (app logic); escalation integrations + GSI3 queue view **post-MVP** |
-| Metric formulas (cleanliness, regularity) | Phase 4 *reports* (not the pipe) | ✅ settled (2026-08-12) — see [data model](./dynamodb-data-model.md) *Metric definitions* |
+| Metric formulas (cleanliness, regularity) | Phase 4 *reports* (not the pipe) | ✅ settled (2026-08-12) — see [data model](../dynamodb-data-model.md) *Metric definitions* |
 | Retention policy | TTL in Phase 1, lifecycle in Phase 4 | ⏭ deferred to post-MVP (no deletion/retention windows during testing) |
 
 Metrics are now settled (unweighted cleanliness; legal 3×/day compliance, no grace) and
@@ -77,7 +77,7 @@ before, keyed on `requestId`. Two things are **deliberately deferred**, not done
 - **Interim item shape.** The worker writes an idempotency **receipt** item —
   `pk = SUBMISSION#<requestId>`, `sk = #RECEIPT` — the direct DynamoDB successor to the old
   `OfflineSubmission` row. It is **not** yet the `SITE#`/`CHECK#` check/artifact/analysis model in
-  the [data model](./dynamodb-data-model.md); `requestId` is the client idempotency-key (== the
+  the [data model](../dynamodb-data-model.md); `requestId` is the client idempotency-key (== the
   future ULID `checkId`), so the receipt is forward-compatible, but growing it into the real check
   item (which needs a `siteId` in the payload) belongs to the **analysis-backend Lambdas** plan.
 - **Test depth.** The worker is proven by a **dependency-free unit test** (mocked Document Client,
@@ -174,7 +174,7 @@ deferred to post-MVP.
 ## Open decisions (carried from Phase 0)
 
 1. ✅ DynamoDB sign-off — decided.
-2. ✅ City escalation — task `type` classification in MVP; escalation integrations + GSI3 queue view post-MVP (see [data model](./dynamodb-data-model.md) *Task ownership & escalation*).
-3. ✅ Metric formulas — settled (see [data model](./dynamodb-data-model.md) *Metric definitions*).
+2. ✅ City escalation — task `type` classification in MVP; escalation integrations + GSI3 queue view post-MVP (see [data model](../dynamodb-data-model.md) *Task ownership & escalation*).
+3. ✅ Metric formulas — settled (see [data model](../dynamodb-data-model.md) *Metric definitions*).
 4. ⏭ Retention → TTL + S3 lifecycle — deferred to post-MVP.
 5. ✅ Export cadence — incremental every 6 hours (settled). QuickSight vs app-rendered charts still open.

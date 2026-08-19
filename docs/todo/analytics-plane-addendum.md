@@ -1,10 +1,10 @@
 # Addendum: Analytics Plane — Build, Complexity & Cost
 
-*DynamoDB planning set (doc 3 of 5) · [index](../README.md) · ← [data model](../inprogress/dynamodb-data-model.md) · next → [local-dev plan](../archive/local-dev-environment-plan.md)*
+*DynamoDB planning set (doc 3 of 5) · [index](../README.md) · ← [data model](../dynamodb-data-model.md) · next → [local-dev plan](../archive/local-dev-environment-plan.md)*
 
 **Status:** Draft for review + prototype build guide
 **Date:** 2026-08-12
-**Companion to:** [dynamodb-data-model.md](../inprogress/dynamodb-data-model.md) → *City-wide reporting &
+**Companion to:** [dynamodb-data-model.md](../dynamodb-data-model.md) → *City-wide reporting &
 analytics*. That section defines *what* the read plane is; this addendum covers *how complex
 it is to build, how you use it, and what it costs* — and the order to build it in for the
 prototype.
@@ -27,7 +27,7 @@ new check  ──Streams──▶  aggregator Lambda  ──UpdateItem ADD──
 one query). Daily is deliberate: the legal 3×/day duty with no grace is a per-day question, so
 the day is the atomic counter; longer windows roll up a date range. Counters hold **raw
 components, never a finished score** — cleanliness/compliance are computed at read by the
-shared scoring module (see the [data model](../inprogress/dynamodb-data-model.md) *Metric definitions*).
+shared scoring module (see the [data model](../dynamodb-data-model.md) *Metric definitions*).
 
 | `pk` | `sk` | Attributes (raw components) |
 |---|---|---|
@@ -158,7 +158,7 @@ Glue, and Athena are cloud-only (LocalStack Pro emulates some, but not for free)
 1. **Metric formulas** — ✅ **settled 2026-08-12.** Cleanliness = unweighted average severity
    per check (`sum(severitySum)/sum(checksCompleted)`); compliance = compliant-days ÷ total
    days, where a day is compliant iff ≥ 3 checks (legal 3×/day, no grace). Computed at read via
-   the shared scoring module; the SQL above mirrors it. See the [data model](../inprogress/dynamodb-data-model.md)
+   the shared scoring module; the SQL above mirrors it. See the [data model](../dynamodb-data-model.md)
    *Metric definitions*.
 2. **Export frequency** — ✅ **settled 2026-08-12: incremental exports every 6 hours**
    (EventBridge). Incremental (not full) so cost tracks changed-data volume, not cadence;

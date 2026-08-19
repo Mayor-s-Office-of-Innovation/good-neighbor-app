@@ -104,7 +104,7 @@ erDiagram
   }
 ```
 
-See [dynamodb-data-model.md](./inprogress/dynamodb-data-model.md) for the authoritative item
+See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item
 shapes and access patterns, and [analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)
 for the analyze-path build steps.
 

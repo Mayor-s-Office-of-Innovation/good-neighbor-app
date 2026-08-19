@@ -73,7 +73,7 @@ writes are anonymous. Prevention requires — and this is the rule every write p
 > `dynamodb:LeadingKeys`. The client never asserts its own site on a write.**
 
 **Decision — Option 3: the device is authenticated as the site.** We adopt the identity model
-already specified in [dynamodb-data-model.md](./inprogress/dynamodb-data-model.md) (§ Identity model): an
+already specified in [dynamodb-data-model.md](./dynamodb-data-model.md) (§ Identity model): an
 Admin registers a device once during site setup; the device receives **short-lived STS
 credentials carrying a `custom:siteId` claim**; API calls are **SigV4-signed**; the write
 handler derives `siteId` **from the claim**; and `dynamodb:LeadingKeys = SITE#<siteId>` pins
