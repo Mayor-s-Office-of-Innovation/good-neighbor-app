@@ -49,7 +49,7 @@ close the tab — the surgical per-record delete above does not.)
 
 ## Backend local harness (Docker-free)
 
-Runs the **exact Lambda handler + worker code** against local emulators. Ports: API **:3000**,
+Runs the **exact Lambda handler + worker code** against local emulators. Ports: API **:3001**,
 DynamoDB Local **:8000**, ElasticMQ **:9324**, GUI **:8001**, MinIO (local S3) **:9000** with its
 console on **:9001**.
 
@@ -59,7 +59,7 @@ console on **:9001**.
 | `npm run db:gui -w backend` | Browse the local table at http://localhost:8001 (run in a second terminal) |
 | `npm run local:services -w backend` | Just the emulators (DynamoDB Local + ElasticMQ + MinIO) |
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
-| `npm run local:api -w backend` | Just the in-process API router (:3000) |
+| `npm run local:api -w backend` | Just the in-process API router (:3001) |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
 | `npm run analyze:smoke -w backend` | Hand-run live analyzer smoke test (reads `backend/.env`, needs a real API key) |
@@ -96,10 +96,10 @@ With `npm run dev -w backend` running, in another terminal:
 
 ```bash
 # health check → {"ok":true,...}
-curl -s localhost:3000/health
+curl -s localhost:3001/health
 
 # POST a submission → 202 queued; flows curl → SQS → worker → DynamoDB
-curl -s -X POST localhost:3000/submissions \
+curl -s -X POST localhost:3001/submissions \
   -H 'idempotency-key: t1' -H 'X-Debug-Sub: dev' \
   -H 'content-type: application/json' -d '{"hello":"world"}'
 ```

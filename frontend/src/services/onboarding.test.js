@@ -38,21 +38,24 @@ describe("validateSetupCode", () => {
         name: "Health Center Mission",
       },
     });
+    // Same-origin path in dev — the Vite proxy forwards it to the local API, so
+    // it works identically from localhost and from a phone on the LAN. No
+    // hostname sniffing (which broke LAN-IP origins).
     expect(fetch.mock.calls[0][0]).toBe("/site-code");
   });
 
-  it("targets the local API port when the frontend runs on localhost", async () => {
+  it("uses a same-origin path regardless of the frontend hostname", async () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
       json: () => Promise.resolve({ error: "invalid_site_code" }),
     });
     vi.stubGlobal("fetch", fetch);
-    vi.stubGlobal("location", { hostname: "127.0.0.1" });
+    vi.stubGlobal("location", { hostname: "10.18.37.82" });
 
     await validateSetupCode("654321");
 
-    expect(fetch.mock.calls[0][0]).toBe("http://127.0.0.1:3001/site-code");
+    expect(fetch.mock.calls[0][0]).toBe("/site-code");
   });
 
   it("maps inactive codes to invalid", async () => {

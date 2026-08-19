@@ -3,6 +3,7 @@ locals {
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "aws_kms_key" "app" {
   description             = "KMS key for ${var.application} ${var.environment} application data"
@@ -19,6 +20,46 @@ resource "aws_kms_key" "app" {
         }
         Action   = "kms:*"
         Resource = "*"
+      },
+      {
+        # CloudFront OAC reads SSE-KMS objects from the frontend bucket; without
+        # this the distribution returns AccessDenied on every object. Scoped to
+        # this env's distribution via SourceArn.
+        Sid    = "AllowCloudFrontDecryptFrontend"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "kms:Decrypt"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+          }
+        }
+      },
+      {
+        # CloudWatch Logs encrypts the Lambda/API log groups with this CMK.
+        # Scoped to this account's log groups in this region via the encryption
+        # context (AWS's documented pattern).
+        Sid    = "AllowCloudWatchLogs"
+        Effect = "Allow"
+        Principal = {
+          Service = "logs.${data.aws_region.current.name}.amazonaws.com"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"
+          }
+        }
       }
     ]
   })
@@ -208,7 +249,7 @@ resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
   message_retention_seconds  = 345600
-  visibility_timeout_seconds = 60
+  visibility_timeout_seconds = 720 # ≥ worker Lambda timeout (120s); AWS-recommended 6× for the SQS event source mapping
   tags                       = var.tags
 }
 
@@ -347,6 +388,22 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  # Per-tenant site binding for the deferred JWT authorizer. Schema attributes
+  # are add-only on a live pool, so we declare it now (harmless while unused) to
+  # avoid a painful migration once token issuance + the authorizer land.
+  schema {
+    name                     = "siteId"
+    attribute_data_type      = "String"
+    mutable                  = true
+    required                 = false
+    developer_only_attribute = false
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 128
+    }
+  }
+
   password_policy {
     minimum_length                   = 14
     require_lowercase                = true
@@ -413,6 +470,9 @@ resource "aws_cloudfront_response_headers_policy" "security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
+  # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
+  provider = aws.us_east_1
+
   name  = "${local.name_prefix}-web-acl"
   scope = "CLOUDFRONT"
 

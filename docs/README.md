@@ -40,8 +40,9 @@ three once-open decisions are settled too (metric formulas settled; city cross-s
 deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
 in this order:**
 
-1. **[dynamodb-database-decision.md](./dynamodb-database-decision.md)** — _start here._ Why
+1. **[dynamodb-database-decision.md](./archive/dynamodb-database-decision.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
+   _(Archived — [ADR 0002](./adr/0002-datastore-dynamodb.md) is now the canonical record; kept for the backing rationale.)_
 2. **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the single-table model, access
    patterns, GSIs, tenant isolation, and the identity model (device-as-site). The "how it's
    shaped."
@@ -94,17 +95,13 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
-- **[deploy-cicd-plan.md](./deploy-cicd-plan.md)** — the plan to move from manual, single-role,
-  dev/prod-only deploys to a **3-environment (`dev`/`staging`/`prod`), gated, auto-promoting**
-  pipeline: `main`→dev auto, tag→staging, tag→prod behind two-admin approval; OIDC-only creds;
-  per-env S3/CloudFront with env-scoped invalidation; branch/environment protection; Terraform
-  rollback runbook. Its one external blocker is the **admin-account bootstrap contract** (role
-  ARNs + remote state). Gates the deploy items in [MVP-TODO](./MVP-TODO.md); closes the open
-  [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
-- **[deploy-admin-bootstrap.md](./deploy-admin-bootstrap.md)** — the hand-to-the-AWS-admin
-  runbook that clears that blocker: step-by-step OIDC provider + Terraform state backend +
-  per-env deploy roles (with copy-paste CLI and trust/permissions JSON), then the maintainer
-  follow-up (GitHub Environments, secrets, backend enable, OIDC smoke test).
+- **[deploy-cicd-plan.md](./deploy-cicd-plan.md)** — the plan to move from manual, single-role
+  deploys to a **2-environment (`dev`/`prod`), 2-branch** pipeline: merge to `dev`→dev auto,
+  publish a **GitHub Release** from `main` (admins-only)→prod behind a required-approval pause;
+  OIDC-only creds; per-env S3/CloudFront with env-scoped invalidation; branch/environment
+  protection; Terraform rollback runbook. Bootstrap + deploy workflows built; remaining is the
+  frontend publish (Phase 4) and the `/health` smoke test. Gates the deploy items in
+  [MVP-TODO](./MVP-TODO.md); closes the open [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
 
 ## Other docs in this directory
 
@@ -121,3 +118,4 @@ historical/design record, not part of the active plan set. See [archive/](./arch
 - [archive/js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md) — Step 1 migration (done; standing choice now in [AGENTS.md](../AGENTS.md)).
 - [archive/local-dev-environment-plan.md](./archive/local-dev-environment-plan.md) — local harness (built; commands in [dev-commands.md](./dev-commands.md)).
 - [archive/transcription-architecture.md](./archive/transcription-architecture.md), [archive/transcription-STATUS.md](./archive/transcription-STATUS.md) — transcription feature docs (forward-looking; post-MVP, not wired into Phase 1).
+- [archive/deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) — the AWS-admin bootstrap runbook (done; OIDC provider + state backend + per-env deploy roles created). Living deploy doc is [deploy-cicd-plan.md](./deploy-cicd-plan.md).

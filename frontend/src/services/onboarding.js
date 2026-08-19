@@ -4,6 +4,12 @@
   the returned binding after a successful check.
 */
 
+// Same-origin in dev (Vite proxy forwards `/site-code` → the local API, no CORS —
+// see vite.config.js); in production the app is built with VITE_API_BASE pointing
+// at the API origin. Shared strategy with services/api.js. Cast `import.meta`:
+// Vite's env types aren't wired into this checkJs project.
+const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
+
 /**
  * @typedef {object} ProviderSite
  * @property {string} id
@@ -24,8 +30,7 @@ export async function validateSetupCode(code) {
 
   let response;
   try {
-    const apiUrl = apiBaseUrl();
-    response = await fetch(`${apiUrl}/site-code`, {
+    response = await fetch(`${BASE}/site-code`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code: formatted }),
@@ -63,23 +68,4 @@ export function formatSiteCode(code) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
-}
-
-function apiBaseUrl() {
-  const env =
-    /** @type {{ env?: { VITE_API_BASE_URL?: string } }} */ (import.meta).env ||
-    {};
-  const configured = env.VITE_API_BASE_URL;
-  if (configured) return configured.replace(/\/$/, "");
-  return isLocalHost() ? localDevApiBaseUrl() : "";
-}
-
-function localDevApiBaseUrl() {
-  const host = globalThis.location?.hostname || "127.0.0.1";
-  return `http://${host}:3001`;
-}
-
-function isLocalHost() {
-  const host = globalThis.location?.hostname;
-  return host === "127.0.0.1" || host === "localhost";
 }

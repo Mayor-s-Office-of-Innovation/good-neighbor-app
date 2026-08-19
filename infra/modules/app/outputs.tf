@@ -33,3 +33,23 @@ output "cognito_client_id" {
   value       = aws_cognito_user_pool_client.web.id
 }
 
+output "api_url" {
+  description = "Base invoke URL of the HTTP API ($default stage)."
+  value       = aws_apigatewayv2_api.http.api_endpoint
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution id (for env-scoped cache invalidation)."
+  value       = aws_cloudfront_distribution.frontend.id
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront domain name serving the frontend."
+  value       = aws_cloudfront_distribution.frontend.domain_name
+}
+
+output "analyzer_secret_arn" {
+  description = "Secrets Manager ARN holding the analyzer x-api-key (value set out-of-band)."
+  value       = aws_secretsmanager_secret.analyzer_api_key.arn
+}
+

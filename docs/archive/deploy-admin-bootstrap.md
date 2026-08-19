@@ -1,54 +1,23 @@
 # Runbook: AWS admin bootstrap for GitHub Actions deploys
 
-**Status:** Ready to hand to the AWS account admin · **Date:** 2026-08-14 ·
-[index](./README.md) · companion to [deploy-cicd-plan.md](./deploy-cicd-plan.md)
+**Status:** Done → **archived** (2026-08-18). The one-time AWS scaffolding below is complete (OIDC
+provider, Terraform state backend, per-env deploy roles) and the maintainer follow-up (GitHub
+Environments, secrets, S3 backend enable) is done. Kept for the historical record + the exact CLI /
+trust-policy JSON. The living deploy doc is [deploy-cicd-plan.md](../deploy-cicd-plan.md).
 
-This is the **one-time scaffolding** an admin/landing-zone owner runs so that
+This is the **one-time scaffolding** an AWS admin runs so that
 `Mayor-s-Office-of-Innovation/good-neighbor-app` can deploy itself from CI with **no long-lived
-AWS keys**. It answers the five "bootstrap contract" facts called out in
-[deploy-cicd-plan.md](./deploy-cicd-plan.md#-the-one-blocking-dependency-the-admin-bootstrap-contract)
-with a concrete, recommended set of choices. After these steps, every deploy runs through
-GitHub Actions via OIDC role assumption.
-
-> **Division of labor.** The **admin** does Steps 1–4 (they need account-admin / IAM
-> permissions) and hands back the values in Step 5. The **repo maintainers** then do the
-> "After the admin is done" section (GitHub settings + a one-line Terraform backend change) —
-> no AWS admin rights required for that part.
-
-The pattern mirrors the OIDC setup used for the `care-connect` deploy repo (GitHub OIDC
-identity provider → scoped assumable role → `aws-actions/configure-aws-credentials`), adapted
-from that repo's single CloudFormation role to GNP's **Terraform, per-environment** model.
+AWS keys**. After these steps, every deploy runs through GitHub Actions via OIDC role assumption.
 
 ---
 
-## What we're asking you to create (the contract, pre-decided)
-
-The plan lists five open questions; here are the answers we're requesting so you can just
-execute. Adjust if account/org policy requires — just tell us what you changed.
-
-| # | Question | Requested answer |
-|---|---|---|
-| 1 | Scope of bootstrap | Admin creates **all four**: the GitHub OIDC provider, the deploy role(s), **and** the Terraform state bucket + lock table. (State backends can't bootstrap themselves, so they must be admin-created.) |
-| 2 | One role or per-env | **One deploy role per environment** (`dev`, `prod`; `staging` later). Separation is at the role, and each is bound to its GitHub Environment. |
-| 3 | Read-only plan role | **No — PRs get no AWS credentials.** The PR path runs only unauthenticated checks; the real plan runs at deploy time. (A read-only role can be added later if PR previews are ever wanted.) |
-| 4 | State layout | **One state bucket, per-env keys.** Bucket `good-neighbor-app-terraform-state`, keys `dev/terraform.tfstate` + `prod/terraform.tfstate`, lock table `good-neighbor-app-terraform-locks`, region `us-west-2`. (These names already appear in the commented backend blocks in the repo.) |
-| 5 | Trust-policy scope | Scope each deploy role's trust to **this repo + a GitHub Environment** (`environment:dev`, `environment:prod`). This makes the prod approval gate cryptographically enforced — GitHub won't mint a token for `environment:prod` until the environment's required reviewers approve. |
-
-**Why environment-scoped trust (fact #5) matters:** GNP's deploy workflow sets
-`environment: <env>` on each job, and prod will require reviewer approval. Because the role's
-trust condition requires `sub = repo:…:environment:prod`, AWS will only issue credentials for a
-job that GitHub has already released past the prod environment's protection rules. No approval →
-no OIDC token with that `sub` → no credentials. The gate can't be bypassed from a workflow edit.
-
----
-
-## Inputs you need from us
+## Inputs you need
 
 | Value | Provided |
 |---|---|
 | GitHub org / repo | `Mayor-s-Office-of-Innovation/good-neighbor-app` |
 | AWS region | `us-west-2` |
-| Environments to provision now | `dev`, `prod` (add `staging` later) |
+| Environments to provision now | `dev`, `prod` |
 | AWS account ID | _(the account these resources live in — you have this)_ |
 
 Below, `ACCOUNT_ID` = that account's 12-digit ID. All commands assume `us-west-2` and admin
@@ -56,25 +25,18 @@ credentials for that account.
 
 ---
 
-## Step 1 — Create the GitHub OIDC identity provider (once per account)
+## Step 1 — Grab the GitHub OIDC provider ARN
 
-If this account already federates GitHub Actions (check IAM → Identity providers for
-`token.actions.githubusercontent.com`), **skip this** and reuse the existing provider ARN.
+This account already federates GitHub Actions, so there's nothing to create — just grab the
+existing provider ARN and record it for Step 4:
 
 ```sh
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+aws iam list-open-id-connect-providers \
+  --query "OpenIDConnectProviderList[?contains(Arn, 'token.actions.githubusercontent.com')].Arn" \
+  --output text
 ```
 
-Notes:
-- The `client-id-list` value `sts.amazonaws.com` is the audience `configure-aws-credentials`
-  requests. Don't change it.
-- AWS now validates the GitHub OIDC endpoint against its own trusted CAs, so the thumbprint is
-  effectively ignored — the value above is GitHub's well-known thumbprint and is fine to use.
-- Record the resulting provider ARN
-  (`arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com`).
+That prints `arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com`.
 
 ---
 
@@ -113,16 +75,30 @@ aws dynamodb create-table \
   --region us-west-2
 ```
 
-Please also apply the CCSF cloud tags your org requires to both resources (`Application`,
-`ApplicationOwner`, `Environment`, `DataClassification`, `InternetExposure`,
-`AssetCriticality`, `Compliance`) — the app's own resources carry these via Terraform, but the
-state backend is created outside Terraform so it needs them applied here.
+Apply the required CCSF cloud tags to both resources — the app's own resources carry these via
+Terraform, but the state backend is created outside Terraform so it needs them applied here
+(`aws s3api put-bucket-tagging` / `aws dynamodb tag-resource`):
+
+```text
+Department         = Mayor's Office
+DepartmentCode     = MYR
+Division           = <your division>
+BusinessOwner      = <ISA business signatory email>
+BillingCode        = <internal billing code, or "Non-Bill">    # required — MYR is not TIS
+CloudType          = Commercial                                # standard aws partition, us-west-2
+Environment        = prod                                      # shared backend serves dev+prod; tag prod
+DataClassification = internal
+InternetExposure   = internal-only
+AssetCriticality   = tier-2
+```
+
+The three `<…>` values are yours to fill (they're org-specific and not derivable here).
 
 ---
 
 ## Step 3 — Create one deploy role per environment
 
-Do this once for `dev` and once for `prod` (repeat later for `staging`). Only the **role name**
+Do this once for `dev` and once for `prod`. Only the **role name**
 and the **`sub` value** change between environments.
 
 ### 3a. Trust policy (per env)
@@ -161,11 +137,11 @@ aws iam create-role \
 
 The deploy role runs `terraform apply`, so it needs to **create/update/delete** the services the
 stack uses, plus read/write its own state. The stack currently provisions: KMS, S3, DynamoDB,
-SQS, Cognito, CloudFront (response-headers policy), and WAFv2 — and will soon add Lambda, API
-Gateway, IAM roles, and CloudWatch Logs (the analysis Lambdas). Least-privilege IAM for a
-Terraform runner is a known hard problem; the recommended posture is a **bounded-broad
-customer-managed policy** now, tightened to least-privilege as a Stage 2 follow-up (tracked in
-the SDLC plan).
+SQS, Cognito, CloudFront (response-headers policy), WAFv2, API
+Gateway, IAM roles, and CloudWatch Logs. The service list also covers the settled roadmap so this
+policy doesn't need a second admin pass: Secrets Manager (analyzer API key, MVP), EventBridge
+(6-hour analytics exports, Phase 4), SSM Parameter Store (config), and Route53 + ACM (custom
+domain and its TLS certificate).
 
 Attach a customer-managed policy `good-neighbor-app-deploy` with these statements (same policy
 can be attached to both env roles):
@@ -175,26 +151,12 @@ can be attached to both env roles):
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "TerraformState",
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": [
-        "arn:aws:s3:::good-neighbor-app-terraform-state",
-        "arn:aws:s3:::good-neighbor-app-terraform-state/*"
-      ]
-    },
-    {
-      "Sid": "TerraformLock",
-      "Effect": "Allow",
-      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
-      "Resource": "arn:aws:dynamodb:us-west-2:ACCOUNT_ID:table/good-neighbor-app-terraform-locks"
-    },
-    {
       "Sid": "AppResources",
       "Effect": "Allow",
       "Action": [
         "kms:*", "s3:*", "dynamodb:*", "sqs:*", "cognito-idp:*",
-        "cloudfront:*", "wafv2:*", "lambda:*", "apigateway:*", "logs:*"
+        "cloudfront:*", "wafv2:*", "lambda:*", "apigateway:*", "logs:*",
+        "secretsmanager:*", "events:*", "ssm:*", "route53:*", "acm:*"
       ],
       "Resource": "*"
     },
@@ -205,7 +167,10 @@ can be attached to both env roles):
       "Resource": "arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-*",
       "Condition": {
         "StringEquals": {
-          "iam:PassedToService": ["lambda.amazonaws.com", "apigateway.amazonaws.com"]
+          "iam:PassedToService": [
+            "lambda.amazonaws.com", "apigateway.amazonaws.com",
+            "events.amazonaws.com", "scheduler.amazonaws.com"
+          ]
         }
       }
     },
@@ -224,38 +189,38 @@ can be attached to both env roles):
         "arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-*",
         "arn:aws:iam::ACCOUNT_ID:policy/good-neighbor-app-*"
       ]
+    },
+    {
+      "Sid": "DenyProtectBootstrap",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRole", "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy", "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+        "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion",
+        "iam:DeletePolicy", "iam:DeleteOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint",
+        "iam:AddClientIDToOpenIDConnectProvider",
+        "iam:RemoveClientIDFromOpenIDConnectProvider"
+      ],
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_ID:role/good-neighbor-app-deploy-*",
+        "arn:aws:iam::ACCOUNT_ID:policy/good-neighbor-app-deploy",
+        "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      ]
     }
   ]
 }
 ```
 
-> **If you want to unblock `dev` in five minutes** and tighten later: attach the AWS-managed
-> `AdministratorAccess` to the **dev** role only, and use the scoped policy above for **prod**.
-> We're fine either way — just note which you chose so we document the actual posture.
+**Naming requirement:** every IAM role and policy the Terraform creates **must** be named with the
+`good-neighbor-app-` prefix, or `terraform apply` fails with `AccessDenied`.
 
 Repeat 3a + 3b with `prod` in place of `dev` for the `good-neighbor-app-deploy-prod` role.
 
----
-
-## Step 4 — Do **not** create a PR/plan role (deliberate)
-
-Nothing to build here — this step exists to make the omission explicit, so it reads as a
-decision rather than an oversight. **PR builds get no AWS credentials at all.** Pull requests run
-only the **unauthenticated** Terraform checks already in
-[`ci.yml`](../.github/workflows/ci.yml) (`fmt`, `validate`, `checkov`, all with
-`-backend=false`) — no role assumption, no state access, nothing a PR (including one from a fork)
-could exfiltrate.
-
-The real `terraform plan` runs at **deploy time** under the environment's deploy role, and the
-[promotion model](./deploy-cicd-plan.md) validates each commit on `dev` (and later `staging`)
-before it reaches `prod`. That real-world validation stands in for a PR-time plan preview.
-
-If PR-time plan previews are ever wanted, a read-only role scoped to `…:pull_request` can be
-added later with no change to anything above.
 
 ---
 
-## Step 5 — Hand these values back to us
+## Step 4 — Hand these values back to us
 
 Once the above exists, send the maintainers (in any secure channel — these are ARNs/names, not
 secrets, but keep them internal):
@@ -275,16 +240,18 @@ Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
 ## After the admin is done (repo maintainers, no AWS admin rights needed)
 
 1. **Create the GitHub Environments** (repo → Settings → Environments): `dev` and `prod`.
-   - `prod`: add **required reviewers** (the two admins) and turn on **"prevent self-review."**
+   - `prod`: add **required reviewers** (the two admins); leave **"prevent self-review" OFF** so a
+     single admin can approve + deploy when the other is unavailable (a deliberate 2-person-team
+     trade — see the plan's P5 decision). Re-enable it when the team grows past two.
    - `dev`: no gate.
 2. **Set per-environment secret + variable** in each Environment (matches the existing
-   [deploy.yml](../.github/workflows/deploy.yml), which reads `secrets.AWS_DEPLOY_ROLE_ARN` and
+   [deploy.yml](../../.github/workflows/deploy.yml), which reads `secrets.AWS_DEPLOY_ROLE_ARN` and
    `vars.AWS_REGION`):
    - Secret `AWS_DEPLOY_ROLE_ARN` → that env's deploy role ARN.
    - Variable `AWS_REGION` → `us-west-2`.
 3. **Enable the S3 backend** in Terraform: uncomment the `backend "s3"` block in
-   [infra/environments/dev/main.tf](../infra/environments/dev/main.tf) and
-   [infra/environments/prod/main.tf](../infra/environments/prod/main.tf) (the values already
+   [infra/environments/dev/main.tf](../../infra/environments/dev/main.tf) and
+   [infra/environments/prod/main.tf](../../infra/environments/prod/main.tf) (the values already
    match Step 2/4). First `terraform init` migrates local state to S3:
    ```sh
    cd infra/environments/dev && terraform init -migrate-state
@@ -309,8 +276,9 @@ Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
    A green run printing an `AROA…:…` assumed-role identity means the federation is wired
    correctly. Delete the smoke-test workflow afterward.
 5. From there, the existing **Deploy** workflow (`workflow_dispatch` → pick `dev`/`prod`) can
-   run a real `terraform apply`, and the gated tag-based promotion in
-   [deploy-cicd-plan.md](./deploy-cicd-plan.md) (Phases 2–4) can be built on top.
+   run a real `terraform apply`, and the branch-and-release promotion in
+   [deploy-cicd-plan.md](../deploy-cicd-plan.md) (merge to `dev`→dev, published Release→prod;
+   Phases 3–4) can be built on top.
 
 ---
 
@@ -318,7 +286,7 @@ Permissions posture: (scoped policy on both, or Admin-on-dev — tell us which)
 
 - **No long-lived keys.** Do not create an IAM user or access keys for CI. OIDC role assumption
   is the whole point.
-- **The PR path holds no AWS credentials.** [`ci.yml`](../.github/workflows/ci.yml) grants no
+- **The PR path holds no AWS credentials.** [`ci.yml`](../../.github/workflows/ci.yml) grants no
   `id-token: write`, so PR-triggered jobs can't federate to AWS at all — the only AWS-touching
   workflow is the gated Deploy. There is deliberately no read-only plan role (Step 4).
 - **Scope stays tight on trust, broad only on permissions.** The trust policy `sub` conditions
