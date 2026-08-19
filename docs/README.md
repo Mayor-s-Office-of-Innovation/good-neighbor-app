@@ -40,8 +40,8 @@ These five docs form one thread: the decision to move from Postgres/Prisma to **
 the data model, city-wide reporting, how to run the backend locally, and how to build it all.
 The **direction is decided** (DynamoDB — [ADR 0002](./adr/0002-datastore-dynamodb.md)); the
 three once-open decisions are settled too (metric formulas settled; city cross-site queue
-deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
-in this order:**
+deferred post-MVP; retention deferred post-MVP — incl. the media bucket's ~7-day expiration, which
+is designed but not yet enforced). **Read them in this order:**
 
 1. **The decision — [ADR 0002](./adr/0002-datastore-dynamodb.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
@@ -75,6 +75,9 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
   creates/resolves guidance tasks in a deterministic sequence. Phases 1–7 are implemented.
+- **[media-downscale-sharp.md](./todo/media-downscale-sharp.md)** — follow-up: swap the passthrough
+  downscale seam for a real `sharp` resize (long-edge ~1568px → JPEG) before the analyzer call.
+  _Deferred — out of the current MVP._
 
 ## Frontend ↔ backend wiring (DONE, Aug 2026)
 

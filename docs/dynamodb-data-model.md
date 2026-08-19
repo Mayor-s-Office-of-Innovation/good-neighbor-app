@@ -33,9 +33,10 @@ all with standard mitigations documented below.
 2. **Performers are anonymous**; a submitted check is attributed to the **site + device**, not
    a person. (See [Identity model](#identity-model).)
 3. **Photos/audio live in S3**, not DynamoDB (items store S3 keys). Non-negotiable — see R4.
-4. Retention: **media auto-expires at ~7 days** via an S3 lifecycle rule on GNP's own bucket
-   (decided 2026-08-13 PM — see D3); checks/analysis retention
-   (DynamoDB TTL) is still unspecified (post-MVP).
+4. Retention: media is **designed** to auto-expire at ~7 days via an S3 lifecycle rule on GNP's own
+   bucket (decided 2026-08-13 PM — see D3), but that expiration is **not yet enforced** (2026-08-19,
+   deferred for the POC — pre-launch TODO); checks/analysis retention (DynamoDB TTL) is still
+   unspecified (post-MVP).
 
 ## Identity model (this matters as much as the tables)
 
