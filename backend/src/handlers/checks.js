@@ -187,7 +187,12 @@ export const completeCheck = async (event) => {
  * @param {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} opts.analyzed
  * @returns {{ assessmentId: string, checkId: string, reportedAt: string, rubricVersion: string | null, grade: import("../analysis/contract.js").GeneralConditionsLabel | null, conditions: { conditionId: string, category: string, severity: number, description?: string, sourceArtifactIds: string[] }[], rawAssessment: Record<string, unknown> }}
  */
-function buildGuidanceAssessment({ checkId, completedAt, scorecard, analyzed }) {
+function buildGuidanceAssessment({
+  checkId,
+  completedAt,
+  scorecard,
+  analyzed,
+}) {
   return {
     assessmentId: checkId,
     checkId,

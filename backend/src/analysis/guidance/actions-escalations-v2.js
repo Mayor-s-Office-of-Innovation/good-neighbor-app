@@ -2,12 +2,28 @@ import { buildCatalog } from "./rule-catalog.js";
 
 export const ACTIONS_ESCALATIONS_POLICY_VERSION = "actions-escalations-v2";
 
+export const ACTIONS_ESCALATIONS_POLICY_METADATA = {
+  sourceAsset: "actions-escalations-rules-v2.csv",
+  effectiveDate: "2026-08-18",
+  createdAt: "2026-08-18T00:00:00.000Z",
+  changelogPath: "docs/guidance-policy-changelog.md",
+};
+
 const ALIASES = [
   { analyzerCategory: "Waste & Small Debris", canonicalCategory: "Litter" },
   { analyzerCategory: "Large waste", canonicalCategory: "Bulky items" },
-  { analyzerCategory: "Temporary shelters", canonicalCategory: "Tents, tarps, or bedding" },
-  { analyzerCategory: "Blocking access", canonicalCategory: "Blocked doorway or sidewalk" },
-  { analyzerCategory: "Dangerous animals", canonicalCategory: "Aggressive animals" },
+  {
+    analyzerCategory: "Temporary shelters",
+    canonicalCategory: "Tents, tarps, or bedding",
+  },
+  {
+    analyzerCategory: "Blocking access",
+    canonicalCategory: "Blocked doorway or sidewalk",
+  },
+  {
+    analyzerCategory: "Dangerous animals",
+    canonicalCategory: "Aggressive animals",
+  },
   {
     analyzerCategory: "Threats, intimidation, or violence",
     canonicalCategory: "Intimidation, or violence",
@@ -461,6 +477,7 @@ const ROWS = [
 
 export const actionsEscalationsV2Catalog = buildCatalog({
   policyVersion: ACTIONS_ESCALATIONS_POLICY_VERSION,
+  metadata: ACTIONS_ESCALATIONS_POLICY_METADATA,
   rows: ROWS,
   aliases: ALIASES,
 });

@@ -137,7 +137,9 @@ describe("guidance handlers", () => {
     send.mockResolvedValueOnce({
       Items: [{ conditionId: "c1", taskIds: ["task-1"] }],
     });
-    send.mockResolvedValueOnce({ Responses: { table: [{ taskId: "task-1" }] } });
+    send.mockResolvedValueOnce({
+      Responses: { table: [{ taskId: "task-1" }] },
+    });
 
     const res = await invoke(
       getGuidance,

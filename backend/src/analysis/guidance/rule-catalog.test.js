@@ -14,6 +14,11 @@ describe("actions/escalations v2 catalog", () => {
     expect(actionsEscalationsV2Catalog.policyVersion).toBe(
       "actions-escalations-v2",
     );
+    expect(actionsEscalationsV2Catalog.metadata).toMatchObject({
+      sourceAsset: "actions-escalations-rules-v2.csv",
+      effectiveDate: "2026-08-18",
+      changelogPath: "docs/guidance-policy-changelog.md",
+    });
     expect(actionsEscalationsV2Catalog.rules).toHaveLength(26);
     expect(validateCatalog(actionsEscalationsV2Catalog)).toEqual([]);
   });

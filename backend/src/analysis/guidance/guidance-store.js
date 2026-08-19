@@ -127,11 +127,13 @@ function buildConditionItem({
           : evaluation.kind === "manual_review"
             ? "manual_review"
             : "completed",
-    selectedRuleId: evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+    selectedRuleId:
+      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
     outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
     resolvedToTasks: evaluation.kind === "outcome",
-    needsAnswer: evaluation.kind === "needs_answer" ? evaluation.question : null,
+    needsAnswer:
+      evaluation.kind === "needs_answer" ? evaluation.question : null,
     cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
@@ -206,7 +208,14 @@ function buildTaskItem({
     category311: rule.outcome.category311,
     cannotDoReasons: rule.outcome.cannotDoReasons,
     sourceArtifactIds: condition.sourceArtifactIds ?? [],
-    ...taskWorklistDateGsi(siteId, status, kind, condition.severity, now, taskId),
+    ...taskWorklistDateGsi(
+      siteId,
+      status,
+      kind,
+      condition.severity,
+      now,
+      taskId,
+    ),
     createdAt: now,
     updatedAt: now,
   };
@@ -230,7 +239,8 @@ export async function storeEvaluatedAssessment(input, options) {
   const taskItems = [];
 
   for (const [index, condition] of input.conditions.entries()) {
-    const conditionId = condition.conditionId ?? makeConditionId(condition.category, index);
+    const conditionId =
+      condition.conditionId ?? makeConditionId(condition.category, index);
     const evaluation = evaluateCondition({
       condition: { category: condition.category, severity: condition.severity },
       catalog,
@@ -320,7 +330,11 @@ export async function storeEvaluatedAssessment(input, options) {
       emergencyCount,
       manualReviewCount,
     },
-    ...assessmentTimelineGsi(input.siteId, input.reportedAt, input.assessmentId),
+    ...assessmentTimelineGsi(
+      input.siteId,
+      input.reportedAt,
+      input.assessmentId,
+    ),
     createdAt: now,
     updatedAt: now,
   };
@@ -357,7 +371,11 @@ export async function storeEvaluatedAssessment(input, options) {
  * @param {string} opts.assessmentId
  * @returns {Promise<{ assessment: Record<string, unknown> | null, conditions: Record<string, unknown>[], tasks: Record<string, unknown>[] }>}
  */
-export async function getAssessmentGuidance({ tableName, siteId, assessmentId }) {
+export async function getAssessmentGuidance({
+  tableName,
+  siteId,
+  assessmentId,
+}) {
   const [assessmentResult, conditionsResult] = await Promise.all([
     ddb.send(
       new GetCommand({
@@ -387,13 +405,13 @@ export async function getAssessmentGuidance({ tableName, siteId, assessmentId })
   const tasks =
     taskKeys.length === 0
       ? []
-      : (
+      : ((
           await ddb.send(
             new BatchGetCommand({
               RequestItems: { [tableName]: { Keys: taskKeys } },
             }),
           )
-        ).Responses?.[tableName] ?? [];
+        ).Responses?.[tableName] ?? []);
 
   return {
     assessment: assessmentResult.Item ?? null,
@@ -436,7 +454,9 @@ export async function answerCondition(opts) {
   };
   const evaluation = evaluateCondition({
     condition: {
-      category: String(conditionItem.analyzerCategory ?? conditionItem.canonicalCategory),
+      category: String(
+        conditionItem.analyzerCategory ?? conditionItem.canonicalCategory,
+      ),
       severity: Number(conditionItem.severity ?? 0),
     },
     answers: mergedAnswers,
@@ -454,7 +474,9 @@ export async function answerCondition(opts) {
       siteId: opts.siteId,
       assessmentId: opts.assessmentId,
       checkId:
-        typeof conditionItem.checkId === "string" ? conditionItem.checkId : undefined,
+        typeof conditionItem.checkId === "string"
+          ? conditionItem.checkId
+          : undefined,
       condition: {
         category: String(conditionItem.analyzerCategory),
         severity: Number(conditionItem.severity),
@@ -482,11 +504,13 @@ export async function answerCondition(opts) {
     ...conditionItem,
     answers: mergedAnswers,
     status,
-    selectedRuleId: evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+    selectedRuleId:
+      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
     outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
     resolvedToTasks: evaluation.kind === "outcome",
-    needsAnswer: evaluation.kind === "needs_answer" ? evaluation.question : null,
+    needsAnswer:
+      evaluation.kind === "needs_answer" ? evaluation.question : null,
     updatedAt: now,
   };
   if (evaluation.kind === "outcome") {

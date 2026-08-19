@@ -103,7 +103,8 @@ export function initialAppActionStatus(appActions) {
  */
 export function summarizeAppActionResults(results) {
   if (results.length === 0) return "none";
-  if (results.every((result) => result.status === "submitted")) return "submitted";
+  if (results.every((result) => result.status === "submitted"))
+    return "submitted";
   if (results.some((result) => result.status === "submitted")) return "partial";
   if (results.some((result) => result.status === "requires_user_action")) {
     return "requires_user_action";

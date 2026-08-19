@@ -1228,13 +1228,17 @@ update process above and produce a new `policyVersion`.
 Decision: use the existing 311 payload fields represented in the current rulebase for now. The final
 311 payload contract can be updated in a later rulebase version.
 
-### Phase 6 - Admin/Policy Operations
+### Phase 6 - Admin/Policy Operations (DONE 2026-08-18)
 
-- Add policy version metadata.
-- Add a catalog validation script to CI.
-- Add a semantic rulebase diff script and fixture-based impact report.
-- Add a changelog for policy versions.
-- Consider an admin-only dry-run endpoint for a historical assessment against a draft policy.
+- Added policy version metadata to the active v2 catalog.
+- Added `npm run policy:validate --workspace backend` for catalog validation.
+- Added catalog validation to CI.
+- Added `npm run policy:diff --workspace backend -- --before <old-catalog.js> --after
+  <new-catalog.js>` for semantic rulebase diffs and fixture-based impact reports.
+- Added representative policy impact fixtures.
+- Added `docs/guidance-policy-changelog.md`.
+- Deferred an admin dry-run endpoint until there is an authenticated admin surface for draft
+  policies.
 
 Decision: historical in-progress assessment evaluations always finish on their original
 `policyVersion`. Do not automatically supersede an in-progress evaluation onto a newer rulebase.
