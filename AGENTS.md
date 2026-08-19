@@ -44,7 +44,7 @@ Migration is in progress; read the linked plans before following the standing ch
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and DynamoDB.
 - Use a single-table DynamoDB design accessed through the AWS SDK (`@aws-sdk/lib-dynamodb`
   Document Client); schema/indexes are defined in Terraform. See
-  [docs/dynamodb-data-model.md](./docs/inprogress/dynamodb-data-model.md).
+  [docs/dynamodb-data-model.md](./docs/dynamodb-data-model.md).
 - Use Terraform for all infrastructure and GitHub Actions for CI/CD.
 
 ## SDLC Rules
