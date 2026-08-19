@@ -123,12 +123,50 @@ export function createCheck(checkId, body = {}) {
 
 /**
  * POST /v1/checks/{checkId}/complete — close the run: fold analyzed artifacts
- * into one scorecard and mint tasks. Idempotent-once server-side.
+ * into one scorecard and return an assessment envelope for guidance evaluation.
  * @param {string} checkId
- * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, taskCount?: number }>}
+ * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, assessmentReady?: boolean, assessment?: any }>}
  */
 export function completeCheck(checkId) {
   return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`);
+}
+
+/**
+ * POST /v1/assessments:evaluate — store an assessment/report, evaluate
+ * conditions, and create any immediately resolvable guidance tasks.
+ * @param {unknown} assessment
+ * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
+ */
+export function evaluateAssessment(assessment) {
+  return request("POST", "/v1/assessments:evaluate", { body: assessment });
+}
+
+/**
+ * GET /v1/assessments/{assessmentId}/guidance — fetch the stored assessment,
+ * conditions, and any created guidance tasks.
+ * @param {string} assessmentId
+ * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
+ */
+export function getAssessmentGuidance(assessmentId) {
+  return request(
+    "GET",
+    `/v1/assessments/${encodeURIComponent(assessmentId)}/guidance`,
+  );
+}
+
+/**
+ * POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers.
+ * @param {string} assessmentId
+ * @param {string} conditionId
+ * @param {{ answers: Record<string, unknown> }} body
+ * @returns {Promise<{ conditionItem: any, taskItem: any, evaluation: any }>}
+ */
+export function submitConditionAnswers(assessmentId, conditionId, body) {
+  return request(
+    "POST",
+    `/v1/assessments/${encodeURIComponent(assessmentId)}/conditions/${encodeURIComponent(conditionId)}/answers`,
+    { body },
+  );
 }
 
 /**
@@ -236,6 +274,32 @@ export function getMediaUrl(checkId, artifactId) {
  */
 export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
+}
+
+/**
+ * POST /v1/tasks/{taskId}/complete — mark a guidance task complete and record
+ * any backend app-action results for audit.
+ * @param {string} taskId
+ * @param {{ completionMethod?: string }} [body]
+ * @returns {Promise<{ task: any }>}
+ */
+export function completeTask(taskId, body = {}) {
+  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
+    body,
+  });
+}
+
+/**
+ * POST /v1/tasks/{taskId}/cannot-do — audit-only reason capture when the user
+ * cannot complete an action or escalation.
+ * @param {string} taskId
+ * @param {{ reason: string, note?: string }} body
+ * @returns {Promise<{ task: any }>}
+ */
+export function cannotDoTask(taskId, body) {
+  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cannot-do`, {
+    body,
+  });
 }
 
 // ── Composed helpers ─────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ import "@awesome.me/webawesome/dist/components/button/button.js";
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
+import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "@awesome.me/webawesome/dist/components/badge/badge.js";
@@ -58,6 +59,10 @@ import "./components/perimeter-check.js";
 import "./components/check-review.js";
 import "./components/check-results.js";
 import "./components/site-setup.js";
+
+if (import.meta.env.DEV) {
+  await import("./components/guidance-harness.js");
+}
 
 // Demo seed: a no-op unless a `?demo=` param is present (see demo/seed.js). It must
 // finish writing IndexedDB BEFORE app-root reads it, so app-root — the only element

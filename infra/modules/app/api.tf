@@ -15,6 +15,11 @@ locals {
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
     "GET /v1/checks/{checkId}",
     "GET /v1/tasks",
+    "POST /v1/tasks/{taskId}/complete",
+    "POST /v1/tasks/{taskId}/cannot-do",
+    "POST /v1/assessments:evaluate",
+    "GET /v1/assessments/{assessmentId}/guidance",
+    "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
     "POST /submissions",
     "GET /health",
   ]
@@ -23,13 +28,6 @@ locals {
 resource "aws_apigatewayv2_api" "http" {
   name          = "${local.name_prefix}-http"
   protocol_type = "HTTP"
-
-  cors_configuration {
-    allow_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}"]
-    allow_methods = ["GET", "POST", "OPTIONS"]
-    allow_headers = ["content-type", "idempotency-key"]
-    max_age       = 3600
-  }
 
   tags = var.tags
 }
