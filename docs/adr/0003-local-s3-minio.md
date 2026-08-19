@@ -11,7 +11,7 @@ record captures only the decision and its rationale.
 
 The backend runs in a **Docker-free** local harness (DynamoDB Local + ElasticMQ as JVM jars,
 an in-process API router + worker; see
-[local-dev-environment-plan.md](../archive/local-dev-environment-plan.md)). Media analysis
+[ADR 0006](0006-docker-free-local-dev-harness.md)). Media analysis
 calls a **real, deployed** analyzer over an API key — there is no local analyzer.
 
 The non-obvious point: a remote analyzer removes the need for a local *analyzer*, **not** for
