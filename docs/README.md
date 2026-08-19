@@ -98,13 +98,15 @@ is designed but not yet enforced). **Read them in this order:**
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
-- **[deploy-cicd-plan.md](./inprogress/deploy-cicd-plan.md)** — the plan to move from manual, single-role
-  deploys to a **2-environment (`dev`/`prod`), 2-branch** pipeline: merge to `dev`→dev auto,
-  publish a **GitHub Release** from `main` (admins-only)→prod behind a required-approval pause;
-  OIDC-only creds; per-env S3/CloudFront with env-scoped invalidation; branch/environment
-  protection; Terraform rollback runbook. Bootstrap + deploy workflows built; remaining is the
-  frontend publish (Phase 4) and the `/health` smoke test. Gates the deploy items in
-  [MVP-TODO](./inprogress/MVP-TODO.md); closes the open [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
+- **The decision — [ADR 0007](./adr/0007-deploy-promotion-model.md)** — the **2-environment
+  (`dev`/`prod`), 2-branch** promotion model (merge to `dev`→dev auto; publish a **GitHub Release**
+  from `main`, admins-only→prod behind an approval pause), OIDC-only creds, and the deliberate
+  single-person-path-to-prod trade for a 2-person team. The "why" behind the built pipeline.
+- **[prod-cicd.md](./todo/prod-cicd.md)** — _what's left._ The pipeline is built
+  and the **dev half is live-proven**; this now tracks only the two remaining prod-side tasks: the
+  first **prod release-deploy** (release-tag + approval path untested) and the **rollback runbook
+  dry-run**. Gates the deploy items in [MVP-TODO](./inprogress/MVP-TODO.md); closes the open
+  [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
 
 ## Other docs in this directory
 
