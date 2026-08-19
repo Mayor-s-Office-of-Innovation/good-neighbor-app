@@ -1,4 +1,4 @@
-FYI # MVP TODO — path to a deployed Good Neighbor App
+# MVP TODO — path to a deployed Good Neighbor App
 
 **Status:** living tracker · **Date:** 2026-08-12 · **Owner:** team
 

@@ -47,8 +47,9 @@ The **only** durable copy of the media is GNP's.
 
 **Controls that apply during testing (and after):**
 
-- [x] **Media bucket hardened:** block-public-access, **SSE-KMS** (app key), TLS-only,
-  **worker/Lambda-role-only** access (no public/cross-account read) — *in place*.
+- [x] **Media bucket hardened:** block-public-access, **SSE-KMS** (app key),
+  **worker/Lambda-role-only** access (no public/cross-account read) — *in place*. (TLS-only is
+  **not** yet enforced on this bucket — see the transport item below.)
 - [ ] **~7-day media expiration** (current-version `expiration` + `expired_object_delete_marker`) as
   the retention backstop — **not yet implemented** (POC gap; only incomplete-multipart + noncurrent-
   version rules exist today). Pre-launch TODO.
@@ -60,7 +61,10 @@ The **only** durable copy of the media is GNP's.
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
 - [ ] **Uploaded-media validation** before the analyzer call: magic-byte / content-type sniff, size
   cap, per-check artifact-count cap.
-- [ ] **TLS-only** on every hop (client→S3, client→Lambda, worker→analyzer).
+- [ ] **TLS-only** on every hop (client→S3, client→Lambda, worker→analyzer). **Not in place for
+  S3:** the uploads bucket has **no bucket policy at all**, so no `aws:SecureTransport` deny refuses
+  non-TLS access — a pre-launch TODO (add an `aws_s3_bucket_policy` denying `aws:SecureTransport =
+  false`).
 
 **Before go-live / any real (non-test) user data:** re-review this classification against the
 as-built path — **implement and confirm the ~7-day media-expiration lifecycle rule is active** (not
