@@ -88,7 +88,7 @@ npm run dev -w backend         # starts DynamoDB Local, ElasticMQ, the API route
 
 Commands, ports, the curl loop, and the GUI are in the
 **[developer command reference](docs/dev-commands.md)**; the design rationale is in
-[docs/archive/local-dev-environment-plan.md](docs/archive/local-dev-environment-plan.md).
+[ADR 0006](./docs/adr/0006-docker-free-local-dev-harness.md).
 
 The local API router listens on `LOCAL_API_PORT` from `.env.local` (`3001` by default).
 

@@ -9,7 +9,7 @@ flowchart LR
   cloudfront --> api["API Gateway"]
   api --> cognito["Cognito authorizer (custom:siteId)"]
   api --> checks["Lambda: checks + artifacts handlers"]
-  checks --> dynamodb["DynamoDB (single table + GSI1/GSI2)"]
+  checks --> dynamodb["DynamoDB (single table + GSIs)"]
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
@@ -64,48 +64,11 @@ still surfaces.
 
 ## Single-table data model
 
-```mermaid
-erDiagram
-  CHECK ||--o{ ARTIFACT : has
-  ARTIFACT ||--o| ANALYSIS : "analyzed into"
-  CHECK ||--o{ TASK : "routes to"
+All tenant data lives in one DynamoDB table keyed on `pk = SITE#<siteId>`, so a check's header,
+artifacts, and analyses share one partition and come back in a single query.
 
-  CHECK {
-    string pk "SITE#<siteId>"
-    string sk "CHECK#<checkId>"
-    string status "in_progress|completed"
-    string grade "at complete"
-    number issueCount
-    number maxSeverity
-    string gsi1pk "SITE#<siteId> (timeline)"
-    string gsi1sk "startedAt ISO"
-  }
-  ARTIFACT {
-    string pk "SITE#<siteId>"
-    string sk "CHECK#<checkId>#ART#<side>#<artifactId>"
-    string s3Key
-    string side
-    string capturedAt "per-photo"
-  }
-  ANALYSIS {
-    string pk "SITE#<siteId>"
-    string sk "CHECK#<checkId>#ANALYSIS#<artifactId>"
-    string status "analyzed|failed"
-    string grade
-    string rubricVersion
-  }
-  TASK {
-    string pk "SITE#<siteId>"
-    string sk "TASK#<taskId>"
-    string type "onsite|city_escalation"
-    number severity
-    string gsi2pk "SITE#<siteId>#TASK#<status> (worklist)"
-    string gsi2sk "severity#createdAt"
-  }
-```
-
-See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item
-shapes and access patterns, and [analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md)
+See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item shapes, keys,
+GSIs, and access patterns, and [analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)
 for the analyze-path build steps.
 
 ## Security boundaries
@@ -122,5 +85,5 @@ for the analyze-path build steps.
 Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
 replayed request can never create a duplicate. For the MVP there is **no active service
-worker** — full offline queue-and-replay is deferred (see [MVP-TODO.md](./MVP-TODO.md)) —
+worker** — full offline queue-and-replay is deferred (see [MVP-TODO.md](./inprogress/MVP-TODO.md)) —
 but the idempotency contract is already in place for when it lands.

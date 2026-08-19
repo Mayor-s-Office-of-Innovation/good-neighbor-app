@@ -1214,7 +1214,7 @@ theme-toggle {
    Screen 5c capture — native camera handoff (MVP). A 3-part top bar, a
    4-segment progress pill, then a per-side photo grid whose ＋ tile opens
    the device camera / file picker. Replaces the earlier in-app live
-   viewfinder + shutter (see docs/mvp-design-trim-plan.md).
+   viewfinder + shutter.
    ================================================================== */
 
 /* The screen is a full-height column: fixed top bar + pill, then the camera
