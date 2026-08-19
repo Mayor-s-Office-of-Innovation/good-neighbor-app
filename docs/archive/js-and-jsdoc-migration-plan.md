@@ -3,7 +3,7 @@
 Status: **DONE (backend + repo config)** — landed 2026-08-12 as migration Step 1.
 Date: 2026-08-11
 Supersedes: the "Use TypeScript for frontend and backend code" standing choice in
-[AGENTS.md](../AGENTS.md). No ADR currently mandates TypeScript, so only AGENTS.md
+[AGENTS.md](../../AGENTS.md). No ADR currently mandates TypeScript, so only AGENTS.md
 needs to change.
 
 > **Completion note (2026-08-12).** Step 1 of the 3-step migration is done and
@@ -114,7 +114,7 @@ arrival.
 
 > _Historical:_ `@prisma/client` was kept for Step 1 but has since been **removed** in the
 > DynamoDB cutover (Postgres/Prisma → DynamoDB) — see
-> [ADR 0002](./adr/0002-datastore-dynamodb.md).
+> [ADR 0002](../adr/0002-datastore-dynamodb.md).
 
 ### Remove these dependencies
 
@@ -207,7 +207,7 @@ Backend:
   becomes `@type {import('aws-lambda').APIGatewayProxyHandlerV2WithJWTAuthorizer}`
 - `backend/src/handlers/health.ts` → `.js`
 
-## CI changes ([.github/workflows/ci.yml](../.github/workflows/ci.yml))
+## CI changes ([.github/workflows/ci.yml](../../.github/workflows/ci.yml))
 
 - **Add a Typecheck step** to the `app` job (between Lint and Test):
   ```yaml

@@ -14,7 +14,7 @@
 
 ## MVP tracker (start here for "what's left")
 
-**[MVP-TODO.md](./MVP-TODO.md)** — the single task list on the way to a deployed MVP, at the
+**[MVP-TODO.md](./inprogress/MVP-TODO.md)** — the single task list on the way to a deployed MVP, at the
 plan level. Groups done work, blocking decisions, plans still to write, the DynamoDB critical
 path, deploy/harden gates, and post-MVP tracks. Each item links to the plan that backs it.
 
@@ -43,17 +43,17 @@ in this order:**
 1. **[dynamodb-database-decision.md](./archive/dynamodb-database-decision.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
    _(Archived — [ADR 0002](./adr/0002-datastore-dynamodb.md) is now the canonical record; kept for the backing rationale.)_
-2. **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the single-table model, access
+2. **[dynamodb-data-model.md](./inprogress/dynamodb-data-model.md)** — the single-table model, access
    patterns, GSIs, tenant isolation, and the identity model (device-as-site). The "how it's
    shaped."
-3. **[analytics-plane-addendum.md](./analytics-plane-addendum.md)** — city-wide reporting:
+3. **[analytics-plane-addendum.md](./todo/analytics-plane-addendum.md)** — city-wide reporting:
    Tier 1 live counters + Tier 2 (S3-export → Athena), with complexity and cost (~$5–15/mo).
    Extends doc 2. The "how reporting works."
 4. **[local-dev-environment-plan.md](./archive/local-dev-environment-plan.md)** — the Docker-free local
    harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why not Architect /
    SAM / LocalStack). The "how we run it locally." _Harness built & verified; run commands live in
    [dev-commands.md](./dev-commands.md). Archived — kept for the alternatives-considered rationale._
-5. **[dynamodb-buildout-plan.md](./dynamodb-buildout-plan.md)** — _capstone._ The phased
+5. **[dynamodb-buildout-plan.md](./inprogress/dynamodb-buildout-plan.md)** — _capstone._ The phased
    Terraform + code build plan (table → app cutover → analytics), sequenced to a queryable
    Athena prototype. References docs 1–4. The "how we build it."
 
@@ -62,13 +62,13 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 
 ## Backend build plans (seams with a decided direction)
 
-- **[analysis-backend-lambdas-plan.md](./analysis-backend-lambdas-plan.md)** — the perimeter-check
+- **[analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)** — the perimeter-check
   API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
   an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
   from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
   via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
   deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
-  [data model](./dynamodb-data-model.md).
+  [data model](./inprogress/dynamodb-data-model.md).
 
 ## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
 
@@ -84,26 +84,23 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for building a
   screen to spec from the token/class system (`tokens.css` / `app.css` are the source of truth).
-- **[mvp-design-trim-plan.md](./mvp-design-trim-plan.md)** — screen-by-screen trim of prototype
-  features down to the MVP surface (partly built; some screens still planned).
-- **[page-transitions-plan.md](./page-transitions-plan.md)** — View Transitions API screen
+- **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
   animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
-- **[deploy-cicd-plan.md](./deploy-cicd-plan.md)** — the plan to move from manual, single-role
+- **[deploy-cicd-plan.md](./inprogress/deploy-cicd-plan.md)** — the plan to move from manual, single-role
   deploys to a **2-environment (`dev`/`prod`), 2-branch** pipeline: merge to `dev`→dev auto,
   publish a **GitHub Release** from `main` (admins-only)→prod behind a required-approval pause;
   OIDC-only creds; per-env S3/CloudFront with env-scoped invalidation; branch/environment
   protection; Terraform rollback runbook. Bootstrap + deploy workflows built; remaining is the
   frontend publish (Phase 4) and the `/health` smoke test. Gates the deploy items in
-  [MVP-TODO](./MVP-TODO.md); closes the open [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
+  [MVP-TODO](./inprogress/MVP-TODO.md); closes the open [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
 
 ## Other docs in this directory
 
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
 - [dev-commands.md](./dev-commands.md) — developer command reference (setup, CI checks, local harness)
-- [minio-local-s3.md](./minio-local-s3.md) — local S3 via MinIO (harness Step D): why it's needed with a remote analyzer, the full media loop, gotchas, and the required `.env.local` edits
 - [sdlc-level-2-checklist.md](./sdlc-level-2-checklist.md), [security-review.md](./security-review.md) — SDLC / security process
 
 ## Archive
@@ -114,4 +111,13 @@ historical/design record, not part of the active plan set. See [archive/](./arch
 - [archive/js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md) — Step 1 migration (done; standing choice now in [AGENTS.md](../AGENTS.md)).
 - [archive/local-dev-environment-plan.md](./archive/local-dev-environment-plan.md) — local harness (built; commands in [dev-commands.md](./dev-commands.md)).
 - [archive/transcription-architecture.md](./archive/transcription-architecture.md), [archive/transcription-STATUS.md](./archive/transcription-STATUS.md) — transcription feature docs (forward-looking; post-MVP, not wired into Phase 1).
-- [archive/deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) — the AWS-admin bootstrap runbook (done; OIDC provider + state backend + per-env deploy roles created). Living deploy doc is [deploy-cicd-plan.md](./deploy-cicd-plan.md).
+- [archive/deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) — the AWS-admin bootstrap runbook (done; OIDC provider + state backend + per-env deploy roles created). Living deploy doc is [deploy-cicd-plan.md](./inprogress/deploy-cicd-plan.md).
+
+## ADRs — `adr/`
+
+**A**rchitecture **D**ecision **R**ecords: short, numbered, immutable notes capturing a
+significant architecture decision, its context, and the alternatives weighed — one file per
+decision (`NNNN-title.md`). They're the durable "why" behind the current design. We **supersede,
+never rewrite or delete**: a decision that changes gets a new ADR, and the old one's Status is
+marked superseded with a pointer forward (see [ADR 0001](./adr/0001-architecture-stack.md) →
+[ADR 0002](./adr/0002-datastore-dynamodb.md), the Postgres/Prisma → DynamoDB pivot).

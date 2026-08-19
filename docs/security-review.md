@@ -73,7 +73,7 @@ writes are anonymous. Prevention requires — and this is the rule every write p
 > `dynamodb:LeadingKeys`. The client never asserts its own site on a write.**
 
 **Decision — Option 3: the device is authenticated as the site.** We adopt the identity model
-already specified in [dynamodb-data-model.md](dynamodb-data-model.md) (§ Identity model): an
+already specified in [dynamodb-data-model.md](./inprogress/dynamodb-data-model.md) (§ Identity model): an
 Admin registers a device once during site setup; the device receives **short-lived STS
 credentials carrying a `custom:siteId` claim**; API calls are **SigV4-signed**; the write
 handler derives `siteId` **from the claim**; and `dynamodb:LeadingKeys = SITE#<siteId>` pins
@@ -88,7 +88,7 @@ revocation).
 
 **Shared dependency.** Option 3 needs a **device-provisioning / credential-vending backend**
 (invite codes + STS cred vending). This is the same building block the transcription workstream
-needs ([MVP-TODO](MVP-TODO.md)) — track it as a **shared dependency**, not transcription-only.
+needs ([MVP-TODO](./inprogress/MVP-TODO.md)) — track it as a **shared dependency**, not transcription-only.
 
 **Demo vs real-data posture.**
 
@@ -97,7 +97,7 @@ needs ([MVP-TODO](MVP-TODO.md)) — track it as a **shared dependency**, not tra
   below. Residual pollution risk is **accepted** because test data is wiped wholesale between
   cycles (consistent with the photo-handling decision above).
 - *Before any real (non-test) data:* **Option 3 must be implemented** (ties to Phase 6 tenant
-  isolation, [MVP-TODO](MVP-TODO.md)) and this section re-reviewed.
+  isolation, [MVP-TODO](./inprogress/MVP-TODO.md)) and this section re-reviewed.
 
 **Cross-cutting hardening** (applies regardless of identity phase — do these now where cheap):
 

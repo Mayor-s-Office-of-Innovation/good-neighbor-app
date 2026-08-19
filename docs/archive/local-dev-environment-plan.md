@@ -1,12 +1,12 @@
 # Plan: Local Development Environment for the Lambda Backend
 
-*DynamoDB planning set (doc 4 of 5) · [index](./README.md) · ← [analytics addendum](./analytics-plane-addendum.md) · next → [buildout plan](./dynamodb-buildout-plan.md)*
+*DynamoDB planning set (doc 4 of 5) · [index](../README.md) · ← [analytics addendum](../todo/analytics-plane-addendum.md) · next → [buildout plan](../dynamodb-buildout-plan.md)*
 
 **Status:** Built & verified E2E (2026-08-13) — DynamoDB adopted; harness live under `npm run dev -w backend`
 **Date:** 2026-08-12 (verified 2026-08-13)
 **Depends on:** [dynamodb-database-decision.md](./dynamodb-database-decision.md). This plan
 describes the **Docker-free** path, which is unlocked *by* adopting DynamoDB — the decided
-direction (see [ADR 0002](./adr/0002-datastore-dynamodb.md)). The now-moot Postgres alternative
+direction (see [ADR 0002](../adr/0002-datastore-dynamodb.md)). The now-moot Postgres alternative
 is kept for the record in [Fork: if we stay on Postgres](#fork-if-we-stay-on-postgres) at the
 end (the shape is the same but a container / local Postgres install would have come back).
 
@@ -50,7 +50,7 @@ already 90% there.
 
 - SDK v3 clients (`new SQSClient({})`) auto-read `AWS_ENDPOINT_URL` / `AWS_ENDPOINT_URL_SQS`
   — no code change needed to redirect them locally.
-- Extend [config.js](../backend/src/config.js) to carry a `dynamoTable` (and later
+- Extend [config.js](../../backend/src/config.js) to carry a `dynamoTable` (and later
   `uploadBucket` already exists) so the DynamoDB Document Client and handlers read the table
   name from env.
 - Add a local env file (e.g. `.env.local`, git-ignored) with the local endpoints, queue URL,
@@ -101,7 +101,7 @@ A small Node HTTP server (`scripts/local-api.mjs`) that:
 This is the arc.codes Sandbox experience rebuilt on our own code — a thing you can `curl`.
 
 **Done when:** `curl -X POST localhost:3000/submissions` with an `idempotency-key` header
-returns the `202 { status: "queued" }` from [submissions.js](../backend/src/handlers/submissions.js)
+returns the `202 { status: "queued" }` from [submissions.js](../../backend/src/handlers/submissions.js)
 and a message lands in ElasticMQ.
 
 ## Phase 4 — Auth stub (Cognito authorizer)
@@ -120,7 +120,7 @@ happens only in the cloud dev env.
 
 A small poller (`scripts/local-worker.mjs`) that long-polls ElasticMQ, wraps received
 messages in an `SQSEvent` shape, and invokes the **real** worker
-[process-submission.js](../backend/src/workers/process-submission.js) `handler`, then
+[process-submission.js](../../backend/src/workers/process-submission.js) `handler`, then
 deletes on success. This stands in for the Lambda event source mapping.
 
 **Done when:** a message produced in Phase 3 is picked up, the worker writes the item to
@@ -262,7 +262,7 @@ the single source of truth, and the only thing to keep in step is the route tabl
 ## Fork: if we stay on Postgres
 
 > **Superseded (2026-08-13):** DynamoDB was adopted (see
-> [ADR 0002](./adr/0002-datastore-dynamodb.md)), so this fork did **not** happen. Kept as an
+> [ADR 0002](../adr/0002-datastore-dynamodb.md)), so this fork did **not** happen. Kept as an
 > alternative-considered record.
 
 Had the DynamoDB decision **not** landed, this plan would still apply with two changes, and

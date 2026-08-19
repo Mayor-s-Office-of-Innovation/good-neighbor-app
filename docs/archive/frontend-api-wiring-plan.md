@@ -22,7 +22,7 @@ screen loads; the in-progress walk stays local.
   worker read-back match, cross-origin preflight 204. The full browser-driven upload leg is
   **now verified end-to-end (2026-08-16)** against the deployed analyzer, with a real
   `ANALYZER_API_KEY` + `AWS_ENDPOINT_URL_S3` in `.env.local`. See
-  [minio-local-s3.md](../minio-local-s3.md).
+  [dev-commands.md → Local S3 (MinIO)](../dev-commands.md#local-s3-minio).
 ### Blockers cleared — fileset re-review (2026-08-15)
 
 Both gates the "locked" decisions waited on are now resolved:
@@ -151,7 +151,7 @@ the post-submit poll. No `synced:false`, no queue.
 DynamoDB, no `synced:false`/queue. The photo-carrying submit path (write → presigned PUT → worker →
 analysis → poll) is **now also verified end-to-end in the browser (2026-08-16)** against the deployed
 analyzer — the harness needed a MinIO-enabled `.env.local` (`AWS_ENDPOINT_URL_S3` + a real
-`ANALYZER_API_KEY`; see [minio-local-s3.md](../minio-local-s3.md)). All acceptance criteria met.
+`ANALYZER_API_KEY`; see [dev-commands.md → Local S3 (MinIO)](../dev-commands.md#local-s3-minio)). All acceptance criteria met.
 
 ## Known gaps (as-built)
 
