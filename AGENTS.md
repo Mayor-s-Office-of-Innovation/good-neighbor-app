@@ -20,8 +20,8 @@ Migration is in progress; read the linked plans before following the standing ch
 - **Frontend migration (JS+JSDoc, then `gnp` adoption): Steps 1 & 2 DONE (2026-08-12).** The
   backend is JavaScript + JSDoc with the `typecheck` gate in CI, and the `gnp` prototype is
   now the `frontend/` — built and green under a lenient `checkJs` gate. See
-  [docs/archive/js-and-jsdoc-migration-plan.md](docs/archive/js-and-jsdoc-migration-plan.md) (Step 1) and
-  [docs/gnp-frontend-migration-plan.md](docs/gnp-frontend-migration-plan.md) (Step 2 — still
+  [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md) (Step 1) and
+  docs/gnp-frontend-migration-plan.md (Step 2 — still
   the tracker for the open backend/auth/deploy decisions D1–D4 and I1).
 - **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
   for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
@@ -37,7 +37,7 @@ Migration is in progress; read the linked plans before following the standing ch
   without a transpile step by type-checking `.js` files with the TypeScript compiler in
   `checkJs` mode, expressing types in JSDoc. `tsc --noEmit` (run as `npm run typecheck`
   in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
-  [docs/archive/js-and-jsdoc-migration-plan.md](docs/archive/js-and-jsdoc-migration-plan.md). (Both backend
+  [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md). (Both backend
   and frontend are now migrated to JS+JSDoc — see Active Plans above.)
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.

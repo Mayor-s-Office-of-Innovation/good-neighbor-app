@@ -20,14 +20,17 @@ path, deploy/harden gates, and post-MVP tracks. Each item links to the plan that
 
 ## Migration — frontend (DONE, Aug 2026)
 
-The completed 3-step frontend migration, in order:
+The 3-step frontend migration is complete; the planning docs have been retired and their
+decisions codified as ADRs:
 
-1. **[js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md)** — _Step 1._ Drop
-   TypeScript syntax for JavaScript + JSDoc (type safety via `tsc --checkJs`, no transpile).
-   _Done — backend + repo config; the standing choice is codified in [AGENTS.md](../AGENTS.md). Archived._
-2. **[gnp-frontend-migration-plan.md](./gnp-frontend-migration-plan.md)** — _Step 2._ Adopt
-   the `gnp` prototype as `frontend/`. _Frontend port done and green; still the tracker for
-   the open backend/auth/deploy decisions (D1–D4, I1) and the deferred offline pass._
+1. **JS + JSDoc — [ADR 0004](./adr/0004-javascript-with-jsdoc.md)** — _Step 1._ Drop TypeScript
+   syntax for JavaScript + JSDoc (type safety via `tsc --checkJs`, no transpile). Done — backend
+   + repo config; the standing choice is codified in [AGENTS.md](../AGENTS.md).
+2. **Adopt the `gnp` prototype as `frontend/`** — _Step 2._ Done and green. Its once-open
+   decisions are now settled: auth (API-key-per-consumer) and the deferred offline pass are
+   tracked in [MVP-TODO](./inprogress/MVP-TODO.md); datastore is
+   [ADR 0002](./adr/0002-datastore-dynamodb.md); the backend contract is
+   [ADR 0005](./adr/0005-online-api-client-no-sync.md).
 
 Step 3 (continue features from `gnp`'s design docs) has not started.
 
@@ -40,19 +43,18 @@ three once-open decisions are settled too (metric formulas settled; city cross-s
 deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
 in this order:**
 
-1. **[dynamodb-database-decision.md](./archive/dynamodb-database-decision.md)** — _start here._ Why
+1. **The decision — [ADR 0002](./adr/0002-datastore-dynamodb.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
-   _(Archived — [ADR 0002](./adr/0002-datastore-dynamodb.md) is now the canonical record; kept for the backing rationale.)_
 2. **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the single-table model, access
    patterns, GSIs, tenant isolation, and the identity model (device-as-site). The "how it's
    shaped."
 3. **[analytics-plane-addendum.md](./todo/analytics-plane-addendum.md)** — city-wide reporting:
    Tier 1 live counters + Tier 2 (S3-export → Athena), with complexity and cost (~$5–15/mo).
    Extends doc 2. The "how reporting works."
-4. **[local-dev-environment-plan.md](./archive/local-dev-environment-plan.md)** — the Docker-free local
-   harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why not Architect /
-   SAM / LocalStack). The "how we run it locally." _Harness built & verified; run commands live in
-   [dev-commands.md](./dev-commands.md). Archived — kept for the alternatives-considered rationale._
+4. **The local harness — [ADR 0006](./adr/0006-docker-free-local-dev-harness.md)** — the
+   Docker-free local harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why
+   not Architect / SAM / LocalStack). The "how we run it locally." Built & verified; run commands
+   live in [dev-commands.md](./dev-commands.md).
 5. **[dynamodb-buildout-plan.md](./inprogress/dynamodb-buildout-plan.md)** — _capstone._ The phased
    Terraform + code build plan (table → app cutover → analytics), sequenced to a queryable
    Athena prototype. References docs 1–4. The "how we build it."
@@ -67,22 +69,22 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
   an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
   from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
   via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
-  deploying. Grounded in [D1/D2/D3](./gnp-frontend-migration-plan.md) + the
+  deploying. Grounded in D1/D2/D3 + the
   [data model](./dynamodb-data-model.md).
 - **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
   creates/resolves guidance tasks in a deterministic sequence. Phases 1–7 are implemented.
 
-## Frontend ↔ backend wiring (plan, Aug 2026 — **done, archived**)
+## Frontend ↔ backend wiring (DONE, Aug 2026)
 
-- **[archive/frontend-api-wiring-plan.md](./archive/frontend-api-wiring-plan.md)** — wire the field
+- **Online `api.js` — [ADR 0005](./adr/0005-online-api-client-no-sync.md)** — wire the field
   app to the backend with a **thin online `api.js`** (write-on-submit, read-on-load, one short poll
   for async results) rather than a sync system. The `synced:false` / sync-layer machinery is
   offline-only, so it defers with offline. Depended on the analysis-backend Step C endpoints.
   **Done for MVP (2026-08-16)** — write+read cutover, photo leg E2E, worklist on real `listTasks`,
   hazard triage off the authoritative `TASK#.type` (client mirror deleted); only the post-MVP
-  confidence-% placeholder remains. **Archived.**
+  confidence-% placeholder remains.
 
 ## Frontend — design & UI
 
@@ -106,16 +108,6 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
 - [dev-commands.md](./dev-commands.md) — developer command reference (setup, CI checks, local harness)
 - [sdlc-level-2-checklist.md](./sdlc-level-2-checklist.md), [security-review.md](./security-review.md) — SDLC / security process
-
-## Archive
-
-Docs whose work is **done and codified elsewhere**, or **deferred post-MVP** — kept for the
-historical/design record, not part of the active plan set. See [archive/](./archive/):
-
-- [archive/js-and-jsdoc-migration-plan.md](./archive/js-and-jsdoc-migration-plan.md) — Step 1 migration (done; standing choice now in [AGENTS.md](../AGENTS.md)).
-- [archive/local-dev-environment-plan.md](./archive/local-dev-environment-plan.md) — local harness (built; commands in [dev-commands.md](./dev-commands.md)).
-- [archive/transcription-architecture.md](./archive/transcription-architecture.md), [archive/transcription-STATUS.md](./archive/transcription-STATUS.md) — transcription feature docs (forward-looking; post-MVP, not wired into Phase 1).
-- [archive/deploy-admin-bootstrap.md](./archive/deploy-admin-bootstrap.md) — the AWS-admin bootstrap runbook (done; OIDC provider + state backend + per-env deploy roles created). Living deploy doc is [deploy-cicd-plan.md](./inprogress/deploy-cicd-plan.md).
 
 ## ADRs — `adr/`
 

@@ -1,6 +1,6 @@
 # Plan: Analysis-Backend Lambdas (perimeter-check API + server-mediated analyze)
 
-*Build plan · [index](../README.md) · grounded in [D1/D2](../gnp-frontend-migration-plan.md) ·
+*Build plan · [index](../README.md) · grounded in D1/D2 ·
 builds on [data model](../dynamodb-data-model.md) · reconciles with
 [buildout Phase 2](./dynamodb-buildout-plan.md)*
 
