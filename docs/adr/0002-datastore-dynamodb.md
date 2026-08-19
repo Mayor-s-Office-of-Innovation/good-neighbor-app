@@ -16,9 +16,7 @@ operational model with no connection-pooling (RDS Proxy) concerns for Lambda. Cr
 analytical reporting is handled by a CQRS read plane (DynamoDB Streams → Tier-1 counters and
 a Tier-2 S3/Athena lake) rather than the operational table.
 
-The full analysis — including the honest Postgres fork — is in
-[dynamodb-database-decision.md](../archive/dynamodb-database-decision.md), validated against real
-access patterns in [dynamodb-data-model.md](../dynamodb-data-model.md).
+The access patterns are validated in [dynamodb-data-model.md](../dynamodb-data-model.md).
 
 ## Decision
 
