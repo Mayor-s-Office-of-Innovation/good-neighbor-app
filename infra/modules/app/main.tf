@@ -433,7 +433,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
 
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 

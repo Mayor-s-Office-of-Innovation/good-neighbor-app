@@ -760,6 +760,7 @@ export async function markTaskCannotDo(opts) {
     new GetCommand({
       TableName: opts.tableName,
       Key: taskKey(opts.siteId, opts.taskId),
+      ConsistentRead: true,
     }),
   );
   if (!existing.Item) {
@@ -835,6 +836,7 @@ export async function completeTaskWithAppActions(opts) {
     new GetCommand({
       TableName: opts.tableName,
       Key: taskKey(opts.siteId, opts.taskId),
+      ConsistentRead: true,
     }),
   );
   if (!existing.Item) {

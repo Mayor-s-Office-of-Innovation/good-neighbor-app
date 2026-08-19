@@ -47,7 +47,9 @@ describe("listTasks", () => {
     expect(q).toBeInstanceOf(QueryCommand);
     expect(q.input.IndexName).toBe("GSI2");
     expect(q.input.KeyConditionExpression).toBe("gsi2pk = :pk");
-    expect(q.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1#TASK#open");
+    expect(q.input.ExpressionAttributeValues[":pk"]).toBe(
+      "SITE#site-1#TASK#open",
+    );
   });
 
   it("honors an explicit status", async () => {
@@ -56,7 +58,9 @@ describe("listTasks", () => {
     await invoke(readEvent({ siteClaim: "site-1", query: { status: "done" } }));
 
     const q = send.mock.calls[0][0];
-    expect(q.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1#TASK#done");
+    expect(q.input.ExpressionAttributeValues[":pk"]).toBe(
+      "SITE#site-1#TASK#done",
+    );
   });
 
   // Regression: GSI2's sort key is date-first, so the index cannot order by
@@ -66,8 +70,16 @@ describe("listTasks", () => {
     send.mockResolvedValueOnce({
       Items: [
         { taskId: "t-low", severity: 1, createdAt: "2026-08-18T00:00:00.000Z" },
-        { taskId: "t-high-old", severity: 4, createdAt: "2026-08-10T00:00:00.000Z" },
-        { taskId: "t-high-new", severity: 4, createdAt: "2026-08-15T00:00:00.000Z" },
+        {
+          taskId: "t-high-old",
+          severity: 4,
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        {
+          taskId: "t-high-new",
+          severity: 4,
+          createdAt: "2026-08-15T00:00:00.000Z",
+        },
         { taskId: "t-mid", severity: 2, createdAt: "2026-08-19T00:00:00.000Z" },
       ],
     });
