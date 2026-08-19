@@ -8,3 +8,18 @@ output "submission_queue_url" {
   value       = module.app.submission_queue_url
 }
 
+output "api_url" {
+  description = "Base invoke URL of the HTTP API (for the frontend build + /health smoke test)."
+  value       = module.app.api_url
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution id (env-scoped cache invalidation)."
+  value       = module.app.cloudfront_distribution_id
+}
+
+output "cloudfront_domain_name" {
+  description = "CloudFront domain name serving the frontend."
+  value       = module.app.cloudfront_domain_name
+}
+

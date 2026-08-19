@@ -18,3 +18,9 @@ variable "tags" {
   type        = map(string)
 }
 
+variable "analyzer_base_url" {
+  description = "Base URL of the external analyzer service (empty until it deploys)."
+  type        = string
+  default     = ""
+}
+
