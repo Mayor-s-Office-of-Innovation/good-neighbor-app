@@ -7,6 +7,8 @@
     "build": "echo 'backend: no build step (JSDoc, deployed as source)'",
     "build:lambdas": "node scripts/build-lambdas.mjs",
     "lint": "eslint src",
+    "policy:diff": "node scripts/policy-diff.mjs",
+    "policy:validate": "node scripts/policy-validate.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "local:ddb": "node scripts/local-ddb.mjs",

@@ -178,7 +178,7 @@ describe("completeCheck", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("synthesizes the worst grade, builds routed tasks, and writes the scorecard atomically", async () => {
+  it("synthesizes the worst grade, writes the scorecard, and returns an assessment envelope", async () => {
     send.mockResolvedValueOnce({
       Items: [
         analyzedItem("art_1", "north", "Fair", "Litter", 2),
@@ -213,23 +213,34 @@ describe("completeCheck", () => {
     expect(header.ExpressionAttributeValues[":issueCount"]).toBe(2);
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
 
-    // One task per concerning category, routed by the placeholder matrix.
-    const tasks = items.slice(1).map((t) => t.Put.Item);
-    const byCategory = Object.fromEntries(tasks.map((t) => [t.category, t]));
-    expect(byCategory["Litter"].type).toBe("onsite");
-    expect(byCategory["Litter"].severity).toBe(2);
-    expect(byCategory["Litter"].status).toBe("open");
-    expect(byCategory["Litter"].sourceArtifactIds).toEqual(["art_1"]);
-    expect(byCategory["Hazardous Waste"].type).toBe("city_escalation");
-    // Worklist GSI: partitioned by status, sorted severity#createdAt.
-    expect(byCategory["Hazardous Waste"].gsi2pk).toBe("SITE#site-1#TASK#open");
-    expect(byCategory["Hazardous Waste"].gsi2sk).toMatch(/^4#/);
+    // Phase 4: complete only updates the check header. Guidance tasks are
+    // created by POST /v1/assessments:evaluate from the returned envelope.
+    expect(items).toHaveLength(1);
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
       grade: "Poor",
-      taskCount: 2,
+      assessmentReady: true,
+      assessment: {
+        assessmentId: "chk_01",
+        checkId: "chk_01",
+        grade: "Poor",
+        conditions: [
+          {
+            conditionId: "001-litter",
+            category: "Litter",
+            severity: 2,
+            sourceArtifactIds: ["art_1"],
+          },
+          {
+            conditionId: "002-hazardous-waste",
+            category: "Hazardous Waste",
+            severity: 4,
+            sourceArtifactIds: ["art_2"],
+          },
+        ],
+      },
     });
   });
 
@@ -255,14 +266,12 @@ describe("completeCheck", () => {
     const items = /** @type {any[]} */ (
       send.mock.calls[1][0].input.TransactItems
     );
-    // Grade comes only from the analyzed artifact; the marker adds no task.
+    // Grade comes only from the analyzed artifact; no tasks are written here.
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBe("Fair");
-    const tasks = items.slice(1).map((t) => t.Put.Item);
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].category).toBe("Litter");
+    expect(items).toHaveLength(1);
   });
 
-  it("completes a check with no analyses (null grade, no tasks)", async () => {
+  it("completes a check with no analyses (null grade, empty assessment)", async () => {
     send.mockResolvedValueOnce({ Items: [] });
     send.mockResolvedValueOnce({});
 
@@ -278,11 +287,12 @@ describe("completeCheck", () => {
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBeNull();
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
-      taskCount: 0,
+      assessmentReady: true,
+      assessment: { conditions: [] },
     });
   });
 
-  it("treats a re-completed check as an idempotent success (no duplicate tasks)", async () => {
+  it("treats a re-completed check as an idempotent success", async () => {
     send.mockResolvedValueOnce({ Items: [] });
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
@@ -298,6 +308,12 @@ describe("completeCheck", () => {
     expect(JSON.parse(res.body)).toMatchObject({
       checkId: "chk_01",
       status: "completed",
+      assessmentReady: true,
+      assessment: {
+        assessmentId: "chk_01",
+        checkId: "chk_01",
+        conditions: [],
+      },
     });
   });
 });

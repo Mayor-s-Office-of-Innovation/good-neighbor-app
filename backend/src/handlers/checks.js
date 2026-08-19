@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   PutCommand,
   QueryCommand,
@@ -9,7 +8,6 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
-import { classifyTask } from "../analysis/task-routing.js";
 import {
   checkAnalysisPrefix,
   checkArtifactPrefix,
@@ -18,8 +16,6 @@ import {
   checkTimelineGsi,
   GSI1_NAME,
   sitePk,
-  taskKey,
-  taskWorklistGsi,
 } from "./keys.js";
 
 /**
@@ -85,14 +81,12 @@ export const createCheck = async (event) => {
 /**
  * POST /v1/checks/{checkId}/complete — close out a perimeter run: fold every
  * analyzed artifact into one scorecard (worst grade across sides, per-category
- * max rating), classify each category into an action item via the placeholder
- * escalation matrix, and persist the header scorecard + tasks atomically.
+ * max rating), persist the header scorecard, and return an assessment envelope
+ * that can be sent to the guidance evaluator.
  *
  * The header update is conditional on the check not already being `completed`,
- * so a replay can't mint a second set of tasks — and because the whole write is
- * one TransactWrite, either the scorecard and all its tasks land together or
- * nothing does. Failed-analysis markers carry no `concerns`, so they are
- * excluded from synthesis here.
+ * so completion is idempotent. Failed-analysis markers carry no `concerns`, so
+ * they are excluded from synthesis here.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const completeCheck = async (event) => {
@@ -128,33 +122,12 @@ export const completeCheck = async (event) => {
   const scorecard = synthesizeCheck(analyzed);
 
   const now = new Date().toISOString();
-
-  // One action item per concerning category, routed by the placeholder matrix.
-  /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
-  const taskPuts = [];
-  for (const category of scorecard.categories) {
-    const type = classifyTask(category.category, category.maxRating);
-    if (!type) continue;
-    const taskId = randomUUID();
-    taskPuts.push({
-      Put: {
-        TableName: dynamoTable,
-        Item: {
-          ...taskKey(siteId, taskId),
-          ...taskWorklistGsi(siteId, "open", category.maxRating, now),
-          taskId,
-          checkId,
-          type,
-          category: category.category,
-          severity: category.maxRating,
-          status: "open",
-          sourceArtifactIds: category.sourceArtifactIds,
-          createdAt: now,
-        },
-        ConditionExpression: "attribute_not_exists(sk)",
-      },
-    });
-  }
+  const assessment = buildGuidanceAssessment({
+    checkId,
+    completedAt: now,
+    scorecard,
+    analyzed,
+  });
 
   /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>[number]} */
   const headerUpdate = {
@@ -181,14 +154,20 @@ export const completeCheck = async (event) => {
   try {
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [headerUpdate, ...taskPuts],
+        TransactItems: [headerUpdate],
       }),
     );
   } catch (err) {
     if (err instanceof Error && err.name === "TransactionCanceledException") {
-      // Already completed (idempotent replay) — the header condition held it
-      // back, so no duplicate tasks were created.
-      return jsonResponse(200, { checkId, status: "completed" });
+      return jsonResponse(200, {
+        checkId,
+        status: "completed",
+        grade: scorecard.grade,
+        issueCount: scorecard.issueCount,
+        maxSeverity: scorecard.maxSeverity,
+        assessmentReady: true,
+        assessment,
+      });
     }
     throw err;
   }
@@ -199,9 +178,65 @@ export const completeCheck = async (event) => {
     grade: scorecard.grade,
     issueCount: scorecard.issueCount,
     maxSeverity: scorecard.maxSeverity,
-    taskCount: taskPuts.length,
+    assessmentReady: true,
+    assessment,
   });
 };
+
+/**
+ * @param {object} opts
+ * @param {string} opts.checkId
+ * @param {string} opts.completedAt
+ * @param {import("../analysis/synthesize-check.js").CheckScorecard} opts.scorecard
+ * @param {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} opts.analyzed
+ * @returns {{ assessmentId: string, checkId: string, reportedAt: string, rubricVersion: string | null, grade: import("../analysis/contract.js").GeneralConditionsLabel | null, conditions: { conditionId: string, category: string, severity: number, description?: string, sourceArtifactIds: string[] }[], rawAssessment: Record<string, unknown> }}
+ */
+function buildGuidanceAssessment({
+  checkId,
+  completedAt,
+  scorecard,
+  analyzed,
+}) {
+  return {
+    assessmentId: checkId,
+    checkId,
+    reportedAt: completedAt,
+    rubricVersion: scorecard.rubricVersion,
+    grade: scorecard.grade,
+    conditions: scorecard.categories.map((category, index) => ({
+      conditionId: `${String(index + 1).padStart(3, "0")}-${category.category
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")}`,
+      category: category.category,
+      severity: category.maxRating,
+      description: firstConcernExplanation(analyzed, category.category),
+      sourceArtifactIds: category.sourceArtifactIds,
+    })),
+    rawAssessment: {
+      checkId,
+      completedAt,
+      grade: scorecard.grade,
+      rubricVersion: scorecard.rubricVersion,
+      categories: scorecard.categories,
+    },
+  };
+}
+
+/**
+ * @param {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} analyzed
+ * @param {string} category
+ * @returns {string | undefined}
+ */
+function firstConcernExplanation(analyzed, category) {
+  for (const artifact of analyzed) {
+    const concern = artifact.adapted.concerns.find(
+      (item) => item.category === category,
+    );
+    if (concern?.explanation) return concern.explanation;
+  }
+  return undefined;
+}
 
 // Opaque pagination cursor: the DynamoDB LastEvaluatedKey round-tripped as
 // base64 JSON so clients pass it back verbatim without seeing key internals.

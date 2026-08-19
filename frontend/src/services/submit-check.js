@@ -22,6 +22,7 @@ import {
   uploadArtifact,
   waitForAnalyses,
   completeCheck,
+  evaluateAssessment,
   getCheck,
   listTasks,
 } from "./api.js";
@@ -64,13 +65,17 @@ export async function submitCheck() {
     });
   }
 
-  // 3. Let the analyses land (worker → analyzer), then close the run out —
-  //    complete folds the analyzed artifacts into one scorecard and mints tasks.
+  // 3. Let the analyses land (worker → analyzer), then close the run out.
+  //    Completion folds artifacts into an assessment; evaluation mints tasks.
   await waitForAnalyses(active.id, { expected: photos.length });
-  await completeCheck(active.id);
+  const completion = await completeCheck(active.id);
+  if (!completion.assessmentReady || !completion.assessment) {
+    throw new Error("Check completed without an assessment to evaluate.");
+  }
+  await evaluateAssessment(completion.assessment);
 
   // 4. Read the authoritative completed check + analyses and adapt to findings.
-  //    complete just minted the TASK# items, so fetch them to classify each
+  //    assessment evaluation just minted immediately resolvable TASK# items, so fetch them to classify each
   //    finding city-vs-handle from the backend's stamped `type` (no client-side
   //    escalation rule). 5e reads these findings + the session photos.
   const [detail, { tasks }] = await Promise.all([
