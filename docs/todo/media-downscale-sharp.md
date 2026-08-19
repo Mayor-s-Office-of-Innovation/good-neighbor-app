@@ -22,9 +22,13 @@ input unchanged. This is a drop-in swap: no worker or handler changes, just a re
 - **`sharp` ships a native binary**, which is a Lambda packaging concern — the esbuild bundler in
   [`build-lambdas.mjs`](../../backend/scripts/build-lambdas.mjs) intentionally does **not** pull it
   in yet (it would need a platform-correct binary / Lambda layer for `linux-x64`/`arm64`).
-- The MVP analyze path works without it: the analyzer client maps a `413 input_too_large` to a
-  retryable error, and current capture sizes have not been the binding constraint. The passthrough
-  is honest and covered by a test.
+- The MVP analyze path works without it: current capture sizes have not hit the analyzer's image
+  limit. Note the safety net is thinner than it sounds — a `413` is **not** retryable (it isn't in
+  the client's `RETRYABLE_STATUS`, and re-sending the same oversized bytes would just 413 again), so
+  if one ever came back the worker would `markFailed` that artifact (a permanent "failed" ANALYSIS#
+  marker), dropping that photo's analysis rather than recovering. Acceptable for disposable test
+  data, but that dropped analysis is exactly what the real downscale prevents. The passthrough is
+  honest and covered by a test.
 
 ## Why we'll want it eventually
 

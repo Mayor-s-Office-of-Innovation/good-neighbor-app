@@ -45,8 +45,11 @@ graduates to `docs/runbooks/rollback.md`. GNP is Terraform, so rollback is
 3. For **dev**, the merge auto-redeploys. For **prod**, merge the revert `dev`→`main` and **publish
    a new Release** (e.g. `v…-rollback`) to deploy through the same gated workflow.
 4. Re-run the **`/health` smoke test**.
-5. **State drift / partial apply:** if an apply half-failed, re-run `terraform apply` to converge;
-   only touch state manually (`state rm`/import) with an owner's sign-off and never hand-edit state.
+5. **State drift / partial apply:** if an apply half-failed, converge by re-running the apply
+   **through the gated deploy workflow** (re-run the deploy job, or publish a rollback release for
+   prod) — **never** run a local `terraform apply` against shared prod remote state, which bypasses
+   CI and the approval/audit trail. Touch state manually (`state rm`/import) only with an owner's
+   sign-off, and never hand-edit state.
 6. Record incident, root cause, follow-up issue.
 
 Avoid out-of-band console changes except in a declared emergency with owner approval — they cause

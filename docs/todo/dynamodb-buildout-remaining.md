@@ -54,11 +54,17 @@ city-report queries return results in Athena. **At this point you can feel the s
 
 ## Phase 5 — Tier 1 live aggregates
 
-- Aggregator **Lambda** subscribed to the table Stream; maintains **daily**
-  `STATS#<yyyy-mm-dd>/SITE#<id>` counter items (raw components: checksCompleted, severitySum,
-  issueCount, hazardCount) via atomic `ADD`, guarded for **idempotent** reprocessing. Scores are
-  computed at read via a shared scoring module (cleanliness/compliance formulas from the
-  [data model](../dynamodb-data-model.md) *Metric definitions*), not stored. Neither the aggregator
+- Aggregator **Lambda** subscribed to the table Stream; maintains the **per-site daily** counter
+  item `SITE#<id>` / `#STATS#<yyyy-mm-dd>` (the orientation documented in the
+  [data model](../dynamodb-data-model.md)) via atomic `ADD`, guarded for **idempotent**
+  reprocessing. Raw components follow the **grade-based** model settled 2026-08-14 (see the data
+  model's *Metric definitions* revision): `checksCompleted` (for compliance) plus the surviving
+  `issueCount`/`maxSeverity`. **Do not** write `severitySum` or `hazardCount` — both were retired
+  when the check `grade` (`general_conditions.label`) replaced the severity-average cleanliness
+  formula and `hazard_detected` left the contract. Cross-site cleanliness ranking now rolls up
+  `grade`, not a severity sum — the exact grade rollup and the cross-site ranking item
+  (`STATS#<date>` / `<score>#<siteId>`) should follow the revised *Metric definitions* when this is
+  built. Scores are computed at read via a shared scoring module, not stored. Neither the aggregator
   nor the scoring module exists yet; the Stream is enabled and its ARN is output, but nothing
   consumes it.
 - **Citywide reporting KPI reads:** wire the app's KPI reads (best/worst, compliance) to a single
