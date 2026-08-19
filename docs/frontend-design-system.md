@@ -2,11 +2,6 @@
 
 **Status:** living reference · **Date:** 2026-08-12
 
-A practical guide to building a new screen that **matches the app's look without a mockup**.
-The design was ported from the wireframes into a small, reusable class + token system; this
-doc names those pieces so you compose from them instead of inventing per-screen styles.
-
-**Source of truth (read the code, this doc points at it):**
 
 - [frontend/src/styles/tokens.css](../frontend/src/styles/tokens.css) — every color, radius,
   and shadow, plus the light/dark values. **Never hard-code a hex; always use a token.**
@@ -102,7 +97,7 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 ## Forms
 
 Form controls are **Web Awesome** components (`wa-input`, `wa-select`, `wa-textarea`,
-`wa-checkbox`, `wa-callout`, `wa-spinner`). They theme off the `--wa-*` tokens and the
+`wa-checkbox`, `wa-spinner`). They theme off the `--wa-*` tokens and the
 `.wa-dark`/`.wa-light` class, so there's little to style yourself — drop them into a
 `.screen__sec` (often a `.stack`) and let them theme. Use a native `<button class="btn-ink">`
 for the submit, not a WA button.
