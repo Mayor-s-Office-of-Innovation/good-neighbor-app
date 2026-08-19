@@ -912,53 +912,21 @@ theme-toggle {
 .guidance-harness__controls--three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.guidance-harness label,
-.guidance-harness__json-label {
-  color: var(--text);
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-.guidance-harness input,
-.guidance-harness select,
-.guidance-harness textarea {
+.guidance-harness wa-select,
+.guidance-harness wa-input,
+.guidance-harness wa-textarea {
   width: 100%;
-  margin-top: 0.35rem;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
 }
-.guidance-harness input,
-.guidance-harness select {
-  min-height: 42px;
-  padding: 0.5rem 0.65rem;
-}
-.guidance-harness__checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+
+.guidance-harness wa-checkbox {
   margin-bottom: 0.85rem;
 }
-.guidance-harness__checkbox input {
-  width: auto;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-}
-.guidance-harness textarea {
+
+.guidance-harness wa-textarea::part(textarea) {
   min-height: 430px;
-  resize: vertical;
-  padding: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.86rem;
   line-height: 1.45;
-}
-.guidance-harness input:focus-visible,
-.guidance-harness select:focus-visible,
-.guidance-harness textarea:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
 }
 .guidance-harness__actions,
 .guidance-question__actions {

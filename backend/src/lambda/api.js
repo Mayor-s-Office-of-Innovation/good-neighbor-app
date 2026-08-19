@@ -17,6 +17,13 @@ import {
   presignMedia,
 } from "../handlers/artifacts.js";
 import { listTasks } from "../handlers/tasks.js";
+import {
+  cannotDoTask,
+  completeTask,
+  evaluateAssessment,
+  getGuidance,
+  submitConditionAnswers,
+} from "../handlers/guidance.js";
 import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
@@ -37,6 +44,13 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/checks/{checkId}": getCheck,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  "POST /v1/tasks/{taskId}/complete": completeTask,
+  "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
+  // Assessment guidance workflow
+  "POST /v1/assessments:evaluate": evaluateAssessment,
+  "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
+  "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
+    submitConditionAnswers,
   // Legacy demo submission loop + health
   "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,

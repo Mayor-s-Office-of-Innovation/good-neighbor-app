@@ -101,10 +101,7 @@ function evaluationFingerprint(result) {
       kind: result.kind,
       category: result.category,
       ruleId: result.rule.ruleId,
-      outcomeKind: result.outcome.kind,
-      label: result.outcome.label,
-      appActions: result.outcome.appActions,
-      category311: result.outcome.category311,
+      outcome: result.outcome,
     };
   }
   if (result.kind === "needs_answer") {

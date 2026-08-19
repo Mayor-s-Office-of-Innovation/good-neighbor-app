@@ -132,6 +132,52 @@ describe("guidance handlers", () => {
     });
   });
 
+  it("does not treat a canceled evaluation as idempotent without stored guidance", async () => {
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("cancelled"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({ Items: [] });
+
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: [{ category: "Litter", severity: 3 }],
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(parse(res)).toEqual({
+      error: "Assessment evaluation was not stored",
+    });
+  });
+
+  it("rejects assessments that exceed the transaction budget", async () => {
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: Array.from({ length: 50 }, (_, index) => ({
+            category: "Litter",
+            severity: index % 6,
+          })),
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(parse(res).error).toContain("Too many conditions");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("gets assessment guidance with condition tasks", async () => {
     send.mockResolvedValueOnce({ Item: { assessmentId: "asm-1" } });
     send.mockResolvedValueOnce({
@@ -160,10 +206,30 @@ describe("guidance handlers", () => {
     send.mockResolvedValueOnce({
       Item: {
         pk: "SITE#site-1",
+        sk: "ASSESSMENT#asm-1",
+        assessmentId: "asm-1",
+        status: "needs_answers",
+        policyVersion: "actions-escalations-v2",
+        summary: {
+          totalConditions: 1,
+          conditionsNeedAnswer: 1,
+          conditionsResolvedToTasks: 0,
+          openTaskCount: 0,
+          actionCount: 0,
+          escalationCount: 0,
+          emergencyCount: 0,
+          manualReviewCount: 0,
+        },
+      },
+    });
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
         sk: "ASSESSMENT#asm-1#COND#cond-1",
         conditionId: "cond-1",
         assessmentId: "asm-1",
         checkId: "chk-1",
+        policyVersion: "actions-escalations-v2",
         status: "needs_answer",
         analyzerCategory: "Graffiti",
         canonicalCategory: "Graffiti",
@@ -186,9 +252,19 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[1][0];
+    const tx = send.mock.calls[2][0];
     expect(tx).toBeInstanceOf(TransactWriteCommand);
-    const condition = tx.input.TransactItems[0].Put.Item;
+    const assessment = tx.input.TransactItems[0].Put.Item;
+    expect(assessment).toMatchObject({
+      status: "tasks_created",
+      summary: {
+        conditionsNeedAnswer: 0,
+        conditionsResolvedToTasks: 1,
+        openTaskCount: 1,
+        escalationCount: 1,
+      },
+    });
+    const condition = tx.input.TransactItems[1].Put.Item;
     expect(condition).toMatchObject({
       status: "tasks_created",
       selectedRuleId: "GRAFFITI-2",
@@ -196,7 +272,7 @@ describe("guidance handlers", () => {
       resolvedToTasks: true,
     });
     expect(condition).not.toHaveProperty("gsi5pk");
-    expect(tx.input.TransactItems[1].Put.Item).toMatchObject({
+    expect(tx.input.TransactItems[2].Put.Item).toMatchObject({
       ruleId: "GRAFFITI-2",
       conditionId: "cond-1",
       kind: "escalation",
@@ -209,6 +285,7 @@ describe("guidance handlers", () => {
         pk: "SITE#site-1",
         sk: "TASK#task-1",
         taskId: "task-1",
+        status: "open",
         kind: "action",
         severity: 2,
         cannotDoReasons: ["It doesn't feel safe"],
@@ -240,6 +317,7 @@ describe("guidance handlers", () => {
         pk: "SITE#site-1",
         sk: "TASK#task-1",
         taskId: "task-1",
+        status: "open",
         kind: "escalation",
         severity: 3,
         appActions: [
@@ -247,6 +325,7 @@ describe("guidance handlers", () => {
         ],
       },
     });
+    send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
 
     const res = await invoke(
@@ -258,17 +337,17 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[1][0];
+    const tx = send.mock.calls[2][0];
     expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
       status: "completed",
       completionMethod: "button",
-      appActionStatus: "submitted",
+      appActionStatus: "not_configured",
       gsi2pk: "SITE#site-1#TASK#completed",
       appActionResults: [
         {
           code: "create_311_ticket",
-          status: "submitted",
-          externalId: "stub-311-task-1",
+          status: "not_configured",
+          reason: "311_client_unavailable",
         },
       ],
     });

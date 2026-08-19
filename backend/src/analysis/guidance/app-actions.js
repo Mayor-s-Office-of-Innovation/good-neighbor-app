@@ -56,8 +56,8 @@ export function executeAppActions(appActions, opts = {}) {
         }
         return {
           code: action.code,
-          status: "submitted",
-          externalId: `stub-311-${opts.taskId ?? "unknown"}`,
+          status: "not_configured",
+          reason: "311_client_unavailable",
           payload,
           recordedAt: now,
         };

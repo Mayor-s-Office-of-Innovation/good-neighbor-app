@@ -45,7 +45,7 @@ describe("app action execution", () => {
     ]);
   });
 
-  it("records a stub 311 submission when the feature flag is enabled", () => {
+  it("does not record a successful 311 submission without a real client", () => {
     expect(
       executeAppActions(
         [{ code: "create_311_ticket", payload: { category311: "Cleaning" } }],
@@ -58,8 +58,8 @@ describe("app action execution", () => {
     ).toEqual([
       {
         code: "create_311_ticket",
-        status: "submitted",
-        externalId: "stub-311-task-1",
+        status: "not_configured",
+        reason: "311_client_unavailable",
         payload: { category311: "Cleaning" },
         recordedAt: "2026-08-18T12:00:00.000Z",
       },
