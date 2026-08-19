@@ -4,6 +4,7 @@ import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import {
   answerCondition,
+  completeTaskWithAppActions,
   getAssessmentGuidance,
   markTaskCannotDo,
   storeEvaluatedAssessment,
@@ -256,6 +257,45 @@ export const cannotDoTask = async (event) => {
     }
     if (err instanceof Error && err.name === "InvalidReason") {
       return jsonResponse(400, { error: "Invalid cannot-do reason" });
+    }
+    throw err;
+  }
+};
+
+/**
+ * POST /v1/tasks/{taskId}/complete
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const completeTask = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+  const taskId = event.pathParameters?.taskId;
+  if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
+
+  /** @type {unknown} */
+  let body = {};
+  if (event.body) {
+    try {
+      body = readJsonBody(event);
+    } catch {
+      return jsonResponse(400, { error: "Invalid JSON body" });
+    }
+  }
+  const { completionMethod } =
+    /** @type {{ completionMethod?: unknown }} */ (body ?? {});
+
+  try {
+    const task = await completeTaskWithAppActions({
+      tableName: dynamoTable,
+      siteId,
+      taskId,
+      completionMethod:
+        typeof completionMethod === "string" ? completionMethod : undefined,
+    });
+    return jsonResponse(200, { task });
+  } catch (err) {
+    if (err instanceof Error && err.name === "NotFound") {
+      return jsonResponse(404, { error: "Task not found" });
     }
     throw err;
   }

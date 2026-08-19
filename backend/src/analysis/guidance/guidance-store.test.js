@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
 
-const { storeEvaluatedAssessment } = await import("./guidance-store.js");
+const { completeTaskWithAppActions, storeEvaluatedAssessment } = await import(
+  "./guidance-store.js"
+);
 
 describe("storeEvaluatedAssessment", () => {
   beforeEach(() => {
@@ -109,6 +111,8 @@ describe("storeEvaluatedAssessment", () => {
       status: "open",
       category: "Litter",
       severity: 3,
+      appActionStatus: "pending",
+      appActionResults: [],
       gsi2pk: "SITE#site-1#TASK#open",
       gsi2sk: "2026-08-18T12:01:00.000Z#escalation#3#task-1",
     });
@@ -142,5 +146,59 @@ describe("storeEvaluatedAssessment", () => {
       gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
     });
     expect(writes).toHaveLength(2);
+  });
+});
+
+describe("completeTaskWithAppActions", () => {
+  beforeEach(() => {
+    send.mockReset();
+  });
+
+  it("marks a task completed and records app action results", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        kind: "escalation",
+        severity: 3,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: { category311: "Street and sidewalk cleaning" },
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "button",
+      env: { GNP_311_SUBMISSION_ENABLED: "true" },
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const tx = send.mock.calls[1][0];
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
+      status: "completed",
+      completedAt: "2026-08-18T12:02:00.000Z",
+      completionMethod: "button",
+      appActionStatus: "submitted",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          externalId: "stub-311-task-1",
+        },
+      ],
+      gsi2pk: "SITE#site-1#TASK#completed",
+      gsi2sk: "2026-08-18T12:02:00.000Z#escalation#3#task-1",
+    });
+    expect(task).toMatchObject({ status: "completed" });
   });
 });
