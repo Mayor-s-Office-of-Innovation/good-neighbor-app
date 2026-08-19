@@ -5,12 +5,27 @@ import { jsonResponse } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { GSI2_NAME, taskWorklistPk } from "./keys.js";
 
-// A task's GSI2 sort key is `${severity}#${createdAt}`; severity is 0–4, so a
-// plain string sort matches numeric order (single digit) and newest-within-
-// severity falls out of the ISO timestamp. Reading descending gives the staff
-// worklist its natural order: most severe first, newest first within a severity.
+// A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
+// so the index serves date-range task lists efficiently (see guidance-workflow-
+// backend-plan.md § Index Tradeoffs). That gives up the index's severity ordering,
+// so AP10's "most severe first" is restored by sorting the fetched page in memory.
+// With a `limit`, we read the newest N descending, then re-order that bounded page
+// by severity: the result is "most severe among the newest N", not "most severe
+// overall" — the tradeoff the plan accepts for MVP.
 
 const DEFAULT_STATUS = "open";
+
+/**
+ * Order a worklist page most-severe first, newest first within a severity.
+ * @param {Record<string, any>[]} tasks
+ * @returns {Record<string, any>[]}
+ */
+const byWorklistPriority = (tasks) =>
+  [...tasks].sort(
+    (a, b) =>
+      (b.severity ?? 0) - (a.severity ?? 0) ||
+      String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+  );
 
 /**
  * GET /v1/tasks?status=open&limit= — the site's action items at one status,
@@ -37,10 +52,10 @@ export const listTasks = async (event) => {
       IndexName: GSI2_NAME,
       KeyConditionExpression: "gsi2pk = :pk",
       ExpressionAttributeValues: { ":pk": taskWorklistPk(siteId, status) },
-      ScanIndexForward: false, // most-severe first, newest first within a severity
+      ScanIndexForward: false, // newest first; severity ordering applied below
       ...(limit ? { Limit: limit } : {}),
     }),
   );
 
-  return jsonResponse(200, { tasks: result.Items ?? [] });
+  return jsonResponse(200, { tasks: byWorklistPriority(result.Items ?? []) });
 };

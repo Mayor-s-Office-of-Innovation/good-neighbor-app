@@ -94,7 +94,7 @@ export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 // per-status staff worklist, and GSI4/GSI5 back condition review queues.
 export const GSI1_NAME = "GSI1";
 
-/** The per-status worklist index (AP10); see taskWorklistGsi. */
+/** The per-status worklist index (AP10); see taskWorklistDateGsi. */
 export const GSI2_NAME = "GSI2";
 
 /** Conditions by site/date/severity. */
@@ -124,20 +124,6 @@ export const checkTimelineGsi = (siteId, startedAt) => ({
  */
 export const taskWorklistPk = (siteId, status) =>
   `SITE#${siteId}#TASK#${status}`;
-
-/**
- * GSI2 (site worklist) attributes for a task. Partitioned by status so the
- * staff worklist (AP10) reads one status at a time, sorted by severity#createdAt.
- * @param {string} siteId
- * @param {string} status
- * @param {number} severity
- * @param {string} createdAt ISO-8601 timestamp
- * @returns {{ gsi2pk: string, gsi2sk: string }}
- */
-export const taskWorklistGsi = (siteId, status, severity, createdAt) => ({
-  gsi2pk: taskWorklistPk(siteId, status),
-  gsi2sk: `${severity}#${createdAt}`,
-});
 
 /**
  * Assessment report item.
