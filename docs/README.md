@@ -40,8 +40,8 @@ These five docs form one thread: the decision to move from Postgres/Prisma to **
 the data model, city-wide reporting, how to run the backend locally, and how to build it all.
 The **direction is decided** (DynamoDB — [ADR 0002](./adr/0002-datastore-dynamodb.md)); the
 three once-open decisions are settled too (metric formulas settled; city cross-site queue
-deferred post-MVP; retention deferred except the media bucket's ~7-day lifecycle). **Read them
-in this order:**
+deferred post-MVP; retention deferred post-MVP — incl. the media bucket's ~7-day expiration, which
+is designed but not yet enforced). **Read them in this order:**
 
 1. **The decision — [ADR 0002](./adr/0002-datastore-dynamodb.md)** — _start here._ Why
    DynamoDB over Postgres, the ripple effects, and the honest Postgres fork. The "should we?"
@@ -55,26 +55,29 @@ in this order:**
    Docker-free local harness (DynamoDB Local / ElasticMQ), plus _Alternatives considered_ (why
    not Architect / SAM / LocalStack). The "how we run it locally." Built & verified; run commands
    live in [dev-commands.md](./dev-commands.md).
-5. **[dynamodb-buildout-plan.md](./inprogress/dynamodb-buildout-plan.md)** — _capstone._ The phased
-   Terraform + code build plan (table → app cutover → analytics), sequenced to a queryable
-   Athena prototype. References docs 1–4. The "how we build it."
+5. **[dynamodb-buildout-remaining.md](./todo/dynamodb-buildout-remaining.md)** — _what's left._
+   The table and app cutover shipped; this carries the **post-MVP / pre-go-live** phases
+   (seed → analytics pipe → live aggregates → tenant isolation). References docs 1–4. The
+   "how we finish it."
 
-**Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3, then the open
-decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as needed.
+**Just want the decision?** Read 1. **Deciding in a meeting?** 1 → 2 → 3. **Building the rest?**
+5, referring back as needed.
 
 ## Backend build plans (seams with a decided direction)
 
-- **[analysis-backend-lambdas-plan.md](./inprogress/analysis-backend-lambdas-plan.md)** — the perimeter-check
-  API + server-mediated analyze path: client uploads via **presigned PUT to GNP's own S3 bucket** →
-  an **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
-  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (media at rest ~7 days, admin review
-  via presigned GET). Phased so A–D build now behind a stub; only live E2E waits on the analyzer
-  deploying. Grounded in D1/D2/D3 + the
-  [data model](./dynamodb-data-model.md).
+- **Analysis backend — perimeter-check API + server-mediated analyze path** *(built 2026-08; build
+  plan retired on completion).* Client uploads via **presigned PUT to GNP's own S3 bucket** → an
+  **async worker** reads it back, base64-encodes, makes a per-artifact analyzer call (`x-api-key`
+  from Secrets Manager) → adapt + persist `SITE#/CHECK#` items (admin review via presigned GET).
+  As-built container/sequence/ER diagrams in [architecture.md](./architecture.md); item shapes in
+  the [data model](./dynamodb-data-model.md). Grounded in D1/D2/D3.
 - **[guidance-workflow-backend-plan.md](./guidance-workflow-backend-plan.md)** — design for the
   rule-driven action/escalation backend that consumes analyzer assessments, applies the
   `actions-escalations-rules.csv` policy table, asks required user follow-up questions, and
   creates/resolves guidance tasks in a deterministic sequence. Phases 1–7 are implemented.
+- **[media-downscale-sharp.md](./todo/media-downscale-sharp.md)** — follow-up: swap the passthrough
+  downscale seam for a real `sharp` resize (long-edge ~1568px → JPEG) before the analyzer call.
+  _Deferred — out of the current MVP._
 
 ## Frontend ↔ backend wiring (DONE, Aug 2026)
 
@@ -95,13 +98,15 @@ decisions consolidated in 5's Phase 0. **Building it?** 5, referring back as nee
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
-- **[deploy-cicd-plan.md](./inprogress/deploy-cicd-plan.md)** — the plan to move from manual, single-role
-  deploys to a **2-environment (`dev`/`prod`), 2-branch** pipeline: merge to `dev`→dev auto,
-  publish a **GitHub Release** from `main` (admins-only)→prod behind a required-approval pause;
-  OIDC-only creds; per-env S3/CloudFront with env-scoped invalidation; branch/environment
-  protection; Terraform rollback runbook. Bootstrap + deploy workflows built; remaining is the
-  frontend publish (Phase 4) and the `/health` smoke test. Gates the deploy items in
-  [MVP-TODO](./inprogress/MVP-TODO.md); closes the open [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
+- **The decision — [ADR 0007](./adr/0007-deploy-promotion-model.md)** — the **2-environment
+  (`dev`/`prod`), 2-branch** promotion model (merge to `dev`→dev auto; publish a **GitHub Release**
+  from `main`, admins-only→prod behind an approval pause), OIDC-only creds, and the deliberate
+  single-person-path-to-prod trade for a 2-person team. The "why" behind the built pipeline.
+- **[prod-cicd.md](./todo/prod-cicd.md)** — _what's left._ The pipeline is built
+  and the **dev half is live-proven**; this now tracks only the two remaining prod-side tasks: the
+  first **prod release-deploy** (release-tag + approval path untested) and the **rollback runbook
+  dry-run**. Gates the deploy items in [MVP-TODO](./inprogress/MVP-TODO.md); closes the open
+  [SDLC Level 2](./sdlc-level-2-checklist.md) deploy items.
 
 ## Other docs in this directory
 
