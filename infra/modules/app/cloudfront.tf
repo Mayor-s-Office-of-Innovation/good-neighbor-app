@@ -35,7 +35,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
   web_acl_id          = aws_wafv2_web_acl.web.arn
-  aliases             = var.frontend_domain_names
+  aliases             = var.frontend_certificate_arn != "" ? var.frontend_domain_names : []
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -140,7 +140,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     cloudfront_default_certificate = var.frontend_certificate_arn == ""
     acm_certificate_arn            = var.frontend_certificate_arn != "" ? var.frontend_certificate_arn : null
     ssl_support_method             = var.frontend_certificate_arn != "" ? "sni-only" : null
-    minimum_protocol_version       = var.frontend_certificate_arn != "" ? "TLSv1.2_2025" : null
+    minimum_protocol_version       = var.frontend_certificate_arn != "" ? "TLSv1.2_2021" : null
   }
 
   logging_config {

@@ -34,4 +34,9 @@ variable "frontend_certificate_arn" {
   description = "ACM certificate ARN in us-east-1 for the frontend custom domains. Empty uses the default CloudFront certificate."
   type        = string
   default     = ""
+
+  validation {
+    condition     = length(var.frontend_domain_names) == 0 || trimspace(var.frontend_certificate_arn) != ""
+    error_message = "frontend_certificate_arn must be set when frontend_domain_names is non-empty."
+  }
 }
