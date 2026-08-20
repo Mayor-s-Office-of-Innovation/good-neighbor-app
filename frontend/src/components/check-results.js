@@ -11,8 +11,10 @@
   (analyzer category vs canonical guidance category) and mis-bucketed real city
   items. today-view.js is the reference implementation for this grouping.
 
-  NOTE: the 311 ticket lifecycle isn't modeled yet (post-MVP); the bottom actions
-  close the check locally until the 311 integration lands.
+  NOTE: the 311 ticket lifecycle isn't modeled yet (post-MVP). The bottom actions
+  really close the backend TASK# items (completeTask) — same mutation the home
+  worklist uses — so handled items don't reappear on the home hub; "File 311"
+  just records the external filing (311_filed_external) without a ticket number.
 
   Reads the just-submitted check from the session (for its id + evidence photos);
   falls back to the most recent persisted check so the home "View" link still
@@ -21,7 +23,7 @@
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite } from "../db.js";
-import { listChecks, listTasks } from "../services/api.js";
+import { listChecks, listTasks, completeTask } from "../services/api.js";
 import { navigate } from "../router.js";
 import {
   getCurrentCheck,
@@ -75,7 +77,8 @@ class CheckResults extends HTMLElement {
           return;
         }
         checkId = latestHeader.checkId;
-        submittedAt = latestHeader.completedAt || latestHeader.startedAt || null;
+        submittedAt =
+          latestHeader.completedAt || latestHeader.startedAt || null;
         items = [];
         evidence = null;
       }
@@ -111,8 +114,7 @@ class CheckResults extends HTMLElement {
           </button>
           <div class="topbar__titles">
             <h1 class="topbar__title">
-              Evening
-              check${submittedAt ? ` · ${timeOf(submittedAt)}` : ""}
+              Evening check${submittedAt ? ` · ${timeOf(submittedAt)}` : ""}
             </h1>
           </div>
           <span class="topbar__meta"
@@ -165,6 +167,7 @@ class CheckResults extends HTMLElement {
                 Back to home
               </button>`
             : ""}
+          <p class="flow-error" id="cta-error" role="alert" hidden></p>
         </div>
         <p class="flow-foot">Tap any item to dispute it.</p>
       </div>
@@ -174,10 +177,48 @@ class CheckResults extends HTMLElement {
       clearCheck();
       navigate("/today");
     };
+    // Leaving the screen without acting (back / all-clear "Back to home") just
+    // drops the session — it closes no tasks.
     this.querySelector("#back").addEventListener("click", finish);
-    this.querySelector("#file-311")?.addEventListener("click", finish);
-    this.querySelector("#mark-handled")?.addEventListener("click", finish);
     this.querySelector("#done")?.addEventListener("click", finish);
+
+    // The bulk CTAs really close the backend tasks (same completeTask the home
+    // worklist uses) before returning home, so handled items don't reappear
+    // there. City -> "311 filed externally"; onsite -> manual. On any failure we
+    // keep the user on this screen with an inline error rather than navigating
+    // away as if it worked.
+    const err = this.querySelector("#cta-error");
+    const bulkClose = async (btn, group, completionMethod) => {
+      if (!group.length) {
+        finish();
+        return;
+      }
+      const buttons = this.querySelectorAll(".flow-ctas button");
+      buttons.forEach((b) => (b.disabled = true));
+      if (err) {
+        err.hidden = true;
+        err.textContent = "";
+      }
+      try {
+        await Promise.all(
+          group.map((t) => completeTask(t.taskId, { completionMethod })),
+        );
+        finish();
+      } catch (e) {
+        console.error("bulk task close failed", e);
+        buttons.forEach((b) => (b.disabled = false));
+        if (err) {
+          err.hidden = false;
+          err.textContent = "Couldn’t save that — please try again.";
+        }
+      }
+    };
+    this.querySelector("#file-311")?.addEventListener("click", (e) =>
+      bulkClose(e.currentTarget, city, "311_filed_external"),
+    );
+    this.querySelector("#mark-handled")?.addEventListener("click", (e) =>
+      bulkClose(e.currentTarget, onsite, "manual"),
+    );
     // Tap an item to "dispute" — post-MVP; harmless no-op affordance for now.
     this.querySelectorAll(".findcard__row").forEach((row) =>
       row.addEventListener("click", () => {}),
@@ -254,7 +295,9 @@ class CheckResults extends HTMLElement {
     return html`
       <section class="bucket">
         <div class="bucket__head">
-          <span class="bucket__title">Escalate to the city · ${city.length}</span>
+          <span class="bucket__title"
+            >Escalate to the city · ${city.length}</span
+          >
           <span class="bucket__meta">Don't handle these</span>
         </div>
         <div class="findcard">
