@@ -29,6 +29,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
   #checkov:skip=CKV2_AWS_47:Log4j is covered by AWSManagedRulesKnownBadInputsRuleSet (active, non-override) on the attached WAF ACL.
+  #checkov:skip=CKV2_AWS_42:Custom SSL is configured whenever frontend_domain_names is non-empty; the default certificate branch exists only for no-alias deployments.
   enabled             = true
   is_ipv6_enabled     = true
   comment             = "${local.name_prefix} frontend"

@@ -3,6 +3,8 @@ locals {
 }
 
 resource "aws_route53_zone" "frontend_subdomain" {
+  #checkov:skip=CKV2_AWS_38:Delegated dev-only subdomain; full DNSSEC would also require parent-zone DS management across accounts and is deferred until the root domain is managed end-to-end in Terraform.
+  #checkov:skip=CKV2_AWS_39:This delegated dev-only subdomain is low-volume and non-production; Route53 query logging is deferred to the broader production DNS observability pass.
   name    = local.frontend_domain_name
   comment = "Delegated hosted zone for the Good Neighbor App dev frontend."
 }
