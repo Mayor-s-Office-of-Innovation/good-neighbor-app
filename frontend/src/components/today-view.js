@@ -232,39 +232,74 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  // Resolve a task's catalog button labels (`task.buttons`, a string[]) to the
-  // concrete wired actions this screen supports, classifying by label:
-  //   "Done"            -> complete       (onsite: staff did it)
-  //   "Can't"           -> cannot-do      (only when the task carries reasons)
-  //   contains "311"    -> complete, relabeled "Filed 311 ticket" (filed outside)
-  //   anything else     -> dropped (e.g. the design's "Check status" — we don't
-  //                        model a filed-but-tracked state; a task is open or done)
-  // Falls back to sensible defaults by type if a task carries no buttons.
+  // Resolve a task's persisted actions into the concrete controls this screen
+  // renders. Driven by the task's STRUCTURED `appActions` (open_phone /
+  // create_311_ticket / compose_email / …) paired with its `buttons` labels —
+  // NOT by string-matching the label — so phone-call escalations ("Call 911",
+  // "Call SFACC", …) are surfaced instead of being silently dropped and left
+  // unactionable. Falls back to a sensible per-type default when a task carries
+  // neither, and always offers the task's allowlisted resolutions (e.g. "We
+  // already called 911") when present, so every card is actionable and closeable.
   _cardActions(task) {
-    const labels =
-      Array.isArray(task.buttons) && task.buttons.length
-        ? task.buttons
-        : task.type === "city_escalation"
-          ? ["File 311 ticket"]
-          : ["Done", "Can't"];
+    const buttons = Array.isArray(task.buttons) ? task.buttons : [];
+    const appActions = Array.isArray(task.appActions) ? task.appActions : [];
     const actions = [];
-    for (const label of labels) {
-      const l = String(label).toLowerCase();
-      if (l.includes("311")) {
-        actions.push({
-          kind: "file311",
-          label: "Filed 311 ticket",
-          variant: "blue",
-        });
-      } else if (l === "done") {
-        actions.push({ kind: "done", label: "Done", variant: "ink" });
-      } else if (l.includes("can")) {
-        if ((task.cannotDoReasons || []).length) {
-          actions.push({ kind: "cant", label: "Can't", variant: "outline" });
-        }
-      }
+    const count = Math.max(buttons.length, appActions.length);
+    for (let i = 0; i < count; i++) {
+      const label = buttons[i] != null ? String(buttons[i]) : "";
+      const a = this._resolveAction(appActions[i], label);
+      if (a) actions.push(a);
+    }
+    if (!actions.length) {
+      actions.push(
+        task.type === "city_escalation"
+          ? { kind: "file311", label: "Filed 311 ticket", variant: "blue" }
+          : { kind: "done", label: "Done", variant: "ink" },
+      );
+    }
+    if ((task.cannotDoReasons || []).length) {
+      actions.push({ kind: "cant", label: "Can't", variant: "outline" });
     }
     return actions;
+  }
+
+  // Map one persisted app action (+ its display label) to a rendered control.
+  // Returns null for actions with no wired behavior yet (fire-hazard report,
+  // generic manual steps) — they always co-occur with a call/311 action, so the
+  // card stays actionable without rendering a dead button.
+  _resolveAction(appAction, label) {
+    const code = appAction?.code;
+    const payload = appAction?.payload || {};
+    const l = label.toLowerCase();
+    if (code === "open_phone" || /^call\b/.test(l)) {
+      // The backend only stamps "911" as the number today (the guidance app
+      // action carries no digits) — so dial 911 for emergencies, but never
+      // misdial a named non-emergency line ("Call SFPD (non-emergency)") to 911:
+      // show it as a reminder until a real number is in the action payload.
+      let digits = String(payload.phoneNumber || "").replace(/\D/g, "");
+      if (/\b911\b/.test(label)) digits = "911";
+      const dialable = digits === "911" || digits.length >= 7;
+      return {
+        kind: "call",
+        label: label || "Call",
+        variant: "blue",
+        href: dialable ? `tel:${digits}` : null,
+      };
+    }
+    if (code === "create_311_ticket" || l.includes("311")) {
+      return { kind: "file311", label: "Filed 311 ticket", variant: "blue" };
+    }
+    if (code === "compose_email") {
+      const to = String(payload.to || "");
+      return {
+        kind: "email",
+        label: label || "Email",
+        variant: "blue",
+        href: to ? `mailto:${to}` : null,
+      };
+    }
+    if (l === "done") return { kind: "done", label: "Done", variant: "ink" };
+    return null;
   }
 
   _actionButton(a) {
@@ -274,11 +309,21 @@ class TodayView extends HTMLElement {
         : a.variant === "blue"
           ? "btn-blue btn-blue--sm"
           : "btn-outline btn-outline--sm";
-    return html`<button
-      type="button"
-      class="${cls}"
-      data-action="${a.kind}"
-    >
+    // Link-style actions (call/email) render as native anchors — no data-action,
+    // so the click wiring skips them and the browser handles tel:/mailto:.
+    if (a.href) {
+      return html`<a class="${cls}" href="${a.href}"
+        >${escapeHtml(a.label)}</a
+      >`;
+    }
+    // A call/email whose target isn't known yet: surface the instruction but keep
+    // it non-interactive rather than misdialing or opening an empty composer.
+    if (a.kind === "call" || a.kind === "email") {
+      return html`<button type="button" class="${cls}" disabled>
+        ${escapeHtml(a.label)}
+      </button>`;
+    }
+    return html`<button type="button" class="${cls}" data-action="${a.kind}">
       ${escapeHtml(a.label)}
     </button>`;
   }
