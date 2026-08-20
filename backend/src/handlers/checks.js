@@ -135,13 +135,16 @@ export const completeCheck = async (event) => {
       TableName: dynamoTable,
       Key: checkHeaderKey(siteId, checkId),
       UpdateExpression:
-        "SET #status = :completed, grade = :grade, categories = :categories, rubricVersion = :rubricVersion, issueCount = :issueCount, maxSeverity = :maxSeverity, synthesizedAt = :now, completedAt = :now",
+        "SET #status = :completed, grade = :grade, summary = :summary, categories = :categories, rubricVersion = :rubricVersion, issueCount = :issueCount, maxSeverity = :maxSeverity, synthesizedAt = :now, completedAt = :now",
       // Complete exactly once: the header must exist and not already be closed.
       ConditionExpression: "attribute_exists(sk) AND #status <> :completed",
       ExpressionAttributeNames: { "#status": "status" },
       ExpressionAttributeValues: {
         ":completed": "completed",
         ":grade": scorecard.grade,
+        // Analyzer-sourced one-line overall summary (see synthesizeCheck). Rides
+        // along on listChecks headers so the home hub needs no detail fetch.
+        ":summary": scorecard.summary,
         ":categories": scorecard.categories,
         ":rubricVersion": scorecard.rubricVersion,
         ":issueCount": scorecard.issueCount,
@@ -163,6 +166,7 @@ export const completeCheck = async (event) => {
         checkId,
         status: "completed",
         grade: scorecard.grade,
+        summary: scorecard.summary,
         issueCount: scorecard.issueCount,
         maxSeverity: scorecard.maxSeverity,
         assessmentReady: true,
@@ -217,6 +221,7 @@ function buildGuidanceAssessment({
       checkId,
       completedAt,
       grade: scorecard.grade,
+      summary: scorecard.summary,
       rubricVersion: scorecard.rubricVersion,
       categories: scorecard.categories,
     },
