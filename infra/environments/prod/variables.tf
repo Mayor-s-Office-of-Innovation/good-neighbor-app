@@ -60,15 +60,3 @@ variable "compliance" {
   type        = string
   default     = ""
 }
-
-variable "frontend_domain_names" {
-  description = "Custom domain names for the prod frontend distribution."
-  type        = list(string)
-  default     = ["goodneighborsf.org"]
-}
-
-variable "frontend_certificate_arn" {
-  description = "ACM certificate ARN in us-east-1 for the prod frontend custom domain."
-  type        = string
-  default     = "arn:aws:acm:us-east-1:701893741736:certificate/10a21484-6c66-41dc-9d1c-57b3e6eed8d4"
-}

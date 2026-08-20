@@ -23,3 +23,7 @@ output "cloudfront_domain_name" {
   value       = module.app.cloudfront_domain_name
 }
 
+output "frontend_dns_name_servers" {
+  description = "Authoritative name servers for the delegated dev.goodneighborsf.org hosted zone."
+  value       = aws_route53_zone.frontend_subdomain.name_servers
+}
