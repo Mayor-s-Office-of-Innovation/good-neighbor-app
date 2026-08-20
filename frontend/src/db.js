@@ -4,23 +4,21 @@
 
   Stores:
     - site   (keyPath 'id')   : single record, the site this device is bound to
-    - checks (keyPath 'id')   : submitted perimeter checks + their findings
     - draft  (out-of-line)    : the single in-progress check (key 'current'), so a
                                 walk survives reload / app-close and can be resumed
                                 from home. Photos ride inline as JPEG data-URLs.
 
-  Submitted checks now live in the backend (DynamoDB), written on submit and read
-  on load via services/api.js — the app is online-only for the submit/review path
-  (docs/archive/frontend-api-wiring-plan.md). The local `checks` store is retained only as
-  demo/seed scaffolding (demo/seed.js) and is not on the submit path; there is no
-  `synced` flag or sync queue, because offline is deferred to post-MVP.
+  Submitted checks live in the backend (DynamoDB), written on submit and read on
+  load via services/api.js — the app is online-only for the submit/review path
+  (docs/archive/frontend-api-wiring-plan.md). There is no local `checks` cache, no
+  `synced` flag, and no sync queue, because offline is deferred to post-MVP.
 */
 
 const DB_NAME = "conditions-reporter";
-// v4: `draft` store. (Bumped past 3 to force onupgradeneeded to re-run for anyone
-// whose DB recorded v3 during development before the draft store landed — the
-// creation below is idempotent, so a fresh install and any older version converge.)
-const DB_VERSION = 4;
+// v5: dropped the unused `checks` store (submitted checks are backend-sourced; the
+// store's only remaining writer was the retired ?demo seed). v4 added the `draft`
+// store. Deletions/creations below are idempotent, so any older version converges.
+const DB_VERSION = 5;
 
 let _dbPromise = null;
 
@@ -33,15 +31,13 @@ function openDb() {
       if (!db.objectStoreNames.contains("site")) {
         db.createObjectStore("site", { keyPath: "id" });
       }
-      // Clean slate: the old two-page prototype's stores are gone in v1.
+      // Clean slate: retired prototype/cutover stores are dropped on upgrade. The
+      // `checks` store is gone — submitted checks are backend-sourced now.
       if (db.objectStoreNames.contains("reports"))
         db.deleteObjectStore("reports");
       if (db.objectStoreNames.contains("tasks")) db.deleteObjectStore("tasks");
-      if (!db.objectStoreNames.contains("checks")) {
-        const s = db.createObjectStore("checks", { keyPath: "id" });
-        s.createIndex("bySite", "siteId");
-        s.createIndex("bySubmittedAt", "submittedAt");
-      }
+      if (db.objectStoreNames.contains("checks"))
+        db.deleteObjectStore("checks");
       // Out-of-line key: the check keeps its own generated `id`, and there is only
       // ever one active draft, stored under the fixed key "current".
       if (!db.objectStoreNames.contains("draft")) {
@@ -120,20 +116,6 @@ export async function setSite(name, meta = {}) {
 }
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
-}
-
-/* ---- checks ---- */
-export async function addCheck(check) {
-  await tx("checks", "readwrite", (os) => os.put(check));
-  return check;
-}
-export async function getChecksForSite(siteId) {
-  return tx("checks", "readonly", (os) =>
-    reqToPromise(os.index("bySite").getAll(siteId)),
-  );
-}
-export async function clearChecks() {
-  return tx("checks", "readwrite", (os) => os.clear());
 }
 
 /* ---- draft (single resumable in-progress check, key 'current') ---- */

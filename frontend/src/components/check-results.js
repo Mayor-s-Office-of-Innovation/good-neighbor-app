@@ -1,27 +1,27 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  check-results — 5e (design port, screen 16). Findings from the submitted check,
-  triaged into three buckets:
-    - City action  (hazard)              -> File 311, don't handle
-    - You can handle (non-hazard, 2-3)   -> safe to clear, tick them off
-    - Noted, no action (non-hazard, 1)   -> informational
-  Bucket + label carry severity in text; color only reinforces (WCAG 1.4.1).
+  check-results — 5e (design port, screen 16). What the just-submitted check
+  produced, presented as the SAME worklist the home hub shows, so the two screens
+  never disagree on where an item belongs:
+    - Escalate to the city  (task.type === "city_escalation")  -> File 311
+    - Site actions          (task.type === "onsite")            -> handle on site
+  The buckets are the backend's real TASK# items (listTasks), grouped by the
+  authoritative `type` the guidance system stamps at task creation. We do NOT
+  re-derive city-vs-handle from findings/category names here — that join drifted
+  (analyzer category vs canonical guidance category) and mis-bucketed real city
+  items. today-view.js is the reference implementation for this grouping.
 
-  NOTE: per-finding confidence % and the 311 ticket lifecycle are not in the
-  findings model yet (post-MVP). Confidence is rendered from a representative,
-  deterministic value and clearly reads as an estimate; the bottom actions close
-  the check locally until the 311 integration lands.
+  NOTE: the 311 ticket lifecycle isn't modeled yet (post-MVP); the bottom actions
+  close the check locally until the 311 integration lands.
 
-  Reads the just-submitted check from the session; falls back to the most recent
-  persisted check so the home "View" link still lands somewhere real.
+  Reads the just-submitted check from the session (for its id + evidence photos);
+  falls back to the most recent persisted check so the home "View" link still
+  lands somewhere real (no evidence strip on that path — photos aren't inlined in
+  the read model).
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite } from "../db.js";
-import { listChecks, getCheck, listTasks } from "../services/api.js";
-import {
-  adaptCheckDetail,
-  cityCategoriesForCheck,
-} from "../domain/check-adapter.js";
+import { listChecks, listTasks } from "../services/api.js";
 import { navigate } from "../router.js";
 import {
   getCurrentCheck,
@@ -44,34 +44,28 @@ const NUM_WORD = [
 const word = (n) => NUM_WORD[n] || String(n);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-// Representative, deterministic confidence (no live scoring in this build).
-function confidence(f, i) {
-  return (
-    62 +
-    ((f.rating * 9 + (f.category ? f.category.length : 0) * 3 + i * 7) % 36)
-  );
-}
-
 class CheckResults extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
     this._siteId = this._site.siteId || this._site.id;
 
     const session = getCurrentCheck();
-    let findings, evidence, items;
-    if (session && session.status === "submitted") {
-      findings = session.findings || [];
-      items = allItems();
-      evidence = {
-        photos: items.filter((i) => i.kind === "photo").length,
-        voice: items.filter((i) => i.kind === "voice").length,
-        notes: items.filter((i) => i.kind === "note").length,
-      };
-    } else {
-      // No just-submitted session (e.g. a "View" link for the latest check):
-      // read the newest completed check from the backend. Photos aren't inlined
-      // in the read model, so there's no evidence strip on this path.
-      try {
+    let checkId, submittedAt, evidence, items;
+    let tasks = [];
+    try {
+      if (session && session.status === "submitted") {
+        checkId = session.id;
+        submittedAt = session.submittedAt;
+        items = allItems();
+        evidence = {
+          photos: items.filter((i) => i.kind === "photo").length,
+          voice: items.filter((i) => i.kind === "voice").length,
+          notes: items.filter((i) => i.kind === "note").length,
+        };
+      } else {
+        // No just-submitted session (e.g. a "View" link for the latest check):
+        // read the newest completed check from the backend. Photos aren't inlined
+        // in the read model, so there's no evidence strip on this path.
         const { checks } = await listChecks({ limit: 10 });
         const latestHeader = (checks || []).find(
           (c) => c.status === "completed",
@@ -80,28 +74,28 @@ class CheckResults extends HTMLElement {
           navigate("/today");
           return;
         }
-        const [detail, { tasks }] = await Promise.all([
-          getCheck(latestHeader.checkId),
-          listTasks({ status: "open" }),
-        ]);
-        const cityCategories = cityCategoriesForCheck(
-          tasks,
-          latestHeader.checkId,
-        );
-        findings = adaptCheckDetail(detail, cityCategories).findings;
-      } catch (err) {
-        console.error("failed to load latest check", err);
-        navigate("/today");
-        return;
+        checkId = latestHeader.checkId;
+        submittedAt = latestHeader.completedAt || latestHeader.startedAt || null;
+        items = [];
+        evidence = null;
       }
-      items = [];
-      evidence = null;
+
+      // The worklist for THIS check: the backend's open TASK# items, grouped by
+      // the type it stamped (city_escalation vs onsite). Same source + grouping
+      // as today-view, so the two screens agree by construction.
+      const { tasks: all } = await listTasks({ status: "open" });
+      tasks = (all || []).filter((t) => t.checkId === checkId);
+    } catch (err) {
+      console.error("failed to load check results", err);
+      navigate("/today");
+      return;
     }
 
-    const city = findings.filter((f) => f.hazard);
-    const handle = findings.filter((f) => !f.hazard && f.rating >= 2);
-    const noted = findings.filter((f) => !f.hazard && f.rating === 1);
-    const total = findings.length;
+    this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
+
+    const city = tasks.filter((t) => t.type === "city_escalation");
+    const onsite = tasks.filter((t) => t.type === "onsite");
+    const total = tasks.length;
     const itemCount = items.length;
 
     this.innerHTML = html`
@@ -118,9 +112,7 @@ class CheckResults extends HTMLElement {
           <div class="topbar__titles">
             <h1 class="topbar__title">
               Evening
-              check${session && session.submittedAt
-                ? ` · ${timeOf(session.submittedAt)}`
-                : ""}
+              check${submittedAt ? ` · ${timeOf(submittedAt)}` : ""}
             </h1>
           </div>
           <span class="topbar__meta"
@@ -131,9 +123,9 @@ class CheckResults extends HTMLElement {
         <div class="flow-hero">
           <p class="flow-hero__eyebrow">Analysis</p>
           <h2 class="flow-hero__headline">
-            ${total} finding${total === 1 ? "" : "s"}
+            ${total} item${total === 1 ? "" : "s"} to do
           </h2>
-          <p class="flow-hero__body">${this._summary(city, handle, noted)}</p>
+          <p class="flow-hero__body">${this._summary(city, onsite)}</p>
         </div>
 
         ${total === 0
@@ -155,8 +147,7 @@ class CheckResults extends HTMLElement {
           ? this._evidence(evidence, items)
           : ""}
         ${city.length ? this._cityBucket(city) : ""}
-        ${handle.length ? this._handleBucket(handle) : ""}
-        ${noted.length ? this._notedBucket(noted) : ""}
+        ${onsite.length ? this._onsiteBucket(onsite) : ""}
 
         <div class="flow-ctas">
           ${city.length
@@ -164,18 +155,18 @@ class CheckResults extends HTMLElement {
                 File 1 ticket for all ${word(city.length)}
               </button>`
             : ""}
-          ${handle.length
+          ${onsite.length
             ? html`<button class="btn-outline" id="mark-handled" type="button">
-                Mark my ${word(handle.length)} handled &amp; close
+                Mark my ${word(onsite.length)} handled &amp; close
               </button>`
             : ""}
-          ${!city.length && !handle.length
+          ${!city.length && !onsite.length
             ? html`<button class="btn-ink" id="done" type="button">
                 Back to home
               </button>`
             : ""}
         </div>
-        <p class="flow-foot">Tap any finding to dispute it.</p>
+        <p class="flow-foot">Tap any item to dispute it.</p>
       </div>
     `;
 
@@ -187,11 +178,11 @@ class CheckResults extends HTMLElement {
     this.querySelector("#file-311")?.addEventListener("click", finish);
     this.querySelector("#mark-handled")?.addEventListener("click", finish);
     this.querySelector("#done")?.addEventListener("click", finish);
-    // Tap a finding to "dispute" — post-MVP; harmless no-op affordance for now.
+    // Tap an item to "dispute" — post-MVP; harmless no-op affordance for now.
     this.querySelectorAll(".findcard__row").forEach((row) =>
       row.addEventListener("click", () => {}),
     );
-    // "You can handle" items tick off in place.
+    // "Site actions" items tick off in place.
     this.querySelectorAll(".checkitem").forEach((btn) =>
       btn.addEventListener("click", () => {
         const on = btn.getAttribute("aria-pressed") === "true";
@@ -200,20 +191,19 @@ class CheckResults extends HTMLElement {
     );
   }
 
-  _summary(city, handle, noted) {
-    if (!city.length && !handle.length && !noted.length) {
-      return "Photos, voice, and notes were all read.";
+  _summary(city, onsite) {
+    if (!city.length && !onsite.length) {
+      return "Nothing needs action from this walk. Photos, voice, and notes were all read.";
     }
     const parts = [];
     if (city.length)
       parts.push(
         `${word(city.length)} need${city.length === 1 ? "s" : ""} a city crew`,
       );
-    if (handle.length)
+    if (onsite.length)
       parts.push(
-        `${word(handle.length)} ${handle.length === 1 ? "is" : "are"} yours to handle`,
+        `${word(onsite.length)} ${onsite.length === 1 ? "is" : "are"} yours to handle`,
       );
-    if (noted.length) parts.push(`${word(noted.length)} noted only`);
     return `${cap(parts.join(", "))}. Photos, voice, and notes were all read.`;
   }
 
@@ -264,84 +254,60 @@ class CheckResults extends HTMLElement {
     return html`
       <section class="bucket">
         <div class="bucket__head">
-          <span class="bucket__title">City action · ${city.length}</span>
+          <span class="bucket__title">Escalate to the city · ${city.length}</span>
           <span class="bucket__meta">Don't handle these</span>
         </div>
         <div class="findcard">
-          ${city.map((f, i) => this._cityRow(f, i)).join("")}
+          ${city.map((t) => this._cityRow(t)).join("")}
         </div>
       </section>
     `;
   }
 
-  _cityRow(f, i) {
-    const src = [
-      f.side ? `${escapeHtml(f.side)}` : null,
-      f.sourceKind ? escapeHtml(f.sourceKind) : null,
-    ].filter(Boolean);
-    src.push(`${confidence(f, i)}% confidence`);
+  _cityRow(t) {
+    const title = t.label || t.category || "Finding";
+    const detail = t.guidance || t.category || "";
     return html`
       <div class="findcard__row" role="button" tabindex="0">
         <div class="findcard__head">
           <span class="findcard__kicker">City action</span>
           <span class="pill pill--route">File 311</span>
         </div>
-        <h3 class="findcard__title">${escapeHtml(f.category)}</h3>
-        <p class="findcard__desc">${escapeHtml(f.explanation)}</p>
-        <p class="findcard__prov">${src.join(" · ")}</p>
+        <h3 class="findcard__title">${escapeHtml(title)}</h3>
+        ${detail
+          ? html`<p class="findcard__desc">${escapeHtml(detail)}</p>`
+          : ""}
       </div>
     `;
   }
 
-  _handleBucket(handle) {
+  _onsiteBucket(onsite) {
     return html`
       <section class="bucket">
         <div class="bucket__head">
-          <span class="bucket__title"
-            >${word(handle.length)} you can handle</span
-          >
+          <span class="bucket__title">Site actions · ${onsite.length}</span>
           <span class="bucket__meta">Safe to clear</span>
         </div>
         <div class="checkcard">
-          ${handle.map((f, i) => this._handleRow(f, i)).join("")}
+          ${onsite.map((t) => this._onsiteRow(t)).join("")}
         </div>
       </section>
     `;
   }
 
-  _handleRow(f, i) {
+  _onsiteRow(t) {
+    const title = t.label || t.category || "Finding";
+    const detail = t.guidance || t.category || "";
     return html`
       <button class="checkitem" type="button" aria-pressed="false">
         <div class="checkitem__body">
-          <p class="checkitem__title">${escapeHtml(f.category)}</p>
-          <p class="checkitem__detail">
-            ${escapeHtml(f.explanation)} · ${confidence(f, i)}%
-          </p>
+          <p class="checkitem__title">${escapeHtml(title)}</p>
+          ${detail
+            ? html`<p class="checkitem__detail">${escapeHtml(detail)}</p>`
+            : ""}
         </div>
         <span class="checkitem__ring" aria-hidden="true"></span>
       </button>
-    `;
-  }
-
-  _notedBucket(noted) {
-    return html`
-      <div class="noted">
-        <div class="noted__head">
-          <span>Noted, no action · ${noted.length}</span>
-          <span>Estimate</span>
-        </div>
-        <ul class="noted__list">
-          ${noted
-            .map(
-              (f, i) =>
-                html`<li class="noted__row">
-                  <span class="noted__name">${escapeHtml(f.category)}</span>
-                  <span class="noted__pct">${confidence(f, i)}%</span>
-                </li>`,
-            )
-            .join("")}
-        </ul>
-      </div>
     `;
   }
 }

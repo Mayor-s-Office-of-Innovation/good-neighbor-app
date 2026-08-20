@@ -4,9 +4,9 @@
 
   Held in memory as a module singleton (survives hash-route changes, no reload) AND
   mirrored to IndexedDB (db.js `draft` store) on every mutation, so a walk survives
-  reload / app-close and can be resumed from home. Only the SUBMITTED check is copied
-  into the `checks` store (via db.addCheck) so 5b/history + the last-log summary have
-  something real to read.
+  reload / app-close and can be resumed from home. On submit the walk goes to the
+  backend (services/submit-check.js); history + the last-log summary read it back
+  from there (services/api.js), not from any local `checks` store.
 
   A check has four fixed sides (N/E/S/W). Each side is covered by photo captures, or
   marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose:
