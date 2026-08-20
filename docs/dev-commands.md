@@ -1,8 +1,10 @@
 # Developer command reference
 
-**Prereqs:** Node 22 LTS+, npm 10+. The backend local harness also needs **JRE 17+** (DynamoDB
-Local + ElasticMQ are Java jars) — install with `brew install --cask temurin`, confirm
-`java -version` reports 17+. The frontend, tests, lint, and typecheck do **not** need Java.
+**Prereqs:** Node 22 LTS+, npm 10+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+for approved operators only — developers work through Git and CI. The backend local harness also
+needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
+`brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
+frontend, tests, lint, and typecheck do **not** need Java.
 
 ## One-time setup
 
@@ -27,6 +29,9 @@ Local + ElasticMQ are Java jars) — install with `brew install --cask temurin`,
 |---|---|
 | `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
 
+The first screen asks for a provider-site code. With the local backend running, `123-456` is
+seeded active and `000-000` seeded inactive.
+
 ### Clearing the local site binding
 
 First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
@@ -49,9 +54,10 @@ close the tab — the surgical per-record delete above does not.)
 
 ## Backend local harness (Docker-free)
 
-Runs the **exact Lambda handler + worker code** against local emulators. Ports: API **:3001**,
-DynamoDB Local **:8000**, ElasticMQ **:9324**, GUI **:8001**, MinIO (local S3) **:9000** with its
-console on **:9001**.
+Runs the **exact Lambda handler + worker code** against local emulators (design rationale:
+[ADR 0006](adr/0006-docker-free-local-dev-harness.md)). Ports: API **:3001**, DynamoDB Local
+**:8000**, ElasticMQ **:9324**, GUI **:8001**, MinIO (local S3) **:9000** with its console on
+**:9001**.
 
 | Command | Does |
 |---|---|
