@@ -60,8 +60,10 @@ module "app" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  application         = var.application
-  environment         = var.environment
-  data_classification = var.data_classification
-  tags                = local.common_tags
+  application             = var.application
+  environment             = var.environment
+  data_classification     = var.data_classification
+  tags                    = local.common_tags
+  frontend_domain_names   = var.frontend_domain_names
+  frontend_certificate_arn = var.frontend_certificate_arn
 }

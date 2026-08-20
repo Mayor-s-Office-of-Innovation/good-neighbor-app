@@ -26,10 +26,8 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
 }
 
 resource "aws_cloudfront_distribution" "frontend" {
-  #checkov:skip=CKV_AWS_174:Default *.cloudfront.net cert can't pin min TLS 1.2; revisit with a custom domain + ACM cert.
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
-  #checkov:skip=CKV2_AWS_42:Uses the default *.cloudfront.net cert per the AWS-default-domains decision; custom SSL lands with a custom domain + ACM.
   #checkov:skip=CKV2_AWS_47:Log4j is covered by AWSManagedRulesKnownBadInputsRuleSet (active, non-override) on the attached WAF ACL.
   enabled             = true
   is_ipv6_enabled     = true
@@ -37,6 +35,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
   web_acl_id          = aws_wafv2_web_acl.web.arn
+  aliases             = var.frontend_domain_names
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -138,7 +137,10 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = var.frontend_certificate_arn == ""
+    acm_certificate_arn            = var.frontend_certificate_arn != "" ? var.frontend_certificate_arn : null
+    ssl_support_method             = var.frontend_certificate_arn != "" ? "sni-only" : null
+    minimum_protocol_version       = var.frontend_certificate_arn != "" ? "TLSv1.2_2025" : null
   }
 
   logging_config {
