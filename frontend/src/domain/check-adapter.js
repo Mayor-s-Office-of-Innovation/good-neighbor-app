@@ -139,6 +139,9 @@ export function adaptCheckHeader(header, cityCategories = new Set()) {
     submittedAt: occurredAt(header),
     startedAt: header.startedAt || null,
     grade: header.grade ?? null,
+    // Analyzer-sourced one-line overall summary, synthesized onto the header at
+    // complete-time. Absent on checks completed before that change -> "".
+    summary: header.summary || "",
     issueCount: header.issueCount ?? 0,
     maxSeverity: header.maxSeverity ?? 0,
     findings: headerToFindings(header, cityCategories),
