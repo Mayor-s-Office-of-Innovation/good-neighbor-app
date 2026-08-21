@@ -60,4 +60,3 @@ variable "compliance" {
   type        = string
   default     = ""
 }
-
