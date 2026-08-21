@@ -25,6 +25,12 @@
 html,
 body {
   height: 100%;
+  /* Paint the theme background on <html>, not just <body>. iOS Safari with
+     viewport-fit=cover fills the safe-area insets (notch/status bar, home
+     indicator) and overscroll from the ROOT element's background; without this
+     those regions fall back to white — the "white bars top & bottom" seen only
+     on iPhone (desktop/Android propagate the body background to the canvas). */
+  background: var(--bg);
 }
 
 body {
@@ -1256,6 +1262,11 @@ theme-toggle {
    Compact grid cell by default; larger + centered with a hint on an empty side. */
 .addshot {
   appearance: none;
+  /* Buttons don't honour a grid item's default justify-self/align-self: stretch,
+     so pin to the cell explicitly — otherwise the tile shrinks to its label and
+     clips "Add photo" next to the full-size photo tiles. */
+  width: 100%;
+  height: 100%;
   aspect-ratio: 1;
   display: flex;
   flex-direction: column;
@@ -1287,6 +1298,7 @@ theme-toggle {
 .addshot--empty {
   aspect-ratio: auto;
   width: min(100%, 260px);
+  height: auto;
   padding: 2.4rem 1.5rem;
   gap: 0.5rem;
 }

@@ -119,3 +119,9 @@ Re-POSTing with the same `idempotency-key` flips the stored item's status to `du
 
 **Teardown:** `Ctrl-C` in the `npm run dev` terminal stops all services cleanly (no orphaned
 JVM/MinIO/node processes).
+
+## Browse locally from phone
+
+Use ```npm run dev:lan -w frontend```
+
+This will print out IP address you can use from external phone to access the app on the same network as your machine that is running it
