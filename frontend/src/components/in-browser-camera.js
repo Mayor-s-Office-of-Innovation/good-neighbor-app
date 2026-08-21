@@ -22,7 +22,11 @@
   a `_webcam` branch in perimeter-check.js) so it can be removed cleanly later.
 */
 const DIGITAL_ZOOM_MAX = 4;
-const JPEG_QUALITY = 0.92;
+const JPEG_QUALITY = 0.85;
+// Cap the saved image's longest side so encode stays cheap and the base64 stored in
+// the IndexedDB draft stays bounded, even if getUserMedia hands us a large frame.
+// The analyzer worker downscales again server-side, so this loses nothing useful.
+const MAX_CAPTURE_DIM = 1600;
 
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 
@@ -55,7 +59,7 @@ class InBrowserCamera extends HTMLElement {
           <canvas class="ibcam__canvas visually-hidden" id="ibcam-canvas"></canvas>
           <span class="ibcam__zoom" id="ibcam-zoom" role="status" aria-live="polite" hidden></span>
         </div>
-        <button class="ibcam__shutter" id="ibcam-shutter" type="button" aria-label="Take photo"></button>
+        <button class="ibcam__shutter" id="ibcam-shutter" type="button" aria-label="Take photo" disabled></button>
       </div>
     `;
 
@@ -66,6 +70,11 @@ class InBrowserCamera extends HTMLElement {
     this._shutter = this.querySelector("#ibcam-shutter");
 
     this._shutter.addEventListener("click", () => this._capture());
+    // The shutter stays disabled until the stream can actually be snapshotted, so a
+    // tap never silently no-ops during a slow camera start / autoplay hold.
+    this._video.addEventListener("loadedmetadata", () => {
+      if (this._video.videoWidth) this._shutter.disabled = false;
+    });
 
     this._stage.addEventListener("touchstart", (e) => this._onTouchStart(e), {
       passive: false,
@@ -103,10 +112,20 @@ class InBrowserCamera extends HTMLElement {
     this._video.srcObject = this._stream;
     // Some browsers need an explicit play() after setting srcObject.
     this._video.play?.().catch(() => {});
+    // If the track ends later (OS reclaim, permission revoked, backgrounding), the
+    // preview freezes — surface it as unavailable so the host restores a capture
+    // path. Note: track.stop() (our own teardown) does NOT fire "ended".
+    this._stream
+      .getVideoTracks?.()
+      .forEach((t) =>
+        t.addEventListener("ended", () => this._emitUnavailable()),
+      );
     this._initZoom();
   }
 
   _emitUnavailable() {
+    if (this._unavailable) return; // emit once
+    this._unavailable = true;
     this.dispatchEvent(
       new CustomEvent("unavailable", { bubbles: true, composed: true }),
     );
@@ -238,8 +257,9 @@ class InBrowserCamera extends HTMLElement {
     );
   }
 
-  // Draw the current frame to a canvas → JPEG data-URL. Under digital zoom, crop the
-  // center region so the saved photo matches what the live (scaled) preview shows.
+  // Draw the current frame to a canvas → JPEG data-URL, downscaled to MAX_CAPTURE_DIM.
+  // Digital zoom takes the center crop as the source region (so the saved photo
+  // matches the scaled preview); hardware zoom is already baked into the stream.
   _snapshot() {
     const video = this._video;
     const sw = video.videoWidth;
@@ -248,19 +268,22 @@ class InBrowserCamera extends HTMLElement {
 
     const ctx = this._canvas.getContext("2d");
     if (!ctx) return null;
-    this._canvas.width = sw;
-    this._canvas.height = sh;
 
-    if (this._zoom.mode === "digital" && this._zoom.level > 1) {
-      const z = this._zoom.level;
-      const cw = sw / z;
-      const ch = sh / z;
-      const cx = (sw - cw) / 2;
-      const cy = (sh - ch) / 2;
-      ctx.drawImage(video, cx, cy, cw, ch, 0, 0, sw, sh);
-    } else {
-      ctx.drawImage(video, 0, 0, sw, sh);
-    }
+    // Source region: center crop under digital zoom, full frame otherwise.
+    const z = this._zoom.mode === "digital" ? this._zoom.level : 1;
+    const cw = sw / z;
+    const ch = sh / z;
+    const cx = (sw - cw) / 2;
+    const cy = (sh - ch) / 2;
+
+    // Output size: cap the longest side, never upscale.
+    const scale = Math.min(1, MAX_CAPTURE_DIM / Math.max(cw, ch));
+    const dw = Math.round(cw * scale);
+    const dh = Math.round(ch * scale);
+    this._canvas.width = dw;
+    this._canvas.height = dh;
+
+    ctx.drawImage(video, cx, cy, cw, ch, 0, 0, dw, dh);
     return this._canvas.toDataURL("image/jpeg", JPEG_QUALITY);
   }
 
