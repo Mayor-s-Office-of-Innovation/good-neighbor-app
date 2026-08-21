@@ -33,6 +33,7 @@ class DescribeInstead extends HTMLElement {
     this._validationState = "idle";
     this._validationError = "";
     this._transcribeSession = null;
+    this._transcribeRunId = 0;
     this._inputSource =
       this._savedDescription?.source || (this._savedText ? "typed" : null);
     this._validation = this._savedDescription?.validation || {
@@ -261,10 +262,42 @@ class DescribeInstead extends HTMLElement {
   async _startVoice() {
     this._setVoiceState("idle", "");
     try {
-      this._transcribeSession = await startTranscribeSession({
+      const session = await startTranscribeSession({
         siteId: this._site.siteId || this._site.providerSiteId || this._site.id,
         onStateChange: (state) => this._setVoiceState(state),
       });
+      this._transcribeSession = session;
+      const runId = ++this._transcribeRunId;
+      session.done
+        .then((result) => {
+          if (
+            this._transcribeSession !== session ||
+            runId !== this._transcribeRunId
+          ) {
+            return;
+          }
+          this._appendTranscript(result.text);
+          this._setVoiceState("idle", "");
+        })
+        .catch((error) => {
+          if (
+            this._transcribeSession !== session ||
+            runId !== this._transcribeRunId
+          ) {
+            return;
+          }
+          this._setVoiceState("idle", error.message);
+        })
+        .finally(() => {
+          if (
+            this._transcribeSession !== session ||
+            runId !== this._transcribeRunId
+          ) {
+            return;
+          }
+          this._transcribeSession = null;
+          this._syncVoiceUi();
+        });
       this._setVoiceState("recording");
     } catch (error) {
       this._transcribeSession = null;
@@ -274,16 +307,7 @@ class DescribeInstead extends HTMLElement {
 
   async _stopVoice() {
     if (!this._transcribeSession) return;
-    try {
-      const result = await this._transcribeSession.stop();
-      this._appendTranscript(result.text);
-      this._setVoiceState("idle", "");
-    } catch (error) {
-      this._setVoiceState("idle", error.message);
-    } finally {
-      this._transcribeSession = null;
-      this._syncVoiceUi();
-    }
+    await this._transcribeSession.stop();
   }
 
   _hasUnsavedChanges() {
@@ -308,14 +332,26 @@ class DescribeInstead extends HTMLElement {
 
   async _cancelVoice() {
     if (!this._transcribeSession) return;
+    const session = this._transcribeSession;
+    const runId = this._transcribeRunId;
     try {
-      await this._transcribeSession.cancel();
+      await session.cancel();
       this._setVoiceState("idle", "");
     } catch (error) {
-      this._setVoiceState("idle", error.message);
+      if (
+        this._transcribeSession === session &&
+        runId === this._transcribeRunId
+      ) {
+        this._setVoiceState("idle", error.message);
+      }
     } finally {
-      this._transcribeSession = null;
-      this._syncVoiceUi();
+      if (
+        this._transcribeSession === session &&
+        runId === this._transcribeRunId
+      ) {
+        this._transcribeSession = null;
+        this._syncVoiceUi();
+      }
     }
   }
 
@@ -343,14 +379,16 @@ class DescribeInstead extends HTMLElement {
         whatYouCanSee: Boolean(result.whatYouCanSee),
         whereItIs: Boolean(result.whereItIs),
       };
+      const accepted =
+        this._validation.whatYouCanSee && this._validation.whereItIs;
       setSideDescription(this._side, {
         kind: "note",
         text,
         source: this._inputSource || "typed",
-        validated: Boolean(result.accepted),
+        validated: accepted,
         validation: this._validation,
       });
-      if (!result.accepted) {
+      if (!accepted) {
         this._validationState = "idle";
         this._validationError =
           result.message || "Add what you can see and where the issue is.";

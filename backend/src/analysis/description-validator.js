@@ -72,6 +72,8 @@ const WHERE_KEYWORDS = [
  * @property {string} message
  */
 
+const LOCAL_STUB_MODEL_ID = "local-stub-model";
+
 /** @type {BedrockRuntimeClient | undefined} */
 let client;
 
@@ -85,6 +87,15 @@ function getClient() {
     });
   }
   return client;
+}
+
+function isLocalValidationAllowed() {
+  return (
+    process.env.NODE_ENV === "test" ||
+    process.env.BEDROCK_ALLOW_LOCAL_STUB === "true" ||
+    process.env.IS_OFFLINE === "true" ||
+    process.env.AWS_SAM_LOCAL === "true"
+  );
 }
 
 /**
@@ -112,7 +123,7 @@ function buildPrompt(text, side) {
 function normalizeResult(result) {
   const whatYouCanSee = Boolean(result?.whatYouCanSee);
   const whereItIs = Boolean(result?.whereItIs);
-  const accepted = Boolean(result?.accepted ?? (whatYouCanSee && whereItIs));
+  const accepted = whatYouCanSee && whereItIs;
   const fallbackMessage = accepted
     ? "Description looks usable."
     : !whatYouCanSee
@@ -166,22 +177,31 @@ function heuristicValidate(text) {
 }
 
 /**
- * @param {{ text: string, side: string, modelId?: string, client?: BedrockRuntimeClient }} params
+ * @param {{ text: string, side: string, modelId?: string, client?: Pick<BedrockRuntimeClient, "send"> }} params
  * @returns {Promise<DescriptionValidationResult>}
  */
 export async function validateDescription({
   text,
   side,
-  modelId = process.env.BEDROCK_MODEL_ID || "local-stub-model",
+  modelId = process.env.BEDROCK_MODEL_ID || LOCAL_STUB_MODEL_ID,
   client: providedClient,
 }) {
-  if (modelId === "local-stub-model") {
+  const configuredModelId = String(modelId || "").trim();
+  if (!configuredModelId || configuredModelId === LOCAL_STUB_MODEL_ID) {
+    if (!isLocalValidationAllowed()) {
+      const error = new Error(
+        "Description validation model is not configured.",
+      );
+      /** @type {Error & { code: string }} */ (error).code =
+        "description_validation_not_configured";
+      throw error;
+    }
     return heuristicValidate(text);
   }
 
   const runtime = providedClient || getClient();
   const command = new ConverseCommand({
-    modelId,
+    modelId: configuredModelId,
     messages: [
       {
         role: "user",

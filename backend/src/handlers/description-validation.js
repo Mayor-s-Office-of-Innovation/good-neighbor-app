@@ -42,6 +42,15 @@ export function createHandler(deps = {}) {
       return jsonResponse(200, result);
     } catch (error) {
       console.error("description validation failed", error);
+      if (
+        /** @type {any} */ (error)?.code ===
+        "description_validation_not_configured"
+      ) {
+        return jsonResponse(503, {
+          error: "description_validation_not_configured",
+          message: "Description validation is not configured.",
+        });
+      }
       return jsonResponse(502, {
         error: "description_validation_failed",
         message: "We couldn’t check this description right now. Try again.",

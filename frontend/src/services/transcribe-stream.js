@@ -1,5 +1,5 @@
 // @ts-nocheck -- browser transcription uses MediaRecorder + Web Audio APIs.
-const MAX_TRANSCRIBE_MS = 180000;
+const MAX_TRANSCRIBE_MS = 60000;
 const TARGET_SAMPLE_RATE = 16000;
 const RECORDER_TIMESLICE_MS = 250;
 const LEADING_SILENCE_MS = 250;
@@ -124,6 +124,17 @@ export async function startTranscribeSession({
   let autoStopTimer = null;
   let stopped = false;
   let canceled = false;
+  let finishedResolve;
+  let finishedReject;
+
+  const done = new Promise((resolve, reject) => {
+    finishedResolve = resolve;
+    finishedReject = reject;
+  });
+
+  function settleFailure(error) {
+    finishedReject(mapTranscribeError(error));
+  }
 
   recorder.ondataavailable = (event) => {
     if (event.data?.size > 0) {
@@ -134,34 +145,32 @@ export async function startTranscribeSession({
   onStateChange("recording");
   recorder.start(RECORDER_TIMESLICE_MS);
 
-  const done = new Promise((resolve, reject) => {
-    recorder.onerror = () => {
-      reject(new Error("The recording session was interrupted."));
-    };
-    recorder.onstop = async () => {
-      try {
-        stream.getTracks().forEach((track) => track.stop());
-        if (canceled) {
-          resolve({ text: "" });
-          return;
-        }
-        onStateChange("processing");
-        const blob = new Blob(chunks, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        const pcmData = await decodeBlobToPcm(blob);
-        const text = await requestTranscription(pcmData);
-        if (!text) {
-          const error = new Error("No speech was detected. Try again.");
-          error.code = "no_speech";
-          throw error;
-        }
-        resolve({ text });
-      } catch (error) {
-        reject(mapTranscribeError(error));
+  recorder.onerror = () => {
+    settleFailure(new Error("The recording session was interrupted."));
+  };
+  recorder.onstop = async () => {
+    try {
+      stream.getTracks().forEach((track) => track.stop());
+      if (canceled) {
+        finishedResolve({ text: "" });
+        return;
       }
-    };
-  });
+      onStateChange("processing");
+      const blob = new Blob(chunks, {
+        type: recorder.mimeType || "audio/webm",
+      });
+      const pcmData = await decodeBlobToPcm(blob);
+      const text = await requestTranscription(pcmData);
+      if (!text) {
+        const error = new Error("No speech was detected. Try again.");
+        error.code = "no_speech";
+        throw error;
+      }
+      finishedResolve({ text });
+    } catch (error) {
+      settleFailure(error);
+    }
+  };
 
   function finish(cancel = false) {
     if (stopped) return;

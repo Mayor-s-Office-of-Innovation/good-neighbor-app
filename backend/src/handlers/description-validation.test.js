@@ -68,6 +68,26 @@ describe("description validation handler", () => {
       message: "We couldn’t check this description right now. Try again.",
     });
   });
+
+  it("reports missing Bedrock configuration separately", async () => {
+    const error = new Error("missing");
+    /** @type {Error & { code: string }} */ (error).code =
+      "description_validation_not_configured";
+    const handler = createHandler({
+      validateDescription: vi.fn().mockRejectedValue(error),
+    });
+
+    const res = await callHandler(handler, {
+      pathParameters: { checkId: "chk-1", side: "South" },
+      body: JSON.stringify({ text: "Graffiti on the south wall." }),
+    });
+
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "description_validation_not_configured",
+      message: "Description validation is not configured.",
+    });
+  });
 });
 
 /**

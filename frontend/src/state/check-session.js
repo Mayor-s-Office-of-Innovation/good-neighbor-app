@@ -35,8 +35,8 @@ function normalizeDescription(description) {
     kind: "note",
     text,
     source,
-    validated: Boolean(description.validated),
     validation: normalizeValidation(description.validation),
+    validated: false,
   };
 }
 
@@ -68,6 +68,17 @@ function normalizeCheck(check) {
       typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
     sides,
   };
+}
+
+function rehydrateDerivedFields(check) {
+  if (!check) return null;
+  for (const side of SIDES) {
+    const description = check.sides[side]?.description;
+    if (!description) continue;
+    description.validated =
+      description.validation.whatYouCanSee && description.validation.whereItIs;
+  }
+  return check;
 }
 
 /** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
@@ -116,7 +127,7 @@ export function getCurrentCheck() {
 export async function loadDraft() {
   if (current) return current;
   const draft = await getDraft();
-  if (draft) current = normalizeCheck(draft);
+  if (draft) current = rehydrateDerivedFields(normalizeCheck(draft));
   return current;
 }
 
@@ -154,6 +165,11 @@ export function getSideDescription(side) {
 export function setSideDescription(side, description) {
   if (!current) return null;
   current.sides[side].description = normalizeDescription(description);
+  if (current.sides[side].description) {
+    current.sides[side].description.validated =
+      current.sides[side].description.validation.whatYouCanSee &&
+      current.sides[side].description.validation.whereItIs;
+  }
   persist();
   return current.sides[side].description;
 }
