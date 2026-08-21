@@ -7,6 +7,13 @@
     - draft  (out-of-line)    : the single in-progress check (key 'current'), so a
                                 walk survives reload / app-close and can be resumed
                                 from home. Photos ride inline as JPEG data-URLs.
+    - review (out-of-line)    : the just-submitted check awaiting the reviewer's
+                                Continue (key 'current'). Kept separate from `draft`
+                                so home never offers to "Resume" it, and so the
+                                assessment envelope + findings + photos survive a
+                                reload — otherwise the results screen would fall back
+                                to the read-only history path and tasks could never
+                                mint. Cleared on Continue.
 
   Submitted checks live in the backend (DynamoDB), written on submit and read on
   load via services/api.js — the app is online-only for the submit/review path
@@ -15,10 +22,12 @@
 */
 
 const DB_NAME = "conditions-reporter";
-// v5: dropped the unused `checks` store (submitted checks are backend-sourced; the
-// store's only remaining writer was the retired ?demo seed). v4 added the `draft`
-// store. Deletions/creations below are idempotent, so any older version converges.
-const DB_VERSION = 5;
+// v6: added the `review` store (just-submitted check awaiting Continue, kept out of
+// `draft` so it isn't offered as a resumable walk). v5: dropped the unused `checks`
+// store (submitted checks are backend-sourced; the store's only remaining writer was
+// the retired ?demo seed). v4 added the `draft` store. Deletions/creations below are
+// idempotent, so any older version converges.
+const DB_VERSION = 6;
 
 let _dbPromise = null;
 
@@ -42,6 +51,11 @@ function openDb() {
       // ever one active draft, stored under the fixed key "current".
       if (!db.objectStoreNames.contains("draft")) {
         db.createObjectStore("draft");
+      }
+      // Same shape as `draft`: a single submitted check under key "current", held
+      // only until the reviewer hits Continue.
+      if (!db.objectStoreNames.contains("review")) {
+        db.createObjectStore("review");
       }
     };
     req.onsuccess = () => {
@@ -128,4 +142,16 @@ export async function saveDraft(check) {
 }
 export async function clearDraft() {
   return tx("draft", "readwrite", (os) => os.delete("current"));
+}
+
+/* ---- review (single just-submitted check awaiting Continue, key 'current') ---- */
+export async function getReview() {
+  return tx("review", "readonly", (os) => reqToPromise(os.get("current")));
+}
+export async function saveReview(check) {
+  await tx("review", "readwrite", (os) => os.put(check, "current"));
+  return check;
+}
+export async function clearReview() {
+  return tx("review", "readwrite", (os) => os.delete("current"));
 }

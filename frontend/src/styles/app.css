@@ -1665,12 +1665,18 @@ theme-toggle {
   overflow-x: auto;
   padding-bottom: 1.3rem;
   scrollbar-width: none;
+  margin: 0;
+  padding-inline-start: 0;
+  list-style: none;
 }
 .thumbstrip::-webkit-scrollbar {
   display: none;
 }
-.thumbstrip__thumb {
+.thumbstrip__item {
   flex: 0 0 auto;
+}
+.thumbstrip__thumb {
+  display: block;
   width: 150px;
   height: 150px;
   border-radius: 14px;
@@ -1724,6 +1730,15 @@ theme-toggle {
   font-weight: 700;
   font-size: 1.15rem;
 }
+/* Which sides this condition was seen on (e.g. "North · West"). */
+.issue__sides {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
 .issue__desc {
   margin: 0.2rem 0 0;
   color: var(--text-secondary);
@@ -1767,7 +1782,9 @@ theme-toggle {
   margin: 0.5rem 0 0;
   font-size: 1rem;
   font-weight: 600;
-  color: var(--c-flag); /* amber "you changed this" — paired with the text label */
+  color: var(
+    --c-flag
+  ); /* amber "you changed this" — paired with the text label */
 }
 /* "Undo" reads as a link inside the amber status line. */
 .issue__undo {
