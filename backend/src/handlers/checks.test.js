@@ -147,6 +147,31 @@ const invokeComplete = (event) =>
   /** @type {any} */ (completeCheck(event, /** @type {any} */ ({}), () => {}));
 
 /**
+ * The CHECK# header item, as the children query returns it alongside artifacts
+ * and analyses.
+ * @param {string} [status]
+ * @returns {object}
+ */
+const headerItem = (status = "in_progress") => ({
+  sk: "CHECK#chk_01",
+  checkId: "chk_01",
+  status,
+});
+
+/**
+ * A registered ART# item (one per captured photo). `completeCheck` gates on
+ * every one of these having a matching ANALYSIS# item.
+ * @param {string} artifactId
+ * @param {string} side
+ * @returns {object}
+ */
+const artifactItem = (artifactId, side) => ({
+  sk: `CHECK#chk_01#ART#${side}#${artifactId}`,
+  artifactId,
+  side,
+});
+
+/**
  * @param {string} artifactId
  * @param {string} side
  * @param {string} grade
@@ -163,6 +188,19 @@ const analyzedItem = (artifactId, side, grade, category, rating) => ({
   gradeDescription: `${side} summary (${grade})`,
   rubricVersion: "1.0.0",
   concerns: [{ category, rating, explanation: "x", evidenceIndices: [] }],
+});
+
+/**
+ * A permanent-failure ANALYSIS# marker: carries no concerns, but still counts
+ * toward coverage so a failed photo can't block completion.
+ * @param {string} artifactId
+ * @returns {object}
+ */
+const failedItem = (artifactId) => ({
+  sk: `CHECK#chk_01#ANALYSIS#${artifactId}`,
+  status: "failed",
+  artifactId,
+  error: { code: "invalid_request", message: "bad" },
 });
 
 describe("completeCheck", () => {
@@ -182,6 +220,9 @@ describe("completeCheck", () => {
   it("synthesizes the worst grade, writes the scorecard, and returns an assessment envelope", async () => {
     send.mockResolvedValueOnce({
       Items: [
+        headerItem(),
+        artifactItem("art_1", "north"),
+        artifactItem("art_2", "south"),
         analyzedItem("art_1", "north", "Fair", "Litter", 2),
         analyzedItem("art_2", "south", "Poor", "Hazardous Waste", 4),
       ],
@@ -192,13 +233,11 @@ describe("completeCheck", () => {
       completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
     );
 
-    // Reads only this check's ANALYSIS# items, scoped to the derived site.
+    // Reads this check's header + children in one query, scoped to the site.
     const q = send.mock.calls[0][0];
     expect(q).toBeInstanceOf(QueryCommand);
     expect(q.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
-    expect(q.input.ExpressionAttributeValues[":prefix"]).toBe(
-      "CHECK#chk_01#ANALYSIS#",
-    );
+    expect(q.input.ExpressionAttributeValues[":prefix"]).toBe("CHECK#chk_01");
 
     const tx = send.mock.calls[1][0];
     expect(tx).toBeInstanceOf(TransactWriteCommand);
@@ -249,17 +288,16 @@ describe("completeCheck", () => {
     });
   });
 
-  it("excludes failed-analysis markers from synthesis", async () => {
+  it("counts a failed marker toward coverage but excludes it from synthesis", async () => {
     send.mockResolvedValueOnce({
       Items: [
+        headerItem(),
+        artifactItem("art_1", "north"),
+        artifactItem("art_9", "south"),
         analyzedItem("art_1", "north", "Fair", "Litter", 2),
-        // A failure marker: no grade/concerns to fold in.
-        {
-          sk: "CHECK#chk_01#ANALYSIS#art_9",
-          status: "failed",
-          artifactId: "art_9",
-          error: { code: "invalid_request", message: "bad" },
-        },
+        // art_9 failed permanently: no grade/concerns to fold in, but its marker
+        // satisfies coverage so the run isn't blocked forever.
+        failedItem("art_9"),
       ],
     });
     send.mockResolvedValueOnce({});
@@ -276,8 +314,52 @@ describe("completeCheck", () => {
     expect(items).toHaveLength(1);
   });
 
-  it("completes a check with no analyses (null grade, empty assessment)", async () => {
-    send.mockResolvedValueOnce({ Items: [] });
+  it("409s (no write) when a registered artifact has no analysis yet", async () => {
+    // Two photos registered, only one analyzed — the classic premature-complete
+    // race. Must NOT fold a partial scorecard onto the header.
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "north"),
+        artifactItem("art_2", "south"),
+        analyzedItem("art_1", "north", "Excellent", "Litter", 0),
+      ],
+    });
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({
+      checkId: "chk_01",
+      status: "analyzing",
+      expected: 2,
+      analyzed: 1,
+      pending: 1,
+    });
+    // Only the read happened — no TransactWrite, so the header stays open.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("404s when the header is absent (children but no header)", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        artifactItem("art_1", "north"),
+        analyzedItem("art_1", "north", "Good", "Litter", 1),
+      ],
+    });
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes a check with no artifacts (null grade, empty assessment)", async () => {
+    send.mockResolvedValueOnce({ Items: [headerItem()] });
     send.mockResolvedValueOnce({});
 
     const res = await invokeComplete(
@@ -298,8 +380,12 @@ describe("completeCheck", () => {
     });
   });
 
-  it("treats a re-completed check as an idempotent success", async () => {
-    send.mockResolvedValueOnce({ Items: [] });
+  it("treats a re-completed check as an idempotent success (gate skipped)", async () => {
+    // Already-completed header: the coverage gate is skipped even though this
+    // read shows an un-analyzed artifact, and the conditional write no-ops.
+    send.mockResolvedValueOnce({
+      Items: [headerItem("completed"), artifactItem("art_1", "north")],
+    });
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
         name: "TransactionCanceledException",
