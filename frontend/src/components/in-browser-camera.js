@@ -70,11 +70,13 @@ class InBrowserCamera extends HTMLElement {
     this._shutter = this.querySelector("#ibcam-shutter");
 
     this._shutter.addEventListener("click", () => this._capture());
-    // The shutter stays disabled until the stream can actually be snapshotted, so a
-    // tap never silently no-ops during a slow camera start / autoplay hold.
-    this._video.addEventListener("loadedmetadata", () => {
-      if (this._video.videoWidth) this._shutter.disabled = false;
-    });
+    // The shutter stays disabled until a frame is actually decoded, so a tap never
+    // silently no-ops during a slow camera start / autoplay hold, and _snapshot is
+    // never called before there's image data to draw. "loadeddata" (readyState >=
+    // HAVE_CURRENT_DATA) is the first point a frame exists — "loadedmetadata" only
+    // means the dimensions are known, which is too early to drawImage safely.
+    this._video.addEventListener("loadeddata", () => this._markReady());
+    this._video.addEventListener("canplay", () => this._markReady());
 
     this._stage.addEventListener("touchstart", (e) => this._onTouchStart(e), {
       passive: false,
@@ -241,6 +243,15 @@ class InBrowserCamera extends HTMLElement {
     this._pinch.active = false;
   }
 
+  // Enable the shutter once a real frame is decoded (readyState >= HAVE_CURRENT_DATA
+  // AND non-zero dimensions). Fires from both "loadeddata" and "canplay" since which
+  // arrives first varies by browser; guarded so it only ever enables.
+  _markReady() {
+    if (this._video.readyState >= 2 && this._video.videoWidth) {
+      this._shutter.disabled = false;
+    }
+  }
+
   /* ---- capture (stays live; host manages thumbnails) ---- */
   _capture() {
     const dataUrl = this._snapshot();
@@ -264,7 +275,10 @@ class InBrowserCamera extends HTMLElement {
     const video = this._video;
     const sw = video.videoWidth;
     const sh = video.videoHeight;
-    if (!sw || !sh) return null;
+    // No decoded frame yet (readyState < HAVE_CURRENT_DATA) or no dimensions →
+    // drawImage would throw. The shutter is gated on the same condition, but guard
+    // here too since the track can lose its frame at any time.
+    if (video.readyState < 2 || !sw || !sh) return null;
 
     const ctx = this._canvas.getContext("2d");
     if (!ctx) return null;
@@ -276,14 +290,21 @@ class InBrowserCamera extends HTMLElement {
     const cx = (sw - cw) / 2;
     const cy = (sh - ch) / 2;
 
-    // Output size: cap the longest side, never upscale.
+    // Output size: cap the longest side, never upscale, and never round to 0
+    // (a zero-sized destination rect makes drawImage throw).
     const scale = Math.min(1, MAX_CAPTURE_DIM / Math.max(cw, ch));
-    const dw = Math.round(cw * scale);
-    const dh = Math.round(ch * scale);
+    const dw = Math.max(1, Math.round(cw * scale));
+    const dh = Math.max(1, Math.round(ch * scale));
     this._canvas.width = dw;
     this._canvas.height = dh;
 
-    ctx.drawImage(video, cx, cy, cw, ch, 0, 0, dw, dh);
+    try {
+      ctx.drawImage(video, cx, cy, cw, ch, 0, 0, dw, dh);
+    } catch {
+      // Frame vanished between the guard and the draw (rare race) — skip this shot
+      // rather than break capture.
+      return null;
+    }
     return this._canvas.toDataURL("image/jpeg", JPEG_QUALITY);
   }
 
