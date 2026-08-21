@@ -10,8 +10,10 @@ import { defineConfig } from "vite";
   TODO(offline pass): the PWA is intentionally OFF for the MVP — no service
   worker is generated or registered while we finalize screens. When we do the
   dedicated offline pass, re-wire vite-plugin-pwa here (it's already in
-  devDependencies) with a workbox precache of the shell + the write-queue/sync,
-  and add the CSP hash for the inline theme script (infra I3). Reference manifest:
+  devDependencies) with a workbox precache of the shell + the write-queue/sync.
+  (The CSP hash for the inline theme script is now set in infra — see the
+  script-src note in infra/modules/app/main.tf; regenerate it there if that
+  script changes.) Reference manifest:
     name "Good Neighbor App", short_name "Good Neighbor", display "standalone",
     theme/background "#0f172a", icons icon-192.png / icon-512.png (+ maskable),
     workbox precache of the built js, css, html, woff2, png, and svg assets.
