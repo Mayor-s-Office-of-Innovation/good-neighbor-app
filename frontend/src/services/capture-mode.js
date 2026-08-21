@@ -1,4 +1,3 @@
-// @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
   capture-mode — single source of truth for which photo-capture path the perimeter
   check uses. The default is the native camera handoff (a hidden <input type="file"
@@ -20,6 +19,7 @@ const BROWSER = "browser";
 // Values that mean "turn it off" when passed as ?webcam=<value>.
 const OFF_VALUES = new Set(["0", "false", "off", "no"]);
 
+/** @returns {string | null} the persisted mode, or null if unset/unreadable. */
 function readStored() {
   try {
     return localStorage.getItem(STORAGE_KEY);
@@ -28,6 +28,10 @@ function readStored() {
   }
 }
 
+/**
+ * @param {string | null} value the mode to persist, or null to clear it.
+ * @returns {void}
+ */
 function writeStored(value) {
   try {
     if (value) localStorage.setItem(STORAGE_KEY, value);
@@ -40,8 +44,10 @@ function writeStored(value) {
 /**
  * Consume the `?webcam` param (if present), update the persisted preference, and
  * strip the param from the URL. Call once during app bootstrap, before any capture.
+ * @returns {void}
  */
 export function syncCaptureModeFromUrl() {
+  /** @type {string | null} */
   let raw = null;
   try {
     const params = new URLSearchParams(location.search);
@@ -57,11 +63,15 @@ export function syncCaptureModeFromUrl() {
   }
 }
 
-/** True when the opt-in in-app browser camera should be used for capture. */
+/**
+ * True when the opt-in in-app browser camera should be used for capture.
+ * @returns {boolean}
+ */
 export function isBrowserCameraEnabled() {
   return readStored() === BROWSER;
 }
 
+/** @returns {void} */
 function stripWebcamFromUrl() {
   try {
     const url = new URL(location.href);
