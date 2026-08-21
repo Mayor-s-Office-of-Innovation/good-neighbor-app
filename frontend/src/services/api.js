@@ -133,16 +133,19 @@ export function completeCheck(checkId) {
 
 /**
  * POST /v1/assessments:evaluate — store an assessment/report, evaluate
- * conditions, and create any immediately resolvable guidance tasks. Any
- * `disputedCategories` (analyzer category names the reviewer marked "I don't see
- * this problem") are recorded but never turned into tasks.
+ * conditions, and create any immediately resolvable guidance tasks. `dispositions`
+ * maps a condition's stable conditionId -> the reviewer's clarification
+ * ("not_present" | "better" | "worse" | "other"). Every disposition is recorded
+ * for false-positive analysis, but only "not_present" ("I don't see this problem")
+ * suppresses task minting for that condition. Keying by conditionId (not category)
+ * means disputing one condition never affects a sibling that shares its category.
  * @param {any} assessment
- * @param {string[]} [disputedCategories]
+ * @param {Record<string, string>} [dispositions]
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment, disputedCategories = []) {
+export function evaluateAssessment(assessment, dispositions = {}) {
   return request("POST", "/v1/assessments:evaluate", {
-    body: { ...assessment, disputedCategories },
+    body: { ...assessment, dispositions },
   });
 }
 
