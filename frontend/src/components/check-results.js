@@ -88,7 +88,7 @@ class CheckResults extends HTMLElement {
     // the assessment envelope to (re)evaluate. On the history/"View" path there's
     // nothing to evaluate, so cards render read-only.
     const canDispute = !!(session && session.status === "submitted");
-    this._assessment = canDispute ? session.assessment || null : null;
+    this._assessmentData = canDispute ? session.assessment || null : null;
 
     this.innerHTML = html`
       <div class="flow view-results">
@@ -154,7 +154,7 @@ class CheckResults extends HTMLElement {
     const finish = async () => {
       if (finishing) return;
       finishing = true;
-      if (this._assessment) {
+      if (this._assessmentData) {
         const disputed = [
           ...new Set(
             [...this._decisions.entries()]
@@ -164,7 +164,7 @@ class CheckResults extends HTMLElement {
           ),
         ];
         try {
-          await evaluateAssessment(this._assessment, disputed);
+          await evaluateAssessment(this._assessmentData, disputed);
         } catch (err) {
           console.error("failed to finalize review", err);
           finishing = false;
