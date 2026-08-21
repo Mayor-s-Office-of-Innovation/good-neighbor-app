@@ -195,6 +195,10 @@ class PerimeterCheck extends HTMLElement {
       // and surface a retryable error (no local queue — offline is post-MVP).
       console.error("submitCheck failed", err);
       overlay.hidden = true;
+      // We tore the camera down before submitting; remount it so webcam-mode users
+      // can still add photos on this (or another) side before retrying. (Native and
+      // fallback modes keep their ＋ tile, so nothing to restore there.)
+      if (this._useWebcam() && !this._camera) this._mountCamera();
       this._showSubmitError();
     }
   }
