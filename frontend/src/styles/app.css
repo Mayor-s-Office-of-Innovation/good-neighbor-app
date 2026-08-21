@@ -202,7 +202,11 @@ form > wa-button[type="submit"] {
   height: 160px;
   border-radius: 4px;
   background-color: var(--surface-2);
-  background-image: linear-gradient(45deg, var(--surface-3) 25%, transparent 25%),
+  background-image: linear-gradient(
+      45deg,
+      var(--surface-3) 25%,
+      transparent 25%
+    ),
     linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
     linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
@@ -234,9 +238,9 @@ form > wa-button[type="submit"] {
   align-items: center;
   margin-top: 0;
 }
-.login__otp::part(segments) { 
+.login__otp::part(segments) {
   padding: 1rem;
-  justify-content: center; 
+  justify-content: center;
 }
 /* Visually hide the field's label — the visible "Enter a site code" copy above
    already labels it (the label is kept for assistive tech). */
