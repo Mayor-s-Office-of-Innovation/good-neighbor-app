@@ -34,7 +34,7 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @property {string} siteId
  * @property {string} checkId
  * @property {string} artifactId
- * @property {string} s3Key
+ * @property {string} [s3Key]
  * @property {string} [side]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
@@ -177,38 +177,53 @@ async function markFailed({ dynamoTable, msg, err }) {
  * @returns {Promise<void>}
  */
 async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
-  // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
-  const object = await getObjectBytes({ bucket: uploadBucket, key: msg.s3Key });
-  const { bytes, contentType } = await downscaleImage(
-    object.bytes,
-    object.contentType ?? "application/octet-stream",
-  );
+  /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
+  const media = [];
+  if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
+    // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
+    const object = await getObjectBytes({ bucket: uploadBucket, key: msg.s3Key });
+    const { bytes, contentType } = await downscaleImage(
+      object.bytes,
+      object.contentType ?? "application/octet-stream",
+    );
 
-  if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
-    // A key that isn't one of our accepted image types can never analyze —
-    // treat it as a permanent failure rather than retry forever.
+    if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
+      // A key that isn't one of our accepted image types can never analyze —
+      // treat it as a permanent failure rather than retry forever.
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: new AnalyzerError(
+          `Unsupported media content-type: ${contentType}`,
+          {
+            code: "unsupported_input_type",
+          },
+        ),
+      });
+      return;
+    }
+
+    media.push(
+      /** @type {import("../analysis/analyzer-client.js").ImageMedia} */ ({
+        type: "image",
+        content_type: contentType,
+        base64: bytes.toString("base64"),
+      }),
+    );
+  }
+  if (typeof msg.text === "string" && msg.text.length > 0) {
+    media.push({ type: "text", text: msg.text });
+  }
+  if (media.length === 0) {
     await markFailed({
       dynamoTable,
       msg,
-      err: new AnalyzerError(`Unsupported media content-type: ${contentType}`, {
-        code: "unsupported_input_type",
+      err: new AnalyzerError("Artifact contained neither image nor text.", {
+        code: "invalid_request",
       }),
     });
     return;
   }
-
-  // content-type is validated above, so this shape is a sound AnalyzeMedia.
-  const media =
-    /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */ ([
-      {
-        type: "image",
-        content_type: contentType,
-        base64: bytes.toString("base64"),
-      },
-      ...(typeof msg.text === "string" && msg.text.length > 0
-        ? [{ type: "text", text: msg.text }]
-        : []),
-    ]);
 
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.

@@ -9,6 +9,7 @@ import {
   getSideDescription,
   setSideDescription,
   setSideDescriptionValidation,
+  setPostDescribeAction,
 } from "../state/check-session.js";
 import { startTranscribeSession } from "../services/transcribe-stream.js";
 import { shell } from "./describe-instead.templates.js";
@@ -49,6 +50,7 @@ class DescribeInstead extends HTMLElement {
     this._continue = this.querySelector("#describe-continue");
     this._dialog = this.querySelector("#describe-exit-modal");
     this._voice = this.querySelector("#describe-voice");
+    this._clear = this.querySelector("#describe-clear");
     this._voiceStatus = this.querySelector("#describe-voice-status");
     this._validationStatus = this.querySelector("#describe-validation-status");
     this._whatChip = this.querySelector("#describe-chip-what");
@@ -63,6 +65,7 @@ class DescribeInstead extends HTMLElement {
     );
     this.querySelector("#describe-continue").addEventListener("click", () => this._onContinue());
     this._voice.addEventListener("click", () => this._toggleVoice());
+    this._clear.addEventListener("click", () => this._clearAll());
     this.querySelector("#describe-discard").addEventListener("click", () =>
       this._discardAndExit(),
     );
@@ -84,10 +87,12 @@ class DescribeInstead extends HTMLElement {
       }
       this._syncVoiceLabel();
       this._syncValidationUi();
+      this._syncClearUi();
     });
 
     this._syncVoiceUi();
     this._syncValidationUi();
+    this._syncClearUi();
     this._field.focus();
     this._field.setSelectionRange(this._field.value.length, this._field.value.length);
   }
@@ -153,6 +158,11 @@ class DescribeInstead extends HTMLElement {
     this._voiceStatus.removeAttribute("role");
   }
 
+  _syncClearUi() {
+    if (!this._clear) return;
+    this._clear.disabled = !this._text.trim();
+  }
+
   _setVoiceState(state, error = "") {
     this._voiceState = state;
     this._voiceError = error;
@@ -189,7 +199,28 @@ class DescribeInstead extends HTMLElement {
         this._validationStatus.removeAttribute("role");
       }
     }
+    this._syncClearUi();
     this._syncVoiceUi();
+  }
+
+  _clearAll() {
+    this._programmaticFieldUpdate = true;
+    this._field.value = "";
+    this._programmaticFieldUpdate = false;
+    this._text = "";
+    this._savedText = "";
+    this._savedDescription = null;
+    this._inputSource = null;
+    this._validation = {
+      whatYouCanSee: false,
+      whereItIs: false,
+    };
+    this._validationState = "idle";
+    this._validationError = "";
+    this._voiceError = "";
+    setSideDescription(this._side, null);
+    this._syncValidationUi();
+    this._field.focus();
   }
 
   _appendTranscript(text) {
@@ -319,6 +350,11 @@ class DescribeInstead extends HTMLElement {
       this._validationState = "idle";
       this._validationError = "";
       this._syncValidationUi();
+      setPostDescribeAction(
+        this._sideIndex === SIDES.length - 1
+          ? { type: "submit" }
+          : { type: "advance", sideIndex: this._sideIndex + 1 },
+      );
       navigate("/check");
     } catch (error) {
       this._validationState = "idle";

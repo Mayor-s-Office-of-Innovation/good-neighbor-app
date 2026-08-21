@@ -23,6 +23,7 @@ import {
   getCurrentCheck,
   getActiveSideIndex,
   setActiveSideIndex,
+  consumePostDescribeAction,
   addItem,
   removeItem,
   skipSide,
@@ -46,9 +47,15 @@ class PerimeterCheck extends HTMLElement {
 
     const activeSideIndex = getActiveSideIndex();
     const hasActiveSide = activeSideIndex >= 0 && activeSideIndex < SIDES.length;
+    const postDescribeAction = consumePostDescribeAction();
     // Resume at the explicitly active side when returning from /check/describe.
     // Otherwise start at the first side that still needs attention.
-    if (hasActiveSide) {
+    if (postDescribeAction?.type === "advance") {
+      this._sideIndex = postDescribeAction.sideIndex;
+    } else if (postDescribeAction?.type === "submit") {
+      this._sideIndex = SIDES.length - 1;
+      this._pendingSubmit = true;
+    } else if (hasActiveSide && !isSideCovered(SIDES[activeSideIndex])) {
       this._sideIndex = activeSideIndex;
     } else {
       const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
@@ -78,6 +85,10 @@ class PerimeterCheck extends HTMLElement {
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._renderSide();
+    if (this._pendingSubmit) {
+      this._pendingSubmit = false;
+      queueMicrotask(() => this._submit());
+    }
   }
 
   get _side() {

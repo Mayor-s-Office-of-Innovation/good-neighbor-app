@@ -72,6 +72,7 @@ function normalizeCheck(check) {
 
 /** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
 let current = null;
+let postDescribeAction = null;
 
 // Fire-and-forget mirror of the in-memory check to the draft store. Renders read
 // the synchronous `current`; persistence catches up in the background.
@@ -133,6 +134,16 @@ export function setActiveSideIndex(index) {
   if (!current) return;
   current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
   persist();
+}
+
+export function setPostDescribeAction(action) {
+  postDescribeAction = action;
+}
+
+export function consumePostDescribeAction() {
+  const action = postDescribeAction;
+  postDescribeAction = null;
+  return action;
 }
 
 export function getSideDescription(side) {
@@ -214,5 +225,6 @@ export function markSubmitted(findings) {
 /** Drop the walk from memory AND the persisted draft (submit or discard). */
 export function clearCheck() {
   current = null;
+  postDescribeAction = null;
   void clearDraft();
 }

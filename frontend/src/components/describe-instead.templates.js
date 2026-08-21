@@ -36,17 +36,30 @@ export const shell = ({ text, hasText }) => html`
 
       <div class="describe__card">
         <label class="visually-hidden" for="describe-text">Describe what you see</label>
-        <textarea
-          class="describe__field"
-          id="describe-text"
-          placeholder="Example: There’s trash near the entrance and graffiti on the wall..."
-          rows="5"
-        ></textarea>
+        <div class="describe__field-wrap">
+          <textarea
+            class="describe__field"
+            id="describe-text"
+            placeholder="Example: There’s trash near the entrance and graffiti on the wall..."
+            rows="5"
+          ></textarea>
+        </div>
 
-      <div class="describe__chips" aria-label="Description checks">
+      <div class="describe__meta">
+        <div class="describe__chips" aria-label="Description checks">
           <span class="describe-chip" id="describe-chip-what" aria-disabled="true">What you can see</span>
           <span class="describe-chip" id="describe-chip-where" aria-disabled="true">Where it is</span>
         </div>
+        <button
+          class="describe__clear"
+          id="describe-clear"
+          type="button"
+          ${hasText ? "" : "disabled"}
+          aria-label="Clear all text"
+        >
+          Clear all
+        </button>
+      </div>
 
         <button class="describe__voice" id="describe-voice" type="button">
           ${hasText ? "Add more by voice" : "Use voice"}
