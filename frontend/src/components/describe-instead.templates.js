@@ -44,8 +44,8 @@ export const shell = ({ text, hasText }) => html`
         ></textarea>
 
       <div class="describe__chips" aria-label="Description checks">
-          <span class="describe-chip" aria-disabled="true">What you can see</span>
-          <span class="describe-chip" aria-disabled="true">Where it is</span>
+          <span class="describe-chip" id="describe-chip-what" aria-disabled="true">What you can see</span>
+          <span class="describe-chip" id="describe-chip-where" aria-disabled="true">Where it is</span>
         </div>
 
         <button class="describe__voice" id="describe-voice" type="button">
@@ -62,6 +62,12 @@ export const shell = ({ text, hasText }) => html`
     </div>
 
     <div class="describe__actions">
+      <p
+        class="describe__validation-status"
+        id="describe-validation-status"
+        aria-live="polite"
+        aria-hidden="true"
+      ></p>
       <button
         class="describe__continue"
         id="describe-continue"

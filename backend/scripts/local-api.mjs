@@ -32,6 +32,7 @@ import {
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
+import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as transcribeHandler } from "../src/handlers/transcribe.js";
 import { handler as transcribeCredentialsHandler } from "../src/handlers/transcribe-credentials.js";
 
@@ -80,6 +81,11 @@ function route(method, pattern, handler) {
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
   route("POST", "/site-code", siteCodeHandler),
+  route(
+    "POST",
+    "/v1/checks/{checkId}/sides/{side}/description:validate",
+    descriptionValidationHandler,
+  ),
   route("POST", "/transcribe", transcribeHandler),
   route("POST", "/transcribe-credentials", transcribeCredentialsHandler),
   // Perimeter checks (analysis-backend Step C)

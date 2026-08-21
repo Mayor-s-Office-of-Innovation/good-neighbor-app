@@ -1519,6 +1519,11 @@ theme-toggle {
   line-height: 1.2;
 }
 
+.describe-chip[data-complete="true"] {
+  background: #d9f2e3;
+  color: #276246;
+}
+
 .describe__voice {
   appearance: none;
   align-self: center;
@@ -1576,8 +1581,29 @@ theme-toggle {
 
 .describe__actions {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   margin-top: auto;
+}
+
+.describe__validation-status {
+  visibility: visible;
+  min-height: 2.75rem;
+  margin: 0 0 0.875rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  text-align: center;
+  max-width: 22rem;
+}
+
+.describe__validation-status[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.describe__validation-status[data-kind="error"] {
+  color: var(--c-hazard);
 }
 
 .describe__continue {

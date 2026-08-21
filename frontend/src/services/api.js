@@ -189,6 +189,21 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
+/**
+ * POST /v1/checks/{checkId}/sides/{side}/description:validate
+ * @param {string} checkId
+ * @param {string} side
+ * @param {{ text: string }} body
+ * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
+ */
+export function validateSideDescription(checkId, side, body) {
+  return request(
+    "POST",
+    `/v1/checks/${encodeURIComponent(checkId)}/sides/${encodeURIComponent(side)}/description:validate`,
+    { body },
+  );
+}
+
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**
