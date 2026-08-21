@@ -181,7 +181,10 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
   const media = [];
   if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
     // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
-    const object = await getObjectBytes({ bucket: uploadBucket, key: msg.s3Key });
+    const object = await getObjectBytes({
+      bucket: uploadBucket,
+      key: msg.s3Key,
+    });
     const { bytes, contentType } = await downscaleImage(
       object.bytes,
       object.contentType ?? "application/octet-stream",

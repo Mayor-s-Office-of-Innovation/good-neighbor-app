@@ -32,7 +32,10 @@ function downsampleToInt16(audioBuffer) {
 
   for (let index = 0; index < outputLength; index += 1) {
     const sample = inputData[Math.floor(index * ratio)];
-    output[index] = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
+    output[index] = Math.max(
+      -32768,
+      Math.min(32767, Math.floor(sample * 32767)),
+    );
   }
 
   return output;

@@ -4,7 +4,11 @@ import { html } from "../lib/html.js";
 export const shell = ({ text, hasText }) => html`
   <div class="flow view-describe describe">
     <div class="describe__bar">
-      <button class="describe__close describe__close--back" id="describe-close" type="button">
+      <button
+        class="describe__close describe__close--back"
+        id="describe-close"
+        type="button"
+      >
         <img
           class="describe__close-icon describe__close-icon--back"
           src="${import.meta.env.BASE_URL}icons/chevron-left.svg"
@@ -14,7 +18,11 @@ export const shell = ({ text, hasText }) => html`
         <span class="visually-hidden">Back to photo capture</span>
       </button>
       <span aria-hidden="true"></span>
-      <button class="describe__close describe__close--dismiss" id="describe-dismiss" type="button">
+      <button
+        class="describe__close describe__close--dismiss"
+        id="describe-dismiss"
+        type="button"
+      >
         <img
           class="describe__close-icon describe__close-icon--dismiss"
           src="${import.meta.env.BASE_URL}icons/xmark.svg"
@@ -35,7 +43,9 @@ export const shell = ({ text, hasText }) => html`
       </div>
 
       <div class="describe__card">
-        <label class="visually-hidden" for="describe-text">Describe what you see</label>
+        <label class="visually-hidden" for="describe-text"
+          >Describe what you see</label
+        >
         <div class="describe__field-wrap">
           <textarea
             class="describe__field"
@@ -45,21 +55,31 @@ export const shell = ({ text, hasText }) => html`
           ></textarea>
         </div>
 
-      <div class="describe__meta">
-        <div class="describe__chips" aria-label="Description checks">
-          <span class="describe-chip" id="describe-chip-what" aria-disabled="true">What you can see</span>
-          <span class="describe-chip" id="describe-chip-where" aria-disabled="true">Where it is</span>
+        <div class="describe__meta">
+          <div class="describe__chips" aria-label="Description checks">
+            <span
+              class="describe-chip"
+              id="describe-chip-what"
+              aria-disabled="true"
+              >What you can see</span
+            >
+            <span
+              class="describe-chip"
+              id="describe-chip-where"
+              aria-disabled="true"
+              >Where it is</span
+            >
+          </div>
+          <button
+            class="describe__clear"
+            id="describe-clear"
+            type="button"
+            ${hasText ? "" : "disabled"}
+            aria-label="Clear all text"
+          >
+            Clear all
+          </button>
         </div>
-        <button
-          class="describe__clear"
-          id="describe-clear"
-          type="button"
-          ${hasText ? "" : "disabled"}
-          aria-label="Clear all text"
-        >
-          Clear all
-        </button>
-      </div>
 
         <button class="describe__voice" id="describe-voice" type="button">
           ${hasText ? "Add more by voice" : "Use voice"}

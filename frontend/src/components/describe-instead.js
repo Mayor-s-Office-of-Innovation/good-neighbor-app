@@ -63,7 +63,9 @@ class DescribeInstead extends HTMLElement {
     this.querySelector("#describe-dismiss").addEventListener("click", () =>
       this._onClose(),
     );
-    this.querySelector("#describe-continue").addEventListener("click", () => this._onContinue());
+    this.querySelector("#describe-continue").addEventListener("click", () =>
+      this._onContinue(),
+    );
     this._voice.addEventListener("click", () => this._toggleVoice());
     this._clear.addEventListener("click", () => this._clearAll());
     this.querySelector("#describe-discard").addEventListener("click", () =>
@@ -94,7 +96,10 @@ class DescribeInstead extends HTMLElement {
     this._syncValidationUi();
     this._syncClearUi();
     this._field.focus();
-    this._field.setSelectionRange(this._field.value.length, this._field.value.length);
+    this._field.setSelectionRange(
+      this._field.value.length,
+      this._field.value.length,
+    );
   }
 
   _render() {
@@ -114,7 +119,9 @@ class DescribeInstead extends HTMLElement {
       this._voice.textContent = "Processing…";
       return;
     }
-    this._voice.textContent = this._text.trim() ? "Add more by voice" : "Use voice";
+    this._voice.textContent = this._text.trim()
+      ? "Add more by voice"
+      : "Use voice";
   }
 
   _syncVoiceUi() {
@@ -325,9 +332,13 @@ class DescribeInstead extends HTMLElement {
     this._validationError = "";
     this._syncValidationUi();
     try {
-      const result = await validateSideDescription(this._siteCheckId(), this._side, {
-        text,
-      });
+      const result = await validateSideDescription(
+        this._siteCheckId(),
+        this._side,
+        {
+          text,
+        },
+      );
       this._validation = {
         whatYouCanSee: Boolean(result.whatYouCanSee),
         whereItIs: Boolean(result.whereItIs),

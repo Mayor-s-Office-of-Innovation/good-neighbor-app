@@ -382,7 +382,10 @@ export async function uploadArtifact(
  * @param {{ side: string, text: string, capturedAt?: string }} item
  * @returns {Promise<string>}
  */
-export async function registerTextArtifact(checkId, { side, text, capturedAt }) {
+export async function registerTextArtifact(
+  checkId,
+  { side, text, capturedAt },
+) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,

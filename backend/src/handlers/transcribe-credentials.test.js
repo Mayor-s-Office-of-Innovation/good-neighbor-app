@@ -13,10 +13,14 @@ describe("transcribe-credentials handler", () => {
   it("rejects requests when passthrough mode is disabled", async () => {
     const { handler } = await import("./transcribe-credentials.js");
 
-    const result = await handler({
-      body: JSON.stringify({ siteId: "site-123" }),
-      isBase64Encoded: false,
-    }, {}, () => {});
+    const result = await handler(
+      {
+        body: JSON.stringify({ siteId: "site-123" }),
+        isBase64Encoded: false,
+      },
+      {},
+      () => {},
+    );
 
     expect(result.statusCode).toBe(501);
     expect(JSON.parse(result.body)).toMatchObject({
@@ -37,10 +41,14 @@ describe("transcribe-credentials handler", () => {
       }),
     });
 
-    const result = await handler({
-      body: JSON.stringify({ siteId: "site-123" }),
-      isBase64Encoded: false,
-    }, {}, () => {});
+    const result = await handler(
+      {
+        body: JSON.stringify({ siteId: "site-123" }),
+        isBase64Encoded: false,
+      },
+      {},
+      () => {},
+    );
 
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body)).toEqual({

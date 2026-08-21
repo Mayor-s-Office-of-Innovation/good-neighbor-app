@@ -46,7 +46,8 @@ class PerimeterCheck extends HTMLElement {
     if (!check) ensureCheck(this._siteId);
 
     const activeSideIndex = getActiveSideIndex();
-    const hasActiveSide = activeSideIndex >= 0 && activeSideIndex < SIDES.length;
+    const hasActiveSide =
+      activeSideIndex >= 0 && activeSideIndex < SIDES.length;
     const postDescribeAction = consumePostDescribeAction();
     // Resume at the explicitly active side when returning from /check/describe.
     // Otherwise start at the first side that still needs attention.
