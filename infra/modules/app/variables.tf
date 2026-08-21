@@ -40,3 +40,8 @@ variable "frontend_certificate_arn" {
     error_message = "frontend_certificate_arn must be set when frontend_domain_names is non-empty."
   }
 }
+
+variable "bedrock_model_id" {
+  description = "Bedrock model or inference profile ID for description validation."
+  type        = string
+}

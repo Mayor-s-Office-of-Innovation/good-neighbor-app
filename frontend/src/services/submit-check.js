@@ -20,6 +20,7 @@ import { clearDraft } from "../db.js";
 import {
   createCheck,
   uploadArtifact,
+  registerTextArtifact,
   waitForAnalyses,
   completeCheck,
   evaluateAssessment,
@@ -32,7 +33,6 @@ import {
 } from "../domain/check-adapter.js";
 import {
   SIDES,
-  allItems,
   getCurrentCheck,
   markSubmitted,
 } from "../state/check-session.js";
@@ -56,18 +56,37 @@ export async function submitCheck() {
 
   // 2. Upload every captured photo straight to S3, then register it. Bytes never
   //    transit our API; register enqueues the artifact's async analysis.
-  const photos = allItems().filter((it) => it.dataUrl);
-  for (const it of photos) {
-    await uploadArtifact(active.id, {
-      side: it.side,
-      dataUrl: it.dataUrl,
-      capturedAt: it.uploadedAt,
-    });
+  let expectedArtifacts = 0;
+  for (const side of SIDES) {
+    const sideState = active.sides[side];
+    const photos = sideState.items.filter((it) => it.dataUrl);
+    const descriptionText = sideState.description?.validated
+      ? sideState.description.text
+      : "";
+
+    for (const [index, it] of photos.entries()) {
+      await uploadArtifact(active.id, {
+        side: it.side,
+        dataUrl: it.dataUrl,
+        capturedAt: it.uploadedAt,
+        ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
+      });
+      expectedArtifacts += 1;
+    }
+
+    if (photos.length === 0 && descriptionText) {
+      await registerTextArtifact(active.id, {
+        side,
+        text: descriptionText,
+        capturedAt: new Date().toISOString(),
+      });
+      expectedArtifacts += 1;
+    }
   }
 
   // 3. Let the analyses land (worker → analyzer), then close the run out.
   //    Completion folds artifacts into an assessment; evaluation mints tasks.
-  await waitForAnalyses(active.id, { expected: photos.length });
+  await waitForAnalyses(active.id, { expected: expectedArtifacts });
   const completion = await completeCheck(active.id);
   if (!completion.assessmentReady || !completion.assessment) {
     throw new Error("Check completed without an assessment to evaluate.");

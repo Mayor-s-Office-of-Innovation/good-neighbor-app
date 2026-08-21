@@ -27,6 +27,9 @@ import {
 import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
+import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
+import { handler as transcribeHandler } from "../handlers/transcribe.js";
+import { handler as transcribeCredentialsHandler } from "../handlers/transcribe-credentials.js";
 import { jsonResponse } from "../http.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
@@ -34,6 +37,10 @@ import { jsonResponse } from "../http.js";
 // only ever call them with the event, so the map is typed to that call shape.
 const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /site-code": siteCodeHandler,
+  "POST /v1/checks/{checkId}/sides/{side}/description:validate":
+    descriptionValidationHandler,
+  "POST /transcribe": transcribeHandler,
+  "POST /transcribe-credentials": transcribeCredentialsHandler,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,
