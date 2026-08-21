@@ -1257,15 +1257,40 @@ theme-toggle {
   outline-offset: 2px;
 }
 
-/* Bottom action row: full-width forward button ("Next side ›" / "Submit check"). */
+/* Bottom action row: secondary "Describe instead" on the left, primary forward
+   action on the right ("Next side ›" / "Submit check"). */
 .check__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   padding-top: 0.2rem;
+}
+.check__describe {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.2;
+  margin: 0;
+  min-width: 0;
+  padding: 0.35rem 0;
+  text-align: left;
+}
+.check__describe:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 .check__next {
   appearance: none;
   border: 0;
   cursor: pointer;
-  width: 100%;
+  flex: 0 0 auto;
   background: var(--ink);
   color: var(--on-ink);
   font: inherit;
@@ -1284,6 +1309,19 @@ theme-toggle {
 .check__next:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+@media (max-width: 359px) {
+  .check__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .check__describe,
+  .check__next {
+    width: 100%;
+  }
+  .check__describe {
+    text-align: center;
+  }
 }
 
 /* AI-summary loading state shown during submit (the cheap "Summarising…"). */
