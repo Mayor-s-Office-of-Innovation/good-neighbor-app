@@ -179,14 +179,14 @@ form > wa-button[type="submit"] {
   width: 100%;
   max-width: none;
   padding: 0;
-  background: #ffffff;
+  background: var(--surface);
 }
 .login {
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  background: #ffffff;
-  color: #000000;
+  background: var(--surface);
+  color: var(--text);
   padding: 2rem 1rem;
 }
 .login__panel {
@@ -201,11 +201,11 @@ form > wa-button[type="submit"] {
   width: 160px;
   height: 160px;
   border-radius: 4px;
-  background-color: #f6f6f6;
-  background-image: linear-gradient(45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(-45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #eeeeee 75%),
-    linear-gradient(-45deg, transparent 75%, #eeeeee 75%);
+  background-color: var(--surface-2);
+  background-image: linear-gradient(45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
   background-position:
     0 0,
     0 8px,
@@ -215,7 +215,7 @@ form > wa-button[type="submit"] {
 }
 .login__copy h1 {
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   font-weight: 700;
   line-height: 40px;
@@ -223,7 +223,7 @@ form > wa-button[type="submit"] {
 .login__copy p {
   max-width: 100%;
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   line-height: 40px;
   text-wrap: balance;
@@ -233,6 +233,10 @@ form > wa-button[type="submit"] {
   flex-direction: column;
   align-items: center;
   margin-top: 0;
+}
+.login__otp::part(segments) { 
+  padding: 1rem;
+  justify-content: center; 
 }
 /* Visually hide the field's label — the visible "Enter a site code" copy above
    already labels it (the label is kept for assistive tech). */
@@ -250,12 +254,12 @@ form > wa-button[type="submit"] {
 }
 /* App-level "wrong code" error state (distinct from native validation). */
 .login__otp--error::part(segment) {
-  border-color: #fa5252;
-  color: #fa5252;
+  border-color: var(--c-hazard);
+  color: var(--c-hazard);
 }
 .login__error {
   margin: 32px 0 0;
-  color: #fa5252;
+  color: var(--c-hazard);
   font-size: 16px;
   font-weight: 400;
   line-height: 24px;
@@ -270,8 +274,6 @@ form > wa-button[type="submit"] {
   min-height: 0;
   padding: 12px 32px;
   border-radius: 32px;
-  background: #212529;
-  color: #f8f9fa;
   font-size: 20px;
   font-weight: 400;
   line-height: 32px;
@@ -282,19 +284,14 @@ form > wa-button[type="submit"] {
 }
 .btn-ink.login__continue:disabled {
   cursor: not-allowed;
-  background: #e9ecef;
-  color: #adb5bd;
-}
-.btn-ink.login__continue:not(:disabled) {
-  cursor: pointer;
-  background: #212529;
-  color: #f8f9fa;
+  background: var(--surface-3);
+  color: var(--text-faint);
 }
 .btn-ink.login__continue wa-spinner {
   width: 32px;
   height: 32px;
   font-size: 32px;
-  color: #adb5bd;
+  color: var(--text-faint);
   --track-width: 3px;
 }
 
