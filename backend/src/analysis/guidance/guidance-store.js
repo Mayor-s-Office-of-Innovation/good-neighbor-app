@@ -179,6 +179,9 @@ function applyAssessmentConditionDelta({
  * @property {string | null} [grade]
  * @property {Record<string, unknown>} rawAssessment
  * @property {AssessmentConditionInput[]} conditions
+ * @property {string[]} [disputedCategories] analyzer category names the reviewer
+ *   marked "I don't see this problem". Their conditions are recorded but never
+ *   turned into tasks (kept for false-positive analysis).
  */
 
 /**
@@ -209,7 +212,10 @@ export function makeConditionId(category, index) {
  * @param {string} opts.conditionId
  * @param {string | undefined} opts.checkId
  * @param {string} opts.reportedAt
- * @param {EvaluationResult} opts.evaluation
+ * @param {EvaluationResult | null} opts.evaluation null when the condition was
+ *   disputed (no rule evaluation runs).
+ * @param {boolean} [opts.disputed] the reviewer marked this "I don't see this
+ *   problem": persist the condition as a terminal record, mint no task.
  * @param {string} opts.policyVersion
  * @param {string[]} opts.taskIds
  * @param {string} opts.now
@@ -223,11 +229,14 @@ function buildConditionItem({
   checkId,
   reportedAt,
   evaluation,
+  disputed = false,
   policyVersion,
   taskIds,
   now,
 }) {
-  const unresolved = evaluation.kind !== "outcome";
+  // A disputed condition is terminal: it never mints a task and never enters the
+  // needs-answer / manual-review queue, but the record is kept for analysis.
+  const unresolved = !disputed && evaluation?.kind !== "outcome";
   const base = {
     ...conditionKey(siteId, assessmentId, conditionId),
     entityType: "CONDITION",
@@ -242,29 +251,35 @@ function buildConditionItem({
       ...condition.source,
     },
     analyzerCategory: condition.category,
-    canonicalCategory:
-      evaluation.kind === "manual_review"
+    canonicalCategory: disputed
+      ? condition.category
+      : evaluation?.kind === "manual_review"
         ? (evaluation.category ?? condition.category)
-        : evaluation.category,
+        : (evaluation?.category ?? condition.category),
     severity: condition.severity,
     severityLabel: condition.severityLabel,
     description: condition.description,
     answers: {},
-    status:
-      evaluation.kind === "needs_answer"
+    status: disputed
+      ? "disputed"
+      : evaluation?.kind === "needs_answer"
         ? "needs_answer"
-        : evaluation.kind === "outcome"
+        : evaluation?.kind === "outcome"
           ? "tasks_created"
-          : evaluation.kind === "manual_review"
+          : evaluation?.kind === "manual_review"
             ? "manual_review"
             : "completed",
+    // Reviewer feedback kept for false-positive analysis. Only the "I don't see
+    // this problem" disposition suppresses task creation (see storeEvaluatedAssessment).
+    disputed,
+    disputeDisposition: disputed ? "not_present" : null,
     selectedRuleId:
-      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
-    outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
+      evaluation?.kind === "outcome" ? evaluation.rule.ruleId : null,
+    outcome: evaluation?.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
-    resolvedToTasks: evaluation.kind === "outcome",
+    resolvedToTasks: evaluation?.kind === "outcome",
     needsAnswer:
-      evaluation.kind === "needs_answer" ? evaluation.question : null,
+      evaluation?.kind === "needs_answer" ? evaluation.question : null,
     cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
@@ -364,6 +379,11 @@ export async function storeEvaluatedAssessment(input, options) {
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
+  // Analyzer categories the reviewer marked "I don't see this problem". Their
+  // conditions are still persisted (for false-positive analysis) but never
+  // evaluated into tasks.
+  const disputedCategories = new Set(input.disputedCategories ?? []);
+
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
   /** @type {Record<string, unknown>[]} */
@@ -372,14 +392,22 @@ export async function storeEvaluatedAssessment(input, options) {
   for (const [index, condition] of input.conditions.entries()) {
     const conditionId =
       condition.conditionId ?? makeConditionId(condition.category, index);
-    const evaluation = evaluateCondition({
-      condition: { category: condition.category, severity: condition.severity },
-      catalog,
-    });
+    const disputed = disputedCategories.has(condition.category);
+
+    // Disputed conditions skip rule evaluation and task minting entirely.
+    const evaluation = disputed
+      ? null
+      : evaluateCondition({
+          condition: {
+            category: condition.category,
+            severity: condition.severity,
+          },
+          catalog,
+        });
 
     /** @type {string[]} */
     const taskIds = [];
-    if (evaluation.kind === "outcome") {
+    if (evaluation && evaluation.kind === "outcome") {
       const taskId = idFactory();
       taskIds.push(taskId);
       taskItems.push(
@@ -405,6 +433,7 @@ export async function storeEvaluatedAssessment(input, options) {
         checkId: input.checkId,
         reportedAt: input.reportedAt,
         evaluation,
+        disputed,
         policyVersion: catalog.policyVersion,
         taskIds,
         now,
@@ -420,6 +449,9 @@ export async function storeEvaluatedAssessment(input, options) {
   ).length;
   const conditionsResolvedToTasks = conditionItems.filter(
     (item) => item.resolvedToTasks,
+  ).length;
+  const disputedCount = conditionItems.filter(
+    (item) => item.disputed === true,
   ).length;
   const actionCount = taskItems.filter((item) => item.kind === "action").length;
   const escalationCount = taskItems.filter(
@@ -457,6 +489,7 @@ export async function storeEvaluatedAssessment(input, options) {
       totalConditions: input.conditions.length,
       conditionsNeedAnswer,
       conditionsResolvedToTasks,
+      disputedCount,
       openTaskCount: taskItems.length,
       actionCount,
       escalationCount,

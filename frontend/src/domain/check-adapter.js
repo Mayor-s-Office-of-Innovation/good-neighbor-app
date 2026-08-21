@@ -165,6 +165,10 @@ export function adaptCheckDetail(
     submittedAt: occurredAt(check),
     startedAt: check.startedAt || null,
     grade: check.grade ?? null,
+    // Analyzer-sourced one-line overall summary (worst-artifact synthesis),
+    // persisted onto the header at complete-time. "" when absent (older checks /
+    // synthesis gap) — the results screen renders an explicit "summary missing".
+    summary: check.summary || "",
     issueCount: check.issueCount ?? 0,
     maxSeverity: check.maxSeverity ?? 0,
     findings: analysesToFindings(analyses, cityCategories),

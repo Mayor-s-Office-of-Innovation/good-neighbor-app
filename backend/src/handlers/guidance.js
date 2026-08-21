@@ -14,7 +14,7 @@ const MAX_ASSESSMENT_CONDITIONS = 49;
 
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
+ * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[], disputedCategories: string[] }}
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -40,6 +40,10 @@ function normalizeAssessmentBody(body) {
     typeof assessment.general_conditions === "object"
       ? /** @type {Record<string, unknown>} */ (assessment.general_conditions)
       : {};
+
+  const disputedCategories = Array.isArray(input.disputedCategories)
+    ? input.disputedCategories.filter((c) => typeof c === "string")
+    : [];
 
   const explicitConditions = Array.isArray(input.conditions)
     ? /** @type {unknown[]} */ (input.conditions)
@@ -126,6 +130,7 @@ function normalizeAssessmentBody(body) {
           : null,
     rawAssessment,
     conditions,
+    disputedCategories,
   };
 }
 

@@ -1,365 +1,325 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  check-results — 5e (design port, screen 16). What the just-submitted check
-  produced, presented as the SAME worklist the home hub shows, so the two screens
-  never disagree on where an item belongs:
-    - Escalate to the city  (task.type === "city_escalation")  -> File 311
-    - Site actions          (task.type === "onsite")            -> handle on site
-  The buckets are the backend's real TASK# items (listTasks), grouped by the
-  authoritative `type` the guidance system stamps at task creation. We do NOT
-  re-derive city-vs-handle from findings/category names here — that join drifted
-  (analyzer category vs canonical guidance category) and mis-bucketed real city
-  items. today-view.js is the reference implementation for this grouping.
+  check-results — "Review conditions" (screen 16), shown right after a perimeter
+  check is submitted. This screen presents the FULL list of conditions the AI
+  identified for the run, so the user can review (and dispute) them before
+  continuing. It is ANALYSIS-sourced, not task-sourced:
+    - the overall summary + grade come from the CHECK# header (check.summary /
+      check.grade), which synthesize-check.js already rolls up as the worst
+      artifact's assessment across the run's sides.
+    - the issue cards are the per-artifact ANALYSIS# concerns (analysesToFindings),
+      one card per identified condition (rating >= 1), titled by the analyzer's
+      own category with its explanation.
 
-  NOTE: the 311 ticket lifecycle isn't modeled yet (post-MVP). The bottom actions
-  really close the backend TASK# items (completeTask) — same mutation the home
-  worklist uses — so handled items don't reappear on the home hub; "File 311"
-  just records the external filing (311_filed_external) without a ticket number.
+  Dispute ("Something not right?"): each card opens a modal offering four takes on
+  the condition (not present / better / worse / something else). Choosing one marks
+  the card (strikethrough + a "You marked this as ..." status with Undo).
 
-  Reads the just-submitted check from the session (for its id + evidence photos);
-  falls back to the most recent persisted check so the home "View" link still
-  lands somewhere real (no evidence strip on that path — photos aren't inlined in
-  the read model).
+  Task minting is DEFERRED to this screen: leaving it (Continue/Close) calls
+  evaluateAssessment with the categories marked "I don't see this problem", so the
+  backend records those conditions but never turns them into tasks (kept for
+  false-positive analysis). The other three dispute takes are local UI only this
+  pass (not sent). Disputes are actionable only on the live post-submit path (the
+  session carries the assessment envelope); the history/"View" path is read-only.
+  If evaluate fails we stay on the screen (surfacing an error) rather than silently
+  dropping task minting.
+
+  The task worklist (what the city handles vs. what the user handles) then lives
+  on the home hub (today-view), which fetches those minted tasks after Continue.
+
+  Data: resolve the checkId from the just-submitted session (also the source of the
+  photo thumbnails, which aren't inlined in the read model), else fall back to the
+  newest completed check so the home "View" link lands somewhere real (no thumbnails
+  on that path). Then getCheck(checkId) -> adaptCheckDetail for summary + findings.
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite } from "../db.js";
-import { listChecks, listTasks, completeTask } from "../services/api.js";
+import { listChecks, getCheck, evaluateAssessment } from "../services/api.js";
+import { adaptCheckDetail } from "../domain/check-adapter.js";
 import { navigate } from "../router.js";
-import {
-  getCurrentCheck,
-  allItems,
-  clearCheck,
-} from "../state/check-session.js";
+import { getCurrentCheck, allItems, clearCheck } from "../state/check-session.js";
 
-const NUM_WORD = [
-  "zero",
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
+// Dispute options offered in the modal. `status` is the phrase shown on the card
+// after the user picks it ("You marked this as <status>").
+const DECISIONS = [
+  { key: "not_present", label: "I don't see this problem", status: "not present" },
+  { key: "better", label: "It's better than described", status: "better than described" },
+  { key: "worse", label: "It's worse than described", status: "worse than described" },
+  { key: "other", label: "Something else", status: "something else" },
 ];
-const word = (n) => NUM_WORD[n] || String(n);
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 class CheckResults extends HTMLElement {
-  async connectedCallback() {
-    this._site = await getSite();
-    this._siteId = this._site.siteId || this._site.id;
+  // idx -> decision key. Local, ephemeral (lost on navigation) — not persisted.
+  _decisions = new Map();
 
+  async connectedCallback() {
     const session = getCurrentCheck();
-    let checkId, submittedAt, evidence, items;
-    let tasks = [];
+    let checkId;
+    let photos = [];
     try {
       if (session && session.status === "submitted") {
         checkId = session.id;
-        submittedAt = session.submittedAt;
-        items = allItems();
-        evidence = {
-          photos: items.filter((i) => i.kind === "photo").length,
-          voice: items.filter((i) => i.kind === "voice").length,
-          notes: items.filter((i) => i.kind === "note").length,
-        };
+        // Thumbnails come from the in-memory session — photos aren't inlined in
+        // the backend read model, so they exist only on the just-submitted path.
+        photos = allItems().filter((i) => i.kind === "photo" && i.dataUrl);
       } else {
-        // No just-submitted session (e.g. a "View" link for the latest check):
-        // read the newest completed check from the backend. Photos aren't inlined
-        // in the read model, so there's no evidence strip on this path.
+        // No just-submitted session (e.g. the home "View" link): read the newest
+        // completed check from the backend. No thumbnails on this path.
         const { checks } = await listChecks({ limit: 10 });
-        const latestHeader = (checks || []).find(
-          (c) => c.status === "completed",
-        );
-        if (!latestHeader) {
+        const latest = (checks || []).find((c) => c.status === "completed");
+        if (!latest) {
           navigate("/today");
           return;
         }
-        checkId = latestHeader.checkId;
-        submittedAt =
-          latestHeader.completedAt || latestHeader.startedAt || null;
-        items = [];
-        evidence = null;
+        checkId = latest.checkId;
       }
 
-      // The worklist for THIS check: the backend's open TASK# items, grouped by
-      // the type it stamped (city_escalation vs onsite). Same source + grouping
-      // as today-view, so the two screens agree by construction.
-      const { tasks: all } = await listTasks({ status: "open" });
-      tasks = (all || []).filter((t) => t.checkId === checkId);
+      const detail = await getCheck(checkId);
+      this._check = adaptCheckDetail(detail);
     } catch (err) {
       console.error("failed to load check results", err);
       navigate("/today");
       return;
     }
 
-    this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
+    const findings = this._check.findings || [];
+    const summary = this._check.summary;
 
-    const city = tasks.filter((t) => t.type === "city_escalation");
-    const onsite = tasks.filter((t) => t.type === "onsite");
-    const total = tasks.length;
-    const itemCount = items.length;
+    // Disputes are actionable only right after submit, when the session carries
+    // the assessment envelope to (re)evaluate. On the history/"View" path there's
+    // nothing to evaluate, so cards render read-only.
+    const canDispute = !!(session && session.status === "submitted");
+    this._assessment = canDispute ? session.assessment || null : null;
 
     this.innerHTML = html`
       <div class="flow view-results">
-        <div class="topbar">
+        <div class="topbar topbar--review">
+          <div class="topbar__titles">
+            <h1 class="topbar__title">Review conditions</h1>
+            <p class="topbar__sub">
+              AI reviewed your report. Review the conditions identified below
+              before continuing.
+            </p>
+          </div>
           <button
             class="topbar__back"
-            id="back"
+            id="close"
             type="button"
-            aria-label="Back"
+            aria-label="Close"
           >
-            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
           </button>
-          <div class="topbar__titles">
-            <h1 class="topbar__title">
-              Evening check${submittedAt ? ` · ${timeOf(submittedAt)}` : ""}
-            </h1>
-          </div>
-          <span class="topbar__meta"
-            >${itemCount ? `${itemCount} items` : ""}</span
-          >
         </div>
 
-        <div class="flow-hero">
-          <p class="flow-hero__eyebrow">Analysis</p>
-          <h2 class="flow-hero__headline">
-            ${total} item${total === 1 ? "" : "s"} to do
-          </h2>
-          <p class="flow-hero__body">${this._summary(city, onsite)}</p>
-        </div>
+        ${photos.length ? this._thumbs(photos) : ""}
 
-        ${total === 0
-          ? html`<div class="rowcard">
-              <div class="rowcard__row">
-                <span class="rowcard__thumb"
-                  ><wa-icon name="circle-check"></wa-icon
-                ></span>
-                <div class="rowcard__body">
-                  <p class="rowcard__title">All clear</p>
-                  <p class="rowcard__detail">
-                    No conditions found this walk. Nice work.
-                  </p>
-                </div>
-              </div>
-            </div>`
-          : ""}
-        ${evidence && (evidence.photos || evidence.voice || evidence.notes)
-          ? this._evidence(evidence, items)
-          : ""}
-        ${city.length ? this._cityBucket(city) : ""}
-        ${onsite.length ? this._onsiteBucket(onsite) : ""}
+        ${findings.length
+          ? this._assessment(summary, findings, canDispute)
+          : this._allClear(summary)}
 
         <div class="flow-ctas">
-          ${city.length
-            ? html`<button class="btn-ink" id="file-311" type="button">
-                File 1 ticket for all ${word(city.length)}
-              </button>`
-            : ""}
-          ${onsite.length
-            ? html`<button class="btn-outline" id="mark-handled" type="button">
-                Mark my ${word(onsite.length)} handled &amp; close
-              </button>`
-            : ""}
-          ${!city.length && !onsite.length
-            ? html`<button class="btn-ink" id="done" type="button">
-                Back to home
-              </button>`
-            : ""}
-          <p class="flow-error" id="cta-error" role="alert" hidden></p>
+          <p class="flow-error" id="results-error" role="alert" hidden>
+            Couldn't save your review. Check your connection and try again.
+          </p>
+          <button class="btn-ink" id="continue" type="button">Continue</button>
         </div>
-        <p class="flow-foot">Tap any item to dispute it.</p>
       </div>
+
+      <dialog class="sheet" id="dispute" aria-label="Something not right?">
+        <div class="sheet__panel">
+          <h2 class="visually-hidden">What's not right about this condition?</h2>
+          <ul class="sheet__opts">
+            ${DECISIONS.map(
+              (d) =>
+                html`<li>
+                  <button class="sheet__opt" type="button" data-key="${d.key}">
+                    ${escapeHtml(d.label)}
+                  </button>
+                </li>`,
+            ).join("")}
+          </ul>
+          <button class="sheet__cancel" type="button" id="dispute-cancel">
+            Cancel
+          </button>
+        </div>
+      </dialog>
     `;
 
-    const finish = () => {
+    this._dialog = this.querySelector("#dispute");
+
+    // Leaving the screen finalizes the review: on the live path, mint tasks now
+    // (evaluateAssessment), excluding categories marked "I don't see this problem".
+    // One-shot so Close+Continue can't double-fire; on failure we stay put so task
+    // minting isn't silently lost.
+    let finishing = false;
+    const finish = async () => {
+      if (finishing) return;
+      finishing = true;
+      if (this._assessment) {
+        const disputed = [
+          ...new Set(
+            [...this._decisions.entries()]
+              .filter(([, key]) => key === "not_present")
+              .map(([i]) => findings[i] && findings[i].category)
+              .filter(Boolean),
+          ),
+        ];
+        try {
+          await evaluateAssessment(this._assessment, disputed);
+        } catch (err) {
+          console.error("failed to finalize review", err);
+          finishing = false;
+          const errEl = this.querySelector("#results-error");
+          if (errEl) errEl.hidden = false;
+          return;
+        }
+      }
       clearCheck();
       navigate("/today");
     };
-    // Leaving the screen without acting (back / all-clear "Back to home") just
-    // drops the session — it closes no tasks.
-    this.querySelector("#back").addEventListener("click", finish);
-    this.querySelector("#done")?.addEventListener("click", finish);
 
-    // The bulk CTAs really close the backend tasks (same completeTask the home
-    // worklist uses) before returning home, so handled items don't reappear
-    // there. City -> "311 filed externally"; onsite -> manual. On any failure we
-    // keep the user on this screen with an inline error rather than navigating
-    // away as if it worked.
-    const err = this.querySelector("#cta-error");
-    const bulkClose = async (btn, group, completionMethod) => {
-      if (!group.length) {
-        finish();
+    // One delegated handler for the whole screen (survives the card footer
+    // innerHTML swaps that Undo/mark performs).
+    this.addEventListener("click", (e) => {
+      const t = e.target;
+      if (t.closest("#close") || t.closest("#continue")) return finish();
+
+      const flag = t.closest(".issue__flag");
+      if (flag) return this._openModal(Number(flag.dataset.idx));
+
+      const undo = t.closest(".issue__undo");
+      if (undo) return this._setDecision(Number(undo.dataset.idx), null);
+
+      const opt = t.closest(".sheet__opt");
+      if (opt) {
+        this._setDecision(Number(this._dialog.dataset.idx), opt.dataset.key);
+        this._dialog.close();
         return;
       }
-      const buttons = this.querySelectorAll(".flow-ctas button");
-      buttons.forEach((b) => (b.disabled = true));
-      if (err) {
-        err.hidden = true;
-        err.textContent = "";
-      }
-      try {
-        await Promise.all(
-          group.map((t) => completeTask(t.taskId, { completionMethod })),
-        );
-        finish();
-      } catch (e) {
-        console.error("bulk task close failed", e);
-        buttons.forEach((b) => (b.disabled = false));
-        if (err) {
-          err.hidden = false;
-          err.textContent = "Couldn’t save that — please try again.";
-        }
-      }
-    };
-    this.querySelector("#file-311")?.addEventListener("click", (e) =>
-      bulkClose(e.currentTarget, city, "311_filed_external"),
-    );
-    this.querySelector("#mark-handled")?.addEventListener("click", (e) =>
-      bulkClose(e.currentTarget, onsite, "manual"),
-    );
-    // Tap an item to "dispute" — post-MVP; harmless no-op affordance for now.
-    this.querySelectorAll(".findcard__row").forEach((row) =>
-      row.addEventListener("click", () => {}),
-    );
-    // "Site actions" items tick off in place.
-    this.querySelectorAll(".checkitem").forEach((btn) =>
-      btn.addEventListener("click", () => {
-        const on = btn.getAttribute("aria-pressed") === "true";
-        btn.setAttribute("aria-pressed", on ? "false" : "true");
-      }),
-    );
+
+      if (t.closest("#dispute-cancel")) return this._dialog.close();
+      // Click on the backdrop (target is the <dialog> itself) dismisses it.
+      if (t === this._dialog) return this._dialog.close();
+    });
   }
 
-  _summary(city, onsite) {
-    if (!city.length && !onsite.length) {
-      return "Nothing needs action from this walk. Photos, voice, and notes were all read.";
-    }
-    const parts = [];
-    if (city.length)
-      parts.push(
-        `${word(city.length)} need${city.length === 1 ? "s" : ""} a city crew`,
-      );
-    if (onsite.length)
-      parts.push(
-        `${word(onsite.length)} ${onsite.length === 1 ? "is" : "are"} yours to handle`,
-      );
-    return `${cap(parts.join(", "))}. Photos, voice, and notes were all read.`;
-  }
-
-  _evidence(e, items) {
-    const parts = [];
-    if (e.photos) parts.push(`${e.photos} photo${e.photos === 1 ? "" : "s"}`);
-    if (e.voice) parts.push(`${e.voice} voice`);
-    if (e.notes) parts.push(`${e.notes} note${e.notes === 1 ? "" : "s"}`);
-    const photos = items
-      .filter((i) => i.kind === "photo" && i.dataUrl)
-      .slice(0, 4);
-    const thumbs = photos.length
-      ? photos
+  // Horizontal, display-only strip of the run's photos (no controls this pass).
+  _thumbs(photos) {
+    return html`
+      <div class="thumbstrip" role="list" aria-label="Photos from this check">
+        ${photos
           .map(
-            (p, i) =>
+            (p) =>
               html`<img
-                class="evidence__thumb ${i < 2
-                  ? "evidence__thumb--active"
-                  : ""}"
+                class="thumbstrip__thumb"
+                role="listitem"
                 src="${p.dataUrl}"
                 alt=""
               />`,
           )
-          .join("")
-      : Array.from({ length: Math.min(e.photos, 4) })
-          .map(() => html`<span class="evidence__thumb"></span>`)
-          .join("");
-    const noteCount = e.voice + e.notes;
-    return html`
-      <div class="evidence">
-        <div class="evidence__head">
-          <span class="evidence__label">Evidence · ${parts.join(", ")}</span>
-          <a class="evidence__link" href="/check">See all</a>
-        </div>
-        <div class="evidence__strip">
-          ${thumbs}
-          ${noteCount
-            ? html`<span class="evidence__thumb evidence__thumb--more"
-                >${noteCount} notes</span
-              >`
-            : ""}
-        </div>
+          .join("")}
       </div>
     `;
   }
 
-  _cityBucket(city) {
+  // The grey assessment panel: sparkle + overall summary, then one white issue
+  // card per identified condition.
+  _assessment(summary, findings, canDispute) {
     return html`
-      <section class="bucket">
-        <div class="bucket__head">
-          <span class="bucket__title"
-            >Escalate to the city · ${city.length}</span
-          >
-          <span class="bucket__meta">Don't handle these</span>
+      <section class="assess">
+        <div class="assess__head">
+          <wa-icon
+            class="assess__spark"
+            name="sparkles"
+            aria-hidden="true"
+          ></wa-icon>
+          <p class="assess__summary">
+            ${summary ? escapeHtml(summary) : "summary missing"}
+          </p>
+          <p class="assess__sub">Review anything that doesn't look right.</p>
         </div>
-        <div class="findcard">
-          ${city.map((t) => this._cityRow(t)).join("")}
+        <div class="assess__list">
+          ${findings.map((f, i) => this._issue(f, i, canDispute)).join("")}
         </div>
       </section>
     `;
   }
 
-  _cityRow(t) {
-    const title = t.label || t.category || "Finding";
-    const detail = t.guidance || t.category || "";
+  _issue(f, i, canDispute) {
+    const title = f.category || "Condition";
     return html`
-      <div class="findcard__row" role="button" tabindex="0">
-        <div class="findcard__head">
-          <span class="findcard__kicker">City action</span>
-          <span class="pill pill--route">File 311</span>
-        </div>
-        <h3 class="findcard__title">${escapeHtml(title)}</h3>
-        ${detail
-          ? html`<p class="findcard__desc">${escapeHtml(detail)}</p>`
+      <div class="issue" data-idx="${i}">
+        <h3 class="issue__title">${escapeHtml(title)}</h3>
+        ${f.explanation
+          ? html`<p class="issue__desc">${escapeHtml(f.explanation)}</p>`
           : ""}
+        <div class="issue__foot">${this._cardFoot(i, canDispute)}</div>
       </div>
     `;
   }
 
-  _onsiteBucket(onsite) {
+  // The card footer flips between the dispute trigger and the "marked" status.
+  // Read-only (history) path: no trigger at all.
+  _cardFoot(i, canDispute) {
+    if (!canDispute) return "";
+    const key = this._decisions.get(i);
+    if (!key) {
+      return html`<button class="issue__flag" type="button" data-idx="${i}">
+        Something not right?
+      </button>`;
+    }
+    const d = DECISIONS.find((x) => x.key === key);
+    return html`<p class="issue__status">
+      You marked this as ${escapeHtml(d.status)} ·
+      <button class="issue__undo" type="button" data-idx="${i}">Undo</button>
+    </p>`;
+  }
+
+  // Apply (key) or clear (null) a card's dispute decision and re-render its foot.
+  _setDecision(i, key) {
+    if (key) this._decisions.set(i, key);
+    else this._decisions.delete(i);
+    const card = this.querySelector(`.issue[data-idx="${i}"]`);
+    if (!card) return;
+    card.classList.toggle("issue--marked", this._decisions.has(i));
+    // Reachable only from the flag/undo controls, which exist on the live path.
+    card.querySelector(".issue__foot").innerHTML = this._cardFoot(i, true);
+  }
+
+  _openModal(i) {
+    this._dialog.dataset.idx = String(i);
+    this._dialog.showModal();
+  }
+
+  // Zero findings: a single reassuring card in place of the issue list.
+  _allClear(summary) {
     return html`
-      <section class="bucket">
-        <div class="bucket__head">
-          <span class="bucket__title">Site actions · ${onsite.length}</span>
-          <span class="bucket__meta">Safe to clear</span>
+      <section class="assess">
+        <div class="assess__head">
+          <wa-icon
+            class="assess__spark"
+            name="sparkles"
+            aria-hidden="true"
+          ></wa-icon>
+          <p class="assess__summary">
+            ${summary ? escapeHtml(summary) : "summary missing"}
+          </p>
         </div>
-        <div class="checkcard">
-          ${onsite.map((t) => this._onsiteRow(t)).join("")}
+        <div class="rowcard">
+          <div class="rowcard__row">
+            <span class="rowcard__thumb"
+              ><wa-icon name="circle-check"></wa-icon
+            ></span>
+            <div class="rowcard__body">
+              <p class="rowcard__title">All clear</p>
+              <p class="rowcard__detail">
+                No conditions found this walk. Nice work.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
     `;
   }
-
-  _onsiteRow(t) {
-    const title = t.label || t.category || "Finding";
-    const detail = t.guidance || t.category || "";
-    return html`
-      <button class="checkitem" type="button" aria-pressed="false">
-        <div class="checkitem__body">
-          <p class="checkitem__title">${escapeHtml(title)}</p>
-          ${detail
-            ? html`<p class="checkitem__detail">${escapeHtml(detail)}</p>`
-            : ""}
-        </div>
-        <span class="checkitem__ring" aria-hidden="true"></span>
-      </button>
-    `;
-  }
-}
-
-function timeOf(iso) {
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 customElements.define("check-results", CheckResults);

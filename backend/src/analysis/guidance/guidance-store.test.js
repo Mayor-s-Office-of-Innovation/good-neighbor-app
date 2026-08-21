@@ -168,6 +168,60 @@ describe("storeEvaluatedAssessment", () => {
     });
     expect(writes).toHaveLength(2);
   });
+
+  it("records a disputed category but mints no task for it", async () => {
+    // Litter sev 3 normally resolves to an escalation task (see the first test);
+    // marking it "I don't see this problem" must suppress that task while keeping
+    // the condition as a terminal record for false-positive analysis.
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-3",
+        checkId: "chk-3",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [
+          { category: "Litter", severity: 3, description: "trash" },
+        ],
+        disputedCategories: ["Litter"],
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn(),
+      },
+    );
+
+    const writes = /** @type {any[]} */ (
+      send.mock.calls[0][0].input.TransactItems
+    );
+    // Only the assessment + the condition — no TASK# item.
+    expect(writes).toHaveLength(2);
+    expect(result.taskItems).toHaveLength(0);
+
+    const assessment = writes[0].Put.Item;
+    expect(assessment.summary).toMatchObject({
+      totalConditions: 1,
+      conditionsResolvedToTasks: 0,
+      openTaskCount: 0,
+      disputedCount: 1,
+    });
+
+    const condition = writes[1].Put.Item;
+    expect(condition).toMatchObject({
+      sk: "ASSESSMENT#asm-3#COND#001-litter",
+      entityType: "CONDITION",
+      status: "disputed",
+      disputed: true,
+      disputeDisposition: "not_present",
+      resolvedToTasks: false,
+      taskIds: [],
+    });
+    // Terminal — must not surface in the unresolved (needs-answer/manual) queue.
+    expect(condition).not.toHaveProperty("gsi5pk");
+    expect(condition.selectedRuleId).toBeNull();
+    expect(condition.outcome).toBeNull();
+  });
 });
 
 describe("answerCondition", () => {

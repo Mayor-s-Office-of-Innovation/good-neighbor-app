@@ -8,9 +8,11 @@
     2. per photo: presign → PUT to S3 → register (each register enqueues the
        artifact's async analysis)
     3. wait for the analyses to land (bounded poll), then complete (folds the
-       scorecard + mints tasks)
+       scorecard). Task minting is DEFERRED to the review screen's Continue so a
+       dispute can suppress a finding before its task exists.
     4. read the authoritative completed check and adapt its analyses → findings,
-       stored on the in-memory session so 5e results renders them.
+       stored (with the assessment envelope) on the in-memory session so the
+       results screen renders them and can evaluate on Continue.
 
   No local fallback: any failure throws so the caller shows an error (offline is
   post-MVP; there is no write queue). The just-submitted photos stay in the session
@@ -22,14 +24,9 @@ import {
   uploadArtifact,
   waitForAnalyses,
   completeCheck,
-  evaluateAssessment,
   getCheck,
-  listTasks,
 } from "./api.js";
-import {
-  analysesToFindings,
-  cityCategoriesForCheck,
-} from "../domain/check-adapter.js";
+import { analysesToFindings } from "../domain/check-adapter.js";
 import {
   SIDES,
   allItems,
@@ -66,24 +63,22 @@ export async function submitCheck() {
   }
 
   // 3. Let the analyses land (worker → analyzer), then close the run out.
-  //    Completion folds artifacts into an assessment; evaluation mints tasks.
+  //    Completion folds artifacts into the assessment envelope. Task minting is
+  //    DEFERRED: evaluateAssessment now runs when the user leaves the review
+  //    screen (check-results Continue), so disputes can suppress tasks before
+  //    they're created. The assessment rides on the session for that call.
   await waitForAnalyses(active.id, { expected: photos.length });
   const completion = await completeCheck(active.id);
   if (!completion.assessmentReady || !completion.assessment) {
     throw new Error("Check completed without an assessment to evaluate.");
   }
-  await evaluateAssessment(completion.assessment);
 
-  // 4. Read the authoritative completed check + analyses and adapt to findings.
-  //    assessment evaluation just minted immediately resolvable TASK# items, so fetch them to classify each
-  //    finding city-vs-handle from the backend's stamped `type` (no client-side
-  //    escalation rule). 5e reads these findings + the session photos.
-  const [detail, { tasks }] = await Promise.all([
-    getCheck(active.id),
-    listTasks({ status: "open" }),
-  ]);
-  const cityCategories = cityCategoriesForCheck(tasks, active.id);
-  markSubmitted(analysesToFindings(detail.analyses, cityCategories));
+  // 4. Read the authoritative completed check + analyses and adapt to findings for
+  //    the review screen. No task-based city/handle classification here — no tasks
+  //    exist yet (they mint on Continue) and the review screen renders plain cards;
+  //    the home hub fetches its own tasks after the user continues.
+  const detail = await getCheck(active.id);
+  markSubmitted(analysesToFindings(detail.analyses), completion.assessment);
 
   // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
   await clearDraft();
