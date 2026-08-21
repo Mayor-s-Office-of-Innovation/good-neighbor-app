@@ -133,12 +133,17 @@ export function completeCheck(checkId) {
 
 /**
  * POST /v1/assessments:evaluate — store an assessment/report, evaluate
- * conditions, and create any immediately resolvable guidance tasks.
- * @param {unknown} assessment
+ * conditions, and create any immediately resolvable guidance tasks. Any
+ * `disputedCategories` (analyzer category names the reviewer marked "I don't see
+ * this problem") are recorded but never turned into tasks.
+ * @param {any} assessment
+ * @param {string[]} [disputedCategories]
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment) {
-  return request("POST", "/v1/assessments:evaluate", { body: assessment });
+export function evaluateAssessment(assessment, disputedCategories = []) {
+  return request("POST", "/v1/assessments:evaluate", {
+    body: { ...assessment, disputedCategories },
+  });
 }
 
 /**

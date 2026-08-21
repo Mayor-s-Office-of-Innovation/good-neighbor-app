@@ -114,11 +114,17 @@ export function allItems() {
   return SIDES.flatMap((s) => current.sides[s].items);
 }
 
-export function markSubmitted(findings) {
+/**
+ * Flip the walk to "submitted" and stash what the results screen needs. The
+ * `assessment` envelope (from completeCheck) rides along so the review screen can
+ * defer task minting to Continue — sending it to evaluate then, with any disputes.
+ */
+export function markSubmitted(findings, assessment) {
   if (!current) return null;
   current.status = "submitted";
   current.submittedAt = new Date().toISOString();
   current.findings = findings;
+  current.assessment = assessment;
   return current;
 }
 
