@@ -77,6 +77,10 @@ const LOCAL_STUB_MODEL_ID = "local-stub-model";
 /** @type {BedrockRuntimeClient | undefined} */
 let client;
 
+/**
+ * Lazily create the Bedrock runtime client with the configured profile.
+ * @returns {BedrockRuntimeClient}
+ */
 function getClient() {
   if (!client) {
     const profile =
@@ -89,6 +93,10 @@ function getClient() {
   return client;
 }
 
+/**
+ * Whether local heuristic validation is allowed in this process.
+ * @returns {boolean}
+ */
 function isLocalValidationAllowed() {
   return (
     process.env.NODE_ENV === "test" ||
@@ -101,6 +109,7 @@ function isLocalValidationAllowed() {
 /**
  * @param {string} text
  * @param {string} side
+ * @returns {string}
  */
 function buildPrompt(text, side) {
   return [
@@ -142,6 +151,7 @@ function normalizeResult(result) {
 
 /**
  * @param {string} text
+ * @returns {any}
  */
 function extractJson(text) {
   const match = text.match(/\{[\s\S]*\}/);

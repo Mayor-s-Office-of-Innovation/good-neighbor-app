@@ -5,12 +5,11 @@ const { defaultProvider } = providerModule;
 
 /**
  * Local/dev passthrough cred vending for browser-direct Transcribe streaming.
- *
  * This is intentionally disabled unless `TRANSCRIBE_CREDENTIALS_MODE=passthrough`
  * is set in the backend environment. That keeps the route inert in deployed
  * environments until the real device-token + scoped STS path lands.
- *
  * @param {{ credentialProvider?: () => Promise<any>, region?: string, profile?: string }} [deps]
+ * @returns {Promise<{ accessKeyId: string, secretAccessKey: string, sessionToken: string | null, expiration: string | null, region: string }>}
  */
 export async function resolvePassthroughCredentials(deps = {}) {
   const profile = deps.profile || process.env.TRANSCRIBE_AWS_PROFILE;

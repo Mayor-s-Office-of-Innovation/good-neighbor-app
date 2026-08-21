@@ -93,6 +93,7 @@ describe("description validation handler", () => {
 /**
  * @param {import("aws-lambda").APIGatewayProxyHandlerV2} handler
  * @param {Partial<import("aws-lambda").APIGatewayProxyEventV2>} event
+ * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
  */
 async function callHandler(handler, event) {
   return /** @type {import("aws-lambda").APIGatewayProxyResult} */ (

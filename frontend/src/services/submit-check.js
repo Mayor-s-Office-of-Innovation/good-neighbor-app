@@ -33,7 +33,6 @@ import {
 } from "../domain/check-adapter.js";
 import {
   SIDES,
-  allItems,
   getCurrentCheck,
   markSubmitted,
 } from "../state/check-session.js";

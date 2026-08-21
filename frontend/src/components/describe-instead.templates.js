@@ -1,7 +1,7 @@
 // @ts-nocheck -- template asset URLs use Vite import.meta.env.BASE_URL like main.js.
 import { html } from "../lib/html.js";
 
-export const shell = ({ text, hasText }) => html`
+export const shell = ({ hasText }) => html`
   <div class="flow view-describe describe">
     <div class="describe__bar">
       <button

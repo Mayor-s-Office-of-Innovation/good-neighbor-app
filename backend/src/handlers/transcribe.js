@@ -14,6 +14,10 @@ const { defaultProvider } = providerModule;
 /** @type {TranscribeStreamingClient | undefined} */
 let client;
 
+/**
+ * Lazily create the Transcribe streaming client with the configured profile.
+ * @returns {TranscribeStreamingClient}
+ */
 function getClient() {
   if (!client) {
     const profile = process.env.TRANSCRIBE_AWS_PROFILE;
@@ -27,6 +31,7 @@ function getClient() {
 
 /**
  * @param {Uint8Array} audioBuffer
+ * @yields {{ AudioEvent: { AudioChunk: Uint8Array } }}
  */
 async function* audioStream(audioBuffer) {
   const chunkSize = 4096;
