@@ -56,7 +56,7 @@ export const shell = ({ text, hasText }) => html`
           id="describe-voice-status"
           role="status"
           aria-live="polite"
-          hidden
+          aria-hidden="true"
         ></p>
       </div>
     </div>

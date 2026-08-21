@@ -97,6 +97,7 @@ class DescribeInstead extends HTMLElement {
     this._syncVoiceLabel();
     if (this._voice) {
       this._voice.disabled = this._voiceState === "processing";
+      this._voice.dataset.state = this._voiceState;
       if (this._voiceState === "processing") {
         this._voice.setAttribute("aria-busy", "true");
       } else {
@@ -109,29 +110,23 @@ class DescribeInstead extends HTMLElement {
     }
     if (!this._voiceStatus) return;
     if (this._voiceError) {
-      this._voiceStatus.hidden = false;
+      this._voiceStatus.removeAttribute("aria-hidden");
       this._voiceStatus.textContent = this._voiceError;
       this._voiceStatus.dataset.kind = "error";
       this._voiceStatus.setAttribute("role", "alert");
       return;
     }
-    if (this._voiceState === "recording") {
-      this._voiceStatus.hidden = false;
-      this._voiceStatus.textContent = "Listening…";
-      this._voiceStatus.dataset.kind = "live";
-      this._voiceStatus.setAttribute("role", "status");
-      return;
-    }
     if (this._voiceState === "processing") {
-      this._voiceStatus.hidden = false;
+      this._voiceStatus.removeAttribute("aria-hidden");
       this._voiceStatus.textContent = "Processing transcript…";
       this._voiceStatus.dataset.kind = "";
       this._voiceStatus.setAttribute("role", "status");
       return;
     }
-    this._voiceStatus.hidden = true;
+    this._voiceStatus.setAttribute("aria-hidden", "true");
     this._voiceStatus.textContent = "";
     delete this._voiceStatus.dataset.kind;
+    this._voiceStatus.removeAttribute("role");
   }
 
   _setVoiceState(state, error = "") {
