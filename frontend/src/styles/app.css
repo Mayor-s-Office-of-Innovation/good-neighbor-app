@@ -179,14 +179,14 @@ form > wa-button[type="submit"] {
   width: 100%;
   max-width: none;
   padding: 0;
-  background: #ffffff;
+  background: var(--surface);
 }
 .login {
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  background: #ffffff;
-  color: #000000;
+  background: var(--surface);
+  color: var(--text);
   padding: 2rem 1rem;
 }
 .login__panel {
@@ -201,11 +201,15 @@ form > wa-button[type="submit"] {
   width: 160px;
   height: 160px;
   border-radius: 4px;
-  background-color: #f6f6f6;
-  background-image: linear-gradient(45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(-45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #eeeeee 75%),
-    linear-gradient(-45deg, transparent 75%, #eeeeee 75%);
+  background-color: var(--surface-2);
+  background-image: linear-gradient(
+      45deg,
+      var(--surface-3) 25%,
+      transparent 25%
+    ),
+    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
   background-position:
     0 0,
     0 8px,
@@ -215,7 +219,7 @@ form > wa-button[type="submit"] {
 }
 .login__copy h1 {
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   font-weight: 700;
   line-height: 40px;
@@ -223,7 +227,7 @@ form > wa-button[type="submit"] {
 .login__copy p {
   max-width: 100%;
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   line-height: 40px;
   text-wrap: balance;
@@ -234,74 +238,32 @@ form > wa-button[type="submit"] {
   align-items: center;
   margin-top: 0;
 }
-.code-boxes {
-  display: grid;
-  grid-template-columns: repeat(3, 48px) 15px repeat(3, 48px);
-  column-gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0;
+.login__otp::part(segments) {
+  padding: 1rem;
+  justify-content: center;
+}
+/* Visually hide the field's label — the visible "Enter a site code" copy above
+   already labels it (the label is kept for assistive tech). */
+.login__otp::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   padding: 0;
   border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
 }
-.code-cell {
-  position: relative;
-  display: block;
-  width: 48px;
-  height: 48px;
-}
-.code-box {
-  appearance: none;
-  -webkit-appearance: none;
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  padding: 5px 0;
-  border: 1px solid #dee2e6;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  text-align: center;
-}
-.code-cell__pin {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 17px;
-  height: 17px;
-  border: 2px solid #c9cfd6;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.code-box:focus {
-  border-color: #4c6ef5;
-  outline: none;
-}
-.code-box--error {
-  border-color: #fa5252;
-  color: #fa5252;
-}
-.code-boxes__dash {
-  width: 15px;
-  height: 28px;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  letter-spacing: 0;
-  text-align: center;
-  justify-self: center;
+/* App-level "wrong code" error state (distinct from native validation). */
+.login__otp--error::part(segment) {
+  border-color: var(--c-hazard);
+  color: var(--c-hazard);
 }
 .login__error {
   margin: 32px 0 0;
-  color: #fa5252;
+  color: var(--c-hazard);
   font-size: 16px;
   font-weight: 400;
   line-height: 24px;
@@ -316,8 +278,6 @@ form > wa-button[type="submit"] {
   min-height: 0;
   padding: 12px 32px;
   border-radius: 32px;
-  background: #212529;
-  color: #f8f9fa;
   font-size: 20px;
   font-weight: 400;
   line-height: 32px;
@@ -328,19 +288,14 @@ form > wa-button[type="submit"] {
 }
 .btn-ink.login__continue:disabled {
   cursor: not-allowed;
-  background: #e9ecef;
-  color: #adb5bd;
-}
-.btn-ink.login__continue:not(:disabled) {
-  cursor: pointer;
-  background: #212529;
-  color: #f8f9fa;
+  background: var(--surface-3);
+  color: var(--text-faint);
 }
 .btn-ink.login__continue wa-spinner {
   width: 32px;
   height: 32px;
   font-size: 32px;
-  color: #adb5bd;
+  color: var(--text-faint);
   --track-width: 3px;
 }
 
@@ -355,14 +310,6 @@ form > wa-button[type="submit"] {
   .login__copy h1,
   .login__copy p {
     font-size: 1.65rem;
-  }
-  .code-boxes {
-    grid-template-columns: repeat(3, 44px) 22px repeat(3, 44px);
-    column-gap: 7px;
-  }
-  .code-cell {
-    width: 44px;
-    height: 48px;
   }
 }
 
