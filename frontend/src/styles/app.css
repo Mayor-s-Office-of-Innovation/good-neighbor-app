@@ -1361,15 +1361,21 @@ theme-toggle {
   object-fit: cover;
   display: block;
 }
-/* Capture flash — brief white wash so a tap registers (no separate review step). */
+/* Capture flash — brief white wash so a tap registers (no separate review step).
+   Motion-gated: reduced-motion users get no flash (the new thumbnail below is the
+   confirmation). Base opacity 0 so the ::after is inert unless the animation runs. */
 .ibcam__stage--flash::after {
   content: "";
   position: absolute;
   inset: 0;
   background: #fff;
-  opacity: 0.85;
+  opacity: 0;
   pointer-events: none;
-  animation: ibcam-flash 160ms ease-out;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ibcam__stage--flash::after {
+    animation: ibcam-flash 160ms ease-out;
+  }
 }
 @keyframes ibcam-flash {
   from {
@@ -1407,6 +1413,14 @@ theme-toggle {
 }
 .ibcam__shutter:active {
   transform: scale(0.94);
+}
+/* Disabled until the stream can be snapshotted (slow start / autoplay hold). */
+.ibcam__shutter:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ibcam__shutter:disabled:active {
+  transform: none;
 }
 
 /* ---- Screen (15) review + (16) results: coverage / evidence rows ---- */
