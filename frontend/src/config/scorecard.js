@@ -1,8 +1,7 @@
 /*
-  The streetconditions.org scorecard vocabulary — the ground truth both the mock
-  analyzer (src/services/analyzer.js) and the findings logic (src/domain/findings.js)
-  build against. Verified against the real export (see docs/take5-plan.md
-  "Analyzer contract").
+  The streetconditions.org scorecard vocabulary — the ground truth the mock
+  analyzer (src/services/analyzer.js) builds against. Verified against the real
+  export (see docs/take5-plan.md "Analyzer contract").
 
   The rubric is FIXED: the analyzer returns all 12 categories every time, each with a
   severity `rating` 0-3 and a `hazard` boolean. `rating` is SEVERITY, not confidence

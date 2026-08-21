@@ -1,39 +1,36 @@
 /*
-  today-view — the home hub (Take 5, screens 5a + 5b).
+  today-view — the home hub (the screen with the "Perimeter check" button).
 
-  One component, two states driven by real data:
-    - 5a "Check due now"  : today's cadence (3 checks) isn't complete -> last log + Start.
-    - 5b "Up to date"     : all of today's checks are in -> last-6 summary + open items.
+  One always-on screen (no due/up-to-date fork), driven by real data. When we have
+  the data, it shows two sections:
+    1. Overall summary of the last perimeter check — the analyzer's own one-line
+       summary (CHECK# header `summary`, synthesized at complete-time), with the
+       LAST LOG timestamp beneath it. Falls back to a derived headline for checks
+       completed before the summary field existed; omitted entirely if there is no
+       submitted check yet.
+    2. Open tasks — the site's real TASK# worklist, in boxed groups: SITE ACTIONS
+       (onsite) then ESCALATE TO THE CITY (city). Cards carry the task's own action
+       buttons, wired to the real complete / cannot-do endpoints.
 
-  Cadence is a fixed pilot value (3/day, decision #3); overdue/missed states are out
-  of v1. Per the MVP design trim, the "check due" screen is pared to just the
-  last-log summary + a Start button; no streak, no status hero.
-  Markup is inline via the `html` tag (barebones screen; split into a .templates.js
-  file if it grows — see CLAUDE.md convention).
+  311 has no integration yet: filing a ticket happens outside the app, so the
+  escalation card's button reads "Filed 311 ticket" and simply closes the task for
+  the record (no 311 API call, no ticket number). Markup is inline via the `html`
+  tag; split into a .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite, getDraft } from "../db.js";
-import { listChecks, listTasks } from "../services/api.js";
+import {
+  listChecks,
+  listTasks,
+  completeTask,
+  cannotDoTask,
+} from "../services/api.js";
 import {
   adaptCheckHeader,
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
-import { severityWord } from "../config/scorecard.js";
 import { startCheck, clearCheck } from "../state/check-session.js";
 import { navigate } from "../router.js";
-
-const CADENCE = 3; // checks per day (pilot, hardcoded)
-
-function isToday(iso) {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
 
 class TodayView extends HTMLElement {
   async connectedCallback() {
@@ -42,9 +39,8 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
-    // newest first, adapted to the UI record shape. Each check's findings are
-    // classified city-vs-handle from the authoritative TASK# items (no client-side
-    // escalation rule). Online-only: on failure show an error, not a crash.
+    // newest first, adapted to the UI record shape. Online-only: on failure show
+    // an error, not a crash.
     let submitted, tasks;
     try {
       const [{ checks }, tasksResult] = await Promise.all([
@@ -65,16 +61,16 @@ class TodayView extends HTMLElement {
       return;
     }
 
-    const todayCount = submitted.filter((c) => isToday(c.submittedAt)).length;
-    const due = todayCount < CADENCE;
-
-    // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA into
-    // Resume + "Start over".
+    const last = submitted[0];
+    // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA
+    // into Resume + "Start over".
     const hasDraft = !!(await getDraft());
 
-    this.innerHTML = due
-      ? this._dueView({ last: submitted[0], hasDraft })
-      : this._upToDateView({ recent: submitted.slice(0, 6), tasks });
+    // Index tasks by id so card action handlers can read the task (e.g. its
+    // allowlisted cannot-do reasons) at click time.
+    this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
+
+    this.innerHTML = this._render({ last, tasks, hasDraft });
 
     const start = this.querySelector("#start-check");
     if (start) {
@@ -93,87 +89,92 @@ class TodayView extends HTMLElement {
         navigate("/check");
       });
     }
+
+    this._wireCards();
   }
 
-  // Global site header: neutral avatar circle + site name. No meta subline
-  // (MVP design trim). Shared with the up-to-date view.
+  _render({ last, tasks, hasDraft }) {
+    const onsite = tasks.filter((t) => t.type === "onsite");
+    const city = tasks.filter((t) => t.type === "city_escalation");
+
+    return html`
+      <div class="home">
+        <div class="screen" role="group" aria-label="Today">
+          ${this._siteHeader()}
+          <div class="screen__sec home-lead">
+            ${this._summaryBlock(last)}
+            <div class="home-cta">
+              <button
+                id="start-check"
+                class="btn-ink btn-ink--block"
+                type="button"
+              >
+                <wa-icon name="camera" aria-hidden="true"></wa-icon>
+                ${hasDraft ? "Resume perimeter check" : "Perimeter check"}
+              </button>
+              ${hasDraft
+                ? html`<button
+                    id="start-over"
+                    class="home-cta__link"
+                    type="button"
+                  >
+                    Start over
+                  </button>`
+                : ""}
+            </div>
+          </div>
+        </div>
+
+        ${tasks.length
+          ? html`
+              <div class="worklist">
+                <p class="worklist__counter">To do · ${tasks.length}</p>
+                ${this._group("Site actions", onsite, "")}
+                ${this._group(
+                  "Escalate to the city",
+                  city,
+                  "worklist__group--city",
+                )}
+              </div>
+            `
+          : html`<p class="empty" style="text-align:center;margin-top:1.25rem">
+              No open items. Nice work.
+            </p>`}
+      </div>
+    `;
+  }
+
+  // Global site header: centered site name with a hairline beneath it (the
+  // header section's border). No avatar, no meta subline (design).
   _siteHeader() {
     const name = (this._site && this._site.name) || "Your site";
     return html`
       <div class="screen__sec sitehead">
-        <span class="sitehead__avatar" aria-hidden="true"></span>
         <div class="sitehead__name">${escapeHtml(name)}</div>
       </div>
     `;
   }
 
-  // Backend unreachable on load. Online-only: surface it with a retry rather than
-  // silently degrading (offline is post-MVP; no local read fallback).
-  _renderError() {
-    this.innerHTML = html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader()}
-          <div class="screen__sec lastlog">
-            <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
-            <h1 class="lastlog__headline">Checks are unavailable</h1>
-          </div>
-          <div class="screen__sec home-cta">
-            <button id="retry" class="btn-ink btn-ink--block" type="button">
-              Try again
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-    this.querySelector("#retry")?.addEventListener("click", () =>
-      this.connectedCallback(),
-    );
-  }
-
-  // "Check due" screen (5a): just the last-log summary + the Start button.
-  // The last log is the most recent submitted check, summarized by its worst
-  // finding (see _lastLog); with no checks yet it reads "No activity recorded yet".
-  _dueView({ last, hasDraft }) {
+  // Section 1: the overall summary of the last submitted check + LAST LOG stamp.
+  // Prefer the analyzer's own summary (header `summary`); fall back to a derived
+  // one-liner for older checks; render nothing when there is no submitted check.
+  _summaryBlock(last) {
+    if (!last || !last.submittedAt) return "";
     const log = this._lastLog(last);
+    const line = last.summary || log.headline;
     return html`
-      <div class="home">
-        <div class="screen screen--due" role="group" aria-label="Today">
-          ${this._siteHeader()}
-          <div class="screen__sec lastlog">
-            ${log.eyebrow
-              ? html`<p class="lastlog__eyebrow">${escapeHtml(log.eyebrow)}</p>`
-              : ""}
-            <h1 class="lastlog__headline">${escapeHtml(log.headline)}</h1>
-          </div>
-          <div class="screen__sec home-cta">
-            <button
-              id="start-check"
-              class="btn-ink btn-ink--block"
-              type="button"
-            >
-              <wa-icon name="camera" aria-hidden="true"></wa-icon>
-              ${hasDraft ? "Resume perimeter check" : "Start a perimeter check"}
-            </button>
-            ${hasDraft
-              ? html`<button
-                  id="start-over"
-                  class="home-cta__link"
-                  type="button"
-                >
-                  Start over
-                </button>`
-              : ""}
-          </div>
-        </div>
+      <div class="lastlog">
+        <p class="lastlog__summary">${escapeHtml(line)}</p>
+        ${log.eyebrow
+          ? html`<p class="lastlog__eyebrow">${escapeHtml(log.eyebrow)}</p>`
+          : ""}
       </div>
     `;
   }
 
-  // Summarize the last submitted check as a one-line activity log:
-  //   eyebrow = "LAST LOG · <relative day> · <time>"
-  //   headline = "<worst finding category> — <triage status>", or "All clear"
-  // No submitted check yet -> no eyebrow, headline "No activity recorded yet".
+  // The last submitted check as a one-line log:
+  //   eyebrow  = "LAST LOG · <relative day> · <time>"
+  //   headline = derived fallback used only when the header carries no summary.
   _lastLog(last) {
     if (!last || !last.submittedAt) {
       return { eyebrow: "", headline: "No activity recorded yet" };
@@ -188,193 +189,271 @@ class TodayView extends HTMLElement {
     return { eyebrow, headline };
   }
 
-  // Categorize each recent check into one bucket by its worst outcome:
-  //   escalated = any city/hazard finding · minor = findings but none hazard · clear = none.
-  // Buckets sum to recent.length and drive both the donut and the legend.
-  _buckets(recent) {
-    let clear = 0,
-      minor = 0,
-      esc = 0;
-    for (const c of recent) {
-      const findings = c.findings || [];
-      if (findings.some((f) => f.hazard)) esc += 1;
-      else if (findings.length) minor += 1;
-      else clear += 1;
-    }
-    return { clear, minor, esc, total: recent.length };
-  }
-
-  // Donut: one stroked ring per bucket on a circumference-100 circle, so each
-  // segment length IS its percentage. Decorative (aria-hidden) — the legend
-  // below states every count in text, so color is never the sole carrier.
-  _donut({ clear, minor, esc, total }) {
-    const segs = [
-      { key: "clear", n: clear },
-      { key: "minor", n: minor },
-      { key: "esc", n: esc },
-    ];
-    let cumulative = 0;
-    const rings = segs
-      .filter((s) => s.n > 0)
-      .map((s) => {
-        const pct = total ? (s.n / total) * 100 : 0;
-        const offset = 25 - cumulative; // start each ring where the last ended
-        cumulative += pct;
-        return html`<circle
-          class="donut__seg donut__seg--${s.key}"
-          cx="21"
-          cy="21"
-          r="15.915"
-          stroke-dasharray="${pct.toFixed(2)} ${(100 - pct).toFixed(2)}"
-          stroke-dashoffset="${offset.toFixed(2)}"
-        ></circle>`;
-      })
-      .join("");
+  // A boxed worklist group (design "D2 boxed groups"). Omitted when empty.
+  _group(title, items, className) {
+    if (!items.length) return "";
     return html`
-      <svg class="donut" viewBox="0 0 42 42" aria-hidden="true">
-        <circle
-          class="donut__seg donut__seg--clear"
-          cx="21"
-          cy="21"
-          r="15.915"
-          stroke-dasharray="100 0"
-          stroke-dashoffset="25"
-          opacity="0.12"
-        ></circle>
-        ${rings}
-      </svg>
+      <section class="worklist__group ${className}">
+        <h2 class="worklist__label">${escapeHtml(title)}</h2>
+        <div class="worklist__cards">
+          ${items.map((t) => this._actionCard(t)).join("")}
+        </div>
+      </section>
     `;
   }
 
-  _upToDateView({ recent, tasks = [] }) {
-    const b = this._buckets(recent);
-
-    // Open work items are the site's real TASK# items (AP10), split by the
-    // backend-stamped `type`: city_escalation -> 311 crew, onsite -> staff can
-    // handle. Most-severe-first ordering is preserved from the server query.
-    const cityItems = tasks.filter((t) => t.type === "city_escalation");
-    const handleItems = tasks.filter((t) => t.type === "onsite");
-
-    const cityCards = cityItems
-      .map((t) => this._actionCard(t, "City action"))
-      .join("");
-
-    const handleCards = handleItems
-      .map((t) => this._actionCard(t, "Yours"))
-      .join("");
-
+  // A single open task, rendered from its real TASK# fields: when it was flagged,
+  // the guidance label, the guidance text, and the task's own action buttons.
+  _actionCard(task) {
+    const when = task.createdAt
+      ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
+      : "";
+    const title = task.label || task.category || "Finding";
+    const detail = task.guidance || task.category || "";
+    const actions = this._cardActions(task);
     return html`
+      <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
+        <div class="actioncard__body">
+          ${when
+            ? html`<span class="actioncard__time">${escapeHtml(when)}</span>`
+            : ""}
+          <h3 class="actioncard__title">${escapeHtml(title)}</h3>
+          ${detail
+            ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
+            : ""}
+        </div>
+        ${actions.length
+          ? html`<div class="actioncard__actions">
+              ${actions.map((a) => this._actionButton(a)).join("")}
+            </div>`
+          : ""}
+        <p class="actioncard__error" role="alert" hidden></p>
+      </div>
+    `;
+  }
+
+  // Resolve a task's persisted actions into the concrete controls this screen
+  // renders. Driven by the task's STRUCTURED `appActions` (open_phone /
+  // create_311_ticket / compose_email / …) paired with its `buttons` labels —
+  // NOT by string-matching the label — so phone-call escalations ("Call 911",
+  // "Call SFACC", …) are surfaced instead of being silently dropped and left
+  // unactionable. Falls back to a sensible per-type default when a task carries
+  // neither, and always offers the task's allowlisted resolutions (e.g. "We
+  // already called 911") when present, so every card is actionable and closeable.
+  _cardActions(task) {
+    const buttons = Array.isArray(task.buttons) ? task.buttons : [];
+    const appActions = Array.isArray(task.appActions) ? task.appActions : [];
+    const actions = [];
+    const count = Math.max(buttons.length, appActions.length);
+    for (let i = 0; i < count; i++) {
+      const label = buttons[i] != null ? String(buttons[i]) : "";
+      const a = this._resolveAction(appActions[i], label);
+      if (a) actions.push(a);
+    }
+    if (!actions.length) {
+      actions.push(
+        task.type === "city_escalation"
+          ? { kind: "file311", label: "Filed 311 ticket", variant: "blue" }
+          : { kind: "done", label: "Done", variant: "ink" },
+      );
+    }
+    if ((task.cannotDoReasons || []).length) {
+      actions.push({ kind: "cant", label: "Can't", variant: "outline" });
+    }
+    return actions;
+  }
+
+  // Map one persisted app action (+ its display label) to a rendered control.
+  // Returns null for actions with no wired behavior yet (fire-hazard report,
+  // generic manual steps) — they always co-occur with a call/311 action, so the
+  // card stays actionable without rendering a dead button.
+  _resolveAction(appAction, label) {
+    const code = appAction?.code;
+    const payload = appAction?.payload || {};
+    const l = label.toLowerCase();
+    if (code === "open_phone" || /^call\b/.test(l)) {
+      // The backend only stamps "911" as the number today (the guidance app
+      // action carries no digits) — so dial 911 for emergencies, but never
+      // misdial a named non-emergency line ("Call SFPD (non-emergency)") to 911:
+      // show it as a reminder until a real number is in the action payload.
+      let digits = String(payload.phoneNumber || "").replace(/\D/g, "");
+      if (/\b911\b/.test(label)) digits = "911";
+      const dialable = digits === "911" || digits.length >= 7;
+      return {
+        kind: "call",
+        label: label || "Call",
+        variant: "blue",
+        href: dialable ? `tel:${digits}` : null,
+      };
+    }
+    if (code === "create_311_ticket" || l.includes("311")) {
+      return { kind: "file311", label: "Filed 311 ticket", variant: "blue" };
+    }
+    if (code === "compose_email") {
+      const to = String(payload.to || "");
+      return {
+        kind: "email",
+        label: label || "Email",
+        variant: "blue",
+        href: to ? `mailto:${to}` : null,
+      };
+    }
+    if (l === "done") return { kind: "done", label: "Done", variant: "ink" };
+    return null;
+  }
+
+  _actionButton(a) {
+    const cls =
+      a.variant === "ink"
+        ? "btn-ink btn-ink--sm"
+        : a.variant === "blue"
+          ? "btn-blue btn-blue--sm"
+          : "btn-outline btn-outline--sm";
+    // Link-style actions (call/email) render as native anchors — no data-action,
+    // so the click wiring skips them and the browser handles tel:/mailto:.
+    if (a.href) {
+      return html`<a class="${cls}" href="${a.href}"
+        >${escapeHtml(a.label)}</a
+      >`;
+    }
+    // A call/email whose target isn't known yet: surface the instruction but keep
+    // it non-interactive rather than misdialing or opening an empty composer.
+    if (a.kind === "call" || a.kind === "email") {
+      return html`<button type="button" class="${cls}" disabled>
+        ${escapeHtml(a.label)}
+      </button>`;
+    }
+    return html`<button type="button" class="${cls}" data-action="${a.kind}">
+      ${escapeHtml(a.label)}
+    </button>`;
+  }
+
+  _wireCards() {
+    this.querySelectorAll(".actioncard").forEach((card) => {
+      const taskId = card.getAttribute("data-task-id");
+      const task = this._tasksById.get(taskId);
+      if (!task) return;
+      this._wireCardButtons(card, task);
+    });
+  }
+
+  // (Re)attach click handlers to every [data-action] button currently inside a
+  // card — used on first render and after swapping in the reason picker.
+  _wireCardButtons(card, task) {
+    card.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => this._onAction(card, task, btn));
+    });
+  }
+
+  _onAction(card, task, btn) {
+    const action = btn.getAttribute("data-action");
+    if (action === "done") {
+      this._run(card, () =>
+        completeTask(task.taskId, { completionMethod: "manual" }),
+      );
+    } else if (action === "file311") {
+      // No 311 API: filing happens outside the app; this just closes the task.
+      this._run(card, () =>
+        completeTask(task.taskId, { completionMethod: "311_filed_external" }),
+      );
+    } else if (action === "cant") {
+      this._renderReasonPicker(card, task);
+    } else if (action === "cant-reason") {
+      const reason = btn.getAttribute("data-reason") || "";
+      this._run(card, () => cannotDoTask(task.taskId, { reason }));
+    } else if (action === "cant-cancel") {
+      this._restoreActions(card, task);
+    }
+  }
+
+  // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
+  // rejects arbitrary ones), plus a cancel.
+  _renderReasonPicker(card, task) {
+    const actions = card.querySelector(".actioncard__actions");
+    if (!actions) return;
+    const reasons = task.cannotDoReasons || [];
+    actions.innerHTML = html`
+      ${reasons
+        .map(
+          (r) =>
+            html`<button
+              type="button"
+              class="btn-outline btn-outline--sm"
+              data-action="cant-reason"
+              data-reason="${escapeHtml(r)}"
+            >
+              ${escapeHtml(r)}
+            </button>`,
+        )
+        .join("")}
+      <button
+        type="button"
+        class="home-cta__link actioncard__cancel"
+        data-action="cant-cancel"
+      >
+        Cancel
+      </button>
+    `;
+    this._wireCardButtons(card, task);
+  }
+
+  _restoreActions(card, task) {
+    const actions = card.querySelector(".actioncard__actions");
+    if (!actions) return;
+    actions.innerHTML = this._cardActions(task)
+      .map((a) => this._actionButton(a))
+      .join("");
+    this._wireCardButtons(card, task);
+  }
+
+  // Run a task mutation: disable the card's buttons, and on success re-render the
+  // whole view so the worklist and the "To do" count stay consistent; on failure
+  // re-enable and show an inline, non-destructive error on the card.
+  async _run(card, fn) {
+    const buttons = card.querySelectorAll("button");
+    const err = card.querySelector(".actioncard__error");
+    buttons.forEach((b) => (b.disabled = true));
+    if (err) {
+      err.hidden = true;
+      err.textContent = "";
+    }
+    try {
+      await fn();
+      this.connectedCallback();
+    } catch (e) {
+      console.error("task action failed", e);
+      buttons.forEach((b) => (b.disabled = false));
+      if (err) {
+        err.hidden = false;
+        err.textContent = "Couldn’t save that — please try again.";
+      }
+    }
+  }
+
+  // Backend unreachable on load. Online-only: surface it with a retry rather than
+  // silently degrading (offline is post-MVP; no local read fallback).
+  _renderError() {
+    this.innerHTML = html`
       <div class="home">
         <div class="screen" role="group" aria-label="Today">
           ${this._siteHeader()}
-          <div class="screen__sec hero">
-            <p class="hero__eyebrow">Perimeter status</p>
-            <h1 class="hero__headline">Up to date</h1>
-            <p class="hero__body">
-              All ${CADENCE} checks in. Next window opens tomorrow morning.
-            </p>
-          </div>
-          <div class="screen__sec stat">
-            ${this._donut(b)}
-            <div class="stat__summary">
-              <p class="stat__label">
-                Last ${b.total} check${b.total === 1 ? "" : "s"}
-              </p>
-              <p class="stat__headline">${b.clear} clear</p>
-              <ul class="legend">
-                <li class="legend__item">
-                  <span class="legend__dot legend__dot--minor"></span>
-                  ${b.minor} minor, handled
-                </li>
-                <li class="legend__item">
-                  <span class="legend__dot legend__dot--esc"></span>
-                  ${b.esc} escalated to 311
-                </li>
-              </ul>
+          <div class="screen__sec home-lead">
+            <div class="lastlog">
+              <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
+              <p class="lastlog__summary">Checks are unavailable</p>
             </div>
-          </div>
-          <div class="screen__sec">
-            <div class="segmented" role="tablist" aria-label="Home sections">
-              <button
-                class="segmented__btn is-active"
-                role="tab"
-                aria-selected="true"
-                type="button"
-              >
-                Open items
-              </button>
-              <button
-                class="segmented__btn"
-                role="tab"
-                aria-selected="false"
-                type="button"
-                disabled
-                title="Coming soon"
-              >
-                History
+            <div class="home-cta">
+              <button id="retry" class="btn-ink btn-ink--block" type="button">
+                Try again
               </button>
             </div>
           </div>
         </div>
-
-        ${cityItems.length || handleItems.length
-          ? html`
-              <div class="worklist">
-                ${cityItems.length
-                  ? html`
-                      <div class="worklist__group">
-                        <div class="worklist__head">
-                          <span class="worklist__title"
-                            >City action · ${cityItems.length}</span
-                          >
-                          <span class="worklist__meta">With 311</span>
-                        </div>
-                        ${cityCards}
-                      </div>
-                    `
-                  : ""}
-                ${handleItems.length
-                  ? html`
-                      <div class="worklist__group">
-                        <div class="worklist__head">
-                          <span class="worklist__title"
-                            >${handleItems.length} you can handle</span
-                          >
-                          <span class="worklist__meta">Safe to clear</span>
-                        </div>
-                        ${handleCards}
-                      </div>
-                    `
-                  : ""}
-              </div>
-            `
-          : html`<p class="empty" style="text-align:center;margin-top:1.25rem">
-              No open items. Nice work.
-            </p>`}
       </div>
     `;
-  }
-
-  // A single open work item, rendered from a real TASK# item: the category, its
-  // severity word, and when it was flagged. `role` is the group label (City
-  // action / Yours). The 311 ticket lifecycle + resolve flow are post-MVP, so no
-  // ticket #, status pill, or resolve buttons are shown yet — only real fields.
-  _actionCard(task, role) {
-    const severity = severityWord(task.severity || 0);
-    return html`
-      <div class="actioncard">
-        <div class="actioncard__head">
-          <span class="actioncard__type">${escapeHtml(role)}</span>
-          <span class="pill pill--sev">${escapeHtml(severity)}</span>
-        </div>
-        <h3 class="actioncard__title">
-          ${escapeHtml(task.category || "Finding")}
-        </h3>
-        <p class="actioncard__foot">
-          Flagged ${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}
-        </p>
-      </div>
-    `;
+    this.querySelector("#retry")?.addEventListener("click", () =>
+      this.connectedCallback(),
+    );
   }
 }
 

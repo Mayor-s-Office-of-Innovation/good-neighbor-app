@@ -25,6 +25,12 @@
 html,
 body {
   height: 100%;
+  /* Paint the theme background on <html>, not just <body>. iOS Safari with
+     viewport-fit=cover fills the safe-area insets (notch/status bar, home
+     indicator) and overscroll from the ROOT element's background; without this
+     those regions fall back to white — the "white bars top & bottom" seen only
+     on iPhone (desktop/Android propagate the body background to the canvas). */
+  background: var(--bg);
 }
 
 body {
@@ -173,14 +179,14 @@ form > wa-button[type="submit"] {
   width: 100%;
   max-width: none;
   padding: 0;
-  background: #ffffff;
+  background: var(--surface);
 }
 .login {
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  background: #ffffff;
-  color: #000000;
+  background: var(--surface);
+  color: var(--text);
   padding: 2rem 1rem;
 }
 .login__panel {
@@ -195,11 +201,15 @@ form > wa-button[type="submit"] {
   width: 160px;
   height: 160px;
   border-radius: 4px;
-  background-color: #f6f6f6;
-  background-image: linear-gradient(45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(-45deg, #eeeeee 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #eeeeee 75%),
-    linear-gradient(-45deg, transparent 75%, #eeeeee 75%);
+  background-color: var(--surface-2);
+  background-image: linear-gradient(
+      45deg,
+      var(--surface-3) 25%,
+      transparent 25%
+    ),
+    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
   background-position:
     0 0,
     0 8px,
@@ -209,7 +219,7 @@ form > wa-button[type="submit"] {
 }
 .login__copy h1 {
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   font-weight: 700;
   line-height: 40px;
@@ -217,7 +227,7 @@ form > wa-button[type="submit"] {
 .login__copy p {
   max-width: 100%;
   margin: 0;
-  color: #000000;
+  color: var(--text);
   font-size: 32px;
   line-height: 40px;
   text-wrap: balance;
@@ -228,74 +238,32 @@ form > wa-button[type="submit"] {
   align-items: center;
   margin-top: 0;
 }
-.code-boxes {
-  display: grid;
-  grid-template-columns: repeat(3, 48px) 15px repeat(3, 48px);
-  column-gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0;
+.login__otp::part(segments) {
+  padding: 1rem;
+  justify-content: center;
+}
+/* Visually hide the field's label — the visible "Enter a site code" copy above
+   already labels it (the label is kept for assistive tech). */
+.login__otp::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   padding: 0;
   border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
 }
-.code-cell {
-  position: relative;
-  display: block;
-  width: 48px;
-  height: 48px;
-}
-.code-box {
-  appearance: none;
-  -webkit-appearance: none;
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  padding: 5px 0;
-  border: 1px solid #dee2e6;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  text-align: center;
-}
-.code-cell__pin {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 17px;
-  height: 17px;
-  border: 2px solid #c9cfd6;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.code-box:focus {
-  border-color: #4c6ef5;
-  outline: none;
-}
-.code-box--error {
-  border-color: #fa5252;
-  color: #fa5252;
-}
-.code-boxes__dash {
-  width: 15px;
-  height: 28px;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  letter-spacing: 0;
-  text-align: center;
-  justify-self: center;
+/* App-level "wrong code" error state (distinct from native validation). */
+.login__otp--error::part(segment) {
+  border-color: var(--c-hazard);
+  color: var(--c-hazard);
 }
 .login__error {
   margin: 32px 0 0;
-  color: #fa5252;
+  color: var(--c-hazard);
   font-size: 16px;
   font-weight: 400;
   line-height: 24px;
@@ -310,8 +278,6 @@ form > wa-button[type="submit"] {
   min-height: 0;
   padding: 12px 32px;
   border-radius: 32px;
-  background: #212529;
-  color: #f8f9fa;
   font-size: 20px;
   font-weight: 400;
   line-height: 32px;
@@ -322,19 +288,14 @@ form > wa-button[type="submit"] {
 }
 .btn-ink.login__continue:disabled {
   cursor: not-allowed;
-  background: #e9ecef;
-  color: #adb5bd;
-}
-.btn-ink.login__continue:not(:disabled) {
-  cursor: pointer;
-  background: #212529;
-  color: #f8f9fa;
+  background: var(--surface-3);
+  color: var(--text-faint);
 }
 .btn-ink.login__continue wa-spinner {
   width: 32px;
   height: 32px;
   font-size: 32px;
-  color: #adb5bd;
+  color: var(--text-faint);
   --track-width: 3px;
 }
 
@@ -349,14 +310,6 @@ form > wa-button[type="submit"] {
   .login__copy h1,
   .login__copy p {
     font-size: 1.65rem;
-  }
-  .code-boxes {
-    grid-template-columns: repeat(3, 44px) 22px repeat(3, 44px);
-    column-gap: 7px;
-  }
-  .code-cell {
-    width: 44px;
-    height: 48px;
   }
 }
 
@@ -466,18 +419,9 @@ theme-toggle {
   border-top: 1px solid var(--c-line);
 }
 
-/* Global site header (neutral avatar + name) */
+/* Global site header — centered site name with the section's hairline beneath. */
 .sitehead {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-}
-.sitehead__avatar {
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--surface-3);
+  text-align: center;
 }
 .sitehead__name {
   font-size: 1.2rem;
@@ -485,36 +429,11 @@ theme-toggle {
   line-height: 1.2;
 }
 
-/* Status hero (centered) */
-.hero {
-  text-align: center;
-  padding-top: 1.6rem;
-  padding-bottom: 1.6rem;
-}
-.hero__eyebrow {
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-  margin: 0 0 0.4rem;
-}
-.hero__headline {
-  font-size: 2.3rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  margin: 0 0 0.7rem;
-  text-wrap: balance;
-}
-.hero__body {
-  color: var(--text-secondary);
-  font-size: 1.02rem;
-  line-height: 1.45;
-  margin: 0 auto 1.4rem;
-  max-width: 20rem;
-}
-.hero__meta {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  margin: 1.1rem 0 0;
+/* Home lead section: the summary block above, the CTA below. */
+.home-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
 }
 
 /* Ink pill — the app's primary button (the design's CTA across screens 12–16).
@@ -558,19 +477,6 @@ theme-toggle {
   font-size: 1.15rem;
 }
 
-/* "Check due" screen (MVP design trim): a tall card with the last-log summary
-   pinned to the top and the Start button to the bottom. No section dividers. */
-.screen--due {
-  display: flex;
-  flex-direction: column;
-  min-height: min(78vh, 620px);
-}
-.screen--due .screen__sec + .screen__sec {
-  border-top: 0;
-}
-.screen--due .home-cta {
-  margin-top: auto; /* push the Start button to the bottom of the card */
-}
 /* "Start over" — a faint secondary link under the Resume button (draft present). */
 .home-cta__link {
   display: block;
@@ -593,138 +499,32 @@ theme-toggle {
   border-radius: 6px;
 }
 
-/* Last-log summary block */
+/* Overall summary of the last check: the analyzer's italic sentence, with the
+   LAST LOG timestamp stamped beneath it. */
 .lastlog {
-  padding-top: 0.5rem;
+  padding-top: 0.25rem;
+}
+.lastlog__summary {
+  font-size: 1.15rem;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 0 0 0.55rem;
+  text-wrap: pretty;
 }
 .lastlog__eyebrow {
   color: var(--text-secondary);
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.06em;
-  margin: 0 0 0.6rem;
-}
-.lastlog__headline {
-  font-size: 2.1rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
   margin: 0;
-  text-wrap: balance;
 }
 
 /* ==================================================================
-   Home hub — screen (13) "up to date" (design port). Adds to the same
-   .home/.screen card: a donut + legend summary, a segmented Open/History
-   control, and a worklist of action cards (city actions + self-serviceable)
-   below the card. Every color is a token (dark-safe); severity/status is
-   named in text, color only reinforces (WCAG 1.4.1).
+   Home hub — open-tasks worklist (design "D2 boxed groups"). Below the
+   .home/.screen card: a "TO DO · N" counter, then boxed groups (SITE ACTIONS,
+   then ESCALATE TO THE CITY in blue) of action cards. Every color is a token
+   (dark-safe); the lane is named in text, color only reinforces (WCAG 1.4.1).
    ================================================================== */
-
-/* Donut + summary (last-N checks breakdown) */
-.stat {
-  display: flex;
-  align-items: center;
-  gap: 1.4rem;
-}
-.donut {
-  flex: 0 0 auto;
-  width: 116px;
-  height: 116px;
-}
-.donut__seg {
-  fill: none;
-  stroke-width: 4;
-}
-.donut__seg--clear {
-  stroke: var(--ink);
-}
-.donut__seg--minor {
-  stroke: var(--text-faint);
-}
-.donut__seg--esc {
-  stroke: var(--brand-blue);
-}
-.stat__summary {
-  min-width: 0;
-}
-.stat__label {
-  color: var(--text-secondary);
-  font-size: 1rem;
-  margin: 0;
-}
-.stat__headline {
-  font-size: 1.9rem;
-  font-weight: 700;
-  line-height: 1.1;
-  margin: 0.1rem 0 0.6rem;
-}
-.legend {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.legend__item {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: var(--text);
-  font-size: 1rem;
-}
-.legend__dot {
-  flex: 0 0 auto;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-}
-.legend__dot--minor {
-  background: var(--text-faint);
-}
-.legend__dot--esc {
-  background: var(--brand-blue);
-}
-
-/* Segmented control (Open items / History) — pill track, active is a raised
-   surface chip. Native buttons: app.css is unlayered so it beats WA chrome. */
-.segmented {
-  display: flex;
-  gap: 0.25rem;
-  background: var(--surface-3);
-  border-radius: var(--radius-pill);
-  padding: 0.25rem;
-}
-.segmented__btn {
-  appearance: none;
-  flex: 1;
-  cursor: pointer;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-weight: 600;
-  font-size: 1rem;
-  height: auto;
-  min-height: 40px;
-  box-shadow: none;
-  margin: 0;
-  border-radius: var(--radius-pill);
-}
-.segmented__btn.is-active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow);
-}
-.segmented__btn[disabled] {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.segmented__btn:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-}
 
 /* Worklist (below the card, on the page ground) */
 .worklist {
@@ -733,65 +533,93 @@ theme-toggle {
   gap: 1rem;
   margin-top: 1.25rem;
 }
+/* "TO DO · N" — total open count, uppercased via text-transform. */
+.worklist__counter {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 -0.15rem;
+  padding-inline: 0.35rem;
+}
+/* A boxed group: a tinted card holding its label + cards. */
 .worklist__group {
+  background: var(--surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.worklist__label {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding-inline: 0.15rem;
+}
+/* The escalation lane's label is blue (matches the "Filed 311 ticket" button). */
+.worklist__group--city .worklist__label {
+  color: var(--brand-blue);
+}
+.worklist__cards {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
 }
-.worklist__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-.worklist__title {
-  font-weight: 700;
-  font-size: 1rem;
-}
-.worklist__meta {
-  color: var(--text-secondary);
-  font-size: 0.92rem;
-}
 
-/* Action card (a city action or a self-serviceable item) */
+/* Action card (one open task) — white on the group's tint. */
 .actioncard {
   background: var(--surface);
   border: 1px solid var(--c-line);
-  border-radius: 14px;
-  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
 }
-.actioncard__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.35rem;
-}
-.actioncard__type {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
+.actioncard__time {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
 }
 .actioncard__title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 .actioncard__detail {
-  margin: 0.2rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.98rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.actioncard__foot {
-  margin: 0.5rem 0 0;
-  color: var(--text-faint);
-  font-size: 0.88rem;
-}
+/* Action row — wraps rather than truncates (the design's overlap bug came from
+   a fixed-width row clipping labels like "File 311 ticket" → "File 311 t"). Here
+   buttons are content-width with nowrap labels and the row flex-wraps to a new
+   line when it runs out of space, so nothing is ever clipped. */
 .actioncard__actions {
   display: flex;
-  gap: 0.6rem;
-  margin-top: 0.9rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+/* Inline, non-destructive failure notice on a card (task action failed). */
+.actioncard__error {
+  margin: 0.6rem 0 0;
+  color: var(--danger, #b42318);
+  font-size: 0.9rem;
+}
+.actioncard__cancel {
+  width: auto;
+  margin-top: 0;
+  padding-inline: 0.4rem;
 }
 
 /* Status pill — text names the state (EN ROUTE/PENDING/CONFIRM); color only
@@ -841,12 +669,41 @@ theme-toggle {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
 }
-/* Compact size for in-card action rows (both button styles) */
+
+/* Blue pill — the escalation action ("Filed 311 ticket"). Blue marks the city
+   lane (matching the group's blue label). Theme-safe: --on-ink flips from white
+   (on the darker light-theme blue) to near-black (on the lighter dark-theme
+   blue), so the label stays legible in both themes without a media query. */
+.btn-blue {
+  appearance: none;
+  cursor: pointer;
+  border: 0;
+  background: var(--brand-blue);
+  color: var(--on-ink);
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.7rem 2.3rem;
+  border-radius: var(--radius-pill);
+  height: auto;
+  min-height: 46px;
+  box-shadow: none;
+  margin: 0;
+}
+.btn-blue:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+/* Compact size for in-card action rows (all three button styles). nowrap keeps
+   labels on one line so they never clip — the row wraps to a new line instead. */
 .btn-ink--sm,
-.btn-outline--sm {
-  padding: 0.45rem 1.4rem;
-  min-height: 40px;
-  font-size: 0.95rem;
+.btn-outline--sm,
+.btn-blue--sm {
+  padding: 0.45rem 1.2rem;
+  min-height: 38px;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 /* ==================================================================
@@ -1352,6 +1209,11 @@ theme-toggle {
    Compact grid cell by default; larger + centered with a hint on an empty side. */
 .addshot {
   appearance: none;
+  /* Buttons don't honour a grid item's default justify-self/align-self: stretch,
+     so pin to the cell explicitly — otherwise the tile shrinks to its label and
+     clips "Add photo" next to the full-size photo tiles. */
+  width: 100%;
+  height: 100%;
   aspect-ratio: 1;
   display: flex;
   flex-direction: column;
@@ -1383,6 +1245,7 @@ theme-toggle {
 .addshot--empty {
   aspect-ratio: auto;
   width: min(100%, 260px);
+  height: auto;
   padding: 2.4rem 1.5rem;
   gap: 0.5rem;
 }

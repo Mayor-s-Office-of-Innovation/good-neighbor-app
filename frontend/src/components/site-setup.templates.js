@@ -5,11 +5,11 @@
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{digits?: string[], error?: string, checking?: boolean}} state
+ * @param {{value?: string, error?: string, checking?: boolean}} state
  * @returns {string}
  */
 export const codeEntryView = ({
-  digits = ["", "", "", "", "", ""],
+  value = "",
   error = "",
   checking = false,
 } = {}) => html`
@@ -27,38 +27,16 @@ export const codeEntryView = ({
         class="login__form ${error ? "login__form--error" : ""}"
         novalidate
       >
-        <fieldset class="code-boxes" ${checking ? "disabled" : ""}>
-          <legend class="visually-hidden">Six digit site code</legend>
-          ${digits
-            .map(
-              (digit, index) => html`
-                <span class="code-cell">
-                  <input
-                    class="code-box ${error ? "code-box--error" : ""}"
-                    id="code-${index}"
-                    inputmode="numeric"
-                    pattern="[0-9]*"
-                    autocomplete="${index === 0 ? "one-time-code" : "off"}"
-                    maxlength="1"
-                    aria-label="Site code digit ${index + 1}"
-                    value="${escapeAttr(digit)}"
-                  />
-                  ${digit
-                    ? ""
-                    : html`<span
-                        class="code-cell__pin"
-                        aria-hidden="true"
-                      ></span>`}
-                </span>
-                ${index === 2
-                  ? html`<span class="code-boxes__dash" aria-hidden="true"
-                      >&mdash;</span
-                    >`
-                  : ""}
-              `,
-            )
-            .join("")}
-        </fieldset>
+        <wa-otp-input
+          id="code-input"
+          class="login__otp ${error ? "login__otp--error" : ""}"
+          label="Site code"
+          length="6"
+          type="alphanumeric"
+          case="upper"
+          value="${escapeAttr(value)}"
+          ${checking ? "disabled" : ""}
+        ></wa-otp-input>
 
         <p
           id="code-error"
@@ -73,7 +51,7 @@ export const codeEntryView = ({
           id="continue"
           class="btn-ink login__continue"
           type="submit"
-          ${checking || digits.join("").length < 6 ? "disabled" : ""}
+          ${checking || value.length < 6 ? "disabled" : ""}
         >
           ${checking
             ? html`<wa-spinner aria-label="Checking site code"></wa-spinner>`
