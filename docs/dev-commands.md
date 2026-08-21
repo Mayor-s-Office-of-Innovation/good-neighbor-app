@@ -29,6 +29,21 @@ frontend, tests, lint, and typecheck do **not** need Java.
 |---|---|
 | `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
 
+### Web Awesome AI agent skill
+
+The UI uses [Web Awesome](https://webawesome.com) (`@awesome.me/webawesome`) for `<wa-*>` components.
+The package ships Claude Code "agent skills" (a component reference + a design companion) inside
+`node_modules` after `npm install`, so an AI agent can pull accurate component docs instead of
+guessing. Register them once and they're available in future sessions:
+
+```bash
+npx skills add ./node_modules/@awesome.me/webawesome/dist/skills/webawesome
+npx skills add ./node_modules/@awesome.me/webawesome/dist/skills/webawesome-design   # optional design companion
+```
+
+They install as symlinks (stay current on package updates); remove with `npx skills remove webawesome`.
+See [Web Awesome → Agent Skills](https://webawesome.com/docs/ai/agent-skills).
+
 The first screen asks for a provider-site code. With the local backend running, `123-456` is
 seeded active and `000-000` seeded inactive.
 
