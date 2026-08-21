@@ -234,70 +234,24 @@ form > wa-button[type="submit"] {
   align-items: center;
   margin-top: 0;
 }
-.code-boxes {
-  display: grid;
-  grid-template-columns: repeat(3, 48px) 15px repeat(3, 48px);
-  column-gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0;
+/* Visually hide the field's label — the visible "Enter a site code" copy above
+   already labels it (the label is kept for assistive tech). */
+.login__otp::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   padding: 0;
   border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
 }
-.code-cell {
-  position: relative;
-  display: block;
-  width: 48px;
-  height: 48px;
-}
-.code-box {
-  appearance: none;
-  -webkit-appearance: none;
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  padding: 5px 0;
-  border: 1px solid #dee2e6;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  box-shadow: none;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  text-align: center;
-}
-.code-cell__pin {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  width: 17px;
-  height: 17px;
-  border: 2px solid #c9cfd6;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.code-box:focus {
-  border-color: #4c6ef5;
-  outline: none;
-}
-.code-box--error {
+/* App-level "wrong code" error state (distinct from native validation). */
+.login__otp--error::part(segment) {
   border-color: #fa5252;
   color: #fa5252;
-}
-.code-boxes__dash {
-  width: 15px;
-  height: 28px;
-  color: #000000;
-  font-family: Roboto, var(--font-sans);
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 28px;
-  letter-spacing: 0;
-  text-align: center;
-  justify-self: center;
 }
 .login__error {
   margin: 32px 0 0;
@@ -355,14 +309,6 @@ form > wa-button[type="submit"] {
   .login__copy h1,
   .login__copy p {
     font-size: 1.65rem;
-  }
-  .code-boxes {
-    grid-template-columns: repeat(3, 44px) 22px repeat(3, 44px);
-    column-gap: 7px;
-  }
-  .code-cell {
-    width: 44px;
-    height: 48px;
   }
 }
 
