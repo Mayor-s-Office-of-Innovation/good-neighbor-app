@@ -281,7 +281,7 @@ describe("storeEvaluatedAssessment", () => {
     });
     expect(condition.status).not.toBe("disputed");
     // Not a suppression, so it must not count toward disputedCount.
-    expect(result.assessmentItem.summary.disputedCount).toBe(0);
+    expect(result.assessmentItem.summary).toMatchObject({ disputedCount: 0 });
   });
 
   it("disputing one condition by conditionId does not suppress a sibling sharing its category", async () => {
