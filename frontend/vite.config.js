@@ -32,6 +32,8 @@ export default defineConfig({
     proxy: {
       "/v1": "http://localhost:3001",
       "/site-code": "http://localhost:3001",
+      "/transcribe-credentials": "http://localhost:3001",
+      "/transcribe": "http://localhost:3001",
       "/health": "http://localhost:3001",
     },
   },

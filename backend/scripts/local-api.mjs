@@ -32,6 +32,8 @@ import {
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
+import { handler as transcribeHandler } from "../src/handlers/transcribe.js";
+import { handler as transcribeCredentialsHandler } from "../src/handlers/transcribe-credentials.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -78,6 +80,8 @@ function route(method, pattern, handler) {
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
   route("POST", "/site-code", siteCodeHandler),
+  route("POST", "/transcribe", transcribeHandler),
+  route("POST", "/transcribe-credentials", transcribeCredentialsHandler),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),

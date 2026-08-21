@@ -17,11 +17,56 @@ import { newId, saveDraft, clearDraft, getDraft } from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
 
+function normalizeValidation(validation = {}) {
+  return {
+    whatYouCanSee: Boolean(validation.whatYouCanSee),
+    whereItIs: Boolean(validation.whereItIs),
+  };
+}
+
+function normalizeDescription(description) {
+  if (!description || typeof description !== "object") return null;
+  const text = String(description.text || "").trim();
+  if (!text) return null;
+  const source = ["typed", "transcribed", "mixed"].includes(description.source)
+    ? description.source
+    : "typed";
+  return {
+    kind: "note",
+    text,
+    source,
+    validated: Boolean(description.validated),
+    validation: normalizeValidation(description.validation),
+  };
+}
+
 function createSideState() {
   return {
     items: [],
     skipped: false,
     description: null,
+  };
+}
+
+function normalizeSideState(sideState = {}) {
+  return {
+    items: Array.isArray(sideState.items) ? sideState.items : [],
+    skipped: Boolean(sideState.skipped),
+    description: normalizeDescription(sideState.description),
+  };
+}
+
+function normalizeCheck(check) {
+  if (!check) return null;
+  const sides = {};
+  for (const side of SIDES) {
+    sides[side] = normalizeSideState(check.sides?.[side]);
+  }
+  return {
+    ...check,
+    activeSideIndex:
+      typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
+    sides,
   };
 }
 
@@ -70,7 +115,7 @@ export function getCurrentCheck() {
 export async function loadDraft() {
   if (current) return current;
   const draft = await getDraft();
-  if (draft) current = draft;
+  if (draft) current = normalizeCheck(draft);
   return current;
 }
 
@@ -97,7 +142,18 @@ export function getSideDescription(side) {
 
 export function setSideDescription(side, description) {
   if (!current) return null;
-  current.sides[side].description = description;
+  current.sides[side].description = normalizeDescription(description);
+  persist();
+  return current.sides[side].description;
+}
+
+export function setSideDescriptionValidation(side, validation) {
+  if (!current) return null;
+  const description = current.sides[side]?.description;
+  if (!description) return null;
+  description.validation = normalizeValidation(validation);
+  description.validated =
+    description.validation.whatYouCanSee && description.validation.whereItIs;
   persist();
   return description;
 }
@@ -134,7 +190,7 @@ export function skipSide(side) {
 export function isSideCovered(side) {
   if (!current) return false;
   const s = current.sides[side];
-  return s.skipped || s.items.length > 0;
+  return s.skipped || s.items.length > 0 || Boolean(s.description?.validated);
 }
 
 export function coveredCount() {

@@ -43,14 +43,21 @@ export const shell = ({ text, hasText }) => html`
           rows="5"
         ></textarea>
 
-        <div class="describe__chips" aria-label="Description checks">
+      <div class="describe__chips" aria-label="Description checks">
           <span class="describe-chip" aria-disabled="true">What you can see</span>
           <span class="describe-chip" aria-disabled="true">Where it is</span>
         </div>
 
-        <button class="describe__voice" id="describe-voice" type="button" disabled>
+        <button class="describe__voice" id="describe-voice" type="button">
           ${hasText ? "Add more by voice" : "Use voice"}
         </button>
+        <p
+          class="describe__voice-status"
+          id="describe-voice-status"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></p>
       </div>
     </div>
 
