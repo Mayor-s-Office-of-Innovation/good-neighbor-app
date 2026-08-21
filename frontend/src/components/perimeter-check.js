@@ -21,6 +21,8 @@ import {
   ensureCheck,
   loadDraft,
   getCurrentCheck,
+  getActiveSideIndex,
+  setActiveSideIndex,
   addItem,
   removeItem,
   skipSide,
@@ -42,9 +44,16 @@ class PerimeterCheck extends HTMLElement {
     const check = getCurrentCheck() || (await loadDraft()) || null;
     if (!check) ensureCheck(this._siteId);
 
-    // Resume at the first side that still needs attention (else the first side).
-    const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
-    this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
+    const activeSideIndex = getActiveSideIndex();
+    const hasActiveSide = activeSideIndex >= 0 && activeSideIndex < SIDES.length;
+    // Resume at the explicitly active side when returning from /check/describe.
+    // Otherwise start at the first side that still needs attention.
+    if (hasActiveSide) {
+      this._sideIndex = activeSideIndex;
+    } else {
+      const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
+      this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
+    }
 
     this.innerHTML = shell();
     this._fileInput = this.querySelector("#file-input");
@@ -57,6 +66,9 @@ class PerimeterCheck extends HTMLElement {
     );
     this.querySelector("#next-side").addEventListener("click", () =>
       this._forward(),
+    );
+    this.querySelector("#describe-instead").addEventListener("click", () =>
+      this._describeInstead(),
     );
     // The ＋ tile and per-shot delete are re-rendered each change, so delegate.
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
@@ -124,6 +136,11 @@ class PerimeterCheck extends HTMLElement {
     this._afterSide();
   }
 
+  _describeInstead() {
+    setActiveSideIndex(this._sideIndex);
+    navigate("/check/describe");
+  }
+
   // Advance to the next side, or submit after the last.
   _afterSide() {
     if (this._isLast) {
@@ -131,6 +148,7 @@ class PerimeterCheck extends HTMLElement {
       return;
     }
     this._sideIndex += 1;
+    setActiveSideIndex(this._sideIndex);
     this._renderSide();
     window.scrollTo?.({ top: 0 });
   }
@@ -172,6 +190,7 @@ class PerimeterCheck extends HTMLElement {
 
   /* ---- render ---- */
   _renderSide() {
+    setActiveSideIndex(this._sideIndex);
     this.querySelector("#side-progress").textContent =
       `Side ${this._sideIndex + 1} of ${SIDES.length}`;
     this._renderSegments();

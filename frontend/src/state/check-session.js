@@ -17,7 +17,15 @@ import { newId, saveDraft, clearDraft, getDraft } from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
 
-/** @type {null | {id,siteId,window,startedAt,sides:Record<string,{items:any[],skipped:boolean}>,status,submittedAt?}} */
+function createSideState() {
+  return {
+    items: [],
+    skipped: false,
+    description: null,
+  };
+}
+
+/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
 let current = null;
 
 // Fire-and-forget mirror of the in-memory check to the draft store. Renders read
@@ -36,12 +44,13 @@ function currentWindow() {
 
 export function startCheck(siteId) {
   const sides = {};
-  for (const s of SIDES) sides[s] = { items: [], skipped: false };
+  for (const s of SIDES) sides[s] = createSideState();
   current = {
     id: newId(),
     siteId,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
+    activeSideIndex: 0,
     sides,
     status: "in-progress",
   };
@@ -67,6 +76,30 @@ export async function loadDraft() {
 
 export function ensureCheck(siteId) {
   return current || startCheck(siteId);
+}
+
+export function getActiveSideIndex() {
+  return current && typeof current.activeSideIndex === "number"
+    ? current.activeSideIndex
+    : null;
+}
+
+export function setActiveSideIndex(index) {
+  if (!current) return;
+  current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
+  persist();
+}
+
+export function getSideDescription(side) {
+  if (!current) return null;
+  return current.sides[side]?.description || null;
+}
+
+export function setSideDescription(side, description) {
+  if (!current) return null;
+  current.sides[side].description = description;
+  persist();
+  return description;
 }
 
 /** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
