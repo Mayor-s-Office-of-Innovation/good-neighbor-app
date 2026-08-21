@@ -160,6 +160,7 @@ const analyzedItem = (artifactId, side, grade, category, rating) => ({
   artifactId,
   side,
   grade,
+  gradeDescription: `${side} summary (${grade})`,
   rubricVersion: "1.0.0",
   concerns: [{ category, rating, explanation: "x", evidenceIndices: [] }],
 });
@@ -210,6 +211,10 @@ describe("completeCheck", () => {
       "attribute_exists(sk) AND #status <> :completed",
     );
     expect(header.ExpressionAttributeValues[":grade"]).toBe("Poor");
+    // Overall summary = the worst-graded side's analyzer description (south/Poor).
+    expect(header.ExpressionAttributeValues[":summary"]).toBe(
+      "south summary (Poor)",
+    );
     expect(header.ExpressionAttributeValues[":issueCount"]).toBe(2);
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
 
@@ -285,6 +290,7 @@ describe("completeCheck", () => {
     // Header-only transaction — no tasks.
     expect(items).toHaveLength(1);
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBeNull();
+    expect(items[0].Update.ExpressionAttributeValues[":summary"]).toBeNull();
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
       assessmentReady: true,

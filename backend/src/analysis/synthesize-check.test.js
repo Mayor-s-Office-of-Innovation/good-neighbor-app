@@ -26,6 +26,24 @@ describe("synthesizeCheck", () => {
     ]);
     expect(scorecard.grade).toBe("Very Poor");
     expect(scorecard.rubricVersion).toBe("1.0.0");
+    // The overall summary is the general_conditions.description of the side that
+    // set the worst grade (multiHighConcernResponse / "south").
+    expect(scorecard.summary).toBe(
+      multiHighConcernResponse.assessment.general_conditions.description,
+    );
+  });
+
+  it("uses the description from the first side to reach the worst grade (ties)", () => {
+    // Two Very Poor sides: the first one wins, so its description is the summary.
+    const scorecard = synthesizeCheck([
+      analyzed("art_01", excellentResponse, "north"),
+      analyzed("art_02", multiHighConcernResponse, "east"),
+      analyzed("art_03", multiHighConcernResponse, "south"),
+    ]);
+    expect(scorecard.grade).toBe("Very Poor");
+    expect(scorecard.summary).toBe(
+      multiHighConcernResponse.assessment.general_conditions.description,
+    );
   });
 
   it("keeps an all-clean run at Excellent with no categories", () => {
@@ -64,6 +82,7 @@ describe("synthesizeCheck", () => {
   it("returns a null grade for an empty run", () => {
     const scorecard = synthesizeCheck([]);
     expect(scorecard.grade).toBeNull();
+    expect(scorecard.summary).toBeNull();
     expect(scorecard.rubricVersion).toBeNull();
     expect(scorecard.categories).toEqual([]);
   });
