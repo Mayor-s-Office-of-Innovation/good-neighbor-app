@@ -12,15 +12,19 @@ import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
 /**
  * Pick the worker for a message by its shape (mirrors local-worker.mjs
  * `pickHandler`). The register handler enqueues an analyze message carrying
- * `s3Key` + `artifactId`; the demo /submissions flow does not. Anything without
- * both goes to the submission handler.
+ * `artifactId` plus either `s3Key` (photo) or `text` (description); the demo
+ * /submissions flow carries neither. Anything without an artifact goes to the
+ * submission handler.
  * @param {string | undefined} body
  * @returns {import("aws-lambda").SQSHandler}
  */
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
-    if (typeof msg?.s3Key === "string" && typeof msg?.artifactId === "string") {
+    if (
+      typeof msg?.artifactId === "string" &&
+      (typeof msg?.s3Key === "string" || typeof msg?.text === "string")
+    ) {
       return analyzeArtifact;
     }
   } catch {
