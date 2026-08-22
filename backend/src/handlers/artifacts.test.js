@@ -225,6 +225,42 @@ describe("registerArtifact", () => {
     );
     expect(res.statusCode).toBe(400);
   });
+
+  it("accepts text-only evidence and enqueues it without an s3Key", async () => {
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          artifactId: "art_text_1",
+          side: "west",
+          capturedAt: "2026-08-21T15:00:00.000Z",
+          text: "Graffiti is on the west wall by the entrance.",
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(202);
+    const tx = ddbSend.mock.calls[0][0];
+    expect(tx.input.TransactItems[1].Put.Item).toMatchObject({
+      sk: "CHECK#chk_01#ART#west#art_text_1",
+      text: "Graffiti is on the west wall by the entrance.",
+    });
+    expect(tx.input.TransactItems[1].Put.Item).not.toHaveProperty("s3Key");
+
+    const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
+    expect(msg).toEqual({
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_text_1",
+      side: "west",
+      capturedAt: "2026-08-21T15:00:00.000Z",
+      text: "Graffiti is on the west wall by the entrance.",
+    });
+  });
 });
 
 /**

@@ -1271,15 +1271,42 @@ theme-toggle {
   outline-offset: 2px;
 }
 
-/* Bottom action row: full-width forward button ("Next side ›" / "Submit check"). */
+/* Bottom action row: secondary "Describe instead" on the left, primary forward
+   action on the right ("Next side ›" / "Submit check"). */
 .check__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   padding-top: 0.2rem;
+}
+.check__describe {
+  appearance: none;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  text-shadow: none;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.2;
+  margin: 0;
+  min-width: 0;
+  padding: 0.35rem 0;
+  text-align: left;
+}
+.check__describe:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 .check__next {
   appearance: none;
   border: 0;
   cursor: pointer;
-  width: 100%;
+  flex: 0 0 auto;
   background: var(--ink);
   color: var(--on-ink);
   font: inherit;
@@ -1298,6 +1325,19 @@ theme-toggle {
 .check__next:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+@media (max-width: 359px) {
+  .check__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .check__describe,
+  .check__next {
+    width: 100%;
+  }
+  .check__describe {
+    text-align: center;
+  }
 }
 
 /* AI-summary loading state shown during submit (the cheap "Summarising…"). */
@@ -1421,6 +1461,432 @@ theme-toggle {
 }
 .ibcam__shutter:disabled:active {
   transform: none;
+}
+
+/* ==================================================================
+   Screen 5c-alt describe instead — typed draft shell. This is the alternate
+   evidence path off the capture screen. Voice/transcription and validation
+   states land in later steps; this pass covers typing, draft save, and
+   unsaved-exit protection.
+   ================================================================== */
+
+.view-describe.describe {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  gap: 1.75rem;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+}
+
+.describe__bar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  width: min(100%, 30rem);
+  margin-inline: auto;
+}
+
+.describe__close {
+  appearance: none;
+  width: 2.6875rem;
+  height: 2.6875rem;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 0;
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.describe__close-icon {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  /* Monochrome mask so the icon paints with --ink and follows the theme (a plain
+     <img> can't be recolored, so it went invisible on dark surfaces). */
+  background-color: var(--ink);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.describe__close:focus-visible,
+.describe__voice:focus-visible,
+.describe__continue:focus-visible,
+.describe-modal__secondary:focus-visible,
+.describe-modal__primary:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+.describe__heading {
+  min-width: 0;
+  text-align: center;
+}
+
+.describe__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+}
+
+.describe__close-icon--back {
+  transform: translateX(-0.015625rem);
+  -webkit-mask-image: url(/icons/chevron-left.svg);
+  mask-image: url(/icons/chevron-left.svg);
+}
+
+.describe__close-icon--dismiss {
+  transform: scale(1.02);
+  -webkit-mask-image: url(/icons/xmark.svg);
+  mask-image: url(/icons/xmark.svg);
+}
+
+.describe__title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.5625rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.describe__subtitle {
+  max-width: 24rem;
+  margin: 0.25rem auto 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.6;
+  text-wrap: balance;
+}
+
+.describe__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  width: min(100%, 25.75rem);
+  margin: 0 auto;
+  padding: 0.625rem 1rem 1.375rem;
+  border-radius: 1.5rem;
+  background: var(--surface-2);
+}
+
+.describe__field-wrap {
+  position: relative;
+  margin-bottom: -0.375rem;
+}
+
+.describe__field {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 9.25rem;
+  resize: none;
+  border: 1px solid var(--c-line);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  box-shadow: none;
+  color: var(--ink);
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-l);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-body);
+  line-height: 1.6;
+  padding: 9px 20px;
+}
+
+.describe__field::placeholder {
+  color: var(--wa-form-control-placeholder-color);
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-l);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-body);
+  line-height: 1.6;
+}
+
+.describe__field:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+.describe__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.describe__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.875rem;
+  margin-top: -0.375rem;
+}
+
+.describe__clear {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  align-self: center;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+  text-shadow: none;
+  color: var(--wa-color-text-link);
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-normal);
+  line-height: 1.6;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-skip-ink: auto;
+  text-decoration-thickness: auto;
+  text-underline-offset: auto;
+  text-underline-position: from-font;
+  cursor: pointer;
+}
+
+.describe__clear:hover,
+.describe__clear:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.describe__clear:disabled {
+  visibility: hidden;
+}
+
+.describe__clear:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}
+
+.describe-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.875rem;
+  padding: 0.328rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: #e4e5e9;
+  color: #9194a2;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.describe-chip[data-complete="true"] {
+  background: #d9f2e3;
+  color: #276246;
+}
+
+.describe__voice {
+  appearance: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  font: inherit;
+  font-weight: 500;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  padding: 0.9375rem 1.25rem;
+  margin: 0;
+  height: auto;
+  box-shadow: none;
+}
+
+.describe__voice[data-state="recording"] {
+  background: var(--wa-color-danger-fill-normal);
+  color: var(--wa-color-danger-on-normal);
+  text-align: center;
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-l);
+  font-style: normal;
+  font-weight: var(--wa-form-control-label-font-weight);
+  line-height: 1.2;
+}
+
+.describe__voice:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.describe__voice-status {
+  visibility: visible;
+  min-height: 1.5rem;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.describe__voice-status[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.describe__voice-status[data-kind="error"] {
+  color: var(--c-hazard);
+}
+
+.describe__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: auto;
+}
+
+.describe__validation-status {
+  visibility: visible;
+  min-height: 2.75rem;
+  margin: 0 0 0.875rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  text-align: center;
+  max-width: 22rem;
+}
+
+.describe__validation-status[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.describe__validation-status[data-kind="error"] {
+  color: var(--c-hazard);
+}
+
+.describe__continue {
+  appearance: none;
+  width: auto;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: #424554;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  padding: 0.9375rem 1.25rem;
+  margin: 0;
+  height: auto;
+  box-shadow: none;
+  opacity: 0.5;
+}
+
+.describe__continue:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.describe__continue:not(:disabled) {
+  background: var(--ink);
+  color: var(--on-ink);
+  opacity: 1;
+}
+
+.describe-modal {
+  width: min(100%, 28rem);
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.describe-modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.describe-modal__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 1.3rem;
+  border-radius: 22px;
+  background: var(--surface-1);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.18);
+}
+
+.describe-modal__title {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.15;
+}
+
+.describe-modal__text {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.describe-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.describe-modal__secondary,
+.describe-modal__primary {
+  appearance: none;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-weight: 700;
+  padding: 0.95rem 1rem;
+  margin: 0;
+  height: auto;
+  box-shadow: none;
+}
+
+.describe-modal__secondary {
+  border: 1px solid var(--c-line);
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+.describe-modal__primary {
+  border: 0;
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+@media (max-width: 479px) {
+  .describe__title {
+    font-size: 1.4rem;
+  }
+
+  .describe__subtitle {
+    font-size: 0.95rem;
+  }
+
+  .describe__field {
+    font-size: 1.1rem;
+  }
 }
 
 /* ---- Screen (15) review + (16) results: coverage / evidence rows ---- */

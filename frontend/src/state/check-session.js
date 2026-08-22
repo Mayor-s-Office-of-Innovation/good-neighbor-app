@@ -25,8 +25,73 @@ import {
 
 export const SIDES = ["North", "East", "South", "West"];
 
-/** @type {null | {id,siteId,window,startedAt,sides:Record<string,{items:any[],skipped:boolean}>,status,submittedAt?}} */
+function normalizeValidation(validation = {}) {
+  return {
+    whatYouCanSee: Boolean(validation.whatYouCanSee),
+    whereItIs: Boolean(validation.whereItIs),
+  };
+}
+
+function normalizeDescription(description) {
+  if (!description || typeof description !== "object") return null;
+  const text = String(description.text || "").trim();
+  if (!text) return null;
+  const source = ["typed", "transcribed", "mixed"].includes(description.source)
+    ? description.source
+    : "typed";
+  return {
+    kind: "note",
+    text,
+    source,
+    validation: normalizeValidation(description.validation),
+    validated: false,
+  };
+}
+
+function createSideState() {
+  return {
+    items: [],
+    skipped: false,
+    description: null,
+  };
+}
+
+function normalizeSideState(sideState = {}) {
+  return {
+    items: Array.isArray(sideState.items) ? sideState.items : [],
+    skipped: Boolean(sideState.skipped),
+    description: normalizeDescription(sideState.description),
+  };
+}
+
+function normalizeCheck(check) {
+  if (!check) return null;
+  const sides = {};
+  for (const side of SIDES) {
+    sides[side] = normalizeSideState(check.sides?.[side]);
+  }
+  return {
+    ...check,
+    activeSideIndex:
+      typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
+    sides,
+  };
+}
+
+function rehydrateDerivedFields(check) {
+  if (!check) return null;
+  for (const side of SIDES) {
+    const description = check.sides[side]?.description;
+    if (!description) continue;
+    description.validated =
+      description.validation.whatYouCanSee && description.validation.whereItIs;
+  }
+  return check;
+}
+
+/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
 let current = null;
+let postDescribeAction = null;
 
 // Fire-and-forget mirror of the in-memory check to the draft store. Renders read
 // the synchronous `current`; persistence catches up in the background.
@@ -44,12 +109,13 @@ function currentWindow() {
 
 export function startCheck(siteId) {
   const sides = {};
-  for (const s of SIDES) sides[s] = { items: [], skipped: false };
+  for (const s of SIDES) sides[s] = createSideState();
   current = {
     id: newId(),
     siteId,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
+    activeSideIndex: 0,
     sides,
     status: "in-progress",
   };
@@ -69,7 +135,7 @@ export function getCurrentCheck() {
 export async function loadDraft() {
   if (current) return current;
   const draft = await getDraft();
-  if (draft) current = draft;
+  if (draft) current = rehydrateDerivedFields(normalizeCheck(draft));
   return current;
 }
 
@@ -89,6 +155,56 @@ export async function loadSubmitted() {
   const saved = await getReview();
   if (saved) current = saved;
   return current;
+}
+
+export function getActiveSideIndex() {
+  return current && typeof current.activeSideIndex === "number"
+    ? current.activeSideIndex
+    : null;
+}
+
+export function setActiveSideIndex(index) {
+  if (!current) return;
+  current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
+  persist();
+}
+
+export function setPostDescribeAction(action) {
+  postDescribeAction = action;
+}
+
+export function consumePostDescribeAction() {
+  const action = postDescribeAction;
+  postDescribeAction = null;
+  return action;
+}
+
+export function getSideDescription(side) {
+  if (!current) return null;
+  return current.sides[side]?.description || null;
+}
+
+export function setSideDescription(side, description) {
+  if (!current) return null;
+  current.sides[side].description = normalizeDescription(description);
+  if (current.sides[side].description) {
+    current.sides[side].description.validated =
+      current.sides[side].description.validation.whatYouCanSee &&
+      current.sides[side].description.validation.whereItIs;
+  }
+  persist();
+  return current.sides[side].description;
+}
+
+export function setSideDescriptionValidation(side, validation) {
+  if (!current) return null;
+  const description = current.sides[side]?.description;
+  if (!description) return null;
+  description.validation = normalizeValidation(validation);
+  description.validated =
+    description.validation.whatYouCanSee && description.validation.whereItIs;
+  persist();
+  return description;
 }
 
 /** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
@@ -123,7 +239,7 @@ export function skipSide(side) {
 export function isSideCovered(side) {
   if (!current) return false;
   const s = current.sides[side];
-  return s.skipped || s.items.length > 0;
+  return s.skipped || s.items.length > 0 || Boolean(s.description?.validated);
 }
 
 export function coveredCount() {
@@ -154,10 +270,13 @@ export function markSubmitted(findings, assessment) {
   return current;
 }
 
-/** Drop the walk from memory AND both persisted copies (draft + review). Called on
- *  submit/discard and on the review screen's Continue. */
+/**
+ * Drop the walk from memory AND both persisted copies (draft + review). Called on
+ * submit/discard and on the review screen's Continue.
+ */
 export function clearCheck() {
   current = null;
+  postDescribeAction = null;
   void clearDraft();
   void clearReview();
 }

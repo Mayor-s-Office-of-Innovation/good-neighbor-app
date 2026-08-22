@@ -53,6 +53,7 @@ resource "aws_lambda_function" "api" {
       SQS_QUEUE_URL    = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET = aws_s3_bucket.uploads.bucket
       DEMO_SITE_ID     = "demo-site"
+      BEDROCK_MODEL_ID = var.bedrock_model_id
     }
   }
 

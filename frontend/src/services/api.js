@@ -197,6 +197,21 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
+/**
+ * POST /v1/checks/{checkId}/sides/{side}/description:validate
+ * @param {string} checkId
+ * @param {string} side
+ * @param {{ text: string }} body
+ * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
+ */
+export function validateSideDescription(checkId, side, body) {
+  return request(
+    "POST",
+    `/v1/checks/${encodeURIComponent(checkId)}/sides/${encodeURIComponent(side)}/description:validate`,
+    { body },
+  );
+}
+
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**
@@ -218,7 +233,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (already registered / missing parent) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, side: string, s3Key: string, contentType?: string, capturedAt?: string, text?: string }} body
+ * @param {{ artifactId: string, side: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -344,10 +359,13 @@ export async function dataUrlToBlob(dataUrl) {
  * (which enqueues the async analysis). Returns the registered artifactId so the
  * caller can wait for exactly these analyses to land.
  * @param {string} checkId
- * @param {{ side: string, dataUrl: string, capturedAt?: string }} item
+ * @param {{ side: string, dataUrl: string, capturedAt?: string, text?: string }} item
  * @returns {Promise<string>} the artifactId
  */
-export async function uploadArtifact(checkId, { side, dataUrl, capturedAt }) {
+export async function uploadArtifact(
+  checkId,
+  { side, dataUrl, capturedAt, text },
+) {
   const contentType = contentTypeFromDataUrl(dataUrl);
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
     side,
@@ -361,6 +379,27 @@ export async function uploadArtifact(checkId, { side, dataUrl, capturedAt }) {
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(text ? { text } : {}),
+  });
+  return artifactId;
+}
+
+/**
+ * Register validated text evidence for a side without uploading media bytes.
+ * @param {string} checkId
+ * @param {{ side: string, text: string, capturedAt?: string }} item
+ * @returns {Promise<string>}
+ */
+export async function registerTextArtifact(
+  checkId,
+  { side, text, capturedAt },
+) {
+  const artifactId = crypto.randomUUID();
+  await registerArtifact(checkId, {
+    artifactId,
+    side,
+    ...(capturedAt ? { capturedAt } : {}),
+    text,
   });
   return artifactId;
 }
