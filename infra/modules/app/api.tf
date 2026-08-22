@@ -9,6 +9,7 @@ locals {
     "POST /site-code",
     "POST /v1/checks",
     "GET /v1/checks",
+    "POST /v1/checks/{checkId}/sides/{side}/description:validate",
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "POST /v1/checks/{checkId}/complete",

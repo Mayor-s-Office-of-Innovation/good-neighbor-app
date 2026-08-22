@@ -246,4 +246,24 @@ describe("analyze-artifact worker", () => {
     await expect(invoke(baseMsg)).rejects.toThrow(/ANALYZER_BASE_URL/);
     expect(getObjectBytes).not.toHaveBeenCalled();
   });
+
+  it("analyzes text-only evidence without fetching S3 bytes", async () => {
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke({
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_text_1",
+      side: "west",
+      capturedAt: "2026-08-21T15:00:00.000Z",
+      text: "Trash is next to the west entrance.",
+    });
+
+    expect(getObjectBytes).not.toHaveBeenCalled();
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(analyze.mock.calls[0][0].media).toEqual([
+      { type: "text", text: "Trash is next to the west entrance." },
+    ]);
+  });
 });

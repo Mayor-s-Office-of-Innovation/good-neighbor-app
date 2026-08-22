@@ -64,6 +64,7 @@ import "./components/capture-audio.js";
 import "./components/in-browser-camera.js";
 import "./components/today-view.js";
 import "./components/perimeter-check.js";
+import "./components/describe-instead.js";
 import "./components/check-review.js";
 import "./components/check-results.js";
 import "./components/site-setup.js";

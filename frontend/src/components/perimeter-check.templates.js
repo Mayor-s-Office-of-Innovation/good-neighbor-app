@@ -40,6 +40,9 @@ export const shell = () => html`
     />
 
     <div class="check__actions">
+      <button class="check__describe" id="describe-instead" type="button">
+        Describe instead
+      </button>
       <button
         class="check__next"
         id="next-side"
@@ -101,6 +104,9 @@ export const shellWebcam = () => html`
     />
 
     <div class="check__actions">
+      <button class="check__describe" id="describe-instead" type="button">
+        Describe instead
+      </button>
       <button
         class="check__next"
         id="next-side"
