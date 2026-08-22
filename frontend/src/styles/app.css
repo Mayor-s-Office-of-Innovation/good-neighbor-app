@@ -31,6 +31,14 @@ body {
      those regions fall back to white — the "white bars top & bottom" seen only
      on iPhone (desktop/Android propagate the body background to the canvas). */
   background: var(--bg);
+  /* Kill rubber-band overscroll / pull-to-refresh and scroll-chaining. This is
+     the biggest lever (short of PWA fullscreen) against the mobile URL bar
+     collapsing/expanding mid-scroll and against bounce revealing bare canvas. */
+  overscroll-behavior: none;
+  /* Reserve the scrollbar's width so its appearance never shifts layout
+     horizontally. No-op on mobile (overlay scrollbars are zero-width); only
+     affects desktop/Android where the bar takes space. */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -70,7 +78,13 @@ body {
 
 /* ---- App shell ---- */
 .app {
-  min-height: 100dvh;
+  /* svh (small viewport height) = the viewport WITH mobile chrome showing — its
+     smallest state. Sizing full-screen shells to svh keeps a stable minimum that
+     never reflows as the URL bar animates and never pushes content under chrome.
+     Extra space when chrome retracts is filled by the root bg, so it's seamless.
+     (Contrast: dvh tracks the live viewport → jitter; lvh is the tall state →
+     bottom content hides behind chrome.) */
+  min-height: 100svh;
   display: flex;
   flex-direction: column;
 }
@@ -182,7 +196,7 @@ form > wa-button[type="submit"] {
   background: var(--surface);
 }
 .login {
-  min-height: 100dvh;
+  min-height: 100svh;
   display: grid;
   place-items: center;
   background: var(--surface);
@@ -1079,7 +1093,7 @@ theme-toggle {
 .view-check.check {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  min-height: 100svh;
   padding-bottom: 1rem;
 }
 
@@ -1624,4 +1638,241 @@ theme-toggle {
   width: 100%;
   padding-left: 0;
   padding-right: 0;
+}
+
+/* ==================================================================
+   Screen (16) "Review conditions" — the AI-findings review shown right
+   after submit. Header (title + close), a display-only photo thumbstrip,
+   then a grey assessment panel (overall summary + one white card per
+   identified condition). Task worklist lives on home, not here.
+   ================================================================== */
+
+/* Header variant: title block left, close button pinned top-right, no divider. */
+.topbar--review {
+  align-items: flex-start;
+  border-bottom: 0;
+  margin-bottom: 1rem;
+}
+.topbar--review .topbar__title {
+  font-size: 1.6rem;
+  line-height: 1.15;
+}
+
+/* Display-only strip of the run's photos, above everything (no controls). */
+.thumbstrip {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 1.3rem;
+  scrollbar-width: none;
+  margin: 0;
+  padding-inline-start: 0;
+  list-style: none;
+}
+.thumbstrip::-webkit-scrollbar {
+  display: none;
+}
+.thumbstrip__item {
+  flex: 0 0 auto;
+}
+.thumbstrip__thumb {
+  display: block;
+  width: 150px;
+  height: 150px;
+  border-radius: 14px;
+  background: var(--surface-3);
+  object-fit: cover;
+}
+
+/* Grey assessment panel wrapping the summary + issue cards. */
+.assess {
+  background: var(--surface-2);
+  border-radius: 18px;
+  padding: 1.2rem 1rem 1rem;
+}
+.assess__head {
+  padding: 0 0.2rem 0.2rem;
+}
+.assess__spark {
+  display: block;
+  font-size: 1.4rem;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+.assess__summary {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.assess__sub {
+  margin: 0.4rem 0 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+/* The stack of identified-condition cards inside the panel. */
+.assess__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.issue {
+  background: var(--surface);
+  border: 1px solid var(--c-line);
+  border-radius: 14px;
+  padding: 0.9rem 1.1rem 1rem;
+}
+.issue__title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+/* Which sides this condition was seen on (e.g. "North · West"). */
+.issue__sides {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.issue__desc {
+  margin: 0.2rem 0 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+/* Opens the dispute ("Something not right?") modal for this card. Link-styled. */
+.issue__flag {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0.5rem 0 0;
+  margin: 0;
+  box-shadow: none;
+  height: auto;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--brand-blue);
+  text-decoration: underline;
+}
+.issue__flag:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.assess .rowcard {
+  margin-top: 1rem;
+}
+
+/* ---- Dispute: marked-card state + status line ---- */
+/* When the user disputes a condition, the card's claim is struck through and the
+   trigger is replaced by a status line noting what they marked. */
+.issue--marked .issue__title,
+.issue--marked .issue__desc {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+.issue__status {
+  margin: 0.5rem 0 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(
+    --c-flag
+  ); /* amber "you changed this" — paired with the text label */
+}
+/* "Undo" reads as a link inside the amber status line. */
+.issue__undo {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  height: auto;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--brand-blue);
+  text-decoration: underline;
+}
+.issue__undo:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
+/* Native <dialog>: showModal() gives focus trap + Escape for free. The element
+   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss). */
+.sheet {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  width: calc(100% - 3rem);
+  max-width: 340px;
+  color: var(--text);
+}
+.sheet::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+.sheet__panel {
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 0.9rem;
+  box-shadow: var(--shadow-lift);
+}
+.sheet__opts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.sheet__opt {
+  width: 100%;
+  appearance: none;
+  border: 0;
+  margin: 0;
+  height: auto;
+  box-shadow: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  background: var(--surface-3);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+}
+.sheet__opt:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.sheet__cancel {
+  display: block;
+  width: 100%;
+  appearance: none;
+  background: none;
+  border: 0;
+  height: auto;
+  box-shadow: none;
+  margin: 0.3rem 0 0;
+  padding: 0.9rem 0 0.4rem;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: center;
+  color: var(--c-hazard);
+}
+.sheet__cancel:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 8px;
 }

@@ -29,6 +29,12 @@ frontend, tests, lint, and typecheck do **not** need Java.
 |---|---|
 | `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
 
+### Theme toggle (dark/light)
+
+The dark/light theme toggle is hidden by default. Add the `?themeToggle` URL param to reveal it
+(e.g. `http://localhost:5173/today?themeToggle`). It's per-load — the toggle shows only while that
+param is in the current URL. OS-following theming still applies regardless of the param.
+
 ### Web Awesome AI agent skill
 
 The UI uses [Web Awesome](https://webawesome.com) (`@awesome.me/webawesome`) for `<wa-*>` components.

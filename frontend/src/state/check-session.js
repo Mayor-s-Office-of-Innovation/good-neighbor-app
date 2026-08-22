@@ -13,7 +13,15 @@
   voice/note capture is out of the MVP UI (photo-only) but the plumbing is left intact
   for the post-MVP pass.
 */
-import { newId, saveDraft, clearDraft, getDraft } from "../db.js";
+import {
+  newId,
+  saveDraft,
+  clearDraft,
+  getDraft,
+  saveReview,
+  getReview,
+  clearReview,
+} from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
 
@@ -69,6 +77,20 @@ export function ensureCheck(siteId) {
   return current || startCheck(siteId);
 }
 
+/**
+ * Hydrate the in-memory check from the persisted review store (after a reload of the
+ * results screen). Unlike loadDraft this restores a SUBMITTED session — the one that
+ * carries the assessment envelope + findings + photos the review screen needs to
+ * dispute and mint tasks on Continue. An in-memory check wins (no clobbering). Returns
+ * the active check or null.
+ */
+export async function loadSubmitted() {
+  if (current) return current;
+  const saved = await getReview();
+  if (saved) current = saved;
+  return current;
+}
+
 /** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
 export function addItem(side, item) {
   if (!current) return null;
@@ -114,16 +136,28 @@ export function allItems() {
   return SIDES.flatMap((s) => current.sides[s].items);
 }
 
-export function markSubmitted(findings) {
+/**
+ * Flip the walk to "submitted" and stash what the results screen needs. The
+ * `assessment` envelope (from completeCheck) rides along so the review screen can
+ * defer task minting to Continue — sending it to evaluate then, with any disputes.
+ */
+export function markSubmitted(findings, assessment) {
   if (!current) return null;
   current.status = "submitted";
   current.submittedAt = new Date().toISOString();
   current.findings = findings;
+  current.assessment = assessment;
+  // Mirror the submitted session to the `review` store so a reload of the results
+  // screen can rehydrate the envelope + findings + photos (loadSubmitted) instead of
+  // dropping to the read-only history path where tasks can never mint.
+  void saveReview(current);
   return current;
 }
 
-/** Drop the walk from memory AND the persisted draft (submit or discard). */
+/** Drop the walk from memory AND both persisted copies (draft + review). Called on
+ *  submit/discard and on the review screen's Continue. */
 export function clearCheck() {
   current = null;
   void clearDraft();
+  void clearReview();
 }

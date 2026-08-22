@@ -179,6 +179,14 @@ function applyAssessmentConditionDelta({
  * @property {string | null} [grade]
  * @property {Record<string, unknown>} rawAssessment
  * @property {AssessmentConditionInput[]} conditions
+ * @property {Record<string, string>} [dispositions] reviewer clarifications keyed
+ *   by the condition's stable conditionId ("not_present" | "better" | "worse" |
+ *   "other"). All are recorded for false-positive analysis; only "not_present"
+ *   suppresses task minting. Keying by conditionId (not category) means disputing
+ *   one condition never affects a sibling that happens to share a category.
+ * @property {string[]} [disputedCategories] legacy: analyzer category names the
+ *   reviewer marked "I don't see this problem". Folded in as "not_present" for any
+ *   condition of that category that has no explicit conditionId disposition.
  */
 
 /**
@@ -209,7 +217,12 @@ export function makeConditionId(category, index) {
  * @param {string} opts.conditionId
  * @param {string | undefined} opts.checkId
  * @param {string} opts.reportedAt
- * @param {EvaluationResult} opts.evaluation
+ * @param {EvaluationResult | null} opts.evaluation null when the condition was
+ *   disputed (no rule evaluation runs).
+ * @param {boolean} [opts.disputed] the reviewer marked this "I don't see this
+ *   problem": persist the condition as a terminal record, mint no task.
+ * @param {string | null} [opts.disputeDisposition] the reviewer's clarification
+ *   ("not_present" | "better" | "worse" | "other"), or null if left alone.
  * @param {string} opts.policyVersion
  * @param {string[]} opts.taskIds
  * @param {string} opts.now
@@ -223,11 +236,15 @@ function buildConditionItem({
   checkId,
   reportedAt,
   evaluation,
+  disputed = false,
+  disputeDisposition = null,
   policyVersion,
   taskIds,
   now,
 }) {
-  const unresolved = evaluation.kind !== "outcome";
+  // A disputed condition is terminal: it never mints a task and never enters the
+  // needs-answer / manual-review queue, but the record is kept for analysis.
+  const unresolved = !disputed && evaluation?.kind !== "outcome";
   const base = {
     ...conditionKey(siteId, assessmentId, conditionId),
     entityType: "CONDITION",
@@ -242,29 +259,37 @@ function buildConditionItem({
       ...condition.source,
     },
     analyzerCategory: condition.category,
-    canonicalCategory:
-      evaluation.kind === "manual_review"
+    canonicalCategory: disputed
+      ? condition.category
+      : evaluation?.kind === "manual_review"
         ? (evaluation.category ?? condition.category)
-        : evaluation.category,
+        : (evaluation?.category ?? condition.category),
     severity: condition.severity,
     severityLabel: condition.severityLabel,
     description: condition.description,
     answers: {},
-    status:
-      evaluation.kind === "needs_answer"
+    status: disputed
+      ? "disputed"
+      : evaluation?.kind === "needs_answer"
         ? "needs_answer"
-        : evaluation.kind === "outcome"
+        : evaluation?.kind === "outcome"
           ? "tasks_created"
-          : evaluation.kind === "manual_review"
+          : evaluation?.kind === "manual_review"
             ? "manual_review"
             : "completed",
+    // Reviewer feedback kept for false-positive analysis. `disputeDisposition` is
+    // the reviewer's clarification ("not_present" | "better" | "worse" | "other")
+    // or null if they left the condition alone. Only "not_present" sets `disputed`
+    // and suppresses task creation (see storeEvaluatedAssessment).
+    disputed,
+    disputeDisposition,
     selectedRuleId:
-      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
-    outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
+      evaluation?.kind === "outcome" ? evaluation.rule.ruleId : null,
+    outcome: evaluation?.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
-    resolvedToTasks: evaluation.kind === "outcome",
+    resolvedToTasks: evaluation?.kind === "outcome",
     needsAnswer:
-      evaluation.kind === "needs_answer" ? evaluation.question : null,
+      evaluation?.kind === "needs_answer" ? evaluation.question : null,
     cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
@@ -364,6 +389,16 @@ export async function storeEvaluatedAssessment(input, options) {
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
+  // Reviewer clarifications keyed by the condition's stable conditionId
+  // ("not_present" | "better" | "worse" | "other"). All are persisted (for
+  // false-positive analysis), but only "not_present" ("I don't see this problem")
+  // suppresses rule evaluation and task minting. Keying by conditionId (not
+  // category) means disputing one condition never suppresses a sibling that shares
+  // its category. `disputedCategories` (legacy, by category) is folded in below as
+  // "not_present" for any condition lacking an explicit conditionId disposition.
+  const dispositions = new Map(Object.entries(input.dispositions ?? {}));
+  const disputedCategories = new Set(input.disputedCategories ?? []);
+
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
   /** @type {Record<string, unknown>[]} */
@@ -372,14 +407,29 @@ export async function storeEvaluatedAssessment(input, options) {
   for (const [index, condition] of input.conditions.entries()) {
     const conditionId =
       condition.conditionId ?? makeConditionId(condition.category, index);
-    const evaluation = evaluateCondition({
-      condition: { category: condition.category, severity: condition.severity },
-      catalog,
-    });
+    // Prefer the per-conditionId disposition; fall back to the legacy by-category
+    // disputedCategories (folded in as "not_present").
+    const disposition =
+      dispositions.get(conditionId) ??
+      (disputedCategories.has(condition.category) ? "not_present" : null);
+    // Only "not_present" is a true dispute that suppresses tasks; better/worse/other
+    // are recorded as feedback but still evaluate into tasks normally.
+    const disputed = disposition === "not_present";
+
+    // Disputed conditions skip rule evaluation and task minting entirely.
+    const evaluation = disputed
+      ? null
+      : evaluateCondition({
+          condition: {
+            category: condition.category,
+            severity: condition.severity,
+          },
+          catalog,
+        });
 
     /** @type {string[]} */
     const taskIds = [];
-    if (evaluation.kind === "outcome") {
+    if (evaluation && evaluation.kind === "outcome") {
       const taskId = idFactory();
       taskIds.push(taskId);
       taskItems.push(
@@ -405,6 +455,8 @@ export async function storeEvaluatedAssessment(input, options) {
         checkId: input.checkId,
         reportedAt: input.reportedAt,
         evaluation,
+        disputed,
+        disputeDisposition: disposition,
         policyVersion: catalog.policyVersion,
         taskIds,
         now,
@@ -421,6 +473,9 @@ export async function storeEvaluatedAssessment(input, options) {
   const conditionsResolvedToTasks = conditionItems.filter(
     (item) => item.resolvedToTasks,
   ).length;
+  const disputedCount = conditionItems.filter(
+    (item) => item.disputed === true,
+  ).length;
   const actionCount = taskItems.filter((item) => item.kind === "action").length;
   const escalationCount = taskItems.filter(
     (item) => item.kind === "escalation",
@@ -434,12 +489,18 @@ export async function storeEvaluatedAssessment(input, options) {
     ),
   ).length;
 
+  // "tasks_created" must mean tasks were actually minted. An assessment whose
+  // conditions were all disputed (or that produced none) creates zero tasks, so it
+  // reports "no_tasks" rather than contradicting a disputedCount>0 / openTaskCount:0
+  // summary.
   const assessmentStatus =
     manualReviewCount > 0
       ? "manual_review"
       : conditionsNeedAnswer > 0
         ? "needs_answers"
-        : "tasks_created";
+        : taskItems.length > 0
+          ? "tasks_created"
+          : "no_tasks";
 
   const assessmentItem = {
     ...assessmentKey(input.siteId, input.assessmentId),
@@ -457,6 +518,7 @@ export async function storeEvaluatedAssessment(input, options) {
       totalConditions: input.conditions.length,
       conditionsNeedAnswer,
       conditionsResolvedToTasks,
+      disputedCount,
       openTaskCount: taskItems.length,
       actionCount,
       escalationCount,

@@ -12,9 +12,18 @@ import {
 
 const MAX_ASSESSMENT_CONDITIONS = 49;
 
+// Reviewer clarifications from the "Something not right?" modal. Only "not_present"
+// affects task minting; the rest are recorded as feedback for false-positive analysis.
+const DISPUTE_DISPOSITIONS = new Set([
+  "not_present",
+  "better",
+  "worse",
+  "other",
+]);
+
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
+ * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[], disputedCategories: string[], dispositions: Record<string, string> }}
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -40,6 +49,31 @@ function normalizeAssessmentBody(body) {
     typeof assessment.general_conditions === "object"
       ? /** @type {Record<string, unknown>} */ (assessment.general_conditions)
       : {};
+
+  const disputedCategories = Array.isArray(input.disputedCategories)
+    ? input.disputedCategories.filter((c) => typeof c === "string")
+    : [];
+
+  // Reviewer clarifications keyed by the condition's stable conditionId. All are
+  // recorded; only "not_present" suppresses task minting (see storeEvaluatedAssessment).
+  /** @type {Record<string, string>} */
+  const dispositions = {};
+  if (
+    input.dispositions &&
+    typeof input.dispositions === "object" &&
+    !Array.isArray(input.dispositions)
+  ) {
+    for (const [conditionId, disposition] of Object.entries(
+      input.dispositions,
+    )) {
+      if (
+        typeof disposition === "string" &&
+        DISPUTE_DISPOSITIONS.has(disposition)
+      ) {
+        dispositions[conditionId] = disposition;
+      }
+    }
+  }
 
   const explicitConditions = Array.isArray(input.conditions)
     ? /** @type {unknown[]} */ (input.conditions)
@@ -126,6 +160,8 @@ function normalizeAssessmentBody(body) {
           : null,
     rawAssessment,
     conditions,
+    disputedCategories,
+    dispositions,
   };
 }
 
