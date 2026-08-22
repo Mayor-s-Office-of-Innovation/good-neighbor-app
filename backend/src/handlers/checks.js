@@ -106,9 +106,23 @@ export const completeCheck = async (event) => {
   // One query gathers the header + every child (artifacts + analyses) so we can
   // verify coverage against the registered artifacts before folding — synthesis
   // must never run over a partially-analyzed run (see the coverage gate above).
+  //
+  // Strongly consistent: this read is the AUTHORITATIVE coverage snapshot, and
+  // the completion write is idempotent-once, so a stale eventually-consistent
+  // read that missed a just-registered artifact could freeze a partial scorecard
+  // that can never self-heal. ConsistentRead closes that staleness window (it's a
+  // base-table query, so strong consistency is available here).
+  //
+  // Note: this does NOT close the check→write TOCTOU — an artifact registered
+  // after this read but before the header update would still be missed. That race
+  // is unreachable in the app's flow (the client registers every artifact, then
+  // waits for coverage, then completes; nothing registers concurrently with
+  // completion), so it's left as a documented limitation rather than guarded with
+  // a transaction/registration lock.
   const result = await ddb.send(
     new QueryCommand({
       TableName: dynamoTable,
+      ConsistentRead: true,
       KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
       ExpressionAttributeValues: {
         ":pk": sitePk(siteId),
