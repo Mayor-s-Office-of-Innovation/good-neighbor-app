@@ -16,6 +16,8 @@
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { submitCheck } from "../services/submit-check.js";
+import { isBrowserCameraEnabled } from "../services/capture-mode.js";
+// <in-browser-camera> registers itself via main.js (opt-in ?webcam feature).
 import {
   SIDES,
   ensureCheck,
@@ -28,6 +30,7 @@ import {
 } from "../state/check-session.js";
 import {
   shell,
+  shellWebcam,
   segment,
   shotTile,
   addTile,
@@ -46,7 +49,12 @@ class PerimeterCheck extends HTMLElement {
     const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
     this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
 
-    this.innerHTML = shell();
+    // Opt-in inline browser camera (?webcam, persisted). Falls back to native on
+    // an unavailable/denied camera (see _onCameraUnavailable).
+    this._webcam = isBrowserCameraEnabled();
+    this._webcamFailed = false;
+
+    this.innerHTML = this._webcam ? shellWebcam() : shell();
     this._fileInput = this.querySelector("#file-input");
 
     this.querySelector("#cancel").addEventListener("click", () =>
@@ -62,10 +70,42 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
     );
-    // A photo came back from the camera / file picker.
+    // A photo came back from the file picker (native path + webcam fallback).
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
+    if (this._webcam) this._mountCamera();
+
     this._renderSide();
+  }
+
+  _useWebcam() {
+    return this._webcam && !this._webcamFailed;
+  }
+
+  /* ---- inline browser camera (opt-in; isolated for easy removal) ---- */
+  // Mounted once and kept alive across captures and sides; capture events add a
+  // photo to the current side. On unavailable/denied, revert to the native tile.
+  _mountCamera() {
+    const panel = this.querySelector("#camera-panel");
+    if (!panel) return;
+    this._camera = document.createElement("in-browser-camera");
+    this._camera.addEventListener("capture", (e) =>
+      this._addPhoto(e.detail.dataUrl),
+    );
+    this._camera.addEventListener("unavailable", () =>
+      this._onCameraUnavailable(),
+    );
+    panel.appendChild(this._camera);
+  }
+
+  _onCameraUnavailable() {
+    this._webcamFailed = true;
+    if (this._camera) {
+      this._camera.remove();
+      this._camera = null;
+    }
+    // With the camera gone, _renderShots restores the ＋ "Add photo" tile.
+    this._renderShots();
   }
 
   get _side() {
@@ -79,7 +119,9 @@ class PerimeterCheck extends HTMLElement {
   }
 
   /* ---- capture (native handoff) ---- */
-  // Open the device camera (phone) / file picker (desktop).
+  // The ＋ "Add photo" tile opens the device camera (phone) / file picker (desktop).
+  // In webcam mode the inline camera replaces this tile; the tile only reappears on
+  // the denied-camera fallback, which routes back here.
   _openCamera() {
     this._fileInput.value = ""; // allow re-picking the same file
     this._fileInput.click();
@@ -89,13 +131,15 @@ class PerimeterCheck extends HTMLElement {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      addItem(this._side, { kind: "photo", dataUrl: reader.result });
-      this._renderSegments();
-      this._renderShots();
-      this._syncControls();
-    };
+    reader.onload = () => this._addPhoto(reader.result);
     reader.readAsDataURL(file);
+  }
+
+  _addPhoto(dataUrl) {
+    addItem(this._side, { kind: "photo", dataUrl });
+    this._renderSegments();
+    this._renderShots();
+    this._syncControls();
   }
 
   /* ---- grid interactions (add + delete, delegated) ---- */
@@ -136,6 +180,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   async _submit() {
+    // Release the camera before the summarising overlay covers the screen.
+    if (this._camera) {
+      this._camera.remove();
+      this._camera = null;
+    }
     const overlay = this.querySelector("#summarising");
     overlay.hidden = false;
     try {
@@ -146,6 +195,10 @@ class PerimeterCheck extends HTMLElement {
       // and surface a retryable error (no local queue — offline is post-MVP).
       console.error("submitCheck failed", err);
       overlay.hidden = true;
+      // We tore the camera down before submitting; remount it so webcam-mode users
+      // can still add photos on this (or another) side before retrying. (Native and
+      // fallback modes keep their ＋ tile, so nothing to restore there.)
+      if (this._useWebcam() && !this._camera) this._mountCamera();
       this._showSubmitError();
     }
   }
@@ -192,13 +245,14 @@ class PerimeterCheck extends HTMLElement {
     }).join("");
   }
 
-  // This side's shots as an inline grid, followed by the ＋ "Add photo" tile.
-  // Empty side → the tile stands alone (larger, with a hint).
+  // This side's shots as an inline grid. Native path (and webcam fallback) appends
+  // the ＋ "Add photo" tile; with the inline camera live, thumbnails render alone.
   _renderShots() {
     const items = this._sideState().items;
     const grid = this.querySelector("#shotgrid");
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    grid.innerHTML = items.map(shotTile).join("") + addTile(items.length === 0);
+    const tile = this._useWebcam() ? "" : addTile(items.length === 0);
+    grid.innerHTML = items.map(shotTile).join("") + tile;
   }
 
   _syncControls() {

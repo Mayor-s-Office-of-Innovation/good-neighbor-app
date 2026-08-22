@@ -52,9 +52,16 @@ import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 import "./styles/tokens.css";
 import "./styles/app.css";
 
+// Consume the ?webcam capture-mode param (opt-in in-app browser camera) at startup,
+// so the choice is persisted + the param stripped from the URL well before any
+// capture is triggered (which only happens on a later user tap).
+import { syncCaptureModeFromUrl } from "./services/capture-mode.js";
+syncCaptureModeFromUrl();
+
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
 import "./components/capture-audio.js";
+import "./components/in-browser-camera.js";
 import "./components/today-view.js";
 import "./components/perimeter-check.js";
 import "./components/check-review.js";
