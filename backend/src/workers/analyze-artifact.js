@@ -279,9 +279,13 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
 }
 
 /**
- * SQS entry point. Builds the analyzer client once per batch, then processes
- * each record. A thrown record fails the batch (SQS redelivers); permanent
- * analyzer failures are consumed via a failure marker inside `analyzeArtifact`.
+ * SQS entry point. Builds the analyzer client once per batch, then analyzes
+ * every record in the batch CONCURRENTLY (each artifact is an independent remote
+ * call whose latency is all in the analyzer's response, so batch wall-clock ≈ the
+ * slowest single call, not the sum). Failures are isolated per message via a
+ * partial-batch response — only the rejected artifacts redeliver, never the whole
+ * batch. Permanent analyzer failures are consumed via a failure marker inside
+ * `analyzeArtifact` and never surface here.
  * @type {import("aws-lambda").SQSHandler}
  */
 export const handler = async (event) => {
@@ -292,10 +296,38 @@ export const handler = async (event) => {
     );
   }
   const apiKey = await getAnalyzerApiKey();
-  const client = createAnalyzerClient({ baseUrl: analyzerBaseUrl, apiKey });
+  // Retries disabled (maxRetries: 0): one analyzer call per artifact, no hidden
+  // exponential backoff. A transient failure surfaces as a rejected promise below
+  // and redelivers via SQS, rather than being masked (and re-timed) in-process.
+  const client = createAnalyzerClient({
+    baseUrl: analyzerBaseUrl,
+    apiKey,
+    maxRetries: 0,
+  });
 
-  for (const record of event.Records) {
-    const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
-    await analyzeArtifact(msg, { client, dynamoTable, uploadBucket });
-  }
+  // Fan out: fire every artifact's analysis at once and await them together.
+  const settled = await Promise.allSettled(
+    event.Records.map(async (record) => {
+      const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
+      await analyzeArtifact(msg, { client, dynamoTable, uploadBucket });
+    }),
+  );
+
+  // Report only the failed messages back to SQS (the event source mapping sets
+  // function_response_types = ["ReportBatchItemFailures"]). Succeeded artifacts
+  // are acknowledged and never re-analyzed; only the rejected ones redeliver.
+  /** @type {{ itemIdentifier: string }[]} */
+  const batchItemFailures = [];
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const { messageId } = event.Records[index];
+      console.error("analyzeArtifact failed; message will redeliver", {
+        messageId,
+        error: result.reason,
+      });
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+  });
+
+  return { batchItemFailures };
 };

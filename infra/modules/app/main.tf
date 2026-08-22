@@ -249,7 +249,7 @@ resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
   message_retention_seconds  = 345600
-  visibility_timeout_seconds = 720 # ≥ worker Lambda timeout (120s); AWS-recommended 6× for the SQS event source mapping
+  visibility_timeout_seconds = 1800 # ≥ worker Lambda timeout (300s); AWS-recommended 6× for the SQS event source mapping
   tags                       = var.tags
 }
 
