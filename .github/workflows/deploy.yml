@@ -92,12 +92,14 @@ jobs:
             echo "dist_id=$(terraform output -raw cloudfront_distribution_id)"
           } >> "$GITHUB_OUTPUT"
 
-      # Build with the per-env API URL baked in (VITE_API_BASE is the only
-      # injected var — see frontend/src/services/api.js).
+      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
+      # so the frontend defaults to a same-origin base ("") and makes relative
+      # calls (/site-code, /v1/*). This resolves to whichever origin served the
+      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
+      # so it stays within connect-src 'self' instead of triggering a cross-origin
+      # CSP violation. (api_url is still used for the /health smoke test below.)
       - name: Build frontend
         working-directory: ${{ github.workspace }}
-        env:
-          VITE_API_BASE: ${{ steps.tf.outputs.api_url }}
         run: npm run build -w @good-neighbor/frontend
 
       - name: Publish frontend to S3
