@@ -74,6 +74,12 @@ class DescribeInstead extends HTMLElement {
     );
     this._dialog.addEventListener("cancel", (event) => event.preventDefault());
     this._field.addEventListener("input", (event) => {
+      if (!this._programmaticFieldUpdate && this._voiceState === "recording") {
+        this._programmaticFieldUpdate = true;
+        this._field.value = this._text;
+        this._programmaticFieldUpdate = false;
+        return;
+      }
       this._text = event.target.value;
       this._continue.disabled = !this._text.trim();
       if (!this._programmaticFieldUpdate) {
@@ -127,6 +133,10 @@ class DescribeInstead extends HTMLElement {
 
   _syncVoiceUi() {
     this._syncVoiceLabel();
+    if (this._field) {
+      this._field.readOnly =
+        this._voiceState === "recording" || this._voiceState === "processing";
+    }
     if (this._voice) {
       this._voice.disabled = this._voiceState === "processing";
       this._voice.dataset.state = this._voiceState;
