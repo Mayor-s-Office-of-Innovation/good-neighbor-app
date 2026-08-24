@@ -43,8 +43,11 @@ function normalizeDescription(description) {
     kind: "note",
     text,
     source,
-    validation: normalizeValidation(description.validation),
-    validated: false,
+    validation: {
+      whatYouCanSee: true,
+      whereItIs: true,
+    },
+    validated: true,
   };
 }
 
@@ -83,8 +86,11 @@ function rehydrateDerivedFields(check) {
   for (const side of SIDES) {
     const description = check.sides[side]?.description;
     if (!description) continue;
-    description.validated =
-      description.validation.whatYouCanSee && description.validation.whereItIs;
+    description.validation = {
+      whatYouCanSee: true,
+      whereItIs: true,
+    };
+    description.validated = true;
   }
   return check;
 }
