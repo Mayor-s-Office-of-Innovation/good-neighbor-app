@@ -14,11 +14,13 @@
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
-// Same-origin in dev (Vite proxy forwards `/v1/*` → the local API on :3001, no
-// CORS — see vite.config.js); in production the app is built with VITE_API_BASE
-// pointing at the API origin. Shared strategy with services/onboarding.js. Cast
-// `import.meta` — Vite's env types (vite/client) aren't wired into this checkJs
-// project, so the host-injected `.env` access is typed locally.
+// Same-origin everywhere: in dev the Vite proxy forwards `/v1/*` → the local API
+// on :3001 (no CORS — see vite.config.js); in production the SPA and API share
+// one CloudFront distribution, so BASE stays "" and calls are relative. Setting
+// VITE_API_BASE to a cross-origin URL would trip the connect-src 'self' CSP.
+// Shared strategy with services/onboarding.js. Cast `import.meta` — Vite's env
+// types (vite/client) aren't wired into this checkJs project, so the
+// host-injected `.env` access is typed locally.
 const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 
 /** A non-2xx response or a transport failure from the backend. */

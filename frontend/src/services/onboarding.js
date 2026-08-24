@@ -4,10 +4,12 @@
   the returned binding after a successful check.
 */
 
-// Same-origin in dev (Vite proxy forwards `/site-code` → the local API, no CORS —
-// see vite.config.js); in production the app is built with VITE_API_BASE pointing
-// at the API origin. Shared strategy with services/api.js. Cast `import.meta`:
-// Vite's env types aren't wired into this checkJs project.
+// Same-origin everywhere: in dev the Vite proxy forwards `/site-code` → the local
+// API (no CORS — see vite.config.js); in production the SPA and API share one
+// CloudFront distribution, so BASE stays "" and the call is relative. Setting
+// VITE_API_BASE to a cross-origin URL would trip the connect-src 'self' CSP.
+// Shared strategy with services/api.js. Cast `import.meta`: Vite's env types
+// aren't wired into this checkJs project.
 const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 
 /**
