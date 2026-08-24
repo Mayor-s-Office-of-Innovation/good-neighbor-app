@@ -53,6 +53,7 @@ resource "aws_lambda_function" "api" {
       SQS_QUEUE_URL    = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET = aws_s3_bucket.uploads.bucket
       DEMO_SITE_ID     = "demo-site"
+      BEDROCK_MODEL_ID = var.bedrock_model_id
     }
   }
 
@@ -70,7 +71,7 @@ resource "aws_lambda_function" "worker" {
   filename                       = data.archive_file.worker.output_path
   source_code_hash               = data.archive_file.worker.output_base64sha256
   memory_size                    = 1024
-  timeout                        = 120
+  timeout                        = 300 # 5 min: headroom for a slow single analyzer call (photos now analyzed concurrently, so this bounds one call, not the batch)
   kms_key_arn                    = aws_kms_key.app.arn
   reserved_concurrent_executions = 5
 

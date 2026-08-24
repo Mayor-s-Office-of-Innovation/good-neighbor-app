@@ -29,6 +29,11 @@
   --c-hazard: #b42318; /* 5.9:1 on white; pairs with the "Hazard" label + icon */
   --c-hazard-bg: #fdecea;
 
+  /* "You changed this" accent — amber, distinct from both blue (interactive) and
+     red (hazard). Used for the dispute status line, always paired with the "You
+     marked this as ..." text so color isn't the sole carrier. ~5:1 on white. */
+  --c-flag: #b45309;
+
   /* Neutral surfaces */
   --bg: #fafafa;
   --surface: #ffffff;
@@ -68,6 +73,8 @@ html.wa-dark {
 
   --c-hazard: #f2938a;
   --c-hazard-bg: #2a1614;
+
+  --c-flag: #e8a54d; /* brightened amber for dark surfaces */
 
   --bg: #0f0f0f;
   --surface: #1a1a1a;

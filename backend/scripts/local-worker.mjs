@@ -27,7 +27,12 @@ let running = true;
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
-    if (typeof msg?.s3Key === "string" && typeof msg?.artifactId === "string") {
+    // Analyze messages carry an artifactId plus either an S3 key (photo) or text
+    // (description). The demo /submissions flow carries neither.
+    if (
+      typeof msg?.artifactId === "string" &&
+      (typeof msg?.s3Key === "string" || typeof msg?.text === "string")
+    ) {
       return analyzeArtifact;
     }
   } catch {

@@ -168,6 +168,170 @@ describe("storeEvaluatedAssessment", () => {
     });
     expect(writes).toHaveLength(2);
   });
+
+  it("records a disputed category but mints no task for it", async () => {
+    // Litter sev 3 normally resolves to an escalation task (see the first test);
+    // marking it "I don't see this problem" must suppress that task while keeping
+    // the condition as a terminal record for false-positive analysis.
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-3",
+        checkId: "chk-3",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [{ category: "Litter", severity: 3, description: "trash" }],
+        disputedCategories: ["Litter"],
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn(),
+      },
+    );
+
+    const writes = /** @type {any[]} */ (
+      send.mock.calls[0][0].input.TransactItems
+    );
+    // Only the assessment + the condition — no TASK# item.
+    expect(writes).toHaveLength(2);
+    expect(result.taskItems).toHaveLength(0);
+
+    const assessment = writes[0].Put.Item;
+    expect(assessment.summary).toMatchObject({
+      totalConditions: 1,
+      conditionsResolvedToTasks: 0,
+      openTaskCount: 0,
+      disputedCount: 1,
+    });
+
+    const condition = writes[1].Put.Item;
+    expect(condition).toMatchObject({
+      sk: "ASSESSMENT#asm-3#COND#001-litter",
+      entityType: "CONDITION",
+      status: "disputed",
+      disputed: true,
+      disputeDisposition: "not_present",
+      resolvedToTasks: false,
+      taskIds: [],
+    });
+    // Terminal — must not surface in the unresolved (needs-answer/manual) queue.
+    expect(condition).not.toHaveProperty("gsi5pk");
+    expect(condition.selectedRuleId).toBeNull();
+    expect(condition.outcome).toBeNull();
+  });
+
+  it("suppresses tasks for a 'not_present' disposition (via dispositions map)", async () => {
+    // Same suppression as disputedCategories, driven by the richer dispositions map
+    // keyed by the condition's stable conditionId.
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-4",
+        checkId: "chk-4",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [{ category: "Litter", severity: 3, description: "trash" }],
+        dispositions: { "001-litter": "not_present" },
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn(),
+      },
+    );
+
+    expect(result.taskItems).toHaveLength(0);
+    const condition = result.conditionItems[0];
+    expect(condition).toMatchObject({
+      status: "disputed",
+      disputed: true,
+      disputeDisposition: "not_present",
+      resolvedToTasks: false,
+    });
+  });
+
+  it("records a 'worse'/'better' disposition as feedback but still mints its task", async () => {
+    // better/worse/other are reviewer feedback only: the condition evaluates and
+    // mints its task exactly as if unmarked, but the disposition is persisted.
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-5",
+        checkId: "chk-5",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [{ category: "Litter", severity: 3, description: "trash" }],
+        dispositions: { "001-litter": "worse" },
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn(),
+      },
+    );
+
+    // Task still minted (Litter sev 3 → escalation), just as the undisputed path.
+    expect(result.taskItems).toHaveLength(1);
+    const condition = result.conditionItems[0];
+    expect(condition).toMatchObject({
+      disputed: false,
+      disputeDisposition: "worse",
+      resolvedToTasks: true,
+    });
+    expect(condition.status).not.toBe("disputed");
+    // Not a suppression, so it must not count toward disputedCount.
+    expect(result.assessmentItem.summary).toMatchObject({ disputedCount: 0 });
+  });
+
+  it("disputing one condition by conditionId does not suppress a sibling sharing its category", async () => {
+    // Two Litter conditions get distinct conditionIds (001-litter, 002-litter).
+    // A not_present disposition keyed to the first must suppress ONLY that task,
+    // leaving the second to evaluate and mint normally — the whole point of keying
+    // dispositions by conditionId rather than by category.
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-6",
+        checkId: "chk-6",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [
+          { category: "Litter", severity: 3, description: "north trash" },
+          { category: "Litter", severity: 3, description: "south trash" },
+        ],
+        dispositions: { "001-litter": "not_present" },
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn(),
+      },
+    );
+
+    // First condition suppressed, second still mints its task.
+    expect(result.taskItems).toHaveLength(1);
+    expect(result.assessmentItem.summary).toMatchObject({
+      totalConditions: 2,
+      disputedCount: 1,
+      openTaskCount: 1,
+    });
+
+    const [first, second] = result.conditionItems;
+    expect(first).toMatchObject({
+      conditionId: "001-litter",
+      status: "disputed",
+      disputed: true,
+      disputeDisposition: "not_present",
+      resolvedToTasks: false,
+    });
+    expect(second).toMatchObject({
+      conditionId: "002-litter",
+      disputed: false,
+      disputeDisposition: null,
+      resolvedToTasks: true,
+    });
+  });
 });
 
 describe("answerCondition", () => {

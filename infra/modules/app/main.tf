@@ -249,7 +249,7 @@ resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
   message_retention_seconds  = 345600
-  visibility_timeout_seconds = 720 # ≥ worker Lambda timeout (120s); AWS-recommended 6× for the SQS event source mapping
+  visibility_timeout_seconds = 1800 # ≥ worker Lambda timeout (300s); AWS-recommended 6× for the SQS event source mapping
   tags                       = var.tags
 }
 
@@ -433,7 +433,15 @@ resource "aws_cloudfront_response_headers_policy" "security" {
 
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      # script-src allows 'self' plus one sha256 hash: the pre-paint theme-init
+      # inline script in frontend/index.html (kept inline on purpose to avoid a
+      # theme flash before first paint). No 'unsafe-inline' — only that one
+      # known script is permitted; an injected inline script hashes differently
+      # and stays blocked. This hash is coupled to the exact bytes of that
+      # script, so it MUST be regenerated and deployed with the frontend on any
+      # edit to it. Regenerate from a fresh build with:
+      #   cd frontend && npm run build && node -e 'const fs=require("fs"),c=require("crypto");const h=fs.readFileSync("dist/index.html","utf8");const m=/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i.exec(h);console.log("sha256-"+c.createHash("sha256").update(m[1],"utf8").digest("base64"))'
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 
