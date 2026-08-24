@@ -40,7 +40,9 @@ const baseMsg = {
 const invoke = (msg) =>
   /** @type {any} */ (
     handler(
-      /** @type {any} */ ({ Records: [{ body: JSON.stringify(msg) }] }),
+      /** @type {any} */ ({
+        Records: [{ messageId: "m1", body: JSON.stringify(msg) }],
+      }),
       /** @type {any} */ ({}),
       () => {},
     )
@@ -144,7 +146,7 @@ describe("analyze-artifact worker", () => {
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
   });
 
-  it("rethrows a retryable analyzer error so SQS redelivers", async () => {
+  it("reports a retryable analyzer error as a batch item failure so SQS redelivers just that message", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img"),
       contentType: "image/jpeg",
@@ -153,8 +155,45 @@ describe("analyze-artifact worker", () => {
       new AnalyzerError("throttled", { status: 429, retryable: true }),
     );
 
-    await expect(invoke(baseMsg)).rejects.toThrow("throttled");
+    // A rejected artifact no longer throws the whole batch — it comes back in
+    // batchItemFailures so only that message redelivers.
+    const res = await invoke(baseMsg);
+    expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
     expect(ddbSend).not.toHaveBeenCalled();
+  });
+
+  it("analyzes a batch concurrently and isolates one failure to its own message", async () => {
+    // Two photos in one batch: art_1 succeeds, art_2's analyzer call rejects.
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img"),
+      contentType: "image/jpeg",
+    });
+    analyze
+      .mockResolvedValueOnce(singleLowConcernResponse) // art_1
+      .mockRejectedValueOnce(
+        new AnalyzerError("throttled", { status: 429, retryable: true }),
+      ); // art_2
+    ddbSend.mockResolvedValue({});
+
+    const res = await /** @type {any} */ (
+      handler(
+        /** @type {any} */ ({
+          Records: [
+            { messageId: "m1", body: JSON.stringify(baseMsg) },
+            {
+              messageId: "m2",
+              body: JSON.stringify({ ...baseMsg, artifactId: "art_2" }),
+            },
+          ],
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      )
+    );
+
+    // Both fired (concurrently); only the failed one redelivers.
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m2" }] });
   });
 
   it("marks a permanent analyzer failure and consumes the message", async () => {
@@ -206,5 +245,25 @@ describe("analyze-artifact worker", () => {
     delete process.env.ANALYZER_BASE_URL;
     await expect(invoke(baseMsg)).rejects.toThrow(/ANALYZER_BASE_URL/);
     expect(getObjectBytes).not.toHaveBeenCalled();
+  });
+
+  it("analyzes text-only evidence without fetching S3 bytes", async () => {
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke({
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_text_1",
+      side: "west",
+      capturedAt: "2026-08-21T15:00:00.000Z",
+      text: "Trash is next to the west entrance.",
+    });
+
+    expect(getObjectBytes).not.toHaveBeenCalled();
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(analyze.mock.calls[0][0].media).toEqual([
+      { type: "text", text: "Trash is next to the west entrance." },
+    ]);
   });
 });

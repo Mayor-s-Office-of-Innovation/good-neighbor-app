@@ -72,6 +72,18 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid    = "InvokeBedrockDescriptionValidator"
+    effect = "Allow"
+    actions = [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream",
+    ]
+    resources = [
+      "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${var.bedrock_model_id}",
+    ]
+  }
+
+  statement {
     sid       = "Logs"
     effect    = "Allow"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]

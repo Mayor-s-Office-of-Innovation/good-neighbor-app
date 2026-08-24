@@ -133,12 +133,20 @@ export function completeCheck(checkId) {
 
 /**
  * POST /v1/assessments:evaluate — store an assessment/report, evaluate
- * conditions, and create any immediately resolvable guidance tasks.
- * @param {unknown} assessment
+ * conditions, and create any immediately resolvable guidance tasks. `dispositions`
+ * maps a condition's stable conditionId -> the reviewer's clarification
+ * ("not_present" | "better" | "worse" | "other"). Every disposition is recorded
+ * for false-positive analysis, but only "not_present" ("I don't see this problem")
+ * suppresses task minting for that condition. Keying by conditionId (not category)
+ * means disputing one condition never affects a sibling that shares its category.
+ * @param {any} assessment
+ * @param {Record<string, string>} [dispositions]
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment) {
-  return request("POST", "/v1/assessments:evaluate", { body: assessment });
+export function evaluateAssessment(assessment, dispositions = {}) {
+  return request("POST", "/v1/assessments:evaluate", {
+    body: { ...assessment, dispositions },
+  });
 }
 
 /**
@@ -189,6 +197,21 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
+/**
+ * POST /v1/checks/{checkId}/sides/{side}/description:validate
+ * @param {string} checkId
+ * @param {string} side
+ * @param {{ text: string }} body
+ * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
+ */
+export function validateSideDescription(checkId, side, body) {
+  return request(
+    "POST",
+    `/v1/checks/${encodeURIComponent(checkId)}/sides/${encodeURIComponent(side)}/description:validate`,
+    { body },
+  );
+}
+
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**
@@ -210,7 +233,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (already registered / missing parent) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, side: string, s3Key: string, contentType?: string, capturedAt?: string, text?: string }} body
+ * @param {{ artifactId: string, side: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -336,10 +359,13 @@ export async function dataUrlToBlob(dataUrl) {
  * (which enqueues the async analysis). Returns the registered artifactId so the
  * caller can wait for exactly these analyses to land.
  * @param {string} checkId
- * @param {{ side: string, dataUrl: string, capturedAt?: string }} item
+ * @param {{ side: string, dataUrl: string, capturedAt?: string, text?: string }} item
  * @returns {Promise<string>} the artifactId
  */
-export async function uploadArtifact(checkId, { side, dataUrl, capturedAt }) {
+export async function uploadArtifact(
+  checkId,
+  { side, dataUrl, capturedAt, text },
+) {
   const contentType = contentTypeFromDataUrl(dataUrl);
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
     side,
@@ -353,6 +379,27 @@ export async function uploadArtifact(checkId, { side, dataUrl, capturedAt }) {
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(text ? { text } : {}),
+  });
+  return artifactId;
+}
+
+/**
+ * Register validated text evidence for a side without uploading media bytes.
+ * @param {string} checkId
+ * @param {{ side: string, text: string, capturedAt?: string }} item
+ * @returns {Promise<string>}
+ */
+export async function registerTextArtifact(
+  checkId,
+  { side, text, capturedAt },
+) {
+  const artifactId = crypto.randomUUID();
+  await registerArtifact(checkId, {
+    artifactId,
+    side,
+    ...(capturedAt ? { capturedAt } : {}),
+    text,
   });
   return artifactId;
 }
@@ -361,16 +408,26 @@ export async function uploadArtifact(checkId, { side, dataUrl, capturedAt }) {
  * Short poll (scoped to the submit flow, not a sync engine) that waits for the
  * async analyses to land after registering artifacts. Resolves as soon as every
  * registered artifact has a matching ANALYSIS# item — counting failed markers, so
- * a failed analysis doesn't hang the poll — or when the deadline passes. Returns
- * the last `getCheck` payload either way; the caller decides whether partial
- * results are acceptable (`completeCheck` folds only what analyzed cleanly).
+ * a failed analysis doesn't hang the poll.
+ *
+ * On the deadline it THROWS `ApiError` (code `analyses_pending`) rather than
+ * returning a partial set: completing on partial coverage would fold only the
+ * analyses that landed in time (usually just the first photo) and the backend
+ * freezes that scorecard idempotently, so a silent partial here corrupts the
+ * saved check. The backend `complete` gate rejects a premature fold too — this is
+ * the client-side half so the user sees a retryable error, not a wrong result.
+ *
+ * The default ceiling is deliberately generous: each photo is analyzed
+ * independently by the worker (downscale → remote LLM), roughly serially, so a
+ * multi-photo run legitimately needs minutes. The ceiling exists only to bound a
+ * genuinely stuck analyzer, not to race normal completion.
  * @param {string} checkId
  * @param {{ expected: number, timeoutMs?: number, intervalMs?: number }} opts
  * @returns {Promise<{ check: any, artifacts: any[], analyses: any[] }>}
  */
 export async function waitForAnalyses(
   checkId,
-  { expected, timeoutMs = 20000, intervalMs = 1200 },
+  { expected, timeoutMs = 180000, intervalMs = 2000 },
 ) {
   const deadline = Date.now() + timeoutMs;
   /** @type {{ check: any, artifacts: any[], analyses: any[] }} */
@@ -380,7 +437,19 @@ export async function waitForAnalyses(
     const covered =
       last.artifacts.length >= expected &&
       last.artifacts.every((a) => analyzedIds.has(a.artifactId));
-    if (expected === 0 || covered || Date.now() >= deadline) return last;
+    if (expected === 0 || covered) return last;
+    if (Date.now() >= deadline) {
+      throw new ApiError(
+        `Analyses still processing (${analyzedIds.size}/${expected}) after ${timeoutMs}ms`,
+        {
+          body: {
+            code: "analyses_pending",
+            expected,
+            analyzed: analyzedIds.size,
+          },
+        },
+      );
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
     last = await getCheck(checkId);
   }

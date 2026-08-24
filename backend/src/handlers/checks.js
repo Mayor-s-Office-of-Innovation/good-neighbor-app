@@ -19,6 +19,45 @@ import {
 } from "./keys.js";
 
 /**
+ * Read every page for one check's header + children from the base table.
+ * @param {string} dynamoTable
+ * @param {string} siteId
+ * @param {string} checkId
+ * @param {boolean} [consistentRead]
+ * @returns {Promise<any[]>}
+ */
+async function queryAllCheckItems(
+  dynamoTable,
+  siteId,
+  checkId,
+  consistentRead = false,
+) {
+  /** @type {Record<string, unknown> | undefined} */
+  let startKey;
+  /** @type {any[]} */
+  const items = [];
+
+  do {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: dynamoTable,
+        ...(consistentRead ? { ConsistentRead: true } : {}),
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": sitePk(siteId),
+          ":prefix": checkChildrenPrefix(checkId),
+        },
+        ...(startKey ? { ExclusiveStartKey: startKey } : {}),
+      }),
+    );
+    items.push(...(result.Items ?? []));
+    startKey = result.LastEvaluatedKey;
+  } while (startKey);
+
+  return items;
+}
+
+/**
  * POST /v1/checks — start a perimeter run (one CHECK header per full run across
  * all sides). The client mints the ULID `checkId` and sends it as the
  * `idempotency-key` header — the same idempotency contract the offline app
@@ -84,9 +123,16 @@ export const createCheck = async (event) => {
  * max rating), persist the header scorecard, and return an assessment envelope
  * that can be sent to the guidance evaluator.
  *
- * The header update is conditional on the check not already being `completed`,
- * so completion is idempotent. Failed-analysis markers carry no `concerns`, so
- * they are excluded from synthesis here.
+ * Coverage gate: analysis is asynchronous (register → SQS → worker), so a caller
+ * that completes too early would fold only the analyses that happened to land —
+ * typically just the first photo. Since the header update is conditional on the
+ * check not already being `completed` (idempotent-once), a premature fold would
+ * freeze a partial scorecard that can never self-heal. So we refuse to finalize
+ * with `409 analyzing` until EVERY registered artifact has a matching ANALYSIS#
+ * item. Failed-analysis markers count toward coverage (a permanently failed photo
+ * must not block the run) but are excluded from synthesis (they carry no
+ * `concerns`). An already-`completed` header skips the gate so a replay stays
+ * idempotent.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const completeCheck = async (event) => {
@@ -96,21 +142,53 @@ export const completeCheck = async (event) => {
   const checkId = event.pathParameters?.checkId;
   if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
 
-  // Pull just this check's ANALYSIS# items and keep the ones that analyzed
-  // cleanly (a "failed" marker has no concerns to synthesize).
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkAnalysisPrefix(checkId),
-      },
-    }),
-  );
+  // One query gathers the header + every child (artifacts + analyses) so we can
+  // verify coverage against the registered artifacts before folding — synthesis
+  // must never run over a partially-analyzed run (see the coverage gate above).
+  //
+  // Strongly consistent: this read is the AUTHORITATIVE coverage snapshot, and
+  // the completion write is idempotent-once, so a stale eventually-consistent
+  // read that missed a just-registered artifact could freeze a partial scorecard
+  // that can never self-heal. ConsistentRead closes that staleness window (it's a
+  // base-table query, so strong consistency is available here).
+  //
+  // Note: this does NOT close the check→write TOCTOU — an artifact registered
+  // after this read but before the header update would still be missed. That race
+  // is unreachable in the app's flow (the client registers every artifact, then
+  // waits for coverage, then completes; nothing registers concurrently with
+  // completion), so it's left as a documented limitation rather than guarded with
+  // a transaction/registration lock.
+  const items = await queryAllCheckItems(dynamoTable, siteId, checkId, true);
+  const headerSk = checkHeaderKey(siteId, checkId).sk;
+  const header = items.find((it) => it.sk === headerSk);
+  if (!header) return jsonResponse(404, { error: "Check not found" });
+
+  const artifactPrefix = checkArtifactPrefix(checkId);
+  const analysisPrefix = checkAnalysisPrefix(checkId);
+  const artifacts = items.filter((it) => it.sk.startsWith(artifactPrefix));
+  const analyses = items.filter((it) => it.sk.startsWith(analysisPrefix));
+
+  // Coverage: every registered artifact must have SOME ANALYSIS# item (analyzed
+  // or failed marker). Skip when already completed so re-completion stays a
+  // no-op success rather than resurrecting the gate on a closed run.
+  const analyzedIds = new Set(analyses.map((it) => it.artifactId));
+  const pending = artifacts.filter((it) => !analyzedIds.has(it.artifactId));
+  if (header.status !== "completed" && pending.length > 0) {
+    return jsonResponse(409, {
+      checkId,
+      status: "analyzing",
+      error: "Analyses still pending; cannot complete yet",
+      expected: artifacts.length,
+      analyzed: analyzedIds.size,
+      pending: pending.length,
+    });
+  }
+
+  // Keep only the artifacts that analyzed cleanly (a "failed" marker has no
+  // concerns to synthesize).
   const analyzed =
     /** @type {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} */ (
-      (result.Items ?? [])
+      analyses
         .filter((it) => it.status === "analyzed")
         .map((it) => ({
           artifactId: it.artifactId,
@@ -314,18 +392,7 @@ export const getCheck = async (event) => {
   const checkId = event.pathParameters?.checkId;
   if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
 
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkChildrenPrefix(checkId),
-      },
-    }),
-  );
-
-  const items = result.Items ?? [];
+  const items = await queryAllCheckItems(dynamoTable, siteId, checkId);
   const headerSk = checkHeaderKey(siteId, checkId).sk;
   const header = items.find((it) => it.sk === headerSk);
   if (!header) return jsonResponse(404, { error: "Check not found" });

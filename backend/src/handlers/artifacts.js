@@ -23,6 +23,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 const PRESIGN_EXPIRY_SECONDS = 300;
+const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -121,11 +122,19 @@ export const registerArtifact = async (event) => {
   if (typeof side !== "string" || !side) {
     return jsonResponse(400, { error: "Missing side" });
   }
-  if (typeof s3Key !== "string" || !s3Key) {
-    return jsonResponse(400, { error: "Missing s3Key" });
+  const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
+  const normalizedText = typeof text === "string" ? text.trim() : "";
+  const hasText = normalizedText.length > 0;
+  if (!hasS3Key && !hasText) {
+    return jsonResponse(400, { error: "Missing s3Key or text" });
+  }
+  if (normalizedText.length > MAX_ARTIFACT_TEXT_LENGTH) {
+    return jsonResponse(400, {
+      error: `text must be ${MAX_ARTIFACT_TEXT_LENGTH} characters or fewer`,
+    });
   }
   // No-graft: the key the client hands back must live under this site + check.
-  if (!s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
+  if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
   }
 
@@ -138,10 +147,10 @@ export const registerArtifact = async (event) => {
     checkId,
     artifactId,
     side,
-    s3Key,
+    ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(typeof contentType === "string" ? { contentType } : {}),
-    ...(typeof text === "string" ? { text } : {}),
+    ...(hasText ? { text: normalizedText } : {}),
   };
 
   try {
@@ -184,10 +193,10 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        s3Key,
         side,
         capturedAt: capturedAtValue,
-        ...(typeof text === "string" ? { text } : {}),
+        ...(hasS3Key ? { s3Key } : {}),
+        ...(hasText ? { text: normalizedText } : {}),
       }),
     }),
   );

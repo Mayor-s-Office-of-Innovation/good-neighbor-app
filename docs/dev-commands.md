@@ -29,6 +29,33 @@ frontend, tests, lint, and typecheck do **not** need Java.
 |---|---|
 | `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
 
+### Theme toggle (dark/light)
+
+The dark/light theme toggle is hidden by default. Add the `?themeToggle` URL param to reveal it
+(e.g. `http://localhost:5173/today?themeToggle`). It's per-load — the toggle shows only while that
+param is in the current URL. OS-following theming still applies regardless of the param.
+
+### In-app browser camera (`?webcam`)
+
+Photo capture defaults to the **native camera** handoff (a hidden `<input type="file"
+capture="environment">` — the device's own camera app). An opt-in **in-app browser camera** can be
+enabled instead: an inline live camera becomes the main element on the perimeter-check screen, with
+the shutter below it and thumbnails accumulating underneath (`getUserMedia` + canvas snapshot, with
+pinch-to-zoom).
+
+| URL param | Effect |
+|---|---|
+| `?webcam` or `?webcam=1` | Enable the in-app browser camera |
+| `?webcam=0` (also `false`/`off`/`no`) | Disable it (back to native) |
+
+Unlike `?themeToggle`, this preference is **persisted per-device** (localStorage key
+`gnp.captureMode`), so it survives reloads and later checks without re-passing the param — the
+param is consumed once and stripped from the URL (e.g. `http://localhost:5173/today?webcam`).
+Zoom uses the camera's **hardware** zoom where the track exposes it (Android Chrome) and falls
+back to a **digital** canvas center-crop elsewhere (incl. iOS Safari). If the camera is denied or
+unavailable, capture falls back to the native file input so the flow never dead-ends. To clear the
+preference manually: `localStorage.removeItem('gnp.captureMode')` (or just load `?webcam=0`).
+
 ### Web Awesome AI agent skill
 
 The UI uses [Web Awesome](https://webawesome.com) (`@awesome.me/webawesome`) for `<wa-*>` components.
