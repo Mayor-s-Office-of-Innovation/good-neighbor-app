@@ -408,6 +408,39 @@ describe("completeCheck", () => {
       },
     });
   });
+
+  it("reads all DynamoDB pages before checking coverage and synthesis", async () => {
+    send.mockResolvedValueOnce({
+      Items: [headerItem(), artifactItem("art_1", "north")],
+      LastEvaluatedKey: { pk: "SITE#site-1", sk: "CHECK#chk_01#ART#north#art_1" },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        artifactItem("art_2", "south"),
+        analyzedItem("art_1", "north", "Fair", "Litter", 2),
+        analyzedItem("art_2", "south", "Poor", "Hazardous Waste", 4),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01#ART#north#art_1",
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      status: "completed",
+      grade: "Poor",
+      issueCount: 2,
+      maxSeverity: 4,
+    });
+  });
 });
 
 /**

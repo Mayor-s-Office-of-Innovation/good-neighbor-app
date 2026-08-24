@@ -19,6 +19,45 @@ import {
 } from "./keys.js";
 
 /**
+ * Read every page for one check's header + children from the base table.
+ * @param {string} dynamoTable
+ * @param {string} siteId
+ * @param {string} checkId
+ * @param {boolean} [consistentRead]
+ * @returns {Promise<any[]>}
+ */
+async function queryAllCheckItems(
+  dynamoTable,
+  siteId,
+  checkId,
+  consistentRead = false,
+) {
+  /** @type {Record<string, unknown> | undefined} */
+  let startKey;
+  /** @type {any[]} */
+  const items = [];
+
+  do {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: dynamoTable,
+        ...(consistentRead ? { ConsistentRead: true } : {}),
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": sitePk(siteId),
+          ":prefix": checkChildrenPrefix(checkId),
+        },
+        ...(startKey ? { ExclusiveStartKey: startKey } : {}),
+      }),
+    );
+    items.push(...(result.Items ?? []));
+    startKey = result.LastEvaluatedKey;
+  } while (startKey);
+
+  return items;
+}
+
+/**
  * POST /v1/checks — start a perimeter run (one CHECK header per full run across
  * all sides). The client mints the ULID `checkId` and sends it as the
  * `idempotency-key` header — the same idempotency contract the offline app
@@ -119,19 +158,7 @@ export const completeCheck = async (event) => {
   // waits for coverage, then completes; nothing registers concurrently with
   // completion), so it's left as a documented limitation rather than guarded with
   // a transaction/registration lock.
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      ConsistentRead: true,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkChildrenPrefix(checkId),
-      },
-    }),
-  );
-
-  const items = result.Items ?? [];
+  const items = await queryAllCheckItems(dynamoTable, siteId, checkId, true);
   const headerSk = checkHeaderKey(siteId, checkId).sk;
   const header = items.find((it) => it.sk === headerSk);
   if (!header) return jsonResponse(404, { error: "Check not found" });
@@ -365,18 +392,7 @@ export const getCheck = async (event) => {
   const checkId = event.pathParameters?.checkId;
   if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
 
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkChildrenPrefix(checkId),
-      },
-    }),
-  );
-
-  const items = result.Items ?? [];
+  const items = await queryAllCheckItems(dynamoTable, siteId, checkId);
   const headerSk = checkHeaderKey(siteId, checkId).sk;
   const header = items.find((it) => it.sk === headerSk);
   if (!header) return jsonResponse(404, { error: "Check not found" });
