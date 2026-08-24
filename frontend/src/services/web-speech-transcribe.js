@@ -1,4 +1,16 @@
-// @ts-nocheck -- browser transcription uses the Web Speech API (SpeechRecognition).
+/**
+ * @typedef {"recording" | "processing"} VoiceState
+ *
+ * @typedef {object} StartTranscribeSessionOptions
+ * @property {string | null | undefined} [siteId]
+ * @property {(state: VoiceState) => void} [onStateChange]
+ * @property {(liveText: string) => void} [onTranscript]
+ *
+ * @typedef {object} TranscribeSession
+ * @property {() => Promise<{ text: string }>} stop
+ * @property {() => Promise<{ text: string }>} cancel
+ * @property {Promise<{ text: string }>} done
+ */
 /*
   Client-side voice transcription via the browser's built-in SpeechRecognition
   (Chrome/Edge behind `webkit`, Safari). Zero backend, zero cost, zero extra deps
@@ -24,6 +36,10 @@
 // Match the Amazon path's 60s cap so a forgotten session can't run forever.
 const MAX_TRANSCRIBE_MS = 60000;
 
+/**
+ * @param {unknown} error
+ * @returns {Error}
+ */
 function mapSpeechError(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return new Error("You’re offline. Connect to the internet to use voice.");
@@ -41,6 +57,10 @@ function mapSpeechError(error) {
   return new Error("Voice transcription failed.");
 }
 
+/**
+ * @param {StartTranscribeSessionOptions} [options]
+ * @returns {Promise<TranscribeSession>}
+ */
 export async function startTranscribeSession({
   siteId, // accepted for contract parity; unused (no credentials needed)
   onStateChange = () => {},

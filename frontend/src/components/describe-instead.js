@@ -1,4 +1,7 @@
-// @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+/**
+ * Describe Instead flow for one side of the perimeter check.
+ * Persists text/voice input, validates it, and returns to the capture flow.
+ */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { validateSideDescription } from "../services/api.js";
