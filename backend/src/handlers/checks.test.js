@@ -412,7 +412,10 @@ describe("completeCheck", () => {
   it("reads all DynamoDB pages before checking coverage and synthesis", async () => {
     send.mockResolvedValueOnce({
       Items: [headerItem(), artifactItem("art_1", "north")],
-      LastEvaluatedKey: { pk: "SITE#site-1", sk: "CHECK#chk_01#ART#north#art_1" },
+      LastEvaluatedKey: {
+        pk: "SITE#site-1",
+        sk: "CHECK#chk_01#ART#north#art_1",
+      },
     });
     send.mockResolvedValueOnce({
       Items: [
