@@ -79,8 +79,7 @@ data "aws_iam_policy_document" "api" {
       "bedrock:InvokeModelWithResponseStream",
     ]
     resources = [
-      "arn:aws:bedrock:*::foundation-model/${var.bedrock_model_id}",
-      "arn:aws:bedrock:*::inference-profile/${var.bedrock_model_id}",
+      "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${var.bedrock_model_id}",
     ]
   }
 

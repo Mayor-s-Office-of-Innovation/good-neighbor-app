@@ -64,5 +64,5 @@ variable "compliance" {
 variable "bedrock_model_id" {
   description = "Bedrock model or inference profile ID for deployed description validation."
   type        = string
-  default     = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+  default     = "anthropic.claude-sonnet-4-20250514-v1:0"
 }
