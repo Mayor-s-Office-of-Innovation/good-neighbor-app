@@ -1,6 +1,8 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Presentational HTML strings.
 import { html } from "../lib/html.js";
 
+export const DESCRIPTION_MAX_LENGTH = 4000;
+
 export const shell = ({ hasText }) => html`
   <div class="flow view-describe describe">
     <div class="describe__bar">
@@ -49,6 +51,7 @@ export const shell = ({ hasText }) => html`
             placeholder="Example: There’s trash near the entrance and graffiti on the wall..."
             rows="5"
             spellcheck="true"
+            maxlength="${DESCRIPTION_MAX_LENGTH}"
           ></textarea>
         </div>
 

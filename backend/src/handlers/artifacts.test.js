@@ -261,6 +261,27 @@ describe("registerArtifact", () => {
       text: "Graffiti is on the west wall by the entrance.",
     });
   });
+
+  it("rejects text evidence that exceeds the maximum length", async () => {
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          artifactId: "art_text_2",
+          side: "west",
+          text: "x".repeat(4001),
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "text must be 4000 characters or fewer",
+    });
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
 });
 
 /**

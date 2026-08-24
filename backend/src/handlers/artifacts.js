@@ -23,6 +23,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 const PRESIGN_EXPIRY_SECONDS = 300;
+const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -122,9 +123,15 @@ export const registerArtifact = async (event) => {
     return jsonResponse(400, { error: "Missing side" });
   }
   const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
-  const hasText = typeof text === "string" && text.trim().length > 0;
+  const normalizedText = typeof text === "string" ? text.trim() : "";
+  const hasText = normalizedText.length > 0;
   if (!hasS3Key && !hasText) {
     return jsonResponse(400, { error: "Missing s3Key or text" });
+  }
+  if (normalizedText.length > MAX_ARTIFACT_TEXT_LENGTH) {
+    return jsonResponse(400, {
+      error: `text must be ${MAX_ARTIFACT_TEXT_LENGTH} characters or fewer`,
+    });
   }
   // No-graft: the key the client hands back must live under this site + check.
   if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
@@ -143,7 +150,7 @@ export const registerArtifact = async (event) => {
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(typeof contentType === "string" ? { contentType } : {}),
-    ...(hasText ? { text: text.trim() } : {}),
+    ...(hasText ? { text: normalizedText } : {}),
   };
 
   try {
@@ -189,7 +196,7 @@ export const registerArtifact = async (event) => {
         side,
         capturedAt: capturedAtValue,
         ...(hasS3Key ? { s3Key } : {}),
-        ...(hasText ? { text: text.trim() } : {}),
+        ...(hasText ? { text: normalizedText } : {}),
       }),
     }),
   );

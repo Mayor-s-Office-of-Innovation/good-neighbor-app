@@ -15,7 +15,10 @@ import {
   setPostDescribeAction,
 } from "../state/check-session.js";
 import { startTranscribeSession } from "../services/web-speech-transcribe.js";
-import { shell } from "./describe-instead.templates.js";
+import {
+  DESCRIPTION_MAX_LENGTH,
+  shell,
+} from "./describe-instead.templates.js";
 
 class DescribeInstead extends HTMLElement {
   async connectedCallback() {
@@ -83,7 +86,12 @@ class DescribeInstead extends HTMLElement {
         this._programmaticFieldUpdate = false;
         return;
       }
-      this._text = event.target.value;
+      this._text = this._clampText(event.target.value);
+      if (event.target.value !== this._text) {
+        this._programmaticFieldUpdate = true;
+        this._field.value = this._text;
+        this._programmaticFieldUpdate = false;
+      }
       this._continue.disabled = !this._text.trim();
       if (!this._programmaticFieldUpdate) {
         this._inputSource =
@@ -250,10 +258,11 @@ class DescribeInstead extends HTMLElement {
     const next = this._text.trim()
       ? `${this._text.trim()} ${incoming}`
       : incoming;
+    const bounded = this._clampText(next);
     this._programmaticFieldUpdate = true;
-    this._field.value = next;
+    this._field.value = bounded;
     this._programmaticFieldUpdate = false;
-    this._text = next;
+    this._text = bounded;
     if (this._inputSource === "typed" || this._inputSource === "mixed") {
       this._inputSource = "mixed";
     } else if (this._inputSource === "transcribed") {
@@ -271,8 +280,9 @@ class DescribeInstead extends HTMLElement {
     const base = (this._voiceBaseText || "").trim();
     const incoming = live.trim();
     const next = base ? (incoming ? `${base} ${incoming}` : base) : incoming;
+    const bounded = this._clampText(next);
     this._programmaticFieldUpdate = true;
-    this._field.value = next;
+    this._field.value = bounded;
     this._programmaticFieldUpdate = false;
     // Keep the growing tail in view as it fills past the visible rows.
     this._field.scrollTop = this._field.scrollHeight;
@@ -344,6 +354,10 @@ class DescribeInstead extends HTMLElement {
 
   _hasUnsavedChanges() {
     return this._text !== this._savedText;
+  }
+
+  _clampText(text) {
+    return text.slice(0, DESCRIPTION_MAX_LENGTH);
   }
 
   _onClose() {
