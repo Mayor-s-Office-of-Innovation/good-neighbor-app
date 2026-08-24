@@ -141,8 +141,9 @@ export async function startTranscribeSession({
     // finalizes, so there's no duplication.
     const text = `${finalText} ${latestInterim}`.replace(/\s+/g, " ").trim();
     if (!text) {
-      const error = new Error("No speech was detected. Try again.");
-      error.code = "no_speech";
+      const error = Object.assign(new Error("No speech was detected. Try again."), {
+        code: "no_speech",
+      });
       rejectWith(error);
       return;
     }
