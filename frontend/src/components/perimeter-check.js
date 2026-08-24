@@ -287,9 +287,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _syncControls() {
-    const hasPhoto = this._sideState().items.length > 0;
+    const side = SIDES[this._sideIndex];
+    const canAdvanceOrSubmit = isSideCovered(side);
     const next = this.querySelector("#next-side");
-    next.disabled = !hasPhoto;
+    next.disabled = !canAdvanceOrSubmit;
     next.textContent = this._isLast ? "Submit check" : "Next side ›";
   }
 }
