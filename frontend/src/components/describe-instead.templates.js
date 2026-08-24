@@ -48,6 +48,7 @@ export const shell = ({ hasText }) => html`
             id="describe-text"
             placeholder="Example: There’s trash near the entrance and graffiti on the wall..."
             rows="5"
+            spellcheck="true"
           ></textarea>
         </div>
 
