@@ -15,10 +15,7 @@ import {
   setPostDescribeAction,
 } from "../state/check-session.js";
 import { startTranscribeSession } from "../services/web-speech-transcribe.js";
-import {
-  DESCRIPTION_MAX_LENGTH,
-  shell,
-} from "./describe-instead.templates.js";
+import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 
 class DescribeInstead extends HTMLElement {
   async connectedCallback() {
