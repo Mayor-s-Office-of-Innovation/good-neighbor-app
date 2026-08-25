@@ -64,16 +64,22 @@ resource "aws_lambda_function" "api" {
 resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public egress to the analyzer + AWS APIs; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
-  function_name                  = "${local.name_prefix}-worker"
-  role                           = aws_iam_role.worker.arn
-  runtime                        = "nodejs22.x"
-  handler                        = "index.handler"
-  filename                       = data.archive_file.worker.output_path
-  source_code_hash               = data.archive_file.worker.output_base64sha256
-  memory_size                    = 1024
-  timeout                        = 300 # 5 min: headroom for a slow single analyzer call (photos now analyzed concurrently, so this bounds one call, not the batch)
-  kms_key_arn                    = aws_kms_key.app.arn
-  reserved_concurrent_executions = 5
+  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
+  function_name    = "${local.name_prefix}-worker"
+  role             = aws_iam_role.worker.arn
+  runtime          = "nodejs22.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.worker.output_path
+  source_code_hash = data.archive_file.worker.output_base64sha256
+  memory_size      = 1024
+  timeout          = 300 # 5 min: headroom for a slow single analyzer call (photos now analyzed concurrently, so this bounds one call, not the batch)
+  kms_key_arn      = aws_kms_key.app.arn
+  # Concurrency is bounded on the SQS event-source mapping below via
+  # `scaling_config.maximum_concurrency`, NOT via reserved concurrency here.
+  # Reserved concurrency on an SQS trigger causes throttling-induced failures
+  # that redrive to the DLQ (AWS docs: don't set it below 5 with SQS); the ESM
+  # cap bounds the drain rate without that side effect. The true downstream
+  # limit is the Bedrock (Sonnet 4, us-east-1) RPM/TPM quota.
 
   tracing_config {
     mode = "Active"
@@ -122,6 +128,17 @@ resource "aws_lambda_event_source_mapping" "worker" {
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
   function_response_types            = ["ReportBatchItemFailures"]
+
+  # Bound how many worker invocations SQS drives concurrently. Each invocation
+  # fans out its batch (up to `batch_size` records) into concurrent analyzer
+  # calls, so peak Bedrock requests ≈ maximum_concurrency × (photos per check).
+  # 20 gives generous headroom for current single-app traffic while still
+  # capping a burst so it can't exhaust the Bedrock quota (→ 429s → DLQ).
+  # Raise this when streetconditions.org starts sharing the analyzer + after a
+  # Bedrock quota increase. Valid range is 2–1000.
+  scaling_config {
+    maximum_concurrency = 20
+  }
 }
 
 resource "aws_lambda_permission" "api_gateway" {

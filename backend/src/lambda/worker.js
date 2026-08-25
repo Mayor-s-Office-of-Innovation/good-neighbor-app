@@ -37,22 +37,34 @@ function pickHandler(body) {
  * @type {import("aws-lambda").SQSHandler}
  */
 export const handler = async (event, context, callback) => {
-  /** @type {{ itemIdentifier: string }[]} */
-  const batchItemFailures = [];
-
-  for (const record of event.Records) {
-    const fn = pickHandler(record.body);
-    try {
-      await fn(
+  // Fan out: each record is an independent unit of work whose latency is almost
+  // entirely the remote analyzer call, so process the whole batch CONCURRENTLY and
+  // await it together — batch wall-clock ≈ the slowest record, not the sum.
+  // (This loop previously awaited each record in series, which serialized the
+  // per-artifact analyzer calls: a 3-photo check paid ~3× one ~11s call ≈ 33s.)
+  const settled = await Promise.allSettled(
+    event.Records.map((record) => {
+      const fn = pickHandler(record.body);
+      return fn(
         /** @type {import("aws-lambda").SQSEvent} */ ({ Records: [record] }),
         context,
         callback,
       );
-    } catch (err) {
-      console.error(`[worker] record ${record.messageId} failed:`, err);
-      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }),
+  );
+
+  // Report only the records that threw (partial-batch-failure); the rest are
+  // acknowledged and never redelivered. Requires the event-source mapping's
+  // `function_response_types = ["ReportBatchItemFailures"]`.
+  /** @type {{ itemIdentifier: string }[]} */
+  const batchItemFailures = [];
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const { messageId } = event.Records[index];
+      console.error(`[worker] record ${messageId} failed:`, result.reason);
+      batchItemFailures.push({ itemIdentifier: messageId });
     }
-  }
+  });
 
   return { batchItemFailures };
 };

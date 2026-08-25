@@ -13,7 +13,10 @@ vi.mock("../workers/analyze-artifact.js", () => ({ handler: analyzeArtifact }));
 
 const { handler } = await import("./worker.js");
 
-/** @param {unknown} body */
+/**
+ * @param {unknown} body
+ * @returns {any} an SQS-style event wrapping the JSON-encoded body
+ */
 function event(body) {
   return /** @type {any} */ ({
     Records: [{ messageId: "m1", body: JSON.stringify(body) }],
