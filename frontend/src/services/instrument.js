@@ -75,7 +75,7 @@ export function mark(event, fields) {
         .map(([k, v]) => `${k}=${v}`)
         .join(" ")
     : "";
-   
+
   console.log(
     `%c[GNP-perf]%c ${offset()} ${clock()}  ${event}${extra}`,
     "color:#7c3aed;font-weight:bold",
