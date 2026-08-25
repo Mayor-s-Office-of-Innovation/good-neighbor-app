@@ -29,7 +29,7 @@ import {
   adaptCheckHeader,
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
-import { startCheck, clearCheck } from "../state/check-session.js";
+import { startCheck } from "../state/check-session.js";
 import { navigate } from "../router.js";
 
 class TodayView extends HTMLElement {
@@ -62,8 +62,8 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
-    // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA
-    // into Resume + "Start over".
+    // A resumable in-progress walk (Cancel from /check keeps it) still reopens
+    // the draft, even though the home CTAs now use the simplified Figma copy.
     const hasDraft = !!(await getDraft());
 
     // Index tasks by id so card action handlers can read the task (e.g. its
@@ -81,52 +81,29 @@ class TodayView extends HTMLElement {
         navigate("/check");
       });
     }
-    const over = this.querySelector("#start-over");
-    if (over) {
-      over.addEventListener("click", () => {
-        clearCheck(); // discard the draft
-        startCheck(this._siteId);
-        navigate("/check");
-      });
-    }
-
     this._wireCards();
   }
 
   _render({ last, tasks, hasDraft }) {
     const onsite = tasks.filter((t) => t.type === "onsite");
     const city = tasks.filter((t) => t.type === "city_escalation");
+    const showFirstRun = !last && tasks.length === 0;
 
     return html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader()}
-          <div class="screen__sec home-lead">
-            ${this._summaryBlock(last)}
-            <div class="home-cta">
-              <button
-                id="start-check"
-                class="btn-ink btn-ink--block"
-                type="button"
-              >
-                <wa-icon name="camera" aria-hidden="true"></wa-icon>
-                ${hasDraft ? "Resume perimeter check" : "Perimeter check"}
-              </button>
-              ${hasDraft
-                ? html`<button
-                    id="start-over"
-                    class="home-cta__link"
-                    type="button"
-                  >
-                    Start over
-                  </button>`
-                : ""}
-            </div>
-          </div>
+      <div class="home ${showFirstRun ? "home--first-run" : ""}">
+        <div
+          class="screen screen--today-hero ${showFirstRun ? "screen--first-run" : ""}"
+          role="group"
+          aria-label="Today"
+        >
+          ${showFirstRun
+            ? this._firstRunBlock()
+            : this._activityBlock({ last })}
         </div>
 
         ${tasks.length
           ? html`
+              <div class="home-divider" aria-hidden="true"></div>
               <div class="worklist">
                 <p class="worklist__counter">To do · ${tasks.length}</p>
                 ${this._group("Site actions", onsite, "")}
@@ -137,22 +114,60 @@ class TodayView extends HTMLElement {
                 )}
               </div>
             `
-          : html`<p class="empty" style="text-align:center;margin-top:1.25rem">
-              No open items. Nice work.
-            </p>`}
+          : ""}
       </div>
     `;
   }
 
-  // Global site header: centered site name with a hairline beneath it (the
-  // header section's border). No avatar, no meta subline (design).
-  _siteHeader() {
-    const name = (this._site && this._site.name) || "Your site";
+  _firstRunBlock() {
     return html`
-      <div class="screen__sec sitehead">
-        <div class="sitehead__name">${escapeHtml(name)}</div>
+      <div class="screen__sec home-lead home-lead--first-run">
+        <div class="home-first-run">
+          <h1 class="home-first-run__title">Start your first check</h1>
+          ${this._homeActions({
+            reportLabel: "Report a problem",
+            stacked: true,
+          })}
+        </div>
       </div>
     `;
+  }
+
+  _activityBlock({ last }) {
+    const identity = this._siteIdentity();
+    return html`
+      <div class="screen__sec home-lead">
+        <div class="home-identity">
+          ${identity.org
+            ? html`<p class="home-identity__org">${escapeHtml(identity.org)}</p>`
+            : ""}
+          <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+        </div>
+        ${this._summaryBlock(last)}
+        ${this._homeActions({ reportLabel: "Report a problem" })}
+      </div>
+    `;
+  }
+
+  _homeActions({ reportLabel, stacked = false }) {
+    return html`
+      <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
+        <button id="start-check" class="btn-ink" type="button">
+          Start a check
+        </button>
+        <button class="btn-outline" type="button">
+          ${escapeHtml(reportLabel)}
+        </button>
+      </div>
+    `;
+  }
+
+  _siteIdentity() {
+    const org =
+      (this._site && (this._site.orgName || this._site.organizationName)) || "";
+    const name = (this._site && this._site.name) || "Your site";
+    if (org) return { org, site: name };
+    return splitSiteIdentity(name) || { org: "", site: name };
   }
 
   // Section 1: the overall summary of the last submitted check + LAST LOG stamp.
@@ -433,17 +448,23 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
+    const identity = this._siteIdentity();
     this.innerHTML = html`
       <div class="home">
         <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader()}
           <div class="screen__sec home-lead">
+            <div class="home-identity">
+              ${identity.org
+                ? html`<p class="home-identity__org">${escapeHtml(identity.org)}</p>`
+                : ""}
+              <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+            </div>
             <div class="lastlog">
               <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
               <p class="lastlog__summary">Checks are unavailable</p>
             </div>
-            <div class="home-cta">
-              <button id="retry" class="btn-ink btn-ink--block" type="button">
+            <div class="home-actions">
+              <button id="retry" class="btn-ink" type="button">
                 Try again
               </button>
             </div>
@@ -491,6 +512,18 @@ function triageStatus(f) {
   if (f.hazard) return "escalated to 311";
   if ((f.rating || 0) >= 2) return "flagged to handle";
   return "noted, no action";
+}
+
+function splitSiteIdentity(name) {
+  for (const delimiter of [" · ", " — ", " – ", " - ", ": "]) {
+    if (!name.includes(delimiter)) continue;
+    const [org, ...rest] = name.split(delimiter);
+    const site = rest.join(delimiter).trim();
+    if (org.trim() && site) {
+      return { org: org.trim(), site };
+    }
+  }
+  return null;
 }
 
 customElements.define("today-view", TodayView);
