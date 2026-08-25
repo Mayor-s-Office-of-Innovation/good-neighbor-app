@@ -33,6 +33,7 @@ import {
   getCurrentCheck,
   markSubmitted,
 } from "../state/check-session.js";
+import { startRun, span, mark } from "./instrument.js";
 
 /**
  * Submit the current walk to the backend and hydrate the session with findings.
@@ -43,17 +44,28 @@ export async function submitCheck() {
   const active = getCurrentCheck();
   if (!active) return null;
 
+  startRun("submit", { checkId: active.id });
+
   // 1. Start the run. `sides` records which sides were skipped (server stores it);
   //    `siteId` is derived server-side, never sent.
   const sides = SIDES.map((s) => ({
     side: s,
     skipped: !!active.sides[s].skipped,
   }));
+  const endCreate = span("createCheck");
   await createCheck(active.id, { sides });
+  endCreate();
 
-  // 2. Upload every captured photo straight to S3, then register it. Bytes never
-  //    transit our API; register enqueues the artifact's async analysis.
-  let expectedArtifacts = 0;
+  // 2. Upload every captured artifact straight to S3, then register it — all sides
+  //    and photos IN PARALLEL. Bytes never transit our API; each register enqueues
+  //    that artifact's async analysis, so firing them together also lets the backend
+  //    worker's per-batch fan-out start analyzing sooner. Order is irrelevant: the
+  //    backend keys every artifact independently and waitForAnalyses matches by id,
+  //    not sequence. Any leg's failure rejects the whole submit (no local fallback).
+  //    The `+Nms` start stamps in the perf trace should now cluster (overlap), not
+  //    climb one upload-latency at a time as the old serial loop did.
+  const endUploads = span("uploads");
+  const uploads = [];
   for (const side of SIDES) {
     const sideState = active.sides[side];
     const photos = sideState.items.filter((it) => it.dataUrl);
@@ -61,25 +73,33 @@ export async function submitCheck() {
       ? sideState.description.text
       : "";
 
-    for (const [index, it] of photos.entries()) {
-      await uploadArtifact(active.id, {
-        side: it.side,
-        dataUrl: it.dataUrl,
-        capturedAt: it.uploadedAt,
-        ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
-      });
-      expectedArtifacts += 1;
-    }
+    photos.forEach((it, index) => {
+      uploads.push(
+        uploadArtifact(active.id, {
+          side: it.side,
+          dataUrl: it.dataUrl,
+          capturedAt: it.uploadedAt,
+          tag: `${it.side}#${index}`,
+          // Description text rides on the side's first photo (index 0).
+          ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
+        }),
+      );
+    });
 
     if (photos.length === 0 && descriptionText) {
-      await registerTextArtifact(active.id, {
-        side,
-        text: descriptionText,
-        capturedAt: new Date().toISOString(),
-      });
-      expectedArtifacts += 1;
+      uploads.push(
+        registerTextArtifact(active.id, {
+          side,
+          text: descriptionText,
+          capturedAt: new Date().toISOString(),
+        }),
+      );
     }
   }
+
+  const expectedArtifacts = uploads.length;
+  await Promise.all(uploads);
+  endUploads({ expectedArtifacts });
 
   // 3. Let the analyses land (worker → analyzer), then close the run out.
   //    Completion folds artifacts into the assessment envelope. Task minting is
@@ -87,7 +107,9 @@ export async function submitCheck() {
   //    screen (check-results Continue), so disputes can suppress tasks before
   //    they're created. The assessment rides on the session for that call.
   await waitForAnalyses(active.id, { expected: expectedArtifacts });
+  const endComplete = span("completeCheck");
   const completion = await completeCheck(active.id);
+  endComplete({ grade: completion?.grade, issues: completion?.issueCount });
   if (!completion.assessmentReady || !completion.assessment) {
     throw new Error("Check completed without an assessment to evaluate.");
   }
@@ -101,5 +123,6 @@ export async function submitCheck() {
 
   // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
   await clearDraft();
+  mark("submit:done", { expectedArtifacts });
   return detail;
 }

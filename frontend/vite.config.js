@@ -28,9 +28,10 @@ export default defineConfig({
     // and forwards to 127.0.0.1, this also works when the app is opened from a
     // phone on the LAN (e.g. `npm run dev:lan`): the browser only ever talks to
     // this origin. Keep this route list in step with the local-api.mjs routes.
-    // In production the app is built with VITE_API_BASE pointing at the API
-    // origin (see services/api.js + services/onboarding.js); presigned S3 PUTs
-    // go straight to their own origin and never touch this proxy.
+    // In production the SPA and API share one CloudFront distribution, so the
+    // app uses a same-origin base and calls these same relative paths (see
+    // services/api.js + services/onboarding.js); presigned S3 PUTs go straight
+    // to their own origin and never touch this proxy.
     proxy: {
       "/v1": "http://localhost:3001",
       "/site-code": "http://localhost:3001",

@@ -1,11 +1,9 @@
 /**
  * @typedef {"recording" | "processing"} VoiceState
- *
  * @typedef {object} StartTranscribeSessionOptions
  * @property {string | null | undefined} [siteId]
  * @property {(state: VoiceState) => void} [onStateChange]
  * @property {(liveText: string) => void} [onTranscript]
- *
  * @typedef {object} TranscribeSession
  * @property {() => Promise<{ text: string }>} stop
  * @property {() => Promise<{ text: string }>} cancel

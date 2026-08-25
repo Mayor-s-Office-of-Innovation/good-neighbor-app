@@ -14,11 +14,15 @@
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
-// Same-origin in dev (Vite proxy forwards `/v1/*` → the local API on :3001, no
-// CORS — see vite.config.js); in production the app is built with VITE_API_BASE
-// pointing at the API origin. Shared strategy with services/onboarding.js. Cast
-// `import.meta` — Vite's env types (vite/client) aren't wired into this checkJs
-// project, so the host-injected `.env` access is typed locally.
+import { mark, span } from "./instrument.js";
+
+// Same-origin everywhere: in dev the Vite proxy forwards `/v1/*` → the local API
+// on :3001 (no CORS — see vite.config.js); in production the SPA and API share
+// one CloudFront distribution, so BASE stays "" and calls are relative. Setting
+// VITE_API_BASE to a cross-origin URL would trip the connect-src 'self' CSP.
+// Shared strategy with services/onboarding.js. Cast `import.meta` — Vite's env
+// types (vite/client) aren't wired into this checkJs project, so the
+// host-injected `.env` access is typed locally.
 const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 
 /** A non-2xx response or a transport failure from the backend. */
@@ -359,20 +363,31 @@ export async function dataUrlToBlob(dataUrl) {
  * (which enqueues the async analysis). Returns the registered artifactId so the
  * caller can wait for exactly these analyses to land.
  * @param {string} checkId
- * @param {{ side: string, dataUrl: string, capturedAt?: string, text?: string }} item
+ * @param {{ side: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string }} item
+ *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
  * @returns {Promise<string>} the artifactId
  */
 export async function uploadArtifact(
   checkId,
-  { side, dataUrl, capturedAt, text },
+  { side, dataUrl, capturedAt, text, tag },
 ) {
+  const art = tag ?? side;
+  const done = span("upload", { art });
+
   const contentType = contentTypeFromDataUrl(dataUrl);
+  const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
     side,
     contentType,
   });
+  endPresign({ artifactId });
+
   const blob = await dataUrlToBlob(dataUrl);
+  const endPut = span("upload.put", { art, bytes: blob.size });
   await putMedia(uploadUrl, blob, contentType);
+  endPut();
+
+  const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
     artifactId,
     side,
@@ -381,6 +396,9 @@ export async function uploadArtifact(
     ...(capturedAt ? { capturedAt } : {}),
     ...(text ? { text } : {}),
   });
+  endRegister();
+
+  done({ artifactId });
   return artifactId;
 }
 
@@ -430,14 +448,31 @@ export async function waitForAnalyses(
   { expected, timeoutMs = 180000, intervalMs = 2000 },
 ) {
   const deadline = Date.now() + timeoutMs;
+  mark("wait:start", { expected, timeoutMs, intervalMs });
+  /** first-seen offset per artifactId, so we can see the landing cadence */
+  const seen = new Set();
+  let poll = 0;
   /** @type {{ check: any, artifacts: any[], analyses: any[] }} */
   let last = await getCheck(checkId);
   while (true) {
+    poll += 1;
     const analyzedIds = new Set(last.analyses.map((a) => a.artifactId));
+    // Log any analyses that landed since the previous poll — this is the
+    // response-cadence signal: do they arrive together or one at a time?
+    const fresh = [...analyzedIds].filter((id) => !seen.has(id));
+    for (const id of fresh) seen.add(id);
+    mark(`wait:poll#${poll}`, {
+      analyzed: `${analyzedIds.size}/${expected}`,
+      artifacts: last.artifacts.length,
+      landed: fresh.length ? fresh.join(",") : "-",
+    });
     const covered =
       last.artifacts.length >= expected &&
       last.artifacts.every((a) => analyzedIds.has(a.artifactId));
-    if (expected === 0 || covered) return last;
+    if (expected === 0 || covered) {
+      mark("wait:done", { analyzed: `${analyzedIds.size}/${expected}`, poll });
+      return last;
+    }
     if (Date.now() >= deadline) {
       throw new ApiError(
         `Analyses still processing (${analyzedIds.size}/${expected}) after ${timeoutMs}ms`,
