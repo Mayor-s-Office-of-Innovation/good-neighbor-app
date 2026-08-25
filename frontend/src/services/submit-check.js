@@ -29,10 +29,10 @@ import {
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
 import {
-  SIDES,
   getCurrentCheck,
   markAnalyzing,
   markAnalysisFailed,
+  getSideOrder,
   markSubmitted,
 } from "../state/check-session.js";
 import { startRun, span, mark } from "./instrument.js";
@@ -92,10 +92,11 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   if (!active) return null;
 
   startRun("submit", { checkId: active.id });
+  const sidesInFlow = getSideOrder();
 
   // 1. Start the run. `sides` records which sides were skipped (server stores it);
   //    `siteId` is derived server-side, never sent.
-  const sides = SIDES.map((s) => ({
+  const sides = sidesInFlow.map((s) => ({
     side: s,
     skipped: !!active.sides[s].skipped,
   }));
@@ -113,7 +114,7 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   //    climb one upload-latency at a time as the old serial loop did.
   const endUploads = span("uploads");
   const uploads = [];
-  for (const side of SIDES) {
+  for (const side of sidesInFlow) {
     const sideState = active.sides[side];
     const photos = sideState.items.filter((it) => it.dataUrl);
     const descriptionText = sideState.description?.validated
@@ -152,7 +153,7 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   //    session into a pending-analysis state and let the long analyzer/complete
   //    sequence continue in the background while the user returns home.
   markAnalyzing({ submissionKind });
-  await clearDraft();
+  await clearDraft(active.flowType);
   mark("submit:queued", { expectedArtifacts, checkId: active.id });
   void resumeSubmittedCheck(active.id);
   return { checkId: active.id };

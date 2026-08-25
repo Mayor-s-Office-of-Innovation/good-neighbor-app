@@ -18,7 +18,7 @@
   tag; split into a .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite, getDraft } from "../db.js";
+import { getSite } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -30,8 +30,9 @@ import {
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
 import {
+  loadDraft,
   startCheck,
-  clearCheck,
+  startProblemReport,
   getCurrentCheck,
   loadSubmitted,
   onCheckSessionChange,
@@ -88,11 +89,8 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
-    // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA
-    // into Resume + "Start over".
-    const hasDraft =
-      active?.status === "in-progress" || !!(await getDraft());
-
+    // A resumable in-progress walk (Cancel from /check keeps it) still reopens
+    // the draft, even though the home CTAs now use the simplified Figma copy.
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
@@ -100,7 +98,6 @@ class TodayView extends HTMLElement {
     this.innerHTML = this._render({
       last,
       tasks,
-      hasDraft,
       pendingSession:
         pendingSession &&
         ["analyzing", "analysis_failed"].includes(pendingSession.status)
@@ -110,60 +107,50 @@ class TodayView extends HTMLElement {
 
     const start = this.querySelector("#start-check");
     if (start) {
-      start.addEventListener("click", () => {
-        // Resume just re-opens /check (the draft hydrates there); a fresh start
-        // seeds a new in-progress check.
-        if (!hasDraft) startCheck(this._siteId);
+      start.addEventListener("click", async () => {
+        const draft = await loadDraft("perimeter");
+        if (!draft) {
+          startCheck(this._siteId);
+        }
         navigate("/check");
       });
     }
-    const over = this.querySelector("#start-over");
-    if (over) {
-      over.addEventListener("click", () => {
-        clearCheck(); // discard the draft
-        startCheck(this._siteId);
-        navigate("/check");
+    const report = this.querySelector("#report-problem");
+    if (report) {
+      report.addEventListener("click", async () => {
+        const draft = await loadDraft("single-problem");
+        if (!draft) {
+          startProblemReport(this._siteId);
+        }
+        navigate("/problem");
       });
     }
-
     this._wireCards();
   }
 
-  _render({ last, tasks, hasDraft, pendingSession }) {
+  _render({ last, tasks, pendingSession }) {
     const onsite = tasks.filter((t) => t.type === "onsite");
     const city = tasks.filter((t) => t.type === "city_escalation");
     const hasPendingAssessment = !!pendingSession;
+    const showFirstRun = !last && tasks.length === 0;
 
     return html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader()}
-          <div class="screen__sec home-lead">
-            ${this._summaryBlock(last)}
-            <div class="home-cta">
-              <button
-                id="start-check"
-                class="btn-ink btn-ink--block"
-                type="button"
-              >
-                <wa-icon name="camera" aria-hidden="true"></wa-icon>
-                ${hasDraft ? "Resume perimeter check" : "Perimeter check"}
-              </button>
-              ${hasDraft
-                ? html`<button
-                    id="start-over"
-                    class="home-cta__link"
-                    type="button"
-                  >
-                    Start over
-                  </button>`
-                : ""}
-            </div>
-          </div>
+      <div class="home ${showFirstRun ? "home--first-run" : ""}">
+        <div
+          class="screen screen--today-hero ${showFirstRun
+            ? "screen--first-run"
+            : ""}"
+          role="group"
+          aria-label="Today"
+        >
+          ${showFirstRun
+            ? this._firstRunBlock()
+            : this._activityBlock({ last })}
         </div>
 
         ${hasPendingAssessment || tasks.length
           ? html`
+              <div class="home-divider" aria-hidden="true"></div>
               <div class="worklist">
                 ${pendingSession
                   ? this._assessmentTile(pendingSession)
@@ -177,9 +164,7 @@ class TodayView extends HTMLElement {
                 )}
               </div>
             `
-          : html`<p class="empty" style="text-align:center;margin-top:1.25rem">
-              No open items. Nice work.
-            </p>`}
+          : ""}
       </div>
     `;
   }
@@ -236,16 +221,57 @@ class TodayView extends HTMLElement {
       </section>
     `;
   }
-
-  // Global site header: centered site name with a hairline beneath it (the
-  // header section's border). No avatar, no meta subline (design).
-  _siteHeader() {
-    const name = (this._site && this._site.name) || "Your site";
+  _firstRunBlock() {
     return html`
-      <div class="screen__sec sitehead">
-        <div class="sitehead__name">${escapeHtml(name)}</div>
+      <div class="screen__sec home-lead home-lead--first-run">
+        <div class="home-first-run">
+          <h1 class="home-first-run__title">Start your first check</h1>
+          ${this._homeActions({
+            reportLabel: "Report a problem",
+            stacked: true,
+          })}
+        </div>
       </div>
     `;
+  }
+
+  _activityBlock({ last }) {
+    const identity = this._siteIdentity();
+    return html`
+      <div class="screen__sec home-lead">
+        <div class="home-identity">
+          ${identity.org
+            ? html`<p class="home-identity__org">
+                ${escapeHtml(identity.org)}
+              </p>`
+            : ""}
+          <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+        </div>
+        ${this._summaryBlock(last)}
+        ${this._homeActions({ reportLabel: "Report a problem" })}
+      </div>
+    `;
+  }
+
+  _homeActions({ reportLabel, stacked = false }) {
+    return html`
+      <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
+        <button id="start-check" class="btn-ink" type="button">
+          Start a check
+        </button>
+        <button id="report-problem" class="btn-outline" type="button">
+          ${escapeHtml(reportLabel)}
+        </button>
+      </div>
+    `;
+  }
+
+  _siteIdentity() {
+    const org =
+      (this._site && (this._site.orgName || this._site.organizationName)) || "";
+    const name = (this._site && this._site.name) || "Your site";
+    if (org) return { org, site: name };
+    return splitSiteIdentity(name) || { org: "", site: name };
   }
 
   // Section 1: the overall summary of the last submitted check + LAST LOG stamp.
@@ -530,17 +556,25 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
+    const identity = this._siteIdentity();
     this.innerHTML = html`
       <div class="home">
         <div class="screen" role="group" aria-label="Today">
-          ${this._siteHeader()}
           <div class="screen__sec home-lead">
+            <div class="home-identity">
+              ${identity.org
+                ? html`<p class="home-identity__org">
+                    ${escapeHtml(identity.org)}
+                  </p>`
+                : ""}
+              <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+            </div>
             <div class="lastlog">
               <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
               <p class="lastlog__summary">Checks are unavailable</p>
             </div>
-            <div class="home-cta">
-              <button id="retry" class="btn-ink btn-ink--block" type="button">
+            <div class="home-actions">
+              <button id="retry" class="btn-ink" type="button">
                 Try again
               </button>
             </div>
@@ -588,6 +622,18 @@ function triageStatus(f) {
   if (f.hazard) return "escalated to 311";
   if ((f.rating || 0) >= 2) return "flagged to handle";
   return "noted, no action";
+}
+
+function splitSiteIdentity(name) {
+  for (const delimiter of [" · ", " — ", " – ", " - ", ": "]) {
+    if (!name.includes(delimiter)) continue;
+    const [org, ...rest] = name.split(delimiter);
+    const site = rest.join(delimiter).trim();
+    if (org.trim() && site) {
+      return { org: org.trim(), site };
+    }
+  }
+  return null;
 }
 
 customElements.define("today-view", TodayView);
