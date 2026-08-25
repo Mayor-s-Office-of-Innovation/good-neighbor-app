@@ -29,14 +29,40 @@ import {
   adaptCheckHeader,
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
-import { startCheck, clearCheck } from "../state/check-session.js";
+import {
+  startCheck,
+  clearCheck,
+  getCurrentCheck,
+  loadSubmitted,
+  onCheckSessionChange,
+} from "../state/check-session.js";
 import { navigate } from "../router.js";
+import { resumeSubmittedCheck } from "../services/submit-check.js";
 
 class TodayView extends HTMLElement {
+  disconnectedCallback() {
+    this._sessionUnsub?.();
+    this._sessionUnsub = null;
+  }
+
   async connectedCallback() {
+    if (!this._sessionUnsub) {
+      this._sessionUnsub = onCheckSessionChange(() => this.connectedCallback());
+    }
+
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+
+    const active = getCurrentCheck();
+    const pendingSession =
+      active &&
+      ["analyzing", "analysis_failed", "submitted"].includes(active.status)
+        ? active
+        : await loadSubmitted();
+    if (pendingSession?.status === "analyzing") {
+      void resumeSubmittedCheck(pendingSession.id);
+    }
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
@@ -64,13 +90,23 @@ class TodayView extends HTMLElement {
     const last = submitted[0];
     // A resumable in-progress walk (Cancel from /check keeps it) turns the CTA
     // into Resume + "Start over".
-    const hasDraft = !!(await getDraft());
+    const hasDraft =
+      active?.status === "in-progress" || !!(await getDraft());
 
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
 
-    this.innerHTML = this._render({ last, tasks, hasDraft });
+    this.innerHTML = this._render({
+      last,
+      tasks,
+      hasDraft,
+      pendingSession:
+        pendingSession &&
+        ["analyzing", "analysis_failed"].includes(pendingSession.status)
+          ? pendingSession
+          : null,
+    });
 
     const start = this.querySelector("#start-check");
     if (start) {
@@ -93,9 +129,10 @@ class TodayView extends HTMLElement {
     this._wireCards();
   }
 
-  _render({ last, tasks, hasDraft }) {
+  _render({ last, tasks, hasDraft, pendingSession }) {
     const onsite = tasks.filter((t) => t.type === "onsite");
     const city = tasks.filter((t) => t.type === "city_escalation");
+    const hasPendingAssessment = !!pendingSession;
 
     return html`
       <div class="home">
@@ -125,9 +162,12 @@ class TodayView extends HTMLElement {
           </div>
         </div>
 
-        ${tasks.length
+        ${hasPendingAssessment || tasks.length
           ? html`
               <div class="worklist">
+                ${pendingSession
+                  ? this._assessmentTile(pendingSession)
+                  : ""}
                 <p class="worklist__counter">To do · ${tasks.length}</p>
                 ${this._group("Site actions", onsite, "")}
                 ${this._group(
@@ -141,6 +181,59 @@ class TodayView extends HTMLElement {
               No open items. Nice work.
             </p>`}
       </div>
+    `;
+  }
+
+  _assessmentTile(session) {
+    if (session.status === "analysis_failed") {
+      return html`
+        <section
+          class="assessment-tile assessment-tile--error"
+          aria-live="polite"
+        >
+          <div class="assessment-tile__card">
+            <p class="assessment-tile__eyebrow">AI analysis paused</p>
+            <p class="assessment-tile__headline">
+              ${escapeHtml(
+                session.analysisError ||
+                  "Couldn’t finish analyzing this submission.",
+              )}
+            </p>
+          </div>
+        </section>
+      `;
+    }
+
+    const label =
+      session.submissionKind === "problem_report"
+        ? "problem report"
+        : "report";
+    const time = session.submittedAt ? timeOf(session.submittedAt) : "";
+    const eyebrow = time
+      ? `AI is analyzing the ${time} ${label}`
+      : `AI is analyzing the latest ${label}`;
+    const headline =
+      session.submissionKind === "problem_report"
+        ? "Problem report received and being analyzed..."
+        : "Report received and being analyzed for problems...";
+
+    return html`
+      <section class="assessment-tile" aria-live="polite">
+        <div class="assessment-tile__card">
+          <p class="assessment-tile__eyebrow">
+            <span class="assessment-tile__spark" aria-hidden="true">✦</span>
+            ${escapeHtml(eyebrow)}
+          </p>
+          <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
+          <div
+            class="assessment-tile__progress"
+            role="img"
+            aria-label="Analysis in progress"
+          >
+            <span class="assessment-tile__bar"></span>
+          </div>
+        </div>
+      </section>
     `;
   }
 
@@ -210,6 +303,7 @@ class TodayView extends HTMLElement {
       : "";
     const title = task.label || task.category || "Finding";
     const detail = task.guidance || task.category || "";
+    const category = task.category || "";
     const actions = this._cardActions(task);
     return html`
       <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
@@ -220,6 +314,9 @@ class TodayView extends HTMLElement {
           <h3 class="actioncard__title">${escapeHtml(title)}</h3>
           ${detail
             ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
+            : ""}
+          ${category
+            ? html`<p class="actioncard__category">${escapeHtml(category)}</p>`
             : ""}
         </div>
         ${actions.length

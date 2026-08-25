@@ -31,16 +31,63 @@ import { analysesToFindings } from "../domain/check-adapter.js";
 import {
   SIDES,
   getCurrentCheck,
+  markAnalyzing,
+  markAnalysisFailed,
   markSubmitted,
 } from "../state/check-session.js";
 import { startRun, span, mark } from "./instrument.js";
 
+const pendingFinalizations = new Map();
+
+function analysisFailureMessage(err) {
+  const body = err?.body;
+  if (body?.code === "analyses_pending") {
+    return "The AI is taking longer than expected. Please try again soon.";
+  }
+  return "Couldn’t finish analyzing this submission. Check your connection and try again.";
+}
+
+async function finalizeSubmittedCheck(checkId) {
+  const last = await waitForAnalyses(checkId);
+  const endComplete = span("completeCheck");
+  const completion = await completeCheck(checkId);
+  endComplete({ grade: completion?.grade, issues: completion?.issueCount });
+  if (!completion.assessmentReady || !completion.assessment) {
+    throw new Error("Check completed without an assessment to evaluate.");
+  }
+
+  const detail = await getCheck(checkId);
+  markSubmitted(analysesToFindings(detail.analyses), completion.assessment);
+  mark("submit:done", { expectedArtifacts: last.artifacts.length });
+  return detail;
+}
+
+export function resumeSubmittedCheck(checkId) {
+  if (pendingFinalizations.has(checkId)) {
+    return pendingFinalizations.get(checkId);
+  }
+  const run = finalizeSubmittedCheck(checkId)
+    .catch((err) => {
+      console.error("finalizeSubmittedCheck failed", err);
+      markAnalysisFailed(analysisFailureMessage(err));
+      throw err;
+    })
+    .finally(() => {
+      pendingFinalizations.delete(checkId);
+    });
+  pendingFinalizations.set(checkId, run);
+  return run;
+}
+
 /**
  * Submit the current walk to the backend and hydrate the session with findings.
- * Throws on any backend/network failure (no silent local fallback).
- * @returns {Promise<object|null>} the getCheck detail payload, or null if no walk.
+ * Throws on any backend/network failure before the submission is safely registered.
+ * Once registration succeeds, the longer analysis/completion work continues in the
+ * background and home shows the pending state.
+ * @param {{ submissionKind?: "check" | "problem_report" }} [opts]
+ * @returns {Promise<{ checkId: string }|null>}
  */
-export async function submitCheck() {
+export async function submitCheck({ submissionKind = "check" } = {}) {
   const active = getCurrentCheck();
   if (!active) return null;
 
@@ -101,28 +148,12 @@ export async function submitCheck() {
   await Promise.all(uploads);
   endUploads({ expectedArtifacts });
 
-  // 3. Let the analyses land (worker → analyzer), then close the run out.
-  //    Completion folds artifacts into the assessment envelope. Task minting is
-  //    DEFERRED: evaluateAssessment now runs when the user leaves the review
-  //    screen (check-results Continue), so disputes can suppress tasks before
-  //    they're created. The assessment rides on the session for that call.
-  await waitForAnalyses(active.id, { expected: expectedArtifacts });
-  const endComplete = span("completeCheck");
-  const completion = await completeCheck(active.id);
-  endComplete({ grade: completion?.grade, issues: completion?.issueCount });
-  if (!completion.assessmentReady || !completion.assessment) {
-    throw new Error("Check completed without an assessment to evaluate.");
-  }
-
-  // 4. Read the authoritative completed check + analyses and adapt to findings for
-  //    the review screen. No task-based city/handle classification here — no tasks
-  //    exist yet (they mint on Continue) and the review screen renders plain cards;
-  //    the home hub fetches its own tasks after the user continues.
-  const detail = await getCheck(active.id);
-  markSubmitted(analysesToFindings(detail.analyses), completion.assessment);
-
-  // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
+  // 3. The submission is durable once every artifact is registered, so switch the
+  //    session into a pending-analysis state and let the long analyzer/complete
+  //    sequence continue in the background while the user returns home.
+  markAnalyzing({ submissionKind });
   await clearDraft();
-  mark("submit:done", { expectedArtifacts });
-  return detail;
+  mark("submit:queued", { expectedArtifacts, checkId: active.id });
+  void resumeSubmittedCheck(active.id);
+  return { checkId: active.id };
 }
