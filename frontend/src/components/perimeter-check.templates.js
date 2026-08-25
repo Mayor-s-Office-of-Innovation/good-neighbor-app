@@ -35,6 +35,8 @@ export const shell = () => html`
       type="file"
       id="file-input"
       class="visually-hidden"
+      tabindex="-1"
+      aria-hidden="true"
       accept="image/*"
       capture="environment"
     />
@@ -99,6 +101,8 @@ export const shellWebcam = () => html`
       type="file"
       id="file-input"
       class="visually-hidden"
+      tabindex="-1"
+      aria-hidden="true"
       accept="image/*"
       capture="environment"
     />
@@ -139,9 +143,13 @@ export const segment = ({ index, state }) => {
 };
 
 /* One captured shot in the grid: the photo + a Delete button. */
-export const shotTile = (item) => html`
+export const shotTile = (item, index) => html`
   <div class="shot">
-    <img class="shot__img" src="${item.dataUrl}" alt="" />
+    <img
+      class="shot__img"
+      src="${item.dataUrl}"
+      alt="Captured photo ${index + 1}${item.side ? ` for ${item.side}` : ""}"
+    />
     <button
       class="shot__del"
       type="button"

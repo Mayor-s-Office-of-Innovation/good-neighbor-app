@@ -4,11 +4,13 @@
  * Persists text/voice input, validates it, and returns to the capture flow.
  */
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { currentRoute, navigate } from "../router.js";
 import {
-  SIDES,
+  getFlowType,
   getCurrentCheck,
+  loadDraft,
   getActiveSideIndex,
+  getSideOrder,
   getSideDescription,
   setSideDescription,
   setPostDescribeAction,
@@ -19,14 +21,23 @@ import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 class DescribeInstead extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    const check = getCurrentCheck();
+    this._routeBase = currentRoute().startsWith("/problem")
+      ? "/problem"
+      : "/check";
+    const expectedFlow =
+      this._routeBase === "/problem" ? "single-problem" : "perimeter";
+    const check = getCurrentCheck() || (await loadDraft(expectedFlow));
     if (!check || !this._site) {
-      navigate("/check");
+      navigate(this._routeBase);
       return;
     }
 
-    this._sideIndex = getActiveSideIndex();
-    this._side = SIDES[this._sideIndex] || SIDES[0];
+    this._flowType = getFlowType();
+    this._routeBase =
+      this._flowType === "single-problem" ? "/problem" : "/check";
+    this._sides = getSideOrder();
+    this._sideIndex = getActiveSideIndex() ?? 0;
+    this._side = this._sides[this._sideIndex] || this._sides[0];
     this._savedDescription = getSideDescription(this._side);
     this._savedText = this._savedDescription?.text || "";
     this._text = this._savedText;
@@ -300,7 +311,7 @@ class DescribeInstead extends HTMLElement {
 
   _onClose() {
     if (!this._hasUnsavedChanges()) {
-      navigate("/check");
+      navigate(this._routeBase);
       return;
     }
     this._dialog.showModal();
@@ -311,7 +322,7 @@ class DescribeInstead extends HTMLElement {
     if (this._transcribeSession) {
       void this._cancelVoice();
     }
-    navigate("/check");
+    navigate(this._routeBase);
   }
 
   async _cancelVoice() {
@@ -358,12 +369,16 @@ class DescribeInstead extends HTMLElement {
         whereItIs: true,
       },
     });
+    if (this._flowType === "single-problem") {
+      navigate(this._routeBase);
+      return;
+    }
     setPostDescribeAction(
-      this._sideIndex === SIDES.length - 1
+      this._sideIndex === this._sides.length - 1
         ? { type: "submit" }
         : { type: "advance", sideIndex: this._sideIndex + 1 },
     );
-    navigate("/check");
+    navigate(this._routeBase);
   }
 
   _siteCheckId() {
