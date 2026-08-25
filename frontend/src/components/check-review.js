@@ -162,7 +162,7 @@ class CheckReview extends HTMLElement {
     this._clearError();
     try {
       await submitCheck();
-      navigate("/results");
+      navigate("/today");
     } catch (err) {
       // Online-only: on any backend/network failure surface an error and let the
       // user retry (no local queue — offline is post-MVP).

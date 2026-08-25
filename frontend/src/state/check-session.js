@@ -98,11 +98,20 @@ function rehydrateDerivedFields(check) {
 /** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
 let current = null;
 let postDescribeAction = null;
+const listeners = new Set();
 
 // Fire-and-forget mirror of the in-memory check to the draft store. Renders read
 // the synchronous `current`; persistence catches up in the background.
 function persist() {
   if (current) void saveDraft(current);
+}
+
+function emit() {
+  listeners.forEach((fn) => fn(current));
+}
+
+function persistReview() {
+  if (current) void saveReview(current);
 }
 
 /** Which cadence window we're in (pilot: fixed thirds of the day). */
@@ -126,11 +135,17 @@ export function startCheck(siteId) {
     status: "in-progress",
   };
   persist();
+  emit();
   return current;
 }
 
 export function getCurrentCheck() {
   return current;
+}
+
+export function onCheckSessionChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
 }
 
 /**
@@ -157,7 +172,7 @@ export function ensureCheck(siteId) {
  * the active check or null.
  */
 export async function loadSubmitted() {
-  if (current) return current;
+  if (current && current.status !== "in-progress") return current;
   const saved = await getReview();
   if (saved) current = saved;
   return current;
@@ -173,6 +188,7 @@ export function setActiveSideIndex(index) {
   if (!current) return;
   current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
   persist();
+  emit();
 }
 
 export function setPostDescribeAction(action) {
@@ -199,6 +215,7 @@ export function setSideDescription(side, description) {
       current.sides[side].description.validation.whereItIs;
   }
   persist();
+  emit();
   return current.sides[side].description;
 }
 
@@ -210,6 +227,7 @@ export function setSideDescriptionValidation(side, validation) {
   description.validated =
     description.validation.whatYouCanSee && description.validation.whereItIs;
   persist();
+  emit();
   return description;
 }
 
@@ -224,6 +242,7 @@ export function addItem(side, item) {
   };
   current.sides[side].items.push(record);
   persist();
+  emit();
   return record;
 }
 
@@ -232,6 +251,7 @@ export function removeItem(side, itemId) {
   const s = current.sides[side];
   s.items = s.items.filter((i) => i.id !== itemId);
   persist();
+  emit();
 }
 
 /** Mark a side skipped (still counted in the fixed 4). */
@@ -239,6 +259,7 @@ export function skipSide(side) {
   if (!current) return;
   current.sides[side].skipped = true;
   persist();
+  emit();
 }
 
 /** A side is "done" once it has >=1 photo or was skipped. */
@@ -259,6 +280,23 @@ export function allItems() {
 }
 
 /**
+ * Flip the walk to "analyzing" once the submission is safely registered server-side.
+ * The review store keeps this pending state off the draft/resume path while allowing
+ * home to show progress and survive a reload.
+ * @param {{ submissionKind?: "check" | "problem_report" }} [opts]
+ */
+export function markAnalyzing({ submissionKind = "check" } = {}) {
+  if (!current) return null;
+  current.status = "analyzing";
+  current.submittedAt = current.submittedAt || new Date().toISOString();
+  current.submissionKind = submissionKind;
+  delete current.analysisError;
+  persistReview();
+  emit();
+  return current;
+}
+
+/**
  * Flip the walk to "submitted" and stash what the results screen needs. The
  * `assessment` envelope (from completeCheck) rides along so the review screen can
  * defer task minting to Continue — sending it to evaluate then, with any disputes.
@@ -266,13 +304,29 @@ export function allItems() {
 export function markSubmitted(findings, assessment) {
   if (!current) return null;
   current.status = "submitted";
-  current.submittedAt = new Date().toISOString();
+  current.submittedAt = current.submittedAt || new Date().toISOString();
   current.findings = findings;
   current.assessment = assessment;
+  delete current.analysisError;
   // Mirror the submitted session to the `review` store so a reload of the results
   // screen can rehydrate the envelope + findings + photos (loadSubmitted) instead of
   // dropping to the read-only history path where tasks can never mint.
-  void saveReview(current);
+  persistReview();
+  emit();
+  return current;
+}
+
+/**
+ * Surface a background analysis failure on the same review-backed session so home
+ * can explain why the pending tile did not resolve.
+ * @param {string} message
+ */
+export function markAnalysisFailed(message) {
+  if (!current) return null;
+  current.status = "analysis_failed";
+  current.analysisError = message;
+  persistReview();
+  emit();
   return current;
 }
 
@@ -285,4 +339,5 @@ export function clearCheck() {
   postDescribeAction = null;
   void clearDraft();
   void clearReview();
+  emit();
 }
