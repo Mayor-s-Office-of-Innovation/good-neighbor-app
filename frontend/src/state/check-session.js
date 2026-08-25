@@ -24,6 +24,16 @@ import {
 } from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
+export const SINGLE_PROBLEM_SIDE = "Problem";
+
+function normalizeSideOrder(sideOrder) {
+  const order = Array.isArray(sideOrder)
+    ? sideOrder
+        .map((side) => String(side || "").trim())
+        .filter(Boolean)
+    : [];
+  return order.length ? [...new Set(order)] : [...SIDES];
+}
 
 function normalizeValidation(validation = {}) {
   return {
@@ -69,21 +79,25 @@ function normalizeSideState(sideState = {}) {
 
 function normalizeCheck(check) {
   if (!check) return null;
+  const sideOrder = normalizeSideOrder(check.sideOrder || check.sides?.order);
   const sides = {};
-  for (const side of SIDES) {
+  for (const side of sideOrder) {
     sides[side] = normalizeSideState(check.sides?.[side]);
   }
   return {
     ...check,
+    flowType:
+      check.flowType === "single-problem" ? "single-problem" : "perimeter",
     activeSideIndex:
       typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
+    sideOrder,
     sides,
   };
 }
 
 function rehydrateDerivedFields(check) {
   if (!check) return null;
-  for (const side of SIDES) {
+  for (const side of check.sideOrder || SIDES) {
     const description = check.sides[side]?.description;
     if (!description) continue;
     description.validation = {
@@ -114,14 +128,28 @@ function currentWindow() {
 }
 
 export function startCheck(siteId) {
+  return startFlow(siteId, { flowType: "perimeter", sideOrder: SIDES });
+}
+
+export function startProblemReport(siteId) {
+  return startFlow(siteId, {
+    flowType: "single-problem",
+    sideOrder: [SINGLE_PROBLEM_SIDE],
+  });
+}
+
+function startFlow(siteId, { flowType, sideOrder }) {
+  const order = normalizeSideOrder(sideOrder);
   const sides = {};
-  for (const s of SIDES) sides[s] = createSideState();
+  for (const s of order) sides[s] = createSideState();
   current = {
     id: newId(),
     siteId,
+    flowType,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
     activeSideIndex: 0,
+    sideOrder: order,
     sides,
     status: "in-progress",
   };
@@ -149,6 +177,10 @@ export function ensureCheck(siteId) {
   return current || startCheck(siteId);
 }
 
+export function ensureProblemReport(siteId) {
+  return current || startProblemReport(siteId);
+}
+
 /**
  * Hydrate the in-memory check from the persisted review store (after a reload of the
  * results screen). Unlike loadDraft this restores a SUBMITTED session — the one that
@@ -169,9 +201,18 @@ export function getActiveSideIndex() {
     : null;
 }
 
+export function getSideOrder() {
+  return current?.sideOrder || SIDES;
+}
+
+export function getFlowType() {
+  return current?.flowType || "perimeter";
+}
+
 export function setActiveSideIndex(index) {
   if (!current) return;
-  current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
+  const sideCount = getSideOrder().length;
+  current.activeSideIndex = Math.max(0, Math.min(sideCount - 1, index));
   persist();
 }
 
@@ -249,13 +290,13 @@ export function isSideCovered(side) {
 }
 
 export function coveredCount() {
-  return SIDES.filter(isSideCovered).length;
+  return getSideOrder().filter(isSideCovered).length;
 }
 
 /** Flat list of all capture items across sides, in side order. */
 export function allItems() {
   if (!current) return [];
-  return SIDES.flatMap((s) => current.sides[s].items);
+  return getSideOrder().flatMap((s) => current.sides[s].items);
 }
 
 /**

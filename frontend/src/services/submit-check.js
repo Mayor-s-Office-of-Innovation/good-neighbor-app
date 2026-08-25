@@ -29,8 +29,8 @@ import {
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
 import {
-  SIDES,
   getCurrentCheck,
+  getSideOrder,
   markSubmitted,
 } from "../state/check-session.js";
 import { startRun, span, mark } from "./instrument.js";
@@ -45,10 +45,11 @@ export async function submitCheck() {
   if (!active) return null;
 
   startRun("submit", { checkId: active.id });
+  const sidesInFlow = getSideOrder();
 
   // 1. Start the run. `sides` records which sides were skipped (server stores it);
   //    `siteId` is derived server-side, never sent.
-  const sides = SIDES.map((s) => ({
+  const sides = sidesInFlow.map((s) => ({
     side: s,
     skipped: !!active.sides[s].skipped,
   }));
@@ -66,7 +67,7 @@ export async function submitCheck() {
   //    climb one upload-latency at a time as the old serial loop did.
   const endUploads = span("uploads");
   const uploads = [];
-  for (const side of SIDES) {
+  for (const side of sidesInFlow) {
     const sideState = active.sides[side];
     const photos = sideState.items.filter((it) => it.dataUrl);
     const descriptionText = sideState.description?.validated
