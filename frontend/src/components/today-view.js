@@ -242,6 +242,7 @@ class TodayView extends HTMLElement {
       : "";
     const title = task.label || task.category || "Finding";
     const detail = task.guidance || task.category || "";
+    const category = task.category || "";
     const actions = this._cardActions(task);
     return html`
       <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
@@ -252,6 +253,9 @@ class TodayView extends HTMLElement {
           <h3 class="actioncard__title">${escapeHtml(title)}</h3>
           ${detail
             ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
+            : ""}
+          ${category
+            ? html`<p class="actioncard__category">${escapeHtml(category)}</p>`
             : ""}
         </div>
         ${actions.length

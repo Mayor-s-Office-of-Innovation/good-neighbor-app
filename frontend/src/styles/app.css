@@ -708,6 +708,13 @@ theme-toggle {
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+.actioncard__category {
+  margin: 0.12rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 /* Action row — wraps rather than truncates (the design's overlap bug came from
    a fixed-width row clipping labels like "File 311 ticket" → "File 311 t"). Here
    buttons are content-width with nowrap labels and the row flex-wraps to a new
