@@ -132,28 +132,29 @@ resource "aws_lambda_event_source_mapping" "worker" {
   # apart — the fast finishers went in one invocation, stragglers waited out the
   # window and started a full window later (observed: a 5s window split 5 photos
   # 3+2 with a ~5s gap, adding ~5s of pure wait to the tail analyses). At 0 each
-  # artifact is analyzed as soon as it lands. Peak concurrency is unchanged — it's
-  # bounded by scaling_config.maximum_concurrency below, not by batching. The only
-  # trade-off is smaller batches → more worker invocations, whose in-process
-  # fan-out simply moves to across-instance concurrency (which has headroom).
+  # artifact is analyzed as soon as it lands. This changes only latency and the
+  # TYPICAL batch size — it does NOT cap records-per-invocation (batch_size still
+  # does that), so it does not change the worst-case peak concurrency below.
   maximum_batching_window_in_seconds = 0
   function_response_types            = ["ReportBatchItemFailures"]
 
-  # Bound how many worker invocations SQS drives concurrently. With no batching
-  # window each invocation typically carries a single artifact, so peak Bedrock
-  # calls ≈ maximum_concurrency (co-arriving photos may still share a batch and
-  # fan out in-process, but that no longer changes the peak).
+  # Bound how many worker invocations SQS drives concurrently. Each invocation
+  # fans its whole batch out into CONCURRENT analyzer calls (worker.js does
+  # Promise.allSettled over event.Records), so the worst-case peak is
+  #   batch_size × maximum_concurrency = 10 × 20 = 200 concurrent Sonnet 4 calls.
+  # A burst that co-arrives and sits queued is pulled up to batch_size (10) per
+  # poll and fanned out — removing the batching window does not lower this peak;
+  # in the staggered/typical case invocations carry ~1 artifact and actual
+  # concurrency is far below 200.
   #
-  # 20 → up to ~20 concurrent Sonnet 4 calls at burst (one artifact per invocation
-  # now that there's no batching window; was ~60 when a batch carried ~3 photos).
-  # This REQUIRES a Bedrock quota increase (us-east-1, cross-region Sonnet 4) above
-  # the defaults, or the app throttles (429 → SQS redrive). At ~8,500 tokens/call
-  # the target is roughly:
+  # Size the Bedrock quota for the 200-call peak, not the typical case, or the app
+  # throttles (429 → SQS redrive). REQUIRES a quota increase (us-east-1,
+  # cross-region Sonnet 4) above the defaults. At ~8,500 tokens/call, target:
   #   TPM ≥ 2,500,000  (default 200,000)   ← binding limit
   #   RPM ≥ 500        (default 200)
-  # These targets were sized on the old ~60-call peak, so they now carry extra
-  # headroom; prompt caching (#2) + output trim (#3) in the analyzer cut per-call
-  # tokens further. Keep the conservative sizing for burst safety. Valid range 2–1000.
+  # Prompt caching (#2) + output trim (#3) in the analyzer cut per-call tokens, so
+  # once those ship this same cap needs less quota — but size on the pre-
+  # optimization numbers above for burst headroom. Valid range 2–1000.
   scaling_config {
     maximum_concurrency = 20
   }
