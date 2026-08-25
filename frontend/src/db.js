@@ -138,7 +138,9 @@ function draftKey(flowType) {
 
 /* ---- draft (resumable in-progress checks, keyed by flow + current) ---- */
 export async function getDraft(flowType) {
-  return tx("draft", "readonly", (os) => reqToPromise(os.get(draftKey(flowType))));
+  return tx("draft", "readonly", (os) =>
+    reqToPromise(os.get(draftKey(flowType))),
+  );
 }
 export async function saveDraft(check) {
   await tx("draft", "readwrite", (os) => {

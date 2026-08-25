@@ -33,7 +33,8 @@ class DescribeInstead extends HTMLElement {
     }
 
     this._flowType = getFlowType();
-    this._routeBase = this._flowType === "single-problem" ? "/problem" : "/check";
+    this._routeBase =
+      this._flowType === "single-problem" ? "/problem" : "/check";
     this._sides = getSideOrder();
     this._sideIndex = getActiveSideIndex() ?? 0;
     this._side = this._sides[this._sideIndex] || this._sides[0];

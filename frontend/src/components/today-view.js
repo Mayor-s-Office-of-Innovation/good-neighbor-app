@@ -105,7 +105,9 @@ class TodayView extends HTMLElement {
     return html`
       <div class="home ${showFirstRun ? "home--first-run" : ""}">
         <div
-          class="screen screen--today-hero ${showFirstRun ? "screen--first-run" : ""}"
+          class="screen screen--today-hero ${showFirstRun
+            ? "screen--first-run"
+            : ""}"
           role="group"
           aria-label="Today"
         >
@@ -152,7 +154,9 @@ class TodayView extends HTMLElement {
       <div class="screen__sec home-lead">
         <div class="home-identity">
           ${identity.org
-            ? html`<p class="home-identity__org">${escapeHtml(identity.org)}</p>`
+            ? html`<p class="home-identity__org">
+                ${escapeHtml(identity.org)}
+              </p>`
             : ""}
           <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
         </div>
@@ -468,7 +472,9 @@ class TodayView extends HTMLElement {
           <div class="screen__sec home-lead">
             <div class="home-identity">
               ${identity.org
-                ? html`<p class="home-identity__org">${escapeHtml(identity.org)}</p>`
+                ? html`<p class="home-identity__org">
+                    ${escapeHtml(identity.org)}
+                  </p>`
                 : ""}
               <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
             </div>

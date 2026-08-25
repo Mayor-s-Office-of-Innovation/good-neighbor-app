@@ -300,13 +300,13 @@ class PerimeterCheck extends HTMLElement {
     const check = getCurrentCheck();
     this.querySelector("#segbar").innerHTML = this._sides
       .map((side, index) => {
-      const s = check.sides[side];
-      let state;
-      if (index === this._sideIndex) state = "current";
-      else if (s.items.length) state = "captured";
-      else if (s.skipped) state = "skipped";
-      else state = "pending";
-      return segment({ index, state });
+        const s = check.sides[side];
+        let state;
+        if (index === this._sideIndex) state = "current";
+        else if (s.items.length) state = "captured";
+        else if (s.skipped) state = "skipped";
+        else state = "pending";
+        return segment({ index, state });
       })
       .join("");
   }
