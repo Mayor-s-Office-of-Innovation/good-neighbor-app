@@ -10,7 +10,7 @@ import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { submitCheck } from "../services/submit-check.js";
 import {
-  SIDES,
+  getSideOrder,
   getCurrentCheck,
   isSideCovered,
   allItems,
@@ -45,9 +45,10 @@ class CheckReview extends HTMLElement {
       navigate("/today");
       return;
     }
+    const sides = getSideOrder();
 
-    const covered = SIDES.filter((s) => isSideCovered(s)).length;
-    const total = SIDES.length;
+    const covered = sides.filter((s) => isSideCovered(s)).length;
+    const total = sides.length;
     const items = allItems();
     const itemCount = items.length;
     const ready = covered === total && itemCount > 0;
@@ -94,7 +95,7 @@ class CheckReview extends HTMLElement {
         </div>
 
         <div class="rowcard">
-          ${SIDES.map((side) => this._sideRow(side, check.sides[side])).join(
+          ${sides.map((side) => this._sideRow(side, check.sides[side])).join(
             "",
           )}
         </div>

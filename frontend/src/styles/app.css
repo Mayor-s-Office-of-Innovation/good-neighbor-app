@@ -1221,6 +1221,10 @@ theme-toggle {
   font-weight: 700;
   font-size: 1.05rem;
 }
+.check__spacer {
+  display: inline-block;
+  min-width: 2.5rem;
+}
 .check__cancel:focus-visible,
 .check__skip:focus-visible {
   outline: 2px solid var(--brand-blue);

@@ -29,7 +29,13 @@ import {
   adaptCheckHeader,
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
-import { startCheck } from "../state/check-session.js";
+import {
+  getCurrentCheck,
+  getFlowType,
+  loadDraft,
+  startCheck,
+  startProblemReport,
+} from "../state/check-session.js";
 import { navigate } from "../router.js";
 
 class TodayView extends HTMLElement {
@@ -74,11 +80,24 @@ class TodayView extends HTMLElement {
 
     const start = this.querySelector("#start-check");
     if (start) {
-      start.addEventListener("click", () => {
+      start.addEventListener("click", async () => {
         // Resume just re-opens /check (the draft hydrates there); a fresh start
         // seeds a new in-progress check.
-        if (!hasDraft) startCheck(this._siteId);
+        const draft = getCurrentCheck() || (hasDraft ? await loadDraft() : null);
+        if (!draft || getFlowType() !== "perimeter") {
+          startCheck(this._siteId);
+        }
         navigate("/check");
+      });
+    }
+    const report = this.querySelector("#report-problem");
+    if (report) {
+      report.addEventListener("click", async () => {
+        const draft = getCurrentCheck() || (hasDraft ? await loadDraft() : null);
+        if (!draft || getFlowType() !== "single-problem") {
+          startProblemReport(this._siteId);
+        }
+        navigate("/problem");
       });
     }
     this._wireCards();
@@ -155,7 +174,7 @@ class TodayView extends HTMLElement {
         <button id="start-check" class="btn-ink" type="button">
           Start a check
         </button>
-        <button class="btn-outline" type="button">
+        <button id="report-problem" class="btn-outline" type="button">
           ${escapeHtml(reportLabel)}
         </button>
       </div>
