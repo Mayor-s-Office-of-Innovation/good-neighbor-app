@@ -348,14 +348,30 @@ export function contentTypeFromDataUrl(dataUrl) {
 
 /**
  * Turn a `data:` URL back into a Blob for the presigned PUT. The whole app stores
- * photos inline as JPEG data-URLs (`item.dataUrl`); this is the one-liner that
- * reconstitutes the bytes.
+ * photos inline as JPEG data-URLs (`item.dataUrl`); this reconstitutes the bytes.
+ *
+ * Decoded in-process rather than via `fetch(dataUrl)`: browsers subject `data:`
+ * fetches to the `connect-src` CSP directive, which is deliberately locked to the
+ * uploads bucket, so a fetch would be blocked. `atob` has no such restriction.
  * @param {string} dataUrl
  * @returns {Promise<Blob>}
  */
 export async function dataUrlToBlob(dataUrl) {
-  const res = await fetch(dataUrl);
-  return res.blob();
+  const comma = dataUrl.indexOf(",");
+  if (comma === -1) throw new ApiError("Malformed data URL", { status: 0 });
+  const header = dataUrl.slice(0, comma);
+  const data = dataUrl.slice(comma + 1);
+  const contentType = /^data:([^;,]+)/.exec(header)?.[1] || "image/jpeg";
+
+  if (!/;base64/i.test(header)) {
+    // Non-base64 (URL-encoded) data URL — decode as UTF-8 text.
+    return new Blob([decodeURIComponent(data)], { type: contentType });
+  }
+
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: contentType });
 }
 
 /**
