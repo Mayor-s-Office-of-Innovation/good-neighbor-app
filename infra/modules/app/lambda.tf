@@ -130,12 +130,17 @@ resource "aws_lambda_event_source_mapping" "worker" {
   function_response_types            = ["ReportBatchItemFailures"]
 
   # Bound how many worker invocations SQS drives concurrently. Each invocation
-  # fans out its batch (up to `batch_size` records) into concurrent analyzer
-  # calls, so peak Bedrock requests ≈ maximum_concurrency × (photos per check).
-  # 20 gives generous headroom for current single-app traffic while still
-  # capping a burst so it can't exhaust the Bedrock quota (→ 429s → DLQ).
-  # Raise this when streetconditions.org starts sharing the analyzer + after a
-  # Bedrock quota increase. Valid range is 2–1000.
+  # fans out its batch (typically one check's ~3 photos) into concurrent analyzer
+  # calls, so peak Bedrock calls ≈ maximum_concurrency × (photos per check).
+  #
+  # 20 → up to ~60 concurrent Sonnet 4 calls at burst. This REQUIRES a Bedrock
+  # quota increase (us-east-1, cross-region Sonnet 4) above the defaults, or the
+  # app throttles (429 → SQS redrive). At ~8,500 tokens/call the target is roughly:
+  #   TPM ≥ 2,500,000  (default 200,000)   ← binding limit
+  #   RPM ≥ 500        (default 200)
+  # Prompt caching (#2) + output trim (#3) in the analyzer cut per-call tokens, so
+  # once those ship this same cap needs less quota — but size the request on the
+  # pre-optimization numbers above for headroom. Valid range 2–1000.
   scaling_config {
     maximum_concurrency = 20
   }
