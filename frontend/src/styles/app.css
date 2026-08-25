@@ -2370,8 +2370,10 @@ theme-toggle {
   padding: 0;
   border: 0;
   background: transparent;
-  width: calc(100% - 3rem);
-  max-width: 340px;
+  box-sizing: border-box;
+  width: min(400px, calc(100vw - 2rem));
+  max-width: none;
+  margin: auto;
   color: var(--text);
 }
 .sheet::backdrop {
@@ -2379,8 +2381,10 @@ theme-toggle {
 }
 .sheet__panel {
   background: var(--surface);
-  border-radius: 18px;
-  padding: 0.9rem;
+  border-radius: 32px;
+  padding: 1rem;
+  width: 100%;
+  box-sizing: border-box;
   box-shadow: var(--shadow-lift);
 }
 .sheet__opts {
@@ -2389,23 +2393,32 @@ theme-toggle {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: 0.5rem;
+}
+.sheet__opts > li {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .sheet__opt {
+  display: block;
   width: 100%;
+  box-sizing: border-box;
   appearance: none;
   border: 0;
   margin: 0;
-  height: auto;
+  height: 54px;
   box-shadow: none;
   cursor: pointer;
   font: inherit;
-  font-weight: 600;
+  font-size: var(--wa-font-size-l);
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  line-height: 1.2;
   text-align: center;
-  color: var(--text);
+  color: var(--wa-color-neutral-on-normal, #424554);
   background: var(--surface-3);
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
+  border-radius: var(--radius-pill);
+  padding: 0 1.25rem;
 }
 .sheet__opt:focus-visible {
   outline: 2px solid var(--brand-blue);
@@ -2414,21 +2427,24 @@ theme-toggle {
 .sheet__cancel {
   display: block;
   width: 100%;
+  box-sizing: border-box;
   appearance: none;
   background: none;
   border: 0;
-  height: auto;
+  height: 54px;
   box-shadow: none;
-  margin: 0.3rem 0 0;
-  padding: 0.9rem 0 0.4rem;
+  margin: 0;
+  padding: 0 1.25rem;
   cursor: pointer;
   font: inherit;
-  font-weight: 600;
+  font-size: var(--wa-font-size-l);
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  line-height: 1.2;
   text-align: center;
-  color: var(--c-hazard);
+  color: var(--wa-color-danger-on-quiet, #b30532);
+  border-radius: var(--radius-pill);
 }
 .sheet__cancel:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
-  border-radius: 8px;
 }
