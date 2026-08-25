@@ -31,7 +31,8 @@ class ProblemReport extends HTMLElement {
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
-    const check = getCurrentCheck() || (await loadDraft("single-problem")) || null;
+    const check =
+      getCurrentCheck() || (await loadDraft("single-problem")) || null;
     if (!check) {
       ensureProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
@@ -48,7 +49,9 @@ class ProblemReport extends HTMLElement {
     this.innerHTML = this._webcam ? shellWebcam() : shell();
     this._fileInput = this.querySelector("#file-input");
 
-    this.querySelector("#cancel").addEventListener("click", () => this._cancel());
+    this.querySelector("#cancel").addEventListener("click", () =>
+      this._cancel(),
+    );
     this.querySelector("#describe-instead").addEventListener("click", () =>
       this._describeInstead(),
     );
@@ -162,7 +165,8 @@ class ProblemReport extends HTMLElement {
     const grid = this.querySelector("#shotgrid");
     grid.classList.toggle("shotgrid--empty", items.length === 0);
     const tile = this._useWebcam() ? "" : addTile(items.length === 0);
-    grid.innerHTML = items.map((item, index) => shotTile(item, index)).join("") + tile;
+    grid.innerHTML =
+      items.map((item, index) => shotTile(item, index)).join("") + tile;
   }
 
   _syncControls() {

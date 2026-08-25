@@ -95,9 +95,9 @@ class CheckReview extends HTMLElement {
         </div>
 
         <div class="rowcard">
-          ${sides.map((side) => this._sideRow(side, check.sides[side])).join(
-            "",
-          )}
+          ${sides
+            .map((side) => this._sideRow(side, check.sides[side]))
+            .join("")}
         </div>
 
         <div class="infostrip">

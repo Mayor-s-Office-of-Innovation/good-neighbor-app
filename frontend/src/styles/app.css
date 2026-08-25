@@ -443,7 +443,10 @@ theme-toggle {
 }
 .screen--first-run {
   width: 100%;
-  min-height: min(47rem, calc(100dvh - max(1rem, env(safe-area-inset-top)) - 2rem));
+  min-height: min(
+    47rem,
+    calc(100dvh - max(1rem, env(safe-area-inset-top)) - 2rem)
+  );
   display: flex;
 }
 .screen__sec {

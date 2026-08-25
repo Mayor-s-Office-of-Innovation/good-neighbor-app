@@ -28,9 +28,7 @@ export const SINGLE_PROBLEM_SIDE = "Problem";
 
 function normalizeSideOrder(sideOrder) {
   const order = Array.isArray(sideOrder)
-    ? sideOrder
-        .map((side) => String(side || "").trim())
-        .filter(Boolean)
+    ? sideOrder.map((side) => String(side || "").trim()).filter(Boolean)
     : [];
   return order.length ? [...new Set(order)] : [...SIDES];
 }

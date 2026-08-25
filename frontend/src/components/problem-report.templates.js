@@ -10,7 +10,11 @@ export const shell = () => html`
       <span class="check__spacer" aria-hidden="true"></span>
     </div>
 
-    <div class="shotgrid" id="shotgrid" aria-label="Photos for this report"></div>
+    <div
+      class="shotgrid"
+      id="shotgrid"
+      aria-label="Photos for this report"
+    ></div>
 
     <input
       type="file"
