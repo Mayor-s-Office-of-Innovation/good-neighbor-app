@@ -12,6 +12,8 @@ import { currentRoute, onRouteChange, navigate } from "../router.js";
 import { setupView, appShell } from "./app-root.templates.js";
 
 const ROUTE_VIEW = [
+  ["/problem/describe", "describe-instead"],
+  ["/problem", "problem-report"],
   ["/check/describe", "describe-instead"],
   ["/check", "perimeter-check"],
   ["/review", "check-review"],

@@ -19,10 +19,12 @@ import { submitCheck } from "../services/submit-check.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 // <in-browser-camera> registers itself via main.js (opt-in ?webcam feature).
 import {
-  SIDES,
   ensureCheck,
+  startCheck,
   loadDraft,
+  getSideOrder,
   getCurrentCheck,
+  getFlowType,
   getActiveSideIndex,
   setActiveSideIndex,
   consumePostDescribeAction,
@@ -30,6 +32,7 @@ import {
   removeItem,
   skipSide,
   isSideCovered,
+  isCurrentSession,
 } from "../state/check-session.js";
 import {
   shell,
@@ -45,24 +48,30 @@ class PerimeterCheck extends HTMLElement {
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     // Resume a persisted draft if one exists; else start fresh.
-    const check = getCurrentCheck() || (await loadDraft()) || null;
-    if (!check) ensureCheck(this._siteId);
+    const check = getCurrentCheck() || (await loadDraft("perimeter")) || null;
+    if (!check) {
+      ensureCheck(this._siteId);
+    } else if (getFlowType() !== "perimeter") {
+      startCheck(this._siteId);
+    }
+    this._checkId = getCurrentCheck()?.id || "";
+    this._sides = getSideOrder();
 
     const activeSideIndex = getActiveSideIndex();
     const hasActiveSide =
-      activeSideIndex >= 0 && activeSideIndex < SIDES.length;
+      activeSideIndex >= 0 && activeSideIndex < this._sides.length;
     const postDescribeAction = consumePostDescribeAction();
     // Resume at the explicitly active side when returning from /check/describe.
     // Otherwise start at the first side that still needs attention.
     if (postDescribeAction?.type === "advance") {
       this._sideIndex = postDescribeAction.sideIndex;
     } else if (postDescribeAction?.type === "submit") {
-      this._sideIndex = SIDES.length - 1;
+      this._sideIndex = this._sides.length - 1;
       this._pendingSubmit = true;
-    } else if (hasActiveSide && !isSideCovered(SIDES[activeSideIndex])) {
+    } else if (hasActiveSide && !isSideCovered(this._sides[activeSideIndex])) {
       this._sideIndex = activeSideIndex;
     } else {
-      const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
+      const firstOpen = this._sides.findIndex((s) => !isSideCovered(s));
       this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
     }
 
@@ -133,10 +142,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   get _side() {
-    return SIDES[this._sideIndex];
+    return this._sides[this._sideIndex];
   }
   get _isLast() {
-    return this._sideIndex === SIDES.length - 1;
+    return this._sideIndex === this._sides.length - 1;
   }
   _sideState() {
     return getCurrentCheck().sides[this._side];
@@ -154,8 +163,26 @@ class PerimeterCheck extends HTMLElement {
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
+    const originCheckId = this._checkId;
     const reader = new FileReader();
-    reader.onload = () => this._addPhoto(reader.result);
+    this._fileReader = reader;
+    reader.onload = () => {
+      if (!this.isConnected || !isCurrentSession(originCheckId, "perimeter")) {
+        this._fileReader = null;
+        return;
+      }
+      this._fileReader = null;
+      this._addPhoto(reader.result);
+    };
+    reader.onerror = () => {
+      this._fileReader = null;
+    };
+    reader.onabort = () => {
+      this._fileReader = null;
+    };
     reader.readAsDataURL(file);
   }
 
@@ -164,6 +191,12 @@ class PerimeterCheck extends HTMLElement {
     this._renderSegments();
     this._renderShots();
     this._syncControls();
+  }
+
+  disconnectedCallback() {
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
   }
 
   /* ---- grid interactions (add + delete, delegated) ---- */
@@ -257,7 +290,7 @@ class PerimeterCheck extends HTMLElement {
   _renderSide() {
     setActiveSideIndex(this._sideIndex);
     this.querySelector("#side-progress").textContent =
-      `Side ${this._sideIndex + 1} of ${SIDES.length}`;
+      `Side ${this._sideIndex + 1} of ${this._sides.length}`;
     this._renderSegments();
     this._renderShots();
     this._syncControls();
@@ -265,15 +298,17 @@ class PerimeterCheck extends HTMLElement {
 
   _renderSegments() {
     const check = getCurrentCheck();
-    this.querySelector("#segbar").innerHTML = SIDES.map((side, index) => {
-      const s = check.sides[side];
-      let state;
-      if (index === this._sideIndex) state = "current";
-      else if (s.items.length) state = "captured";
-      else if (s.skipped) state = "skipped";
-      else state = "pending";
-      return segment({ index, state });
-    }).join("");
+    this.querySelector("#segbar").innerHTML = this._sides
+      .map((side, index) => {
+        const s = check.sides[side];
+        let state;
+        if (index === this._sideIndex) state = "current";
+        else if (s.items.length) state = "captured";
+        else if (s.skipped) state = "skipped";
+        else state = "pending";
+        return segment({ index, state });
+      })
+      .join("");
   }
 
   // This side's shots as an inline grid. Native path (and webcam fallback) appends
@@ -287,7 +322,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _syncControls() {
-    const side = SIDES[this._sideIndex];
+    const side = this._sides[this._sideIndex];
     const canAdvanceOrSubmit = isSideCovered(side);
     const next = this.querySelector("#next-side");
     next.disabled = !canAdvanceOrSubmit;

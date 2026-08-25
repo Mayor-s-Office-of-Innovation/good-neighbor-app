@@ -24,6 +24,18 @@ import {
 } from "../db.js";
 
 export const SIDES = ["North", "East", "South", "West"];
+export const SINGLE_PROBLEM_SIDE = "Problem";
+
+function normalizeSideOrder(sideOrder) {
+  const order = Array.isArray(sideOrder)
+    ? sideOrder.map((side) => String(side || "").trim()).filter(Boolean)
+    : [];
+  return order.length ? [...new Set(order)] : [...SIDES];
+}
+
+function normalizeFlowType(flowType) {
+  return flowType === "single-problem" ? "single-problem" : "perimeter";
+}
 
 function normalizeValidation(validation = {}) {
   return {
@@ -69,21 +81,24 @@ function normalizeSideState(sideState = {}) {
 
 function normalizeCheck(check) {
   if (!check) return null;
+  const sideOrder = normalizeSideOrder(check.sideOrder || check.sides?.order);
   const sides = {};
-  for (const side of SIDES) {
+  for (const side of sideOrder) {
     sides[side] = normalizeSideState(check.sides?.[side]);
   }
   return {
     ...check,
+    flowType: normalizeFlowType(check.flowType),
     activeSideIndex:
       typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
+    sideOrder,
     sides,
   };
 }
 
 function rehydrateDerivedFields(check) {
   if (!check) return null;
-  for (const side of SIDES) {
+  for (const side of check.sideOrder || SIDES) {
     const description = check.sides[side]?.description;
     if (!description) continue;
     description.validation = {
@@ -123,14 +138,28 @@ function currentWindow() {
 }
 
 export function startCheck(siteId) {
+  return startFlow(siteId, { flowType: "perimeter", sideOrder: SIDES });
+}
+
+export function startProblemReport(siteId) {
+  return startFlow(siteId, {
+    flowType: "single-problem",
+    sideOrder: [SINGLE_PROBLEM_SIDE],
+  });
+}
+
+function startFlow(siteId, { flowType, sideOrder }) {
+  const order = normalizeSideOrder(sideOrder);
   const sides = {};
-  for (const s of SIDES) sides[s] = createSideState();
+  for (const s of order) sides[s] = createSideState();
   current = {
     id: newId(),
     siteId,
+    flowType,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
     activeSideIndex: 0,
+    sideOrder: order,
     sides,
     status: "in-progress",
   };
@@ -153,15 +182,25 @@ export function onCheckSessionChange(fn) {
  * is already in memory it wins (no clobbering a live walk). Returns the active check
  * or null. Awaited at /check boot and by home to detect a resumable draft.
  */
-export async function loadDraft() {
-  if (current) return current;
-  const draft = await getDraft();
-  if (draft) current = rehydrateDerivedFields(normalizeCheck(draft));
+export async function loadDraft(flowType) {
+  const requestedFlow = flowType ? normalizeFlowType(flowType) : null;
+  if (current && (!requestedFlow || current.flowType === requestedFlow)) {
+    return current;
+  }
+  const draft = await getDraft(requestedFlow);
+  if (!draft) {
+    return requestedFlow ? null : current;
+  }
+  current = rehydrateDerivedFields(normalizeCheck(draft));
   return current;
 }
 
 export function ensureCheck(siteId) {
   return current || startCheck(siteId);
+}
+
+export function ensureProblemReport(siteId) {
+  return current || startProblemReport(siteId);
 }
 
 /**
@@ -184,9 +223,26 @@ export function getActiveSideIndex() {
     : null;
 }
 
+export function getSideOrder() {
+  return current?.sideOrder || SIDES;
+}
+
+export function getFlowType() {
+  return current?.flowType || "perimeter";
+}
+
+export function isCurrentSession(checkId, flowType) {
+  return Boolean(
+    current &&
+      current.id === checkId &&
+      (!flowType || current.flowType === normalizeFlowType(flowType)),
+  );
+}
+
 export function setActiveSideIndex(index) {
   if (!current) return;
-  current.activeSideIndex = Math.max(0, Math.min(SIDES.length - 1, index));
+  const sideCount = getSideOrder().length;
+  current.activeSideIndex = Math.max(0, Math.min(sideCount - 1, index));
   persist();
   emit();
 }
@@ -234,13 +290,15 @@ export function setSideDescriptionValidation(side, validation) {
 /** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
 export function addItem(side, item) {
   if (!current) return null;
+  const sideState = current.sides[side];
+  if (!sideState) return null;
   const record = {
     id: newId(),
     side,
     uploadedAt: new Date().toISOString(),
     ...item,
   };
-  current.sides[side].items.push(record);
+  sideState.items.push(record);
   persist();
   emit();
   return record;
@@ -249,6 +307,7 @@ export function addItem(side, item) {
 export function removeItem(side, itemId) {
   if (!current) return;
   const s = current.sides[side];
+  if (!s) return;
   s.items = s.items.filter((i) => i.id !== itemId);
   persist();
   emit();
@@ -270,13 +329,13 @@ export function isSideCovered(side) {
 }
 
 export function coveredCount() {
-  return SIDES.filter(isSideCovered).length;
+  return getSideOrder().filter(isSideCovered).length;
 }
 
 /** Flat list of all capture items across sides, in side order. */
 export function allItems() {
   if (!current) return [];
-  return SIDES.flatMap((s) => current.sides[s].items);
+  return getSideOrder().flatMap((s) => current.sides[s].items);
 }
 
 /**
@@ -335,9 +394,11 @@ export function markAnalysisFailed(message) {
  * submit/discard and on the review screen's Continue.
  */
 export function clearCheck() {
+  const flowType = current?.flowType;
   current = null;
   postDescribeAction = null;
-  void clearDraft();
+  void clearDraft(flowType);
+  if (flowType) void clearDraft();
   void clearReview();
   emit();
 }
