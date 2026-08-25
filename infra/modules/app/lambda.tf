@@ -64,6 +64,7 @@ resource "aws_lambda_function" "api" {
 resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public egress to the analyzer + AWS APIs; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
+  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
   function_name    = "${local.name_prefix}-worker"
   role             = aws_iam_role.worker.arn
   runtime          = "nodejs22.x"
