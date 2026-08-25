@@ -245,6 +245,24 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   }
 }
 
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+
+  # Media is uploaded directly from the browser via presigned PUT URLs, so the
+  # bucket must answer CORS preflight for the frontend origin(s). Reads stay
+  # server-side (worker), but GET/HEAD are allowed for presigned preview URLs.
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
