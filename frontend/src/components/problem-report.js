@@ -20,6 +20,7 @@ import {
   removeItem,
   isSideCovered,
   getFlowType,
+  isCurrentSession,
 } from "../state/check-session.js";
 import { shell, shellWebcam } from "./problem-report.templates.js";
 import { shotTile, addTile } from "./perimeter-check.templates.js";
@@ -30,12 +31,13 @@ class ProblemReport extends HTMLElement {
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
-    const check = getCurrentCheck() || (await loadDraft()) || null;
+    const check = getCurrentCheck() || (await loadDraft("single-problem")) || null;
     if (!check) {
       ensureProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
       startProblemReport(this._siteId);
     }
+    this._checkId = getCurrentCheck()?.id || "";
 
     this._side = getSideOrder()[0];
     setActiveSideIndex(0);
@@ -102,8 +104,29 @@ class ProblemReport extends HTMLElement {
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
+    const originCheckId = this._checkId;
     const reader = new FileReader();
-    reader.onload = () => this._addPhoto(reader.result);
+    this._fileReader = reader;
+    reader.onload = () => {
+      if (
+        !this.isConnected ||
+        !isCurrentSession(originCheckId, "single-problem")
+      ) {
+        this._fileReader = null;
+        return;
+      }
+      this._fileReader = null;
+      this._addPhoto(reader.result);
+    };
+    reader.onerror = () => {
+      this._fileReader = null;
+    };
+    reader.onabort = () => {
+      this._fileReader = null;
+    };
     reader.readAsDataURL(file);
   }
 
@@ -139,7 +162,7 @@ class ProblemReport extends HTMLElement {
     const grid = this.querySelector("#shotgrid");
     grid.classList.toggle("shotgrid--empty", items.length === 0);
     const tile = this._useWebcam() ? "" : addTile(items.length === 0);
-    grid.innerHTML = items.map(shotTile).join("") + tile;
+    grid.innerHTML = items.map((item, index) => shotTile(item, index)).join("") + tile;
   }
 
   _syncControls() {
@@ -179,6 +202,12 @@ class ProblemReport extends HTMLElement {
     }
     el.textContent =
       "Couldn’t file this report — the server didn’t respond. Try again.";
+  }
+
+  disconnectedCallback() {
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
   }
 }
 

@@ -4,10 +4,11 @@
  * Persists text/voice input, validates it, and returns to the capture flow.
  */
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { currentRoute, navigate } from "../router.js";
 import {
   getFlowType,
   getCurrentCheck,
+  loadDraft,
   getActiveSideIndex,
   getSideOrder,
   getSideDescription,
@@ -20,9 +21,14 @@ import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 class DescribeInstead extends HTMLElement {
   async connectedCallback() {
     this._site = await getSite();
-    const check = getCurrentCheck();
+    this._routeBase = currentRoute().startsWith("/problem")
+      ? "/problem"
+      : "/check";
+    const expectedFlow =
+      this._routeBase === "/problem" ? "single-problem" : "perimeter";
+    const check = getCurrentCheck() || (await loadDraft(expectedFlow));
     if (!check || !this._site) {
-      navigate("/check");
+      navigate(this._routeBase);
       return;
     }
 

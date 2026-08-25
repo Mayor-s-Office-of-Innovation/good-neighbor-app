@@ -123,7 +123,7 @@ export async function submitCheck() {
   markSubmitted(analysesToFindings(detail.analyses), completion.assessment);
 
   // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
-  await clearDraft();
+  await clearDraft(active.flowType);
   mark("submit:done", { expectedArtifacts });
   return detail;
 }

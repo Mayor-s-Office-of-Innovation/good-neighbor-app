@@ -32,6 +32,7 @@ import {
   removeItem,
   skipSide,
   isSideCovered,
+  isCurrentSession,
 } from "../state/check-session.js";
 import {
   shell,
@@ -47,12 +48,13 @@ class PerimeterCheck extends HTMLElement {
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     // Resume a persisted draft if one exists; else start fresh.
-    const check = getCurrentCheck() || (await loadDraft()) || null;
+    const check = getCurrentCheck() || (await loadDraft("perimeter")) || null;
     if (!check) {
       ensureCheck(this._siteId);
     } else if (getFlowType() !== "perimeter") {
       startCheck(this._siteId);
     }
+    this._checkId = getCurrentCheck()?.id || "";
     this._sides = getSideOrder();
 
     const activeSideIndex = getActiveSideIndex();
@@ -161,8 +163,26 @@ class PerimeterCheck extends HTMLElement {
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
+    const originCheckId = this._checkId;
     const reader = new FileReader();
-    reader.onload = () => this._addPhoto(reader.result);
+    this._fileReader = reader;
+    reader.onload = () => {
+      if (!this.isConnected || !isCurrentSession(originCheckId, "perimeter")) {
+        this._fileReader = null;
+        return;
+      }
+      this._fileReader = null;
+      this._addPhoto(reader.result);
+    };
+    reader.onerror = () => {
+      this._fileReader = null;
+    };
+    reader.onabort = () => {
+      this._fileReader = null;
+    };
     reader.readAsDataURL(file);
   }
 
@@ -171,6 +191,12 @@ class PerimeterCheck extends HTMLElement {
     this._renderSegments();
     this._renderShots();
     this._syncControls();
+  }
+
+  disconnectedCallback() {
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
   }
 
   /* ---- grid interactions (add + delete, delegated) ---- */
