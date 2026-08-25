@@ -111,7 +111,9 @@ class ProblemReport extends HTMLElement {
   /** @returns {SideState} */
   _sideState() {
     const check = getCurrentCheck();
-    return /** @type {SideState} */ (check?.sides?.[this._side] || { items: [] });
+    return /** @type {SideState} */ (
+      check?.sides?.[this._side] || { items: [] }
+    );
   }
 
   /** @returns {void} */
@@ -183,7 +185,10 @@ class ProblemReport extends HTMLElement {
 
   /** @param {string} dataUrl */
   _addPhoto(dataUrl) {
-    addItem(this._side, /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }));
+    addItem(
+      this._side,
+      /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
+    );
     this._renderShots();
     this._syncControls();
   }
