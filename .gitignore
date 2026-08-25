@@ -34,3 +34,4 @@ override.tf.json
 
 # Local agent workspace artifacts
 .agents/
+skills-lock.json

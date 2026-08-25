@@ -5,14 +5,12 @@
  */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { validateSideDescription } from "../services/api.js";
 import {
   SIDES,
   getCurrentCheck,
   getActiveSideIndex,
   getSideDescription,
   setSideDescription,
-  setSideDescriptionValidation,
   setPostDescribeAction,
 } from "../state/check-session.js";
 import { startTranscribeSession } from "../services/web-speech-transcribe.js";
@@ -34,16 +32,10 @@ class DescribeInstead extends HTMLElement {
     this._text = this._savedText;
     this._voiceState = "idle";
     this._voiceError = "";
-    this._validationState = "idle";
-    this._validationError = "";
     this._transcribeSession = null;
     this._transcribeRunId = 0;
     this._inputSource =
       this._savedDescription?.source || (this._savedText ? "typed" : null);
-    this._validation = this._savedDescription?.validation || {
-      whatYouCanSee: false,
-      whereItIs: false,
-    };
     this._programmaticFieldUpdate = false;
 
     this._render();
@@ -57,9 +49,6 @@ class DescribeInstead extends HTMLElement {
     this._voice = this.querySelector("#describe-voice");
     this._clear = this.querySelector("#describe-clear");
     this._voiceStatus = this.querySelector("#describe-voice-status");
-    this._validationStatus = this.querySelector("#describe-validation-status");
-    this._whatChip = this.querySelector("#describe-chip-what");
-    this._whereChip = this.querySelector("#describe-chip-where");
     this._field.value = this._text;
 
     this.querySelector("#describe-close").addEventListener("click", () =>
@@ -96,20 +85,12 @@ class DescribeInstead extends HTMLElement {
           this._inputSource === "transcribed" || this._inputSource === "mixed"
             ? "mixed"
             : "typed";
-        this._validation = {
-          whatYouCanSee: false,
-          whereItIs: false,
-        };
-        this._validationState = "idle";
-        this._validationError = "";
       }
       this._syncVoiceLabel();
-      this._syncValidationUi();
       this._syncClearUi();
     });
 
     this._syncVoiceUi();
-    this._syncValidationUi();
     this._syncClearUi();
     this._field.focus();
     this._field.setSelectionRange(
@@ -159,10 +140,8 @@ class DescribeInstead extends HTMLElement {
       this._continue.disabled =
         !this._text.trim() ||
         this._voiceState === "recording" ||
-        this._voiceState === "processing" ||
-        this._validationState === "loading";
-      this._continue.textContent =
-        this._validationState === "loading" ? "Checking…" : "Continue";
+        this._voiceState === "processing";
+      this._continue.textContent = "Continue";
     }
     if (!this._voiceStatus) return;
     if (this._voiceError) {
@@ -196,40 +175,6 @@ class DescribeInstead extends HTMLElement {
     this._syncVoiceUi();
   }
 
-  _syncValidationUi() {
-    if (this._whatChip) {
-      this._whatChip.dataset.complete = this._validation.whatYouCanSee
-        ? "true"
-        : "false";
-    }
-    if (this._whereChip) {
-      this._whereChip.dataset.complete = this._validation.whereItIs
-        ? "true"
-        : "false";
-    }
-    if (this._validationStatus) {
-      if (this._validationState === "loading") {
-        this._validationStatus.removeAttribute("aria-hidden");
-        this._validationStatus.textContent = "Checking description…";
-        this._validationStatus.dataset.kind = "";
-        this._validationStatus.setAttribute("role", "status");
-      } else if (this._validationError) {
-        this._validationStatus.removeAttribute("aria-hidden");
-        this._validationStatus.textContent =
-          "Please share only things you can see, and make sure to describe where you see them.";
-        this._validationStatus.dataset.kind = "error";
-        this._validationStatus.setAttribute("role", "alert");
-      } else {
-        this._validationStatus.setAttribute("aria-hidden", "true");
-        this._validationStatus.textContent = "";
-        delete this._validationStatus.dataset.kind;
-        this._validationStatus.removeAttribute("role");
-      }
-    }
-    this._syncClearUi();
-    this._syncVoiceUi();
-  }
-
   _clearAll() {
     this._programmaticFieldUpdate = true;
     this._field.value = "";
@@ -238,15 +183,10 @@ class DescribeInstead extends HTMLElement {
     this._savedText = "";
     this._savedDescription = null;
     this._inputSource = null;
-    this._validation = {
-      whatYouCanSee: false,
-      whereItIs: false,
-    };
-    this._validationState = "idle";
-    this._validationError = "";
     this._voiceError = "";
     setSideDescription(this._side, null);
-    this._syncValidationUi();
+    this._syncVoiceUi();
+    this._syncClearUi();
     this._field.focus();
   }
 
@@ -408,55 +348,22 @@ class DescribeInstead extends HTMLElement {
   async _onContinue() {
     const text = this._text.trim();
     if (!text) return;
-    this._validationState = "loading";
-    this._validationError = "";
-    this._syncValidationUi();
-    try {
-      const result = await validateSideDescription(
-        this._siteCheckId(),
-        this._side,
-        {
-          text,
-        },
-      );
-      this._validation = {
-        whatYouCanSee: Boolean(result.whatYouCanSee),
-        whereItIs: Boolean(result.whereItIs),
-      };
-      const accepted =
-        this._validation.whatYouCanSee && this._validation.whereItIs;
-      setSideDescription(this._side, {
-        kind: "note",
-        text,
-        source: this._inputSource || "typed",
-        validated: accepted,
-        validation: this._validation,
-      });
-      if (!accepted) {
-        this._validationState = "idle";
-        this._validationError =
-          result.message || "Add what you can see and where the issue is.";
-        this._syncValidationUi();
-        return;
-      }
-      setSideDescriptionValidation(this._side, this._validation);
-      this._validationState = "idle";
-      this._validationError = "";
-      this._syncValidationUi();
-      setPostDescribeAction(
-        this._sideIndex === SIDES.length - 1
-          ? { type: "submit" }
-          : { type: "advance", sideIndex: this._sideIndex + 1 },
-      );
-      navigate("/check");
-    } catch (error) {
-      this._validationState = "idle";
-      this._validationError =
-        error?.body?.message ||
-        error?.message ||
-        "We couldn’t check this description right now. Try again.";
-      this._syncValidationUi();
-    }
+    setSideDescription(this._side, {
+      kind: "note",
+      text,
+      source: this._inputSource || "typed",
+      validated: true,
+      validation: {
+        whatYouCanSee: true,
+        whereItIs: true,
+      },
+    });
+    setPostDescribeAction(
+      this._sideIndex === SIDES.length - 1
+        ? { type: "submit" }
+        : { type: "advance", sideIndex: this._sideIndex + 1 },
+    );
+    navigate("/check");
   }
 
   _siteCheckId() {
@@ -469,8 +376,11 @@ class DescribeInstead extends HTMLElement {
       kind: "note",
       text: this._text.trim(),
       source: this._inputSource || "typed",
-      validated: false,
-      validation: this._validation,
+      validated: true,
+      validation: {
+        whatYouCanSee: true,
+        whereItIs: true,
+      },
     });
   }
 }
