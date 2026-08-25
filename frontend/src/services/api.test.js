@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, waitForAnalyses } from "./api.js";
+import { ApiError, dataUrlToBlob, waitForAnalyses } from "./api.js";
 
 /**
  * A fetch stub whose responses are driven by successive `getCheck` payloads.
@@ -100,5 +100,44 @@ describe("waitForAnalyses", () => {
       expected: 2,
       analyzed: 1,
     });
+  });
+});
+
+describe("dataUrlToBlob", () => {
+  it("decodes a base64 JPEG data URL to a Blob of the right type and bytes", async () => {
+    // "hi" → base64 "aGk="
+    const blob = await dataUrlToBlob("data:image/jpeg;base64,aGk=");
+    expect(blob.type).toBe("image/jpeg");
+    expect(await blob.text()).toBe("hi");
+  });
+
+  it("round-trips arbitrary bytes (not just ASCII-safe input)", async () => {
+    const bytes = new Uint8Array([0, 255, 16, 128, 1]);
+    const b64 = btoa(String.fromCharCode(...bytes));
+    const blob = await dataUrlToBlob(
+      `data:application/octet-stream;base64,${b64}`,
+    );
+    const out = new Uint8Array(await blob.arrayBuffer());
+    expect(Array.from(out)).toEqual(Array.from(bytes));
+  });
+
+  it("does not use fetch (would be blocked by connect-src CSP)", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    await dataUrlToBlob("data:image/jpeg;base64,aGk=");
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("decodes a non-base64 (URL-encoded) data URL as text", async () => {
+    const blob = await dataUrlToBlob("data:text/plain,hello%20world");
+    expect(blob.type).toBe("text/plain");
+    expect(await blob.text()).toBe("hello world");
+  });
+
+  it("throws ApiError on a malformed data URL with no comma", async () => {
+    await expect(
+      dataUrlToBlob("data:image/jpeg;base64"),
+    ).rejects.toBeInstanceOf(ApiError);
   });
 });
