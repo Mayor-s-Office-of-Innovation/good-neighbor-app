@@ -16,6 +16,8 @@ export const shell = () => html`
       type="file"
       id="file-input"
       class="visually-hidden"
+      tabindex="-1"
+      aria-hidden="true"
       accept="image/*"
       capture="environment"
     />
@@ -59,6 +61,8 @@ export const shellWebcam = () => html`
       type="file"
       id="file-input"
       class="visually-hidden"
+      tabindex="-1"
+      aria-hidden="true"
       accept="image/*"
       capture="environment"
     />

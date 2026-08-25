@@ -132,16 +132,28 @@ export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
 }
 
-/* ---- draft (single resumable in-progress check, key 'current') ---- */
-export async function getDraft() {
-  return tx("draft", "readonly", (os) => reqToPromise(os.get("current")));
+function draftKey(flowType) {
+  return flowType ? `flow:${flowType}` : "current";
+}
+
+/* ---- draft (resumable in-progress checks, keyed by flow + current) ---- */
+export async function getDraft(flowType) {
+  return tx("draft", "readonly", (os) => reqToPromise(os.get(draftKey(flowType))));
 }
 export async function saveDraft(check) {
-  await tx("draft", "readwrite", (os) => os.put(check, "current"));
+  await tx("draft", "readwrite", (os) => {
+    os.put(check, "current");
+    if (check?.flowType) os.put(check, draftKey(check.flowType));
+  });
   return check;
 }
-export async function clearDraft() {
-  return tx("draft", "readwrite", (os) => os.delete("current"));
+export async function clearDraft(flowType) {
+  return tx("draft", "readwrite", (os) => {
+    os.delete(draftKey(flowType));
+    if (!flowType) {
+      os.delete("current");
+    }
+  });
 }
 
 /* ---- review (single just-submitted check awaiting Continue, key 'current') ---- */

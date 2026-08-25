@@ -18,7 +18,7 @@
   tag; split into a .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite, getDraft } from "../db.js";
+import { getSite } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -30,8 +30,6 @@ import {
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
 import {
-  getCurrentCheck,
-  getFlowType,
   loadDraft,
   startCheck,
   startProblemReport,
@@ -70,21 +68,17 @@ class TodayView extends HTMLElement {
     const last = submitted[0];
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
-    const hasDraft = !!(await getDraft());
-
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
 
-    this.innerHTML = this._render({ last, tasks, hasDraft });
+    this.innerHTML = this._render({ last, tasks });
 
     const start = this.querySelector("#start-check");
     if (start) {
       start.addEventListener("click", async () => {
-        // Resume just re-opens /check (the draft hydrates there); a fresh start
-        // seeds a new in-progress check.
-        const draft = getCurrentCheck() || (hasDraft ? await loadDraft() : null);
-        if (!draft || getFlowType() !== "perimeter") {
+        const draft = await loadDraft("perimeter");
+        if (!draft) {
           startCheck(this._siteId);
         }
         navigate("/check");
@@ -93,8 +87,8 @@ class TodayView extends HTMLElement {
     const report = this.querySelector("#report-problem");
     if (report) {
       report.addEventListener("click", async () => {
-        const draft = getCurrentCheck() || (hasDraft ? await loadDraft() : null);
-        if (!draft || getFlowType() !== "single-problem") {
+        const draft = await loadDraft("single-problem");
+        if (!draft) {
           startProblemReport(this._siteId);
         }
         navigate("/problem");
@@ -103,7 +97,7 @@ class TodayView extends HTMLElement {
     this._wireCards();
   }
 
-  _render({ last, tasks, hasDraft }) {
+  _render({ last, tasks }) {
     const onsite = tasks.filter((t) => t.type === "onsite");
     const city = tasks.filter((t) => t.type === "city_escalation");
     const showFirstRun = !last && tasks.length === 0;
