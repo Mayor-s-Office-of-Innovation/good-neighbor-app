@@ -662,22 +662,14 @@ theme-toggle {
   line-height: 1;
 }
 .assessment-tile__dismiss {
-  appearance: none;
-  border: 0;
-  background: none;
   color: var(--text-secondary);
-  cursor: pointer;
-  padding: 0.15rem;
-  min-height: auto;
-  box-shadow: none;
   position: absolute;
-  top: 0.6rem;
-  right: 0.7rem;
+  top: 0.35rem;
+  right: 0.45rem;
 }
-.assessment-tile__dismiss:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 6px;
+.assessment-tile__dismiss::part(button) {
+  min-height: 2rem;
+  padding-inline: 0.45rem;
 }
 .assessment-tile__headline {
   margin: 0;
@@ -714,10 +706,12 @@ theme-toggle {
   justify-content: flex-start;
   margin-top: 0.15rem;
 }
-.assessment-tile__actions .btn-outline--sm {
+.assessment-tile__actions wa-button {
   min-height: 34px;
-  padding-inline: 0.95rem;
   font-size: 0.82rem;
+}
+.assessment-tile__actions wa-button::part(button) {
+  padding-inline: 0.95rem;
 }
 
 @keyframes assessment-slide {
@@ -2618,46 +2612,19 @@ theme-toggle {
 }
 .sheet__opt {
   width: 100%;
-  appearance: none;
-  border: 0;
   margin: 0;
   height: auto;
-  box-shadow: none;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  text-align: center;
-  color: var(--text);
-  background: var(--surface-3);
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
 }
-.sheet__opt--danger {
-  background: color-mix(in srgb, var(--danger, #b42318) 14%, var(--surface));
-  color: var(--danger, #b42318);
-}
-.sheet__opt:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
+.sheet__opt::part(button) {
+  width: 100%;
+  min-height: 46px;
 }
 .sheet__cancel {
   display: block;
   width: 100%;
-  appearance: none;
-  background: transparent;
-  border: 1px solid var(--c-line);
-  border-radius: 999px;
-  min-height: 46px;
-  box-shadow: none;
   margin: 0;
-  padding: 0.7rem 1rem;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 700;
-  text-align: center;
-  color: var(--text);
 }
-.sheet__cancel:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
+.sheet__cancel::part(button) {
+  width: 100%;
+  min-height: 46px;
 }

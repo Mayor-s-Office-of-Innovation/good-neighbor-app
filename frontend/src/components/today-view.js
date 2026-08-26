@@ -257,26 +257,29 @@ class TodayView extends HTMLElement {
                 <span class="assessment-tile__spark" aria-hidden="true">✦</span>
                 AI analysis complete
               </p>
-              <button
+              <wa-button
                 id="cancel-assessment-open"
                 class="assessment-tile__dismiss"
                 type="button"
+                appearance="plain"
+                size="small"
                 aria-label="Cancel existing submission"
               >
                 <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </button>
+              </wa-button>
             </div>
             <p class="assessment-tile__headline">
               Report ready to review and confirm.
             </p>
             <div class="assessment-tile__actions">
-              <button
+              <wa-button
                 id="review-assessment"
-                class="btn-outline btn-outline--sm"
                 type="button"
+                appearance="outlined"
+                size="small"
               >
                 Review assessment
-              </button>
+              </wa-button>
             </div>
           </div>
         </section>
@@ -292,14 +295,16 @@ class TodayView extends HTMLElement {
           <div class="assessment-tile__card">
             <div class="assessment-tile__top">
               <p class="assessment-tile__eyebrow">AI analysis paused</p>
-              <button
+              <wa-button
                 id="cancel-assessment-open"
                 class="assessment-tile__dismiss"
                 type="button"
+                appearance="plain"
+                size="small"
                 aria-label="Cancel existing submission"
               >
                 <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </button>
+              </wa-button>
             </div>
             <p class="assessment-tile__headline">
               ${escapeHtml(
@@ -333,14 +338,16 @@ class TodayView extends HTMLElement {
               <span class="assessment-tile__spark" aria-hidden="true">✦</span>
               ${escapeHtml(eyebrow)}
             </p>
-            <button
+            <wa-button
               id="cancel-assessment-open"
               class="assessment-tile__dismiss"
               type="button"
+              appearance="plain"
+              size="small"
               aria-label="Cancel existing submission"
             >
               <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-            </button>
+            </wa-button>
           </div>
           <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
           <div
@@ -364,23 +371,26 @@ class TodayView extends HTMLElement {
       >
         <div class="sheet__panel">
           <div class="sheet__actions">
-            <button
+            <wa-button
               class="sheet__cancel"
               type="button"
               id="cancel-assessment-keep"
+              appearance="outlined"
             >
               Keep it
-            </button>
+            </wa-button>
           </div>
           <ul class="sheet__opts">
             <li>
-              <button
+              <wa-button
                 class="sheet__opt sheet__opt--danger"
                 id="cancel-assessment-confirm"
                 type="button"
+                appearance="filled"
+                variant="danger"
               >
                 Cancel analysis
-              </button>
+              </wa-button>
             </li>
           </ul>
         </div>
