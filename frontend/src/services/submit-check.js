@@ -79,6 +79,10 @@ export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   return run;
 }
 
+export function resumeSubmittedCheckInBackground(checkId, opts) {
+  void resumeSubmittedCheck(checkId, opts).catch(() => {});
+}
+
 /**
  * Submit the current walk to the backend and hydrate the session with findings.
  * Throws on any backend/network failure before the submission is safely registered.
@@ -155,6 +159,6 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   markAnalyzing({ submissionKind, expectedArtifacts });
   await clearDraft(active.flowType);
   mark("submit:queued", { expectedArtifacts, checkId: active.id });
-  void resumeSubmittedCheck(active.id, { expectedArtifacts });
+  resumeSubmittedCheckInBackground(active.id, { expectedArtifacts });
   return { checkId: active.id };
 }

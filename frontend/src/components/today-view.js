@@ -40,7 +40,7 @@ import {
   markAnalysisFailed,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
-import { resumeSubmittedCheck } from "../services/submit-check.js";
+import { resumeSubmittedCheckInBackground } from "../services/submit-check.js";
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
@@ -132,7 +132,7 @@ class TodayView extends HTMLElement {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "analyzing") {
-      void resumeSubmittedCheck(effectivePendingSession.id, {
+      resumeSubmittedCheckInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
     }
