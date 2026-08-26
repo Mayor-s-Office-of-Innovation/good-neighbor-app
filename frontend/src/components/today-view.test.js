@@ -37,7 +37,7 @@ describe("isStalePendingSession", () => {
     ).toBe(true);
   });
 
-  it("clears an analyzing session once the same backend check is completed", async () => {
+  it("keeps an analyzing session once the same backend check is completed", async () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
     expect(
@@ -45,7 +45,7 @@ describe("isStalePendingSession", () => {
         { id: "chk_1", status: "analyzing" },
         [{ id: "chk_1", status: "submitted" }],
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
