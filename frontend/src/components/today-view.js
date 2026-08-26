@@ -120,7 +120,9 @@ class TodayView extends HTMLElement {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "analyzing") {
-      void resumeSubmittedCheck(effectivePendingSession.id);
+      void resumeSubmittedCheck(effectivePendingSession.id, {
+        expectedArtifacts: effectivePendingSession.expectedArtifacts,
+      });
     }
 
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
