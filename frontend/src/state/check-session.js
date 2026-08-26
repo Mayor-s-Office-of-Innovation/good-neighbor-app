@@ -129,6 +129,10 @@ function persistReview() {
   if (current) void saveReview(current);
 }
 
+function canMutateCurrentSession(checkId) {
+  return !checkId || current?.id === checkId;
+}
+
 /** Which cadence window we're in (pilot: fixed thirds of the day). */
 function currentWindow() {
   const h = new Date().getHours();
@@ -364,8 +368,8 @@ export function markAnalyzing({ submissionKind = "check" } = {}) {
  * `assessment` envelope (from completeCheck) rides along so the review screen can
  * defer task minting to Continue — sending it to evaluate then, with any disputes.
  */
-export function markSubmitted(findings, assessment) {
-  if (!current) return null;
+export function markSubmitted(findings, assessment, { checkId } = {}) {
+  if (!current || !canMutateCurrentSession(checkId)) return null;
   current.status = "submitted";
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.findings = findings;
@@ -384,8 +388,8 @@ export function markSubmitted(findings, assessment) {
  * can explain why the pending tile did not resolve.
  * @param {string} message
  */
-export function markAnalysisFailed(message) {
-  if (!current) return null;
+export function markAnalysisFailed(message, { checkId } = {}) {
+  if (!current || !canMutateCurrentSession(checkId)) return null;
   current.status = "analysis_failed";
   current.analysisError = message;
   persistReview();

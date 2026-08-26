@@ -57,7 +57,9 @@ async function finalizeSubmittedCheck(checkId) {
   }
 
   const detail = await getCheck(checkId);
-  markSubmitted(analysesToFindings(detail.analyses), completion.assessment);
+  markSubmitted(analysesToFindings(detail.analyses), completion.assessment, {
+    checkId,
+  });
   mark("submit:done", { expectedArtifacts: last.artifacts.length });
   return detail;
 }
@@ -69,7 +71,7 @@ export function resumeSubmittedCheck(checkId) {
   const run = finalizeSubmittedCheck(checkId)
     .catch((err) => {
       console.error("finalizeSubmittedCheck failed", err);
-      markAnalysisFailed(analysisFailureMessage(err));
+      markAnalysisFailed(analysisFailureMessage(err), { checkId });
       throw err;
     })
     .finally(() => {
