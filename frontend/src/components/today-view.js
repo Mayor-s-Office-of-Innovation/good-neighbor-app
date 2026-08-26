@@ -37,7 +37,6 @@ import {
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
-  markAnalysisFailed,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
 import { resumeSubmittedCheckInBackground } from "../services/submit-check.js";
