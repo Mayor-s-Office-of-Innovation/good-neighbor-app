@@ -110,7 +110,7 @@ function rehydrateDerivedFields(check) {
   return check;
 }
 
-/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?}} */
+/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number}} */
 let current = null;
 let postDescribeAction = null;
 const listeners = new Set();
@@ -350,13 +350,19 @@ export function allItems() {
  * Flip the walk to "analyzing" once the submission is safely registered server-side.
  * The review store keeps this pending state off the draft/resume path while allowing
  * home to show progress and survive a reload.
- * @param {{ submissionKind?: "check" | "problem_report" }} [opts]
+ * @param {{ submissionKind?: "check" | "problem_report", expectedArtifacts?: number }} [opts]
  */
-export function markAnalyzing({ submissionKind = "check" } = {}) {
+export function markAnalyzing({
+  submissionKind = "check",
+  expectedArtifacts,
+} = {}) {
   if (!current) return null;
   current.status = "analyzing";
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.submissionKind = submissionKind;
+  if (Number.isFinite(expectedArtifacts)) {
+    current.expectedArtifacts = expectedArtifacts;
+  }
   delete current.analysisError;
   persistReview();
   emit();

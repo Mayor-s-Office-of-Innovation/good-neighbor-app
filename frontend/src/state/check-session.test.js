@@ -43,3 +43,24 @@ describe("loadSubmitted", () => {
     expect(getCurrentCheck()?.status).toBe("in-progress");
   });
 });
+
+describe("markAnalyzing", () => {
+  beforeEach(async () => {
+    savedReview = null;
+    const { clearCheck } = await import("./check-session.js");
+    clearCheck();
+    vi.clearAllMocks();
+  });
+
+  it("persists the expected artifact count for resumed finalization", async () => {
+    const { getCurrentCheck, markAnalyzing, startCheck } = await import(
+      "./check-session.js"
+    );
+
+    startCheck("site-1");
+    markAnalyzing({ expectedArtifacts: 4 });
+
+    expect(getCurrentCheck()?.expectedArtifacts).toBe(4);
+    expect(savedReview?.expectedArtifacts).toBe(4);
+  });
+});

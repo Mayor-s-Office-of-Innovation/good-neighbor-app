@@ -46,8 +46,8 @@ function analysisFailureMessage(err) {
   return "Couldn’t finish analyzing this submission. Check your connection and try again.";
 }
 
-async function finalizeSubmittedCheck(checkId) {
-  const last = await waitForAnalyses(checkId);
+async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
+  const last = await waitForAnalyses(checkId, { expected: expectedArtifacts });
   const endComplete = span("completeCheck");
   const completion = await completeCheck(checkId);
   endComplete({ grade: completion?.grade, issues: completion?.issueCount });
@@ -62,11 +62,11 @@ async function finalizeSubmittedCheck(checkId) {
   return last;
 }
 
-export function resumeSubmittedCheck(checkId) {
+export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   if (pendingFinalizations.has(checkId)) {
     return pendingFinalizations.get(checkId);
   }
-  const run = finalizeSubmittedCheck(checkId)
+  const run = finalizeSubmittedCheck(checkId, { expectedArtifacts })
     .catch((err) => {
       console.error("finalizeSubmittedCheck failed", err);
       markAnalysisFailed(analysisFailureMessage(err), { checkId });
@@ -152,9 +152,9 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   // 3. The submission is durable once every artifact is registered, so switch the
   //    session into a pending-analysis state and let the long analyzer/complete
   //    sequence continue in the background while the user returns home.
-  markAnalyzing({ submissionKind });
+  markAnalyzing({ submissionKind, expectedArtifacts });
   await clearDraft(active.flowType);
   mark("submit:queued", { expectedArtifacts, checkId: active.id });
-  void resumeSubmittedCheck(active.id);
+  void resumeSubmittedCheck(active.id, { expectedArtifacts });
   return { checkId: active.id };
 }

@@ -456,9 +456,8 @@ export async function registerTextArtifact(
  * multi-photo run legitimately needs minutes. The ceiling exists only to bound a
  * genuinely stuck analyzer, not to race normal completion.
  * @param {string} checkId
- * When `expected` is omitted, the first read becomes the source of truth for how
- * many registered artifacts this check has, which lets a resumed pending submit
- * continue after a reload without carrying a separate local count around.
+ * When `expected` is omitted, the first read is a best-effort fallback for older
+ * pending sessions that do not have a persisted upload count.
  * @param {{ expected?: number, timeoutMs?: number, intervalMs?: number }} opts
  * @returns {Promise<{ check: any, artifacts: any[], analyses: any[] }>}
  */
