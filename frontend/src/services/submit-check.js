@@ -38,21 +38,116 @@ import { startRun, span, mark } from "./instrument.js";
 
 const pendingFinalizations = new Map();
 
-function analysisFailureMessage(err) {
-  const body = err?.body;
-  if (body?.code === "analyses_pending") {
-    return "The AI is taking longer than expected. Please try again soon.";
+/**
+ * Run one submit step and stamp the failing leg onto its error so the message
+ * layer can say *which* step broke. The first leg to fail wins (a nested call
+ * that already tagged keeps its own, more specific, leg), which matters for the
+ * parallel uploads: `Promise.all`'s first rejection carries the real cause.
+ * @template T
+ * @param {"start"|"upload"|"analyze"|"complete"|"assessment"} leg
+ * @param {() => Promise<T>} work
+ * @returns {Promise<T>}
+ */
+async function withLeg(leg, work) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err && typeof err === "object" && err.leg === undefined) err.leg = leg;
+    throw err;
   }
-  return "Couldn’t finish analyzing this submission. Check your connection and try again.";
+}
+
+/**
+ * Reduce an error to one cause bucket. Order matters: the analyses-timeout error
+ * carries status 0 (it never made an HTTP round-trip) but is a "still working",
+ * NOT a connection failure, so `analyses_pending` is checked before status 0.
+ * @param {any} err
+ * @returns {"pending"|"network"|"conflict"|"too_large"|"rejected"|"server"}
+ */
+function causeOf(err) {
+  if (err?.body?.code === "analyses_pending") return "pending";
+  const status = err?.status;
+  if (!status) return "network"; // 0 or undefined = transport failure / no round-trip
+  if (status === 409) return "conflict";
+  if (status === 413) return "too_large";
+  if (status >= 400 && status < 500) return "rejected";
+  return "server";
+}
+
+/**
+ * Per-leg cause → user message. Each leg has a `default` for causes it doesn't
+ * spell out; an untagged error falls back to a single generic line. Every string
+ * names both the step that failed and what to do next, so no two failure modes
+ * read the same.
+ */
+const SUBMIT_MESSAGES = {
+  start: {
+    network:
+      "Couldn’t start this check — we couldn’t reach the server. Check your connection and try again.",
+    conflict:
+      "This check may already have been filed. Go home to check before submitting again.",
+    rejected:
+      "The server wouldn’t accept this check. Please try again; if it keeps happening, report it.",
+    default:
+      "Something went wrong on our end starting this check. Please try again in a moment.",
+  },
+  upload: {
+    network:
+      "Couldn’t upload your photos — we couldn’t reach the server. Check your connection and try again.",
+    too_large:
+      "One of your photos was too large to upload. Retake it and try again.",
+    conflict:
+      "One of your photos looks already uploaded. Go home to check, or try again.",
+    rejected:
+      "The server rejected one of your photos. Please try again; if it keeps happening, report it.",
+    default:
+      "Something went wrong on our end uploading your photos. Please try again in a moment.",
+  },
+  analyze: {
+    pending: "The AI is taking longer than expected. Please try again soon.",
+    network:
+      "Lost connection while waiting for the AI analysis. Check your connection and reopen this check.",
+    default: "The analysis service had a problem. Please try again soon.",
+  },
+  complete: {
+    network:
+      "Couldn’t finish filing this check — the connection dropped. Reopen it to finish.",
+    default:
+      "Something went wrong finishing this check. Please try again soon.",
+  },
+  assessment: {
+    default:
+      "This check finished, but its results couldn’t be read. Please try again.",
+  },
+};
+
+/**
+ * Map a submit/analysis failure to a unique, actionable message keyed on the
+ * failing leg (stamped by `withLeg`) and the cause bucket. Used by both the
+ * foreground submit screens and the background "AI analysis paused" home tile so
+ * there is a single source of truth for these strings.
+ * @param {any} err
+ * @returns {string}
+ */
+export function submitErrorMessage(err) {
+  const leg = SUBMIT_MESSAGES[err?.leg];
+  if (!leg) {
+    return "Couldn’t file this check. Check your connection and try again.";
+  }
+  return leg[causeOf(err)] ?? leg.default;
 }
 
 async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
-  const last = await waitForAnalyses(checkId, { expected: expectedArtifacts });
+  const last = await withLeg("analyze", () =>
+    waitForAnalyses(checkId, { expected: expectedArtifacts }),
+  );
   const endComplete = span("completeCheck");
-  const completion = await completeCheck(checkId);
+  const completion = await withLeg("complete", () => completeCheck(checkId));
   endComplete({ grade: completion?.grade, issues: completion?.issueCount });
   if (!completion.assessmentReady || !completion.assessment) {
-    throw new Error("Check completed without an assessment to evaluate.");
+    const err = new Error("Check completed without an assessment to evaluate.");
+    err.leg = "assessment";
+    throw err;
   }
 
   markSubmitted(analysesToFindings(last.analyses), completion.assessment, {
@@ -69,7 +164,7 @@ export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   const run = finalizeSubmittedCheck(checkId, { expectedArtifacts })
     .catch((err) => {
       console.error("finalizeSubmittedCheck failed", err);
-      markAnalysisFailed(analysisFailureMessage(err), { checkId });
+      markAnalysisFailed(submitErrorMessage(err), { checkId });
       throw err;
     })
     .finally(() => {
@@ -105,7 +200,7 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
     skipped: !!active.sides[s].skipped,
   }));
   const endCreate = span("createCheck");
-  await createCheck(active.id, { sides });
+  await withLeg("start", () => createCheck(active.id, { sides }));
   endCreate();
 
   // 2. Upload every captured artifact straight to S3, then register it — all sides
@@ -150,7 +245,7 @@ export async function submitCheck({ submissionKind = "check" } = {}) {
   }
 
   const expectedArtifacts = uploads.length;
-  await Promise.all(uploads);
+  await withLeg("upload", () => Promise.all(uploads));
   endUploads({ expectedArtifacts });
 
   // 3. The submission is durable once every artifact is registered, so switch the

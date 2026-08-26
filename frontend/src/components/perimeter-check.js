@@ -15,7 +15,7 @@
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { submitCheck } from "../services/submit-check.js";
+import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 // <in-browser-camera> registers itself via main.js (opt-in ?webcam feature).
 import {
@@ -262,11 +262,11 @@ class PerimeterCheck extends HTMLElement {
       // can still add photos on this (or another) side before retrying. (Native and
       // fallback modes keep their ＋ tile, so nothing to restore there.)
       if (this._useWebcam() && !this._camera) this._mountCamera();
-      this._showSubmitError();
+      this._showSubmitError(err);
     }
   }
 
-  _showSubmitError() {
+  _showSubmitError(err) {
     let el = this.querySelector(".check__error");
     if (!el) {
       el = document.createElement("p");
@@ -277,8 +277,7 @@ class PerimeterCheck extends HTMLElement {
         el,
       );
     }
-    el.textContent =
-      "Couldn’t file this check — the server didn’t respond. Try again.";
+    el.textContent = submitErrorMessage(err);
   }
 
   _cancel() {
