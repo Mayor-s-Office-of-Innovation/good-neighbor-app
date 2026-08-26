@@ -224,9 +224,7 @@ class TodayView extends HTMLElement {
           ? html`
               <div class="home-divider" aria-hidden="true"></div>
               <div class="worklist">
-                ${pendingSession
-                  ? this._assessmentTile(pendingSession)
-                  : ""}
+                ${pendingSession ? this._assessmentTile(pendingSession) : ""}
                 <p class="worklist__counter">To do · ${tasks.length}</p>
                 ${this._group("Site actions", onsite, "")}
                 ${this._group(
@@ -237,7 +235,6 @@ class TodayView extends HTMLElement {
               </div>
             `
           : ""}
-
         ${pendingSession ? this._cancelAssessmentDialog() : ""}
       </div>
     `;
@@ -250,7 +247,10 @@ class TodayView extends HTMLElement {
   _assessmentTile(session) {
     if (session.status === "submitted") {
       return html`
-        <section class="assessment-tile assessment-tile--ready" aria-live="polite">
+        <section
+          class="assessment-tile assessment-tile--ready"
+          aria-live="polite"
+        >
           <div class="assessment-tile__card">
             <div class="assessment-tile__top">
               <p class="assessment-tile__eyebrow">
@@ -318,9 +318,7 @@ class TodayView extends HTMLElement {
     }
 
     const label =
-      session.submissionKind === "problem_report"
-        ? "problem report"
-        : "report";
+      session.submissionKind === "problem_report" ? "problem report" : "report";
     const time = session.submittedAt ? timeOf(session.submittedAt) : "";
     const eyebrow = time
       ? `AI is analyzing the ${time} ${label}`
