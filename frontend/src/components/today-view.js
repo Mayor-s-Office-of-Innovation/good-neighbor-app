@@ -44,6 +44,26 @@ import { resumeSubmittedCheck } from "../services/submit-check.js";
 
 const ANALYSIS_TIMEOUT_MS = 180000;
 
+export function isStalePendingSession(session, submitted) {
+  if (!session) return false;
+  if (session.status === "submitted") {
+    return submitted.length > 0 && submitted[0].id !== session.id;
+  }
+  if (submitted.some((check) => check.id === session.id)) return true;
+  if (!session.submittedAt || !submitted.length) return false;
+  return submitted.some(
+    (check) =>
+      check.submittedAt &&
+      check.submittedAt.localeCompare(session.submittedAt) >= 0,
+  );
+}
+
+export function newestTasksFirst(tasks) {
+  return [...tasks].sort((a, b) =>
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+  );
+}
+
 class TodayView extends HTMLElement {
   disconnectedCallback() {
     this._sessionUnsub?.();
@@ -172,8 +192,10 @@ class TodayView extends HTMLElement {
   }
 
   _render({ last, tasks, pendingSession }) {
-    const onsite = tasks.filter((t) => t.type === "onsite");
-    const city = tasks.filter((t) => t.type === "city_escalation");
+    const onsite = newestTasksFirst(tasks.filter((t) => t.type === "onsite"));
+    const city = newestTasksFirst(
+      tasks.filter((t) => t.type === "city_escalation"),
+    );
     const hasPendingAssessment = !!pendingSession;
     const showFirstRun = !last && tasks.length === 0;
 
@@ -215,17 +237,7 @@ class TodayView extends HTMLElement {
   }
 
   _isStalePendingSession(session, submitted) {
-    if (!session) return false;
-    if (session.status === "submitted") {
-      return submitted.length > 0 && submitted[0].checkId !== session.id;
-    }
-    if (submitted.some((check) => check.checkId === session.id)) return true;
-    if (!session.submittedAt || !submitted.length) return false;
-    return submitted.some(
-      (check) =>
-        check.submittedAt &&
-        check.submittedAt.localeCompare(session.submittedAt) >= 0,
-    );
+    return isStalePendingSession(session, submitted);
   }
 
   _isExpiredPendingSession(session) {

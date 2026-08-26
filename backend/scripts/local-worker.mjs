@@ -84,7 +84,20 @@ async function poll(queueUrl) {
     for (const msg of received.Messages ?? []) {
       try {
         const handler = pickHandler(msg.Body);
-        await handler(toSqsEvent(msg), /** @type {any} */ ({}), () => {});
+        const result = await handler(
+          toSqsEvent(msg),
+          /** @type {any} */ ({}),
+          () => {},
+        );
+        const failed = result?.batchItemFailures?.some(
+          (failure) => failure.itemIdentifier === msg.MessageId,
+        );
+        if (failed) {
+          console.error(
+            `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
+          );
+          continue;
+        }
         // Delete with THIS receive's ReceiptHandle, only on success.
         await sqs.send(
           new DeleteMessageCommand({
