@@ -235,7 +235,7 @@ export function presignArtifact(checkId, body) {
 
 /**
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
- * its analysis. 409 (already registered / missing parent) → ApiError.
+ * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
  * @param {{ artifactId: string, side: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
