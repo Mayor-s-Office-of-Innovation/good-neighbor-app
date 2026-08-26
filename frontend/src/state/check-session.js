@@ -184,7 +184,11 @@ export function onCheckSessionChange(fn) {
  */
 export async function loadDraft(flowType) {
   const requestedFlow = flowType ? normalizeFlowType(flowType) : null;
-  if (current && (!requestedFlow || current.flowType === requestedFlow)) {
+  if (
+    current &&
+    current.status === "in-progress" &&
+    (!requestedFlow || current.flowType === requestedFlow)
+  ) {
     return current;
   }
   const draft = await getDraft(requestedFlow);
@@ -387,6 +391,18 @@ export function markAnalysisFailed(message) {
   persistReview();
   emit();
   return current;
+}
+
+/**
+ * Drop only the persisted review-backed submitted/analyzing session. Used when the
+ * local pending marker is stale and should no longer override the backend home view.
+ */
+export async function clearSubmittedSession() {
+  if (current && current.status !== "in-progress") {
+    current = null;
+  }
+  await clearReview();
+  emit();
 }
 
 /**
