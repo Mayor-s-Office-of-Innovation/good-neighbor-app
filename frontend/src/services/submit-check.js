@@ -25,7 +25,6 @@ import {
   registerTextArtifact,
   waitForAnalyses,
   completeCheck,
-  getCheck,
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
 import {
@@ -56,12 +55,11 @@ async function finalizeSubmittedCheck(checkId) {
     throw new Error("Check completed without an assessment to evaluate.");
   }
 
-  const detail = await getCheck(checkId);
-  markSubmitted(analysesToFindings(detail.analyses), completion.assessment, {
+  markSubmitted(analysesToFindings(last.analyses), completion.assessment, {
     checkId,
   });
   mark("submit:done", { expectedArtifacts: last.artifacts.length });
-  return detail;
+  return last;
 }
 
 export function resumeSubmittedCheck(checkId) {
