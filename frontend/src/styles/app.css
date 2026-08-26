@@ -424,6 +424,7 @@ theme-toggle {
   width: 100%;
   min-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - 1.5rem);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }
@@ -635,10 +636,14 @@ theme-toggle {
 .assessment-tile__card {
   background: var(--surface);
   border-radius: 12px;
-  padding: 1rem 1.1rem;
+  padding: 1rem 3.25rem 1rem 1.1rem;
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  position: relative;
+}
+.assessment-tile__top {
+  display: block;
 }
 .assessment-tile__eyebrow {
   margin: 0;
@@ -655,6 +660,24 @@ theme-toggle {
   color: var(--brand-blue);
   font-size: 0.78rem;
   line-height: 1;
+}
+.assessment-tile__dismiss {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.15rem;
+  min-height: auto;
+  box-shadow: none;
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+}
+.assessment-tile__dismiss:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 .assessment-tile__headline {
   margin: 0;
@@ -685,6 +708,16 @@ theme-toggle {
 }
 .assessment-tile--error .assessment-tile__headline {
   color: var(--danger, #b42318);
+}
+.assessment-tile__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.15rem;
+}
+.assessment-tile__actions .btn-outline--sm {
+  min-height: 34px;
+  padding-inline: 0.95rem;
+  font-size: 0.82rem;
 }
 
 @keyframes assessment-slide {
@@ -2551,8 +2584,9 @@ theme-toggle {
   padding: 0;
   border: 0;
   background: transparent;
-  width: calc(100% - 3rem);
-  max-width: 340px;
+  width: min(calc(100% - 2rem), 24rem);
+  max-width: none;
+  margin: auto;
   color: var(--text);
 }
 .sheet::backdrop {
@@ -2561,16 +2595,26 @@ theme-toggle {
 .sheet__panel {
   background: var(--surface);
   border-radius: 18px;
-  padding: 0.9rem;
+  padding: 1rem;
   box-shadow: var(--shadow-lift);
+  width: 100%;
+}
+.sheet__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 .sheet__opts {
   list-style: none;
-  margin: 0;
+  margin: 0.6rem 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+}
+.sheet__opts li {
+  margin: 0;
+  padding: 0;
 }
 .sheet__opt {
   width: 100%;
@@ -2588,6 +2632,10 @@ theme-toggle {
   border-radius: 12px;
   padding: 0.9rem 1rem;
 }
+.sheet__opt--danger {
+  background: color-mix(in srgb, var(--danger, #b42318) 14%, var(--surface));
+  color: var(--danger, #b42318);
+}
 .sheet__opt:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
@@ -2596,20 +2644,20 @@ theme-toggle {
   display: block;
   width: 100%;
   appearance: none;
-  background: none;
-  border: 0;
-  height: auto;
+  background: transparent;
+  border: 1px solid var(--c-line);
+  border-radius: 999px;
+  min-height: 46px;
   box-shadow: none;
-  margin: 0.3rem 0 0;
-  padding: 0.9rem 0 0.4rem;
+  margin: 0;
+  padding: 0.7rem 1rem;
   cursor: pointer;
   font: inherit;
-  font-weight: 600;
+  font-weight: 700;
   text-align: center;
-  color: var(--c-hazard);
+  color: var(--text);
 }
 .sheet__cancel:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
-  border-radius: 8px;
 }

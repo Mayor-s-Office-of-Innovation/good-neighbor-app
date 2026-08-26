@@ -36,9 +36,13 @@ import {
   getCurrentCheck,
   loadSubmitted,
   onCheckSessionChange,
+  clearSubmittedSession,
+  markAnalysisFailed,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
 import { resumeSubmittedCheck } from "../services/submit-check.js";
+
+const ANALYSIS_TIMEOUT_MS = 180000;
 
 class TodayView extends HTMLElement {
   disconnectedCallback() {
@@ -61,9 +65,6 @@ class TodayView extends HTMLElement {
       ["analyzing", "analysis_failed", "submitted"].includes(active.status)
         ? active
         : await loadSubmitted();
-    if (pendingSession?.status === "analyzing") {
-      void resumeSubmittedCheck(pendingSession.id);
-    }
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
@@ -89,6 +90,26 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
+    let effectivePendingSession =
+      pendingSession &&
+      ["analyzing", "analysis_failed", "submitted"].includes(
+        pendingSession.status,
+      )
+        ? pendingSession
+        : null;
+
+    if (this._isExpiredPendingSession(effectivePendingSession)) {
+      markAnalysisFailed(
+        "The AI is taking longer than expected. Please try again soon.",
+      );
+      effectivePendingSession = getCurrentCheck();
+    } else if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+      await clearSubmittedSession();
+      effectivePendingSession = null;
+    } else if (effectivePendingSession?.status === "analyzing") {
+      void resumeSubmittedCheck(effectivePendingSession.id);
+    }
+
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
     // Index tasks by id so card action handlers can read the task (e.g. its
@@ -98,11 +119,7 @@ class TodayView extends HTMLElement {
     this.innerHTML = this._render({
       last,
       tasks,
-      pendingSession:
-        pendingSession &&
-        ["analyzing", "analysis_failed"].includes(pendingSession.status)
-          ? pendingSession
-          : null,
+      pendingSession: effectivePendingSession,
     });
 
     const start = this.querySelector("#start-check");
@@ -125,6 +142,32 @@ class TodayView extends HTMLElement {
         navigate("/problem");
       });
     }
+    const review = this.querySelector("#review-assessment");
+    if (review) {
+      review.addEventListener("click", () => navigate("/results"));
+    }
+    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#cancel-assessment-dialog")
+    );
+    this.querySelector("#cancel-assessment-open")?.addEventListener(
+      "click",
+      () => this._cancelDialog?.showModal(),
+    );
+    this.querySelector("#cancel-assessment-keep")?.addEventListener(
+      "click",
+      () => this._cancelDialog?.close(),
+    );
+    this.querySelector("#cancel-assessment-confirm")?.addEventListener(
+      "click",
+      async () => {
+        await clearSubmittedSession();
+        this._cancelDialog?.close();
+        this.connectedCallback();
+      },
+    );
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
     this._wireCards();
   }
 
@@ -165,11 +208,71 @@ class TodayView extends HTMLElement {
               </div>
             `
           : ""}
+
+        ${pendingSession ? this._cancelAssessmentDialog() : ""}
       </div>
     `;
   }
 
+  _isStalePendingSession(session, submitted) {
+    if (!session) return false;
+    if (session.status === "submitted") {
+      return submitted.length > 0 && submitted[0].checkId !== session.id;
+    }
+    if (submitted.some((check) => check.checkId === session.id)) return true;
+    if (!session.submittedAt || !submitted.length) return false;
+    return submitted.some(
+      (check) =>
+        check.submittedAt &&
+        check.submittedAt.localeCompare(session.submittedAt) >= 0,
+    );
+  }
+
+  _isExpiredPendingSession(session) {
+    if (!session || session.status !== "analyzing" || !session.submittedAt) {
+      return false;
+    }
+    const submittedAt = Date.parse(session.submittedAt);
+    if (!Number.isFinite(submittedAt)) return false;
+    return Date.now() - submittedAt >= ANALYSIS_TIMEOUT_MS;
+  }
+
   _assessmentTile(session) {
+    if (session.status === "submitted") {
+      return html`
+        <section class="assessment-tile assessment-tile--ready" aria-live="polite">
+          <div class="assessment-tile__card">
+            <div class="assessment-tile__top">
+              <p class="assessment-tile__eyebrow">
+                <span class="assessment-tile__spark" aria-hidden="true">✦</span>
+                AI analysis complete
+              </p>
+              <button
+                id="cancel-assessment-open"
+                class="assessment-tile__dismiss"
+                type="button"
+                aria-label="Cancel existing submission"
+              >
+                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+              </button>
+            </div>
+            <p class="assessment-tile__headline">
+              Report ready to review and confirm.
+            </p>
+            <div class="assessment-tile__actions">
+              <button
+                id="review-assessment"
+                class="btn-outline btn-outline--sm"
+                type="button"
+              >
+                Review assessment
+              </button>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
     if (session.status === "analysis_failed") {
       return html`
         <section
@@ -177,7 +280,17 @@ class TodayView extends HTMLElement {
           aria-live="polite"
         >
           <div class="assessment-tile__card">
-            <p class="assessment-tile__eyebrow">AI analysis paused</p>
+            <div class="assessment-tile__top">
+              <p class="assessment-tile__eyebrow">AI analysis paused</p>
+              <button
+                id="cancel-assessment-open"
+                class="assessment-tile__dismiss"
+                type="button"
+                aria-label="Cancel existing submission"
+              >
+                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+              </button>
+            </div>
             <p class="assessment-tile__headline">
               ${escapeHtml(
                 session.analysisError ||
@@ -205,10 +318,20 @@ class TodayView extends HTMLElement {
     return html`
       <section class="assessment-tile" aria-live="polite">
         <div class="assessment-tile__card">
-          <p class="assessment-tile__eyebrow">
-            <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-            ${escapeHtml(eyebrow)}
-          </p>
+          <div class="assessment-tile__top">
+            <p class="assessment-tile__eyebrow">
+              <span class="assessment-tile__spark" aria-hidden="true">✦</span>
+              ${escapeHtml(eyebrow)}
+            </p>
+            <button
+              id="cancel-assessment-open"
+              class="assessment-tile__dismiss"
+              type="button"
+              aria-label="Cancel existing submission"
+            >
+              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            </button>
+          </div>
           <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
           <div
             class="assessment-tile__progress"
@@ -219,6 +342,39 @@ class TodayView extends HTMLElement {
           </div>
         </div>
       </section>
+    `;
+  }
+
+  _cancelAssessmentDialog() {
+    return html`
+      <dialog
+        class="sheet"
+        id="cancel-assessment-dialog"
+        aria-label="Cancel existing submission?"
+      >
+        <div class="sheet__panel">
+          <div class="sheet__actions">
+            <button
+              class="sheet__cancel"
+              type="button"
+              id="cancel-assessment-keep"
+            >
+              Keep it
+            </button>
+          </div>
+          <ul class="sheet__opts">
+            <li>
+              <button
+                class="sheet__opt sheet__opt--danger"
+                id="cancel-assessment-confirm"
+                type="button"
+              >
+                Cancel analysis
+              </button>
+            </li>
+          </ul>
+        </div>
+      </dialog>
     `;
   }
   _firstRunBlock() {

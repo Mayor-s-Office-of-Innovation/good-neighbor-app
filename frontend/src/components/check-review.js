@@ -162,7 +162,7 @@ class CheckReview extends HTMLElement {
     btn.textContent = "Filing…";
     this._clearError();
     try {
-      await submitCheck();
+      await submitCheck({ submissionKind: "check" });
       navigate("/today");
     } catch (err) {
       // Online-only: on any backend/network failure surface an error and let the
