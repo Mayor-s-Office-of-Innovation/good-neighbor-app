@@ -456,20 +456,27 @@ export async function registerTextArtifact(
  * multi-photo run legitimately needs minutes. The ceiling exists only to bound a
  * genuinely stuck analyzer, not to race normal completion.
  * @param {string} checkId
- * @param {{ expected: number, timeoutMs?: number, intervalMs?: number }} opts
+ * When `expected` is omitted, the first read is a best-effort fallback for older
+ * pending sessions that do not have a persisted upload count.
+ * @param {{ expected?: number, timeoutMs?: number, intervalMs?: number }} opts
  * @returns {Promise<{ check: any, artifacts: any[], analyses: any[] }>}
  */
 export async function waitForAnalyses(
   checkId,
-  { expected, timeoutMs = 180000, intervalMs = 2000 },
+  { expected, timeoutMs = 180000, intervalMs = 2000 } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
-  mark("wait:start", { expected, timeoutMs, intervalMs });
+  mark("wait:start", {
+    expected: expected ?? "auto",
+    timeoutMs,
+    intervalMs,
+  });
   /** first-seen offset per artifactId, so we can see the landing cadence */
   const seen = new Set();
   let poll = 0;
   /** @type {{ check: any, artifacts: any[], analyses: any[] }} */
   let last = await getCheck(checkId);
+  const wanted = expected ?? last.artifacts.length;
   while (true) {
     poll += 1;
     const analyzedIds = new Set(last.analyses.map((a) => a.artifactId));
@@ -478,24 +485,24 @@ export async function waitForAnalyses(
     const fresh = [...analyzedIds].filter((id) => !seen.has(id));
     for (const id of fresh) seen.add(id);
     mark(`wait:poll#${poll}`, {
-      analyzed: `${analyzedIds.size}/${expected}`,
+      analyzed: `${analyzedIds.size}/${wanted}`,
       artifacts: last.artifacts.length,
       landed: fresh.length ? fresh.join(",") : "-",
     });
     const covered =
-      last.artifacts.length >= expected &&
+      last.artifacts.length >= wanted &&
       last.artifacts.every((a) => analyzedIds.has(a.artifactId));
-    if (expected === 0 || covered) {
-      mark("wait:done", { analyzed: `${analyzedIds.size}/${expected}`, poll });
+    if (wanted === 0 || covered) {
+      mark("wait:done", { analyzed: `${analyzedIds.size}/${wanted}`, poll });
       return last;
     }
     if (Date.now() >= deadline) {
       throw new ApiError(
-        `Analyses still processing (${analyzedIds.size}/${expected}) after ${timeoutMs}ms`,
+        `Analyses still processing (${analyzedIds.size}/${wanted}) after ${timeoutMs}ms`,
         {
           body: {
             code: "analyses_pending",
-            expected,
+            expected: wanted,
             analyzed: analyzedIds.size,
           },
         },

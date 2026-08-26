@@ -33,14 +33,67 @@ import {
   loadDraft,
   startCheck,
   startProblemReport,
+  getCurrentCheck,
+  loadSubmitted,
+  onCheckSessionChange,
+  clearSubmittedSession,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
+import { resumeSubmittedCheckInBackground } from "../services/submit-check.js";
+
+/**
+ * Decide whether a local pending/review session has been superseded by backend history.
+ * @param {{ id: string, status?: string, submittedAt?: string } | null} session
+ * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
+ * @returns {boolean}
+ */
+export function isStalePendingSession(session, submitted) {
+  if (!session) return false;
+  if (session.status === "submitted") {
+    return submitted.length > 0 && submitted[0].id !== session.id;
+  }
+  if (submitted.some((check) => check.id === session.id)) return false;
+  if (!session.submittedAt || !submitted.length) return false;
+  return submitted.some(
+    (check) =>
+      check.submittedAt &&
+      check.submittedAt.localeCompare(session.submittedAt) >= 0,
+  );
+}
+
+/**
+ * Sort task records by creation time without mutating the caller's array.
+ * @template {{ createdAt?: string }} T
+ * @param {T[]} tasks
+ * @returns {T[]}
+ */
+export function newestTasksFirst(tasks) {
+  return [...tasks].sort((a, b) =>
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+  );
+}
 
 class TodayView extends HTMLElement {
+  disconnectedCallback() {
+    this._sessionUnsub?.();
+    this._sessionUnsub = null;
+  }
+
   async connectedCallback() {
+    if (!this._sessionUnsub) {
+      this._sessionUnsub = onCheckSessionChange(() => this.connectedCallback());
+    }
+
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+
+    const active = getCurrentCheck();
+    const pendingSession =
+      active &&
+      ["analyzing", "analysis_failed", "submitted"].includes(active.status)
+        ? active
+        : await loadSubmitted();
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
@@ -66,13 +119,34 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
+    let effectivePendingSession =
+      pendingSession &&
+      ["analyzing", "analysis_failed", "submitted"].includes(
+        pendingSession.status,
+      )
+        ? pendingSession
+        : null;
+
+    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+      await clearSubmittedSession();
+      effectivePendingSession = null;
+    } else if (effectivePendingSession?.status === "analyzing") {
+      resumeSubmittedCheckInBackground(effectivePendingSession.id, {
+        expectedArtifacts: effectivePendingSession.expectedArtifacts,
+      });
+    }
+
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
 
-    this.innerHTML = this._render({ last, tasks });
+    this.innerHTML = this._render({
+      last,
+      tasks,
+      pendingSession: effectivePendingSession,
+    });
 
     const start = this.querySelector("#start-check");
     if (start) {
@@ -94,12 +168,41 @@ class TodayView extends HTMLElement {
         navigate("/problem");
       });
     }
+    const review = this.querySelector("#review-assessment");
+    if (review) {
+      review.addEventListener("click", () => navigate("/results"));
+    }
+    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#cancel-assessment-dialog")
+    );
+    this.querySelector("#cancel-assessment-open")?.addEventListener(
+      "click",
+      () => this._cancelDialog?.showModal(),
+    );
+    this.querySelector("#cancel-assessment-keep")?.addEventListener(
+      "click",
+      () => this._cancelDialog?.close(),
+    );
+    this.querySelector("#cancel-assessment-confirm")?.addEventListener(
+      "click",
+      async () => {
+        await clearSubmittedSession();
+        this._cancelDialog?.close();
+        this.connectedCallback();
+      },
+    );
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
     this._wireCards();
   }
 
-  _render({ last, tasks }) {
-    const onsite = tasks.filter((t) => t.type === "onsite");
-    const city = tasks.filter((t) => t.type === "city_escalation");
+  _render({ last, tasks, pendingSession }) {
+    const onsite = newestTasksFirst(tasks.filter((t) => t.type === "onsite"));
+    const city = newestTasksFirst(
+      tasks.filter((t) => t.type === "city_escalation"),
+    );
+    const hasPendingAssessment = !!pendingSession;
     const showFirstRun = !last && tasks.length === 0;
 
     return html`
@@ -116,10 +219,11 @@ class TodayView extends HTMLElement {
             : this._activityBlock({ last })}
         </div>
 
-        ${tasks.length
+        ${hasPendingAssessment || tasks.length
           ? html`
               <div class="home-divider" aria-hidden="true"></div>
               <div class="worklist">
+                ${pendingSession ? this._assessmentTile(pendingSession) : ""}
                 <p class="worklist__counter">To do · ${tasks.length}</p>
                 ${this._group("Site actions", onsite, "")}
                 ${this._group(
@@ -130,10 +234,166 @@ class TodayView extends HTMLElement {
               </div>
             `
           : ""}
+        ${pendingSession ? this._cancelAssessmentDialog() : ""}
       </div>
     `;
   }
 
+  _isStalePendingSession(session, submitted) {
+    return isStalePendingSession(session, submitted);
+  }
+
+  _assessmentTile(session) {
+    if (session.status === "submitted") {
+      return html`
+        <section
+          class="assessment-tile assessment-tile--ready"
+          aria-live="polite"
+        >
+          <div class="assessment-tile__card">
+            <div class="assessment-tile__top">
+              <p class="assessment-tile__eyebrow">
+                <span class="assessment-tile__spark" aria-hidden="true">✦</span>
+                AI analysis complete
+              </p>
+              <wa-button
+                id="cancel-assessment-open"
+                class="assessment-tile__dismiss"
+                type="button"
+                appearance="plain"
+                size="small"
+                aria-label="Cancel existing submission"
+              >
+                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+              </wa-button>
+            </div>
+            <p class="assessment-tile__headline">
+              Report ready to review and confirm.
+            </p>
+            <div class="assessment-tile__actions">
+              <wa-button
+                id="review-assessment"
+                type="button"
+                appearance="outlined"
+                size="small"
+              >
+                Review assessment
+              </wa-button>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    if (session.status === "analysis_failed") {
+      return html`
+        <section
+          class="assessment-tile assessment-tile--error"
+          aria-live="polite"
+        >
+          <div class="assessment-tile__card">
+            <div class="assessment-tile__top">
+              <p class="assessment-tile__eyebrow">AI analysis paused</p>
+              <wa-button
+                id="cancel-assessment-open"
+                class="assessment-tile__dismiss"
+                type="button"
+                appearance="plain"
+                size="small"
+                aria-label="Cancel existing submission"
+              >
+                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+              </wa-button>
+            </div>
+            <p class="assessment-tile__headline">
+              ${escapeHtml(
+                session.analysisError ||
+                  "Couldn’t finish analyzing this submission.",
+              )}
+            </p>
+          </div>
+        </section>
+      `;
+    }
+
+    const label =
+      session.submissionKind === "problem_report" ? "problem report" : "report";
+    const time = session.submittedAt ? timeOf(session.submittedAt) : "";
+    const eyebrow = time
+      ? `AI is analyzing the ${time} ${label}`
+      : `AI is analyzing the latest ${label}`;
+    const headline =
+      session.submissionKind === "problem_report"
+        ? "Problem report received and being analyzed..."
+        : "Report received and being analyzed for problems...";
+
+    return html`
+      <section class="assessment-tile" aria-live="polite">
+        <div class="assessment-tile__card">
+          <div class="assessment-tile__top">
+            <p class="assessment-tile__eyebrow">
+              <span class="assessment-tile__spark" aria-hidden="true">✦</span>
+              ${escapeHtml(eyebrow)}
+            </p>
+            <wa-button
+              id="cancel-assessment-open"
+              class="assessment-tile__dismiss"
+              type="button"
+              appearance="plain"
+              size="small"
+              aria-label="Cancel existing submission"
+            >
+              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            </wa-button>
+          </div>
+          <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
+          <div
+            class="assessment-tile__progress"
+            role="img"
+            aria-label="Analysis in progress"
+          >
+            <span class="assessment-tile__bar"></span>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  _cancelAssessmentDialog() {
+    return html`
+      <dialog
+        class="sheet"
+        id="cancel-assessment-dialog"
+        aria-label="Cancel existing submission?"
+      >
+        <div class="sheet__panel">
+          <div class="sheet__actions">
+            <wa-button
+              class="sheet__cancel"
+              type="button"
+              id="cancel-assessment-keep"
+              appearance="outlined"
+            >
+              Keep it
+            </wa-button>
+          </div>
+          <ul class="sheet__opts">
+            <li>
+              <wa-button
+                class="sheet__opt sheet__opt--danger"
+                id="cancel-assessment-confirm"
+                type="button"
+                appearance="filled"
+                variant="danger"
+              >
+                Cancel analysis
+              </wa-button>
+            </li>
+          </ul>
+        </div>
+      </dialog>
+    `;
+  }
   _firstRunBlock() {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">

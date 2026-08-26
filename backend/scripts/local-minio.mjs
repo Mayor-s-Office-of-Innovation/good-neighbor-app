@@ -11,7 +11,7 @@
 // against MinIO. MinIO requires user >= 3 chars and password >= 8 chars, so those
 // env values must satisfy that (see .env.example).
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -19,13 +19,24 @@ import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const API_PORT = 9000;
-const CONSOLE_PORT = 9001;
+const API_PORT = Number(process.env.LOCAL_MINIO_API_PORT ?? 9000);
+const CONSOLE_PORT = Number(process.env.LOCAL_MINIO_CONSOLE_PORT ?? 9001);
 
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const localDir = join(backendDir, ".local");
 const binPath = join(localDir, "minio");
 const dataDir = join(localDir, "minio-data");
+
+/**
+ * @returns {Promise<string | null>}
+ */
+async function installedBinary() {
+  return new Promise((resolve) => {
+    execFile("/bin/sh", ["-lc", "command -v minio"], (err, stdout) => {
+      resolve(err ? null : stdout.trim() || null);
+    });
+  });
+}
 
 /**
  * Map Node's platform/arch to MinIO's release path segment (`<os>-<arch>`).
@@ -76,14 +87,16 @@ async function main() {
     );
   }
 
-  await ensureBinary();
+  const installed = await installedBinary();
+  const minioBin = installed ?? binPath;
+  if (!installed) await ensureBinary();
   await mkdir(dataDir, { recursive: true });
   console.log(
-    `[minio] starting MinIO on :${API_PORT} (console :${CONSOLE_PORT})…`,
+    `[minio] starting MinIO on :${API_PORT} (console :${CONSOLE_PORT}) with ${minioBin}…`,
   );
 
   const child = spawn(
-    binPath,
+    minioBin,
     [
       "server",
       dataDir,

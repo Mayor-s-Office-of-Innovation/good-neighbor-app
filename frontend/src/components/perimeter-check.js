@@ -251,8 +251,8 @@ class PerimeterCheck extends HTMLElement {
     const overlay = this.querySelector("#summarising");
     overlay.hidden = false;
     try {
-      await submitCheck();
-      navigate("/results");
+      await submitCheck({ submissionKind: "check" });
+      navigate("/today");
     } catch (err) {
       // Online-only: on any backend/network failure hide the summarising overlay
       // and surface a retryable error (no local queue — offline is post-MVP).

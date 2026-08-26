@@ -424,6 +424,7 @@ theme-toggle {
   width: 100%;
   min-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - 1.5rem);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }
@@ -625,6 +626,108 @@ theme-toggle {
   height: 1px;
   margin: 1.5rem auto 1.15rem;
   background: var(--c-line);
+}
+
+.assessment-tile {
+  background: color-mix(in srgb, var(--brand-blue) 12%, var(--surface));
+  border-radius: 18px;
+  padding: 0.75rem;
+}
+.assessment-tile__card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1rem 3.25rem 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  position: relative;
+}
+.assessment-tile__top {
+  display: block;
+}
+.assessment-tile__eyebrow {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-faint);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.assessment-tile__spark {
+  color: var(--brand-blue);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.assessment-tile__dismiss {
+  color: var(--text-secondary);
+  position: absolute;
+  top: 0.35rem;
+  right: 0.45rem;
+}
+.assessment-tile__dismiss::part(button) {
+  min-height: 2rem;
+  padding-inline: 0.45rem;
+}
+.assessment-tile__headline {
+  margin: 0;
+  color: var(--brand-blue);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.assessment-tile__progress {
+  position: relative;
+  overflow: hidden;
+  height: 4px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.assessment-tile__bar {
+  position: absolute;
+  inset-block: 0;
+  width: 34%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 78%, var(--surface));
+  animation: assessment-slide 1.8s ease-in-out infinite alternate;
+}
+.assessment-tile--error {
+  background: color-mix(in srgb, var(--danger, #b42318) 12%, var(--surface));
+}
+.assessment-tile--error .assessment-tile__headline {
+  color: var(--danger, #b42318);
+}
+.assessment-tile__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.15rem;
+}
+.assessment-tile__actions wa-button {
+  min-height: 34px;
+  font-size: 0.82rem;
+}
+.assessment-tile__actions wa-button::part(button) {
+  padding-inline: 0.95rem;
+}
+
+@keyframes assessment-slide {
+  from {
+    transform: translateX(-8%);
+  }
+  to {
+    transform: translateX(205%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assessment-tile__bar {
+    animation: none;
+    transform: translateX(90%);
+  }
 }
 
 /* ==================================================================
@@ -2475,8 +2578,9 @@ theme-toggle {
   padding: 0;
   border: 0;
   background: transparent;
-  width: calc(100% - 3rem);
-  max-width: 340px;
+  width: min(calc(100% - 2rem), 24rem);
+  max-width: none;
+  margin: auto;
   color: var(--text);
 }
 .sheet::backdrop {
@@ -2485,55 +2589,42 @@ theme-toggle {
 .sheet__panel {
   background: var(--surface);
   border-radius: 18px;
-  padding: 0.9rem;
+  padding: 1rem;
   box-shadow: var(--shadow-lift);
+  width: 100%;
+}
+.sheet__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 .sheet__opts {
   list-style: none;
-  margin: 0;
+  margin: 0.6rem 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
 }
+.sheet__opts li {
+  margin: 0;
+  padding: 0;
+}
 .sheet__opt {
   width: 100%;
-  appearance: none;
-  border: 0;
   margin: 0;
   height: auto;
-  box-shadow: none;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  text-align: center;
-  color: var(--text);
-  background: var(--surface-3);
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
 }
-.sheet__opt:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
+.sheet__opt::part(button) {
+  width: 100%;
+  min-height: 46px;
 }
 .sheet__cancel {
   display: block;
   width: 100%;
-  appearance: none;
-  background: none;
-  border: 0;
-  height: auto;
-  box-shadow: none;
-  margin: 0.3rem 0 0;
-  padding: 0.9rem 0 0.4rem;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  text-align: center;
-  color: var(--c-hazard);
+  margin: 0;
 }
-.sheet__cancel:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 8px;
+.sheet__cancel::part(button) {
+  width: 100%;
+  min-height: 46px;
 }

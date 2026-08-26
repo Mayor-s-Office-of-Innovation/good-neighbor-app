@@ -162,8 +162,8 @@ class CheckReview extends HTMLElement {
     btn.textContent = "Filing…";
     this._clearError();
     try {
-      await submitCheck();
-      navigate("/results");
+      await submitCheck({ submissionKind: "check" });
+      navigate("/today");
     } catch (err) {
       // Online-only: on any backend/network failure surface an error and let the
       // user retry (no local queue — offline is post-MVP).
