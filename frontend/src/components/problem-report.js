@@ -250,8 +250,8 @@ class ProblemReport extends HTMLElement {
     if (!overlay) return;
     overlay.hidden = false;
     try {
-      await submitCheck();
-      navigate("/results");
+      await submitCheck({ submissionKind: "problem_report" });
+      navigate("/today");
     } catch (err) {
       console.error("submitCheck failed", err);
       overlay.hidden = true;

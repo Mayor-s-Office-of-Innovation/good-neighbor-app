@@ -55,9 +55,9 @@ export const shell = () => html`
 
     <!-- AI summary loading state, shown during submit. -->
     <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">✦ AI SUMMARY</p>
+      <p class="summarising__eyebrow">Submitting report</p>
       <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Summarising…</p>
+      <p class="summarising__text">Submitting…</p>
     </div>
   </div>
 `;
@@ -121,9 +121,9 @@ export const shellWebcam = () => html`
 
     <!-- AI summary loading state, shown during submit. -->
     <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">✦ AI SUMMARY</p>
+      <p class="summarising__eyebrow">Submitting report</p>
       <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Summarising…</p>
+      <p class="summarising__text">Submitting…</p>
     </div>
   </div>
 `;
