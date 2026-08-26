@@ -42,8 +42,6 @@ import {
 import { navigate } from "../router.js";
 import { resumeSubmittedCheck } from "../services/submit-check.js";
 
-const ANALYSIS_TIMEOUT_MS = 180000;
-
 export function isStalePendingSession(session, submitted) {
   if (!session) return false;
   if (session.status === "submitted") {
@@ -118,12 +116,7 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
-    if (this._isExpiredPendingSession(effectivePendingSession)) {
-      markAnalysisFailed(
-        "The AI is taking longer than expected. Please try again soon.",
-      );
-      effectivePendingSession = getCurrentCheck();
-    } else if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "analyzing") {
@@ -238,15 +231,6 @@ class TodayView extends HTMLElement {
 
   _isStalePendingSession(session, submitted) {
     return isStalePendingSession(session, submitted);
-  }
-
-  _isExpiredPendingSession(session) {
-    if (!session || session.status !== "analyzing" || !session.submittedAt) {
-      return false;
-    }
-    const submittedAt = Date.parse(session.submittedAt);
-    if (!Number.isFinite(submittedAt)) return false;
-    return Date.now() - submittedAt >= ANALYSIS_TIMEOUT_MS;
   }
 
   _assessmentTile(session) {
