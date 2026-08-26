@@ -19,10 +19,9 @@ describe("isStalePendingSession", () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
     expect(
-      isStalePendingSession(
+      isStalePendingSession({ id: "chk_1", status: "submitted" }, [
         { id: "chk_1", status: "submitted" },
-        [{ id: "chk_1", status: "submitted" }],
-      ),
+      ]),
     ).toBe(false);
   });
 
@@ -30,10 +29,9 @@ describe("isStalePendingSession", () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
     expect(
-      isStalePendingSession(
-        { id: "chk_1", status: "submitted" },
-        [{ id: "chk_2", status: "submitted" }],
-      ),
+      isStalePendingSession({ id: "chk_1", status: "submitted" }, [
+        { id: "chk_2", status: "submitted" },
+      ]),
     ).toBe(true);
   });
 
@@ -41,10 +39,9 @@ describe("isStalePendingSession", () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
     expect(
-      isStalePendingSession(
-        { id: "chk_1", status: "analyzing" },
-        [{ id: "chk_1", status: "submitted" }],
-      ),
+      isStalePendingSession({ id: "chk_1", status: "analyzing" }, [
+        { id: "chk_1", status: "submitted" },
+      ]),
     ).toBe(false);
   });
 });
