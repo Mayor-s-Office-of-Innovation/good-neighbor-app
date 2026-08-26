@@ -42,6 +42,12 @@ import {
 import { navigate } from "../router.js";
 import { resumeSubmittedCheck } from "../services/submit-check.js";
 
+/**
+ * Decide whether a local pending/review session has been superseded by backend history.
+ * @param {{ id: string, status?: string, submittedAt?: string } | null} session
+ * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
+ * @returns {boolean}
+ */
 export function isStalePendingSession(session, submitted) {
   if (!session) return false;
   if (session.status === "submitted") {
@@ -56,6 +62,12 @@ export function isStalePendingSession(session, submitted) {
   );
 }
 
+/**
+ * Sort task records by creation time without mutating the caller's array.
+ * @template {{ createdAt?: string }} T
+ * @param {T[]} tasks
+ * @returns {T[]}
+ */
 export function newestTasksFirst(tasks) {
   return [...tasks].sort((a, b) =>
     String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
