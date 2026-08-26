@@ -219,7 +219,7 @@ export function ensureProblemReport(siteId) {
  * the active check or null.
  */
 export async function loadSubmitted() {
-  if (current && current.status !== "in-progress") return current;
+  if (current) return current.status === "in-progress" ? null : current;
   const saved = await getReview();
   if (saved) current = saved;
   return current;
