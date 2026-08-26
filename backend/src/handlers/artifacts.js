@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
 import { presignGet, presignPut } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import {
-  artifactKey,
-  checkArtifactPrefix,
-  checkHeaderKey,
-  sitePk,
-} from "./keys.js";
+import { artifactKey, checkArtifactPrefix, sitePk } from "./keys.js";
 
 const sqs = new SQSClient({});
 
@@ -92,10 +87,20 @@ export const presignUpload = async (event) => {
 
 /**
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
- * its analysis. Writes are a TransactWrite: a ConditionCheck that the parent
- * CHECK header exists (no grafting an artifact onto a missing/foreign check)
- * plus a conditional Put of the ART item (no duplicate). Only then do we enqueue
- * — the message carries the S3 key, never the media bytes.
+ * its analysis. A single conditional Put of the ART item (attribute_not_exists,
+ * so a replay can't duplicate it); only then do we enqueue — the message carries
+ * the S3 key, never the media bytes.
+ *
+ * Tenant isolation is the partition key (`SITE#<siteId>`, siteId derived from the
+ * JWT and enforced by the IAM LeadingKeys condition) plus the s3Key prefix check
+ * below — NOT a parent-header lookup. We deliberately do not read the CHECK header
+ * here. It used to be a ConditionCheck in a TransactWrite, but that routed every
+ * one of a submit's parallel registrations through the same header item, and
+ * DynamoDB cancels concurrent transactions contending on a shared item
+ * (TransactionConflict) — surfacing as a spurious 409 on multi-photo submits. The
+ * client always awaits createCheck before uploading, and getCheck/completeCheck
+ * key off the header (a would-be orphan is simply never read), so "parent exists"
+ * is a client-guaranteed invariant rather than one re-proven on every photo.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
@@ -155,31 +160,21 @@ export const registerArtifact = async (event) => {
 
   try {
     await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            ConditionCheck: {
-              TableName: dynamoTable,
-              Key: checkHeaderKey(siteId, checkId),
-              ConditionExpression: "attribute_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: item,
-              ConditionExpression: "attribute_not_exists(sk)",
-            },
-          },
-        ],
+      new PutCommand({
+        TableName: dynamoTable,
+        Item: item,
+        // No duplicate: write only if this artifactId isn't already registered.
+        // Touches only this artifact's own item, so a submit's parallel
+        // registrations never contend (see the header note above).
+        ConditionExpression: "attribute_not_exists(sk)",
       }),
     );
   } catch (err) {
-    if (err instanceof Error && err.name === "TransactionCanceledException") {
-      // Parent check missing, or this artifact was already registered.
-      return jsonResponse(409, {
-        error: "check not found or artifact already registered",
-      });
+    if (
+      err instanceof Error &&
+      err.name === "ConditionalCheckFailedException"
+    ) {
+      return jsonResponse(409, { error: "artifact already registered" });
     }
     throw err;
   }

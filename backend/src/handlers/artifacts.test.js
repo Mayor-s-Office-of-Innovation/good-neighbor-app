@@ -1,5 +1,5 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
-import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Spies for the three side-effecting seams. vi.hoisted lets the mock factories
@@ -133,7 +133,7 @@ describe("registerArtifact", () => {
     text: "north gate clear",
   };
 
-  it("transactionally records the artifact then enqueues the S3 key only", async () => {
+  it("records the artifact with a conditional put then enqueues the S3 key only", async () => {
     ddbSend.mockResolvedValueOnce({});
     sqsSend.mockResolvedValueOnce({});
 
@@ -147,20 +147,12 @@ describe("registerArtifact", () => {
 
     expect(res.statusCode).toBe(202);
 
-    const tx = ddbSend.mock.calls[0][0];
-    expect(tx).toBeInstanceOf(TransactWriteCommand);
-    const [check, put] = tx.input.TransactItems;
-    // Parent must exist — no grafting onto a missing/foreign check.
-    expect(check.ConditionCheck.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "CHECK#chk_01",
-    });
-    expect(check.ConditionCheck.ConditionExpression).toBe(
-      "attribute_exists(sk)",
-    );
-    // Artifact write is conditional (no duplicate).
-    expect(put.Put.ConditionExpression).toBe("attribute_not_exists(sk)");
-    expect(put.Put.Item).toMatchObject({
+    const put = ddbSend.mock.calls[0][0];
+    expect(put).toBeInstanceOf(PutCommand);
+    // Conditional write touches only this artifact's own item (no shared header
+    // ConditionCheck), so a submit's parallel registrations never contend.
+    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+    expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ART#north#art_1",
       artifactId: "art_1",
@@ -196,10 +188,10 @@ describe("registerArtifact", () => {
     expect(sqsSend).not.toHaveBeenCalled();
   });
 
-  it("409s and does not enqueue when the transaction is cancelled", async () => {
+  it("409s and does not enqueue when the artifact is already registered", async () => {
     ddbSend.mockRejectedValueOnce(
-      Object.assign(new Error("cancelled"), {
-        name: "TransactionCanceledException",
+      Object.assign(new Error("conditional check failed"), {
+        name: "ConditionalCheckFailedException",
       }),
     );
 
@@ -212,6 +204,9 @@ describe("registerArtifact", () => {
     );
 
     expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "artifact already registered",
+    });
     expect(sqsSend).not.toHaveBeenCalled();
   });
 
@@ -244,12 +239,12 @@ describe("registerArtifact", () => {
     );
 
     expect(res.statusCode).toBe(202);
-    const tx = ddbSend.mock.calls[0][0];
-    expect(tx.input.TransactItems[1].Put.Item).toMatchObject({
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item).toMatchObject({
       sk: "CHECK#chk_01#ART#west#art_text_1",
       text: "Graffiti is on the west wall by the entrance.",
     });
-    expect(tx.input.TransactItems[1].Put.Item).not.toHaveProperty("s3Key");
+    expect(put.input.Item).not.toHaveProperty("s3Key");
 
     const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
     expect(msg).toEqual({
