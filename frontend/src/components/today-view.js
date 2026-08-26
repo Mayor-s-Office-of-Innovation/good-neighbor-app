@@ -49,7 +49,7 @@ export function isStalePendingSession(session, submitted) {
   if (session.status === "submitted") {
     return submitted.length > 0 && submitted[0].id !== session.id;
   }
-  if (submitted.some((check) => check.id === session.id)) return true;
+  if (submitted.some((check) => check.id === session.id)) return false;
   if (!session.submittedAt || !submitted.length) return false;
   return submitted.some(
     (check) =>
