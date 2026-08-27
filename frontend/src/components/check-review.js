@@ -8,7 +8,7 @@
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { submitCheck } from "../services/submit-check.js";
+import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
 import {
   getSideOrder,
   getCurrentCheck,
@@ -170,9 +170,7 @@ class CheckReview extends HTMLElement {
       console.error("submitCheck failed", err);
       btn.removeAttribute("disabled");
       btn.textContent = label;
-      this._showError(
-        "Couldn’t file this check — the server didn’t respond. Check your connection and try again.",
-      );
+      this._showError(submitErrorMessage(err));
     }
   }
 
