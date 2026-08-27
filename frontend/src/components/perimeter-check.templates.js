@@ -43,13 +43,14 @@ export const shell = () => html`
 
     <div class="check__actions check__actions--perimeter">
       <div class="check__nav">
-        <button
-          class="check__next check__next--secondary"
+        <wa-button
+          class="check__previous"
           id="previous-side"
           type="button"
+          appearance="filled"
         >
           ‹ Previous side
-        </button>
+        </wa-button>
         <button
           class="check__next"
           id="next-side"
@@ -118,13 +119,14 @@ export const shellWebcam = () => html`
 
     <div class="check__actions check__actions--perimeter">
       <div class="check__nav">
-        <button
-          class="check__next check__next--secondary"
+        <wa-button
+          class="check__previous"
           id="previous-side"
           type="button"
+          appearance="filled"
         >
           ‹ Previous side
-        </button>
+        </wa-button>
         <button
           class="check__next"
           id="next-side"

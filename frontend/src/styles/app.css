@@ -1541,10 +1541,27 @@ theme-toggle {
   box-shadow: none;
   margin: 0;
 }
-.check__next--secondary {
+.check__previous {
+  flex: 0 0 auto;
+}
+.check__previous::part(base) {
+  min-height: auto;
+  padding: 0.9rem 1.1rem;
+  border: 0;
+  border-radius: var(--radius-pill);
   background: var(--ink);
   color: var(--on-ink);
-  border: 0;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+}
+.check__previous::part(label) {
+  line-height: 1.2;
+}
+.check__previous[disabled]::part(base) {
+  opacity: 0.4;
+  cursor: default;
 }
 .check__next:disabled {
   opacity: 0.4;
@@ -1563,7 +1580,8 @@ theme-toggle {
     flex-direction: column;
   }
   .check__describe,
-  .check__next {
+  .check__next,
+  .check__previous {
     width: 100%;
   }
   .check__describe {
