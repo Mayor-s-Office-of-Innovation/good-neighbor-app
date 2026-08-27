@@ -243,21 +243,17 @@ class PerimeterCheck extends HTMLElement {
   }
 
   async _submit() {
-    // Release the camera before the summarising overlay covers the screen.
+    // Release the camera before leaving the capture screen.
     if (this._camera) {
       this._camera.remove();
       this._camera = null;
     }
-    const overlay = this.querySelector("#summarising");
-    overlay.hidden = false;
     try {
-      await submitCheck({ submissionKind: "check" });
+      submitCheck({ submissionKind: "check" });
       navigate("/today");
     } catch (err) {
-      // Online-only: on any backend/network failure hide the summarising overlay
-      // and surface a retryable error (no local queue — offline is post-MVP).
+      // Synchronous failures are rare here, but keep the retry path intact.
       console.error("submitCheck failed", err);
-      overlay.hidden = true;
       // We tore the camera down before submitting; remount it so webcam-mode users
       // can still add photos on this (or another) side before retrying. (Native and
       // fallback modes keep their ＋ tile, so nothing to restore there.)

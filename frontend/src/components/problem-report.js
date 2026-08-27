@@ -6,7 +6,10 @@
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { submitCheck } from "../services/submit-check.js";
+import {
+  submitCheck,
+  submitErrorMessage,
+} from "../services/submit-check.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 import {
   ensureProblemReport,
@@ -244,24 +247,18 @@ class ProblemReport extends HTMLElement {
       this._camera.remove();
       this._camera = null;
     }
-    const overlay = /** @type {HTMLElement | null} */ (
-      this.querySelector("#summarising")
-    );
-    if (!overlay) return;
-    overlay.hidden = false;
     try {
-      await submitCheck({ submissionKind: "problem_report" });
+      submitCheck({ submissionKind: "problem_report" });
       navigate("/today");
     } catch (err) {
       console.error("submitCheck failed", err);
-      overlay.hidden = true;
       if (this._useWebcam() && !this._camera) this._mountCamera();
-      this._showSubmitError();
+      this._showSubmitError(err);
     }
   }
 
-  /** @returns {void} */
-  _showSubmitError() {
+  /** @param {unknown} err @returns {void} */
+  _showSubmitError(err) {
     let el = this.querySelector(".check__error");
     if (!el) {
       el = document.createElement("p");
@@ -272,8 +269,7 @@ class ProblemReport extends HTMLElement {
         el,
       );
     }
-    el.textContent =
-      "Couldn’t file this report — the server didn’t respond. Try again.";
+    el.textContent = submitErrorMessage(err);
   }
 
   /** @returns {void} */

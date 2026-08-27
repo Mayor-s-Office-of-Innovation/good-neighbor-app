@@ -11,7 +11,7 @@
 */
 import { html, escapeHtml } from "../lib/html.js";
 
-/** The one-time shell. The Summarising overlay starts hidden. */
+/** The one-time shell. */
 export const shell = () => html`
   <div class="flow view-check check">
     <div class="check__bar">
@@ -51,13 +51,6 @@ export const shell = () => html`
         type="button"
         disabled
       ></button>
-    </div>
-
-    <!-- AI summary loading state, shown during submit. -->
-    <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">Submitting report</p>
-      <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Submitting…</p>
     </div>
   </div>
 `;
@@ -117,13 +110,6 @@ export const shellWebcam = () => html`
         type="button"
         disabled
       ></button>
-    </div>
-
-    <!-- AI summary loading state, shown during submit. -->
-    <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">Submitting report</p>
-      <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Submitting…</p>
     </div>
   </div>
 `;
