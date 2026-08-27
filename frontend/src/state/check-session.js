@@ -321,6 +321,53 @@ export function removeItem(side, itemId) {
   emit();
 }
 
+function findSessionItem(side, itemId) {
+  const s = current?.sides?.[side];
+  if (!s) return null;
+  return s.items.find((i) => i.id === itemId) || null;
+}
+
+/**
+ * Record a photo's eager upload (services/artifact-uploader.js): its bytes are in
+ * S3, so stash the artifact coordinates submit needs to register cheaply, and swap
+ * the full-res base64 for a thumbnail to bound the draft's size on many-photo walks.
+ * No-op if the item was deleted mid-upload.
+ * @param {string} side
+ * @param {string} itemId
+ * @param {{ artifactId: string, s3Key: string, contentType: string, thumbUrl: string }} coords
+ */
+export function markItemUploaded(
+  side,
+  itemId,
+  { artifactId, s3Key, contentType, thumbUrl },
+) {
+  const item = findSessionItem(side, itemId);
+  if (!item) return null;
+  item.upload = { status: "uploaded", artifactId, s3Key, contentType };
+  if (thumbUrl) item.dataUrl = thumbUrl;
+  persist();
+  emit();
+  return item;
+}
+
+/**
+ * Track the in-flight/terminal state of a photo's eager upload without touching its
+ * bytes: "uploading" while a presign+PUT attempt runs, "failed" once retries are
+ * exhausted. Failed/uploading items keep their full-res dataUrl so submit can still
+ * fall back to a full upload. No-op if the item was deleted mid-upload.
+ * @param {string} side
+ * @param {string} itemId
+ * @param {"uploading"|"failed"} status
+ */
+export function setItemUploadStatus(side, itemId, status) {
+  const item = findSessionItem(side, itemId);
+  if (!item) return null;
+  item.upload = { ...(item.upload || {}), status };
+  persist();
+  emit();
+  return item;
+}
+
 /** Mark a side skipped (still counted in the fixed 4). */
 export function skipSide(side) {
   if (!current) return;

@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+class ApiError extends Error {
+  constructor(message, { status = 0 } = {}) {
+    super(message);
+    this.status = status;
+  }
+}
 const createCheck = vi.fn(async () => ({ checkId: "check-1" }));
 const uploadArtifact = vi.fn(async () => "artifact-uploaded");
+const registerArtifact = vi.fn(async () => ({
+  artifactId: "artifact-eager",
+  status: "registered",
+}));
 const registerTextArtifact = vi.fn(async () => "artifact-text");
 const waitForAnalyses = vi.fn(async () => ({
   artifacts: [{ artifactId: "artifact-uploaded" }],
@@ -26,10 +36,12 @@ const getSideOrder = vi.fn(() => ["North"]);
 vi.mock("./api.js", () => ({
   createCheck,
   uploadArtifact,
+  registerArtifact,
   registerTextArtifact,
   waitForAnalyses,
   completeCheck,
   getCheck,
+  ApiError,
 }));
 
 vi.mock("../db.js", () => ({
@@ -132,6 +144,82 @@ describe("resumeUploadingCheck", () => {
 
     expect(uploadArtifact).not.toHaveBeenCalled();
     expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
+  });
+});
+
+function makeEagerDraft() {
+  const draft = makeDraft();
+  draft.sides.North.items[0].upload = {
+    status: "uploaded",
+    artifactId: "artifact-eager",
+    s3Key: "checks/site/check-1/eager.jpg",
+    contentType: "image/jpeg",
+  };
+  // The eager upload swapped the full-res bytes for a thumbnail.
+  draft.sides.North.items[0].dataUrl = "data:image/jpeg;base64,THUMB==";
+  return draft;
+}
+
+describe("eager-uploaded photos register instead of re-uploading", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    getDraft.mockResolvedValue(makeEagerDraft());
+    getCheck.mockResolvedValue({ artifacts: [], analyses: [] });
+  });
+
+  it("registers the stored artifact and never re-uploads the bytes", async () => {
+    const { resumeUploadingCheck } = await import("./submit-check.js");
+
+    await resumeUploadingCheck("check-1", {
+      flowType: "single-problem",
+      submissionKind: "problem_report",
+    });
+
+    expect(uploadArtifact).not.toHaveBeenCalled();
+    expect(registerArtifact).toHaveBeenCalledTimes(1);
+    expect(registerArtifact).toHaveBeenCalledWith("check-1", {
+      artifactId: "artifact-eager",
+      side: "North",
+      s3Key: "checks/site/check-1/eager.jpg",
+      contentType: "image/jpeg",
+      capturedAt: "2026-08-27T00:20:00.000Z",
+    });
+    expect(markAnalyzing).toHaveBeenCalledWith({
+      submissionKind: "problem_report",
+      expectedArtifacts: 1,
+      checkId: "check-1",
+    });
+  });
+
+  it("tolerates a 409 (already registered) on replay", async () => {
+    registerArtifact.mockRejectedValueOnce(
+      new ApiError("conflict", { status: 409 }),
+    );
+    const { resumeUploadingCheck } = await import("./submit-check.js");
+
+    await expect(
+      resumeUploadingCheck("check-1", {
+        flowType: "single-problem",
+        submissionKind: "problem_report",
+      }),
+    ).resolves.toBeDefined();
+
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a non-409 register failure", async () => {
+    registerArtifact.mockRejectedValueOnce(
+      new ApiError("server", { status: 500 }),
+    );
+    const { resumeUploadingCheck } = await import("./submit-check.js");
+
+    await expect(
+      resumeUploadingCheck("check-1", {
+        flowType: "single-problem",
+        submissionKind: "problem_report",
+      }),
+    ).rejects.toBeDefined();
   });
 });
 

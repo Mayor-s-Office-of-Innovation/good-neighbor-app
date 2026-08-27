@@ -22,10 +22,12 @@ import { clearDraft, getDraft } from "../db.js";
 import {
   createCheck,
   uploadArtifact,
+  registerArtifact,
   registerTextArtifact,
   waitForAnalyses,
   completeCheck,
   getCheck,
+  ApiError,
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
 import {
@@ -50,6 +52,10 @@ const pendingSubmissions = new Map();
  * @property {string} [dataUrl]
  * @property {string} [text]
  * @property {string} [tag]
+ * @property {boolean} [uploaded]   photo bytes already in S3 (eager upload)
+ * @property {string} [artifactId]  eager-upload artifact id (present when uploaded)
+ * @property {string} [s3Key]       eager-upload S3 key (present when uploaded)
+ * @property {string} [contentType] eager-upload content type (present when uploaded)
  */
 
 /**
@@ -152,9 +158,19 @@ export function submitErrorMessage(err) {
 }
 
 async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
+  // The dominant leg on the submit→review journey: the backend analyzes each photo
+  // (downscale → remote LLM), and we poll until every artifact has landed. The
+  // per-poll cadence is logged inside waitForAnalyses (wait:poll#N); this span is
+  // the single clean total so a regression here stands out in one line.
+  const endAnalyze = span("analyze", { expected: expectedArtifacts });
   const last = await withLeg("analyze", () =>
     waitForAnalyses(checkId, { expected: expectedArtifacts }),
   );
+  endAnalyze({
+    analyzed: last.analyses.length,
+    artifacts: last.artifacts.length,
+  });
+
   const endComplete = span("completeCheck");
   const completion = await withLeg("complete", () => completeCheck(checkId));
   endComplete({ grade: completion?.grade, issues: completion?.issueCount });
@@ -164,9 +180,15 @@ async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
     throw err;
   }
 
+  // Adapt analyses → findings and stash the assessment on the session (fast, local).
+  const endAdapt = span("adaptFindings");
   markSubmitted(analysesToFindings(last.analyses), completion.assessment, {
     checkId,
   });
+  endAdapt({ findings: (last.analyses || []).length });
+  // Assessment is ready in memory + mirrored to the review store; home re-renders
+  // its "Review assessment" tile off this. The `+Nms` offset here is the whole
+  // automated pipeline duration from the submit tap.
   mark("submit:done", { expectedArtifacts: last.artifacts.length });
   return last;
 }
@@ -202,6 +224,12 @@ function plannedArtifactsForCheck(check) {
       : "";
 
     photos.forEach((it, index) => {
+      // A photo whose bytes were already pushed to S3 during the walk
+      // (services/artifact-uploader.js) carries its artifact coordinates so submit
+      // can register the metadata cheaply instead of re-uploading the bytes. The
+      // signature stays content-based (capturedAt=uploadedAt) so it dedups against a
+      // full upload of the same photo on resume.
+      const eager = it.upload?.status === "uploaded" ? it.upload : null;
       planned.push({
         kind: "photo",
         side: it.side,
@@ -209,6 +237,14 @@ function plannedArtifactsForCheck(check) {
         capturedAt: it.uploadedAt || submittedAt,
         tag: `${it.side}#${index}`,
         ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
+        ...(eager
+          ? {
+              uploaded: true,
+              artifactId: eager.artifactId,
+              s3Key: eager.s3Key,
+              contentType: eager.contentType,
+            }
+          : {}),
         signature: artifactSignature({
           kind: "photo",
           side: it.side,
@@ -271,23 +307,54 @@ async function uploadPlannedArtifacts(
     : new Set();
   const uploads = plannedArtifacts
     .filter((artifact) => !uploaded.has(artifact.signature))
-    .map((artifact) =>
-      artifact.kind === "text"
-        ? registerTextArtifact(checkId, {
-            side: artifact.side,
-            text: artifact.text,
-            capturedAt: artifact.capturedAt,
-          })
-        : uploadArtifact(checkId, {
-            side: artifact.side,
-            dataUrl: artifact.dataUrl,
-            capturedAt: artifact.capturedAt,
-            text: artifact.text,
-            tag: artifact.tag,
-          }),
-    );
+    .map((artifact) => {
+      if (artifact.kind === "text") {
+        return registerTextArtifact(checkId, {
+          side: artifact.side,
+          text: artifact.text,
+          capturedAt: artifact.capturedAt,
+        });
+      }
+      // Bytes already in S3 (eager upload): register the metadata only — the
+      // expensive PUT happened during the walk.
+      if (artifact.uploaded) {
+        return registerUploadedArtifact(checkId, artifact);
+      }
+      // Never eager-uploaded (offline during the walk, a 4xx, or an interrupted
+      // attempt): fall back to the full presign → PUT → register.
+      return uploadArtifact(checkId, {
+        side: artifact.side,
+        dataUrl: artifact.dataUrl,
+        capturedAt: artifact.capturedAt,
+        text: artifact.text,
+        tag: artifact.tag,
+      });
+    });
   await withLeg("upload", () => Promise.all(uploads));
   return plannedArtifacts.length;
+}
+
+/**
+ * Register a photo whose bytes were uploaded eagerly during the walk. Tolerates a
+ * 409 (already registered) so a resume/replay is idempotent — signature dedup is
+ * the primary guard, this is defence in depth.
+ * @param {string} checkId
+ * @param {PlannedArtifact} artifact
+ */
+async function registerUploadedArtifact(checkId, artifact) {
+  try {
+    return await registerArtifact(checkId, {
+      artifactId: artifact.artifactId,
+      side: artifact.side,
+      s3Key: artifact.s3Key,
+      contentType: artifact.contentType,
+      capturedAt: artifact.capturedAt,
+      ...(artifact.text ? { text: artifact.text } : {}),
+    });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) return null;
+    throw err;
+  }
 }
 
 function startFinalization(checkId, { expectedArtifacts } = {}) {

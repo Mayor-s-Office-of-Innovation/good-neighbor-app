@@ -7,6 +7,10 @@
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
+import {
+  enqueueUpload,
+  resumePendingUploads,
+} from "../services/artifact-uploader.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 import {
   ensureProblemReport,
@@ -71,6 +75,8 @@ class ProblemReport extends HTMLElement {
       startProblemReport(this._siteId);
     }
     this._checkId = getCurrentCheck()?.id || "";
+    // Resume any photo upload interrupted by a reload / navigation mid-report.
+    resumePendingUploads();
 
     this._side = getSideOrder()[0];
     setActiveSideIndex(0);
@@ -204,10 +210,13 @@ class ProblemReport extends HTMLElement {
 
   /** @param {string} dataUrl */
   _addPhoto(dataUrl) {
-    addItem(
+    const record = addItem(
       this._side,
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
+    // Start pushing the bytes to S3 now, in the background, so by submit time
+    // they're already up and submit only registers the metadata.
+    if (record) enqueueUpload(getCurrentCheck()?.id, record.side, record.id);
     this._renderShots();
     this._syncControls();
   }
