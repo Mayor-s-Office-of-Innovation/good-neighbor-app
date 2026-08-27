@@ -1548,39 +1548,6 @@ theme-toggle {
   }
 }
 
-/* AI-summary loading state shown during submit (the cheap "Summarising…"). */
-.summarising {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  background: var(--bg);
-  text-align: center;
-}
-.summarising[hidden] {
-  display: none;
-}
-.summarising__eyebrow {
-  margin: 0;
-  color: var(--brand-blue);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  font-size: 0.95rem;
-}
-.summarising__spinner {
-  font-size: 2rem;
-  --track-width: 3px;
-}
-.summarising__text {
-  margin: 0;
-  font-size: 1.3rem;
-  font-weight: 700;
-}
-
 /* ---- <in-browser-camera>: opt-in INLINE camera (?webcam) ----
    Isolated with the rest of the feature (in-browser-camera.js + shellWebcam
    template) so it can be lifted out cleanly. */
