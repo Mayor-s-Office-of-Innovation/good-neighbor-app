@@ -149,11 +149,36 @@ export async function saveDraft(check) {
   });
   return check;
 }
-export async function clearDraft(flowType) {
-  return tx("draft", "readwrite", (os) => {
-    os.delete(draftKey(flowType));
+
+async function deleteDraftIfMatches(os, key, checkId) {
+  if (!checkId) {
+    os.delete(key);
+    return;
+  }
+  const saved = await reqToPromise(os.get(key));
+  if (saved?.id === checkId) {
+    os.delete(key);
+  }
+}
+
+/**
+ * Clear the resumable draft, optionally only if it still belongs to one check.
+ * @param {string | { flowType?: string, checkId?: string } | undefined} flowOrOpts
+ * @param {string} [maybeCheckId]
+ */
+export async function clearDraft(flowOrOpts, maybeCheckId) {
+  const flowType =
+    flowOrOpts && typeof flowOrOpts === "object"
+      ? flowOrOpts.flowType
+      : flowOrOpts;
+  const checkId =
+    flowOrOpts && typeof flowOrOpts === "object"
+      ? flowOrOpts.checkId
+      : maybeCheckId;
+  return tx("draft", "readwrite", async (os) => {
+    await deleteDraftIfMatches(os, draftKey(flowType), checkId);
     if (!flowType) {
-      os.delete("current");
+      await deleteDraftIfMatches(os, "current", checkId);
     }
   });
 }
