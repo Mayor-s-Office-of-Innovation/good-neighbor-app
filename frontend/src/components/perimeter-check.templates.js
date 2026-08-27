@@ -73,6 +73,38 @@ export const shell = () => html`
       <wa-spinner class="summarising__spinner"></wa-spinner>
       <p class="summarising__text">Submitting…</p>
     </div>
+
+    <dialog
+      class="sheet"
+      id="cancel-check-dialog"
+      aria-label="Leave this check?"
+    >
+      <div class="sheet__panel">
+        <div class="sheet__actions">
+          <wa-button
+            class="sheet__cancel"
+            type="button"
+            id="cancel-check-save"
+            appearance="outlined"
+          >
+            Save draft and exit
+          </wa-button>
+        </div>
+        <ul class="sheet__opts">
+          <li>
+            <wa-button
+              class="sheet__opt sheet__opt--danger"
+              id="cancel-check-discard"
+              type="button"
+              appearance="filled"
+              variant="danger"
+            >
+              Discard draft and exit
+            </wa-button>
+          </li>
+        </ul>
+      </div>
+    </dialog>
   </div>
 `;
 
@@ -149,6 +181,38 @@ export const shellWebcam = () => html`
       <wa-spinner class="summarising__spinner"></wa-spinner>
       <p class="summarising__text">Submitting…</p>
     </div>
+
+    <dialog
+      class="sheet"
+      id="cancel-check-dialog"
+      aria-label="Leave this check?"
+    >
+      <div class="sheet__panel">
+        <div class="sheet__actions">
+          <wa-button
+            class="sheet__cancel"
+            type="button"
+            id="cancel-check-save"
+            appearance="outlined"
+          >
+            Save draft and exit
+          </wa-button>
+        </div>
+        <ul class="sheet__opts">
+          <li>
+            <wa-button
+              class="sheet__opt sheet__opt--danger"
+              id="cancel-check-discard"
+              type="button"
+              appearance="filled"
+              variant="danger"
+            >
+              Discard draft and exit
+            </wa-button>
+          </li>
+        </ul>
+      </div>
+    </dialog>
   </div>
 `;
 
