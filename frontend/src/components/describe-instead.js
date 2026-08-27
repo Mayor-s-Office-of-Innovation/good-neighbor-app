@@ -311,6 +311,7 @@ class DescribeInstead extends HTMLElement {
 
   _onClose() {
     if (!this._hasUnsavedChanges()) {
+      this._returnToCurrentSide();
       navigate(this._routeBase);
       return;
     }
@@ -322,6 +323,7 @@ class DescribeInstead extends HTMLElement {
     if (this._transcribeSession) {
       void this._cancelVoice();
     }
+    this._returnToCurrentSide();
     navigate(this._routeBase);
   }
 
@@ -373,12 +375,13 @@ class DescribeInstead extends HTMLElement {
       navigate(this._routeBase);
       return;
     }
-    setPostDescribeAction(
-      this._sideIndex === this._sides.length - 1
-        ? { type: "submit" }
-        : { type: "advance", sideIndex: this._sideIndex + 1 },
-    );
+    setPostDescribeAction({ type: "stay", sideIndex: this._sideIndex });
     navigate(this._routeBase);
+  }
+
+  _returnToCurrentSide() {
+    if (this._flowType !== "perimeter") return;
+    setPostDescribeAction({ type: "stay", sideIndex: this._sideIndex });
   }
 
   _siteCheckId() {

@@ -27,7 +27,11 @@ export const shell = () => html`
     <div class="segbar" id="segbar" aria-label="Perimeter sides"></div>
 
     <!-- This side's shots (inline grid + a trailing ＋ tile), rendered by JS. -->
-    <div class="shotgrid" id="shotgrid" aria-label="Photos for this side"></div>
+    <div
+      class="shotgrid"
+      id="shotgrid"
+      aria-label="Evidence for this side"
+    ></div>
 
     <!-- Hidden native-camera handoff: opens the rear camera on phones, the file
          picker on desktop. One photo per invocation. -->
@@ -41,17 +45,59 @@ export const shell = () => html`
       capture="environment"
     />
 
-    <div class="check__actions">
+    <div class="check__actions check__actions--perimeter">
+      <div class="check__nav">
+        <wa-button
+          class="check__previous"
+          id="previous-side"
+          type="button"
+          appearance="filled"
+        >
+          ‹ Previous side
+        </wa-button>
+        <button
+          class="check__next"
+          id="next-side"
+          type="button"
+          disabled
+        ></button>
+      </div>
       <button class="check__describe" id="describe-instead" type="button">
         Describe instead
       </button>
-      <button
-        class="check__next"
-        id="next-side"
-        type="button"
-        disabled
-      ></button>
     </div>
+
+    <dialog
+      class="sheet"
+      id="cancel-check-dialog"
+      aria-label="Leave this check?"
+    >
+      <div class="sheet__panel">
+        <div class="sheet__actions">
+          <wa-button
+            class="sheet__cancel"
+            type="button"
+            id="cancel-check-save"
+            appearance="outlined"
+          >
+            Save draft and exit
+          </wa-button>
+        </div>
+        <ul class="sheet__opts">
+          <li>
+            <wa-button
+              class="sheet__opt sheet__opt--danger"
+              id="cancel-check-discard"
+              type="button"
+              appearance="filled"
+              variant="danger"
+            >
+              Discard draft and exit
+            </wa-button>
+          </li>
+        </ul>
+      </div>
+    </dialog>
   </div>
 `;
 
@@ -86,7 +132,7 @@ export const shellWebcam = () => html`
     <div
       class="shotgrid shotgrid--webcam"
       id="shotgrid"
-      aria-label="Photos for this side"
+      aria-label="Evidence for this side"
     ></div>
 
     <!-- Kept for the fallback path when the browser camera is unavailable/denied. -->
@@ -100,17 +146,59 @@ export const shellWebcam = () => html`
       capture="environment"
     />
 
-    <div class="check__actions">
+    <div class="check__actions check__actions--perimeter">
+      <div class="check__nav">
+        <wa-button
+          class="check__previous"
+          id="previous-side"
+          type="button"
+          appearance="filled"
+        >
+          ‹ Previous side
+        </wa-button>
+        <button
+          class="check__next"
+          id="next-side"
+          type="button"
+          disabled
+        ></button>
+      </div>
       <button class="check__describe" id="describe-instead" type="button">
         Describe instead
       </button>
-      <button
-        class="check__next"
-        id="next-side"
-        type="button"
-        disabled
-      ></button>
     </div>
+
+    <dialog
+      class="sheet"
+      id="cancel-check-dialog"
+      aria-label="Leave this check?"
+    >
+      <div class="sheet__panel">
+        <div class="sheet__actions">
+          <wa-button
+            class="sheet__cancel"
+            type="button"
+            id="cancel-check-save"
+            appearance="outlined"
+          >
+            Save draft and exit
+          </wa-button>
+        </div>
+        <ul class="sheet__opts">
+          <li>
+            <wa-button
+              class="sheet__opt sheet__opt--danger"
+              id="cancel-check-discard"
+              type="button"
+              appearance="filled"
+              variant="danger"
+            >
+              Discard draft and exit
+            </wa-button>
+          </li>
+        </ul>
+      </div>
+    </dialog>
   </div>
 `;
 
@@ -141,6 +229,30 @@ export const shotTile = (item, index) => html`
       type="button"
       data-del="${item.id}"
       aria-label="Delete photo"
+    >
+      <wa-icon name="trash" aria-hidden="true"></wa-icon>
+    </button>
+  </div>
+`;
+
+export const descriptionTile = ({ side }) => html`
+  <div class="shot shot--description">
+    <button
+      class="shot__body shot__body--description"
+      type="button"
+      data-edit-description="true"
+      aria-label="Edit description for ${escapeHtml(side)} side"
+    >
+      <span class="shot__icon" aria-hidden="true">
+        <wa-icon name="file-lines"></wa-icon>
+      </span>
+      <span class="shot__label">Description added</span>
+    </button>
+    <button
+      class="shot__del"
+      type="button"
+      data-del-description="true"
+      aria-label="Delete description"
     >
       <wa-icon name="trash" aria-hidden="true"></wa-icon>
     </button>

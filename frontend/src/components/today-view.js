@@ -18,7 +18,7 @@
   tag; split into a .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
-import { getSite } from "../db.js";
+import { getSite, getDraft } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -124,6 +124,17 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
+    const currentDraft = /** @type {any} */ (getCurrentCheck());
+    const [checkDraft, problemDraft] = await Promise.all([
+      currentDraft?.status === "in-progress" &&
+      currentDraft.flowType === "perimeter"
+        ? Promise.resolve(currentDraft)
+        : getDraft("perimeter"),
+      currentDraft?.status === "in-progress" &&
+      currentDraft.flowType === "single-problem"
+        ? Promise.resolve(currentDraft)
+        : getDraft("single-problem"),
+    ]);
     let effectivePendingSession =
       pendingSession &&
       ["uploading", "analyzing", "analysis_failed", "submitted"].includes(
@@ -156,6 +167,8 @@ class TodayView extends HTMLElement {
       last,
       tasks,
       pendingSession: effectivePendingSession,
+      hasCheckDraft: Boolean(checkDraft),
+      hasProblemDraft: Boolean(problemDraft),
     });
 
     const start = this.querySelector("#start-check");
@@ -207,7 +220,7 @@ class TodayView extends HTMLElement {
     this._wireCards();
   }
 
-  _render({ last, tasks, pendingSession }) {
+  _render({ last, tasks, pendingSession, hasCheckDraft, hasProblemDraft }) {
     const onsite = newestTasksFirst(tasks.filter((t) => t.type === "onsite"));
     const city = newestTasksFirst(
       tasks.filter((t) => t.type === "city_escalation"),
@@ -225,8 +238,8 @@ class TodayView extends HTMLElement {
           aria-label="Today"
         >
           ${showFirstRun
-            ? this._firstRunBlock()
-            : this._activityBlock({ last })}
+            ? this._firstRunBlock({ hasCheckDraft, hasProblemDraft })
+            : this._activityBlock({ last, hasCheckDraft, hasProblemDraft })}
         </div>
 
         ${hasPendingAssessment || tasks.length
@@ -416,13 +429,14 @@ class TodayView extends HTMLElement {
       </dialog>
     `;
   }
-  _firstRunBlock() {
+  _firstRunBlock({ hasCheckDraft, hasProblemDraft }) {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">
         <div class="home-first-run">
           <h1 class="home-first-run__title">Start your first check</h1>
           ${this._homeActions({
-            reportLabel: "Report a problem",
+            checkLabel: hasCheckDraft ? "Resume check" : "Start a check",
+            reportLabel: hasProblemDraft ? "Resume report" : "Report a problem",
             stacked: true,
           })}
         </div>
@@ -430,7 +444,7 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _activityBlock({ last }) {
+  _activityBlock({ last, hasCheckDraft, hasProblemDraft }) {
     const identity = this._siteIdentity();
     return html`
       <div class="screen__sec home-lead">
@@ -443,16 +457,19 @@ class TodayView extends HTMLElement {
           <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
         </div>
         ${this._summaryBlock(last)}
-        ${this._homeActions({ reportLabel: "Report a problem" })}
+        ${this._homeActions({
+          checkLabel: hasCheckDraft ? "Resume check" : "Start a check",
+          reportLabel: hasProblemDraft ? "Resume report" : "Report a problem",
+        })}
       </div>
     `;
   }
 
-  _homeActions({ reportLabel, stacked = false }) {
+  _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {
     return html`
       <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
         <button id="start-check" class="btn-ink" type="button">
-          Start a check
+          ${escapeHtml(checkLabel)}
         </button>
         <button id="report-problem" class="btn-outline" type="button">
           ${escapeHtml(reportLabel)}
