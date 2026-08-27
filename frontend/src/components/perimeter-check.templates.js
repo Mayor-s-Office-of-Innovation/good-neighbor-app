@@ -27,7 +27,11 @@ export const shell = () => html`
     <div class="segbar" id="segbar" aria-label="Perimeter sides"></div>
 
     <!-- This side's shots (inline grid + a trailing ＋ tile), rendered by JS. -->
-    <div class="shotgrid" id="shotgrid" aria-label="Photos for this side"></div>
+    <div
+      class="shotgrid"
+      id="shotgrid"
+      aria-label="Evidence for this side"
+    ></div>
 
     <!-- Hidden native-camera handoff: opens the rear camera on phones, the file
          picker on desktop. One photo per invocation. -->
@@ -93,7 +97,7 @@ export const shellWebcam = () => html`
     <div
       class="shotgrid shotgrid--webcam"
       id="shotgrid"
-      aria-label="Photos for this side"
+      aria-label="Evidence for this side"
     ></div>
 
     <!-- Kept for the fallback path when the browser camera is unavailable/denied. -->
