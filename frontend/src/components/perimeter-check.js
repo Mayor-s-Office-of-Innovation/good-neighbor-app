@@ -89,6 +89,9 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#skip-side").addEventListener("click", () =>
       this._skip(),
     );
+    this.querySelector("#previous-side").addEventListener("click", () =>
+      this._back(),
+    );
     this.querySelector("#next-side").addEventListener("click", () =>
       this._forward(),
     );
@@ -225,6 +228,14 @@ class PerimeterCheck extends HTMLElement {
     this._afterSide();
   }
 
+  _back() {
+    if (this._sideIndex === 0) return;
+    this._sideIndex -= 1;
+    setActiveSideIndex(this._sideIndex);
+    this._renderSide();
+    window.scrollTo?.({ top: 0 });
+  }
+
   _describeInstead() {
     setActiveSideIndex(this._sideIndex);
     navigate("/check/describe");
@@ -323,6 +334,8 @@ class PerimeterCheck extends HTMLElement {
   _syncControls() {
     const side = this._sides[this._sideIndex];
     const canAdvanceOrSubmit = isSideCovered(side);
+    const previous = this.querySelector("#previous-side");
+    previous.disabled = this._sideIndex === 0;
     const next = this.querySelector("#next-side");
     next.disabled = !canAdvanceOrSubmit;
     next.textContent = this._isLast ? "Submit check" : "Next side ›";

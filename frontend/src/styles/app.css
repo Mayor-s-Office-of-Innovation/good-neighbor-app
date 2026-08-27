@@ -1479,14 +1479,25 @@ theme-toggle {
   outline-offset: 2px;
 }
 
-/* Bottom action row: secondary "Describe instead" on the left, primary forward
-   action on the right ("Next side ›" / "Submit check"). */
+/* Bottom action row shared by check/report flows. The perimeter flow adds a
+   stacked nav row so previous/next sit opposite each other, with "Describe
+   instead" below. */
 .check__actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding-top: 0.2rem;
+}
+.check__actions--perimeter {
+  align-items: stretch;
+  flex-direction: column;
+}
+.check__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 .check__describe {
   appearance: none;
@@ -1504,6 +1515,10 @@ theme-toggle {
   min-width: 0;
   padding: 0.35rem 0;
   text-align: left;
+}
+.check__actions--perimeter .check__describe {
+  align-self: center;
+  text-align: center;
 }
 .check__describe:focus-visible {
   outline: 2px solid var(--brand-blue);
@@ -1526,6 +1541,11 @@ theme-toggle {
   box-shadow: none;
   margin: 0;
 }
+.check__next--secondary {
+  background: var(--ink);
+  color: var(--on-ink);
+  border: 0;
+}
 .check__next:disabled {
   opacity: 0.4;
   cursor: default;
@@ -1537,6 +1557,9 @@ theme-toggle {
 @media (max-width: 359px) {
   .check__actions {
     align-items: stretch;
+    flex-direction: column;
+  }
+  .check__nav {
     flex-direction: column;
   }
   .check__describe,
