@@ -443,11 +443,7 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _homeActions({
-    checkLabel = "Start a check",
-    reportLabel,
-    stacked = false,
-  }) {
+  _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {
     return html`
       <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
         <button id="start-check" class="btn-ink" type="button">
