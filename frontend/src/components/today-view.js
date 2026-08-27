@@ -297,7 +297,9 @@ class TodayView extends HTMLElement {
 
     if (session.status === "analysis_failed") {
       const pausedLabel =
-        session.pendingStage === "upload" ? "Upload paused" : "AI analysis paused";
+        session.pendingStage === "upload"
+          ? "Upload paused"
+          : "AI analysis paused";
       return html`
         <section
           class="assessment-tile assessment-tile--error"
