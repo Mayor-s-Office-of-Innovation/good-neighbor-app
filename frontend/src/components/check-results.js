@@ -38,6 +38,7 @@ import { listChecks, getCheck, evaluateAssessment } from "../services/api.js";
 import { adaptCheckDetail } from "../domain/check-adapter.js";
 import { navigate } from "../router.js";
 import { loadSubmitted, allItems, clearCheck } from "../state/check-session.js";
+import { mark } from "../services/instrument.js";
 
 // Dispute options offered in the modal. `status` is the phrase shown on the card
 // after the user picks it ("You marked this as <status>").
@@ -165,6 +166,15 @@ class CheckResults extends HTMLElement {
         </div>
       </dialog>
     `;
+
+    // Journey endpoint: the assessment is now on screen for the user to review.
+    // On the live post-submit path (no reload) the run epoch is still the submit
+    // tap, so this line's `+Nms` is the full submit→review latency.
+    mark("review:rendered", {
+      checkId,
+      conditions: conditions.length,
+      source: canDispute ? "post-submit" : "history",
+    });
 
     this._dialog = this.querySelector("#dispute");
 
