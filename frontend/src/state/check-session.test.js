@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let savedReview = null;
+let nextId = 1;
 
 vi.mock("../db.js", () => ({
-  newId: () => "test-check-id",
+  newId: () => `test-check-id-${nextId++}`,
   saveDraft: vi.fn(),
   clearDraft: vi.fn(),
   getDraft: vi.fn(async () => null),
@@ -20,6 +21,7 @@ vi.mock("../db.js", () => ({
 describe("loadSubmitted", () => {
   beforeEach(async () => {
     savedReview = null;
+    nextId = 1;
     const { clearCheck } = await import("./check-session.js");
     clearCheck();
     vi.clearAllMocks();
@@ -47,6 +49,7 @@ describe("loadSubmitted", () => {
 describe("markAnalyzing", () => {
   beforeEach(async () => {
     savedReview = null;
+    nextId = 1;
     const { clearCheck } = await import("./check-session.js");
     clearCheck();
     vi.clearAllMocks();
@@ -62,5 +65,19 @@ describe("markAnalyzing", () => {
 
     expect(getCurrentCheck()?.expectedArtifacts).toBe(4);
     expect(savedReview?.expectedArtifacts).toBe(4);
+  });
+
+  it("ignores a stale checkId when the active session has been replaced", async () => {
+    const { getCurrentCheck, markAnalyzing, startCheck } = await import(
+      "./check-session.js"
+    );
+
+    const original = startCheck("site-1");
+    startCheck("site-2");
+    markAnalyzing({ checkId: original.id, expectedArtifacts: 4 });
+
+    expect(getCurrentCheck()?.id).not.toBe(original.id);
+    expect(getCurrentCheck()?.status).toBe("in-progress");
+    expect(savedReview).toBeNull();
   });
 });

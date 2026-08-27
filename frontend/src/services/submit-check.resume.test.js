@@ -1,0 +1,178 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const createCheck = vi.fn(async () => ({ checkId: "check-1" }));
+const uploadArtifact = vi.fn(async () => "artifact-uploaded");
+const registerTextArtifact = vi.fn(async () => "artifact-text");
+const waitForAnalyses = vi.fn(async () => ({
+  artifacts: [{ artifactId: "artifact-uploaded" }],
+  analyses: [{ artifactId: "artifact-uploaded" }],
+}));
+const completeCheck = vi.fn(async () => ({
+  assessmentReady: true,
+  assessment: { id: "assessment-1" },
+  grade: "A",
+  issueCount: 0,
+}));
+const getCheck = vi.fn(async () => ({ artifacts: [], analyses: [] }));
+const clearDraft = vi.fn(async () => {});
+const getDraft = vi.fn(async () => null);
+const markAnalyzing = vi.fn();
+const markAnalysisFailed = vi.fn();
+const markSubmitted = vi.fn();
+const markUploading = vi.fn();
+const getCurrentCheck = vi.fn(() => null);
+const getSideOrder = vi.fn(() => ["North"]);
+
+vi.mock("./api.js", () => ({
+  createCheck,
+  uploadArtifact,
+  registerTextArtifact,
+  waitForAnalyses,
+  completeCheck,
+  getCheck,
+}));
+
+vi.mock("../db.js", () => ({
+  clearDraft,
+  getDraft,
+}));
+
+vi.mock("../domain/check-adapter.js", () => ({
+  analysesToFindings: vi.fn(() => []),
+}));
+
+vi.mock("../state/check-session.js", () => ({
+  getCurrentCheck,
+  markUploading,
+  markAnalyzing,
+  markAnalysisFailed,
+  getSideOrder,
+  markSubmitted,
+}));
+
+vi.mock("./instrument.js", () => ({
+  startRun: vi.fn(),
+  span: vi.fn(() => vi.fn()),
+  mark: vi.fn(),
+}));
+
+function makeDraft() {
+  return {
+    id: "check-1",
+    flowType: "single-problem",
+    sideOrder: ["North"],
+    submittedAt: "2026-08-27T00:21:00.000Z",
+    sides: {
+      North: {
+        skipped: false,
+        description: null,
+        items: [
+          {
+            id: "item-1",
+            side: "North",
+            dataUrl: "data:image/jpeg;base64,AA==",
+            uploadedAt: "2026-08-27T00:20:00.000Z",
+          },
+        ],
+      },
+    },
+  };
+}
+
+describe("resumeUploadingCheck", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    getDraft.mockResolvedValue(makeDraft());
+    getCheck.mockResolvedValue({
+      artifacts: [],
+      analyses: [],
+    });
+  });
+
+  it("resumes a persisted uploading session from the saved draft", async () => {
+    const { resumeUploadingCheck } = await import("./submit-check.js");
+
+    await resumeUploadingCheck("check-1", {
+      flowType: "single-problem",
+      submissionKind: "problem_report",
+    });
+
+    expect(createCheck).toHaveBeenCalledWith("check-1", {
+      sides: [{ side: "North", skipped: false }],
+    });
+    expect(uploadArtifact).toHaveBeenCalledTimes(1);
+    expect(markAnalyzing).toHaveBeenCalledWith({
+      submissionKind: "problem_report",
+      expectedArtifacts: 1,
+      checkId: "check-1",
+    });
+    expect(clearDraft).toHaveBeenCalledTimes(2);
+    expect(waitForAnalyses).toHaveBeenCalledTimes(1);
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips artifacts already registered before reload", async () => {
+    const { resumeUploadingCheck } = await import("./submit-check.js");
+    getCheck.mockResolvedValue({
+      artifacts: [
+        {
+          side: "North",
+          capturedAt: "2026-08-27T00:20:00.000Z",
+          s3Key: "checks/site/check-1/existing.jpg",
+        },
+      ],
+      analyses: [],
+    });
+
+    await resumeUploadingCheck("check-1", {
+      flowType: "single-problem",
+      submissionKind: "problem_report",
+    });
+
+    expect(uploadArtifact).not.toHaveBeenCalled();
+    expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
+  });
+});
+
+describe("submitCheck / resumeSubmittedCheck", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    getCurrentCheck.mockReturnValue(makeDraft());
+  });
+
+  it("routes initial and resumed finalization through one registry", async () => {
+    /** @type {null | (() => void)} */
+    let releaseAnalyses = null;
+    waitForAnalyses.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseAnalyses = () =>
+            resolve({
+              artifacts: [{ artifactId: "artifact-uploaded" }],
+              analyses: [{ artifactId: "artifact-uploaded" }],
+            });
+        }),
+    );
+
+    const { submitCheck, resumeSubmittedCheck } = await import(
+      "./submit-check.js"
+    );
+
+    submitCheck({ submissionKind: "problem_report" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const resumed = resumeSubmittedCheck("check-1", { expectedArtifacts: 1 });
+    expect(releaseAnalyses).toBeTypeOf("function");
+    if (!releaseAnalyses) {
+      throw new Error("Expected analysis release callback");
+    }
+    releaseAnalyses();
+    await resumed;
+
+    expect(waitForAnalyses).toHaveBeenCalledTimes(1);
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+});
