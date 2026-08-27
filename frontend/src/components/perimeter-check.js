@@ -22,6 +22,7 @@ import {
   ensureCheck,
   startCheck,
   loadDraft,
+  clearCheck,
   getSideOrder,
   getCurrentCheck,
   getFlowType,
@@ -95,6 +96,24 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#describe-instead").addEventListener("click", () =>
       this._describeInstead(),
     );
+    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#cancel-check-dialog")
+    );
+    this.querySelector("#cancel-check-save")?.addEventListener("click", () => {
+      this._cancelDialog?.close();
+      navigate("/today");
+    });
+    this.querySelector("#cancel-check-discard")?.addEventListener(
+      "click",
+      () => {
+        clearCheck();
+        this._cancelDialog?.close();
+        navigate("/today");
+      },
+    );
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
     // The ＋ tile and per-shot delete are re-rendered each change, so delegate.
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
@@ -281,8 +300,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _cancel() {
-    // Draft is already persisted — leaving keeps it for resume from home.
-    navigate("/today");
+    this._cancelDialog?.showModal();
   }
 
   /* ---- render ---- */
