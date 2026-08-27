@@ -45,16 +45,26 @@ export const shell = () => html`
       capture="environment"
     />
 
-    <div class="check__actions">
+    <div class="check__actions check__actions--perimeter">
+      <div class="check__nav">
+        <wa-button
+          class="check__previous"
+          id="previous-side"
+          type="button"
+          appearance="filled"
+        >
+          ‹ Previous side
+        </wa-button>
+        <button
+          class="check__next"
+          id="next-side"
+          type="button"
+          disabled
+        ></button>
+      </div>
       <button class="check__describe" id="describe-instead" type="button">
         Describe instead
       </button>
-      <button
-        class="check__next"
-        id="next-side"
-        type="button"
-        disabled
-      ></button>
     </div>
 
     <!-- AI summary loading state, shown during submit. -->
@@ -111,16 +121,26 @@ export const shellWebcam = () => html`
       capture="environment"
     />
 
-    <div class="check__actions">
+    <div class="check__actions check__actions--perimeter">
+      <div class="check__nav">
+        <wa-button
+          class="check__previous"
+          id="previous-side"
+          type="button"
+          appearance="filled"
+        >
+          ‹ Previous side
+        </wa-button>
+        <button
+          class="check__next"
+          id="next-side"
+          type="button"
+          disabled
+        ></button>
+      </div>
       <button class="check__describe" id="describe-instead" type="button">
         Describe instead
       </button>
-      <button
-        class="check__next"
-        id="next-side"
-        type="button"
-        disabled
-      ></button>
     </div>
 
     <!-- AI summary loading state, shown during submit. -->
