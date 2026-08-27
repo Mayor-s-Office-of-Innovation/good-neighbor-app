@@ -161,6 +161,30 @@ export const shotTile = (item, index) => html`
   </div>
 `;
 
+export const descriptionTile = ({ side }) => html`
+  <div class="shot shot--description">
+    <button
+      class="shot__body shot__body--description"
+      type="button"
+      data-edit-description="true"
+      aria-label="Edit description for ${escapeHtml(side)} side"
+    >
+      <span class="shot__icon" aria-hidden="true">
+        <wa-icon name="file-lines"></wa-icon>
+      </span>
+      <span class="shot__label">Description added</span>
+    </button>
+    <button
+      class="shot__del"
+      type="button"
+      data-del-description="true"
+      aria-label="Delete description"
+    >
+      <wa-icon name="trash" aria-hidden="true"></wa-icon>
+    </button>
+  </div>
+`;
+
 /*
   The ＋ "Add photo" tile that opens the camera. Empty side → a larger centered tile
   with a one-line hint; once shots exist → a compact trailing tile (no hint).
