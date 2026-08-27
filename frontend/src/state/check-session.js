@@ -110,7 +110,7 @@ function rehydrateDerivedFields(check) {
   return check;
 }
 
-/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number}} */
+/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number,pendingStage?:string,flowType?:string,submissionKind?:string}} */
 let current = null;
 let postDescribeAction = null;
 const listeners = new Set();
@@ -347,19 +347,39 @@ export function allItems() {
 }
 
 /**
+ * Flip the walk to "uploading" once the user submits, before network work begins.
+ * Draft persistence stays intact until the upload is durably registered so a failed
+ * submission can still be resumed after the pending tile is cleared.
+ * @param {{ submissionKind?: "check" | "problem_report", checkId?: string }} [opts]
+ */
+export function markUploading({ submissionKind = "check", checkId } = {}) {
+  if (!current || !canMutateCurrentSession(checkId)) return null;
+  current.status = "uploading";
+  current.submittedAt = current.submittedAt || new Date().toISOString();
+  current.submissionKind = submissionKind;
+  current.pendingStage = "upload";
+  delete current.analysisError;
+  persistReview();
+  emit();
+  return current;
+}
+
+/**
  * Flip the walk to "analyzing" once the submission is safely registered server-side.
  * The review store keeps this pending state off the draft/resume path while allowing
  * home to show progress and survive a reload.
- * @param {{ submissionKind?: "check" | "problem_report", expectedArtifacts?: number }} [opts]
+ * @param {{ submissionKind?: "check" | "problem_report", expectedArtifacts?: number, checkId?: string }} [opts]
  */
 export function markAnalyzing({
   submissionKind = "check",
   expectedArtifacts,
+  checkId,
 } = {}) {
-  if (!current) return null;
+  if (!current || !canMutateCurrentSession(checkId)) return null;
   current.status = "analyzing";
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.submissionKind = submissionKind;
+  current.pendingStage = "analyze";
   if (Number.isFinite(expectedArtifacts)) {
     current.expectedArtifacts = expectedArtifacts;
   }
@@ -380,6 +400,7 @@ export function markSubmitted(findings, assessment, { checkId } = {}) {
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.findings = findings;
   current.assessment = assessment;
+  delete current.pendingStage;
   delete current.analysisError;
   // Mirror the submitted session to the `review` store so a reload of the results
   // screen can rehydrate the envelope + findings + photos (loadSubmitted) instead of

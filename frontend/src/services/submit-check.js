@@ -18,17 +18,19 @@
   post-MVP; there is no write queue). The just-submitted photos stay in the session
   for the results evidence strip; only the resumable draft is dropped.
 */
-import { clearDraft } from "../db.js";
+import { clearDraft, getDraft } from "../db.js";
 import {
   createCheck,
   uploadArtifact,
   registerTextArtifact,
   waitForAnalyses,
   completeCheck,
+  getCheck,
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
 import {
   getCurrentCheck,
+  markUploading,
   markAnalyzing,
   markAnalysisFailed,
   getSideOrder,
@@ -37,6 +39,18 @@ import {
 import { startRun, span, mark } from "./instrument.js";
 
 const pendingFinalizations = new Map();
+const pendingSubmissions = new Map();
+
+/**
+ * @typedef {object} PlannedArtifact
+ * @property {string} kind
+ * @property {string} side
+ * @property {string} capturedAt
+ * @property {string} signature
+ * @property {string} [dataUrl]
+ * @property {string} [text]
+ * @property {string} [tag]
+ */
 
 /**
  * Run one submit step and stamp the failing leg onto its error so the message
@@ -157,7 +171,126 @@ async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   return last;
 }
 
-export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
+/**
+ * @param {PlannedArtifact} artifact
+ * @returns {string}
+ */
+function artifactSignature(artifact) {
+  return [
+    artifact.kind,
+    artifact.side,
+    artifact.capturedAt || "",
+    artifact.text || "",
+  ].join("::");
+}
+
+/**
+ * @param {any} check
+ * @returns {PlannedArtifact[]}
+ */
+function plannedArtifactsForCheck(check) {
+  const planned = [];
+  const submittedAt =
+    check.submittedAt || check.startedAt || new Date().toISOString();
+  const sidesInFlow = check.sideOrder || getSideOrder();
+
+  for (const side of sidesInFlow) {
+    const sideState = check.sides[side];
+    const photos = sideState.items.filter((it) => it.dataUrl);
+    const descriptionText = sideState.description?.validated
+      ? sideState.description.text
+      : "";
+
+    photos.forEach((it, index) => {
+      planned.push({
+        kind: "photo",
+        side: it.side,
+        dataUrl: it.dataUrl,
+        capturedAt: it.uploadedAt || submittedAt,
+        tag: `${it.side}#${index}`,
+        ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
+        signature: artifactSignature({
+          kind: "photo",
+          side: it.side,
+          capturedAt: it.uploadedAt || submittedAt,
+          ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
+        }),
+      });
+    });
+
+    if (photos.length === 0 && descriptionText) {
+      planned.push({
+        kind: "text",
+        side,
+        text: descriptionText,
+        capturedAt: submittedAt,
+        signature: artifactSignature({
+          kind: "text",
+          side,
+          capturedAt: submittedAt,
+          text: descriptionText,
+        }),
+      });
+    }
+  }
+
+  return planned;
+}
+
+/**
+ * @param {string} checkId
+ * @returns {Promise<Set<string>>}
+ */
+async function existingArtifactSignatures(checkId) {
+  const existing = await getCheck(checkId);
+  return new Set(
+    (existing.artifacts || []).map((artifact) =>
+      artifactSignature({
+        kind: artifact.s3Key ? "photo" : "text",
+        side: artifact.side,
+        capturedAt: artifact.capturedAt,
+        text: artifact.text,
+      }),
+    ),
+  );
+}
+
+/**
+ * @param {string} checkId
+ * @param {PlannedArtifact[]} plannedArtifacts
+ * @param {{ resume?: boolean }} [opts]
+ * @returns {Promise<number>}
+ */
+async function uploadPlannedArtifacts(
+  checkId,
+  plannedArtifacts,
+  { resume = false } = {},
+) {
+  const uploaded = resume
+    ? await existingArtifactSignatures(checkId)
+    : new Set();
+  const uploads = plannedArtifacts
+    .filter((artifact) => !uploaded.has(artifact.signature))
+    .map((artifact) =>
+      artifact.kind === "text"
+        ? registerTextArtifact(checkId, {
+            side: artifact.side,
+            text: artifact.text,
+            capturedAt: artifact.capturedAt,
+          })
+        : uploadArtifact(checkId, {
+            side: artifact.side,
+            dataUrl: artifact.dataUrl,
+            capturedAt: artifact.capturedAt,
+            text: artifact.text,
+            tag: artifact.tag,
+          }),
+    );
+  await withLeg("upload", () => Promise.all(uploads));
+  return plannedArtifacts.length;
+}
+
+function startFinalization(checkId, { expectedArtifacts } = {}) {
   if (pendingFinalizations.has(checkId)) {
     return pendingFinalizations.get(checkId);
   }
@@ -174,86 +307,120 @@ export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   return run;
 }
 
+/**
+ * @param {any} check
+ * @param {{ submissionKind?: "check" | "problem_report", resume?: boolean }} [opts]
+ * @returns {Promise<any>}
+ */
+async function runSubmittedCheck(
+  check,
+  { submissionKind = "check", resume = false } = {},
+) {
+  startRun("submit", { checkId: check.id });
+  const plannedArtifacts = plannedArtifactsForCheck(check);
+
+  // 1. Start the run. `sides` records which sides were skipped (server stores it);
+  //    `siteId` is derived server-side, never sent.
+  const sides = (check.sideOrder || getSideOrder()).map((s) => ({
+    side: s,
+    skipped: !!check.sides[s].skipped,
+  }));
+  const endCreate = span("createCheck");
+  await withLeg("start", () => createCheck(check.id, { sides }));
+  endCreate();
+
+  const endUploads = span("uploads");
+  const expectedArtifacts = await uploadPlannedArtifacts(
+    check.id,
+    plannedArtifacts,
+    {
+      resume,
+    },
+  );
+  endUploads({ expectedArtifacts });
+
+  // 3. Once every artifact is registered, the submission is durable and the draft
+  //    can be dropped. Home then shifts from upload copy to AI-analysis copy.
+  markAnalyzing({ submissionKind, expectedArtifacts, checkId: check.id });
+  await Promise.all([
+    clearDraft({ flowType: check.flowType, checkId: check.id }),
+    clearDraft({ checkId: check.id }),
+  ]);
+  mark("submit:queued", { expectedArtifacts, checkId: check.id });
+  return startFinalization(check.id, { expectedArtifacts });
+}
+
+export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
+  return startFinalization(checkId, { expectedArtifacts });
+}
+
+export async function resumeUploadingCheck(
+  checkId,
+  { flowType, submissionKind = "check" } = {},
+) {
+  if (pendingSubmissions.has(checkId) || pendingFinalizations.has(checkId)) {
+    return pendingSubmissions.get(checkId) || pendingFinalizations.get(checkId);
+  }
+
+  const draft = await getDraft(flowType);
+  if (!draft || draft.id !== checkId) {
+    const err = new Error("No matching draft found for upload resume.");
+    err.leg = "upload";
+    markAnalysisFailed(submitErrorMessage(err), { checkId });
+    throw err;
+  }
+
+  const run = runSubmittedCheck(draft, { submissionKind, resume: true })
+    .catch((err) => {
+      console.error("resumeUploadingCheck failed", err);
+      markAnalysisFailed(submitErrorMessage(err), { checkId });
+      throw err;
+    })
+    .finally(() => {
+      pendingSubmissions.delete(checkId);
+    });
+  pendingSubmissions.set(checkId, run);
+  return run;
+}
+
 export function resumeSubmittedCheckInBackground(checkId, opts) {
   void resumeSubmittedCheck(checkId, opts).catch(() => {});
 }
 
+export function resumeUploadingCheckInBackground(checkId, opts) {
+  void resumeUploadingCheck(checkId, opts).catch(() => {});
+}
+
 /**
- * Submit the current walk to the backend and hydrate the session with findings.
- * Throws on any backend/network failure before the submission is safely registered.
- * Once registration succeeds, the longer analysis/completion work continues in the
- * background and home shows the pending state.
+ * Submit the current walk and immediately switch the UI to the home-screen pending
+ * tile. The full create/upload/analyze pipeline continues in the background.
  * @param {{ submissionKind?: "check" | "problem_report" }} [opts]
- * @returns {Promise<{ checkId: string }|null>}
+ * @returns {{ checkId: string }|null}
  */
-export async function submitCheck({ submissionKind = "check" } = {}) {
+export function submitCheck({ submissionKind = "check" } = {}) {
   const active = getCurrentCheck();
   if (!active) return null;
 
-  startRun("submit", { checkId: active.id });
-  const sidesInFlow = getSideOrder();
-
-  // 1. Start the run. `sides` records which sides were skipped (server stores it);
-  //    `siteId` is derived server-side, never sent.
-  const sides = sidesInFlow.map((s) => ({
-    side: s,
-    skipped: !!active.sides[s].skipped,
-  }));
-  const endCreate = span("createCheck");
-  await withLeg("start", () => createCheck(active.id, { sides }));
-  endCreate();
-
-  // 2. Upload every captured artifact straight to S3, then register it — all sides
-  //    and photos IN PARALLEL. Bytes never transit our API; each register enqueues
-  //    that artifact's async analysis, so firing them together also lets the backend
-  //    worker's per-batch fan-out start analyzing sooner. Order is irrelevant: the
-  //    backend keys every artifact independently and waitForAnalyses matches by id,
-  //    not sequence. Any leg's failure rejects the whole submit (no local fallback).
-  //    The `+Nms` start stamps in the perf trace should now cluster (overlap), not
-  //    climb one upload-latency at a time as the old serial loop did.
-  const endUploads = span("uploads");
-  const uploads = [];
-  for (const side of sidesInFlow) {
-    const sideState = active.sides[side];
-    const photos = sideState.items.filter((it) => it.dataUrl);
-    const descriptionText = sideState.description?.validated
-      ? sideState.description.text
-      : "";
-
-    photos.forEach((it, index) => {
-      uploads.push(
-        uploadArtifact(active.id, {
-          side: it.side,
-          dataUrl: it.dataUrl,
-          capturedAt: it.uploadedAt,
-          tag: `${it.side}#${index}`,
-          // Description text rides on the side's first photo (index 0).
-          ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
-        }),
-      );
-    });
-
-    if (photos.length === 0 && descriptionText) {
-      uploads.push(
-        registerTextArtifact(active.id, {
-          side,
-          text: descriptionText,
-          capturedAt: new Date().toISOString(),
-        }),
-      );
-    }
+  if (
+    pendingSubmissions.has(active.id) ||
+    pendingFinalizations.has(active.id)
+  ) {
+    return { checkId: active.id };
   }
 
-  const expectedArtifacts = uploads.length;
-  await withLeg("upload", () => Promise.all(uploads));
-  endUploads({ expectedArtifacts });
-
-  // 3. The submission is durable once every artifact is registered, so switch the
-  //    session into a pending-analysis state and let the long analyzer/complete
-  //    sequence continue in the background while the user returns home.
-  markAnalyzing({ submissionKind, expectedArtifacts });
-  await clearDraft(active.flowType);
-  mark("submit:queued", { expectedArtifacts, checkId: active.id });
-  resumeSubmittedCheckInBackground(active.id, { expectedArtifacts });
+  markUploading({ submissionKind, checkId: active.id });
+  const run = runSubmittedCheck(active, { submissionKind })
+    .catch((err) => {
+      console.error("runSubmittedCheck failed", err);
+      if (err?.leg === "start" || err?.leg === "upload") {
+        markAnalysisFailed(submitErrorMessage(err), { checkId: active.id });
+      }
+      throw err;
+    })
+    .finally(() => {
+      pendingSubmissions.delete(active.id);
+    });
+  pendingSubmissions.set(active.id, run);
+  void run.catch(() => {});
   return { checkId: active.id };
 }

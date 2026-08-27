@@ -35,12 +35,6 @@ export const shell = () => html`
       </button>
     </div>
 
-    <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">✦ AI SUMMARY</p>
-      <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Summarising…</p>
-    </div>
-
     <dialog
       class="sheet"
       id="cancel-report-dialog"
@@ -110,12 +104,6 @@ export const shellWebcam = () => html`
       <button class="check__next" id="submit-report" type="button" disabled>
         Submit report
       </button>
-    </div>
-
-    <div class="summarising" id="summarising" hidden>
-      <p class="summarising__eyebrow">✦ AI SUMMARY</p>
-      <wa-spinner class="summarising__spinner"></wa-spinner>
-      <p class="summarising__text">Summarising…</p>
     </div>
 
     <dialog
