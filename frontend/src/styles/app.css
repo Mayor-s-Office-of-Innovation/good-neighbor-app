@@ -1397,11 +1397,57 @@ theme-toggle {
   overflow: hidden;
   background: var(--surface-3);
 }
+.shot__body {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+}
+.shot__body:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: -2px;
+}
 .shot__img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.shot--description {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.shot__body--description {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.85rem;
+  color: var(--ink);
+}
+.shot__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 1.25rem;
+  transform: translateY(-0.2rem);
+}
+.shot__label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.15;
 }
 .shot__del {
   position: absolute;
@@ -1479,14 +1525,25 @@ theme-toggle {
   outline-offset: 2px;
 }
 
-/* Bottom action row: secondary "Describe instead" on the left, primary forward
-   action on the right ("Next side ›" / "Submit check"). */
+/* Bottom action row shared by check/report flows. The perimeter flow adds a
+   stacked nav row so previous/next sit opposite each other, with "Describe
+   instead" below. */
 .check__actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding-top: 0.2rem;
+}
+.check__actions--perimeter {
+  align-items: stretch;
+  flex-direction: column;
+}
+.check__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 .check__describe {
   appearance: none;
@@ -1504,6 +1561,10 @@ theme-toggle {
   min-width: 0;
   padding: 0.35rem 0;
   text-align: left;
+}
+.check__actions--perimeter .check__describe {
+  align-self: center;
+  text-align: center;
 }
 .check__describe:focus-visible {
   outline: 2px solid var(--brand-blue);
@@ -1526,6 +1587,28 @@ theme-toggle {
   box-shadow: none;
   margin: 0;
 }
+.check__previous {
+  flex: 0 0 auto;
+}
+.check__previous::part(base) {
+  min-height: auto;
+  padding: 0.9rem 1.1rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+  font-size: 1rem;
+}
+.check__previous::part(label) {
+  line-height: 1.2;
+}
+.check__previous[disabled]::part(base) {
+  opacity: 0.4;
+  cursor: default;
+}
 .check__next:disabled {
   opacity: 0.4;
   cursor: default;
@@ -1539,8 +1622,12 @@ theme-toggle {
     align-items: stretch;
     flex-direction: column;
   }
+  .check__nav {
+    flex-direction: column;
+  }
   .check__describe,
-  .check__next {
+  .check__next,
+  .check__previous {
     width: 100%;
   }
   .check__describe {

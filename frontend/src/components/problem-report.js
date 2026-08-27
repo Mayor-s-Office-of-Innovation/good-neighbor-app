@@ -12,6 +12,7 @@ import {
   ensureProblemReport,
   startProblemReport,
   loadDraft,
+  clearCheck,
   getCurrentCheck,
   getSideOrder,
   setActiveSideIndex,
@@ -89,6 +90,24 @@ class ProblemReport extends HTMLElement {
     this.querySelector("#describe-instead").addEventListener("click", () =>
       this._describeInstead(),
     );
+    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#cancel-report-dialog")
+    );
+    this.querySelector("#cancel-report-save")?.addEventListener("click", () => {
+      this._cancelDialog?.close();
+      navigate("/today");
+    });
+    this.querySelector("#cancel-report-discard")?.addEventListener(
+      "click",
+      () => {
+        clearCheck();
+        this._cancelDialog?.close();
+        navigate("/today");
+      },
+    );
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
     this.querySelector("#submit-report").addEventListener("click", () =>
       this._submit(),
     );
@@ -211,7 +230,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _cancel() {
-    navigate("/today");
+    this._cancelDialog?.showModal();
   }
 
   /** @returns {void} */

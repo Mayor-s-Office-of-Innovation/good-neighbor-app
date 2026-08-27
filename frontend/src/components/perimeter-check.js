@@ -22,6 +22,7 @@ import {
   ensureCheck,
   startCheck,
   loadDraft,
+  clearCheck,
   getSideOrder,
   getCurrentCheck,
   getFlowType,
@@ -30,6 +31,7 @@ import {
   consumePostDescribeAction,
   addItem,
   removeItem,
+  setSideDescription,
   skipSide,
   isSideCovered,
   isCurrentSession,
@@ -39,6 +41,7 @@ import {
   shellWebcam,
   segment,
   shotTile,
+  descriptionTile,
   addTile,
 } from "./perimeter-check.templates.js";
 
@@ -63,7 +66,9 @@ class PerimeterCheck extends HTMLElement {
     const postDescribeAction = consumePostDescribeAction();
     // Resume at the explicitly active side when returning from /check/describe.
     // Otherwise start at the first side that still needs attention.
-    if (postDescribeAction?.type === "advance") {
+    if (postDescribeAction?.type === "stay") {
+      this._sideIndex = postDescribeAction.sideIndex;
+    } else if (postDescribeAction?.type === "advance") {
       this._sideIndex = postDescribeAction.sideIndex;
     } else if (postDescribeAction?.type === "submit") {
       this._sideIndex = this._sides.length - 1;
@@ -89,12 +94,33 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#skip-side").addEventListener("click", () =>
       this._skip(),
     );
+    this.querySelector("#previous-side").addEventListener("click", () =>
+      this._back(),
+    );
     this.querySelector("#next-side").addEventListener("click", () =>
       this._forward(),
     );
     this.querySelector("#describe-instead").addEventListener("click", () =>
       this._describeInstead(),
     );
+    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#cancel-check-dialog")
+    );
+    this.querySelector("#cancel-check-save")?.addEventListener("click", () => {
+      this._cancelDialog?.close();
+      navigate("/today");
+    });
+    this.querySelector("#cancel-check-discard")?.addEventListener(
+      "click",
+      () => {
+        clearCheck();
+        this._cancelDialog?.close();
+        navigate("/today");
+      },
+    );
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
     // The ＋ tile and per-shot delete are re-rendered each change, so delegate.
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
@@ -123,7 +149,7 @@ class PerimeterCheck extends HTMLElement {
     if (!panel) return;
     this._camera = document.createElement("in-browser-camera");
     this._camera.addEventListener("capture", (e) =>
-      this._addPhoto(e.detail.dataUrl),
+      this._addPhoto(this._side, e.detail.dataUrl),
     );
     this._camera.addEventListener("unavailable", () =>
       this._onCameraUnavailable(),
@@ -167,6 +193,7 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     const originCheckId = this._checkId;
+    const originSide = this._side;
     const reader = new FileReader();
     this._fileReader = reader;
     reader.onload = () => {
@@ -175,7 +202,7 @@ class PerimeterCheck extends HTMLElement {
         return;
       }
       this._fileReader = null;
-      this._addPhoto(reader.result);
+      this._addPhoto(originSide, reader.result);
     };
     reader.onerror = () => {
       this._fileReader = null;
@@ -186,8 +213,8 @@ class PerimeterCheck extends HTMLElement {
     reader.readAsDataURL(file);
   }
 
-  _addPhoto(dataUrl) {
-    addItem(this._side, { kind: "photo", dataUrl });
+  _addPhoto(side, dataUrl) {
+    addItem(side, { kind: "photo", dataUrl });
     this._renderSegments();
     this._renderShots();
     this._syncControls();
@@ -211,6 +238,17 @@ class PerimeterCheck extends HTMLElement {
       this._renderSegments();
       this._renderShots();
       this._syncControls();
+      return;
+    }
+    if (e.target.closest("[data-del-description]")) {
+      setSideDescription(this._side, null);
+      this._renderSegments();
+      this._renderShots();
+      this._syncControls();
+      return;
+    }
+    if (e.target.closest("[data-edit-description]")) {
+      this._describeInstead();
     }
   }
 
@@ -223,6 +261,15 @@ class PerimeterCheck extends HTMLElement {
   _forward() {
     // Enabled only once the side has a photo (Skip covers the no-photo path).
     this._afterSide();
+  }
+
+  /** @returns {void} */
+  _back() {
+    if (this._sideIndex === 0) return;
+    this._sideIndex -= 1;
+    setActiveSideIndex(this._sideIndex);
+    this._renderSide();
+    window.scrollTo?.({ top: 0 });
   }
 
   _describeInstead() {
@@ -277,8 +324,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _cancel() {
-    // Draft is already persisted — leaving keeps it for resume from home.
-    navigate("/today");
+    this._cancelDialog?.showModal();
   }
 
   /* ---- render ---- */
@@ -309,16 +355,30 @@ class PerimeterCheck extends HTMLElement {
   // This side's shots as an inline grid. Native path (and webcam fallback) appends
   // the ＋ "Add photo" tile; with the inline camera live, thumbnails render alone.
   _renderShots() {
-    const items = this._sideState().items;
+    const sideState = this._sideState();
+    const items = sideState.items;
     const grid = this.querySelector("#shotgrid");
-    grid.classList.toggle("shotgrid--empty", items.length === 0);
-    const tile = this._useWebcam() ? "" : addTile(items.length === 0);
-    grid.innerHTML = items.map(shotTile).join("") + tile;
+    const hasDescription = Boolean(sideState.description?.validated);
+    grid.classList.toggle(
+      "shotgrid--empty",
+      items.length === 0 && !hasDescription,
+    );
+    const tile = this._useWebcam()
+      ? ""
+      : addTile(items.length === 0 && !hasDescription);
+    const description = hasDescription
+      ? descriptionTile({
+          side: this._side,
+        })
+      : "";
+    grid.innerHTML = items.map(shotTile).join("") + description + tile;
   }
 
   _syncControls() {
     const side = this._sides[this._sideIndex];
     const canAdvanceOrSubmit = isSideCovered(side);
+    const previous = this.querySelector("#previous-side");
+    previous.disabled = this._sideIndex === 0;
     const next = this.querySelector("#next-side");
     next.disabled = !canAdvanceOrSubmit;
     next.textContent = this._isLast ? "Submit check" : "Next side ›";
