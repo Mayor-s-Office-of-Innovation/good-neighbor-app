@@ -190,7 +190,8 @@ function artifactSignature(artifact) {
  */
 function plannedArtifactsForCheck(check) {
   const planned = [];
-  const submittedAt = check.submittedAt || check.startedAt || new Date().toISOString();
+  const submittedAt =
+    check.submittedAt || check.startedAt || new Date().toISOString();
   const sidesInFlow = check.sideOrder || getSideOrder();
 
   for (const side of sidesInFlow) {
@@ -265,7 +266,9 @@ async function uploadPlannedArtifacts(
   plannedArtifacts,
   { resume = false } = {},
 ) {
-  const uploaded = resume ? await existingArtifactSignatures(checkId) : new Set();
+  const uploaded = resume
+    ? await existingArtifactSignatures(checkId)
+    : new Set();
   const uploads = plannedArtifacts
     .filter((artifact) => !uploaded.has(artifact.signature))
     .map((artifact) =>
@@ -327,9 +330,13 @@ async function runSubmittedCheck(
   endCreate();
 
   const endUploads = span("uploads");
-  const expectedArtifacts = await uploadPlannedArtifacts(check.id, plannedArtifacts, {
-    resume,
-  });
+  const expectedArtifacts = await uploadPlannedArtifacts(
+    check.id,
+    plannedArtifacts,
+    {
+      resume,
+    },
+  );
   endUploads({ expectedArtifacts });
 
   // 3. Once every artifact is registered, the submission is durable and the draft
@@ -394,7 +401,10 @@ export function submitCheck({ submissionKind = "check" } = {}) {
   const active = getCurrentCheck();
   if (!active) return null;
 
-  if (pendingSubmissions.has(active.id) || pendingFinalizations.has(active.id)) {
+  if (
+    pendingSubmissions.has(active.id) ||
+    pendingFinalizations.has(active.id)
+  ) {
     return { checkId: active.id };
   }
 

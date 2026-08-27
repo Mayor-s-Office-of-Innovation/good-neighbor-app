@@ -6,10 +6,7 @@
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import {
-  submitCheck,
-  submitErrorMessage,
-} from "../services/submit-check.js";
+import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 import {
   ensureProblemReport,
