@@ -27,7 +27,11 @@ export const shell = () => html`
     <div class="segbar" id="segbar" aria-label="Perimeter sides"></div>
 
     <!-- This side's shots (inline grid + a trailing ＋ tile), rendered by JS. -->
-    <div class="shotgrid" id="shotgrid" aria-label="Photos for this side"></div>
+    <div
+      class="shotgrid"
+      id="shotgrid"
+      aria-label="Evidence for this side"
+    ></div>
 
     <!-- Hidden native-camera handoff: opens the rear camera on phones, the file
          picker on desktop. One photo per invocation. -->
@@ -93,7 +97,7 @@ export const shellWebcam = () => html`
     <div
       class="shotgrid shotgrid--webcam"
       id="shotgrid"
-      aria-label="Photos for this side"
+      aria-label="Evidence for this side"
     ></div>
 
     <!-- Kept for the fallback path when the browser camera is unavailable/denied. -->
@@ -155,6 +159,30 @@ export const shotTile = (item, index) => html`
       type="button"
       data-del="${item.id}"
       aria-label="Delete photo"
+    >
+      <wa-icon name="trash" aria-hidden="true"></wa-icon>
+    </button>
+  </div>
+`;
+
+export const descriptionTile = ({ side }) => html`
+  <div class="shot shot--description">
+    <button
+      class="shot__body shot__body--description"
+      type="button"
+      data-edit-description="true"
+      aria-label="Edit description for ${escapeHtml(side)} side"
+    >
+      <span class="shot__icon" aria-hidden="true">
+        <wa-icon name="file-lines"></wa-icon>
+      </span>
+      <span class="shot__label">Description added</span>
+    </button>
+    <button
+      class="shot__del"
+      type="button"
+      data-del-description="true"
+      aria-label="Delete description"
     >
       <wa-icon name="trash" aria-hidden="true"></wa-icon>
     </button>
