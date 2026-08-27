@@ -39,7 +39,10 @@ import {
   clearSubmittedSession,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
-import { resumeSubmittedCheckInBackground } from "../services/submit-check.js";
+import {
+  resumeSubmittedCheckInBackground,
+  resumeUploadingCheckInBackground,
+} from "../services/submit-check.js";
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
@@ -91,7 +94,9 @@ class TodayView extends HTMLElement {
     const active = getCurrentCheck();
     const pendingSession =
       active &&
-      ["analyzing", "analysis_failed", "submitted"].includes(active.status)
+      ["uploading", "analyzing", "analysis_failed", "submitted"].includes(
+        active.status,
+      )
         ? active
         : await loadSubmitted();
 
@@ -132,7 +137,7 @@ class TodayView extends HTMLElement {
     ]);
     let effectivePendingSession =
       pendingSession &&
-      ["analyzing", "analysis_failed", "submitted"].includes(
+      ["uploading", "analyzing", "analysis_failed", "submitted"].includes(
         pendingSession.status,
       )
         ? pendingSession
@@ -141,6 +146,11 @@ class TodayView extends HTMLElement {
     if (this._isStalePendingSession(effectivePendingSession, submitted)) {
       await clearSubmittedSession();
       effectivePendingSession = null;
+    } else if (effectivePendingSession?.status === "uploading") {
+      resumeUploadingCheckInBackground(effectivePendingSession.id, {
+        flowType: effectivePendingSession.flowType,
+        submissionKind: effectivePendingSession.submissionKind,
+      });
     } else if (effectivePendingSession?.status === "analyzing") {
       resumeSubmittedCheckInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
@@ -299,6 +309,10 @@ class TodayView extends HTMLElement {
     }
 
     if (session.status === "analysis_failed") {
+      const pausedLabel =
+        session.pendingStage === "upload"
+          ? "Upload paused"
+          : "AI analysis paused";
       return html`
         <section
           class="assessment-tile assessment-tile--error"
@@ -306,7 +320,7 @@ class TodayView extends HTMLElement {
         >
           <div class="assessment-tile__card">
             <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">AI analysis paused</p>
+              <p class="assessment-tile__eyebrow">${escapeHtml(pausedLabel)}</p>
               <wa-button
                 id="cancel-assessment-open"
                 class="assessment-tile__dismiss"
@@ -330,13 +344,19 @@ class TodayView extends HTMLElement {
     }
 
     const label =
-      session.submissionKind === "problem_report" ? "problem report" : "report";
+      session.submissionKind === "problem_report" ? "problem report" : "check";
     const time = session.submittedAt ? timeOf(session.submittedAt) : "";
-    const eyebrow = time
-      ? `AI is analyzing the ${time} ${label}`
-      : `AI is analyzing the latest ${label}`;
-    const headline =
-      session.submissionKind === "problem_report"
+    const isUploading = session.status === "uploading";
+    const eyebrow = isUploading
+      ? time
+        ? `Uploading your ${time} ${label}`
+        : `Uploading your latest ${label}`
+      : time
+        ? `AI is analyzing the ${time} ${label}`
+        : `AI is analyzing the latest ${label}`;
+    const headline = isUploading
+      ? "Uploading your report..."
+      : session.submissionKind === "problem_report"
         ? "Problem report received and being analyzed..."
         : "Report received and being analyzed for problems...";
 
@@ -363,7 +383,9 @@ class TodayView extends HTMLElement {
           <div
             class="assessment-tile__progress"
             role="img"
-            aria-label="Analysis in progress"
+            aria-label="${isUploading
+              ? "Upload in progress"
+              : "Analysis in progress"}"
           >
             <span class="assessment-tile__bar"></span>
           </div>
