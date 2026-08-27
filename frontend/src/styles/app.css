@@ -1397,11 +1397,57 @@ theme-toggle {
   overflow: hidden;
   background: var(--surface-3);
 }
+.shot__body {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+}
+.shot__body:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: -2px;
+}
 .shot__img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.shot--description {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.shot__body--description {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.85rem;
+  color: var(--ink);
+}
+.shot__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 1.25rem;
+  transform: translateY(-0.2rem);
+}
+.shot__label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.15;
 }
 .shot__del {
   position: absolute;

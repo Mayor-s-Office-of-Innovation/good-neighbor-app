@@ -30,6 +30,7 @@ import {
   consumePostDescribeAction,
   addItem,
   removeItem,
+  setSideDescription,
   skipSide,
   isSideCovered,
   isCurrentSession,
@@ -39,6 +40,7 @@ import {
   shellWebcam,
   segment,
   shotTile,
+  descriptionTile,
   addTile,
 } from "./perimeter-check.templates.js";
 
@@ -63,7 +65,9 @@ class PerimeterCheck extends HTMLElement {
     const postDescribeAction = consumePostDescribeAction();
     // Resume at the explicitly active side when returning from /check/describe.
     // Otherwise start at the first side that still needs attention.
-    if (postDescribeAction?.type === "advance") {
+    if (postDescribeAction?.type === "stay") {
+      this._sideIndex = postDescribeAction.sideIndex;
+    } else if (postDescribeAction?.type === "advance") {
       this._sideIndex = postDescribeAction.sideIndex;
     } else if (postDescribeAction?.type === "submit") {
       this._sideIndex = this._sides.length - 1;
@@ -211,6 +215,17 @@ class PerimeterCheck extends HTMLElement {
       this._renderSegments();
       this._renderShots();
       this._syncControls();
+      return;
+    }
+    if (e.target.closest("[data-del-description]")) {
+      setSideDescription(this._side, null);
+      this._renderSegments();
+      this._renderShots();
+      this._syncControls();
+      return;
+    }
+    if (e.target.closest("[data-edit-description]")) {
+      this._describeInstead();
     }
   }
 
@@ -313,11 +328,23 @@ class PerimeterCheck extends HTMLElement {
   // This side's shots as an inline grid. Native path (and webcam fallback) appends
   // the ＋ "Add photo" tile; with the inline camera live, thumbnails render alone.
   _renderShots() {
-    const items = this._sideState().items;
+    const sideState = this._sideState();
+    const items = sideState.items;
     const grid = this.querySelector("#shotgrid");
-    grid.classList.toggle("shotgrid--empty", items.length === 0);
-    const tile = this._useWebcam() ? "" : addTile(items.length === 0);
-    grid.innerHTML = items.map(shotTile).join("") + tile;
+    const hasDescription = Boolean(sideState.description?.validated);
+    grid.classList.toggle(
+      "shotgrid--empty",
+      items.length === 0 && !hasDescription,
+    );
+    const tile = this._useWebcam()
+      ? ""
+      : addTile(items.length === 0 && !hasDescription);
+    const description = hasDescription
+      ? descriptionTile({
+          side: this._side,
+        })
+      : "";
+    grid.innerHTML = items.map(shotTile).join("") + description + tile;
   }
 
   _syncControls() {
