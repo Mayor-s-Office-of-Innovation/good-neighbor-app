@@ -93,6 +93,9 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#skip-side").addEventListener("click", () =>
       this._skip(),
     );
+    this.querySelector("#previous-side").addEventListener("click", () =>
+      this._back(),
+    );
     this.querySelector("#next-side").addEventListener("click", () =>
       this._forward(),
     );
@@ -127,7 +130,7 @@ class PerimeterCheck extends HTMLElement {
     if (!panel) return;
     this._camera = document.createElement("in-browser-camera");
     this._camera.addEventListener("capture", (e) =>
-      this._addPhoto(e.detail.dataUrl),
+      this._addPhoto(this._side, e.detail.dataUrl),
     );
     this._camera.addEventListener("unavailable", () =>
       this._onCameraUnavailable(),
@@ -171,6 +174,7 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     const originCheckId = this._checkId;
+    const originSide = this._side;
     const reader = new FileReader();
     this._fileReader = reader;
     reader.onload = () => {
@@ -179,7 +183,7 @@ class PerimeterCheck extends HTMLElement {
         return;
       }
       this._fileReader = null;
-      this._addPhoto(reader.result);
+      this._addPhoto(originSide, reader.result);
     };
     reader.onerror = () => {
       this._fileReader = null;
@@ -190,8 +194,8 @@ class PerimeterCheck extends HTMLElement {
     reader.readAsDataURL(file);
   }
 
-  _addPhoto(dataUrl) {
-    addItem(this._side, { kind: "photo", dataUrl });
+  _addPhoto(side, dataUrl) {
+    addItem(side, { kind: "photo", dataUrl });
     this._renderSegments();
     this._renderShots();
     this._syncControls();
@@ -238,6 +242,15 @@ class PerimeterCheck extends HTMLElement {
   _forward() {
     // Enabled only once the side has a photo (Skip covers the no-photo path).
     this._afterSide();
+  }
+
+  /** @returns {void} */
+  _back() {
+    if (this._sideIndex === 0) return;
+    this._sideIndex -= 1;
+    setActiveSideIndex(this._sideIndex);
+    this._renderSide();
+    window.scrollTo?.({ top: 0 });
   }
 
   _describeInstead() {
@@ -350,6 +363,8 @@ class PerimeterCheck extends HTMLElement {
   _syncControls() {
     const side = this._sides[this._sideIndex];
     const canAdvanceOrSubmit = isSideCovered(side);
+    const previous = this.querySelector("#previous-side");
+    previous.disabled = this._sideIndex === 0;
     const next = this.querySelector("#next-side");
     next.disabled = !canAdvanceOrSubmit;
     next.textContent = this._isLast ? "Submit check" : "Next side ›";
