@@ -16,6 +16,10 @@
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
+import {
+  enqueueUpload,
+  resumePendingUploads,
+} from "../services/artifact-uploader.js";
 import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 // <in-browser-camera> registers itself via main.js (opt-in ?webcam feature).
 import {
@@ -59,6 +63,8 @@ class PerimeterCheck extends HTMLElement {
     }
     this._checkId = getCurrentCheck()?.id || "";
     this._sides = getSideOrder();
+    // Resume any photo uploads interrupted by a reload / navigation mid-walk.
+    resumePendingUploads();
 
     const activeSideIndex = getActiveSideIndex();
     const hasActiveSide =
@@ -214,7 +220,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _addPhoto(side, dataUrl) {
-    addItem(side, { kind: "photo", dataUrl });
+    const record = addItem(side, { kind: "photo", dataUrl });
+    // Start pushing the bytes to S3 now, in the background, so by submit time
+    // they're already up and submit only registers the metadata.
+    if (record) enqueueUpload(getCurrentCheck()?.id, record.side, record.id);
     this._renderSegments();
     this._renderShots();
     this._syncControls();

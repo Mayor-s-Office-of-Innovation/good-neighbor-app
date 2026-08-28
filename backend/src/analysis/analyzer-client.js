@@ -192,15 +192,21 @@ export function createAnalyzerClient({
           },
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         });
-      } catch (cause) {
+      } catch {
         // Transport failure (DNS/connection/TLS) — retry, then give up.
         if (attempt < maxRetries) {
           await sleep(baseDelayMs * 2 ** attempt);
           continue;
         }
+        // Security: the request that just failed carried the `x-api-key` header
+        // (GNP's server-side analyzer credential), so the fetch error is on that
+        // key's taint path. The worker pumps log this error whole on redelivery,
+        // so we deliberately do NOT attach the raw fetch error as `cause` — that
+        // would be the one edge by which the key could reach clear-text logs.
+        // "network" + retryable is all the caller acts on; the HTTP-error path
+        // below still carries status/code for diagnosis.
         throw new AnalyzerError("Analyzer request failed (network)", {
           retryable: true,
-          cause,
         });
       }
 
