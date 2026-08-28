@@ -39,6 +39,7 @@ import {
   clearSubmittedSession,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
+import { mark } from "../services/instrument.js";
 import {
   resumeSubmittedCheckInBackground,
   resumeUploadingCheckInBackground,
@@ -193,7 +194,12 @@ class TodayView extends HTMLElement {
     }
     const review = this.querySelector("#review-assessment");
     if (review) {
-      review.addEventListener("click", () => navigate("/results"));
+      review.addEventListener("click", () => {
+        // Brackets human think-time: submit:done → review:open is the user
+        // deciding to review; review:open → review:rendered is the screen load.
+        mark("review:open");
+        navigate("/results");
+      });
     }
     this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#cancel-assessment-dialog")

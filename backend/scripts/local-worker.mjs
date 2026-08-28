@@ -16,6 +16,29 @@ const sqs = new SQSClient({});
 let running = true;
 
 /**
+ * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
+ * drives the analyzer path, whose requests carry GNP's `x-api-key` credential, so
+ * we never dump a raw error object here — a nested field could put the key in
+ * clear-text logs. Name + message (built from literals) plus `code`/`status` are
+ * enough to triage a redelivery.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function summarizeError(err) {
+  if (!(err instanceof Error)) return String(err);
+  const e = /** @type {any} */ (err);
+  const tail = [
+    e.code != null ? `code=${e.code}` : null,
+    e.status != null ? `status=${e.status}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return tail
+    ? `${err.name}: ${err.message} (${tail})`
+    : `${err.name}: ${err.message}`;
+}
+
+/**
  * Both flows share SQS_QUEUE_URL, so the local pump — standing in for two
  * separate Lambda event-source mappings — picks the handler by message shape.
  * The register handler enqueues an analyze message carrying s3Key + artifactId;
@@ -81,36 +104,46 @@ async function poll(queueUrl) {
       continue;
     }
 
-    for (const msg of received.Messages ?? []) {
-      try {
-        const handler = pickHandler(msg.Body);
-        const result = await handler(
-          toSqsEvent(msg),
-          /** @type {any} */ ({}),
-          () => {},
-        );
-        const failed = result?.batchItemFailures?.some(
-          (failure) => failure.itemIdentifier === msg.MessageId,
-        );
-        if (failed) {
-          console.error(
-            `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
+    // Process the whole received batch CONCURRENTLY, mirroring the deployed
+    // Lambda (src/lambda/worker.js). Each artifact's latency is almost entirely
+    // its independent remote analyzer call, so a serial `for … await` here made
+    // an N-photo check pay ~N× one call (visible as analyses landing one at a
+    // time). Each message is still its own single-record event, so delete /
+    // redelivery semantics per message are unchanged.
+    await Promise.allSettled(
+      (received.Messages ?? []).map(async (msg) => {
+        try {
+          const handler = pickHandler(msg.Body);
+          const result = await handler(
+            toSqsEvent(msg),
+            /** @type {any} */ ({}),
+            () => {},
           );
-          continue;
+          const failed = result?.batchItemFailures?.some(
+            (failure) => failure.itemIdentifier === msg.MessageId,
+          );
+          if (failed) {
+            console.error(
+              `[worker] handler reported failure for ${msg.MessageId}; leaving message for redelivery`,
+            );
+            return;
+          }
+          // Delete with THIS receive's ReceiptHandle, only on success.
+          await sqs.send(
+            new DeleteMessageCommand({
+              QueueUrl: queueUrl,
+              ReceiptHandle: msg.ReceiptHandle,
+            }),
+          );
+          console.log(`[worker] processed & deleted ${msg.MessageId}`);
+        } catch (err) {
+          // Leave the message for redelivery (visibility timeout) — matches prod.
+          console.error(
+            `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
+          );
         }
-        // Delete with THIS receive's ReceiptHandle, only on success.
-        await sqs.send(
-          new DeleteMessageCommand({
-            QueueUrl: queueUrl,
-            ReceiptHandle: msg.ReceiptHandle,
-          }),
-        );
-        console.log(`[worker] processed & deleted ${msg.MessageId}`);
-      } catch (err) {
-        // Leave the message for redelivery (visibility timeout) — matches prod.
-        console.error(`[worker] handler threw for ${msg.MessageId}:`, err);
-      }
-    }
+      }),
+    );
   }
 }
 
