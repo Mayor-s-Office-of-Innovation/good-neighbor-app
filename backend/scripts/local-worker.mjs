@@ -33,7 +33,9 @@ function summarizeError(err) {
   ]
     .filter(Boolean)
     .join(" ");
-  return tail ? `${err.name}: ${err.message} (${tail})` : `${err.name}: ${err.message}`;
+  return tail
+    ? `${err.name}: ${err.message} (${tail})`
+    : `${err.name}: ${err.message}`;
 }
 
 /**

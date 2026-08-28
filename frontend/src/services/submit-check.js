@@ -30,6 +30,7 @@ import {
   ApiError,
 } from "./api.js";
 import { analysesToFindings } from "../domain/check-adapter.js";
+import { settlePendingUploads } from "./artifact-uploader.js";
 import {
   getCurrentCheck,
   markUploading,
@@ -337,7 +338,9 @@ async function uploadPlannedArtifacts(
 /**
  * Register a photo whose bytes were uploaded eagerly during the walk. Tolerates a
  * 409 (already registered) so a resume/replay is idempotent — signature dedup is
- * the primary guard, this is defence in depth.
+ * the primary guard, this is defence in depth. A 409 is safe to treat as success
+ * because the backend re-enqueues analysis on the already-registered path (see
+ * handlers/artifacts.js), so a replay never strands an artifact un-analyzed.
  * @param {string} checkId
  * @param {PlannedArtifact} artifact
  */
@@ -384,6 +387,15 @@ async function runSubmittedCheck(
   { submissionKind = "check", resume = false } = {},
 ) {
   startRun("submit", { checkId: check.id });
+  // Let any eager upload still in flight finish first. plannedArtifactsForCheck
+  // only treats a photo as eager once its status is "uploaded"; if we planned
+  // mid-PUT we'd omit its coordinates and start a *second* presign→PUT→register
+  // for the same bytes, orphaning the eager S3 object it was about to produce.
+  // After this settles, every photo is "uploaded" (cheap register) or "failed"
+  // (full-upload fallback) — never ambiguous.
+  const endSettle = span("settleUploads");
+  await settlePendingUploads();
+  endSettle();
   const plannedArtifacts = plannedArtifactsForCheck(check);
 
   // 1. Start the run. `sides` records which sides were skipped (server stores it);

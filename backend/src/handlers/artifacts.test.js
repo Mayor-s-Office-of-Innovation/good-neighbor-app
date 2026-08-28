@@ -188,12 +188,17 @@ describe("registerArtifact", () => {
     expect(sqsSend).not.toHaveBeenCalled();
   });
 
-  it("409s and does not enqueue when the artifact is already registered", async () => {
+  it("409s but still re-enqueues analysis when the artifact is already registered", async () => {
+    // The Put and the SQS send are not atomic: a prior attempt may have persisted
+    // the item then failed before enqueuing. So a replay must re-enqueue (the
+    // worker's ANALYSIS# write is idempotent) or the artifact hangs waitForAnalyses
+    // forever. We keep the 409 so the client still learns it was a duplicate.
     ddbSend.mockRejectedValueOnce(
       Object.assign(new Error("conditional check failed"), {
         name: "ConditionalCheckFailedException",
       }),
     );
+    sqsSend.mockResolvedValueOnce({});
 
     const res = await callRegister(
       artifactEvent({
@@ -207,7 +212,14 @@ describe("registerArtifact", () => {
     expect(JSON.parse(res.body)).toEqual({
       error: "artifact already registered",
     });
-    expect(sqsSend).not.toHaveBeenCalled();
+    expect(sqsSend).toHaveBeenCalledTimes(1);
+    const msg = sqsSend.mock.calls[0][0];
+    expect(msg).toBeInstanceOf(SendMessageCommand);
+    expect(JSON.parse(msg.input.MessageBody)).toMatchObject({
+      artifactId: "art_1",
+      checkId: "chk_01",
+      side: "north",
+    });
   });
 
   it("requires artifactId", async () => {
