@@ -43,6 +43,8 @@ const inFlight = new Set();
 /** @type {Array<() => Promise<void>>} */
 const queue = [];
 let active = 0;
+/** @type {Array<() => void>} resolvers awaiting a fully-idle uploader. */
+let idleWaiters = [];
 
 /**
  * Locate a photo item by side + id on the active session. Returns null if the
@@ -102,12 +104,43 @@ function pump() {
       pump();
     });
   }
+  // Nothing left running or queued (and none tracked in flight) → wake submit.
+  settleIfIdle();
+}
+
+/** Resolve any settle() waiters once the uploader is fully idle. */
+function settleIfIdle() {
+  if (active > 0 || queue.length > 0 || inFlight.size > 0) return;
+  const waiters = idleWaiters;
+  idleWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+/**
+ * Resolve once every queued/in-flight eager upload has settled (each item is now
+ * either `uploaded` or `failed`). Submit awaits this before planning artifacts so
+ * a photo still mid-PUT is registered from its eager coordinates instead of
+ * racing a second presign→PUT — which would orphan the eager S3 object and double
+ * the bytes. Resolves immediately when the uploader is already idle.
+ * @returns {Promise<void>}
+ */
+export function settlePendingUploads() {
+  if (active === 0 && queue.length === 0 && inFlight.size === 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    idleWaiters.push(resolve);
+  });
 }
 
 /**
  * Presign + PUT one photo's bytes with bounded retry. On success record the
  * artifact coordinates on the item and swap in a thumbnail; on terminal failure
  * mark it failed so submit falls back to a full upload.
+ * @param {string} checkId
+ * @param {string} side
+ * @param {string} itemId
+ * @returns {Promise<void>}
  */
 async function runUpload(checkId, side, itemId) {
   try {
@@ -135,6 +168,10 @@ async function runUpload(checkId, side, itemId) {
 /**
  * One presign → PUT → record cycle. contentType is read from the FULL-RES dataUrl
  * before the thumbnail swap, so it describes the object actually in S3.
+ * @param {string} checkId
+ * @param {string} side
+ * @param {{ id: string, dataUrl: string }} item
+ * @returns {Promise<void>}
  */
 async function uploadOnce(checkId, side, item) {
   const done = span("eager-upload", { art: `${side}:${item.id}` });

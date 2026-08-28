@@ -158,6 +158,7 @@ export const registerArtifact = async (event) => {
     ...(hasText ? { text: normalizedText } : {}),
   };
 
+  let alreadyRegistered = false;
   try {
     await ddb.send(
       new PutCommand({
@@ -174,13 +175,23 @@ export const registerArtifact = async (event) => {
       err instanceof Error &&
       err.name === "ConditionalCheckFailedException"
     ) {
-      return jsonResponse(409, { error: "artifact already registered" });
+      // The ART item already exists — but the Put and the SQS send below are not
+      // atomic, so a PRIOR attempt may have persisted the item then failed before
+      // enqueuing (or its 202 was lost and the client retried). We can't tell
+      // "already queued" from "persisted but never queued", so we fall through and
+      // (re)enqueue anyway rather than returning here. The worker's ANALYSIS# write
+      // is conditional/idempotent, so a duplicate analyze message is harmless —
+      // and NOT re-enqueuing would strand an artifact that exists-but-was-never-
+      // queued, hanging the client's waitForAnalyses poll until it times out.
+      alreadyRegistered = true;
+    } else {
+      throw err;
     }
-    throw err;
   }
 
   // Media bytes NEVER travel through the queue — only the S3 key the worker
-  // will fetch, downscale, and forward to the analyzer.
+  // will fetch, downscale, and forward to the analyzer. Enqueued on BOTH the fresh
+  // and the already-registered path (see above) so analysis is always driven.
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: queueUrl,
@@ -196,7 +207,11 @@ export const registerArtifact = async (event) => {
     }),
   );
 
-  return jsonResponse(202, { artifactId, status: "queued" });
+  // Keep 409 on replay so the client still learns this was a duplicate; the
+  // enqueue above means treating that 409 as success is now safe.
+  return alreadyRegistered
+    ? jsonResponse(409, { error: "artifact already registered" })
+    : jsonResponse(202, { artifactId, status: "queued" });
 };
 
 /**

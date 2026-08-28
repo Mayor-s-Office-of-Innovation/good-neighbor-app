@@ -249,8 +249,14 @@ describe("submitCheck / resumeSubmittedCheck", () => {
     );
 
     submitCheck({ submissionKind: "problem_report" });
-    await Promise.resolve();
-    await Promise.resolve();
+    // Let submit's background pipeline (create → settle eager uploads → upload →
+    // finalize) reach waitForAnalyses, so it registers in the finalization registry
+    // before the resume below — which must then dedupe onto it rather than start a
+    // second finalization. Flush microtasks until submit parks on the analyses
+    // promise (releaseAnalyses is set the moment its waitForAnalyses is called).
+    for (let i = 0; i < 50 && !releaseAnalyses; i++) {
+      await Promise.resolve();
+    }
 
     const resumed = resumeSubmittedCheck("check-1", { expectedArtifacts: 1 });
     expect(releaseAnalyses).toBeTypeOf("function");
