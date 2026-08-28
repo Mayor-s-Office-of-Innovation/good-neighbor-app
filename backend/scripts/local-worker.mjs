@@ -16,6 +16,27 @@ const sqs = new SQSClient({});
 let running = true;
 
 /**
+ * Reduce a thrown error to compact, non-sensitive fields for logging. The worker
+ * drives the analyzer path, whose requests carry GNP's `x-api-key` credential, so
+ * we never dump a raw error object here — a nested field could put the key in
+ * clear-text logs. Name + message (built from literals) plus `code`/`status` are
+ * enough to triage a redelivery.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function summarizeError(err) {
+  if (!(err instanceof Error)) return String(err);
+  const e = /** @type {any} */ (err);
+  const tail = [
+    e.code != null ? `code=${e.code}` : null,
+    e.status != null ? `status=${e.status}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return tail ? `${err.name}: ${err.message} (${tail})` : `${err.name}: ${err.message}`;
+}
+
+/**
  * Both flows share SQS_QUEUE_URL, so the local pump — standing in for two
  * separate Lambda event-source mappings — picks the handler by message shape.
  * The register handler enqueues an analyze message carrying s3Key + artifactId;
@@ -115,7 +136,9 @@ async function poll(queueUrl) {
           console.log(`[worker] processed & deleted ${msg.MessageId}`);
         } catch (err) {
           // Leave the message for redelivery (visibility timeout) — matches prod.
-          console.error(`[worker] handler threw for ${msg.MessageId}:`, err);
+          console.error(
+            `[worker] handler threw for ${msg.MessageId}: ${summarizeError(err)}`,
+          );
         }
       }),
     );
