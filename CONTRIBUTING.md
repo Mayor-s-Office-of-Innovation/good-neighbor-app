@@ -4,8 +4,10 @@
 
 - Code reviews may be by volunteers, so temper your expectations on responsiveness
 - Look for "good first issue" tags, if you're just getting started
-- When you pick up a story, assign yourself
+- When you pick up a story, assign yourself.
+- If you want to pair with a code owner or more experienced engineer, just ask
 - This project moves fast: if you pick up a story, even as a volunteer, the expectation is that you're committing to execute on that story in a reasonable time frame: 24 hours for small stories, up to 3 days for more complex stories. If you can't meet that expectation, no problem, but unassign yourself and let City product owner know
+- Once you're up and running, please let a code owner know if you have feedback on the process of getting set up, or how we can adjust docs, resources, etc., to make it easier to get started
 - Any questions? Concerns? Ping the City product lead in Slack
 
 ## Development Workflow
