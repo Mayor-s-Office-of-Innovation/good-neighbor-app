@@ -1,12 +1,23 @@
 # Contributing
 
+## Expectations for volunteer contributors
+
+- Code reviews may be by volunteers, so temper your expectations on responsiveness
+- Look for "good first issue" tags, if you're just getting started
+- When you pick up a story, assign yourself
+- This project moves fast: if you pick up a story, even as a volunteer, the expectation is that you're committing to execute on that story in a reasonable time frame: 24 hours for small stories, up to 3 days for more complex stories. If you can't meet that expectation, no problem, but unassign yourself and let City product owner know
+- Any questions? Concerns? Ping the City product lead in Slack
+
 ## Development Workflow
 
 1. Create a branch from `dev`.
 2. Keep changes small and focused.
-3. Run local checks before opening a pull request.
-4. Include tests or explain why tests are not applicable.
-5. Request review from a code owner.
+3. If working to a frontend spec, adhere to the spec (e.g., from Figma).
+4. Run local checks **first** before opening a pull request.
+5. Include tests or explain why tests are not applicable.
+6. Fix CI/CD issues **before** requesting review.
+7. If automated code review is running, respond to any issues identified.
+8. Request review from a code owner.
 
 ## Required Local Checks
 
