@@ -577,6 +577,48 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
+  # Per-path rate limit for the public, unauthenticated client-error intake
+  # (POST /v1/client-errors). API Gateway v2 has stage-level throttle only, so
+  # a WAF rate-based rule with a path scope-down is the route-level guard the
+  # error-tracking plan calls for — only this endpoint is bounded, at 100
+  # requests/5min/IP (errors are rare + client-side deduped; a normal session
+  # emits at most a handful).
+  rule {
+    name     = "ClientErrorsRateLimit"
+    priority = 4
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 100
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/client-errors"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-client-errors-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${local.name_prefix}-web-acl"

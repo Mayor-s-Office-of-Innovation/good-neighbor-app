@@ -22,6 +22,7 @@ locals {
     "GET /v1/assessments/{assessmentId}/guidance",
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
     "POST /submissions",
+    "POST /v1/client-errors",
     "GET /health",
   ]
 }

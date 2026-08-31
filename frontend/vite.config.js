@@ -21,6 +21,22 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "/",
   plugins: [],
+  define: {
+    // Release stamp for error reports (services/error-report.js reads
+    // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
+    // (deploy.yml); local builds get "dev". Guarded for non-Node contexts.
+    __RELEASE__: JSON.stringify(
+      typeof process !== "undefined" && process.env.RELEASE_SHA
+        ? process.env.RELEASE_SHA
+        : "dev",
+    ),
+  },
+  build: {
+    // Source maps for the error tracker's symbolication (Phase 3 of the
+    // error-tracking plan). deploy.yml uploads them to PostHog and EXCLUDES
+    // them from the public S3 sync — public maps would leak full source.
+    sourcemap: true,
+  },
   server: {
     // Dev-only: proxy the backend API to the local harness (npm run dev -w
     // backend, :3001) so the app calls same-origin paths — no CORS, and the

@@ -49,11 +49,13 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DYNAMO_TABLE     = aws_dynamodb_table.app.name
-      SQS_QUEUE_URL    = aws_sqs_queue.submissions.url
-      S3_UPLOAD_BUCKET = aws_s3_bucket.uploads.bucket
-      DEMO_SITE_ID     = "demo-site"
-      BEDROCK_MODEL_ID = var.bedrock_model_id
+      DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      DEMO_SITE_ID                = "demo-site"
+      BEDROCK_MODEL_ID            = var.bedrock_model_id
+      POSTHOG_API_KEY_SECRET_ARN  = aws_secretsmanager_secret.posthog_project_api_key.arn
+      POSTHOG_HOST                = var.posthog_host
     }
   }
 

@@ -33,6 +33,7 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
+import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -111,6 +112,8 @@ const routes = [
   // Legacy demo submission loop + health
   route("POST", "/submissions", submissionsHandler),
   route("GET", "/health", healthHandler),
+  // Client error intake (best-effort; handler always 204s)
+  route("POST", "/v1/client-errors", clientErrorsHandler),
 ];
 
 /**
