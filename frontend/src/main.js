@@ -58,6 +58,12 @@ import "./styles/app.css";
 import { syncCaptureModeFromUrl } from "./services/capture-mode.js";
 syncCaptureModeFromUrl();
 
+// Global error capture (own beacon endpoint → Lambda → PostHog). Installed
+// first so early bootstrap errors are caught too; no-ops under tests and when
+// `gnp:errors=off`.
+import { installErrorReporting } from "./services/error-report.js";
+installErrorReporting();
+
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
 import "./components/capture-audio.js";

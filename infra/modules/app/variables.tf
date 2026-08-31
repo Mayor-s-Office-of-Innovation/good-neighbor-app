@@ -45,3 +45,9 @@ variable "bedrock_model_id" {
   description = "Bedrock model or inference profile ID for description validation."
   type        = string
 }
+
+variable "posthog_host" {
+  description = "PostHog ingest host for client-error forwarding (US cloud default; forwarder is log-only until the egress sign-off)."
+  type        = string
+  default     = "https://us.i.posthog.com"
+}

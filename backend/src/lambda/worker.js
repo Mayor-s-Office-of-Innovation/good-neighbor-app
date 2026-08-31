@@ -8,6 +8,7 @@
 
 import { handler as processSubmission } from "../workers/process-submission.js";
 import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
+import { logServerError } from "../lib/log-server-error.js";
 
 /**
  * Pick the worker for a message by its shape (mirrors local-worker.mjs
@@ -61,7 +62,11 @@ export const handler = async (event, context, callback) => {
   settled.forEach((result, index) => {
     if (result.status === "rejected") {
       const { messageId } = event.Records[index];
-      console.error(`[worker] record ${messageId} failed:`, result.reason);
+      // Structured error convention (logServerError) — groupable + alarmable;
+      // then batchItemFailures drives the SQS redrive as before.
+      logServerError(`worker ${messageId}`, result.reason, {
+        extra: { messageId },
+      });
       batchItemFailures.push({ itemIdentifier: messageId });
     }
   });
