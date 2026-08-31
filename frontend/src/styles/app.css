@@ -2682,3 +2682,57 @@ theme-toggle {
   width: 100%;
   min-height: 46px;
 }
+
+/* ---- Feedback sheet (feedback-dialog.js): textarea + send, then thanks ---- */
+/* Reuses .sheet/.sheet__panel chrome; adds the form-specific bits. */
+.feedback__open {
+  margin-top: 0.4rem;
+}
+.feedback__panel {
+  width: min(calc(100vw - 2rem), 24rem);
+}
+.feedback__intro {
+  margin: 0 0 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+.feedback__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 7rem;
+  padding: 0.7rem 0.8rem;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border, #c9c9c9);
+  border-radius: 12px;
+  resize: vertical;
+}
+.feedback__textarea:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.feedback__error {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+  color: var(--danger, #b3261e);
+}
+.feedback__thanks {
+  margin: 0.4rem 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+}
+.feedback__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.feedback__actions .btn-ink,
+.feedback__actions .btn-outline {
+  min-width: 6.5rem;
+}

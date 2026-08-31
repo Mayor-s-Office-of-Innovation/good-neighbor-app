@@ -577,12 +577,12 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Per-path rate limit for the public, unauthenticated client-error intake
-  # (POST /v1/client-errors). API Gateway v2 has stage-level throttle only, so
-  # a WAF rate-based rule with a path scope-down is the route-level guard the
-  # error-tracking plan calls for — only this endpoint is bounded, at 100
-  # requests/5min/IP (errors are rare + client-side deduped; a normal session
-  # emits at most a handful).
+  # Per-path rate limits for the public, unauthenticated intakes (client-error
+  # reports + user feedback). API Gateway v2 has stage-level throttle only, so
+  # WAF rate-based rules with path scope-downs are the route-level guards the
+  # error-tracking and feedback plans call for — only these endpoints are
+  # bounded. Errors are rare + client-side deduped (100/5min/IP); honest
+  # feedback submissions are one-per-visit (20/5min/IP).
   rule {
     name     = "ClientErrorsRateLimit"
     priority = 4
@@ -615,6 +615,42 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-client-errors-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "FeedbackRateLimit"
+    priority = 5
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 20
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/feedback"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-feedback-rate"
       sampled_requests_enabled   = true
     }
   }
