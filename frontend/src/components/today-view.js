@@ -172,6 +172,13 @@ class TodayView extends HTMLElement {
       hasProblemDraft: Boolean(problemDraft),
     });
 
+    // Hand the bound site id to the feedback sheet so submissions carry it as
+    // optional context (the server treats it as advisory, pattern-checked).
+    const feedbackDialog = /** @type {any} */ (
+      this.querySelector("feedback-dialog")
+    );
+    if (feedbackDialog) feedbackDialog.siteId = this._siteId;
+
     const start = this.querySelector("#start-check");
     if (start) {
       start.addEventListener("click", async () => {
@@ -264,6 +271,7 @@ class TodayView extends HTMLElement {
             `
           : ""}
         ${pendingSession ? this._cancelAssessmentDialog() : ""}
+        <feedback-dialog></feedback-dialog>
       </div>
     `;
   }

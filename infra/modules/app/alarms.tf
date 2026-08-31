@@ -113,6 +113,76 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
   }
 }
 
+# --- user feedback filters (docs/todo/feedback-plan.md Phase 3) ---------------
+
+# Every valid feedback submission logs one FeedbackReceived line. The alarm is
+# the notification: ≥1 per 5-min bucket emails the SNS topic (recipients are
+# console-managed per environment — see the plan's Decisions).
+resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
+  name           = "${local.name_prefix}-feedback-received"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackReceived\" }"
+
+  metric_transformation {
+    name          = "FeedbackReceived"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_received" {
+  alarm_name          = "${local.name_prefix}-feedback-received"
+  alarm_description   = "A user submitted app feedback. Read it in CloudWatch Logs Insights (saved query 'GNP feedback') on the ${local.name_prefix}-api log group."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "FeedbackReceived"
+  namespace           = local.error_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# Validation drops are quiet-but-counted (abuse signal, not app failure —
+# alarm only at a clearly abusive level), mirroring client_error_dropped.
+resource "aws_cloudwatch_log_metric_filter" "feedback_dropped" {
+  name           = "${local.name_prefix}-feedback-dropped"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackDropped\" }"
+
+  metric_transformation {
+    name          = "FeedbackDropped"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_dropped" {
+  alarm_name          = "${local.name_prefix}-feedback-dropped"
+  alarm_description   = "Unusually many invalid feedback payloads — possible abuse of the public intake (high threshold; single drops are normal noise)."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  threshold           = 100
+  period              = 300
+  namespace           = local.error_namespace
+  metric_name         = "FeedbackDropped"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
 # --- worker filter ------------------------------------------------------------
 
 resource "aws_cloudwatch_log_metric_filter" "worker_errors" {

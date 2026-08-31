@@ -114,6 +114,16 @@ is designed but not yet enforced). **Read them in this order:**
   pending first apply); **MOI egress sign-off granted 2026-08-31** — remaining: Phase 0 (PostHog
   org/keys → secrets), alarm recipients, first dev apply + verify.
 
+## User feedback (plan, Aug 2026)
+
+- **[feedback-plan.md](./todo/feedback-plan.md)** — lightweight in-app feedback:
+  form → own `POST /v1/feedback` route → api Lambda scrubs + logs one
+  `FeedbackReceived` JSON line to the existing api log group (CloudWatch *is*
+  the store — no new infra). Includes the Logs Insights runbook for viewing
+  feedback, the metric-filter → SNS email alarm, and the deferred DynamoDB
+  migration path. Rides the client-error intake architecture minus the
+  forwarder. _Not started._
+
 ## Deploy & CI/CD (plan, Aug 2026)
 
 - **The decision — [ADR 0007](./adr/0007-deploy-promotion-model.md)** — the **2-environment
