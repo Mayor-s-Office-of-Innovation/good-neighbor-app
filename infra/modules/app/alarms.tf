@@ -183,6 +183,42 @@ resource "aws_cloudwatch_metric_alarm" "feedback_dropped" {
   tags = var.tags
 }
 
+# Feedback forwarder failures (PostHog ingest down, egress broken, secret
+# errors) — the feedback twin of client_error_forward_failed. A failure here
+# means feedback arrived but never reached the store (CloudWatch keeps only
+# metadata), so it pages.
+resource "aws_cloudwatch_log_metric_filter" "feedback_forward_failed" {
+  name           = "${local.name_prefix}-feedback-forward-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackForwardFailed\" }"
+
+  metric_transformation {
+    name          = "FeedbackForwardFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_forward_failed" {
+  alarm_name          = "${local.name_prefix}-feedback-forward-failed"
+  alarm_description   = "Feedback forwarder to PostHog is failing (ingest down, egress broken, or secret misread) — feedback arrived but never reached the store. Check the FeedbackForwardFailed WARN lines."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "FeedbackForwardFailed"
+  namespace           = local.error_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
 # --- worker filter ------------------------------------------------------------
 
 resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
