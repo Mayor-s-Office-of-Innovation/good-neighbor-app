@@ -9,8 +9,13 @@ vi.mock("./posthog-api-key.js", () => ({
   getPosthogApiKey: (...args) => getPosthogApiKey(...args),
 }));
 
-const { forwardClientError, toIso, parseStackFrames, FORWARD_FAILED_MARKER, FORWARD_OK_MARKER } =
-  await import("./forwarder.js");
+const {
+  forwardClientError,
+  toIso,
+  parseStackFrames,
+  FORWARD_FAILED_MARKER,
+  FORWARD_OK_MARKER,
+} = await import("./forwarder.js");
 
 /**
  * Build a scrubbed report shape for forwarder input.
@@ -64,7 +69,8 @@ describe("forwardClientError", () => {
 
     const outcome = await forwardClientError(
       report({
-        stack: "Error: boom\n    at inner (/assets/app.js:2:15)\n    at outer (/assets/app.js:9:3)",
+        stack:
+          "Error: boom\n    at inner (/assets/app.js:2:15)\n    at outer (/assets/app.js:9:3)",
         source: "/check",
         release: "abc123",
         ts: "2026-08-31T10:00:00.000Z",
@@ -101,8 +107,8 @@ describe("forwardClientError", () => {
     });
     // Innermost (throw site) last — reversed V8 order.
     expect(exception.stacktrace.frames).toEqual([
-      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
-      { filename: "/assets/app.js", lineno: 2, colno: 15, "function": "inner" },
+      { filename: "/assets/app.js", lineno: 9, colno: 3, function: "outer" },
+      { filename: "/assets/app.js", lineno: 2, colno: 15, function: "inner" },
     ]);
     expect(evt.properties.release).toBe("abc123");
     expect(evt.properties.app_source).toBe("/check");
@@ -201,8 +207,8 @@ describe("parseStackFrames", () => {
       "Error: boom\n    at inner (/assets/app.js:2:15)\n    at outer (/assets/app.js:9:3)",
     );
     expect(frames).toEqual([
-      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
-      { filename: "/assets/app.js", lineno: 2, colno: 15, "function": "inner" },
+      { filename: "/assets/app.js", lineno: 9, colno: 3, function: "outer" },
+      { filename: "/assets/app.js", lineno: 2, colno: 15, function: "inner" },
     ]);
   });
 
@@ -211,7 +217,7 @@ describe("parseStackFrames", () => {
       "Error: boom\n    at /assets/app.js:2:15\nouter@/assets/app.js:9:3",
     );
     expect(frames).toEqual([
-      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
+      { filename: "/assets/app.js", lineno: 9, colno: 3, function: "outer" },
       { filename: "/assets/app.js", lineno: 2, colno: 15 },
     ]);
   });
@@ -220,7 +226,7 @@ describe("parseStackFrames", () => {
     // The message line is not a frame — PostHog carries it in type/value.
     const frames = parseStackFrames("Error: boom\n    at f (/a.js:1:1)");
     expect(frames).toEqual([
-      { filename: "/a.js", lineno: 1, colno: 1, "function": "f" },
+      { filename: "/a.js", lineno: 1, colno: 1, function: "f" },
     ]);
     expect(parseStackFrames("")).toEqual([]);
     expect(parseStackFrames("Error: only a message")).toEqual([]);

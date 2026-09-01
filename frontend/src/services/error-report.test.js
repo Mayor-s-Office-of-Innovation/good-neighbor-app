@@ -326,8 +326,9 @@ describe("capture + payload", () => {
     );
     await loadEnabled();
 
-    expect(() => listeners.error({ message: "a", error: new Error("a") })).not
-      .toThrow();
+    expect(() =>
+      listeners.error({ message: "a", error: new Error("a") }),
+    ).not.toThrow();
 
     const payload = await lastPayload();
     expect(payload.id).toMatch(/^id-/);
@@ -338,7 +339,7 @@ describe("capture + payload", () => {
     // Vite replaces the bare identifier (not globalThis members); stub the
     // same shape the built bundle sees. `globalThis.eval("typeof __RELEASE__")
     // would look at real globals, so emulate the define via a direct eval.
-    (/** @type {any} */ (globalThis)).eval?.('var __RELEASE__ = "abc123";');
+    /** @type {any} */ (globalThis).eval?.('var __RELEASE__ = "abc123";');
     // In the built bundle release() reads the bare identifier; here the var
     // above provides it for the module under test via the same global scope.
     const mod = await load();
@@ -347,7 +348,7 @@ describe("capture + payload", () => {
 
     const payload = await lastPayload();
     expect(payload.release).toBe("abc123");
-    delete (/** @type {any} */ (globalThis)).__RELEASE__;
+    delete /** @type {any} */ (globalThis).__RELEASE__;
     void mod;
   });
 });
