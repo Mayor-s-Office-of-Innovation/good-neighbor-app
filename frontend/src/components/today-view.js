@@ -271,7 +271,7 @@ class TodayView extends HTMLElement {
             `
           : ""}
         ${pendingSession ? this._cancelAssessmentDialog() : ""}
-        <feedback-dialog></feedback-dialog>
+        <feedback-dialog class="feedback-dialog"></feedback-dialog>
       </div>
     `;
   }

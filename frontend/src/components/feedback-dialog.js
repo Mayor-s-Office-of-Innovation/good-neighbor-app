@@ -1,8 +1,10 @@
 /*
-  feedback-dialog — the "Send feedback" sheet on the today view.
+  feedback-dialog — the "Send feedback" entry point + sheet on the today view.
 
-  A native <dialog> (showModal() gives focus trap + Escape for free, same as the
-  dispute sheet in check-results.js) with ONE textarea and a submit button.
+  The trigger is an icon-only button rendered at the top-right of the home
+  header (today-view places it there). A native <dialog> (showModal() gives
+  focus trap + Escape for free, same as the dispute sheet in check-results.js)
+  with ONE textarea and a submit button.
   Settled scope (docs/todo/feedback-plan.md): textarea-only — no category picker,
   no rating, no email field; feedback is anonymous.
 
@@ -135,11 +137,13 @@ class FeedbackDialog extends HTMLElement {
   _renderForm() {
     this.innerHTML = html`
       <button
-        class="feedback__open home-cta__link"
+        class="feedback__open"
         id="feedback-open"
         type="button"
+        aria-label="Send feedback about this app"
+        title="Send feedback"
       >
-        Send feedback
+        <wa-icon name="comment" aria-hidden="true"></wa-icon>
       </button>
 
       <dialog
