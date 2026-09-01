@@ -2627,7 +2627,13 @@ theme-toggle {
 
 /* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
 /* Native <dialog>: showModal() gives focus trap + Escape for free. The element
-   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss). */
+   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss).
+
+   Show/hide animation is pure CSS (no JS timing): @starting-style defines the
+   pre-open state, `transition-behavior: allow-discrete` keeps the element
+   rendered while it transitions out after close(). Mirrors wa-dialog's fade +
+   scale (`--wa-transition-normal`, its dialog.styles.ts show-dialog keyframes).
+   Browsers without @starting-style skip the animation and show/hide instantly. */
 .sheet {
   padding: 0;
   border: 0;
@@ -2636,9 +2642,59 @@ theme-toggle {
   max-width: none;
   margin: auto;
   color: var(--text);
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition:
+    opacity var(--wa-transition-normal, 150ms) ease,
+    translate var(--wa-transition-normal, 150ms) ease,
+    scale var(--wa-transition-normal, 150ms) ease,
+    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
+    display var(--wa-transition-normal, 150ms) ease allow-discrete;
+}
+/* Closed state: the dialog element when not open (modal + closed = display:none
+   via the UA sheet; allow-discrete keeps it painted during the exit run). */
+.sheet:not([open]) {
+  opacity: 0;
+  translate: 0 0.6rem;
+  scale: 0.96;
+}
+/* Pre-open state: the styles the dialog animates FROM on showModal(). */
+@starting-style {
+  .sheet[open] {
+    opacity: 0;
+    translate: 0 0.6rem;
+    scale: 0.96;
+  }
 }
 .sheet::backdrop {
   background: rgba(0, 0, 0, 0.4);
+  transition:
+    opacity var(--wa-transition-normal, 150ms) ease,
+    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
+    display var(--wa-transition-normal, 150ms) ease allow-discrete;
+}
+/* Backdrop closed state + pre-open, same pattern as the panel. */
+.sheet:not([open])::backdrop {
+  opacity: 0;
+}
+@starting-style {
+  .sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+/* Reduced motion: fade only — no slide/scale (matches the assessment-tile guard). */
+@media (prefers-reduced-motion: reduce) {
+  .sheet:not([open]) {
+    translate: 0 0;
+    scale: 1;
+  }
+  @starting-style {
+    .sheet[open] {
+      translate: 0 0;
+      scale: 1;
+    }
+  }
 }
 .sheet__panel {
   background: var(--surface);
@@ -2685,8 +2741,51 @@ theme-toggle {
 
 /* ---- Feedback sheet (feedback-dialog.js): textarea + send, then thanks ---- */
 /* Reuses .sheet/.sheet__panel chrome; adds the form-specific bits. */
+/* Trigger: icon-only button pinned to the top-right of the home header. The
+   <feedback-dialog> element itself is a 0×0 box in the flow; the button
+   positions against the nearest positioned ancestor (.home is not positioned,
+   so this anchors to the viewport corner where the header sits). */
+.feedback-dialog {
+  position: static;
+}
 .feedback__open {
-  margin-top: 0.4rem;
+  position: absolute;
+  top: max(0.6rem, env(safe-area-inset-top));
+  right: 0.75rem;
+  z-index: 20; /* above the sticky header (z-index: 10) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem; /* 44px touch target (WCAG 2.5.8) */
+  height: 2.75rem;
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-secondary);
+  /* Undo WA's native-button box: the awesome theme raises every non-plain
+     button with a solid offset shadow + matching margins (same reset as
+     .btn-ink above). */
+  box-shadow: none;
+  margin: 0;
+}
+.feedback__open:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.feedback__open:not(:disabled):active {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.feedback__open:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.feedback__open wa-icon {
+  font-size: 1.15rem;
 }
 .feedback__panel {
   width: min(calc(100vw - 2rem), 24rem);
