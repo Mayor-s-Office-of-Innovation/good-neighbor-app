@@ -53,7 +53,10 @@ describe("feedback-dialog → sendFeedback payload", () => {
 
     const init = /** @type {any} */ (vi.mocked(fetch).mock.calls.at(-1)?.[1]);
     expect(JSON.parse(init.body)).toEqual(
-      expect.objectContaining({ message: "note from the sheet", page: "/today" }),
+      expect.objectContaining({
+        message: "note from the sheet",
+        page: "/today",
+      }),
     );
   });
 });
