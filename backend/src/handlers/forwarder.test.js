@@ -136,7 +136,11 @@ describe("forwardClientError", () => {
 
     expect(outcome).toBe("failed");
     const line = JSON.parse(/** @type {string} */ (warn.mock.calls[0]?.[0]));
-    expect(line).toMatchObject({ marker: FORWARD_FAILED_MARKER });
+    expect(line).toMatchObject({
+      marker: FORWARD_FAILED_MARKER,
+      type: "Error",
+      message: "boom",
+    });
   });
 
   it("treats non-2xx ingest responses as failures (still 204 upstream)", async () => {
@@ -151,9 +155,12 @@ describe("forwardClientError", () => {
     );
 
     expect(outcome).toBe("failed");
-    expect(
-      JSON.parse(/** @type {string} */ (warn.mock.calls[0]?.[0])).marker,
-    ).toBe(FORWARD_FAILED_MARKER);
+    const line = JSON.parse(/** @type {string} */ (warn.mock.calls[0]?.[0]));
+    expect(line).toMatchObject({
+      marker: FORWARD_FAILED_MARKER,
+      type: "Error",
+      message: "boom",
+    });
   });
 
   it("times out slow ingests after ~3s", async () => {

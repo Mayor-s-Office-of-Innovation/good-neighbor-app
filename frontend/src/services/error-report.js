@@ -29,10 +29,10 @@ const MAX_PER_WINDOW = 5;
 /** Dedupe memory lifetime (ms) — same key may report again after this. */
 const DEDUPE_TTL_MS = WINDOW_MS;
 
-/** @type {string | undefined} last reported type+message key (dedupe) */
-let lastKey;
-/** @type {number} when the current dedupe key was recorded (ms epoch) */
-let lastKeyAt = 0;
+/** @type {Map<string, number>} dedupe: type+message key → last sent time (ms) */
+const recentKeys = new Map();
+/** Max distinct keys remembered — bound memory; the rate cap is the real guard */
+const MAX_DEDUPE_KEYS = 100;
 /** @type {number[]} send timestamps inside the current window */
 let windowSends = [];
 
@@ -105,15 +105,26 @@ function onUnhandledRejection(e) {
 function report(type, message, stack) {
   try {
     // Per-message dedupe first (identical type+message once per window —
-    // duplicates never consume rate budget), then sliding-window cap.
+    // duplicates never consume rate budget), then sliding-window cap. A Map
+    // (not just the last key) so A→B→A still dedupes A; bounded to keep
+    // memory finite.
     const key = `${type}:${message}`;
     const now = Date.now();
-    if (lastKey === key && now - lastKeyAt < DEDUPE_TTL_MS) return;
+    const lastAt = recentKeys.get(key);
+    if (lastAt !== undefined && now - lastAt < DEDUPE_TTL_MS) return;
+    if (recentKeys.size >= MAX_DEDUPE_KEYS) {
+      for (const [k, t] of recentKeys) {
+        if (now - t >= DEDUPE_TTL_MS) recentKeys.delete(k);
+      }
+      if (recentKeys.size >= MAX_DEDUPE_KEYS) {
+        const oldest = recentKeys.keys().next().value;
+        if (oldest !== undefined) recentKeys.delete(oldest);
+      }
+    }
     windowSends = windowSends.filter((t) => now - t < WINDOW_MS);
     if (windowSends.length >= MAX_PER_WINDOW) return;
     windowSends.push(now);
-    lastKey = key;
-    lastKeyAt = now;
+    recentKeys.set(key, now);
 
     sendBeacon(
       scrub({

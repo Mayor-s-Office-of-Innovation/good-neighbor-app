@@ -111,7 +111,7 @@ export async function forwardClientError(report, ctx, deps = {}) {
   try {
     apiKey = await getPosthogApiKey(deps.config ?? getConfig());
   } catch (err) {
-    warnForwardFailed("secret_fetch_failed", err);
+    warnForwardFailed("secret_fetch_failed", err, report);
     return "failed";
   }
 
@@ -182,7 +182,7 @@ export async function forwardClientError(report, ctx, deps = {}) {
     );
     return "forwarded";
   } catch (err) {
-    warnForwardFailed("forward_failed", err);
+    warnForwardFailed("forward_failed", err, report);
     return "failed";
   }
 }
@@ -200,16 +200,25 @@ export function toIso(ts) {
 }
 
 /**
+ * Log the failure WARN. The scrubbed report's type/message ride along so the
+ * error is retained in CloudWatch even when PostHog never accepts it (the
+ * success INFO line wouldn't exist) — dual storage must hold on failure too.
+ * The report is already scrubbed + size-capped by the intake, so echoing it is
+ * safe. Stack is omitted: it's the one field that can still embed sensitive
+ * strings from code/messages, and failure triage needs type+message only.
  * @param {string} reason
  * @param {unknown} err
+ * @param {import("./scrub-client-error.js").ScrubbedErrorReport} report
  */
-function warnForwardFailed(reason, err) {
+function warnForwardFailed(reason, err, report) {
   console.warn(
     JSON.stringify({
       level: "warn",
       marker: FORWARD_FAILED_MARKER,
       reason,
       error: err instanceof Error ? err.message : String(err),
+      type: report.type,
+      message: report.message,
     }),
   );
 }

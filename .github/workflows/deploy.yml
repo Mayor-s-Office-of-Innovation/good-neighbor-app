@@ -121,8 +121,8 @@ jobs:
       # release/chunk metadata (required for the upload to be usable), upload
       # then associates the maps with the release named after the commit sha.
       # Best-effort: a failed upload must not fail the deploy (errors just
-      # stay minified until the next green run), hence continue-on-error +
-      # the CLI's --no-fail.
+      # stay minified until the next green run), hence continue-on-error on
+      # both steps + the CLI's --no-fail on the upload.
       - name: Inject PostHog metadata into bundles
         if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
         working-directory: ${{ github.workspace }}
@@ -133,6 +133,7 @@ jobs:
         run: |
           npx @posthog/cli sourcemap inject \
             --directory frontend/dist
+        continue-on-error: true
 
       - name: Upload sourcemaps to PostHog
         if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
