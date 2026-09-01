@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const forward = vi.fn();
+vi.mock("./feedback-forwarder.js", () => ({
+  /**
+   * @param {...unknown} args
+   * @returns {unknown} passthrough to the mock fn
+   */
+  forwardFeedback: (...args) => forward(...args),
+}));
+
 const { handler, RECEIVED_MARKER, DROPPED_MARKER } = await import(
   "./feedback.js"
 );
@@ -50,11 +59,12 @@ describe("feedback handler", () => {
   let warnSpy;
 
   afterEach(() => {
+    forward.mockReset();
     logSpy?.mockRestore();
     warnSpy?.mockRestore();
   });
 
-  it("logs a valid submission as one FeedbackReceived line, 204", async () => {
+  it("logs a metadata-only FeedbackReceived line, forwards, 204", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const res = await callHandler(
       event({
@@ -82,11 +92,34 @@ describe("feedback handler", () => {
         id: "uuid-1",
         userAgent: "TestUA/1.0",
         textLength: 34,
-        text: "Love the app, but photos are slow.",
       }),
     );
-    // The whole message rides in the line — it IS the store.
-    expect(line.text).toContain("photos are slow");
+    // The message text must NOT be in the log line: PostHog is the feedback
+    // store; CloudWatch carries operational metadata only (plan amendment).
+    expect("text" in line).toBe(false);
+    expect(forward).toHaveBeenCalledTimes(1);
+    expect(/** @type {any} */ (forward.mock.calls[0][0])).toMatchObject({
+      text: "Love the app, but photos are slow.",
+      page: "/today",
+      site: "M0101",
+      id: "uuid-1",
+    });
+    expect(
+      /** @type {any} */ (forward.mock.calls[0][1]),
+    ).toEqual({ userAgent: "TestUA/1.0" });
+  });
+
+  it("forwards carry the same user-agent extracted for the log line", async () => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await callHandler(
+      /** @type {any} */ (
+        event({ message: "hi" }, { headers: { "User-Agent": "TestUA/2.0" } })
+      ),
+    );
+
+    expect(
+      /** @type {any} */ (forward.mock.calls.at(-1)?.[1]),
+    ).toEqual({ userAgent: "TestUA/2.0" });
   });
 
   it.each([
@@ -137,7 +170,11 @@ describe("feedback handler", () => {
 
     const line = lastLog(logSpy);
     expect(line.textLength).toBe(MAX_MESSAGE);
-    expect(line.text.length).toBe(MAX_MESSAGE);
+    // The text itself rides only to the forwarder, already capped by the
+    // scrubber.
+    expect(/** @type {any} */ (forward.mock.calls.at(-1)?.[0])).toMatchObject({
+      text: "m".repeat(MAX_MESSAGE),
+    });
   });
 
   it("scrubs query strings out of page on intake", async () => {

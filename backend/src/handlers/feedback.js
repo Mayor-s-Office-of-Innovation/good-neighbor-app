@@ -2,18 +2,22 @@
  * POST /v1/feedback — public, unauthenticated intake for in-app user
  * feedback (see docs/todo/feedback-plan.md). Contract: always respond 204,
  * never throw, never signal payload validity to a possible abuser. Valid
- * submissions are scrubbed (allowlist-only) and logged as one structured JSON
- * line — the `FeedbackReceived` marker line IS the feedback store (read via
- * the Logs Insights query in the plan; alarmed via the Phase-3 metric filter).
+ * submissions are scrubbed (allowlist-only), logged as one metadata-only
+ * structured JSON line (no message text — PostHog is the feedback store; the
+ * CloudWatch leg is operational signals + fallback only), and forwarded to
+ * PostHog as a `survey sent` event (log-only until key + survey IDs are
+ * configured — see feedback-forwarder.js).
  */
 
 import { readJsonBody } from "../http.js";
 import { scrubFeedback } from "./scrub-feedback.js";
+import { forwardFeedback } from "./feedback-forwarder.js";
 
 /*
- * Log markers: FeedbackReceived counts as the feedback metric
+ * Log markers: FeedbackReceived counts as the feedback-arrival metric
  * (alarms.tf filter → SNS email); FeedbackDropped is the quiet-but-counted
  * abuse/validation signal (silent drops would hide exactly what we alarm on).
+ * Neither line ever carries the message text.
  */
 export const RECEIVED_MARKER = "FeedbackReceived";
 export const DROPPED_MARKER = "FeedbackDropped";
@@ -43,6 +47,8 @@ export const handler = async (event) => {
     return { statusCode: 204 };
   }
 
+  // Metadata-only arrival line (operational signal; deliberately no `text` —
+  // CloudWatch does not store feedback content, PostHog does).
   console.log(
     JSON.stringify({
       level: "info",
@@ -54,9 +60,17 @@ export const handler = async (event) => {
       ...("id" in feedback ? { id: feedback.id } : {}),
       userAgent: readUserAgent(event),
       textLength: feedback.text.length,
-      text: feedback.text,
     }),
   );
+
+  // Best-effort forward to the feedback store (PostHog). Never throws; the
+  // outcome only affects WARN lines, never the response.
+  try {
+    await forwardFeedback(feedback, { userAgent: readUserAgent(event) });
+  } catch {
+    // forwardFeedback never throws, but a surprise here must not 500 the
+    // intake either — the submission is already durably counted above.
+  }
 
   // Always 204 No Content — validity is never signalled back.
   return { statusCode: 204 };

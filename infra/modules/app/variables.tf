@@ -51,3 +51,15 @@ variable "posthog_host" {
   type        = string
   default     = "https://us.i.posthog.com"
 }
+
+variable "feedback_survey_id" {
+  description = "PostHog survey UUID that receives `survey sent` feedback events (API-type survey, one open-text question). Either ID unset = feedback forwarder stays log-only (the kill switch)."
+  type        = string
+  default     = ""
+}
+
+variable "feedback_question_id" {
+  description = "PostHog question UUID inside feedback_survey_id; the response key is $survey_response_<this>."
+  type        = string
+  default     = ""
+}
