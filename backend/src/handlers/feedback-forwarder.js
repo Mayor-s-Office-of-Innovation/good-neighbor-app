@@ -21,6 +21,14 @@ export const FORWARD_FAILED_MARKER = "FeedbackForwardFailed";
 const LOG_ONLY_MARKER = "FeedbackLogOnly";
 
 /**
+ * Server-side distinct_id fallback. The scrubber requires `id`, so this only
+ * fires for a hand-constructed ScrubbedFeedback that skipped it — belt and
+ * suspenders: an event without a distinct_id would be rejected by the PostHog
+ * ingest and the feedback lost.
+ */
+const FALLBACK_DISTINCT_ID = "feedback-anonymous";
+
+/**
  * Forward a scrubbed feedback submission to PostHog. Never throws.
  * @param {import("./scrub-feedback.js").ScrubbedFeedback} feedback
  * @param {{ userAgent?: string }} ctx best taken from the API Gateway event
@@ -56,7 +64,7 @@ export async function forwardFeedback(feedback, ctx, deps = {}) {
   const ts = toIso(feedback.ts);
   const event = {
     event: "survey sent",
-    distinct_id: feedback.id,
+    distinct_id: feedback.id || FALLBACK_DISTINCT_ID,
     properties: {
       $survey_id: config.posthogFeedbackSurveyId,
       [`$survey_response_${config.posthogFeedbackQuestionId}`]: feedback.text,

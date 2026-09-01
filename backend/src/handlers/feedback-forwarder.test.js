@@ -146,6 +146,24 @@ describe("forwardFeedback", () => {
     }
   });
 
+  it("falls back to a server-side distinct_id when id is absent", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_test");
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+
+    // Hand-constructed input that skipped the scrubber's required-id check —
+    // the forwarder must still emit an event PostHog will accept.
+    const noId = { ...feedback(), id: "" };
+
+    const outcome = await forwardFeedback(noId, {}, { fetchImpl, config });
+
+    expect(outcome).toBe("forwarded");
+    const [, init] = /** @type {[string, { body: string }]} */ (
+      fetchImpl.mock.calls[0]
+    );
+    const [evt] = JSON.parse(/** @type {string} */ (init.body)).batch;
+    expect(evt.distinct_id).toBe("feedback-anonymous");
+  });
+
   it("non-2xx ingest response → FeedbackForwardFailed + 'failed'", async () => {
     getPosthogApiKey.mockResolvedValue("phc_test");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
