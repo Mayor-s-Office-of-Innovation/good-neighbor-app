@@ -113,7 +113,10 @@ describe("feedback handler", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await callHandler(
       /** @type {any} */ (
-        event({ message: "hi" }, { headers: { "User-Agent": "TestUA/2.0" } })
+        event(
+          { message: "hi", id: "uuid-9" },
+          { headers: { "User-Agent": "TestUA/2.0" } },
+        )
       ),
     );
 
@@ -121,6 +124,30 @@ describe("feedback handler", () => {
       /** @type {any} */ (forward.mock.calls.at(-1)?.[1]),
     ).toEqual({ userAgent: "TestUA/2.0" });
   });
+
+  it.each([
+    ["missing id", { message: "hi" }],
+    ["empty id", { message: "hi", id: "" }],
+    ["non-string id", { message: "hi", id: 42 }],
+  ])(
+    "drops submissions without a usable id (%s) — distinct_id is required",
+    async (_name, body) => {
+      warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await callHandler(event(body));
+
+        expect(res.statusCode).toBe(204);
+        expect(forward).not.toHaveBeenCalled();
+        expect(
+          JSON.parse(/** @type {string} */ (warnSpy.mock.calls[0]?.[0])).marker,
+        ).toBe(DROPPED_MARKER);
+      } finally {
+        warnSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    },
+  );
 
   it.each([
     ["non-object body", "nope"],
@@ -166,7 +193,7 @@ describe("feedback handler", () => {
 
   it("truncates oversized messages to the cap", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await callHandler(event({ message: "m".repeat(5000) }));
+    await callHandler(event({ message: "m".repeat(5000), id: "uuid-1" }));
 
     const line = lastLog(logSpy);
     expect(line.textLength).toBe(MAX_MESSAGE);
@@ -180,7 +207,7 @@ describe("feedback handler", () => {
   it("scrubs query strings out of page on intake", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await callHandler(
-      event({ message: "hi", page: "/today?email=a@b.c&token=secret" }),
+      event({ message: "hi", id: "uuid-1", page: "/today?email=a@b.c&token=secret" }),
     );
 
     expect(lastLog(logSpy).page).toBe("/today");
@@ -188,19 +215,23 @@ describe("feedback handler", () => {
 
   it("drops a site field that does not match the site-code shape", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await callHandler(event({ message: "hi", site: "<script>alert(1)</script>" }));
+    await callHandler(
+      event({ message: "hi", id: "uuid-1", site: "<script>alert(1)</script>" }),
+    );
 
     expect(lastLog(logSpy).site).toBeUndefined();
   });
 
   it("omits optional fields entirely when absent (no undefined noise)", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await callHandler(event({ message: "hi" }));
+    await callHandler(event({ message: "hi", id: "uuid-1" }));
 
     const line = lastLog(logSpy);
-    for (const key of ["page", "site", "release", "id"]) {
+    for (const key of ["page", "site", "release"]) {
       expect(key in line).toBe(false);
     }
+    // `id` is required, so it IS on the line.
+    expect(line.id).toBe("uuid-1");
     expect(typeof line.ts).toBe("string");
   });
 
@@ -208,7 +239,10 @@ describe("feedback handler", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await callHandler(
       /** @type {any} */ (
-        event({ message: "hi" }, { headers: { "User-Agent": "TestUA/2.0" } })
+        event(
+          { message: "hi", id: "uuid-1" },
+          { headers: { "User-Agent": "TestUA/2.0" } },
+        )
       ),
     );
 

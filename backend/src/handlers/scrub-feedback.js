@@ -1,9 +1,12 @@
 // Scrub + validate user feedback submissions. Never trust the client: the
 // only fields forwarded are the allowlist below (sizes capped, types coerced,
-// query strings stripped from URL-ish fields). The feedback log line (the
-// permanent store — see docs/todo/feedback-plan.md) and the metric filters all
-// consume the shape this module produces. Settled scope: textarea-only, no
-// reply channel, CloudWatch-only storage (no DynamoDB migration).
+// query strings stripped from URL-ish fields). The forwarder
+// (feedback-forwarder.js) consumes this shape to build the PostHog event, and
+// the metadata-only log line + metric filters key off the intake markers.
+// Settled scope: textarea-only, no reply channel, PostHog is the feedback
+// store (CloudWatch logs carry metadata only). `id` is REQUIRED — it becomes
+// the PostHog `distinct_id`; an event without one would be rejected by the
+// ingest and the feedback lost (see the security review in the plan).
 
 /** Max feedback message length the intake accepts (chars). */
 export const MAX_MESSAGE = 2000;
@@ -18,10 +21,10 @@ const SITE_PATTERN = /^[A-Za-z0-9-]{4,32}$/;
 /**
  * @typedef {object} ScrubbedFeedback
  * @property {string} text
+ * @property {string} id
  * @property {string} [page]
  * @property {string} [site]
  * @property {string} [release]
- * @property {string} [id]
  * @property {string} [ts]
  */
 
@@ -52,8 +55,14 @@ export function scrubFeedback(body) {
     const text = truncateString(raw.message, MAX_MESSAGE).trim();
     if (!text) return null;
 
+    // Required: becomes the PostHog `distinct_id`. Parity with the error
+    // intake — without it the forwarded event would be rejected by the
+    // ingest and the feedback lost.
+    const id = truncateString(raw.id, MAX_SHORT);
+    if (!id) return null;
+
     /** @type {ScrubbedFeedback} */
-    const out = { text };
+    const out = { text, id };
 
     if (typeof raw.page === "string" && raw.page) {
       out.page = stripQueryString(
@@ -65,10 +74,10 @@ export function scrubFeedback(body) {
       out.site = raw.site;
     }
 
-    for (const key of ["release", "id", "ts"]) {
+    for (const key of ["release", "ts"]) {
       const value = raw[key];
       if (typeof value === "string" && value) {
-        out[/** @type {"release" | "id" | "ts"} */ (key)] =
+        out[/** @type {"release" | "ts"} */ (key)] =
           truncateString(value, MAX_SHORT);
       }
     }
