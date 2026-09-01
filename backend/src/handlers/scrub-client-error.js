@@ -37,6 +37,25 @@ export function stripQueryString(value) {
 }
 
 /**
+ * Strip query strings from http(s) URL substrings inside a stack trace
+ * (tokens/emails sometimes ride along in script URLs). Only the URL part is
+ * touched — error text around it stays verbatim. A trailing `:line:col`
+ * frame suffix is preserved (V8 appends it after the full URL, query
+ * included).
+ * @param {string} stack
+ * @returns {string}
+ */
+export function stripStackQueryStrings(stack) {
+  return stack.replace(/https?:\/\/[^\s)]*/g, (url) => {
+    const framePos = url.match(/^(.*):(\d+):(\d+)$/);
+    if (framePos && framePos[1]?.includes("?")) {
+      return `${stripQueryString(framePos[1])}:${framePos[2]}:${framePos[3]}`;
+    }
+    return stripQueryString(url);
+  });
+}
+
+/**
  * Validate + scrub a raw client error payload. Returns a clean object with
  * only allowlisted fields (query strings stripped, sizes capped, types
  * coerced), or `null` when the payload is garbage — the caller decides how to
@@ -78,7 +97,7 @@ export function scrubClientErrorReport(body) {
     };
 
     const stack = truncateString(raw.stack, MAX_STACK);
-    if (stack) out.stack = stack;
+    if (stack) out.stack = stripStackQueryStrings(stack);
 
     if (typeof raw.source === "string" && raw.source) {
       out.source = stripQueryString(truncateString(raw.source, MAX_URL) || "");

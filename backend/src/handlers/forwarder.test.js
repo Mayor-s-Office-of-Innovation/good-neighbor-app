@@ -9,9 +9,8 @@ vi.mock("./posthog-api-key.js", () => ({
   getPosthogApiKey: (...args) => getPosthogApiKey(...args),
 }));
 
-const { forwardClientError, toIso, FORWARD_FAILED_MARKER } = await import(
-  "./forwarder.js"
-);
+const { forwardClientError, toIso, parseStackFrames, FORWARD_FAILED_MARKER, FORWARD_OK_MARKER } =
+  await import("./forwarder.js");
 
 /**
  * Build a scrubbed report shape for forwarder input.
@@ -58,13 +57,14 @@ describe("forwardClientError", () => {
     });
   });
 
-  it("forwards a mapped $exception batch event", async () => {
+  it("forwards a mapped $exception batch event with the strict schema", async () => {
     getPosthogApiKey.mockResolvedValue("phc_test");
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const outcome = await forwardClientError(
       report({
-        stack: "Error: boom\n    at f",
+        stack: "Error: boom\n    at inner (/assets/app.js:2:15)\n    at outer (/assets/app.js:9:3)",
         source: "/check",
         release: "abc123",
         ts: "2026-08-31T10:00:00.000Z",
@@ -86,21 +86,34 @@ describe("forwardClientError", () => {
     const body = JSON.parse(/** @type {string} */ (init.body));
     expect(body.api_key).toBe("phc_test");
     expect(body.batch).toHaveLength(1);
-    expect(body.sentAt).toBeTypeOf("string");
+    // sent_at (snake case) — the field the ingestion API reads.
+    expect(body.sent_at).toBe("2023-11-14T22:13:20.000Z");
     const [evt] = body.batch;
-    expect(evt).toMatchObject({
-      event: "$exception",
-      distinct_id: "uuid-1",
-      properties: {
-        $exception_type: "Error",
-        $exception_message: "boom",
-        $exception_stack_trace: "Error: boom\n    at f",
-        $exception_handling: "unhandled",
-        release: "abc123",
-        app_source: "/check",
-        $process_person_profile: false,
-      },
-      timestamp: "2026-08-31T10:00:00.000Z",
+    expect(evt.event).toBe("$exception");
+    expect(evt.distinct_id).toBe("uuid-1");
+    expect(evt.timestamp).toBe("2026-08-31T10:00:00.000Z");
+    // Strict schema: $exception_list with structured frames; no legacy flat props.
+    const [exception] = evt.properties.$exception_list;
+    expect(exception).toMatchObject({
+      type: "Error",
+      value: "boom",
+      mechanism: { handled: false, synthetic: true },
+    });
+    // Innermost (throw site) last — reversed V8 order.
+    expect(exception.stacktrace.frames).toEqual([
+      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
+      { filename: "/assets/app.js", lineno: 2, colno: 15, "function": "inner" },
+    ]);
+    expect(evt.properties.release).toBe("abc123");
+    expect(evt.properties.app_source).toBe("/check");
+    expect(evt.properties.$process_person_profile).toBe(false);
+    // Dual storage: forwarded reports also log an INFO line to CloudWatch.
+    const line = JSON.parse(/** @type {string} */ (log.mock.calls[0][0]));
+    expect(line).toMatchObject({
+      level: "info",
+      marker: FORWARD_OK_MARKER,
+      type: "Error",
+      message: "boom",
     });
   });
 
@@ -179,5 +192,37 @@ describe("toIso", () => {
     expect(toIso("2026-08-31T10:00:00.000Z")).toBe("2026-08-31T10:00:00.000Z");
     expect(toIso("garbage")).toBeUndefined();
     expect(toIso(undefined)).toBeUndefined();
+  });
+});
+
+describe("parseStackFrames", () => {
+  it("parses V8 frames (fn + location), reversed to outermost-first", () => {
+    const frames = parseStackFrames(
+      "Error: boom\n    at inner (/assets/app.js:2:15)\n    at outer (/assets/app.js:9:3)",
+    );
+    expect(frames).toEqual([
+      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
+      { filename: "/assets/app.js", lineno: 2, colno: 15, "function": "inner" },
+    ]);
+  });
+
+  it("parses V8 location-only frames and Firefox @ frames", () => {
+    const frames = parseStackFrames(
+      "Error: boom\n    at /assets/app.js:2:15\nouter@/assets/app.js:9:3",
+    );
+    expect(frames).toEqual([
+      { filename: "/assets/app.js", lineno: 9, colno: 3, "function": "outer" },
+      { filename: "/assets/app.js", lineno: 2, colno: 15 },
+    ]);
+  });
+
+  it("skips the message line and blank lines; parses real frames", () => {
+    // The message line is not a frame — PostHog carries it in type/value.
+    const frames = parseStackFrames("Error: boom\n    at f (/a.js:1:1)");
+    expect(frames).toEqual([
+      { filename: "/a.js", lineno: 1, colno: 1, "function": "f" },
+    ]);
+    expect(parseStackFrames("")).toEqual([]);
+    expect(parseStackFrames("Error: only a message")).toEqual([]);
   });
 });

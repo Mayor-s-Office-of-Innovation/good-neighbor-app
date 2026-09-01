@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-const { scrubClientErrorReport, stripQueryString, MAX_MESSAGE, MAX_STACK } =
-  await import("./scrub-client-error.js");
+const {
+  scrubClientErrorReport,
+  stripQueryString,
+  stripStackQueryStrings,
+  MAX_MESSAGE,
+  MAX_STACK,
+} = await import("./scrub-client-error.js");
 
 describe("scrubClientErrorReport", () => {
   it("keeps the allowlisted fields from a valid report", () => {
@@ -59,6 +64,20 @@ describe("scrubClientErrorReport", () => {
     expect(out?.source).toBe("/check");
   });
 
+  it("strips query strings from URLs embedded in stack frames, keeps prose", () => {
+    const out = scrubClientErrorReport({
+      type: "Error",
+      message: "x",
+      id: "u",
+      stack:
+        "Error: boom\n    at f (https://cdn.example.com/app.js?token=secret:2:15)",
+    });
+    expect(out?.stack).toBe(
+      "Error: boom\n    at f (https://cdn.example.com/app.js:2:15)",
+    );
+    expect(out?.stack).not.toContain("secret");
+  });
+
   it("truncates oversized fields to the documented caps", () => {
     const out = scrubClientErrorReport({
       type: "Error",
@@ -94,5 +113,33 @@ describe("stripQueryString", () => {
     expect(stripQueryString("/check?x=1")).toBe("/check");
     expect(stripQueryString("/check")).toBe("/check");
     expect(stripQueryString("")).toBe("");
+  });
+});
+
+describe("stripStackQueryStrings", () => {
+  it("scrubs only http(s) URLs, leaves relative paths and prose intact", () => {
+    const stack =
+      "Error: /assets/app.js?token=secret failed\n    at f (https://cdn.example.com/a.js?q=1:2:15)\n    at g (webpack:///./x.ts:3:5)";
+    expect(stripStackQueryStrings(stack)).toBe(
+      "Error: /assets/app.js?token=secret failed\n    at f (https://cdn.example.com/a.js:2:15)\n    at g (webpack:///./x.ts:3:5)",
+    );
+  });
+
+  it("handles URLs terminated by ), whitespace, or end of line", () => {
+    expect(stripStackQueryStrings("(https://x.dev/a.js?t=1)")).toBe(
+      "(https://x.dev/a.js)",
+    );
+    expect(stripStackQueryStrings("https://x.dev/a.js?t=1 at f")).toBe(
+      "https://x.dev/a.js at f",
+    );
+    expect(stripStackQueryStrings("at https://x.dev/a.js?t=1")).toBe(
+      "at https://x.dev/a.js",
+    );
+  });
+
+  it("leaves stacks without URLs untouched", () => {
+    expect(stripStackQueryStrings("Error: boom\n at f")).toBe(
+      "Error: boom\n at f",
+    );
   });
 });

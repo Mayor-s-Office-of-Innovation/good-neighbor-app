@@ -114,23 +114,41 @@ jobs:
 
       # Upload sourcemaps to the error tracker so client stack traces
       # symbolicate for contributors. The upload is per-release (the sha the
-      # client sends) and needs POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_API_KEY
-      # (per-env GH Environment secrets — write-only ingest uses the project
-      # key; the personal key authorizes the CLI). Best-effort: a failed upload
-      # must not fail the deploy (errors just stay minified until the next
-      # green run).
+      # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
+      # per-env GH Environment secret) + POSTHOG_CLI_PROJECT_ID (per-env GH
+      # Environment variable) — the CLI's headless-CI auth variables. The
+      # pipeline is inject → upload: inject stamps the built chunks with
+      # release/chunk metadata (required for the upload to be usable), upload
+      # then associates the maps with the release named after the commit sha.
+      # Best-effort: a failed upload must not fail the deploy (errors just
+      # stay minified until the next green run), hence continue-on-error +
+      # the CLI's --no-fail.
+      - name: Inject PostHog metadata into bundles
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx @posthog/cli sourcemap inject \
+            --directory frontend/dist
+
       - name: Upload sourcemaps to PostHog
         if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
         working-directory: ${{ github.workspace }}
         env:
-          POSTHOG_PERSONAL_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
-          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          npx posthog-cli sourcemap upload \
+          npx @posthog/cli sourcemap upload \
             --directory frontend/dist \
-            --release "$RELEASE_SHA" \
-            --host https://us.i.posthog.com
+            --release-name good-neighbor \
+            --release-version "$RELEASE_SHA" \
+            --host https://us.i.posthog.com \
+            --no-fail
+        continue-on-error: true
 
       # Maps must not go public — they'd leak full source. They live in
       # PostHog (uploaded above) and only there.

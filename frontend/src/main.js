@@ -19,6 +19,12 @@
   (No service worker ships in the MVP — real offline/precaching is a later pass; see
   vite.config.js and memory step2-gnp-port-scope.)
 */
+// Error capture installs FIRST — this is the first import in the module graph,
+// and the module self-installs its `error` + `unhandledrejection` listeners at
+// evaluation time, so exceptions while loading Web Awesome or any later import
+// are still captured. No-ops under tests and when `gnp:errors=off`.
+import "./services/error-report.js";
+
 import { registerIconLibrary } from "@awesome.me/webawesome/dist/components/icon/library.js";
 
 // Resolve icons from our self-hosted set. BASE_URL keeps paths correct under a
@@ -57,12 +63,6 @@ import "./styles/app.css";
 // capture is triggered (which only happens on a later user tap).
 import { syncCaptureModeFromUrl } from "./services/capture-mode.js";
 syncCaptureModeFromUrl();
-
-// Global error capture (own beacon endpoint → Lambda → PostHog). Installed
-// first so early bootstrap errors are caught too; no-ops under tests and when
-// `gnp:errors=off`.
-import { installErrorReporting } from "./services/error-report.js";
-installErrorReporting();
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";

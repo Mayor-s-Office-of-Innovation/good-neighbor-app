@@ -78,11 +78,14 @@ function load() {
   return import("./error-report.js");
 }
 
-/** @returns {Promise<void>} opt-in via the kill-switch override, then install */
+/**
+ * Opt in via the kill-switch override, then (re)load. The module
+ * self-installs at import time, so no explicit install call is needed.
+ * @returns {Promise<typeof import("./error-report.js")>}
+ */
 async function loadEnabled() {
   storage["gnp:errors"] = "on";
-  const mod = await load();
-  mod.installErrorReporting();
+  return load();
 }
 
 /**
@@ -122,12 +125,11 @@ async function syncBodies() {
 
 describe("enablement (instrument.js conventions)", () => {
   it("installs nothing in test mode without the on flag", async () => {
-    const mod = await load();
-    mod.installErrorReporting();
+    await load();
     expect(listeners.error).toBeUndefined();
   });
 
-  it("gnp:errors=on forces listeners on even in test mode", async () => {
+  it("gnp:errors=on forces listeners on even in test mode (self-install)", async () => {
     await loadEnabled();
     expect(listeners.error).toBeTypeOf("function");
     expect(listeners.unhandledrejection).toBeTypeOf("function");
@@ -135,9 +137,15 @@ describe("enablement (instrument.js conventions)", () => {
 
   it("gnp:errors=off keeps it off (kill switch)", async () => {
     storage["gnp:errors"] = "off";
-    const mod = await load();
-    mod.installErrorReporting();
+    await load();
     expect(listeners.error).toBeUndefined();
+  });
+
+  it("self-installs on import (bootstrap-order contract)", async () => {
+    // Import alone — no install call — with the on flag set.
+    storage["gnp:errors"] = "on";
+    await import("./error-report.js");
+    expect(listeners.error).toBeTypeOf("function");
   });
 });
 
@@ -202,7 +210,7 @@ describe("capture + payload", () => {
     expect(c.message).toBe("UnhandledRejection");
   });
 
-  it("dedupes identical type+message, still sends distinct ones", async () => {
+  it("dedupes identical type+message within the window, still sends distinct ones", async () => {
     await loadEnabled();
 
     fireError("boom", new Error("boom"));
@@ -211,6 +219,24 @@ describe("capture + payload", () => {
 
     await syncBodies();
     expect(beaconBodies).toHaveLength(2);
+  });
+
+  it("re-reports the same type+message after the dedupe window expires", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadEnabled();
+
+      fireError("boom", new Error("boom"));
+      fireError("boom", new Error("boom")); // deduped
+      vi.advanceTimersByTime(61_000); // past DEDUPE_TTL_MS
+      fireError("boom", new Error("boom")); // allowed again
+
+      await vi.runAllTimersAsync();
+      await syncBodies();
+      expect(beaconBodies).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rate-caps distinct errors at 5 per window", async () => {
@@ -235,6 +261,22 @@ describe("capture + payload", () => {
     const payload = await lastPayload();
     expect(payload.message.length).toBeLessThanOrEqual(2000);
     expect(payload.stack.length).toBeLessThanOrEqual(16000);
+  });
+
+  it("strips query strings from http(s) URLs inside stacks", async () => {
+    await loadEnabled();
+    /** @type {any} */
+    const error = new Error("boom");
+    error.stack =
+      "Error: boom\n    at f (https://cdn.example.com/app.js?token=secret:2:15)";
+
+    listeners.error({ message: "boom", error });
+
+    const payload = await lastPayload();
+    expect(payload.stack).toBe(
+      "Error: boom\n    at f (https://cdn.example.com/app.js:2:15)",
+    );
+    expect(payload.stack).not.toContain("secret");
   });
 
   it("falls back to fetch keepalive when beacon is unavailable", async () => {
@@ -273,16 +315,39 @@ describe("capture + payload", () => {
     expect(ids).toEqual(["stable-id", "stable-id"]);
   });
 
+  it("falls back to a non-throwing id when storage and randomUUID both fail", async () => {
+    vi.stubGlobal(
+      "crypto",
+      /** @type {any} */ ({
+        getRandomValues: () => {
+          throw new Error("no entropy");
+        },
+      }),
+    );
+    await loadEnabled();
+
+    expect(() => listeners.error({ message: "a", error: new Error("a") })).not
+      .toThrow();
+
+    const payload = await lastPayload();
+    expect(payload.id).toMatch(/^id-/);
+  });
+
   it("honors the __RELEASE__ build define", async () => {
     storage["gnp:errors"] = "on";
-    /** @type {any} */ (globalThis).__RELEASE__ = "abc123";
+    // Vite replaces the bare identifier (not globalThis members); stub the
+    // same shape the built bundle sees. `globalThis.eval("typeof __RELEASE__")
+    // would look at real globals, so emulate the define via a direct eval.
+    (/** @type {any} */ (globalThis)).eval?.('var __RELEASE__ = "abc123";');
+    // In the built bundle release() reads the bare identifier; here the var
+    // above provides it for the module under test via the same global scope.
     const mod = await load();
-    mod.installErrorReporting();
 
     fireError("boom", new Error("boom"));
 
     const payload = await lastPayload();
     expect(payload.release).toBe("abc123");
-    delete (/** @type {any} */ (globalThis).__RELEASE__);
+    delete (/** @type {any} */ (globalThis)).__RELEASE__;
+    void mod;
   });
 });

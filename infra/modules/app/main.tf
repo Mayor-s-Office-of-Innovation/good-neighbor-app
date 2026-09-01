@@ -60,6 +60,26 @@ resource "aws_kms_key" "app" {
             "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"
           }
         }
+      },
+      {
+        # CloudWatch alarms publish to the KMS-encrypted SNS alarms topic
+        # (alarms.tf); without service permission to decrypt + generate data
+        # keys, alarm state changes fail instead of notifying.
+        Sid    = "AllowCloudWatchAlarmsPublish"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudwatch.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = "${data.aws_caller_identity.current.account_id}"
+          }
+        }
       }
     ]
   })
