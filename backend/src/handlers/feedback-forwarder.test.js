@@ -169,7 +169,11 @@ describe("forwardFeedback", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
 
-    const outcome = await forwardFeedback(feedback(), {}, { fetchImpl, config });
+    const outcome = await forwardFeedback(
+      feedback(),
+      {},
+      { fetchImpl, config },
+    );
 
     expect(outcome).toBe("failed");
     const line = /** @type {string} */ (warn.mock.calls[0][0]);
@@ -185,7 +189,11 @@ describe("forwardFeedback", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError("down"));
 
-    const outcome = await forwardFeedback(feedback(), {}, { fetchImpl, config });
+    const outcome = await forwardFeedback(
+      feedback(),
+      {},
+      { fetchImpl, config },
+    );
 
     expect(outcome).toBe("failed");
     const line = /** @type {string} */ (warn.mock.calls[0][0]);
@@ -210,9 +218,7 @@ describe("forwardFeedback", () => {
   });
 
   it("toIso passes parseable timestamps and drops garbage", () => {
-    expect(toIso("2026-09-01T10:00:00.000Z")).toBe(
-      "2026-09-01T10:00:00.000Z",
-    );
+    expect(toIso("2026-09-01T10:00:00.000Z")).toBe("2026-09-01T10:00:00.000Z");
     expect(toIso("not-a-date")).toBeUndefined();
     expect(toIso(undefined)).toBeUndefined();
   });

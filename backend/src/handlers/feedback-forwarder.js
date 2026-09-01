@@ -80,9 +80,7 @@ export async function forwardFeedback(feedback, ctx, deps = {}) {
   const body = {
     api_key: apiKey,
     batch: [event],
-    ...(ts
-      ? { sentAt: new Date((deps.now ?? Date.now)()).toISOString() }
-      : {}),
+    ...(ts ? { sentAt: new Date((deps.now ?? Date.now)()).toISOString() } : {}),
   };
 
   const fetchImpl = deps.fetchImpl ?? fetch;

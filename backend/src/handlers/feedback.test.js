@@ -104,9 +104,9 @@ describe("feedback handler", () => {
       site: "M0101",
       id: "uuid-1",
     });
-    expect(
-      /** @type {any} */ (forward.mock.calls[0][1]),
-    ).toEqual({ userAgent: "TestUA/1.0" });
+    expect(/** @type {any} */ (forward.mock.calls[0][1])).toEqual({
+      userAgent: "TestUA/1.0",
+    });
   });
 
   it("forwards carry the same user-agent extracted for the log line", async () => {
@@ -120,9 +120,9 @@ describe("feedback handler", () => {
       ),
     );
 
-    expect(
-      /** @type {any} */ (forward.mock.calls.at(-1)?.[1]),
-    ).toEqual({ userAgent: "TestUA/2.0" });
+    expect(/** @type {any} */ (forward.mock.calls.at(-1)?.[1])).toEqual({
+      userAgent: "TestUA/2.0",
+    });
   });
 
   it.each([
@@ -207,7 +207,11 @@ describe("feedback handler", () => {
   it("scrubs query strings out of page on intake", async () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await callHandler(
-      event({ message: "hi", id: "uuid-1", page: "/today?email=a@b.c&token=secret" }),
+      event({
+        message: "hi",
+        id: "uuid-1",
+        page: "/today?email=a@b.c&token=secret",
+      }),
     );
 
     expect(lastLog(logSpy).page).toBe("/today");

@@ -90,15 +90,11 @@ describe("sendFeedback", () => {
 
   it("rejects on a transport failure", async () => {
     fetchMock.mockRejectedValue(new TypeError("network down"));
-    await expect(sendFeedback({ message: "hi" })).rejects.toThrow(
-      TypeError,
-    );
+    await expect(sendFeedback({ message: "hi" })).rejects.toThrow(TypeError);
   });
 
   it("rejects on an empty/whitespace-only message without calling fetch", async () => {
-    await expect(sendFeedback({ message: "   " })).rejects.toThrow(
-      /empty/,
-    );
+    await expect(sendFeedback({ message: "   " })).rejects.toThrow(/empty/);
     await expect(sendFeedback({ message: undefined })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });

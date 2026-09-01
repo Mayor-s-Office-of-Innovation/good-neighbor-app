@@ -65,9 +65,7 @@ export function scrubFeedback(body) {
     const out = { text, id };
 
     if (typeof raw.page === "string" && raw.page) {
-      out.page = stripQueryString(
-        truncateString(raw.page, MAX_SHORT) || "",
-      );
+      out.page = stripQueryString(truncateString(raw.page, MAX_SHORT) || "");
     }
 
     if (typeof raw.site === "string" && SITE_PATTERN.test(raw.site)) {
@@ -77,8 +75,10 @@ export function scrubFeedback(body) {
     for (const key of ["release", "ts"]) {
       const value = raw[key];
       if (typeof value === "string" && value) {
-        out[/** @type {"release" | "ts"} */ (key)] =
-          truncateString(value, MAX_SHORT);
+        out[/** @type {"release" | "ts"} */ (key)] = truncateString(
+          value,
+          MAX_SHORT,
+        );
       }
     }
 

@@ -134,7 +134,11 @@ class FeedbackDialog extends HTMLElement {
 
   _renderForm() {
     this.innerHTML = html`
-      <button class="feedback__open home-cta__link" id="feedback-open" type="button">
+      <button
+        class="feedback__open home-cta__link"
+        id="feedback-open"
+        type="button"
+      >
         Send feedback
       </button>
 
@@ -161,15 +165,16 @@ class FeedbackDialog extends HTMLElement {
                 placeholder="Share an idea, a bug, or a frustration…"
                 aria-label="Your feedback"
               ></textarea>
-              <p class="feedback__error" id="feedback-error" role="alert" hidden>
+              <p
+                class="feedback__error"
+                id="feedback-error"
+                role="alert"
+                hidden
+              >
                 Couldn't send just now. Your note is still here — try again.
               </p>
               <div class="feedback__actions">
-                <button
-                  class="btn-outline"
-                  id="feedback-cancel"
-                  type="button"
-                >
+                <button class="btn-outline" id="feedback-cancel" type="button">
                   Cancel
                 </button>
                 <button class="btn-ink" id="feedback-send" type="submit">
