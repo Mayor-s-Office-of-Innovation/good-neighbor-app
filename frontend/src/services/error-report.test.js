@@ -348,7 +348,7 @@ describe("capture + payload", () => {
 
     const payload = await lastPayload();
     expect(payload.release).toBe("abc123");
-    delete /** @type {any} */ (globalThis).__RELEASE__;
+    delete (/** @type {any} */ (globalThis).__RELEASE__);
     void mod;
   });
 });
