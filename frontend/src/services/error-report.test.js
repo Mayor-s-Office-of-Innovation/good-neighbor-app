@@ -221,6 +221,17 @@ describe("capture + payload", () => {
     expect(beaconBodies).toHaveLength(2);
   });
 
+  it("dedupes A→B→A within the window (not just the last key)", async () => {
+    await loadEnabled();
+
+    fireError("boom", new Error("boom"));
+    fireError("other", new Error("other"));
+    fireError("boom", new Error("boom")); // A again — must dedupe
+
+    await syncBodies();
+    expect(beaconBodies).toHaveLength(2);
+  });
+
   it("re-reports the same type+message after the dedupe window expires", async () => {
     vi.useFakeTimers();
     try {
