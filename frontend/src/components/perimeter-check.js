@@ -10,8 +10,8 @@
   device's full camera (zoom / focus / flash / lens). On desktop the same input is
   a file picker. The returned file is read to a JPEG data-URL, which serializes
   straight into the IndexedDB draft and matches the analyzer's base64 flow.
-  Photo-only by design — voice/note capture is deferred post-MVP (its plumbing is
-  left intact but unused).
+  Photo-only by design — voice capture was removed (the system keyboard's native
+  dictation on the describe screen covers it better than Web Speech did).
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
@@ -20,8 +20,6 @@ import {
   enqueueUpload,
   resumePendingUploads,
 } from "../services/artifact-uploader.js";
-import { isBrowserCameraEnabled } from "../services/capture-mode.js";
-// <in-browser-camera> registers itself via main.js (opt-in ?webcam feature).
 import {
   ensureCheck,
   startCheck,
@@ -42,7 +40,6 @@ import {
 } from "../state/check-session.js";
 import {
   shell,
-  shellWebcam,
   segment,
   shotTile,
   descriptionTile,
@@ -86,12 +83,7 @@ class PerimeterCheck extends HTMLElement {
       this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
     }
 
-    // Opt-in inline browser camera (?webcam, persisted). Falls back to native on
-    // an unavailable/denied camera (see _onCameraUnavailable).
-    this._webcam = isBrowserCameraEnabled();
-    this._webcamFailed = false;
-
-    this.innerHTML = this._webcam ? shellWebcam() : shell();
+    this.innerHTML = shell();
     this._fileInput = this.querySelector("#file-input");
 
     this.querySelector("#cancel").addEventListener("click", () =>
@@ -131,10 +123,8 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
     );
-    // A photo came back from the file picker (native path + webcam fallback).
+    // A photo came back from the file picker.
     this._fileInput.addEventListener("change", () => this._onFilePicked());
-
-    if (this._webcam) this._mountCamera();
 
     this._renderSide();
     if (this._pendingSubmit) {
@@ -185,8 +175,6 @@ class PerimeterCheck extends HTMLElement {
 
   /* ---- capture (native handoff) ---- */
   // The ＋ "Add photo" tile opens the device camera (phone) / file picker (desktop).
-  // In webcam mode the inline camera replaces this tile; the tile only reappears on
-  // the denied-camera fallback, which routes back here.
   _openCamera() {
     this._fileInput.value = ""; // allow re-picking the same file
     this._fileInput.click();
@@ -299,21 +287,12 @@ class PerimeterCheck extends HTMLElement {
   }
 
   async _submit() {
-    // Release the camera before leaving the capture screen.
-    if (this._camera) {
-      this._camera.remove();
-      this._camera = null;
-    }
     try {
       submitCheck({ submissionKind: "check" });
       navigate("/today");
     } catch (err) {
       // Synchronous failures are rare here, but keep the retry path intact.
       console.error("submitCheck failed", err);
-      // We tore the camera down before submitting; remount it so webcam-mode users
-      // can still add photos on this (or another) side before retrying. (Native and
-      // fallback modes keep their ＋ tile, so nothing to restore there.)
-      if (this._useWebcam() && !this._camera) this._mountCamera();
       this._showSubmitError(err);
     }
   }
@@ -361,8 +340,7 @@ class PerimeterCheck extends HTMLElement {
       .join("");
   }
 
-  // This side's shots as an inline grid. Native path (and webcam fallback) appends
-  // the ＋ "Add photo" tile; with the inline camera live, thumbnails render alone.
+  // This side's shots as an inline grid, with a trailing ＋ "Add photo" tile.
   _renderShots() {
     const sideState = this._sideState();
     const items = sideState.items;
@@ -372,9 +350,7 @@ class PerimeterCheck extends HTMLElement {
       "shotgrid--empty",
       items.length === 0 && !hasDescription,
     );
-    const tile = this._useWebcam()
-      ? ""
-      : addTile(items.length === 0 && !hasDescription);
+    const tile = addTile(items.length === 0 && !hasDescription);
     const description = hasDescription
       ? descriptionTile({
           side: this._side,

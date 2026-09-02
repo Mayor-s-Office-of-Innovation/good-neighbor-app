@@ -9,9 +9,9 @@
   from there (services/api.js), not from any local `checks` store.
 
   A check has four fixed sides (N/E/S/W). Each side is covered by photo captures, or
-  marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose:
-  voice/note capture is out of the MVP UI (photo-only) but the plumbing is left intact
-  for the post-MVP pass.
+  marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose
+  ({kind:'photo', dataUrl}) so post-MVP capture kinds don't require a reshaping. Voice
+  capture was removed (native keyboard dictation on the describe screen covers it).
 */
 import {
   newId,
@@ -48,13 +48,12 @@ function normalizeDescription(description) {
   if (!description || typeof description !== "object") return null;
   const text = String(description.text || "").trim();
   if (!text) return null;
-  const source = ["typed", "transcribed", "mixed"].includes(description.source)
-    ? description.source
-    : "typed";
+  // Voice capture is removed (ADR 0009): everything is typed now, so legacy
+  // "transcribed"/"mixed" sources coerce to "typed" on load.
   return {
     kind: "note",
     text,
-    source,
+    source: "typed",
     validation: {
       whatYouCanSee: true,
       whereItIs: true,
