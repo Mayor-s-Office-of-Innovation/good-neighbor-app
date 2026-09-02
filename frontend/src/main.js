@@ -4,9 +4,8 @@
   register our own components, mount the app.
 
   Web Awesome is adopted in HYBRID fashion: WA supplies form controls, buttons,
-  badges, callouts, spinners and icons; we keep our own shell, bottom nav and the
-  camera/mic capture plumbing. APIs were pulled from the shipped agent skill in
-  node_modules (never guessed).
+  badges, callouts, spinners and icons; we keep our own shell and bottom nav.
+  APIs were pulled from the shipped agent skill in node_modules (never guessed).
 
   CDN-free note: wa-icon loads from the Font Awesome CDN by default. We self-host a
   small icon set in /public/icons and register it as the `default` library below, so
@@ -58,16 +57,8 @@ import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 import "./styles/tokens.css";
 import "./styles/app.css";
 
-// Consume the ?webcam capture-mode param (opt-in in-app browser camera) at startup,
-// so the choice is persisted + the param stripped from the URL well before any
-// capture is triggered (which only happens on a later user tap).
-import { syncCaptureModeFromUrl } from "./services/capture-mode.js";
-syncCaptureModeFromUrl();
-
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
-import "./components/capture-audio.js";
-import "./components/in-browser-camera.js";
 import "./components/today-view.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
