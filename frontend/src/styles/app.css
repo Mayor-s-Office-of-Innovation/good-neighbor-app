@@ -2796,23 +2796,14 @@ theme-toggle {
   font-size: 0.95rem;
   line-height: 1.4;
 }
+/* The WA form control themes itself off the --wa-* tokens; only the bits the
+   system doesn't cover are set here (width inside the sheet, quiet label). */
 .feedback__textarea {
   width: 100%;
-  box-sizing: border-box;
-  min-height: 7rem;
-  padding: 0.7rem 0.8rem;
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1.4;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border, #c9c9c9);
-  border-radius: 12px;
-  resize: vertical;
 }
-.feedback__textarea:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
+.feedback__textarea::part(form-control-label) {
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 .feedback__error {
   margin: 0.6rem 0 0;

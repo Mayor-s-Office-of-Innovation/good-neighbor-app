@@ -1,5 +1,5 @@
 // Forward a scrubbed feedback submission to PostHog as a `survey sent` event
-// (docs/todo/feedback-plan.md Phase 5). PostHog is the feedback store — the
+// (docs/runbooks/feedback-ops.md). PostHog is the feedback store — the
 // CloudWatch log line carries metadata only (no message text; text was
 // removed from logging when PostHog became the destination). Kept mechanical
 // like forwarder.js so provider swaps stay trivial. All forwarding is

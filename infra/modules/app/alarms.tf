@@ -113,7 +113,7 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
   }
 }
 
-# --- user feedback filters (docs/todo/feedback-plan.md Phase 3) ---------------
+# --- user feedback filters (docs/runbooks/feedback-ops.md) --------------------
 
 # Every valid feedback submission logs one FeedbackReceived line. The alarm is
 # the notification: ≥1 per 5-min bucket emails the SNS topic (recipients are
@@ -132,8 +132,13 @@ resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "feedback_received" {
-  alarm_name          = "${local.name_prefix}-feedback-received"
-  alarm_description   = "A user submitted app feedback. Read it in CloudWatch Logs Insights (saved query 'GNP feedback') on the ${local.name_prefix}-api log group."
+  alarm_name = "${local.name_prefix}-feedback-received"
+  # CloudWatch never stores feedback text (metadata-only line, see
+  # handlers/feedback.js) — the submission content lives in PostHog Surveys
+  # once forwarding is enabled. While the forwarder is log-only (check for
+  # FeedbackLogOnly lines) the text was discarded at intake; the metrics here
+  # (page/site/release/id/textLength) are the whole CloudWatch-side story.
+  alarm_description   = "A user submitted app feedback. Read the note in PostHog → Surveys → 'GNP app feedback' → Results (see docs/runbooks/feedback-ops.md). If CloudWatch shows FeedbackLogOnly lines instead, forwarding is off and the note was discarded at intake — check the survey-ID env vars."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1

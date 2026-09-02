@@ -1,6 +1,6 @@
 /*
  * POST /v1/feedback — public, unauthenticated intake for in-app user
- * feedback (see docs/todo/feedback-plan.md). Contract: always respond 204,
+ * feedback (see docs/runbooks/feedback-ops.md). Contract: always respond 204,
  * never throw, never signal payload validity to a possible abuser. Valid
  * submissions are scrubbed (allowlist-only), logged as one metadata-only
  * structured JSON line (no message text — PostHog is the feedback store; the

@@ -4,13 +4,17 @@
   The trigger is an icon-only button rendered at the top-right of the home
   header (today-view places it there). A native <dialog> (showModal() gives
   focus trap + Escape for free, same as the dispute sheet in check-results.js)
-  with ONE textarea and a submit button.
-  Settled scope (docs/todo/feedback-plan.md): textarea-only — no category picker,
-  no rating, no email field; feedback is anonymous.
+  with ONE textarea and a submit button (textarea is the WA control per the
+  design system; buttons stay native — see docs/frontend-design-system.md,
+  which reserves .btn-ink/.btn-outline for primary CTAs). Settled scope:
+  textarea-only — no category
+  picker, no rating, no email field; feedback is anonymous.
 
-  States: form → sending (disabled + spinner) → thanks (auto-close after a beat).
-  Send happens while the dialog is open; failure re-enables the form + shows a
-  gentle inline retry (the draft text is never cleared on failure).
+  States: form → sending (disabled + spinner) → thanks (auto-close after a
+  beat). Send happens while the dialog is open; failure re-enables the form +
+  shows a gentle inline retry (the draft text is never cleared on failure).
+  The thanks auto-close timer is cleared on every close, so Done/Escape/
+  backdrop followed by a quick reopen can't be dismissed by the stale timer.
 */
 import { html } from "../lib/html.js";
 import { sendFeedback } from "../services/feedback.js";
@@ -39,6 +43,11 @@ export function clearsDraft(thanksShowing) {
 }
 
 class FeedbackDialog extends HTMLElement {
+  /** @type {HTMLDialogElement | null} */
+  _dialog = null;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  _thanksTimer;
+
   connectedCallback() {
     this._renderForm();
     this._dialog = /** @type {HTMLDialogElement | null} */ (
@@ -48,9 +57,12 @@ class FeedbackDialog extends HTMLElement {
     this.querySelector("#feedback-open")?.addEventListener("click", () => {
       this._setState("form");
       this._dialog?.showModal();
-      /** @type {HTMLElement | null} */ (
+      const textarea = /** @type {HTMLElement | null} */ (
         this.querySelector("#feedback-text")
-      )?.focus();
+      );
+      // wa-textarea renders its input in the shadow DOM; focus the host and
+      // let it forward focus to the inner control.
+      textarea?.focus();
     });
 
     this.querySelector("#feedback-cancel")?.addEventListener("click", () =>
@@ -74,9 +86,9 @@ class FeedbackDialog extends HTMLElement {
   }
 
   async _submit() {
-    const textarea = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector("#feedback-text")
-    );
+    const textarea = /** @type {any} */ (this.querySelector("#feedback-text"));
+    // wa-textarea exposes its value as a property (and syncs it to the inner
+    // native control), so read it like any form control.
     const text = textarea?.value ?? "";
     if (!hasSendableText(text)) return;
 
@@ -128,9 +140,7 @@ class FeedbackDialog extends HTMLElement {
 
   /** Reset the draft after a successful send (called when the sheet closes). */
   _resetForm() {
-    const textarea = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector("#feedback-text")
-    );
+    const textarea = /** @type {any} */ (this.querySelector("#feedback-text"));
     if (textarea) textarea.value = "";
   }
 
@@ -159,7 +169,7 @@ class FeedbackDialog extends HTMLElement {
               building this app.
             </p>
             <form id="feedback-form">
-              <textarea
+              <wa-textarea
                 id="feedback-text"
                 class="feedback__textarea"
                 name="message"
@@ -167,8 +177,9 @@ class FeedbackDialog extends HTMLElement {
                 maxlength="2000"
                 required
                 placeholder="Share an idea, a bug, or a frustration…"
-                aria-label="Your feedback"
-              ></textarea>
+                label="Your feedback"
+                resize="vertical"
+              ></wa-textarea>
               <p
                 class="feedback__error"
                 id="feedback-error"
@@ -189,7 +200,7 @@ class FeedbackDialog extends HTMLElement {
           </div>
           <div class="feedback__pane feedback__pane--thanks" hidden>
             <p class="feedback__thanks" aria-live="polite">
-              Thanks — your feedback reached the team.
+              Thanks — your note is on its way to the team.
             </p>
             <div class="feedback__actions">
               <button class="btn-ink" id="feedback-done" type="button">
@@ -204,7 +215,15 @@ class FeedbackDialog extends HTMLElement {
     // Clear the draft only after a dialog that ended in a sent state — closing
     // via Escape/backdrop mid-edit must not discard typing. `cancel` fires on
     // Escape; the backdrop-click branch above covers pointing-device dismissal.
+    // Also clears the thanks auto-close timer on EVERY close: Done/Escape/
+    // backdrop followed by a quick reopen would otherwise be dismissed by the
+    // stale timer (close() on an already-closed dialog is a no-op, so this is
+    // belt-and-suspenders for the timer's own self-close).
     this._dialog?.addEventListener("close", () => {
+      if (this._thanksTimer) {
+        clearTimeout(this._thanksTimer);
+        this._thanksTimer = undefined;
+      }
       const thanksPane = /** @type {HTMLElement | null} */ (
         this.querySelector(".feedback__pane--thanks")
       );
