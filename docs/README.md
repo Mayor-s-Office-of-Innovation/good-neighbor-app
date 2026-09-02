@@ -100,6 +100,20 @@ is designed but not yet enforced). **Read them in this order:**
 - **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
   animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
 
+- **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
+  animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
+
+## Error tracking & observability (built, Aug 2026)
+
+- **[client-error-tracking-plan.md](./todo/client-error-tracking-plan.md)** — **approved; build in
+  progress** on `feature/error-tracking`. Lean client capture (`error-report.js` beacon → own
+  `POST /v1/client-errors` route → api-Lambda forwarder), log-only whenever the key is absent
+  (safe local-dev default); PostHog Cloud chosen for contributor (non-AWS) access. Includes the
+  `logServerError` convention (CloudWatch = server-error source of truth), WAF rate rule on the
+  public intake, and metric-filter alarms. **Phases 1–5 built & green** (CI terraform validate
+  pending first apply); **MOI egress sign-off granted 2026-08-31** — remaining: Phase 0 (PostHog
+  org/keys → secrets), alarm recipients, first dev apply + verify.
+
 ## Deploy & CI/CD (plan, Aug 2026)
 
 - **The decision — [ADR 0007](./adr/0007-deploy-promotion-model.md)** — the **2-environment

@@ -12,3 +12,14 @@ resource "aws_secretsmanager_secret" "analyzer_api_key" {
   kms_key_id  = aws_kms_key.app.arn
   tags        = var.tags
 }
+
+# PostHog project API key (write-only ingest key) for the client-error
+# forwarder. Same container-only pattern: the value is set out-of-band; until
+# it is, the forwarder runs in log-only mode (see handlers/posthog-api-key.js).
+resource "aws_secretsmanager_secret" "posthog_project_api_key" {
+  #checkov:skip=CKV2_AWS_57:Third-party ingest key rotated manually out-of-band; PostHog project keys are not credentials for any account surface.
+  name        = "${local.name_prefix}-posthog-project-api-key"
+  description = "PostHog project API key for client-error forwarding (value set out-of-band; absent = log-only mode)."
+  kms_key_id  = aws_kms_key.app.arn
+  tags        = var.tags
+}

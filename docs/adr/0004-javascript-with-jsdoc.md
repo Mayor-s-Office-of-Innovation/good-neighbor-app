@@ -35,3 +35,19 @@ interior stays unchecked (no `lit-html`/`lit-analyzer`).
 - Adopting an untyped tree is done under a **lenient, ratcheting** gate: `checkJs: true` with
   `strict: false` and greppable `// @ts-nocheck` on the noisiest files, tightened toward
   `strict` one file per PR.
+
+## Dependency note: why `@types/node` is added
+
+Per the dependency bar ("every added npm dependency must justify the platform gap it fills"),
+each `@types/*` install is recorded here:
+
+- **backend (`@types/node`, dev-only):** the backend's type gate runs in strict mode over code
+  that uses Node globals — `process.env`, `setTimeout` (typed as
+  `ReturnType<typeof setTimeout>`), `node:crypto` imports. These have no web-platform
+  equivalent; lib.dom doesn't declare them. Platform gap: none of the web type libs describe
+  the Node runtime the Lambda runs on.
+- **frontend (`@types/node`, dev-only, added with ADR 0008):** `frontend/vite.config.js` is
+  included in the frontend `tsc` gate and reads `process.env.RELEASE_SHA` (the release stamp
+  for error reports). A Vite config is Node code by definition — the platform gap is the
+  Node build context itself, which no browser type library covers. Only this config file (not
+  app code) relies on it; app code stays browser-only types.

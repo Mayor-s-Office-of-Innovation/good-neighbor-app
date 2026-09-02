@@ -98,13 +98,64 @@ jobs:
       # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
       # so it stays within connect-src 'self' instead of triggering a cross-origin
       # CSP violation. (api_url is still used for the /health smoke test below.)
+      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
+      # so the frontend defaults to a same-origin base ("") and makes relative
+      # calls (/site-code, /v1/*). This resolves to whichever origin served the
+      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
+      # so it stays within connect-src 'self' instead of triggering a cross-origin
+      # CSP violation. (api_url is still used for the /health smoke test below.)
+      # RELEASE stamps the build for the error tracker (error-report.js reads
+      # __RELEASE__, defined in vite.config.js) and keys the sourcemap upload.
       - name: Build frontend
         working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         run: npm run build -w @good-neighbor/frontend
 
+      # Upload sourcemaps to the error tracker so client stack traces
+      # symbolicate for contributors. The upload is per-release (the sha the
+      # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
+      # per-env GH Environment secret) + POSTHOG_CLI_PROJECT_ID (per-env GH
+      # Environment variable) — the CLI's headless-CI auth variables. The
+      # pipeline is inject → upload: inject stamps the built chunks with
+      # release/chunk metadata (required for the upload to be usable), upload
+      # then associates the maps with the release named after the commit sha.
+      # Best-effort: a failed upload must not fail the deploy (errors just
+      # stay minified until the next green run), hence continue-on-error on
+      # both steps + the CLI's --no-fail on the upload.
+      - name: Inject PostHog metadata into bundles
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx @posthog/cli sourcemap inject \
+            --directory frontend/dist
+        continue-on-error: true
+
+      - name: Upload sourcemaps to PostHog
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx @posthog/cli sourcemap upload \
+            --directory frontend/dist \
+            --release-name good-neighbor \
+            --release-version "$RELEASE_SHA" \
+            --host https://us.i.posthog.com \
+            --no-fail
+        continue-on-error: true
+
+      # Maps must not go public — they'd leak full source. They live in
+      # PostHog (uploaded above) and only there.
       - name: Publish frontend to S3
         working-directory: ${{ github.workspace }}
-        run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete
+        run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete --exclude "*.map"
 
       # Env-scoped: only this environment's distribution is invalidated.
       - name: Invalidate CloudFront
