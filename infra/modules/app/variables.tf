@@ -24,6 +24,36 @@ variable "analyzer_base_url" {
   default     = ""
 }
 
+variable "enable_311_submission" {
+  description = "Enable backend CreateSR submissions to SF311 HUB when task app actions run."
+  type        = bool
+  default     = false
+}
+
+variable "sf311_createsr_url" {
+  description = "SF311 HUB CreateSR endpoint URL."
+  type        = string
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/CREATESR/2.0"
+}
+
+variable "sf311_agency_lookup_url" {
+  description = "SF311 HUB agency lookup endpoint URL."
+  type        = string
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/HUBWEB/1.0/lookup_agency_table"
+}
+
+variable "sf311_default_responsible_agency" {
+  description = "Optional fallback ResponsibleAgency value if the HUB lookup response does not map the selected service code."
+  type        = string
+  default     = ""
+}
+
+variable "sf311_classifier_service_code_map" {
+  description = "JSON object mapping classifier labels to SF311 service codes, keyed by classifier id."
+  type        = string
+  default     = ""
+}
+
 variable "frontend_domain_names" {
   description = "Custom domain names to attach to the frontend CloudFront distribution."
   type        = list(string)

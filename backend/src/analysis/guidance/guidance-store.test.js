@@ -142,6 +142,61 @@ describe("storeEvaluatedAssessment", () => {
     expect(result.conditionItems).toHaveLength(2);
   });
 
+  it("runs task-created 311 actions silently after minting an action task", async () => {
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-silent",
+        checkId: "chk-silent",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [
+          {
+            category: "Litter",
+            severity: 1,
+            description: "small litter",
+          },
+        ],
+      },
+      {
+        tableName: "table",
+        env: { GNP_311_SUBMISSION_ENABLED: "true" },
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi.fn().mockReturnValueOnce("task-silent"),
+      },
+    );
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const task = result.taskItems[0];
+    expect(task).toMatchObject({
+      taskId: "task-silent",
+      kind: "action",
+      appActionStatus: "failed",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            responsibleAgencyCode: "76",
+            executionTrigger: "task_created",
+          },
+        },
+      ],
+    });
+
+    const updateTx = send.mock.calls[1][0];
+    expect(updateTx).toBeInstanceOf(TransactWriteCommand);
+    expect(updateTx.input.TransactItems[0].Put).toMatchObject({
+      ConditionExpression: "#status = :open",
+      ExpressionAttributeValues: { ":open": "open" },
+    });
+    expect(updateTx.input.TransactItems[0].Put.Item).toMatchObject({
+      taskId: "task-silent",
+      appActionStatus: "failed",
+    });
+  });
+
   it("marks unresolved analyzer categories for manual review", async () => {
     await storeEvaluatedAssessment(
       {
@@ -453,7 +508,7 @@ describe("completeTaskWithAppActions", () => {
         appActions: [
           {
             code: "create_311_ticket",
-            payload: { category311: "Street and sidewalk cleaning" },
+            payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
           },
         ],
       },
@@ -466,7 +521,7 @@ describe("completeTaskWithAppActions", () => {
       siteId: "site-1",
       taskId: "task-1",
       completionMethod: "button",
-      env: { GNP_311_SUBMISSION_ENABLED: "true" },
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
       now: new Date("2026-08-18T12:02:00.000Z"),
     });
 
@@ -501,12 +556,12 @@ describe("completeTaskWithAppActions", () => {
       status: "completed",
       completedAt: "2026-08-18T12:02:00.000Z",
       completionMethod: "button",
-      appActionStatus: "not_configured",
+      appActionStatus: "skipped",
       appActionResults: [
         {
           code: "create_311_ticket",
-          status: "not_configured",
-          reason: "311_client_unavailable",
+          status: "skipped",
+          reason: "feature_disabled",
         },
       ],
       gsi2pk: "SITE#site-1#TASK#completed",

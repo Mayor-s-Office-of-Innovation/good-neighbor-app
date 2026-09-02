@@ -71,8 +71,9 @@ npx skills add ./node_modules/@awesome.me/webawesome/dist/skills/webawesome-desi
 They install as symlinks (stay current on package updates); remove with `npx skills remove webawesome`.
 See [Web Awesome → Agent Skills](https://webawesome.com/docs/ai/agent-skills).
 
-The first screen asks for a provider-site code. With the local backend running, `123-456` is
-seeded active and `000-000` seeded inactive.
+The first screen asks for a provider-site code. With the local backend running,
+`123-456` is seeded active for St. John the Evangelist / The Gubbio Project and
+`000-000` is seeded inactive.
 
 ### Clearing the local site binding
 
@@ -107,6 +108,7 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 | `npm run db:gui -w backend` | Browse the local table at http://localhost:8001 (run in a second terminal) |
 | `npm run local:services -w backend` | Just the emulators (DynamoDB Local + ElasticMQ + MinIO) |
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
+| `npm run local:sf311 -w backend` | Fake local SF311 CreateSR server (:3999) that records requests without calling HUB |
 | `npm run local:api -w backend` | Just the in-process API router (:3001) |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
@@ -154,6 +156,44 @@ curl -s -X POST localhost:3001/submissions \
 
 Re-POSTing with the same `idempotency-key` flips the stored item's status to `duplicate_replay`
 (the conditional-write replay branch). `X-Debug-Sub` stands in for the Cognito JWT `sub`.
+
+### Fake SF311 server
+
+To test 311 filing locally without calling HUB, start the fake endpoint in a
+separate terminal:
+
+```bash
+npm run local:sf311 -w backend
+```
+
+Then start the local API with these env overrides:
+
+```bash
+GNP_311_SUBMISSION_ENABLED=true \
+SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
+SF311_BASIC_AUTH_USER=local \
+SF311_BASIC_AUTH_PASS=local \
+npm run local:api -w backend
+```
+
+Start the worker in another terminal with the same overrides:
+
+```bash
+GNP_311_SUBMISSION_ENABLED=true \
+SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
+SF311_BASIC_AUTH_USER=local \
+SF311_BASIC_AUTH_PASS=local \
+npm run local:worker -w backend
+```
+
+The fake server returns `LOCAL-SR-000001` style SR numbers. Inspect captured
+CreateSR payloads at `http://127.0.0.1:3999/requests`, or clear them with:
+
+```bash
+curl -X DELETE http://127.0.0.1:3999/requests
+```
 
 > **No seed data yet.** A fresh `npm run dev` creates the table **empty** — there is no seed
 > script (Phase 3 / Phase 8, not built). The GUI shows the table with zero items until you POST

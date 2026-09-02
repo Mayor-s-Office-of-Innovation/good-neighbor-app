@@ -12,10 +12,10 @@
        (onsite) then ESCALATE TO THE CITY (city). Cards carry the task's own action
        buttons, wired to the real complete / cannot-do endpoints.
 
-  311 has no integration yet: filing a ticket happens outside the app, so the
-  escalation card's button reads "Filed 311 ticket" and simply closes the task for
-  the record (no 311 API call, no ticket number). Markup is inline via the `html`
-  tag; split into a .templates.js file if it grows (see CLAUDE.md convention).
+  311 filing is a backend app action: explicit escalation buttons file during
+  completion, while action/non-actionable escalation rules may file silently when
+  tasks are created. Markup is inline via the `html` tag; split into a
+  .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml } from "../lib/html.js";
 import { getSite, getDraft } from "../db.js";
@@ -574,13 +574,11 @@ class TodayView extends HTMLElement {
   }
 
   // Resolve a task's persisted actions into the concrete controls this screen
-  // renders. Driven by the task's STRUCTURED `appActions` (open_phone /
-  // create_311_ticket / compose_email / …) paired with its `buttons` labels —
-  // NOT by string-matching the label — so phone-call escalations ("Call 911",
-  // "Call SFACC", …) are surfaced instead of being silently dropped and left
-  // unactionable. Falls back to a sensible per-type default when a task carries
-  // neither, and always offers the task's allowlisted resolutions (e.g. "We
-  // already called 911") when present, so every card is actionable and closeable.
+  // renders. Driven by the task's STRUCTURED `appActions` (create_311_ticket /
+  // compose_email / …) paired with its `buttons` labels —
+  // NOT by string-matching the label. Falls back to a sensible per-type default
+  // when a task carries neither, and always offers the task's allowlisted
+  // resolutions when present, so every card is actionable and closeable.
   _cardActions(task) {
     const buttons = Array.isArray(task.buttons) ? task.buttons : [];
     const appActions = Array.isArray(task.appActions) ? task.appActions : [];
@@ -594,7 +592,7 @@ class TodayView extends HTMLElement {
     if (!actions.length) {
       actions.push(
         task.type === "city_escalation"
-          ? { kind: "file311", label: "Filed 311 ticket", variant: "blue" }
+          ? { kind: "file311", label: "File 311 ticket", variant: "blue" }
           : { kind: "done", label: "Done", variant: "ink" },
       );
     }
@@ -612,23 +610,22 @@ class TodayView extends HTMLElement {
     const code = appAction?.code;
     const payload = appAction?.payload || {};
     const l = label.toLowerCase();
+    if (payload.executionTrigger === "task_created") {
+      return label ? { kind: "done", label, variant: "ink" } : null;
+    }
     if (code === "open_phone" || /^call\b/.test(l)) {
-      // The backend only stamps "911" as the number today (the guidance app
-      // action carries no digits) — so dial 911 for emergencies, but never
-      // misdial a named non-emergency line ("Call SFPD (non-emergency)") to 911:
-      // show it as a reminder until a real number is in the action payload.
-      let digits = String(payload.phoneNumber || "").replace(/\D/g, "");
-      if (/\b911\b/.test(label)) digits = "911";
-      const dialable = digits === "911" || digits.length >= 7;
       return {
-        kind: "call",
-        label: label || "Call",
+        kind: "done",
+        label: String(payload.completionLabel || label || "Done"),
         variant: "blue",
-        href: dialable ? `tel:${digits}` : null,
       };
     }
     if (code === "create_311_ticket" || l.includes("311")) {
-      return { kind: "file311", label: "Filed 311 ticket", variant: "blue" };
+      return {
+        kind: "file311",
+        label: label || "File 311 ticket",
+        variant: "blue",
+      };
     }
     if (code === "compose_email") {
       const to = String(payload.to || "");
@@ -650,16 +647,16 @@ class TodayView extends HTMLElement {
         : a.variant === "blue"
           ? "btn-blue btn-blue--sm"
           : "btn-outline btn-outline--sm";
-    // Link-style actions (call/email) render as native anchors — no data-action,
-    // so the click wiring skips them and the browser handles tel:/mailto:.
+    // Link-style actions render as native anchors with no data-action, so the
+    // click wiring skips them and the browser handles the URL.
     if (a.href) {
       return html`<a class="${cls}" href="${a.href}"
         >${escapeHtml(a.label)}</a
       >`;
     }
-    // A call/email whose target isn't known yet: surface the instruction but keep
+    // An email whose target isn't known yet: surface the instruction but keep
     // it non-interactive rather than misdialing or opening an empty composer.
-    if (a.kind === "call" || a.kind === "email") {
+    if (a.kind === "email") {
       return html`<button type="button" class="${cls}" disabled>
         ${escapeHtml(a.label)}
       </button>`;
@@ -693,9 +690,8 @@ class TodayView extends HTMLElement {
         completeTask(task.taskId, { completionMethod: "manual" }),
       );
     } else if (action === "file311") {
-      // No 311 API: filing happens outside the app; this just closes the task.
       this._run(card, () =>
-        completeTask(task.taskId, { completionMethod: "311_filed_external" }),
+        completeTask(task.taskId, { completionMethod: "311_filed" }),
       );
     } else if (action === "cant") {
       this._renderReasonPicker(card, task);

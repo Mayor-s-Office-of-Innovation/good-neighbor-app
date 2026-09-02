@@ -8,6 +8,13 @@
  * @property {string} [analyzerApiKeySecretArn]
  * @property {string} [posthogProjectApiKey]
  * @property {string} [posthogApiKeySecretArn]
+ * @property {string} [sf311CreateSrUrl]
+ * @property {string} [sf311AgencyLookupUrl]
+ * @property {string} [sf311BasicAuthSecretArn]
+ * @property {string} [sf311BasicAuthUser]
+ * @property {string} [sf311BasicAuthPass]
+ * @property {string} [sf311DefaultResponsibleAgency]
+ * @property {string} [sf311ClassifierServiceCodeMap]
  */
 
 /**
@@ -47,6 +54,27 @@ export function getConfig(env = process.env) {
   }
   if (env.POSTHOG_API_KEY_SECRET_ARN) {
     config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
+  }
+
+  if (env.SF311_CREATESR_URL) config.sf311CreateSrUrl = env.SF311_CREATESR_URL;
+  if (env.SF311_AGENCY_LOOKUP_URL) {
+    config.sf311AgencyLookupUrl = env.SF311_AGENCY_LOOKUP_URL;
+  }
+  if (env.SF311_BASIC_AUTH_SECRET_ARN) {
+    config.sf311BasicAuthSecretArn = env.SF311_BASIC_AUTH_SECRET_ARN;
+  }
+  if (env.SF311_BASIC_AUTH_USER) {
+    config.sf311BasicAuthUser = env.SF311_BASIC_AUTH_USER;
+  }
+  if (env.SF311_BASIC_AUTH_PASS) {
+    config.sf311BasicAuthPass = env.SF311_BASIC_AUTH_PASS;
+  }
+  if (env.SF311_DEFAULT_RESPONSIBLE_AGENCY) {
+    config.sf311DefaultResponsibleAgency = env.SF311_DEFAULT_RESPONSIBLE_AGENCY;
+  }
+  if (env.SF311_CLASSIFIER_SERVICE_CODE_MAP) {
+    config.sf311ClassifierServiceCodeMap =
+      env.SF311_CLASSIFIER_SERVICE_CODE_MAP;
   }
 
   return config;

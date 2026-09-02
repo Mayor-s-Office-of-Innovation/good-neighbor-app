@@ -15,11 +15,11 @@ describe("actions/escalations v2 catalog", () => {
       "actions-escalations-v2",
     );
     expect(actionsEscalationsV2Catalog.metadata).toMatchObject({
-      sourceAsset: "actions-escalations-rules-v2.csv",
-      effectiveDate: "2026-08-18",
+      sourceAsset: "GNP - rulebase.csv",
+      effectiveDate: "2026-09-02",
       changelogPath: "docs/guidance-policy-changelog.md",
     });
-    expect(actionsEscalationsV2Catalog.rules).toHaveLength(26);
+    expect(actionsEscalationsV2Catalog.rules).toHaveLength(34);
     expect(validateCatalog(actionsEscalationsV2Catalog)).toEqual([]);
   });
 
@@ -33,6 +33,12 @@ describe("actions/escalations v2 catalog", () => {
     expect(questionKeyForPrompt("Are they a site client or resident?")).toBe(
       "affiliated",
     );
+    expect(questionKeyForPrompt("Are they asking for medical help?")).toBe(
+      "medical_help",
+    );
+    expect(questionKeyForPrompt("Are they likely to leave if asked?")).toBe(
+      "refusal_leave",
+    );
   });
 
   it("normalizes location predicates to the boolean onsite answer key", () => {
@@ -45,22 +51,47 @@ describe("actions/escalations v2 catalog", () => {
   });
 
   it("normalizes app actions into executable action codes", () => {
-    const graffiti = actionsEscalationsV2Catalog.rules.find(
-      (rule) => rule.ruleId === "GRAFFITI-2",
+    const litterAction = actionsEscalationsV2Catalog.rules.find(
+      (rule) => rule.ruleId === "LITTER-1",
     );
-    expect(graffiti?.outcome.appActions).toEqual([
-      { code: "create_311_ticket", payload: { category311: "Graffiti" } },
-      { code: "compose_email", payload: { to: "zerograffiti@sfdpw.org" } },
-    ]);
-
-    const animal = actionsEscalationsV2Catalog.rules.find(
-      (rule) => rule.ruleId === "ANIMAL-2",
-    );
-    expect(animal?.outcome.appActions).toEqual([
-      { code: "open_phone", payload: { phoneNumber: "(415) 554-9400" } },
+    expect(litterAction?.outcome.kind).toBe("action");
+    expect(litterAction?.outcome.appActions).toEqual([
       {
         code: "create_311_ticket",
-        payload: { category311: "Animal care and control" },
+        payload: {
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          responsibleAgencyCode: "76",
+          executionTrigger: "task_created",
+        },
+      },
+    ]);
+
+    const graffitiEscalation = actionsEscalationsV2Catalog.rules.find(
+      (rule) => rule.ruleId === "GRAFFITI-2",
+    );
+    expect(graffitiEscalation?.outcome.appActions).toEqual([
+      {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "Run graffiti analysis",
+          responsibleAgencyCode: "",
+          executionTrigger: "user_confirmed",
+        },
+      },
+    ]);
+
+    const feces = actionsEscalationsV2Catalog.rules.find(
+      (rule) => rule.ruleId === "FECES-2",
+    );
+    expect(feces?.outcome.kind).toBe("non_actionable_escalation");
+    expect(feces?.outcome.appActions).toEqual([
+      {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "1.1.4.7.9.0",
+          responsibleAgencyCode: "76",
+          executionTrigger: "task_created",
+        },
       },
     ]);
   });

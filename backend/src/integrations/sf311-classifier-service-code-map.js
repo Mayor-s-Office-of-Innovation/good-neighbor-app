@@ -1,0 +1,59 @@
+/**
+ * Classifier label to SF311 NatureofRequest mapping.
+ *
+ * Bulky item labels were provided directly for GNP. Graffiti labels are from
+ * "Graffiti-code-mapping.csv" supplied by SFMOI/Good Neighbor.
+ */
+export const DEFAULT_CLASSIFIER_SERVICE_CODE_MAP = Object.freeze({
+  "bulky-items": Object.freeze({
+    Mattress: "1.1.4.7.10.0",
+    "Fridge/Appliance": "1.1.4.7.16.0",
+    "Contained Garbage": "1.1.4.7.21.0",
+    Furniture: "1.1.4.7.7.0",
+  }),
+  graffiti: Object.freeze({
+    "Graffiti - Offensive - Bike_Rack": "1.5.1.1.1.0",
+    "Graffiti - Offensive - Pole": "1.5.1.1.10.0",
+    "Graffiti - Offensive - Sidewalk_Structure": "1.5.1.1.11.0",
+    "Graffiti - Offensive - Signal_Box": "1.5.1.1.12.0",
+    "Graffiti - Offensive - Street": "1.5.1.1.13.0",
+    "Graffiti - Offensive - Other": "1.5.1.1.14.0",
+    "Graffiti - Offensive - Transit_Shelter_Platform": "1.5.1.1.15.0",
+    "Graffiti - Offensive - Att_Property": "1.5.1.1.16.0",
+    "Graffiti - Offensive - Sign": "1.5.1.1.17.0",
+    "Graffiti - Not_Offensive - Other": "1.5.1.1.18.0",
+    "Graffiti - Offensive - Bridge": "1.5.1.1.2.0",
+    "Graffiti - Offensive - City_Receptacle": "1.5.1.1.3.0",
+    "Graffiti - Offensive - Fire_Police_Callbox": "1.5.1.1.4.0",
+    "Graffiti - Offensive - Fire_Hydrant": "1.5.1.1.5.0",
+    "Graffiti - Offensive - Mail_Box": "1.5.1.1.6.0",
+    "Graffiti - Offensive - News_Rack": "1.5.1.1.7.0",
+    "Graffiti - Offensive - Parking_Meter": "1.5.1.1.8.0",
+    "Graffiti - Offensive - Pay_Phone": "1.5.1.1.9.0",
+    "Graffiti - Not_Offensive - Bike_Rack": "1.5.1.2.1.0",
+    "Graffiti - Not_Offensive - Pole": "1.5.1.2.10.0",
+    "Graffiti - Not_Offensive - Sidewalk_Structure": "1.5.1.2.11.0",
+    "Graffiti - Not_Offensive - Signal_Box": "1.5.1.2.12.0",
+    "Graffiti - Not_Offensive - Street": "1.5.1.2.13.0",
+    "Graffiti - Not_Offensive - Transit_Shelter_Platform": "1.5.1.2.15.0",
+    "Graffiti - Not_Offensive - Att_Property": "1.5.1.2.16.0",
+    "Graffiti - Not_Offensive - Sign": "1.5.1.2.17.0",
+    "Graffiti - Not_Offensive - Bridge": "1.5.1.2.2.0",
+    "Graffiti - Not_Offensive - City_Receptacle": "1.5.1.2.3.0",
+    "Graffiti - Not_Offensive - Fire_Police_Callbox": "1.5.1.2.4.0",
+    "Graffiti - Not_Offensive - Fire_Hydrant": "1.5.1.2.5.0",
+    "Graffiti - Not_Offensive - Mail_Box": "1.5.1.2.6.0",
+    "Graffiti - Not_Offensive - News_Rack": "1.5.1.2.7.0",
+    "Graffiti - Not_Offensive - Parking_Meter": "1.5.1.2.8.0",
+    "Graffiti - Not_Offensive - Pay_Phone": "1.5.1.2.9.0",
+    "Graffiti - Offensive - Building_Commercial": "1.5.2.1.1.0",
+    "Graffiti - Offensive - Building_Residential": "1.5.2.1.2.0",
+    "Graffiti - Offensive - Building_Other": "1.5.2.1.3.0",
+    "Graffiti - Offensive - Sidewalk_In_Front_Of_Property": "1.5.2.1.4.0",
+    "Graffiti - Not_Offensive - Building_Commercial": "1.5.2.2.1.0",
+    "Graffiti - Not_Offensive - Building_Residential": "1.5.2.2.2.0",
+    "Graffiti - Not_Offensive - Building_Other": "1.5.2.2.3.0",
+    "Graffiti - Not_Offensive - Sidewalk_In_Front_Of_Property":
+      "1.5.2.2.4.0",
+  }),
+});
