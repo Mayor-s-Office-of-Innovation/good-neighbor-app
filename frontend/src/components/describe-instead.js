@@ -40,8 +40,6 @@ class DescribeInstead extends HTMLElement {
     this._savedDescription = getSideDescription(this._side);
     this._savedText = this._savedDescription?.text || "";
     this._text = this._savedText;
-    this._inputSource =
-      this._savedDescription?.source || (this._savedText ? "typed" : null);
     this._programmaticFieldUpdate = false;
 
     this._render();
@@ -77,7 +75,6 @@ class DescribeInstead extends HTMLElement {
         this._programmaticFieldUpdate = false;
       }
       this._continue.disabled = !this._text.trim();
-      this._inputSource = "typed";
       this._syncClearUi();
     });
 
@@ -108,7 +105,6 @@ class DescribeInstead extends HTMLElement {
     this._text = "";
     this._savedText = "";
     this._savedDescription = null;
-    this._inputSource = null;
     setSideDescription(this._side, null);
     this._syncClearUi();
     this._field.focus();
@@ -143,7 +139,7 @@ class DescribeInstead extends HTMLElement {
     setSideDescription(this._side, {
       kind: "note",
       text,
-      source: this._inputSource || "typed",
+      source: "typed",
       validated: true,
       validation: {
         whatYouCanSee: true,
