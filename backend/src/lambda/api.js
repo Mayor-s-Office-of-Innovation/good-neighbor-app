@@ -28,7 +28,9 @@ import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
+import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { jsonResponse } from "../http.js";
+import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
 // The individual handlers carry richer (event, context, callback) signatures; we
@@ -57,6 +59,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // Legacy demo submission loop + health
   "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,
+  // Client error intake (best-effort; handler always 204s — see handlers/client-errors.js)
+  "POST /v1/client-errors": clientErrorsHandler,
 });
 
 /**
@@ -68,5 +72,10 @@ export const handler = async (event) => {
   if (!fn) {
     return jsonResponse(404, { error: "not_found", routeKey });
   }
-  return fn(event);
+  // Server-side error convention (logServerError): uncaught handler errors
+  // land as one structured JSON line (Logs Insights-groupable, alarmable)
+  // before the platform turns them into a 500.
+  return withServerErrorsLogged(`api ${routeKey}`, () => fn(event), {
+    reqId: /** @type {any} */ (event)?.requestContext?.requestId,
+  });
 };

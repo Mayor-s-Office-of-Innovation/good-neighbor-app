@@ -72,6 +72,13 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ReadPosthogSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.posthog_project_api_key.arn]
+  }
+
+  statement {
     sid    = "InvokeBedrockDescriptionValidator"
     effect = "Allow"
     actions = [

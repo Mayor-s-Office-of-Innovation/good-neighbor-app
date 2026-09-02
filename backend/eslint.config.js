@@ -18,6 +18,7 @@ export default [
         Response: "readonly",
         URL: "readonly",
         setTimeout: "readonly",
+        clearTimeout: "readonly",
       },
     },
     settings: {

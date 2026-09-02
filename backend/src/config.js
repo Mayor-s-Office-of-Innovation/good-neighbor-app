@@ -6,6 +6,8 @@
  * @property {string} [analyzerBaseUrl]
  * @property {string} [analyzerApiKey]
  * @property {string} [analyzerApiKeySecretArn]
+ * @property {string} [posthogProjectApiKey]
+ * @property {string} [posthogApiKeySecretArn]
  */
 
 /**
@@ -35,6 +37,16 @@ export function getConfig(env = process.env) {
   if (env.ANALYZER_API_KEY) config.analyzerApiKey = env.ANALYZER_API_KEY;
   if (env.ANALYZER_API_KEY_SECRET_ARN) {
     config.analyzerApiKeySecretArn = env.ANALYZER_API_KEY_SECRET_ARN;
+  }
+
+  // PostHog forwarder wiring is likewise optional at load time: unset/empty
+  // means the client-error forwarder runs in log-only mode (validate + log,
+  // no egress) — the governance-gate default. See handlers/posthog-api-key.js.
+  if (env.POSTHOG_PROJECT_API_KEY) {
+    config.posthogProjectApiKey = env.POSTHOG_PROJECT_API_KEY;
+  }
+  if (env.POSTHOG_API_KEY_SECRET_ARN) {
+    config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
   }
 
   return config;
