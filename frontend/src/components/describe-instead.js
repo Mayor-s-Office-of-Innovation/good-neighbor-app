@@ -1,7 +1,7 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /**
  * Describe Instead flow for one side of the perimeter check.
- * Persists text/voice input, validates it, and returns to the capture flow.
+ * Persists typed input, validates it, and returns to the capture flow.
  */
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
@@ -15,7 +15,6 @@ import {
   setSideDescription,
   setPostDescribeAction,
 } from "../state/check-session.js";
-import { startTranscribeSession } from "../services/web-speech-transcribe.js";
 import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 
 class DescribeInstead extends HTMLElement {
@@ -41,10 +40,6 @@ class DescribeInstead extends HTMLElement {
     this._savedDescription = getSideDescription(this._side);
     this._savedText = this._savedDescription?.text || "";
     this._text = this._savedText;
-    this._voiceState = "idle";
-    this._voiceError = "";
-    this._transcribeSession = null;
-    this._transcribeRunId = 0;
     this._inputSource =
       this._savedDescription?.source || (this._savedText ? "typed" : null);
     this._programmaticFieldUpdate = false;
@@ -57,9 +52,7 @@ class DescribeInstead extends HTMLElement {
     this._field = this.querySelector("#describe-text");
     this._continue = this.querySelector("#describe-continue");
     this._dialog = this.querySelector("#describe-exit-modal");
-    this._voice = this.querySelector("#describe-voice");
     this._clear = this.querySelector("#describe-clear");
-    this._voiceStatus = this.querySelector("#describe-voice-status");
     this._field.value = this._text;
 
     this.querySelector("#describe-close").addEventListener("click", () =>
@@ -71,19 +64,12 @@ class DescribeInstead extends HTMLElement {
     this.querySelector("#describe-continue").addEventListener("click", () =>
       this._onContinue(),
     );
-    this._voice.addEventListener("click", () => this._toggleVoice());
     this._clear.addEventListener("click", () => this._clearAll());
     this.querySelector("#describe-discard").addEventListener("click", () =>
       this._discardAndExit(),
     );
     this._dialog.addEventListener("cancel", (event) => event.preventDefault());
     this._field.addEventListener("input", (event) => {
-      if (!this._programmaticFieldUpdate && this._voiceState === "recording") {
-        this._programmaticFieldUpdate = true;
-        this._field.value = this._text;
-        this._programmaticFieldUpdate = false;
-        return;
-      }
       this._text = this._clampText(event.target.value);
       if (event.target.value !== this._text) {
         this._programmaticFieldUpdate = true;
@@ -91,17 +77,10 @@ class DescribeInstead extends HTMLElement {
         this._programmaticFieldUpdate = false;
       }
       this._continue.disabled = !this._text.trim();
-      if (!this._programmaticFieldUpdate) {
-        this._inputSource =
-          this._inputSource === "transcribed" || this._inputSource === "mixed"
-            ? "mixed"
-            : "typed";
-      }
-      this._syncVoiceLabel();
+      this._inputSource = "typed";
       this._syncClearUi();
     });
 
-    this._syncVoiceUi();
     this._syncClearUi();
     this._field.focus();
     this._field.setSelectionRange(
@@ -117,73 +96,9 @@ class DescribeInstead extends HTMLElement {
     });
   }
 
-  _syncVoiceLabel() {
-    if (!this._voice) return;
-    if (this._voiceState === "recording") {
-      this._voice.textContent = "Stop recording";
-      return;
-    }
-    if (this._voiceState === "processing") {
-      this._voice.textContent = "Processing…";
-      return;
-    }
-    this._voice.textContent = this._text.trim()
-      ? "Add more by voice"
-      : "Use voice";
-  }
-
-  _syncVoiceUi() {
-    this._syncVoiceLabel();
-    if (this._field) {
-      this._field.readOnly =
-        this._voiceState === "recording" || this._voiceState === "processing";
-    }
-    if (this._voice) {
-      this._voice.disabled = this._voiceState === "processing";
-      this._voice.dataset.state = this._voiceState;
-      if (this._voiceState === "processing") {
-        this._voice.setAttribute("aria-busy", "true");
-      } else {
-        this._voice.removeAttribute("aria-busy");
-      }
-    }
-    if (this._continue) {
-      this._continue.disabled =
-        !this._text.trim() ||
-        this._voiceState === "recording" ||
-        this._voiceState === "processing";
-      this._continue.textContent = "Continue";
-    }
-    if (!this._voiceStatus) return;
-    if (this._voiceError) {
-      this._voiceStatus.removeAttribute("aria-hidden");
-      this._voiceStatus.textContent = this._voiceError;
-      this._voiceStatus.dataset.kind = "error";
-      this._voiceStatus.setAttribute("role", "alert");
-      return;
-    }
-    if (this._voiceState === "processing") {
-      this._voiceStatus.removeAttribute("aria-hidden");
-      this._voiceStatus.textContent = "Processing transcript…";
-      this._voiceStatus.dataset.kind = "";
-      this._voiceStatus.setAttribute("role", "status");
-      return;
-    }
-    this._voiceStatus.setAttribute("aria-hidden", "true");
-    this._voiceStatus.textContent = "";
-    delete this._voiceStatus.dataset.kind;
-    this._voiceStatus.removeAttribute("role");
-  }
-
   _syncClearUi() {
     if (!this._clear) return;
     this._clear.disabled = !this._text.trim();
-  }
-
-  _setVoiceState(state, error = "") {
-    this._voiceState = state;
-    this._voiceError = error;
-    this._syncVoiceUi();
   }
 
   _clearAll() {
@@ -194,111 +109,9 @@ class DescribeInstead extends HTMLElement {
     this._savedText = "";
     this._savedDescription = null;
     this._inputSource = null;
-    this._voiceError = "";
     setSideDescription(this._side, null);
-    this._syncVoiceUi();
     this._syncClearUi();
     this._field.focus();
-  }
-
-  _appendTranscript(text) {
-    const incoming = text.trim();
-    if (!incoming) return;
-    const next = this._text.trim()
-      ? `${this._text.trim()} ${incoming}`
-      : incoming;
-    const bounded = this._clampText(next);
-    this._programmaticFieldUpdate = true;
-    this._field.value = bounded;
-    this._programmaticFieldUpdate = false;
-    this._text = bounded;
-    if (this._inputSource === "typed" || this._inputSource === "mixed") {
-      this._inputSource = "mixed";
-    } else if (this._inputSource === "transcribed") {
-      this._inputSource = "transcribed";
-    } else {
-      this._inputSource = "transcribed";
-    }
-  }
-
-  _previewTranscript(live) {
-    // Live-only: paint the field with the base text plus what's been heard so far,
-    // without touching this._text — `done` performs the real append on stop. Mirrors
-    // _appendTranscript's join so the text doesn't shift when recording ends.
-    if (this._voiceState !== "recording" || !this._field) return;
-    const base = (this._voiceBaseText || "").trim();
-    const incoming = live.trim();
-    const next = base ? (incoming ? `${base} ${incoming}` : base) : incoming;
-    const bounded = this._clampText(next);
-    this._programmaticFieldUpdate = true;
-    this._field.value = bounded;
-    this._programmaticFieldUpdate = false;
-    // Keep the growing tail in view as it fills past the visible rows.
-    this._field.scrollTop = this._field.scrollHeight;
-  }
-
-  async _toggleVoice() {
-    if (this._voiceState === "processing") return;
-    if (this._transcribeSession && this._voiceState === "recording") {
-      await this._stopVoice();
-      return;
-    }
-    await this._startVoice();
-  }
-
-  async _startVoice() {
-    this._setVoiceState("idle", "");
-    // Snapshot the text as it stands before this recording. Live preview renders on
-    // top of this base; the authoritative append happens once, on `done`.
-    this._voiceBaseText = this._text;
-    try {
-      const session = await startTranscribeSession({
-        siteId: this._site.siteId || this._site.providerSiteId || this._site.id,
-        onStateChange: (state) => this._setVoiceState(state),
-        onTranscript: (live) => this._previewTranscript(live),
-      });
-      this._transcribeSession = session;
-      const runId = ++this._transcribeRunId;
-      session.done
-        .then((result) => {
-          if (
-            this._transcribeSession !== session ||
-            runId !== this._transcribeRunId
-          ) {
-            return;
-          }
-          this._appendTranscript(result.text);
-          this._setVoiceState("idle", "");
-        })
-        .catch((error) => {
-          if (
-            this._transcribeSession !== session ||
-            runId !== this._transcribeRunId
-          ) {
-            return;
-          }
-          this._setVoiceState("idle", error.message);
-        })
-        .finally(() => {
-          if (
-            this._transcribeSession !== session ||
-            runId !== this._transcribeRunId
-          ) {
-            return;
-          }
-          this._transcribeSession = null;
-          this._syncVoiceUi();
-        });
-      this._setVoiceState("recording");
-    } catch (error) {
-      this._transcribeSession = null;
-      this._setVoiceState("idle", error.message);
-    }
-  }
-
-  async _stopVoice() {
-    if (!this._transcribeSession) return;
-    await this._transcribeSession.stop();
   }
 
   _hasUnsavedChanges() {
@@ -320,42 +133,8 @@ class DescribeInstead extends HTMLElement {
 
   _discardAndExit() {
     this._dialog.close();
-    if (this._transcribeSession) {
-      void this._cancelVoice();
-    }
     this._returnToCurrentSide();
     navigate(this._routeBase);
-  }
-
-  async _cancelVoice() {
-    if (!this._transcribeSession) return;
-    const session = this._transcribeSession;
-    const runId = this._transcribeRunId;
-    try {
-      await session.cancel();
-      this._setVoiceState("idle", "");
-    } catch (error) {
-      if (
-        this._transcribeSession === session &&
-        runId === this._transcribeRunId
-      ) {
-        this._setVoiceState("idle", error.message);
-      }
-    } finally {
-      if (
-        this._transcribeSession === session &&
-        runId === this._transcribeRunId
-      ) {
-        this._transcribeSession = null;
-        this._syncVoiceUi();
-      }
-    }
-  }
-
-  disconnectedCallback() {
-    if (this._transcribeSession) {
-      void this._cancelVoice();
-    }
   }
 
   async _onContinue() {
@@ -382,24 +161,6 @@ class DescribeInstead extends HTMLElement {
   _returnToCurrentSide() {
     if (this._flowType !== "perimeter") return;
     setPostDescribeAction({ type: "stay", sideIndex: this._sideIndex });
-  }
-
-  _siteCheckId() {
-    const check = getCurrentCheck();
-    return check?.id || "";
-  }
-
-  _saveDraftDescription() {
-    setSideDescription(this._side, {
-      kind: "note",
-      text: this._text.trim(),
-      source: this._inputSource || "typed",
-      validated: true,
-      validation: {
-        whatYouCanSee: true,
-        whereItIs: true,
-      },
-    });
   }
 }
 

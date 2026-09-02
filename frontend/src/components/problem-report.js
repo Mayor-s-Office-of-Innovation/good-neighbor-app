@@ -11,7 +11,6 @@ import {
   enqueueUpload,
   resumePendingUploads,
 } from "../services/artifact-uploader.js";
-import { isBrowserCameraEnabled } from "../services/capture-mode.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -26,14 +25,12 @@ import {
   getFlowType,
   isCurrentSession,
 } from "../state/check-session.js";
-import { shell, shellWebcam } from "./problem-report.templates.js";
+import { shell } from "./problem-report.templates.js";
 import { shotTile, addTile } from "./perimeter-check.templates.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
- * @typedef {{ id?: string | null, detail?: { dataUrl?: string } }} CameraCaptureEvent
- * @typedef {{ id?: string | null }} CameraUnavailableEvent
  * @typedef {{ items: Array<{ id: string, dataUrl: string, side?: string }> }} SideState
  */
 
@@ -48,16 +45,10 @@ class ProblemReport extends HTMLElement {
     this._checkId = "";
     /** @type {string} */
     this._side = "";
-    /** @type {boolean} */
-    this._webcam = false;
-    /** @type {boolean} */
-    this._webcamFailed = false;
     /** @type {HTMLInputElement | null} */
     this._fileInput = null;
     /** @type {FileReader | null} */
     this._fileReader = null;
-    /** @type {HTMLElement | null} */
-    this._camera = null;
   }
 
   /** @returns {Promise<void>} */
@@ -81,10 +72,7 @@ class ProblemReport extends HTMLElement {
     this._side = getSideOrder()[0];
     setActiveSideIndex(0);
 
-    this._webcam = isBrowserCameraEnabled();
-    this._webcamFailed = false;
-
-    this.innerHTML = this._webcam ? shellWebcam() : shell();
+    this.innerHTML = shell();
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -122,15 +110,8 @@ class ProblemReport extends HTMLElement {
     );
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
-    if (this._webcam) this._mountCamera();
-
     this._renderShots();
     this._syncControls();
-  }
-
-  /** @returns {boolean} */
-  _useWebcam() {
-    return this._webcam && !this._webcamFailed;
   }
 
   /** @returns {SideState} */
@@ -139,33 +120,6 @@ class ProblemReport extends HTMLElement {
     return /** @type {SideState} */ (
       check?.sides?.[this._side] || { items: [] }
     );
-  }
-
-  /** @returns {void} */
-  _mountCamera() {
-    const panel = this.querySelector("#camera-panel");
-    if (!panel) return;
-    this._camera = /** @type {HTMLElement} */ (
-      document.createElement("in-browser-camera")
-    );
-    this._camera.addEventListener("capture", (event) => {
-      const e = /** @type {CustomEvent<{ dataUrl?: string }>} */ (event);
-      if (e.detail?.dataUrl) this._addPhoto(e.detail.dataUrl);
-    });
-    this._camera.addEventListener("unavailable", () =>
-      this._onCameraUnavailable(),
-    );
-    panel.appendChild(this._camera);
-  }
-
-  /** @returns {void} */
-  _onCameraUnavailable() {
-    this._webcamFailed = true;
-    if (this._camera) {
-      this._camera.remove();
-      this._camera = null;
-    }
-    this._renderShots();
   }
 
   /** @returns {void} */
@@ -253,7 +207,7 @@ class ProblemReport extends HTMLElement {
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    const tile = this._useWebcam() ? "" : addTile(items.length === 0);
+    const tile = addTile(items.length === 0);
     grid.innerHTML =
       items.map((item, index) => shotTile(item, index)).join("") + tile;
   }
@@ -268,16 +222,11 @@ class ProblemReport extends HTMLElement {
   /** @returns {Promise<void>} */
   async _submit() {
     if (!isSideCovered(this._side)) return;
-    if (this._camera) {
-      this._camera.remove();
-      this._camera = null;
-    }
     try {
       submitCheck({ submissionKind: "problem_report" });
       navigate("/today");
     } catch (err) {
       console.error("submitCheck failed", err);
-      if (this._useWebcam() && !this._camera) this._mountCamera();
       this._showSubmitError(err);
     }
   }
