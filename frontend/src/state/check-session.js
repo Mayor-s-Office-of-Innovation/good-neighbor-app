@@ -48,13 +48,12 @@ function normalizeDescription(description) {
   if (!description || typeof description !== "object") return null;
   const text = String(description.text || "").trim();
   if (!text) return null;
-  const source = ["typed", "transcribed", "mixed"].includes(description.source)
-    ? description.source
-    : "typed";
+  // Voice capture is removed (ADR 0009): everything is typed now, so legacy
+  // "transcribed"/"mixed" sources coerce to "typed" on load.
   return {
     kind: "note",
     text,
-    source,
+    source: "typed",
     validation: {
       whatYouCanSee: true,
       whereItIs: true,
