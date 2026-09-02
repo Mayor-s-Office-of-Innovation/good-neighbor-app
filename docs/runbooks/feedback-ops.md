@@ -8,19 +8,32 @@ discarded at intake because we don't want to risk recording sensitive informatio
 
 ## Current state (2026-09-02)
 
-Forwarding is **log-only in every environment**: neither `dev` nor `prod` sets
-`feedback_survey_id`/`feedback_question_id` (`infra/environments/*/main.tf`), and the
-`posthog-project-api-key` secret exists as a container only (value never set —
-`infra/modules/app/secrets.tf`). Users see "your note is on its way" but nothing egresses.
-Enable with the steps below.
+**Dev is enabled** (survey IDs wired in `infra/environments/dev/main.tf`; verified end-to-end
+locally 2026-09-02 — events land in PostHog and render in the survey's Results tab). Still
+outstanding for dev: the `phc_` key value in Secrets Manager (§2) — until it's set, the
+deployed forwarder stays log-only. **Prod is log-only**: its env root has no survey IDs and
+the prod PostHog project has no survey yet. Enable prod with the steps below.
 
 ## 1. Create the survey (PostHog dashboard, no code)
 
 Per project — **GNP dev** and **GNP prod** (same org as error tracking):
 
-1. Surveys → New survey. Name **"GNP app feedback"**, presentation type **API**, one
-   **open-text** question ("What's working? What's not?"), state **Active**.
-2. Copy the **survey UUID** and the **question UUID** from the survey page.
+1. Surveys → New survey. Name **"GNP app feedback"**, one **open-text** question
+   ("What's working? What's not?"), state **Active**.
+   - **Presentation type — pick "API".** If created with the default web/popover type,
+     clear the recurring schedule: the default "recurring" schedule auto-creates 10 × 30-day
+     iterations, and the Results tab filters responses by `$survey_iteration` — server-side
+     events carry no iteration property, so they ingest fine (visible under Events) but
+     **never show in Results**. Single-schedule (or API type) has no iterations → nothing
+     filters them out.
+2. Copy the **survey UUID** from the survey page. The **question UUID is not shown in the
+   UI** — read it from the surveys API response instead:
+   - DevTools → Network on the survey page → the `/api/environments/…/surveys/` request →
+     response JSON → `questions[0].id`; or
+   - `curl -s -H "Authorization: Bearer <personal key (phx_…)>" \
+      "https://us.posthog.com/api/environments/<project_id>/surveys/" | jq
+      '.results[] | {name, id, question_id: .questions[0].id}'`
+     (project id = the number in the `…/project/<id>` URL; EU cloud → `eu.posthog.com`).
 3. (Optional) invite contributors to the org — same free-tier caveat as error tracking.
 
 ## 2. Put the project API key in Secrets Manager (per environment)
@@ -37,24 +50,29 @@ aws secretsmanager put-secret-value \
 
 ## 3. Wire the survey IDs into the environment root
 
-Plain identifiers, not secrets — add to `infra/environments/<env>/main.tf`'s `module "app"`:
+Plain identifiers, not secrets — add to `infra/environments/<env>/main.tf`'s `module "app"`
+(dev is done as the reference example):
 
 ```hcl
   feedback_survey_id   = "<survey uuid>"
   feedback_question_id = "<question uuid>"
 ```
 
-Then merge to `dev` (CI applies). Unsetting either ID later is the kill switch (forwarder
-returns to log-only). `POSTHOG_HOST` only needs setting for EU-cloud projects (default
-`us.i.posthog.com`).
+Then merge to `dev` (CI applies; **no laptop applies**). Unsetting either ID later is the
+kill switch (forwarder returns to log-only). `POSTHOG_HOST` only needs setting for EU-cloud
+projects (default `us.i.posthog.com`).
 
 ## 4. Verify in dev
 
 1. Submit from the in-app form.
 2. **PostHog → Surveys → "GNP app feedback" → Results** shows the response (server-side
-   `survey sent` without `survey shown` renders fine; the response event is the source of truth).
+   `survey sent` without `survey shown` renders fine; the response event is the source of
+   truth). If Events shows `survey sent` but Results stays empty, re-read §1 step 1 — an
+   iteration-scoped survey hides server-side responses.
 3. CloudWatch shows `FeedbackReceived` and **no** new `FeedbackLogOnly` lines
-   (`FeedbackLogOnly` after configuration = the env vars didn't land).
+   (`FeedbackLogOnly` after configuration = the env vars didn't land). A successful forward
+   logs nothing — "silent success, noisy failure" is deliberate; don't wait for a
+   forwarding confirmation line.
 
 ## Local testing (no AWS)
 
@@ -70,7 +88,16 @@ FEEDBACK_QUESTION_ID=<question uuid>
 
 Run `npm run dev -w backend` + `npm run dev -w frontend` (the Vite proxy forwards `/v1` to
 `:3001`), submit from the form, and check the survey's Results tab. The local route is already
-wired (`backend/scripts/local-api.mjs` → `POST /v1/feedback`).
+wired (`backend/scripts/local-api.mjs` → `POST /v1/feedback`). Restart the backend after
+editing `.env.local` — config is read at process start. Note the local loop is *more* enabled
+than a freshly-configured deployed env: locally the key comes straight from `.env.local`
+(precedence in `handlers/posthog-api-key.js`), while deployed Lambda needs the §2 secret set.
+
+### You can retrieve PostHog survey info as json when logged
+
+```https://us.posthog.com/api/environments/<project id>/surveys/<survey id>```
+
+The above json provides survey ids (which are also visible in the url when viewing survey info) as well as question ids which are hard to find elsewhere.
 
 ## Reading the signals
 
