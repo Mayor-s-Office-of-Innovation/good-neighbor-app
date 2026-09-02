@@ -54,8 +54,16 @@ resource "aws_lambda_function" "api" {
       S3_UPLOAD_BUCKET           = aws_s3_bucket.uploads.bucket
       DEMO_SITE_ID               = "demo-site"
       BEDROCK_MODEL_ID           = var.bedrock_model_id
+      ANALYZER_BASE_URL          = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       POSTHOG_API_KEY_SECRET_ARN = aws_secretsmanager_secret.posthog_project_api_key.arn
       POSTHOG_HOST               = var.posthog_host
+      GNP_311_SUBMISSION_ENABLED = tostring(var.enable_311_submission)
+      SF311_CREATESR_URL         = var.sf311_createsr_url
+      SF311_AGENCY_LOOKUP_URL    = var.sf311_agency_lookup_url
+      SF311_BASIC_AUTH_SECRET_ARN = aws_secretsmanager_secret.sf311_basic_auth.arn
+      SF311_DEFAULT_RESPONSIBLE_AGENCY = var.sf311_default_responsible_agency
+      SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
     }
   }
 

@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildCreateSrPayload,
+  findResponsibleAgencyInLookup,
+  hubDateTime,
+  sourceRequestId,
+} from "./sf311-client.js";
+
+describe("SF311 CreateSR client helpers", () => {
+  it("formats HUB datetimes without milliseconds or timezone suffix", () => {
+    expect(hubDateTime(new Date("2026-09-02T17:11:12.345Z"))).toBe(
+      "2026-09-02T17:11:12",
+    );
+  });
+
+  it("builds a CreateSR payload with documented field names", () => {
+    expect(
+      buildCreateSrPayload({
+        taskId: "task-123",
+        serviceCode: "1.1.4.7.20.0",
+        responsibleAgency: "5",
+        problemDescription: "Trash near the doorway",
+        location: {
+          latitude: 37.76656393517443,
+          longitude: -122.4213267021692,
+        },
+        now: new Date("2026-09-02T17:11:12.000Z"),
+      }),
+    ).toEqual({
+      SourceAgency: "76",
+      SourceRequestID: "task-123-1147200",
+      SourceAgencyReceiveDate: "2026-09-02T17:11:12",
+      ResponsibleAgency: "5",
+      NatureofRequest: "1.1.4.7.20.0",
+      ProblemDescription: "Trash near the doorway",
+      Latitude: "37.76656393517443",
+      Longitude: "-122.4213267021692",
+    });
+  });
+
+  it("keeps SourceRequestID within HUB's 50-character limit", () => {
+    expect(
+      sourceRequestId({
+        taskId: "task-with-a-very-long-generated-id-that-keeps-going",
+        serviceCode: "1.1.4.7.20.0",
+      }),
+    ).toHaveLength(50);
+  });
+
+  it("finds ResponsibleAgency in nested lookup responses", () => {
+    expect(
+      findResponsibleAgencyInLookup(
+        { data: [{ NatureofRequest: "1.1.4.7.20.0", ResponsibleAgency: 5 }] },
+        "1.1.4.7.20.0",
+      ),
+    ).toBe("5");
+  });
+});

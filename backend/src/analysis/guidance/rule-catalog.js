@@ -1,5 +1,5 @@
 /** @typedef {"Low" | "Moderate" | "High"} RuleWeighting */
-/** @typedef {"action" | "escalation" | "manual_review"} OutcomeKind */
+/** @typedef {"action" | "escalation" | "non_actionable_escalation" | "manual_review"} OutcomeKind */
 
 /**
  * @typedef {object} RuleQuestion
@@ -92,6 +92,8 @@ export function questionKeyForPrompt(prompt) {
   if (value.includes("on site property")) return "onsite";
   if (value.includes("client or resident")) return "affiliated";
   if (value.includes("clients or residents")) return "affiliated";
+  if (value.includes("asking for medical help")) return "medical_help";
+  if (value.includes("likely to leave if asked")) return "refusal_leave";
   throw new Error(`Unknown question prompt: ${prompt}`);
 }
 
@@ -147,7 +149,7 @@ export function parsePredicate(raw) {
 }
 
 /**
- * @param {string} raw
+ * @param {string | undefined} raw
  * @returns {string[]}
  */
 export function splitLines(raw) {
@@ -158,25 +160,38 @@ export function splitLines(raw) {
 }
 
 /**
- * @param {string} raw
- * @param {string} category311
+ * @param {string | undefined} raw
+ * @param {{ serviceCodeOrAction?: string, responsibleAgencyCode?: string }} [options]
  * @returns {{ code: string, payload: Record<string, unknown> }[]}
  */
-export function parseAppActions(raw, category311) {
+export function parseAppActions(raw, options = {}) {
+  const {
+    serviceCodeOrAction = "",
+    responsibleAgencyCode = "",
+  } = /** @type {{ serviceCodeOrAction?: string, responsibleAgencyCode?: string }} */ (
+    options
+  );
   return splitLines(raw).map((line) => {
     if (line.includes("311")) {
+      const normalizedLine = line.toLowerCase();
+      const executionTrigger =
+        normalizedLine.includes("action creation") ||
+        normalizedLine.includes("escalation creation")
+          ? "task_created"
+          : "user_confirmed";
       return {
         code: "create_311_ticket",
-        payload: { category311: cleanCell(category311) || null },
+        payload: {
+          serviceCodeOrAction: cleanCell(serviceCodeOrAction) || null,
+          responsibleAgencyCode: cleanCell(responsibleAgencyCode),
+          executionTrigger,
+        },
       };
     }
     if (line.includes("phone app")) {
-      const phone = line.match(/\((\d{3})\)\s*(\d{3})-(\d{4})/);
       return {
-        code: "open_phone",
-        payload: {
-          phoneNumber: phone ? `(${phone[1]}) ${phone[2]}-${phone[3]}` : "911",
-        },
+        code: "manual_app_action",
+        payload: { description: line },
       };
     }
     if (line.startsWith("E-mail") || line.startsWith("Email")) {
@@ -193,6 +208,18 @@ export function parseAppActions(raw, category311) {
     }
     return { code: "manual_app_action", payload: { description: line } };
   });
+}
+
+/**
+ * @param {string} raw
+ * @returns {OutcomeKind}
+ */
+export function normalizeOutcomeKind(raw) {
+  const value = cleanCell(raw).toLowerCase();
+  if (value === "non-actionable escalation") {
+    return "non_actionable_escalation";
+  }
+  return /** @type {OutcomeKind} */ (value.replaceAll(" ", "_"));
 }
 
 /**
@@ -214,23 +241,31 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
-      const [
-        category,
-        weighting,
-        ruleId,
-        evaluationOrder,
-        severity,
-        askUser,
-        userResponse,
-        thenKind,
-        label,
-        buttons,
-        appAction,
-        category311,
-        guidance,
-        cannotDoReasons,
-        source,
-      ] = row;
+      const isResponsibleAgencyRulebaseShape = row.length === 16;
+      const category = row[0];
+      const weighting = row[1];
+      const ruleId = row[2];
+      const evaluationOrder = row[3];
+      const severity = row[4];
+      const askUser = row[5];
+      const userResponse = row[6];
+      const thenKind = row[7];
+      const label = row[8];
+      const buttons = row[9];
+      const appAction = row[10];
+      const serviceCodeOrAction = row[11];
+      const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
+        ? row[12]
+        : "";
+      const guidance = isResponsibleAgencyRulebaseShape
+          ? row[13]
+          : row[12];
+      const cannotDoReasons = isResponsibleAgencyRulebaseShape
+          ? row[14]
+          : row[13];
+      const source = isResponsibleAgencyRulebaseShape
+          ? row[15]
+          : row[14];
 
       return {
         policyVersion,
@@ -242,11 +277,14 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         requiredQuestions: questionsForPrompt(askUser),
         predicate: parsePredicate(userResponse),
         outcome: {
-          kind: /** @type {OutcomeKind} */ (cleanCell(thenKind).toLowerCase()),
+          kind: normalizeOutcomeKind(thenKind),
           label: cleanCell(label),
           buttons: splitLines(buttons),
-          appActions: parseAppActions(appAction, category311),
-          category311: cleanCell(category311) || null,
+          appActions: parseAppActions(appAction, {
+            serviceCodeOrAction,
+            responsibleAgencyCode,
+          }),
+          category311: cleanCell(serviceCodeOrAction) || null,
           guidance: cleanCell(guidance),
           cannotDoReasons: splitLines(cannotDoReasons),
           source: cleanCell(source),
@@ -277,7 +315,12 @@ export function validateCatalog(catalog) {
       errors.push(`${rule.ruleId} has invalid weighting ${rule.weighting}`);
     }
     if (
-      !["action", "escalation", "manual_review"].includes(rule.outcome.kind)
+      ![
+        "action",
+        "escalation",
+        "non_actionable_escalation",
+        "manual_review",
+      ].includes(rule.outcome.kind)
     ) {
       errors.push(
         `${rule.ruleId} has invalid outcome kind ${rule.outcome.kind}`,

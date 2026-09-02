@@ -9,29 +9,34 @@ import {
 describe("app action execution", () => {
   const now = new Date("2026-08-18T12:00:00.000Z");
 
-  it("keeps phone actions as user-facing metadata", () => {
+  it("records legacy phone actions without routing to a phone app", async () => {
     expect(
-      executeAppActions(
+      await executeAppActions(
         [{ code: "open_phone", payload: { phoneNumber: "911" } }],
         { now },
       ),
     ).toEqual([
       {
         code: "open_phone",
-        status: "requires_user_action",
+        status: "recorded",
         payload: { phoneNumber: "911" },
         recordedAt: "2026-08-18T12:00:00.000Z",
       },
     ]);
   });
 
-  it("skips 311 submission unless the feature flag is enabled", () => {
+  it("skips 311 submission unless the feature flag is enabled", async () => {
     expect(
       is311SubmissionEnabled({ GNP_311_SUBMISSION_ENABLED: "false" }),
     ).toBe(false);
     expect(
-      executeAppActions(
-        [{ code: "create_311_ticket", payload: { category311: "Cleaning" } }],
+      await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
+          },
+        ],
         { env: {}, now, taskId: "task-1" },
       ),
     ).toEqual([
@@ -39,16 +44,71 @@ describe("app action execution", () => {
         code: "create_311_ticket",
         status: "skipped",
         reason: "feature_disabled",
-        payload: { category311: "Cleaning" },
+        payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
         recordedAt: "2026-08-18T12:00:00.000Z",
       },
     ]);
   });
 
-  it("does not record a successful 311 submission without a real client", () => {
+  it("runs only app actions for the requested trigger", async () => {
+    const actions = [
+      {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          executionTrigger: "task_created",
+        },
+      },
+      {
+        code: "open_phone",
+        payload: { phoneNumber: "911" },
+      },
+    ];
+
     expect(
-      executeAppActions(
-        [{ code: "create_311_ticket", payload: { category311: "Cleaning" } }],
+      await executeAppActions(actions, {
+        env: { GNP_311_SUBMISSION_ENABLED: "false" },
+        now,
+        trigger: "user_confirmed",
+      }),
+    ).toEqual([
+      {
+        code: "open_phone",
+        status: "recorded",
+        payload: { phoneNumber: "911" },
+        recordedAt: "2026-08-18T12:00:00.000Z",
+      },
+    ]);
+
+    expect(
+      await executeAppActions(actions, {
+        env: { GNP_311_SUBMISSION_ENABLED: "false" },
+        now,
+        trigger: "task_created",
+      }),
+    ).toEqual([
+      {
+        code: "create_311_ticket",
+        status: "skipped",
+        reason: "feature_disabled",
+        payload: {
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          executionTrigger: "task_created",
+        },
+        recordedAt: "2026-08-18T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("records a failed 311 submission when config is incomplete", async () => {
+    expect(
+      await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
+          },
+        ],
         {
           env: { GNP_311_SUBMISSION_ENABLED: "true" },
           now,
@@ -58,16 +118,18 @@ describe("app action execution", () => {
     ).toEqual([
       {
         code: "create_311_ticket",
-        status: "not_configured",
-        reason: "311_client_unavailable",
-        payload: { category311: "Cleaning" },
+        status: "failed",
+        reason: expect.stringContaining(
+          "Missing required environment variable",
+        ),
+        payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
         recordedAt: "2026-08-18T12:00:00.000Z",
       },
     ]);
   });
 
-  it("leaves email and form integrations unconfigured", () => {
-    const results = executeAppActions(
+  it("leaves email and form integrations unconfigured", async () => {
+    const results = await executeAppActions(
       [{ code: "compose_email" }, { code: "create_fire_hazard_report" }],
       { now },
     );
@@ -86,10 +148,10 @@ describe("app action execution", () => {
       summarizeAppActionResults([
         {
           code: "open_phone",
-          status: "requires_user_action",
+          status: "recorded",
           recordedAt: "2026-08-18T12:00:00.000Z",
         },
       ]),
-    ).toBe("requires_user_action");
+    ).toBe("recorded");
   });
 });
