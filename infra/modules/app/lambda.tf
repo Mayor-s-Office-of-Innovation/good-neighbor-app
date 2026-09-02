@@ -56,7 +56,7 @@ resource "aws_lambda_function" "api" {
       BEDROCK_MODEL_ID           = var.bedrock_model_id
       POSTHOG_API_KEY_SECRET_ARN = aws_secretsmanager_secret.posthog_project_api_key.arn
       POSTHOG_HOST               = var.posthog_host
-      # Feedback destination (docs/todo/feedback-plan.md Phase 5): plain
+      # Feedback destination (docs/runbooks/feedback-ops.md): plain
       # identifiers, not secrets. Empty defaults keep the forwarder log-only
       # until the surveys exist in the project (the kill switch too).
       FEEDBACK_SURVEY_ID   = var.feedback_survey_id

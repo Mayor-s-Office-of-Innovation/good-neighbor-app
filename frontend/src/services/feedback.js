@@ -2,8 +2,9 @@
   feedback.js — the one-call client for the in-app feedback form.
 
   POSTs a scrubbed payload to our own endpoint (`POST /v1/feedback`); the Lambda
-  validates + re-scrubs and logs one `FeedbackReceived` JSON line — the log line
-  IS the store (docs/todo/feedback-plan.md). Unlike error beacons this is NOT
+  validates + re-scrubs and logs one `FeedbackReceived` JSON line. PostHog
+  Surveys is the store (see docs/runbooks/feedback-ops.md). Unlike error beacons
+  this is NOT
   fire-and-forget: the user is waiting on a confirmation, so the promise resolves
   on any acknowledged request (2xx from our always-204 handler) and rejects only
   on a transport failure, letting the UI show a gentle retry.
