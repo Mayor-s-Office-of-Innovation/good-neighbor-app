@@ -35,8 +35,7 @@ export const shell = ({ hasText }) => html`
       <div class="describe__heading">
         <h1 class="describe__title">Describe what you see</h1>
         <p class="describe__subtitle">
-          Describe the general conditions around the site. You can type or use
-          the microphone.
+          Describe the general conditions around the site.
         </p>
       </div>
 
@@ -66,17 +65,6 @@ export const shell = ({ hasText }) => html`
             Clear all
           </button>
         </div>
-
-        <button class="describe__voice" id="describe-voice" type="button">
-          ${hasText ? "Add more by voice" : "Use voice"}
-        </button>
-        <p
-          class="describe__voice-status"
-          id="describe-voice-status"
-          role="status"
-          aria-live="polite"
-          aria-hidden="true"
-        ></p>
       </div>
     </div>
 

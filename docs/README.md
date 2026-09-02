@@ -93,10 +93,7 @@ is designed but not yet enforced). **Read them in this order:**
 
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for building a
   screen to spec from the token/class system (`tokens.css` / `app.css` are the source of truth).
-- **[describe-instead-transcription-plan.md](./todo/describe-instead-transcription-plan.md)** —
-  plan for the side-scoped **Describe instead** flow: typed description, client-direct voice
-  transcription, Bedrock validation chips, and return to the next side in `/check`. Built on the
-  locked transcription architecture in the transcription docs. _Not started._
+- **Describe instead flow** — the side-scoped typed description in `/check` + `/problem`.
 - **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
   animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
 

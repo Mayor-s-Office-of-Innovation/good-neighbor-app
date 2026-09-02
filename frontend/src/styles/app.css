@@ -1635,101 +1635,10 @@ theme-toggle {
   }
 }
 
-/* ---- <in-browser-camera>: opt-in INLINE camera (?webcam) ----
-   Isolated with the rest of the feature (in-browser-camera.js + shellWebcam
-   template) so it can be lifted out cleanly. */
-.camera-panel {
-  margin-bottom: 0.75rem;
-}
-.ibcam {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.9rem;
-}
-.ibcam__stage {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 52vh;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #000;
-  touch-action: none; /* let pinch drive zoom, not the browser */
-}
-.ibcam__video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-/* Capture flash — brief white wash so a tap registers (no separate review step).
-   Motion-gated: reduced-motion users get no flash (the new thumbnail below is the
-   confirmation). Base opacity 0 so the ::after is inert unless the animation runs. */
-.ibcam__stage--flash::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .ibcam__stage--flash::after {
-    animation: ibcam-flash 160ms ease-out;
-  }
-}
-@keyframes ibcam-flash {
-  from {
-    opacity: 0.85;
-  }
-  to {
-    opacity: 0;
-  }
-}
-.ibcam__zoom {
-  position: absolute;
-  top: 0.6rem;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 0.2rem 0.7rem;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-.ibcam__zoom[hidden] {
-  display: none;
-}
-/* Shutter: ink disc + surface ring, sits on the light screen below the camera. */
-.ibcam__shutter {
-  width: 70px;
-  height: 70px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ink);
-  border: 4px solid var(--surface);
-  box-shadow: 0 0 0 3px var(--ink);
-  cursor: pointer;
-}
-.ibcam__shutter:active {
-  transform: scale(0.94);
-}
-/* Disabled until the stream can be snapshotted (slow start / autoplay hold). */
-.ibcam__shutter:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.ibcam__shutter:disabled:active {
-  transform: none;
-}
-
 /* ==================================================================
    Screen 5c-alt describe instead — typed draft shell. This is the alternate
-   evidence path off the capture screen. Voice/transcription and validation
-   states land in later steps; this pass covers typing, draft save, and
-   unsaved-exit protection.
+   evidence path off the capture screen. This pass covers typing, draft save,
+   and unsaved-exit protection.
    ================================================================== */
 
 .view-describe.describe {
@@ -1784,7 +1693,6 @@ theme-toggle {
 }
 
 .describe__close:focus-visible,
-.describe__voice:focus-visible,
 .describe__continue:focus-visible,
 .describe-modal__secondary:focus-visible,
 .describe-modal__primary:focus-visible {
@@ -1959,61 +1867,6 @@ theme-toggle {
 .describe-chip[data-complete="true"] {
   background: #d9f2e3;
   color: #276246;
-}
-
-.describe__voice {
-  appearance: none;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.625rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--ink);
-  color: var(--on-ink);
-  font: inherit;
-  font-weight: 500;
-  font-size: 1.25rem;
-  line-height: 1.2;
-  padding: 0.9375rem 1.25rem;
-  margin: 0;
-  height: auto;
-  box-shadow: none;
-}
-
-.describe__voice[data-state="recording"] {
-  background: var(--wa-color-danger-fill-normal);
-  color: var(--wa-color-danger-on-normal);
-  text-align: center;
-  font-family: var(--wa-font-family-body);
-  font-size: var(--wa-font-size-l);
-  font-style: normal;
-  font-weight: var(--wa-form-control-label-font-weight);
-  line-height: 1.2;
-}
-
-.describe__voice:disabled {
-  cursor: default;
-  opacity: 0.72;
-}
-
-.describe__voice-status {
-  visibility: visible;
-  min-height: 1.5rem;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.4;
-  text-align: center;
-}
-
-.describe__voice-status[aria-hidden="true"] {
-  visibility: hidden;
-}
-
-.describe__voice-status[data-kind="error"] {
-  color: var(--c-hazard);
 }
 
 .describe__actions {
