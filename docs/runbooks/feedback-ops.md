@@ -3,9 +3,8 @@
 **Scope:** the in-app "Send feedback" sheet (`frontend/src/components/feedback-dialog.js`) →
 `POST /v1/feedback` → api Lambda → PostHog Surveys. 
 
-**Mental model:** CloudWatch carries **metadata only** (arrival/abuse/forward signals — never the
-message text). **PostHog is the feedback store.** While forwarding is off, submitted text is
-discarded at intake (deliberately; the metadata line still records that it happened).
+CloudWatch carries **metadata only**. While forwarding is off, submitted text is
+discarded at intake because we don't want to risk recording sensitive information in 
 
 ## Current state (2026-09-02)
 
@@ -32,7 +31,7 @@ never enters state or VCS:
 
 ```sh
 aws secretsmanager put-secret-value \
-  --secret-id gnp-<env>-posthog-project-api-key \
+  --secret-id good-neighbor-app-<env>-posthog-project-api-key \
   --secret-string 'phc_…'
 ```
 
@@ -59,7 +58,7 @@ returns to log-only). `POSTHOG_HOST` only needs setting for EU-cloud projects (d
 
 ## Local testing (no AWS)
 
-Put all three values in **`backend/.env.local`** (git-ignored; loaded by the `local:*` scripts
+Put all three values in **`.env.local`** (git-ignored; loaded by the `local:*` scripts
 via `--env-file`). Config precedence in `backend/src/handlers/posthog-api-key.js` checks the
 direct key first, so no Secrets Manager needed locally:
 
