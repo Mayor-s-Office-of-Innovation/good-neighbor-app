@@ -100,19 +100,13 @@ is designed but not yet enforced). **Read them in this order:**
 - **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
   animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
 
-- **[page-transitions-plan.md](./todo/page-transitions-plan.md)** — View Transitions API screen
-  animations (Phase 0 baseline + Phase 1 directional slides). _Not started._
-
 ## Error tracking & observability (built, Aug 2026)
 
-- **[client-error-tracking-plan.md](./todo/client-error-tracking-plan.md)** — **approved; build in
-  progress** on `feature/error-tracking`. Lean client capture (`error-report.js` beacon → own
-  `POST /v1/client-errors` route → api-Lambda forwarder), log-only whenever the key is absent
-  (safe local-dev default); PostHog Cloud chosen for contributor (non-AWS) access. Includes the
-  `logServerError` convention (CloudWatch = server-error source of truth), WAF rate rule on the
-  public intake, and metric-filter alarms. **Phases 1–5 built & green** (CI terraform validate
-  pending first apply); **MOI egress sign-off granted 2026-08-31** — remaining: Phase 0 (PostHog
-  org/keys → secrets), alarm recipients, first dev apply + verify.
+Uses custom client side error tracker to reduce client side weight. This posts to backend lambda which writes all errors to posthog and cloudwatch.
+
+## User feedback (built, Aug–Sep 2026)
+
+User feedback form posts to PostHog headless survey
 
 ## Deploy & CI/CD (plan, Aug 2026)
 
@@ -131,6 +125,7 @@ is designed but not yet enforced). **Read them in this order:**
 - [architecture.md](./architecture.md), [adr/](./adr/) — architecture notes and decision records
 - [dev-commands.md](./dev-commands.md) — developer command reference (setup, CI checks, local harness)
 - [sdlc-level-2-checklist.md](./sdlc-level-2-checklist.md), [security-review.md](./security-review.md) — SDLC / security process
+- [runbooks/](./runbooks/) — operational runbooks (source of truth; the `~/dev/notes/` folder is plans + history, see AGENTS.md)
 
 ## ADRs — `adr/`
 

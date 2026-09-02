@@ -69,6 +69,7 @@ import "./components/theme-toggle.js";
 import "./components/capture-audio.js";
 import "./components/in-browser-camera.js";
 import "./components/today-view.js";
+import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";
 import "./components/describe-instead.js";

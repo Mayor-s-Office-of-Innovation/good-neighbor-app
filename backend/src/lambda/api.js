@@ -29,6 +29,7 @@ import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
+import { handler as feedbackHandler } from "../handlers/feedback.js";
 import { jsonResponse } from "../http.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
@@ -61,6 +62,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /health": healthHandler,
   // Client error intake (best-effort; handler always 204s — see handlers/client-errors.js)
   "POST /v1/client-errors": clientErrorsHandler,
+  // User feedback intake (log-based store; handler always 204s — see handlers/feedback.js)
+  "POST /v1/feedback": feedbackHandler,
 });
 
 /**
