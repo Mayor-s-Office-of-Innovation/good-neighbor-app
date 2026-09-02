@@ -7,12 +7,7 @@ direction (Web Speech implementation;
 
 ## Context
 
-The field app's "Describe instead" screen offered voice capture so contributors
-could speak a description instead of typing. Two implementations shipped or
-were planned:
-
-1. **In-browser speech recognition (Web Speech API)** — `SpeechRecognition`
-   running client-side, zero backend. This shipped.
+The field app's "Describe instead" screen offered voice capture so contributors could speak a description instead of typing using **In-browser speech recognition (Web Speech API)** — `SpeechRecognition` running client-side, zero backend. This shipped.
 
 Web Speech was chosen to avoid backend cost and complexity, it worked great on Android
 
