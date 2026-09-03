@@ -20,6 +20,7 @@ import { evaluateCondition } from "./evaluator.js";
 import {
   executeAppActions,
   initialAppActionStatus,
+  is311SubmissionEnabled,
   summarizeAppActionResults,
 } from "./app-actions.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
@@ -79,11 +80,34 @@ function isResolvedToTasks(item) {
  * @returns {boolean}
  */
 function isEmergencyTask(task) {
-  return /** @type {{ code?: string, payload?: { phoneNumber?: unknown } }[]} */ (
+  return [
+    task.label,
+    task.guidance,
+    .../** @type {unknown[]} */ (task.buttons ?? []),
+  ].some((value) => /\b911\b/.test(String(value ?? "")));
+}
+
+/**
+ * @param {Record<string, unknown>} task
+ * @returns {boolean}
+ */
+function hasTaskCreatedAppAction(task) {
+  return /** @type {{ payload?: { executionTrigger?: unknown } }[]} */ (
+    task.appActions ?? []
+  ).some((action) => action.payload?.executionTrigger === "task_created");
+}
+
+/**
+ * @param {Record<string, unknown>} task
+ * @returns {boolean}
+ */
+function hasUserConfirmed311Action(task) {
+  return /** @type {{ code?: unknown, payload?: { executionTrigger?: unknown } }[]} */ (
     task.appActions ?? []
   ).some(
     (action) =>
-      action.code === "open_phone" && action.payload?.phoneNumber === "911",
+      action.code === "create_311_ticket" &&
+      action.payload?.executionTrigger !== "task_created",
   );
 }
 
@@ -131,7 +155,10 @@ function applyAssessmentConditionDelta({
       (taskItem?.kind === "action" ? 1 : 0),
     escalationCount:
       Number(priorSummary.escalationCount ?? 0) +
-      (taskItem?.kind === "escalation" ? 1 : 0),
+      (taskItem?.kind === "escalation" ||
+      taskItem?.kind === "non_actionable_escalation"
+        ? 1
+        : 0),
     emergencyCount:
       Number(priorSummary.emergencyCount ?? 0) +
       (taskItem && isEmergencyTask(taskItem) ? 1 : 0),
@@ -194,6 +221,7 @@ function applyAssessmentConditionDelta({
  * @property {string} tableName
  * @property {GuidanceCatalog} [catalog]
  * @property {() => string} [idFactory]
+ * @property {Record<string, string | undefined>} [env]
  * @property {Date} [now]
  */
 
@@ -356,6 +384,7 @@ function buildTaskItem({
     analyzerCategory: condition.category,
     severity: condition.severity,
     label: rule.outcome.label,
+    description: condition.description,
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
@@ -364,6 +393,7 @@ function buildTaskItem({
     category311: rule.outcome.category311,
     cannotDoReasons: rule.outcome.cannotDoReasons,
     sourceArtifactIds: condition.sourceArtifactIds ?? [],
+    source: condition.source ?? {},
     ...taskWorklistDateGsi(
       siteId,
       status,
@@ -478,15 +508,11 @@ export async function storeEvaluatedAssessment(input, options) {
   ).length;
   const actionCount = taskItems.filter((item) => item.kind === "action").length;
   const escalationCount = taskItems.filter(
-    (item) => item.kind === "escalation",
+    (item) =>
+      item.kind === "escalation" || item.kind === "non_actionable_escalation",
   ).length;
   const emergencyCount = taskItems.filter((item) =>
-    /** @type {{ code?: string, payload?: { phoneNumber?: unknown } }[]} */ (
-      item.appActions
-    ).some(
-      (action) =>
-        action.code === "open_phone" && action.payload?.phoneNumber === "911",
-    ),
+    isEmergencyTask(item),
   ).length;
 
   // "tasks_created" must mean tasks were actually minted. An assessment whose
@@ -560,7 +586,84 @@ export async function storeEvaluatedAssessment(input, options) {
 
   await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
 
-  return { assessmentItem, conditionItems, taskItems };
+  const updatedTaskItems = await executeTaskCreatedAppActions({
+    tableName: options.tableName,
+    siteId: input.siteId,
+    taskItems,
+    env: options.env,
+    now: options.now,
+  });
+
+  return { assessmentItem, conditionItems, taskItems: updatedTaskItems };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {Record<string, unknown>[]} opts.taskItems
+ * @param {Record<string, string | undefined>} [opts.env]
+ * @param {Date} [opts.now]
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function executeTaskCreatedAppActions({
+  tableName,
+  siteId,
+  taskItems,
+  env = process.env,
+  now,
+}) {
+  if (!is311SubmissionEnabled(env)) return taskItems;
+  const updatedTasks = [];
+  for (const task of taskItems) {
+    if (!hasTaskCreatedAppAction(task)) {
+      updatedTasks.push(task);
+      continue;
+    }
+    const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
+      task.appActions ?? []
+    );
+    const appActionResults = await executeAppActions(appActions, {
+      env,
+      now,
+      tableName,
+      siteId,
+      task,
+      taskId: String(task.taskId ?? ""),
+      priorResults:
+        /** @type {import("./app-actions.js").AppActionResult[]} */ (
+          task.appActionResults ?? []
+        ),
+      trigger: "task_created",
+    });
+    if (appActionResults.length === 0) {
+      updatedTasks.push(task);
+      continue;
+    }
+    const updatedTask = {
+      ...task,
+      appActionResults,
+      appActionStatus: summarizeAppActionResults(appActionResults),
+      updatedAt: (now ?? new Date()).toISOString(),
+    };
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: updatedTask,
+              ConditionExpression: "#status = :open",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: { ":open": "open" },
+            },
+          },
+        ],
+      }),
+    );
+    updatedTasks.push(updatedTask);
+  }
+  return updatedTasks;
 }
 
 /**
@@ -624,6 +727,7 @@ export async function getAssessmentGuidance({
  * @param {Record<string, unknown>} opts.answers
  * @param {GuidanceCatalog} [opts.catalog]
  * @param {() => string} [opts.idFactory]
+ * @param {Record<string, string | undefined>} [opts.env]
  * @param {Date} [opts.now]
  * @returns {Promise<{ assessmentItem: Record<string, unknown>, conditionItem: Record<string, unknown>, taskItem: Record<string, unknown> | null, evaluation: EvaluationResult }>}
  */
@@ -702,6 +806,10 @@ export async function answerCondition(opts) {
           sourceArtifactIds:
             /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
               ?.artifactIds ?? [],
+          source:
+            conditionItem.source && typeof conditionItem.source === "object"
+              ? /** @type {Record<string, unknown>} */ (conditionItem.source)
+              : {},
         },
         conditionId: opts.conditionId,
         rule: evaluation.rule,
@@ -785,10 +893,19 @@ export async function answerCondition(opts) {
 
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
+      const [updatedTaskItem = null] = taskItem
+        ? await executeTaskCreatedAppActions({
+            tableName: opts.tableName,
+            siteId: opts.siteId,
+            taskItems: [taskItem],
+            env: opts.env,
+            now: opts.now,
+          })
+        : [];
       return {
         assessmentItem: updatedAssessment,
         conditionItem: updatedCondition,
-        taskItem,
+        taskItem: updatedTaskItem,
         evaluation,
       };
     } catch (err) {
@@ -923,6 +1040,15 @@ export async function completeTaskWithAppActions(opts) {
   ) {
     throw namedError("TerminalConflict", "Task is no longer open");
   }
+  if (
+    opts.completionMethod === "311_filed" &&
+    !hasUserConfirmed311Action(existing.Item)
+  ) {
+    throw namedError(
+      "InvalidCompletionMethod",
+      "Task has no executable 311 filing action",
+    );
+  }
 
   let claimCondition = "#status = :open";
   /** @type {Record<string, string>} */
@@ -979,23 +1105,41 @@ export async function completeTaskWithAppActions(opts) {
   const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
     existing.Item.appActions ?? []
   );
-  const appActionResults = executeAppActions(appActions, {
+  const priorResults =
+    /** @type {import("./app-actions.js").AppActionResult[]} */ (
+      existing.Item.appActionResults ?? []
+    );
+  const executedAppActionResults = await executeAppActions(appActions, {
     env: opts.env,
     now: nowDate,
     taskId: opts.taskId,
+    tableName: opts.tableName,
+    siteId: opts.siteId,
+    task: claimed,
+    priorResults,
+    trigger: "user_confirmed",
   });
+  const appActionResults =
+    executedAppActionResults.length > 0
+      ? executedAppActionResults
+      : priorResults;
+  const appActionStatus = summarizeAppActionResults(appActionResults);
+  const appActionFailed = appActionStatus === "failed";
 
   const updated = {
     ...claimed,
-    status: "completed",
-    completedAt: now,
-    completionMethod: opts.completionMethod ?? "user_confirmed",
-    appActionStatus: summarizeAppActionResults(appActionResults),
+    status: appActionFailed ? "open" : "completed",
+    ...(appActionFailed ? {} : { completedAt: now }),
+    ...(appActionFailed
+      ? {}
+      : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
+    appActionStatus,
     appActionResults,
+    completionLeaseExpiresAt: null,
     updatedAt: now,
     ...taskWorklistDateGsi(
       opts.siteId,
-      "completed",
+      appActionFailed ? "open" : "completed",
       String(existing.Item.kind),
       Number(existing.Item.severity ?? 0),
       now,
