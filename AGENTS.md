@@ -6,30 +6,28 @@ This repo follows the CCSF Software Development Lifecycle Standard for a Level 2
 
 New here? Get your bearings in this order:
 
-1. **This file (AGENTS.md)** — standing choices, SDLC rules, and what's in flight (below).
-2. **[docs/README.md](docs/README.md)** — the docs map: every planning thread with its own
-   ordered read path and status. Go here to find the right doc for the area you're in.
-3. **The thread you're working in** — follow the order `docs/README.md` gives for that area
-   (frontend migration, database direction, transcription, …), then the file-level detail.
+1. **This file (AGENTS.md)** — standing choices, SDLC rules, and current state (below).
+2. **[docs/README.md](docs/README.md)** — the reference-docs map: architecture, data model,
+   ADRs, runbooks. Go here to find the authoritative doc for the area you're in.
+3. **The GitHub issue tracker** — all open plans, tasks, and in-flight work. Docs in this
+   repo are perpetually useful references, not trackers; anything time-bound lives in issues.
 
-## Active Plans
+## Current state
 
-Migration is in progress; read the linked plans before following the standing choices below
-— some of those choices are being revised.
-
-- **Frontend migration (JS+JSDoc, then `gnp` adoption): Steps 1 & 2 DONE (2026-08-12).** The
-  backend is JavaScript + JSDoc with the `typecheck` gate in CI, and the `gnp` prototype is
-  now the `frontend/` — built and green under a lenient `checkJs` gate. See
-  [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md) (Step 1) and
-  docs/gnp-frontend-migration-plan.md (Step 2 — still
-  the tracker for the open backend/auth/deploy decisions D1–D4 and I1).
+- **Stack & datastore are settled:** JavaScript + JSDoc backend and frontend
+  ([ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md)), single-table DynamoDB
+  ([ADR 0002](./docs/adr/0002-datastore-dynamodb.md)), 2-env deploy pipeline
+  ([ADR 0007](./docs/adr/0007-deploy-promotion-model.md)) — dev live-proven, prod pending
+  first release-deploy (issue tracker).
+- **Built and live in the repo:** the perimeter-check → analyzer → guidance-workflow
+  pipeline (see [docs/architecture.md](./docs/architecture.md)), error tracking
+  ([ADR 0008](./docs/adr/0008-lean-client-error-capture.md); rollout completion tracked as
+  an issue), and the Docker-free local harness ([ADR 0006](./docs/adr/0006-docker-free-local-dev-harness.md)).
 - **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
   for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
-  offline pass (details in the Step 2 doc).
-- **Datastore: DynamoDB (decided).** The project moved off managed Postgres/Prisma to a
-  single-table DynamoDB design; the standing choice below reflects this. See the database
-  thread in [docs/README.md](docs/README.md) and
-  [ADR 0002](docs/adr/0002-datastore-dynamodb.md).
+  offline pass (tracked on the issue tracker).
+- Live transcription was dropped (2026-09-02) — keyboard dictation covers the need; see
+  [ADR 0009](./docs/adr/0009-drop-transcription.md).
 
 ## Standing Project Choices
 
@@ -37,8 +35,7 @@ Migration is in progress; read the linked plans before following the standing ch
   without a transpile step by type-checking `.js` files with the TypeScript compiler in
   `checkJs` mode, expressing types in JSDoc. `tsc --noEmit` (run as `npm run typecheck`
   in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
-  [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md). (Both backend
-  and frontend are now migrated to JS+JSDoc — see Active Plans above.)
+  [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md).
 - Use native web components for UI and Web Awesome for shared UI primitives.
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and DynamoDB.

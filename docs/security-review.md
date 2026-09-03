@@ -110,7 +110,7 @@ revocation).
   below. Residual pollution risk is **accepted** because test data is wiped wholesale between
   cycles (consistent with the photo-handling decision above).
 - *Before any real (non-test) data:* **Option 3 must be implemented** (ties to Phase 6 tenant
-  isolation, [MVP-TODO](./inprogress/MVP-TODO.md)) and this section re-reviewed.
+  isolation, on the issue tracker) and this section re-reviewed.
 
 **Cross-cutting hardening** (applies regardless of identity phase — do these now where cheap):
 

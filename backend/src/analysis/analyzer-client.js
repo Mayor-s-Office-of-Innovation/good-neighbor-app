@@ -5,7 +5,7 @@
 // into our stored shape is `adapt-scorecard.js`'s job, kept separate so the wire
 // contract and our persistence stay decoupled.
 //
-// Invariants (see MVP-TODO 🔒 analyzer-auth + media-handling):
+// Invariants (see security-review.md, analyzer-auth + media-handling):
 //   - `x-api-key` (GNP's per-consumer key) is a *server-side* credential — held
 //     by our Lambda (Secrets Manager in prod, env for local), never on device.
 //   - `store_input:false` always — the analyzer must never retain our media;

@@ -1,6 +1,6 @@
 // Resolve GNP's per-consumer analyzer API key (the `x-api-key` header). This is
 // a server-side credential — never sent to the device, never logged (see
-// MVP-TODO 🔒 analyzer-auth). Step C reads it from the environment
+// security-review.md, analyzer-auth). Step C reads it from the environment
 // (`ANALYZER_API_KEY`), which covers local runs and the demo deployment.
 // Production holds it in Secrets Manager (`ANALYZER_API_KEY_SECRET_ARN`); this
 // module fetches it once and caches it at module scope (a warm Lambda reuses the

@@ -5,7 +5,7 @@
 // header's running counters. `completeCheck` (C4) does the authoritative
 // roll-up; the counters here are a best-effort in-progress display.
 //
-// Invariants (see MVP-TODO 🔒 media-handling):
+// Invariants (see security-review.md, media-handling):
 //   - Media bytes reach this worker only via the S3 key on the message — never
 //     through the queue body — and are never logged.
 //   - The analyzer API key is server-side (api-key.js) and `store_input:false`
