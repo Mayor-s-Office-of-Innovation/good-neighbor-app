@@ -184,11 +184,14 @@ class TodayView extends HTMLElement {
       start.addEventListener("click", async () => {
         const draft = await loadDraft("perimeter");
         if (!draft) {
-          startCheck(this._siteId);
+          startCheck(this._siteId, this._site.places || []);
         }
         navigate("/check");
       });
     }
+    this.querySelector("#edit-places")?.addEventListener("click", () =>
+      navigate("/places/edit"),
+    );
     const report = this.querySelector("#report-problem");
     if (report) {
       report.addEventListener("click", async () => {
@@ -243,6 +246,14 @@ class TodayView extends HTMLElement {
 
     return html`
       <div class="home ${showFirstRun ? "home--first-run" : ""}">
+        <button
+          class="home-settings"
+          id="edit-places"
+          type="button"
+          aria-label="Edit places"
+        >
+          <span class="home-settings__icon" aria-hidden="true"></span>
+        </button>
         <div
           class="screen screen--today-hero ${showFirstRun
             ? "screen--first-run"

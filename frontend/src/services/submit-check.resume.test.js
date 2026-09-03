@@ -31,7 +31,7 @@ const markAnalysisFailed = vi.fn();
 const markSubmitted = vi.fn();
 const markUploading = vi.fn();
 const getCurrentCheck = vi.fn(() => null);
-const getSideOrder = vi.fn(() => ["North"]);
+const getPlaceOrder = vi.fn(() => ["place-north"]);
 
 vi.mock("./api.js", () => ({
   createCheck,
@@ -58,7 +58,7 @@ vi.mock("../state/check-session.js", () => ({
   markUploading,
   markAnalyzing,
   markAnalysisFailed,
-  getSideOrder,
+  getPlaceOrder,
   markSubmitted,
 }));
 
@@ -72,16 +72,19 @@ function makeDraft() {
   return {
     id: "check-1",
     flowType: "single-problem",
-    sideOrder: ["North"],
+    placeOrder: ["place-north"],
     submittedAt: "2026-08-27T00:21:00.000Z",
-    sides: {
-      North: {
+    places: {
+      "place-north": {
+        id: "place-north",
+        name: "North",
         skipped: false,
         description: null,
         items: [
           {
             id: "item-1",
-            side: "North",
+            placeId: "place-north",
+            placeName: "North",
             dataUrl: "data:image/jpeg;base64,AA==",
             uploadedAt: "2026-08-27T00:20:00.000Z",
           },
@@ -111,7 +114,7 @@ describe("resumeUploadingCheck", () => {
     });
 
     expect(createCheck).toHaveBeenCalledWith("check-1", {
-      sides: [{ side: "North", skipped: false }],
+      places: [{ placeId: "place-north", placeName: "North", skipped: false }],
     });
     expect(uploadArtifact).toHaveBeenCalledTimes(1);
     expect(markAnalyzing).toHaveBeenCalledWith({
@@ -129,7 +132,8 @@ describe("resumeUploadingCheck", () => {
     getCheck.mockResolvedValue({
       artifacts: [
         {
-          side: "North",
+          placeId: "place-north",
+          placeName: "North",
           capturedAt: "2026-08-27T00:20:00.000Z",
           s3Key: "checks/site/check-1/existing.jpg",
         },
@@ -149,14 +153,15 @@ describe("resumeUploadingCheck", () => {
 
 function makeEagerDraft() {
   const draft = makeDraft();
-  draft.sides.North.items[0].upload = {
+  draft.places["place-north"].items[0].upload = {
     status: "uploaded",
     artifactId: "artifact-eager",
     s3Key: "checks/site/check-1/eager.jpg",
     contentType: "image/jpeg",
   };
   // The eager upload swapped the full-res bytes for a thumbnail.
-  draft.sides.North.items[0].dataUrl = "data:image/jpeg;base64,THUMB==";
+  draft.places["place-north"].items[0].dataUrl =
+    "data:image/jpeg;base64,THUMB==";
   return draft;
 }
 
@@ -180,7 +185,8 @@ describe("eager-uploaded photos register instead of re-uploading", () => {
     expect(registerArtifact).toHaveBeenCalledTimes(1);
     expect(registerArtifact).toHaveBeenCalledWith("check-1", {
       artifactId: "artifact-eager",
-      side: "North",
+      placeId: "place-north",
+      placeName: "North",
       s3Key: "checks/site/check-1/eager.jpg",
       contentType: "image/jpeg",
       capturedAt: "2026-08-27T00:20:00.000Z",

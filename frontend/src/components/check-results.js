@@ -6,7 +6,7 @@
   continuing. It is ANALYSIS-sourced, not task-sourced:
     - the overall summary + grade come from the CHECK# header (check.summary /
       check.grade), which synthesize-check.js already rolls up as the worst
-      artifact's assessment across the run's sides.
+      artifact's assessment across the run's places.
     - the issue cards are the per-artifact ANALYSIS# concerns (analysesToFindings),
       one card per identified condition (rating >= 1), titled by the analyzer's
       own category with its explanation.
@@ -258,8 +258,8 @@ class CheckResults extends HTMLElement {
                   class="thumbstrip__thumb"
                   src="${p.dataUrl}"
                   alt="${escapeHtml(
-                    p.side
-                      ? `Photo of the ${p.side} side`
+                    p.placeName
+                      ? `Photo of ${p.placeName}`
                       : "Perimeter check photo",
                   )}"
                 />
@@ -273,16 +273,16 @@ class CheckResults extends HTMLElement {
   // Build the per-condition review list — one entry per backend condition (which is
   // one per category). Each card then maps 1:1 to a condition, so a dispute targets
   // exactly that condition via its stable conditionId. The disputable (live) path is
-  // driven by the assessment envelope's conditions; each is enriched with the sides
+  // driven by the assessment envelope's conditions; each is enriched with the places
   // it was seen on (from the per-artifact findings). The read-only history path has
   // no envelope, so findings are grouped by category (no conditionId — those cards
   // can't be disputed anyway).
   _reviewConditions(findings) {
-    const sidesFor = (category) => [
+    const placesFor = (category) => [
       ...new Set(
         findings
-          .filter((f) => f.category === category && f.side)
-          .map((f) => f.side),
+          .filter((f) => f.category === category && f.placeName)
+          .map((f) => f.placeName),
       ),
     ];
     const envelope = this._assessmentData?.conditions;
@@ -294,7 +294,7 @@ class CheckResults extends HTMLElement {
           c.description ||
           findings.find((f) => f.category === c.category)?.explanation ||
           "",
-        sides: sidesFor(c.category),
+        places: placesFor(c.category),
       }));
     }
     const byCategory = new Map();
@@ -304,7 +304,7 @@ class CheckResults extends HTMLElement {
         conditionId: null,
         category: f.category || "Condition",
         explanation: f.explanation || "",
-        sides: sidesFor(f.category),
+        places: placesFor(f.category),
       });
     }
     return [...byCategory.values()];
@@ -339,8 +339,10 @@ class CheckResults extends HTMLElement {
     return html`
       <div class="issue" data-cid="${escapeHtml(cid)}">
         <h3 class="issue__title">${escapeHtml(title)}</h3>
-        ${c.sides && c.sides.length
-          ? html`<p class="issue__sides">${escapeHtml(c.sides.join(" · "))}</p>`
+        ${c.places && c.places.length
+          ? html`<p class="issue__places">
+              ${escapeHtml(c.places.join(" · "))}
+            </p>`
           : ""}
         ${c.explanation
           ? html`<p class="issue__desc">${escapeHtml(c.explanation)}</p>`

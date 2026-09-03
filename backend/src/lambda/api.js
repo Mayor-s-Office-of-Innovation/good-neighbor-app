@@ -27,6 +27,7 @@ import {
 import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
+import { getSite, putSitePlaces } from "../handlers/site.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
@@ -38,7 +39,9 @@ import { withServerErrorsLogged } from "../lib/log-server-error.js";
 // only ever call them with the event, so the map is typed to that call shape.
 const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /site-code": siteCodeHandler,
-  "POST /v1/checks/{checkId}/sides/{side}/description:validate":
+  "GET /v1/site": getSite,
+  "PUT /v1/site/places": putSitePlaces,
+  "POST /v1/checks/{checkId}/places/{placeId}/description:validate":
     descriptionValidationHandler,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
