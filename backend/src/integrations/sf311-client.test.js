@@ -7,9 +7,9 @@ import {
 } from "./sf311-client.js";
 
 describe("SF311 CreateSR client helpers", () => {
-  it("formats HUB datetimes without milliseconds or timezone suffix", () => {
+  it("formats HUB datetimes with spaces and without milliseconds or timezone suffix", () => {
     expect(hubDateTime(new Date("2026-09-02T17:11:12.345Z"))).toBe(
-      "2026-09-02T17:11:12",
+      "2026-09-02 17:11:12",
     );
   });
 
@@ -29,10 +29,42 @@ describe("SF311 CreateSR client helpers", () => {
     ).toEqual({
       SourceAgency: "76",
       SourceRequestID: "task-123-1147200",
-      SourceAgencyReceiveDate: "2026-09-02T17:11:12",
+      SourceOperator: "Good Neighbor App",
       ResponsibleAgency: "5",
+      ResponsibleAgencyRequestID: "",
+      SourceAgencyReceiveDate: "2026-09-02 17:11:12",
+      TransferToResponsiblAgencyDate: "",
+      PublicVisibilityIndicator: "0",
+      CustomerName: "",
+      CustomerPhone: "",
+      CustomerAddress1: "",
+      CustomerAddress2: "",
+      CustomerCity: "",
+      CustomerState: "",
+      CustomerZip: "",
+      CustomerCountry: "",
+      CustomerEmail: "",
+      CallbackRequestedIndicator: "0",
+      CallbackNotes: "",
       NatureofRequest: "1.1.4.7.20.0",
       ProblemDescription: "Trash near the doorway",
+      PriorityType: "",
+      EmergencyType: "",
+      Status: "",
+      LinkID: "",
+      LocationPointofInterest: "",
+      LocationStreetNumber: "",
+      LocationStreetName: "",
+      LocationCrossStreet1: "",
+      LocationCrossStreet2: "",
+      LocationDescription: "",
+      EasID: "",
+      BlockLot: "",
+      CNN: "",
+      DeptAssetType: "",
+      DeptAssetID: "",
+      Xcoordinate: "",
+      Ycoordinate: "",
       Latitude: "37.76656393517443",
       Longitude: "-122.4213267021692",
     });
