@@ -4,6 +4,9 @@ import { currentRoute, navigate } from "../router.js";
 import { getSiteSettings, putSitePlaces } from "../services/api.js";
 import { placesShell } from "./places-setup.templates.js";
 
+const MAX_PLACES = 40;
+const MAX_PLACE_NAME_LENGTH = 120;
+
 const SEEDED_COPY = {
   title: "Places you check",
   subtitle:
@@ -38,6 +41,20 @@ export function cleanPlaces(places) {
       name: String(place.name || "").trim(),
     }))
     .filter((place) => place.name);
+}
+
+export function validatePlacesForSave(places) {
+  const clean = cleanPlaces(places);
+  if (!clean.length) {
+    return { ok: false, error: "Add at least one place." };
+  }
+  if (clean.length > MAX_PLACES) {
+    return { ok: false, error: "You can save up to 40 places." };
+  }
+  if (clean.some((place) => place.name.length > MAX_PLACE_NAME_LENGTH)) {
+    return { ok: false, error: "Place names must be 120 characters or fewer." };
+  }
+  return { ok: true, places: clean };
 }
 
 function signature(places) {
@@ -110,16 +127,20 @@ class PlacesSetup extends HTMLElement {
       subtitle: copy.subtitle,
       siteName: this._site?.name || "Your site",
       places: this._places,
-      canAdd: !this._places.some((place) => !place.name.trim()),
+      canAdd:
+        this._places.length < MAX_PLACES &&
+        !this._places.some((place) => !place.name.trim()),
       canSave: clean.length > 0,
       mode: this._mode,
       menuIndex: this._menuIndex,
+      error: this._error,
     });
     this._bind();
   }
 
   _bind() {
     this.querySelector("#add-place")?.addEventListener("click", () => {
+      this._error = "";
       this._places.push({ id: newId(), name: "", order: this._places.length });
       this._menuIndex = null;
       this._render();
@@ -164,6 +185,7 @@ class PlacesSetup extends HTMLElement {
     const index = Number(field.getAttribute("data-place-input"));
     if (!Number.isInteger(index) || !this._places[index]) return;
     this._places[index].name = field.value;
+    this._error = "";
     this._syncButtons();
   }
 
@@ -188,6 +210,7 @@ class PlacesSetup extends HTMLElement {
       } else {
         this._menuIndex = this._menuIndex === index ? null : index;
       }
+      this._error = "";
       this._render();
       return;
     }
@@ -222,6 +245,7 @@ class PlacesSetup extends HTMLElement {
     this._places.splice(next, 0, place);
     this._places.forEach((item, i) => (item.order = i));
     this._menuIndex = next;
+    this._error = "";
     this._render();
   }
 
@@ -245,11 +269,14 @@ class PlacesSetup extends HTMLElement {
     }
     this._removeIndex = null;
     this.querySelector("#remove-place-dialog")?.close();
+    this._error = "";
     this._render();
   }
 
   _syncButtons() {
-    const canAdd = !this._places.some((place) => !place.name.trim());
+    const canAdd =
+      this._places.length < MAX_PLACES &&
+      !this._places.some((place) => !place.name.trim());
     const canSave = this._cleanPlaces().length > 0;
     const add = this.querySelector("#add-place");
     const save = this.querySelector("#save-places");
@@ -274,44 +301,43 @@ class PlacesSetup extends HTMLElement {
   }
 
   async _save() {
-    const clean = this._cleanPlaces();
-    if (!clean.length) return;
+    const validation = validatePlacesForSave(this._places);
+    if (!validation.ok) {
+      this._error = validation.error;
+      this._render();
+      return;
+    }
+    const clean = validation.places;
     const save = this.querySelector("#save-places");
     save.disabled = true;
     save.textContent = "Saving...";
     try {
-      const localPlaces = clean.map((place, order) => ({ ...place, order }));
+      const { site } = await putSitePlaces(clean);
+      const remotePlaces = Array.isArray(site?.places) ? site.places : clean;
+      const localPlaces = remotePlaces.map((place, order) => ({
+        ...place,
+        order,
+      }));
       const savedSite = await saveSiteSettings({
+        ...site,
         places: localPlaces,
-        placesConfirmedAt: new Date().toISOString(),
+        placesConfirmedAt:
+          site?.placesConfiguredAt ||
+          site?.placesConfirmedAt ||
+          new Date().toISOString(),
       });
       window.dispatchEvent(
         new CustomEvent("siteplacesupdated", { detail: { site: savedSite } }),
       );
       navigate("/today");
     } catch (err) {
-      console.error("saveSiteSettings failed", err);
+      console.error("save places failed", err);
+      this._error =
+        "We couldn’t save your places. Check your connection and try again.";
       save.disabled = false;
       save.textContent = "Save places";
-      return;
+      this._render();
     }
-
-    putSitePlaces(clean)
-      .then(async ({ site }) => {
-        if (!site) return;
-        const savedSite = await saveSiteSettings({
-          ...site,
-          placesConfirmedAt: new Date().toISOString(),
-        });
-        window.dispatchEvent(
-          new CustomEvent("siteplacesupdated", {
-            detail: { site: savedSite },
-          }),
-        );
-      })
-      .catch((err) => {
-        console.error("putSitePlaces failed", err);
-      });
   }
 }
 

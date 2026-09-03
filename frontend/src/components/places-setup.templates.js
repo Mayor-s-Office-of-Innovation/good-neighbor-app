@@ -2,6 +2,7 @@
 import { html, escapeHtml } from "../lib/html.js";
 
 export const PLACE_PLACEHOLDER = "Example: 6th St., or, Front entrance";
+export const MAX_PLACE_NAME_LENGTH = 120;
 
 export function placesShell({
   title,
@@ -12,6 +13,7 @@ export function placesShell({
   canSave,
   mode,
   menuIndex,
+  error,
 }) {
   return html`
     <div class="places-flow" data-mode="${escapeHtml(mode)}">
@@ -52,6 +54,11 @@ export function placesShell({
           ? html`<p class="places-flow__future-note">
               Changes apply to future checks.<br />
               Previous check records won’t be affected.
+            </p>`
+          : ""}
+        ${error
+          ? html`<p class="places-flow__error" role="alert">
+              ${escapeHtml(error)}
             </p>`
           : ""}
 
@@ -148,6 +155,7 @@ function placeRow({ place, index, count, menuOpen }) {
         label="Place ${index + 1}"
         value="${escapeHtml(name)}"
         placeholder="${PLACE_PLACEHOLDER}"
+        maxlength="${MAX_PLACE_NAME_LENGTH}"
       ></wa-input>
       <div class="places-row__menu-wrap">
         ${showMenuButton

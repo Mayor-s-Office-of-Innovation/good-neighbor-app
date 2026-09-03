@@ -57,6 +57,17 @@ describe("places setup template", () => {
     expect(markup).toMatch(/id="save-places"[\s\S]*disabled/);
   });
 
+  it("renders save errors near the places actions", () => {
+    const markup = renderPlaces({
+      places: [{ id: "place-1", name: "Front entrance" }],
+      canSave: true,
+      error: "We couldn’t save your places.",
+    });
+
+    expect(markup).toContain('class="places-flow__error" role="alert"');
+    expect(markup).toContain("We couldn’t save your places.");
+  });
+
   it("shows numbering and a menu once there are multiple rows", () => {
     const markup = renderPlaces({
       places: [
@@ -74,7 +85,9 @@ describe("places setup template", () => {
 
 describe("places setup helpers", () => {
   it("trims place names and drops blank places before saving", async () => {
-    const { cleanPlaces } = await import("./places-setup.js");
+    const { cleanPlaces, validatePlacesForSave } = await import(
+      "./places-setup.js"
+    );
 
     expect(
       cleanPlaces([
@@ -82,6 +95,35 @@ describe("places setup helpers", () => {
         { id: "place-2", name: "   " },
       ]),
     ).toEqual([{ id: "place-1", name: "Front entrance" }]);
+    expect(
+      validatePlacesForSave([{ id: "place-1", name: "  Front entrance  " }]),
+    ).toEqual({
+      ok: true,
+      places: [{ id: "place-1", name: "Front entrance" }],
+    });
+  });
+
+  it("validates backend place limits before saving", async () => {
+    const { validatePlacesForSave } = await import("./places-setup.js");
+
+    expect(validatePlacesForSave([{ id: "place-1", name: "   " }])).toEqual({
+      ok: false,
+      error: "Add at least one place.",
+    });
+    expect(
+      validatePlacesForSave(
+        Array.from({ length: 41 }, (_, index) => ({
+          id: `place-${index}`,
+          name: `Place ${index}`,
+        })),
+      ),
+    ).toEqual({ ok: false, error: "You can save up to 40 places." });
+    expect(
+      validatePlacesForSave([{ id: "place-1", name: "x".repeat(121) }]),
+    ).toEqual({
+      ok: false,
+      error: "Place names must be 120 characters or fewer.",
+    });
   });
 
   it("requires at least one confirmed named place before leaving first-run", async () => {
@@ -112,6 +154,7 @@ function renderPlaces(overrides = {}) {
     canSave: false,
     mode: "setup",
     menuIndex: null,
+    error: "",
     ...overrides,
   });
 }
