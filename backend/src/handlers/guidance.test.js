@@ -340,7 +340,7 @@ describe("guidance handlers", () => {
   });
 
   it("completes a task and records app action results", async () => {
-    process.env.GNP_311_SUBMISSION_ENABLED = "true";
+    process.env.GNP_311_SUBMISSION_ENABLED = "false";
     send.mockResolvedValueOnce({
       Item: {
         pk: "SITE#site-1",
@@ -350,7 +350,10 @@ describe("guidance handlers", () => {
         kind: "escalation",
         severity: 3,
         appActions: [
-          { code: "create_311_ticket", payload: { category311: "Cleaning" } },
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "1.1.4.7.20.0" },
+          },
         ],
       },
     });
@@ -370,13 +373,13 @@ describe("guidance handlers", () => {
     expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
       status: "completed",
       completionMethod: "button",
-      appActionStatus: "not_configured",
+      appActionStatus: "skipped",
       gsi2pk: "SITE#site-1#TASK#completed",
       appActionResults: [
         {
           code: "create_311_ticket",
-          status: "not_configured",
-          reason: "311_client_unavailable",
+          status: "skipped",
+          reason: "feature_disabled",
         },
       ],
     });
