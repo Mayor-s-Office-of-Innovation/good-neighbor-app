@@ -1,10 +1,11 @@
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
-import { getObjectBytes } from "../../s3.js";
+import { getObjectBytes, presignGet } from "../../s3.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
 import {
+  buildAttachmentUpdatePayload,
   buildCreateSrPayload,
   createSf311Client,
   Sf311Error,
@@ -167,6 +168,100 @@ async function loadClassifierImage({ tableName, siteId, task }) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
+ * @returns {Promise<Array<{ artifactId: string, s3Key: string }>>}
+ */
+async function imageArtifactsForTask({ tableName, siteId, task }) {
+  const artifactIds = new Set(
+    /** @type {string[]} */ (task.sourceArtifactIds ?? []),
+  );
+  if (!task.checkId || artifactIds.size === 0) return [];
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": checkArtifactPrefix(String(task.checkId)),
+      },
+      ConsistentRead: true,
+    }),
+  );
+  return (result.Items ?? [])
+    .filter(
+      (item) =>
+        artifactIds.has(String(item.artifactId ?? "")) &&
+        typeof item.s3Key === "string" &&
+        typeof item.contentType === "string" &&
+        String(item.contentType).startsWith("image/"),
+    )
+    .map((item) => ({
+      artifactId: String(item.artifactId),
+      s3Key: String(item.s3Key),
+    }));
+}
+
+/**
+ * @param {object} opts
+ * @param {ReturnType<typeof createSf311Client>} opts.sf311
+ * @param {import("../../config.js").AppConfig} opts.config
+ * @param {string | null} opts.srNum
+ * @param {Array<{ artifactId: string, s3Key: string }>} opts.artifacts
+ * @param {Date} opts.nowDate
+ * @returns {Promise<Array<Record<string, unknown>>>}
+ */
+async function attachImagesToServiceRequest({
+  sf311,
+  config,
+  srNum,
+  artifacts,
+  nowDate,
+}) {
+  if (!srNum) {
+    return artifacts.map((artifact) => ({
+      ...artifact,
+      status: "skipped",
+      reason: "missing_srnum",
+    }));
+  }
+
+  const attachments = [];
+  for (const artifact of artifacts) {
+    try {
+      const imageUrl = await presignGet({
+        bucket: config.uploadBucket,
+        key: artifact.s3Key,
+        expiresIn: 300,
+      });
+      const payload = buildAttachmentUpdatePayload({
+        srNum,
+        imageUrl,
+        now: nowDate,
+      });
+      const response = await sf311.updateServiceRequest(payload);
+      attachments.push({
+        ...artifact,
+        status: "submitted",
+        updateId: response.updateId,
+      });
+    } catch (error) {
+      attachments.push({
+        ...artifact,
+        status: "failed",
+        reason: appActionErrorReason(error),
+        ...(appActionErrorDiagnostics(error)
+          ? { diagnostics: appActionErrorDiagnostics(error) }
+          : {}),
+      });
+    }
+  }
+  return attachments;
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {Record<string, unknown>} opts.task
  * @param {AppAction} opts.action
  * @param {Date} opts.nowDate
  * @param {Record<string, string | undefined>} opts.env
@@ -254,6 +349,7 @@ async function execute311Action({
   }
 
   const sf311 = createSf311Client({ config });
+  const imageArtifacts = await imageArtifactsForTask({ tableName, siteId, task });
   const tickets = [];
   for (const serviceCode of serviceCodes) {
     const actionPayload =
@@ -275,11 +371,19 @@ async function execute311Action({
       now: nowDate,
     });
     const response = await sf311.createServiceRequest(payload);
+    const attachments = await attachImagesToServiceRequest({
+      sf311,
+      config,
+      srNum: response.srNum,
+      artifacts: imageArtifacts,
+      nowDate,
+    });
     tickets.push({
       serviceCode,
       responsibleAgency,
       sourceRequestId: payload.SourceRequestID,
       srNum: response.srNum,
+      attachments,
     });
   }
 
@@ -314,7 +418,8 @@ function sanitizeDiagnosticValue(value, depth = 0) {
   if (depth > 4) return "[truncated]";
   if (value == null) return value;
   if (typeof value === "string") {
-    return value.length > 1000 ? `${value.slice(0, 1000)}...` : value;
+    const redacted = redactSignedUrl(value);
+    return redacted.length > 1000 ? `${redacted.slice(0, 1000)}...` : redacted;
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (Array.isArray(value)) {
@@ -337,6 +442,30 @@ function sanitizeDiagnosticValue(value, depth = 0) {
     return sanitized;
   }
   return String(value);
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function redactSignedUrl(value) {
+  if (!value.includes("X-Amz-")) return value;
+  try {
+    const url = new URL(value);
+    for (const key of [
+      "X-Amz-Credential",
+      "X-Amz-Signature",
+      "X-Amz-Security-Token",
+    ]) {
+      if (url.searchParams.has(key)) url.searchParams.set(key, "[redacted]");
+    }
+    return url.toString();
+  } catch {
+    return value.replace(
+      /(X-Amz-(?:Credential|Signature|Security-Token)=)[^&]+/g,
+      "$1[redacted]",
+    );
+  }
 }
 
 /**

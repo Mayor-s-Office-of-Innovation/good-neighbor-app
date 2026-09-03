@@ -171,6 +171,7 @@ Then start the local API with these env overrides:
 ```bash
 GNP_311_SUBMISSION_ENABLED=true \
 SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
 SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
 SF311_BASIC_AUTH_USER=local \
 SF311_BASIC_AUTH_PASS=local \
@@ -182,14 +183,16 @@ Start the worker in another terminal with the same overrides:
 ```bash
 GNP_311_SUBMISSION_ENABLED=true \
 SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
 SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
 SF311_BASIC_AUTH_USER=local \
 SF311_BASIC_AUTH_PASS=local \
 npm run local:worker -w backend
 ```
 
-The fake server returns `LOCAL-SR-000001` style SR numbers. Inspect captured
-CreateSR payloads at `http://127.0.0.1:3999/requests`, or clear them with:
+The fake server returns `LOCAL-SR-000001` style SR numbers and accepts UpdateSR
+attachment requests at `/updatesr`. Inspect captured CreateSR/UpdateSR payloads
+at `http://127.0.0.1:3999/requests`, or clear them with:
 
 ```bash
 curl -X DELETE http://127.0.0.1:3999/requests

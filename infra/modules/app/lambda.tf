@@ -60,6 +60,7 @@ resource "aws_lambda_function" "api" {
       POSTHOG_HOST               = var.posthog_host
       GNP_311_SUBMISSION_ENABLED = tostring(var.enable_311_submission)
       SF311_CREATESR_URL         = var.sf311_createsr_url
+      SF311_UPDATESR_URL         = var.sf311_updatesr_url
       SF311_AGENCY_LOOKUP_URL    = var.sf311_agency_lookup_url
       SF311_BASIC_AUTH_SECRET_ARN = aws_secretsmanager_secret.sf311_basic_auth.arn
       SF311_DEFAULT_RESPONSIBLE_AGENCY = var.sf311_default_responsible_agency

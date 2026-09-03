@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { getObjectBytes, presignGet, send } = vi.hoisted(() => ({
+  getObjectBytes: vi.fn(),
+  presignGet: vi.fn(),
+  send: vi.fn(),
+}));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
+vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
 
 import {
   executeAppActions,
@@ -141,6 +146,7 @@ describe("app action execution", () => {
         },
       },
     });
+    send.mockResolvedValueOnce({ Items: [] });
     const fetchImpl = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -252,6 +258,143 @@ describe("app action execution", () => {
       ]);
     } finally {
       send.mockReset();
+      getObjectBytes.mockReset();
+      presignGet.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("attaches source images to submitted SF311 service requests", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+    presignGet.mockResolvedValueOnce(
+      "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
+    );
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              return_code: "0",
+              error_description: "",
+              SRNum: "2000008106",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            UpdateID: 1234,
+            error_description: "",
+            return_code: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+    try {
+      expect(
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "1.1.4.7.20.0",
+                responsibleAgencyCode: "76",
+              },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            task: {
+              taskId: "task-1",
+              checkId: "check-1",
+              description: "Trash",
+              sourceArtifactIds: ["artifact-1"],
+            },
+          },
+        ),
+      ).toEqual([
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            responsibleAgencyCode: "76",
+            tickets: [
+              {
+                serviceCode: "1.1.4.7.20.0",
+                responsibleAgency: "76",
+                sourceRequestId: "task-1-1147200",
+                srNum: "2000008106",
+                attachments: [
+                  {
+                    artifactId: "artifact-1",
+                    s3Key: "checks/site-1/check-1/North/artifact-1",
+                    status: "submitted",
+                    updateId: "1234",
+                  },
+                ],
+              },
+            ],
+          },
+          externalId: "2000008106",
+          recordedAt: "2026-08-18T12:00:00.000Z",
+        },
+      ]);
+      expect(presignGet).toHaveBeenCalledWith({
+        bucket: "bucket",
+        key: "checks/site-1/check-1/North/artifact-1",
+        expiresIn: 300,
+      });
+      expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+        SRnum: "2000008106",
+        UpdateType: "8",
+        SendingAgency: "76",
+        SourceOperator: "Good Neighbor App",
+        NumericSubType: "1",
+        TextSubType:
+          "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
+        EffectiveDate: "2026-08-18 12:00:00",
+        ToAgencyDate: "",
+        Notes: "",
+      });
+    } finally {
+      send.mockReset();
+      getObjectBytes.mockReset();
+      presignGet.mockReset();
       vi.unstubAllGlobals();
     }
   });
