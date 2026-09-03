@@ -6,9 +6,9 @@ import { deriveSiteId } from "../lib/principal.js";
 import { GSI2_NAME, taskWorklistPk } from "./keys.js";
 
 // A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
-// so the index serves date-range task lists efficiently (see guidance-workflow-
-// backend-plan.md § Index Tradeoffs). That gives up the index's severity ordering,
-// so AP10's "most severe first" is restored by sorting in memory here.
+// so the index serves date-range task lists efficiently (see the data model doc,
+// GSI2 + AP10). That gives up the index's severity ordering, so AP10's "most
+// severe first" is restored by sorting in memory here.
 //
 // A caller `limit` is applied AFTER the sort (a slice), never as a DynamoDB Limit:
 // a Limit truncates by the index order (newest-first), so the globally most-severe
@@ -63,8 +63,9 @@ export const listTasks = async (event) => {
 
   // The partition exceeded one 1 MB page, so we did NOT read every open task: the
   // severity ranking below is over a partial set and could omit the most-severe
-  // task. Visible-not-silent — this is the signal to add a severity-first index
-  // (guidance-workflow-backend-plan.md § Index Tradeoffs) rather than page here.
+  // task. Visible-not-silent — if this fires, the remediation is a second task
+  // index sorted severity-first (rather than overloading GSI2's sort key) or
+  // real pagination; do not paper over it by paging here.
   if (result.LastEvaluatedKey) {
     console.warn(
       `listTasks: ${taskWorklistPk(siteId, status)} exceeded one page; ` +

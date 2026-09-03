@@ -6,8 +6,7 @@
 flowchart LR
   user["Field device (browser)"] --> cloudfront["CloudFront + WAF"]
   cloudfront --> frontend["S3 static frontend"]
-  cloudfront --> api["API Gateway"]
-  api --> cognito["Cognito authorizer (custom:siteId)"]
+  cloudfront --> api["API Gateway (demo: no authorizer)"]
   api --> checks["Lambda: checks + artifacts handlers"]
   checks --> dynamodb["DynamoDB (single table + GSIs)"]
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
@@ -107,8 +106,13 @@ GSIs, and access patterns.
 
 ## Security boundaries
 
+**Demo posture note:** the deployed MVP API runs **no authorizer** — requests resolve to a
+single `DEMO_SITE_ID` (see `api.tf`; test data is disposable). The boundaries below describe
+the target design, enforced with the Phase 6 tenant-isolation work (issue tracker) before
+any real data; details in [security-review.md](./security-review.md).
+
 - Browser users authenticate through Cognito; API Gateway validates tokens before invoking Lambda.
-- `siteId` is derived server-side from the JWT `custom:siteId` claim — never read from the request body — so a tenant can only ever address its own partition.
+- `siteId` is derived server-side from the JWT `custom:siteId` claim — never read from the request body — so a tenant can only ever address its own partition (IAM `LeadingKeys` scoping).
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
 - Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. (A ~7-day media-expiration lifecycle rule is designed but not yet enforced — a pre-launch TODO; see [security-review.md](./security-review.md).)
