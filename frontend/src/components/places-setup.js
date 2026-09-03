@@ -1,8 +1,15 @@
-// @ts-nocheck -- lenient migration baseline (checkJs).
 import { getSite, newId, saveSiteSettings } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
 import { getSiteSettings, putSitePlaces } from "../services/api.js";
 import { placesShell } from "./places-setup.templates.js";
+
+/**
+ * @typedef {{ id?: unknown, name?: unknown, order?: number }} PlaceInput
+ * @typedef {{ id: string, name: string, order: number }} OrderedPlace
+ * @typedef {{ id: string, name: string }} CleanPlace
+ * @typedef {{ ok: true, places: CleanPlace[] } | { ok: false, error: string }} PlaceValidation
+ * @typedef {{ places?: PlaceInput[], name?: string, providerSiteId?: string, placesConfirmedAt?: string, placesConfiguredAt?: string }} SiteSettings
+ */
 
 const MAX_PLACES = 40;
 const MAX_PLACE_NAME_LENGTH = 120;
@@ -24,25 +31,37 @@ const EDIT_COPY = {
   subtitle: "Update the places included in each perimeter check",
 };
 
+/**
+ * @param {unknown} places
+ * @returns {OrderedPlace[]}
+ */
 function normalizePlaces(places) {
   return (Array.isArray(places) ? places : [])
     .map((place, index) => ({
-      id: String(place.id || newId()).trim(),
-      name: String(place.name || "").trim(),
+      id: String(/** @type {PlaceInput} */ (place).id || newId()).trim(),
+      name: String(/** @type {PlaceInput} */ (place).name || "").trim(),
       order: index,
     }))
     .filter((place) => place.id);
 }
 
+/**
+ * @param {unknown} places
+ * @returns {CleanPlace[]}
+ */
 export function cleanPlaces(places) {
   return (Array.isArray(places) ? places : [])
     .map((place) => ({
-      id: place.id,
-      name: String(place.name || "").trim(),
+      id: String(/** @type {PlaceInput} */ (place).id || newId()).trim(),
+      name: String(/** @type {PlaceInput} */ (place).name || "").trim(),
     }))
-    .filter((place) => place.name);
+    .filter((place) => place.id && place.name);
 }
 
+/**
+ * @param {unknown} places
+ * @returns {PlaceValidation}
+ */
 export function validatePlacesForSave(places) {
   const clean = cleanPlaces(places);
   if (!clean.length) {
@@ -57,6 +76,10 @@ export function validatePlacesForSave(places) {
   return { ok: true, places: clean };
 }
 
+/**
+ * @param {CleanPlace[]} places
+ * @returns {string}
+ */
 function signature(places) {
   return JSON.stringify(
     places.map((place) => ({ id: place.id, name: place.name.trim() })),
@@ -64,6 +87,28 @@ function signature(places) {
 }
 
 class PlacesSetup extends HTMLElement {
+  constructor() {
+    super();
+    /** @type {"setup" | "edit"} */
+    this._mode = "setup";
+    /** @type {number | null} */
+    this._menuIndex = null;
+    /** @type {number | null} */
+    this._removeIndex = null;
+    /** @type {string} */
+    this._error = "";
+    /** @type {SiteSettings | null} */
+    this._site = null;
+    /** @type {OrderedPlace[]} */
+    this._places = [];
+    /** @type {boolean} */
+    this._hadSeededPlaces = false;
+    /** @type {string} */
+    this._savedSignature = "[]";
+    /** @type {((event: MouseEvent) => void) | null} */
+    this._onDocumentClick = null;
+  }
+
   async connectedCallback() {
     this._mode = currentRoute().startsWith("/places/edit") ? "edit" : "setup";
     this._menuIndex = null;
@@ -145,8 +190,8 @@ class PlacesSetup extends HTMLElement {
       this._menuIndex = null;
       this._render();
       requestAnimationFrame(() =>
-        this.querySelector(
-          `[data-place-input="${this._places.length - 1}"]`,
+        /** @type {HTMLElement | null} */ (
+          this.querySelector(`[data-place-input="${this._places.length - 1}"]`)
         )?.focus(),
       );
     });
@@ -162,7 +207,9 @@ class PlacesSetup extends HTMLElement {
     this.querySelector("#discard-places-confirm")?.addEventListener(
       "click",
       () => {
-        this.querySelector("#discard-places-dialog")?.close();
+        /** @type {HTMLDialogElement | null} */ (
+          this.querySelector("#discard-places-dialog")
+        )?.close();
         navigate("/today");
       },
     );
@@ -257,7 +304,9 @@ class PlacesSetup extends HTMLElement {
     this._render();
     this.querySelector("#remove-place-title").textContent =
       `Remove "${place.name.trim()}"?`;
-    this.querySelector("#remove-place-dialog")?.showModal();
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#remove-place-dialog")
+    )?.showModal();
   }
 
   _confirmRemove() {
@@ -268,7 +317,9 @@ class PlacesSetup extends HTMLElement {
       }
     }
     this._removeIndex = null;
-    this.querySelector("#remove-place-dialog")?.close();
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#remove-place-dialog")
+    )?.close();
     this._error = "";
     this._render();
   }
@@ -278,8 +329,12 @@ class PlacesSetup extends HTMLElement {
       this._places.length < MAX_PLACES &&
       !this._places.some((place) => !place.name.trim());
     const canSave = this._cleanPlaces().length > 0;
-    const add = this.querySelector("#add-place");
-    const save = this.querySelector("#save-places");
+    const add = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("#add-place")
+    );
+    const save = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("#save-places")
+    );
     if (add) add.disabled = !canAdd;
     if (save) save.disabled = !canSave;
   }
@@ -297,18 +352,22 @@ class PlacesSetup extends HTMLElement {
       navigate("/today");
       return;
     }
-    this.querySelector("#discard-places-dialog")?.showModal();
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#discard-places-dialog")
+    )?.showModal();
   }
 
   async _save() {
     const validation = validatePlacesForSave(this._places);
-    if (!validation.ok) {
+    if (validation.ok === false) {
       this._error = validation.error;
       this._render();
       return;
     }
     const clean = validation.places;
-    const save = this.querySelector("#save-places");
+    const save = /** @type {HTMLButtonElement} */ (
+      this.querySelector("#save-places")
+    );
     save.disabled = true;
     save.textContent = "Saving...";
     try {

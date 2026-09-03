@@ -1,9 +1,33 @@
-// @ts-nocheck -- lenient migration baseline (checkJs). Presentational HTML strings.
 import { html, escapeHtml } from "../lib/html.js";
+
+/**
+ * @typedef {{ id?: string, name?: string, order?: number }} PlaceTemplateItem
+ * @typedef {{
+ *   title: string,
+ *   subtitle: string,
+ *   siteName: string,
+ *   places: PlaceTemplateItem[],
+ *   canAdd: boolean,
+ *   canSave: boolean,
+ *   mode: "setup" | "edit",
+ *   menuIndex: number | null,
+ *   error?: string
+ * }} PlacesShellOptions
+ * @typedef {{
+ *   place: PlaceTemplateItem,
+ *   index: number,
+ *   count: number,
+ *   menuOpen: boolean
+ * }} PlaceRowOptions
+ */
 
 export const PLACE_PLACEHOLDER = "Example: 6th St., or, Front entrance";
 export const MAX_PLACE_NAME_LENGTH = 120;
 
+/**
+ * @param {PlacesShellOptions} options
+ * @returns {string}
+ */
 export function placesShell({
   title,
   subtitle,
@@ -13,7 +37,7 @@ export function placesShell({
   canSave,
   mode,
   menuIndex,
-  error,
+  error = "",
 }) {
   return html`
     <div class="places-flow" data-mode="${escapeHtml(mode)}">
@@ -132,6 +156,10 @@ export function placesShell({
   `;
 }
 
+/**
+ * @param {PlaceRowOptions} options
+ * @returns {string}
+ */
 function placeRow({ place, index, count, menuOpen }) {
   const name = place.name || "";
   const canMoveUp = index > 0;
