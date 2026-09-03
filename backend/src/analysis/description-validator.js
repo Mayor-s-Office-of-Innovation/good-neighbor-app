@@ -83,8 +83,7 @@ let client;
  */
 function getClient() {
   if (!client) {
-    const profile =
-      process.env.BEDROCK_AWS_PROFILE || process.env.TRANSCRIBE_AWS_PROFILE;
+    const profile = process.env.BEDROCK_AWS_PROFILE;
     client = new BedrockRuntimeClient({
       region: process.env.AWS_REGION || "us-east-1",
       credentials: defaultProvider(profile ? { profile } : undefined),
