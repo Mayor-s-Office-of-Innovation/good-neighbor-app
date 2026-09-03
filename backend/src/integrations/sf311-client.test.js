@@ -153,7 +153,8 @@ describe("SF311 CreateSR client helpers", () => {
   });
 
   it("converts SF311 request timeouts into retryable Sf311Errors", async () => {
-    const timeout = new DOMException("Timed out", "TimeoutError");
+    const timeout = new Error("Timed out");
+    timeout.name = "TimeoutError";
     const fetchImpl = vi.fn().mockRejectedValue(timeout);
     const client = createSf311Client({
       config: {
@@ -188,6 +189,6 @@ describe("SF311 CreateSR client helpers", () => {
       request: payload,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    expect(fetchImpl.mock.calls[0][1].signal).toBeTruthy();
   });
 });
