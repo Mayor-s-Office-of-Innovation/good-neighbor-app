@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAttachmentUpdatePayload,
   buildCreateSrPayload,
@@ -150,5 +150,42 @@ describe("SF311 CreateSR client helpers", () => {
     await expect(client.createServiceRequest(payload)).rejects.toBeInstanceOf(
       Sf311Error,
     );
+  });
+
+  it("converts SF311 request timeouts into retryable Sf311Errors", async () => {
+    const timeout = new DOMException("Timed out", "TimeoutError");
+    const fetchImpl = vi.fn().mockRejectedValue(timeout);
+    const client = createSf311Client({
+      config: {
+        uploadBucket: "bucket",
+        queueUrl: "queue",
+        dynamoTable: "table",
+        sf311CreateSrUrl: "https://hub.example.test/createsr",
+        sf311UpdateSrUrl: "https://hub.example.test/updatesr",
+        sf311AgencyLookupUrl: "https://hub.example.test/lookup",
+        sf311BasicAuthUser: "user",
+        sf311BasicAuthPass: "pass",
+      },
+      fetchImpl,
+    });
+    const payload = { SourceRequestID: "task-123" };
+
+    await expect(client.lookupResponsibleAgency("1.1.4.7.20.0")).rejects.toMatchObject({
+      name: "Sf311Error",
+      code: "sf311_timeout",
+      request: { serviceCode: "1.1.4.7.20.0" },
+    });
+    await expect(client.createServiceRequest(payload)).rejects.toMatchObject({
+      name: "Sf311Error",
+      code: "sf311_timeout",
+      request: payload,
+    });
+    await expect(client.updateServiceRequest(payload)).rejects.toMatchObject({
+      name: "Sf311Error",
+      code: "sf311_timeout",
+      request: payload,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });
