@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const {
   createAnalyzerClient,
@@ -208,7 +209,9 @@ describe("app action execution", () => {
           payload: {
             serviceCodeOrAction: "1.1.4.7.20.0",
             responsibleAgencyCode: "",
+            tickets: [],
           },
+          externalId: "",
           diagnostics: {
             integration: "sf311",
             status: 200,
@@ -340,6 +343,142 @@ describe("app action execution", () => {
       getAnalyzerApiKey.mockReset();
       getObjectBytes.mockReset();
       send.mockReset();
+    }
+  });
+
+  it("checkpoints created SF311 tickets when classifier fan-out later fails", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("image"),
+      contentType: "image/jpeg",
+    });
+    getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    createAnalyzerClient.mockReturnValueOnce({
+      classifyImage: vi.fn().mockResolvedValueOnce({
+        labels: ["Mattress", "Furniture"],
+      }),
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              return_code: "0",
+              error_description: "",
+              SRNum: "2000008106",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              return_code: "4001",
+              return_message: "NatureofRequest is invalid",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    try {
+      const results = await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "Run bulky item analysis",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            ANALYZER_BASE_URL: "https://analyzer.example.test",
+            ANALYZER_API_KEY: "analyzer-key",
+            SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site-1",
+          trigger: "user_confirmed",
+          task: {
+            taskId: "task-1",
+            checkId: "check-1",
+            description: "Bulky items",
+            sourceArtifactIds: ["artifact-1"],
+          },
+        },
+      );
+
+      expect(results).toMatchObject([
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "4001",
+          payload: {
+            tickets: [
+              {
+                serviceCode: "1.1.4.7.10.0",
+                responsibleAgency: "76",
+                sourceRequestId: "task-1-1147100",
+                srNum: "2000008106",
+                attachments: [],
+              },
+            ],
+          },
+          externalId: "2000008106",
+        },
+      ]);
+      const checkpoint = send.mock.calls[3][0];
+      expect(checkpoint).toBeInstanceOf(UpdateCommand);
+      expect(checkpoint.input.ExpressionAttributeValues[":results"]).toMatchObject([
+        {
+          status: "failed",
+          reason: "fanout_incomplete",
+          externalId: "2000008106",
+        },
+      ]);
+      expect(JSON.parse(fetchImpl.mock.calls[1][1].body).NatureofRequest).toBe(
+        "1.1.4.7.7.0",
+      );
+    } finally {
+      createAnalyzerClient.mockReset();
+      getAnalyzerApiKey.mockReset();
+      getObjectBytes.mockReset();
+      presignGet.mockReset();
+      send.mockReset();
+      vi.unstubAllGlobals();
     }
   });
 
