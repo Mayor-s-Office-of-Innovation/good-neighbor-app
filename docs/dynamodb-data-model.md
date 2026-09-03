@@ -49,10 +49,12 @@ Key decision: **the device is authenticated as the site**, so anonymous performe
 accounts and every check is still attributed to a site (and a device) for the tenant
 partition key. The admin registers the device once during setup.
 
-This model also lets us enforce tenant isolation **in IAM, not just app code**: site/device
-roles carry a `dynamodb:LeadingKeys` condition pinned to `SITE#${custom:siteId}`, so a
-compromised or buggy client physically cannot read another site's partition. That directly
-satisfies "sites don't share data" at the platform layer.
+This model lets us enforce tenant isolation **in IAM, not just app code**: site/device
+roles will carry a `dynamodb:LeadingKeys` condition pinned to `SITE#${custom:siteId}`, so a
+compromised or buggy client physically cannot read another site's partition. **This is the
+target design, not the current deployment** — today's API runs no authorizer (demo posture);
+the enforcement work is the Phase 6 issue on the issue tracker, per
+[security-review.md](./security-review.md).
 
 ## Table design
 
@@ -100,7 +102,7 @@ header, every artifact, and every analysis together.
 
 | GSI | Partition | Sort | Sparse on | Serves | Status |
 |---|---|---|---|---|---|
-| **GSI1** checks timeline | `SITE#<siteId>` | `<startedAt ISO>` | check headers | list recent checks, date ranges, "were 3 done today" | built |
+| **GSI1** timelines | two partitions per site: `SITE#<siteId>` and `SITE#<siteId>#ASSESSMENT` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) | check headers + assessment reports | checks timeline (AP6, AP12) and assessments timeline (AP14) — each partition lists one entity type | built |
 | **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<createdAt>#<kind>#<severity>#<taskId>` | tasks | staff's open action items, newest-first from the index (severity re-sorted in-app per page — see AP10) | built |
 | **GSI3** city queue | `ESCALATION#<status>` | `<severity>#<createdAt>#<siteId>` | `city_escalation` tasks only | cross-site toxic-cleanup queue for the city | **deferred post-MVP** — sparse, addable with no rebuild |
 | **GSI4** condition history | `SITE#<siteId>#CONDITION#SEV#<severity>` | `<reportedAt>#<assessmentId>#<conditionId>` | conditions | list conditions by site/date/severity | built |
@@ -115,7 +117,7 @@ header, every artifact, and every analysis together.
 | AP3 | Resolve admin → site | from JWT `custom:siteId` (no query) |
 | AP4 | List devices | `Query` `SITE#x`, `begins_with(sk,"DEVICE#")` |
 | AP5 | Submit a check + artifacts | `TransactWrite` (header + artifacts), idempotent on `checkId` |
-| AP6 | List recent / today's checks | `Query` **GSI1** `SITE#x`, SK date range, newest-first |
+| AP6 | List recent / today's checks | `Query` **GSI1** `SITE#x` (checks partition), SK date range, newest-first |
 | AP7 | Open one check (header+artifacts+analysis) | `Query` base `SITE#x`, `begins_with(sk,"CHECK#<id>")` |
 | AP8 | AI writes analysis back | `PutItem` `…#ANALYSIS#…` + `UpdateItem` header severity/status |
 | AP9 | Generate action items | `TransactWrite` tasks |
@@ -123,7 +125,7 @@ header, every artifact, and every analysis together.
 | AP11 | City escalation queue (all sites) | `Query` **GSI3** `ESCALATION#open` *(post-MVP — GSI3 not yet built)* |
 | AP12 | Compliance: 3 checks on date D? | `Query` **GSI1** date range, count |
 | AP13 | Cross-site analytics / rollups | **not native** — see R2 |
-| AP14 | List assessments by site/date | `Query` **GSI1** `SITE#x#ASSESSMENT`, SK date range |
+| AP14 | List assessments by site/date | `Query` **GSI1** `SITE#x#ASSESSMENT` (assessments partition), SK date range, newest-first |
 | AP15 | Conditions of one assessment | `Query` base `SITE#x`, `begins_with(sk,"ASSESSMENT#<id>#COND#")` |
 | AP16 | Unresolved conditions | `Query` **GSI5** `SITE#x#CONDITION#UNRESOLVED` |
 | AP17 | Guidance read / answers | `GetItem` assessment + condition, `UpdateItem` on answer |
@@ -196,8 +198,16 @@ components `severitySum`/`hazardCount` from the original design are **retired** 
 grade-based *Metric definitions* below.)
 
 **Tier 2** is a scheduled incremental DynamoDB **S3 export** (every 6 hours, needs PITR) →
-Glue catalog → **Athena** SQL for arbitrary site-sets/grains; a streaming Firehose/Parquet
-build (T2b) exists only if near-real-time dashboards ever become a requirement.
+Glue catalog → **Athena** SQL for arbitrary site-sets/grains. A streaming Firehose/Parquet
+build (T2b) was considered and **rejected — near-real-time feeds are overkill** for
+leadership reporting; the 6-hour export is the design.
+
+### Infra this adds (all Terraform, no click-ops)
+
+DynamoDB Streams on the table; an S3 analytics bucket (KMS, lifecycle); a Glue database +
+table schema; an Athena workgroup + results bucket. Buildout is post-MVP, tracked on the
+issue tracker. (No Firehose — see T2b above. Dashboards, if any, are app-rendered or
+QuickSight; decide when building.)
 
 Buildout of both tiers is post-MVP, tracked on the issue tracker.
 
@@ -232,12 +242,6 @@ raw components (never a baked score), the formula lives in one module, and — s
 testing data is disposable (cleared between test cycles) — formulas can be reshaped during
 testing at zero migration cost.
 
-### Infra this adds (all Terraform, no click-ops)
-
-DynamoDB Streams on the table; a Firehose delivery stream; an S3 analytics bucket (KMS,
-lifecycle); a Glue database + table schema; an Athena workgroup; QuickSight. Buildout is
-post-MVP, tracked on the issue tracker.
-
 ## Limitations & workarounds
 
 | # | Limitation | Status | Mitigation |
@@ -246,7 +250,7 @@ post-MVP, tracked on the issue tracker.
 | **R2** | **Cross-site analytics / rollups** (city-wide reports — see [the CQRS read plane](#city-wide-reporting--analytics-the-cqrs-read-plane)) | Deferred post-MVP | Tier 1 live aggregates in DynamoDB (Streams → counter items) + Tier 2 lake (S3 export → Athena). Cheap at this volume. |
 | **R3** | Detecting a **missing** check (a site did <3 today) — "proving a negative" | Minor | Scheduled EventBridge sweep iterates the site registry and checks GSI1 counts; can't be a single query, but it's a cron job, not a hot path. |
 | **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Blobs go to the existing S3 uploads bucket; items store S3 keys + use presigned URLs. Never store media in the item. |
-| **R5** | Tenant isolation must be **airtight** across 400 tenants | Enforced by design | IAM `dynamodb:LeadingKeys = SITE#${custom:siteId}` enforces isolation at the platform layer, below the app. |
+| **R5** | Tenant isolation must be **airtight** across 400 tenants | **Not yet enforced — required before any real data** | The design: IAM `dynamodb:LeadingKeys = SITE#${custom:siteId}` on site/device roles enforces isolation at the platform layer, below the app. **Today's deployed API has no authorizer** (demo resolves to `DEMO_SITE_ID`; see `api.tf`) and its Lambda role spans the whole table — the real-data half (Cognito `custom:siteId`, device principal, `LeadingKeys` scoping, negative test) is the Phase 6 issue on the issue tracker, per [security-review.md](./security-review.md). |
 | **R6** | Anonymous performers → **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local performer PIN/roster; not required now. |
 | **R7** | GSI2 status changes rewrite index entries on every task transition | Normal | Expected DynamoDB behavior; volume is tiny. |
 
