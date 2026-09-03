@@ -675,6 +675,49 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
+  # Device-auth bootstrap routes (ADR 0010): /v1/devices (register) and
+  # /v1/devices/token:refresh. Anonymous + keyed only by the 6-char site code,
+  # so WAF is the brute-force guard. Generous by design — several hundred
+  # clients across many sites/IPs: registration is once-per-device and refresh
+  # ~once per 30 days per device (plus rare 401 retries), so honest traffic is
+  # single digits per IP per 5 min. 300/5min/IP leaves >30x headroom while
+  # capping code-guessing at ~900k tries/5min (vs 1M codespace, unusable).
+  rule {
+    name     = "DeviceAuthRateLimit"
+    priority = 6
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 300
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/devices"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-device-auth-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${local.name_prefix}-web-acl"
