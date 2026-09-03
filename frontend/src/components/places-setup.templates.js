@@ -61,7 +61,7 @@ export function placesShell({
 
         <p class="places-flow__site">${escapeHtml(siteName)}</p>
 
-        <div class="places-list" id="places-list">
+        <ol class="places-list" id="places-list">
           ${places
             .map((place, index) =>
               placeRow({
@@ -72,7 +72,7 @@ export function placesShell({
               }),
             )
             .join("")}
-        </div>
+        </ol>
 
         ${mode === "edit"
           ? html`<p class="places-flow__future-note">
@@ -168,7 +168,7 @@ function placeRow({ place, index, count, menuOpen }) {
   const isBlank = !name.trim();
   const showMenuButton = !isSingle;
   return html`
-    <div
+    <li
       class="places-row ${isSingle ? "places-row--single" : ""}"
       data-index="${index}"
     >
@@ -236,6 +236,6 @@ function placeRow({ place, index, count, menuOpen }) {
             </div>`
           : ""}
       </div>
-    </div>
+    </li>
   `;
 }
