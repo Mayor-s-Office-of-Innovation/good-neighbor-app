@@ -15,7 +15,11 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import { checkArtifactPrefix, siteMetaKey, taskKey } from "../../handlers/keys.js";
+import {
+  checkArtifactPrefix,
+  siteMetaKey,
+  taskKey,
+} from "../../handlers/keys.js";
 
 /**
  * @typedef {object} AppAction
@@ -466,7 +470,12 @@ async function execute311Action({
       baseUrl: config.analyzerBaseUrl ?? "",
       apiKey: analyzerApiKey,
     });
-    const image = await loadClassifierImage({ tableName, siteId, task, config });
+    const image = await loadClassifierImage({
+      tableName,
+      siteId,
+      task,
+      config,
+    });
     const result = /** @type {{ labels?: unknown }} */ (
       await analyzer.classifyImage({
         classifierId: parsed.classifierId,
@@ -506,7 +515,11 @@ async function execute311Action({
   }
 
   const sf311 = createSf311Client({ config });
-  const imageArtifacts = await imageArtifactsForTask({ tableName, siteId, task });
+  const imageArtifacts = await imageArtifactsForTask({
+    tableName,
+    siteId,
+    task,
+  });
   const tickets = [];
   for (const serviceCode of serviceCodes) {
     const priorTicket = priorTickets.get(serviceCode);
@@ -522,10 +535,9 @@ async function execute311Action({
       tickets.push({ ...priorTicket, attachments });
       continue;
     }
-    const actionPayload =
-      /** @type {{ responsibleAgencyCode?: unknown }} */ (
-        action.payload ?? {}
-      );
+    const actionPayload = /** @type {{ responsibleAgencyCode?: unknown }} */ (
+      action.payload ?? {}
+    );
     try {
       const responsibleAgency = Object.hasOwn(
         actionPayload,
@@ -698,9 +710,9 @@ function appActionErrorDiagnostics(error) {
 function actionsForTrigger(appActions, trigger) {
   if (!trigger) return appActions;
   return appActions.filter((action) => {
-    const actionTrigger =
-      /** @type {{ executionTrigger?: unknown }} */ (action.payload ?? {})
-        .executionTrigger;
+    const actionTrigger = /** @type {{ executionTrigger?: unknown }} */ (
+      action.payload ?? {}
+    ).executionTrigger;
     if (trigger === "task_created") return actionTrigger === "task_created";
     return actionTrigger !== "task_created";
   });

@@ -509,8 +509,7 @@ export async function storeEvaluatedAssessment(input, options) {
   const actionCount = taskItems.filter((item) => item.kind === "action").length;
   const escalationCount = taskItems.filter(
     (item) =>
-      item.kind === "escalation" ||
-      item.kind === "non_actionable_escalation",
+      item.kind === "escalation" || item.kind === "non_actionable_escalation",
   ).length;
   const emergencyCount = taskItems.filter((item) =>
     isEmergencyTask(item),
@@ -621,10 +620,9 @@ async function executeTaskCreatedAppActions({
       updatedTasks.push(task);
       continue;
     }
-    const appActions =
-      /** @type {import("./app-actions.js").AppAction[]} */ (
-        task.appActions ?? []
-      );
+    const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
+      task.appActions ?? []
+    );
     const appActionResults = await executeAppActions(appActions, {
       env,
       now,
@@ -1122,7 +1120,9 @@ export async function completeTaskWithAppActions(opts) {
     trigger: "user_confirmed",
   });
   const appActionResults =
-    executedAppActionResults.length > 0 ? executedAppActionResults : priorResults;
+    executedAppActionResults.length > 0
+      ? executedAppActionResults
+      : priorResults;
   const appActionStatus = summarizeAppActionResults(appActionResults);
   const appActionFailed = appActionStatus === "failed";
 
