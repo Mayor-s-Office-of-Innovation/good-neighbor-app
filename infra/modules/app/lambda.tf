@@ -8,6 +8,12 @@ data "archive_file" "api" {
   output_path = "${path.module}/dist/api.zip"
 }
 
+data "archive_file" "authorizer" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/authorizer"
+  output_path = "${path.module}/dist/authorizer.zip"
+}
+
 data "archive_file" "worker" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/worker"
@@ -56,6 +62,9 @@ resource "aws_lambda_function" "api" {
       BEDROCK_MODEL_ID           = var.bedrock_model_id
       POSTHOG_API_KEY_SECRET_ARN = aws_secretsmanager_secret.posthog_project_api_key.arn
       POSTHOG_HOST               = var.posthog_host
+      # Device token minting (Option 4 device auth — docs/adr/0010): the api
+      # Lambda mints session tokens for the registration/refresh routes.
+      DEVICE_TOKEN_SECRET_SECRET_ARN = aws_secretsmanager_secret.device_token_key.arn
       # Feedback destination (docs/runbooks/feedback-ops.md): plain
       # identifiers, not secrets. Empty defaults keep the forwarder log-only
       # until the surveys exist in the project (the kill switch too).
@@ -65,6 +74,42 @@ resource "aws_lambda_function" "api" {
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
+  tags       = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "authorizer" {
+  name              = "/aws/lambda/${local.name_prefix}-authorizer"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "authorizer" {
+  #checkov:skip=CKV_AWS_116:Sync API-Gateway authorizer function; verdicts return to the gateway, so a Lambda DLQ is N/A.
+  #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
+  #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
+  function_name    = "${local.name_prefix}-authorizer"
+  role             = aws_iam_role.authorizer.arn
+  runtime          = "nodejs22.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.authorizer.output_path
+  source_code_hash = data.archive_file.authorizer.output_base64sha256
+  memory_size      = 256
+  timeout          = 5
+  kms_key_arn      = aws_kms_key.app.arn
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      DYNAMO_TABLE                   = aws_dynamodb_table.app.name
+      DEVICE_TOKEN_SECRET_SECRET_ARN = aws_secretsmanager_secret.device_token_key.arn
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.authorizer]
   tags       = var.tags
 }
 
@@ -173,4 +218,12 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
+resource "aws_lambda_permission" "api_gateway_authorizer" {
+  statement_id  = "AllowApiGatewayInvokeAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/$default"
 }

@@ -15,6 +15,8 @@
 */
 
 import { mark, span } from "./instrument.js";
+import { getSite, updateSiteSession } from "../db.js";
+import { refreshDeviceToken } from "./devices.js";
 
 // Same-origin everywhere: in dev the Vite proxy forwards `/v1/*` → the local API
 // on :3001 (no CORS — see vite.config.js); in production the SPA and API share
@@ -42,18 +44,88 @@ export class ApiError extends Error {
 }
 
 /**
- * One JSON request against the backend. Serializes an object body, parses a JSON
- * response, and throws `ApiError` on a non-2xx status or a transport failure.
+ * Raised when the device session cannot be renewed (refresh rejected after the
+ * access token died — months of disuse, or the device was revoked). Callers
+ * should route the user back to site setup; nothing else recovers from this.
+ */
+export class ReauthRequiredError extends ApiError {
+  constructor() {
+    super("Device session expired — re-registration (site code) required", {
+      status: 401,
+    });
+    this.name = "ReauthRequiredError";
+  }
+}
+
+/*
+  Device-token plumbing (Option 4 device auth, docs/adr/0010): every request
+  rides `Authorization: Bearer <token>` from the stored site record. On a 401 —
+  or pre-emptively when the access token is near expiry — the session is
+  refreshed silently with the single-use rotating refresh token (never the site
+  code; the code-holder may not be around). One in-flight refresh is shared by
+  concurrent requests; failures surface as `ReauthRequiredError`.
+*/
+
+/** Module-level in-flight refresh, shared by concurrent requests. */
+let refreshInFlight;
+
+/**
+ * Exchange the stored refresh token for a fresh pair and persist it. Shared
+ * promise so N concurrent 401s trigger exactly one refresh. Throws
+ * `ReauthRequiredError` when the refresh is rejected.
+ * @param {{ refreshToken?: string }} site
+ * @returns {Promise<{ token: string }>}
+ */
+async function refreshSession(site) {
+  refreshInFlight ??= (async () => {
+    if (!site.refreshToken) throw new ReauthRequiredError();
+    try {
+      const session = await refreshDeviceToken(site.refreshToken);
+      await updateSiteSession(session);
+      mark("auth:refreshed", { generation: session.tokenGeneration });
+      return { token: session.token };
+    } finally {
+      // Clear AFTER persistence so a crash mid-refresh still fails closed.
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean} true for a 401 ApiError (transport failures are 0)
+ */
+function is401(err) {
+  return err instanceof ApiError && err.status === 401;
+}
+
+/**
+ * One JSON request against the backend. Serializes an object body, parses a
+ * JSON response, and throws `ApiError` on a non-2xx status or a transport
+ * failure. Attaches the device token when a session exists and retries once
+ * through a silent refresh on a 401.
  * @param {string} method
  * @param {string} path        path beginning with `/` (joined onto BASE)
  * @param {object} [opts]
  * @param {Record<string,string>} [opts.headers]
  * @param {unknown} [opts.body]  JSON-serializable body (omitted for GET)
  * @param {AbortSignal} [opts.signal]
+ * @param {boolean} [opts.allowAuthRetry] internal: set false on the retry leg
+ *   to stop a 401 loop
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
-async function request(method, path, { headers = {}, body, signal } = {}) {
+async function request(
+  method,
+  path,
+  { headers = {}, body, signal, allowAuthRetry = true } = {},
+) {
   const hasBody = body !== undefined;
+  const site = await getSite().catch(() => null);
+  const authHeaders = site?.token
+    ? { authorization: `Bearer ${site.token}` }
+    : {};
+
   /** @type {Response} */
   let res;
   try {
@@ -61,6 +133,7 @@ async function request(method, path, { headers = {}, body, signal } = {}) {
       method,
       headers: {
         ...(hasBody ? { "content-type": "application/json" } : {}),
+        ...authHeaders,
         ...headers,
       },
       ...(hasBody ? { body: JSON.stringify(body) } : {}),
@@ -85,6 +158,24 @@ async function request(method, path, { headers = {}, body, signal } = {}) {
   }
 
   if (!res.ok) {
+    // Expired/revoked access token → ONE silent refresh, then retry. A second
+    // 401 (or a rejected refresh) is fatal: ReauthRequiredError.
+    if (res.status === 401 && allowAuthRetry && site?.refreshToken) {
+      try {
+        await refreshSession(site);
+      } catch (err) {
+        if (err instanceof ReauthRequiredError) throw err;
+        if (is401(err)) throw new ReauthRequiredError();
+        throw err;
+      }
+      // The refreshed session is already persisted; re-read + retry.
+      return request(method, path, {
+        headers,
+        body,
+        signal,
+        allowAuthRetry: false,
+      });
+    }
     const detail =
       parsed && typeof parsed === "object" && "error" in parsed
         ? parsed.error
