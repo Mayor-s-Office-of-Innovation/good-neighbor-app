@@ -15,6 +15,7 @@
     "local:mq": "node scripts/local-mq.mjs",
     "local:minio": "node --env-file=../.env.local scripts/local-minio.mjs",
     "local:services": "concurrently -k -n ddb,mq,minio \"npm:local:ddb\" \"npm:local:mq\" \"npm:local:minio\"",
+    "local:sf311": "node scripts/local-sf311.mjs",
     "local:bootstrap": "node --env-file=../.env.local scripts/local-bootstrap.mjs",
     "local:api": "node --env-file=../.env.local scripts/local-api.mjs",
     "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",

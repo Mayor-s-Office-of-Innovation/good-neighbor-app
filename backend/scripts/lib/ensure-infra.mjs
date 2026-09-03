@@ -233,14 +233,37 @@ async function seedLocalSiteCodes(docDdb, tableName) {
   const now = new Date().toISOString();
   const items = [
     {
+      pk: "PROVIDER#the-gubbio-project",
+      sk: "#META",
+      entityType: "PROVIDER",
+      providerId: "the-gubbio-project",
+      name: "The Gubbio Project",
+      seededAt: now,
+    },
+    {
+      pk: "SITE#st-john-the-evangelist",
+      sk: "#META",
+      entityType: "SITE",
+      siteId: "st-john-the-evangelist",
+      providerId: "the-gubbio-project",
+      name: "St. John the Evangelist",
+      location: {
+        latitude: 37.76656393517443,
+        longitude: -122.4213267021692,
+      },
+      seededAt: now,
+    },
+    {
       pk: "SITE_CODE#123456",
       sk: "#META",
       type: "providerSiteCode",
       code: "123456",
       active: true,
-      providerSiteId: "provider-site-health-center-mission",
-      siteId: "site-health-center-mission",
-      siteName: "Health Center Mission",
+      providerId: "the-gubbio-project",
+      providerName: "The Gubbio Project",
+      providerSiteId: "provider-site-st-john-the-evangelist",
+      siteId: "st-john-the-evangelist",
+      siteName: "St. John the Evangelist",
       seededAt: now,
     },
     {
