@@ -238,16 +238,17 @@ export class Sf311Error extends Error {
 }
 
 /**
- * @returns {{ signal: AbortSignal, cancel: () => void }}
+ * @returns {{ signal: unknown, cancel: () => void }}
  */
 function sf311TimeoutSignal() {
-  if (typeof AbortSignal.timeout === "function") {
+  const abortSignal = globalThis.AbortSignal;
+  if (typeof abortSignal?.timeout === "function") {
     return {
-      signal: AbortSignal.timeout(SF311_REQUEST_TIMEOUT_MS),
+      signal: abortSignal.timeout(SF311_REQUEST_TIMEOUT_MS),
       cancel: () => {},
     };
   }
-  const controller = new AbortController();
+  const controller = new globalThis.AbortController();
   const timer = setTimeout(() => controller.abort(), SF311_REQUEST_TIMEOUT_MS);
   return {
     signal: controller.signal,
@@ -299,7 +300,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
 
   /**
    * @param {string} url
-   * @param {RequestInit} init
+   * @param {Record<string, unknown>} init
    * @param {string} operation
    * @param {unknown} [request]
    * @returns {Promise<Response>}
@@ -307,7 +308,11 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   const fetchSf311 = async (url, init, operation, request) => {
     const timeout = sf311TimeoutSignal();
     try {
-      return await fetchImpl(url, { ...init, signal: timeout.signal });
+      const requestInit = /** @type {Parameters<typeof fetch>[1]} */ ({
+        ...init,
+        signal: timeout.signal,
+      });
+      return await fetchImpl(url, requestInit);
     } catch (error) {
       if (isAbortError(error)) {
         throw new Sf311Error(`SF311 ${operation} timed out`, {
