@@ -131,6 +131,7 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
 /**
  * @typedef {object} AnalyzerClient
  * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string }) => Promise<AnalysisResponse>} analyze
+ * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
  * @property {() => Promise<unknown>} listRubrics
  */
 
@@ -236,6 +237,20 @@ export function createAnalyzerClient({
       return /** @type {Promise<AnalysisResponse>} */ (
         request("/v1/analyses", { method: "POST", body, auth: true })
       );
+    },
+    classifyImage({ classifierId, image, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request(`/v1/classifiers/${encodeURIComponent(classifierId)}`, {
+        method: "POST",
+        body: {
+          image,
+          ...(Object.keys(caller).length > 0 ? { caller } : {}),
+        },
+        auth: true,
+      });
     },
     listRubrics() {
       return request("/v1/rubrics", { method: "GET", auth: false });
