@@ -40,6 +40,8 @@ describe("places setup template", () => {
     });
 
     expect(markup).toContain("places-row--single");
+    expect(markup).toContain('<ol class="places-list" id="places-list">');
+    expect(markup).toContain("<li");
     expect(markup).not.toContain("places-row__number");
     expect(markup).not.toContain("data-place-menu");
   });
