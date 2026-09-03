@@ -462,7 +462,9 @@ describe("app action execution", () => {
       ]);
       const checkpoint = send.mock.calls[3][0];
       expect(checkpoint).toBeInstanceOf(UpdateCommand);
-      expect(checkpoint.input.ExpressionAttributeValues[":results"]).toMatchObject([
+      expect(
+        checkpoint.input.ExpressionAttributeValues[":results"],
+      ).toMatchObject([
         {
           status: "failed",
           reason: "fanout_incomplete",

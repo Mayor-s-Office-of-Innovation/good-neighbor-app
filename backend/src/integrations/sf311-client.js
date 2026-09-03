@@ -19,7 +19,10 @@ const basicAuthCache = new Map();
  * @returns {string}
  */
 export function hubDateTime(date) {
-  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, "");
 }
 
 /**
@@ -357,7 +360,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
 
     /**
      * @param {Record<string, string>} payload
-     * @returns {Promise<{ srNum: string | null, response: unknown }>}
+     * @returns {Promise<{ srNum: string, response: unknown }>}
      */
     async createServiceRequest(payload) {
       const auth = await getSf311BasicAuth(config);

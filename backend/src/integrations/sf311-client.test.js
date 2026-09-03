@@ -170,7 +170,9 @@ describe("SF311 CreateSR client helpers", () => {
     });
     const payload = { SourceRequestID: "task-123" };
 
-    await expect(client.lookupResponsibleAgency("1.1.4.7.20.0")).rejects.toMatchObject({
+    await expect(
+      client.lookupResponsibleAgency("1.1.4.7.20.0"),
+    ).rejects.toMatchObject({
       name: "Sf311Error",
       code: "sf311_timeout",
       request: { serviceCode: "1.1.4.7.20.0" },
