@@ -6,6 +6,7 @@ import { getConfig } from "../config.js";
 
 const SOURCE_AGENCY = "76";
 const SENDING_AGENCY = "76";
+const SF311_REQUEST_TIMEOUT_MS = 10_000;
 
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
@@ -234,6 +235,35 @@ export class Sf311Error extends Error {
 }
 
 /**
+ * @returns {{ signal: AbortSignal, cancel: () => void }}
+ */
+function sf311TimeoutSignal() {
+  if (typeof AbortSignal.timeout === "function") {
+    return {
+      signal: AbortSignal.timeout(SF311_REQUEST_TIMEOUT_MS),
+      cancel: () => {},
+    };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SF311_REQUEST_TIMEOUT_MS);
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(timer),
+  };
+}
+
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isAbortError(error) {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
+/**
  * @param {object} options
  * @param {import("../config.js").AppConfig} [options.config]
  * @param {typeof fetch} [options.fetchImpl]
@@ -264,6 +294,30 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
     }
   };
 
+  /**
+   * @param {string} url
+   * @param {RequestInit} init
+   * @param {string} operation
+   * @param {unknown} [request]
+   * @returns {Promise<Response>}
+   */
+  const fetchSf311 = async (url, init, operation, request) => {
+    const timeout = sf311TimeoutSignal();
+    try {
+      return await fetchImpl(url, { ...init, signal: timeout.signal });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Sf311Error(`SF311 ${operation} timed out`, {
+          code: "sf311_timeout",
+          request,
+        });
+      }
+      throw error;
+    } finally {
+      timeout.cancel();
+    }
+  };
+
   return {
     /**
      * @param {string} serviceCode
@@ -271,13 +325,18 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
      */
     async lookupResponsibleAgency(serviceCode) {
       const auth = await getSf311BasicAuth(config);
-      const res = await fetchImpl(agencyLookupUrl, {
-        method: "GET",
-        headers: {
-          accept: "application/json",
-          authorization: basicAuthHeader(auth),
+      const res = await fetchSf311(
+        agencyLookupUrl,
+        {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: basicAuthHeader(auth),
+          },
         },
-      });
+        "agency lookup",
+        { serviceCode },
+      );
       const body = await readJson(res);
       if (!res.ok) {
         throw new Sf311Error(`SF311 agency lookup returned ${res.status}`, {
@@ -302,15 +361,20 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
      */
     async createServiceRequest(payload) {
       const auth = await getSf311BasicAuth(config);
-      const res = await fetchImpl(createSrUrl, {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          authorization: basicAuthHeader(auth),
+      const res = await fetchSf311(
+        createSrUrl,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            authorization: basicAuthHeader(auth),
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        "CreateSR",
+        payload,
+      );
       const body = await readJson(res);
       const data =
         body && typeof body === "object" && "data" in body
@@ -355,15 +419,20 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         throw new Error("SF311_UPDATESR_URL is required");
       }
       const auth = await getSf311BasicAuth(config);
-      const res = await fetchImpl(updateSrUrl, {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-          authorization: basicAuthHeader(auth),
+      const res = await fetchSf311(
+        updateSrUrl,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            authorization: basicAuthHeader(auth),
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        "UpdateSR",
+        payload,
+      );
       const body = await readJson(res);
       const data =
         body && typeof body === "object" && "data" in body
