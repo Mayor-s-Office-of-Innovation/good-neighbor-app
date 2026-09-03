@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildAttachmentUpdatePayload,
   buildCreateSrPayload,
+  createSf311Client,
   findResponsibleAgencyInLookup,
   hubDateTime,
+  Sf311Error,
   sourceRequestId,
 } from "./sf311-client.js";
 
@@ -107,5 +109,46 @@ describe("SF311 CreateSR client helpers", () => {
         "1.1.4.7.20.0",
       ),
     ).toBe("5");
+  });
+
+  it("rejects successful CreateSR responses that do not include an SRNum", async () => {
+    const payload = buildCreateSrPayload({
+      taskId: "task-123",
+      serviceCode: "1.1.4.7.20.0",
+      responsibleAgency: "76",
+      problemDescription: "Trash near the doorway",
+      location: {
+        latitude: 37.76656393517443,
+        longitude: -122.4213267021692,
+      },
+      now: new Date("2026-09-02T17:11:12.000Z"),
+    });
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: { return_code: "0" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const client = createSf311Client({
+      config: {
+        uploadBucket: "bucket",
+        queueUrl: "queue",
+        dynamoTable: "table",
+        sf311CreateSrUrl: "https://hub.example.test/createsr",
+        sf311AgencyLookupUrl: "https://hub.example.test/lookup",
+        sf311BasicAuthUser: "user",
+        sf311BasicAuthPass: "pass",
+      },
+      fetchImpl,
+    });
+
+    await expect(client.createServiceRequest(payload)).rejects.toMatchObject({
+      name: "Sf311Error",
+      code: "missing_srnum",
+      status: 200,
+      request: payload,
+    });
+    await expect(client.createServiceRequest(payload)).rejects.toBeInstanceOf(
+      Sf311Error,
+    );
   });
 });

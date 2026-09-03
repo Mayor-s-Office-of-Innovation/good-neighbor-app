@@ -237,7 +237,7 @@ export class Sf311Error extends Error {
  * @param {object} options
  * @param {import("../config.js").AppConfig} [options.config]
  * @param {typeof fetch} [options.fetchImpl]
- * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string | null, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }> }}
+ * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }> }}
  */
 export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   if (!config.sf311CreateSrUrl) {
@@ -334,7 +334,16 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         data && typeof data === "object"
           ? /** @type {Record<string, unknown>} */ (data).SRNum
           : null;
-      return { srNum: srNum == null ? null : String(srNum), response: body };
+      const normalizedSrNum = srNum == null ? "" : String(srNum).trim();
+      if (!normalizedSrNum) {
+        throw new Sf311Error("SF311 CreateSR response missing SRNum", {
+          status: res.status,
+          code: "missing_srnum",
+          body,
+          request: payload,
+        });
+      }
+      return { srNum: normalizedSrNum, response: body };
     },
 
     /**
