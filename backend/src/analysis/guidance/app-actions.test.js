@@ -617,6 +617,256 @@ describe("app action execution", () => {
     }
   });
 
+  it("keeps created SF311 tickets retryable when image attachment fails", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+    presignGet.mockResolvedValueOnce(
+      "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
+    );
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              return_code: "0",
+              error_description: "",
+              SRNum: "2000008106",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              return_code: "5001",
+              return_message: "Attachment rejected",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    try {
+      expect(
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "1.1.4.7.20.0",
+                responsibleAgencyCode: "76",
+              },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            task: {
+              taskId: "task-1",
+              checkId: "check-1",
+              description: "Trash",
+              sourceArtifactIds: ["artifact-1"],
+            },
+          },
+        ),
+      ).toMatchObject([
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "attachment_submission_failed",
+          payload: {
+            tickets: [
+              {
+                serviceCode: "1.1.4.7.20.0",
+                responsibleAgency: "76",
+                sourceRequestId: "task-1-1147200",
+                srNum: "2000008106",
+                attachments: [
+                  {
+                    artifactId: "artifact-1",
+                    s3Key: "checks/site-1/check-1/North/artifact-1",
+                    status: "failed",
+                    reason: "5001",
+                  },
+                ],
+              },
+            ],
+          },
+          externalId: "2000008106",
+        },
+      ]);
+    } finally {
+      send.mockReset();
+      getObjectBytes.mockReset();
+      presignGet.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries failed image attachments without recreating the SF311 ticket", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+    presignGet.mockResolvedValueOnce(
+      "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
+    );
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          UpdateID: 1234,
+          error_description: "",
+          return_code: 0,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    try {
+      expect(
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "1.1.4.7.20.0",
+                responsibleAgencyCode: "76",
+              },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            task: {
+              taskId: "task-1",
+              checkId: "check-1",
+              description: "Trash",
+              sourceArtifactIds: ["artifact-1"],
+            },
+            priorResults: [
+              {
+                code: "create_311_ticket",
+                status: "failed",
+                reason: "attachment_submission_failed",
+                payload: {
+                  tickets: [
+                    {
+                      serviceCode: "1.1.4.7.20.0",
+                      responsibleAgency: "76",
+                      sourceRequestId: "task-1-1147200",
+                      srNum: "2000008106",
+                      attachments: [
+                        {
+                          artifactId: "artifact-1",
+                          s3Key: "checks/site-1/check-1/North/artifact-1",
+                          status: "failed",
+                          reason: "5001",
+                        },
+                      ],
+                    },
+                  ],
+                },
+                externalId: "2000008106",
+                recordedAt: "2026-08-18T11:59:00.000Z",
+              },
+            ],
+          },
+        ),
+      ).toMatchObject([
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          payload: {
+            tickets: [
+              {
+                serviceCode: "1.1.4.7.20.0",
+                srNum: "2000008106",
+                attachments: [
+                  {
+                    artifactId: "artifact-1",
+                    s3Key: "checks/site-1/check-1/North/artifact-1",
+                    status: "submitted",
+                    updateId: "1234",
+                  },
+                ],
+              },
+            ],
+          },
+          externalId: "2000008106",
+        },
+      ]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+        SRnum: "2000008106",
+        UpdateType: "8",
+      });
+    } finally {
+      send.mockReset();
+      getObjectBytes.mockReset();
+      presignGet.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("leaves email and form integrations unconfigured", async () => {
     const results = await executeAppActions(
       [{ code: "compose_email" }, { code: "create_fire_hazard_report" }],
