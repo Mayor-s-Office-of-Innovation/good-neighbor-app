@@ -56,10 +56,9 @@ Convention: a component's logic lives in `<name>.js`; if its markup grows, split
 - **[Design system — building screens to spec](../docs/frontend-design-system.md)** — the class
   + token vocabulary and a recipe for building a screen that matches the app **without a mockup**.
   Start here before adding any new screen or styles.
-- Frontend migration plan (Step 2) — how `gnp` became
-  `frontend/`, plus the open backend/auth/deploy decisions and the deferred offline pass.
-- [Docs map](../docs/README.md) — every planning thread with its ordered read path.
-- [MVP tracker](../docs/inprogress/MVP-TODO.md) — what's left on the way to a deployed MVP.
+- [Docs map](../docs/README.md) — reference docs: architecture, data model, ADRs.
+- [GitHub issue tracker](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues) —
+  open work and what's left on the way to a deployed MVP.
 
 Design tokens and component classes themselves are documented inline in
 [src/styles/tokens.css](./src/styles/tokens.css) and [src/styles/app.css](./src/styles/app.css).

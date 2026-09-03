@@ -2,12 +2,17 @@
 
 ## Status
 
-Accepted (2026-08-31). Planning detail and build state live in
-[client-error-tracking-plan.md](../todo/client-error-tracking-plan.md); a sibling
-DIY-first proposal (same date, since removed) was reviewed and folded in — its
-governance gate, scrub-twice approach, digest fallback, structured server
-logging, and `instrument.js` toggle conventions were adopted, while its
-DIY-first posture (tracker conditional) and offline error queue were declined.
+Accepted (2026-08-31). Build state: phases 1–4 built + green (2026-08-31,
+branch `feature/error-tracking`) — intake handler (validate + double-scrub +
+`ClientErrorDropped` marker), forwarder (**log-only until MOI/COIT egress sign-off**; Secrets
+Manager key, module-cached, 3 s timeout), `logServerError` structured-logging convention,
+WAF rate rule, sourcemaps (CI upload to PostHog, excluded from public S3), metric-filter
+alarms. MOI egress sign-off granted 2026-08-31; rollout completion (PostHog keys, alarm
+recipients, first dev apply) is tracked on the issue tracker. A sibling DIY-first proposal
+(same date, since removed) was reviewed and folded in — its governance gate, scrub-twice
+approach, digest fallback, structured server logging, and `instrument.js` toggle
+conventions were adopted, while its DIY-first posture (tracker conditional) and offline
+error queue were declined.
 
 ## Context
 
