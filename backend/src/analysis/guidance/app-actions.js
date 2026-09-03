@@ -1,4 +1,4 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes, presignGet } from "../../s3.js";
 import { getAnalyzerApiKey } from "../api-key.js";
@@ -15,7 +15,7 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import { checkArtifactPrefix, siteMetaKey } from "../../handlers/keys.js";
+import { checkArtifactPrefix, siteMetaKey, taskKey } from "../../handlers/keys.js";
 
 /**
  * @typedef {object} AppAction
@@ -33,6 +33,103 @@ import { checkArtifactPrefix, siteMetaKey } from "../../handlers/keys.js";
  * @property {string} [externalId]
  * @property {string} recordedAt
  */
+
+/**
+ * @param {AppActionResult} result
+ * @returns {Array<Record<string, unknown>>}
+ */
+function ticketsFromActionResult(result) {
+  const tickets = result.payload?.tickets;
+  return Array.isArray(tickets)
+    ? tickets.filter((ticket) => ticket && typeof ticket === "object")
+    : [];
+}
+
+/**
+ * @param {AppActionResult[]} priorResults
+ * @param {string} actionCode
+ * @returns {Map<string, Record<string, unknown>>}
+ */
+function priorTicketsByServiceCode(priorResults, actionCode) {
+  const tickets = new Map();
+  for (const result of priorResults) {
+    if (result.code !== actionCode) continue;
+    for (const ticket of ticketsFromActionResult(result)) {
+      const serviceCode = String(ticket.serviceCode ?? "");
+      if (serviceCode && ticket.srNum) tickets.set(serviceCode, ticket);
+    }
+  }
+  return tickets;
+}
+
+/**
+ * @param {object} opts
+ * @param {AppAction} opts.action
+ * @param {string} opts.status
+ * @param {string} opts.recordedAt
+ * @param {Array<Record<string, unknown>>} opts.tickets
+ * @param {string} [opts.reason]
+ * @param {Record<string, unknown>} [opts.diagnostics]
+ * @returns {AppActionResult}
+ */
+function build311ActionResult({
+  action,
+  status,
+  recordedAt,
+  tickets,
+  reason,
+  diagnostics,
+}) {
+  return {
+    code: action.code,
+    status,
+    ...(reason ? { reason } : {}),
+    payload: { ...(action.payload ?? {}), tickets },
+    externalId: tickets
+      .map((ticket) => ticket.srNum)
+      .filter(Boolean)
+      .join(","),
+    ...(diagnostics ? { diagnostics } : {}),
+    recordedAt,
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.taskId
+ * @param {AppActionResult} opts.result
+ * @param {string} opts.updatedAt
+ * @returns {Promise<void>}
+ */
+async function checkpoint311ActionResult({
+  tableName,
+  siteId,
+  taskId,
+  result,
+  updatedAt,
+}) {
+  if (!tableName || !siteId || !taskId) return;
+  await ddb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: taskKey(siteId, taskId),
+      UpdateExpression:
+        "SET appActionResults = :results, appActionStatus = :status, updatedAt = :updatedAt",
+      ConditionExpression: "#status = :completing",
+      ExpressionAttributeNames: {
+        "#status": "status",
+      },
+      ExpressionAttributeValues: {
+        ":results": [result],
+        ":status": summarizeAppActionResults([result]),
+        ":updatedAt": updatedAt,
+        ":completing": "completing",
+      },
+    }),
+  );
+}
 
 /**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
@@ -267,6 +364,7 @@ async function attachImagesToServiceRequest({
  * @param {Date} opts.nowDate
  * @param {Record<string, string | undefined>} opts.env
  * @param {AppActionResult[]} opts.priorResults
+ * @param {"task_created" | "user_confirmed" | undefined} opts.trigger
  * @returns {Promise<AppActionResult>}
  */
 async function execute311Action({
@@ -277,12 +375,14 @@ async function execute311Action({
   nowDate,
   env,
   priorResults,
+  trigger,
 }) {
   const now = nowDate.toISOString();
   const priorSubmitted = priorResults.find(
     (result) => result.code === action.code && result.status === "submitted",
   );
   if (priorSubmitted) return priorSubmitted;
+  const priorTickets = priorTicketsByServiceCode(priorResults, action.code);
 
   if (!is311SubmissionEnabled(env)) {
     return {
@@ -362,51 +462,78 @@ async function execute311Action({
   const imageArtifacts = await imageArtifactsForTask({ tableName, siteId, task });
   const tickets = [];
   for (const serviceCode of serviceCodes) {
+    const priorTicket = priorTickets.get(serviceCode);
+    if (priorTicket) {
+      tickets.push(priorTicket);
+      continue;
+    }
     const actionPayload =
       /** @type {{ responsibleAgencyCode?: unknown }} */ (
         action.payload ?? {}
       );
-    const responsibleAgency = Object.hasOwn(
-      actionPayload,
-      "responsibleAgencyCode",
-    )
-      ? String(actionPayload.responsibleAgencyCode ?? "")
-      : await sf311.lookupResponsibleAgency(serviceCode);
-    const payload = buildCreateSrPayload({
-      taskId: String(task.taskId ?? ""),
-      serviceCode,
-      responsibleAgency,
-      problemDescription: problemDescriptionForTask(task),
-      location,
-      now: nowDate,
-    });
-    const response = await sf311.createServiceRequest(payload);
-    const attachments = await attachImagesToServiceRequest({
-      sf311,
-      config,
-      srNum: response.srNum,
-      artifacts: imageArtifacts,
-      nowDate,
-    });
-    tickets.push({
-      serviceCode,
-      responsibleAgency,
-      sourceRequestId: payload.SourceRequestID,
-      srNum: response.srNum,
-      attachments,
-    });
+    try {
+      const responsibleAgency = Object.hasOwn(
+        actionPayload,
+        "responsibleAgencyCode",
+      )
+        ? String(actionPayload.responsibleAgencyCode ?? "")
+        : await sf311.lookupResponsibleAgency(serviceCode);
+      const payload = buildCreateSrPayload({
+        taskId: String(task.taskId ?? ""),
+        serviceCode,
+        responsibleAgency,
+        problemDescription: problemDescriptionForTask(task),
+        location,
+        now: nowDate,
+      });
+      const response = await sf311.createServiceRequest(payload);
+      const attachments = await attachImagesToServiceRequest({
+        sf311,
+        config,
+        srNum: response.srNum,
+        artifacts: imageArtifacts,
+        nowDate,
+      });
+      tickets.push({
+        serviceCode,
+        responsibleAgency,
+        sourceRequestId: payload.SourceRequestID,
+        srNum: response.srNum,
+        attachments,
+      });
+      if (trigger === "user_confirmed") {
+        await checkpoint311ActionResult({
+          tableName,
+          siteId,
+          taskId: String(task.taskId ?? ""),
+          result: build311ActionResult({
+            action,
+            status: "failed",
+            reason: "fanout_incomplete",
+            recordedAt: now,
+            tickets,
+          }),
+          updatedAt: now,
+        });
+      }
+    } catch (error) {
+      return build311ActionResult({
+        action,
+        status: "failed",
+        reason: appActionErrorReason(error),
+        diagnostics: appActionErrorDiagnostics(error),
+        recordedAt: now,
+        tickets,
+      });
+    }
   }
 
-  return {
-    code: action.code,
+  return build311ActionResult({
+    action,
     status: "submitted",
-    payload: { ...(action.payload ?? {}), tickets },
-    externalId: tickets
-      .map((ticket) => ticket.srNum)
-      .filter(Boolean)
-      .join(","),
     recordedAt: now,
-  };
+    tickets,
+  });
 }
 
 /**
@@ -558,6 +685,7 @@ export async function executeAppActions(appActions, opts = {}) {
               nowDate,
               env,
               priorResults,
+              trigger: opts.trigger,
             }),
           );
         } catch (error) {
