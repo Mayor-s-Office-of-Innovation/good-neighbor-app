@@ -26,12 +26,12 @@ const MAX_ARTIFACT_TEXT_LENGTH = 4000;
  * `registerArtifact` can reject any key that doesn't.
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} artifactId
  * @returns {string}
  */
-const mediaKey = (siteId, checkId, side, artifactId) =>
-  `checks/${siteId}/${checkId}/${side}/${artifactId}`;
+const mediaKey = (siteId, checkId, placeId, artifactId) =>
+  `checks/${siteId}/${checkId}/${placeId}/${artifactId}`;
 
 /**
  * POST /v1/checks/{checkId}/artifacts:presign — mint an `artifactId` + S3 key
@@ -53,11 +53,16 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { side, contentType } =
-    /** @type {{ side?: unknown, contentType?: unknown }} */ (body ?? {});
+  const { placeId, placeName, contentType } =
+    /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
+      body ?? {}
+    );
 
-  if (typeof side !== "string" || side.length === 0) {
-    return jsonResponse(400, { error: "Missing side" });
+  if (typeof placeId !== "string" || placeId.length === 0) {
+    return jsonResponse(400, { error: "Missing placeId" });
+  }
+  if (typeof placeName !== "string" || placeName.trim().length === 0) {
+    return jsonResponse(400, { error: "Missing placeName" });
   }
   if (
     typeof contentType !== "string" ||
@@ -67,7 +72,7 @@ export const presignUpload = async (event) => {
   }
 
   const artifactId = randomUUID();
-  const key = mediaKey(siteId, checkId, side, artifactId);
+  const key = mediaKey(siteId, checkId, placeId, artifactId);
   const uploadUrl = await presignPut({
     bucket: uploadBucket,
     key,
@@ -77,7 +82,8 @@ export const presignUpload = async (event) => {
 
   return jsonResponse(200, {
     artifactId,
-    side,
+    placeId,
+    placeName: placeName.trim(),
     s3Key: key,
     contentType,
     uploadUrl,
@@ -116,16 +122,29 @@ export const registerArtifact = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { artifactId, side, s3Key, contentType, capturedAt, text } =
-    /** @type {{ artifactId?: unknown, side?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, text?: unknown }} */ (
+  const {
+    artifactId,
+    placeId,
+    placeName,
+    s3Key,
+    contentType,
+    capturedAt,
+    text,
+  } =
+    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, text?: unknown }} */ (
       body ?? {}
     );
 
   if (typeof artifactId !== "string" || !artifactId) {
     return jsonResponse(400, { error: "Missing artifactId" });
   }
-  if (typeof side !== "string" || !side) {
-    return jsonResponse(400, { error: "Missing side" });
+  if (typeof placeId !== "string" || !placeId) {
+    return jsonResponse(400, { error: "Missing placeId" });
+  }
+  const normalizedPlaceName =
+    typeof placeName === "string" ? placeName.trim() : "";
+  if (!normalizedPlaceName) {
+    return jsonResponse(400, { error: "Missing placeName" });
   }
   const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
   const normalizedText = typeof text === "string" ? text.trim() : "";
@@ -148,10 +167,11 @@ export const registerArtifact = async (event) => {
   // `reported_at`, so it must describe THIS artifact, not the batch.
   const capturedAtValue = typeof capturedAt === "string" ? capturedAt : now;
   const item = {
-    ...artifactKey(siteId, checkId, side, artifactId),
+    ...artifactKey(siteId, checkId, placeId, artifactId),
     checkId,
     artifactId,
-    side,
+    placeId,
+    placeName: normalizedPlaceName,
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(typeof contentType === "string" ? { contentType } : {}),
@@ -199,7 +219,8 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        side,
+        placeId,
+        placeName: normalizedPlaceName,
         capturedAt: capturedAtValue,
         ...(hasS3Key ? { s3Key } : {}),
         ...(hasText ? { text: normalizedText } : {}),
@@ -217,7 +238,7 @@ export const registerArtifact = async (event) => {
 /**
  * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — mint a short-lived
  * presigned GET so staff can review the original photo. The route carries only
- * checkId + artifactId, but the sort key embeds `side`, so we query this check's
+ * checkId + artifactId, but the sort key embeds `placeId`, so we query this check's
  * ART# items and match on `artifactId` (rather than reconstruct the key). Scoped
  * to the derived site, so one tenant can never sign another's media.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}

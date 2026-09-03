@@ -7,22 +7,24 @@ describe("description validation handler", () => {
     vi.restoreAllMocks();
   });
 
-  it("requires a valid side and text", async () => {
+  it("requires a valid place and text", async () => {
     const handler = createHandler();
 
     const missingText = await callHandler(handler, {
-      pathParameters: { checkId: "chk-1", side: "North" },
+      pathParameters: { checkId: "chk-1", placeId: "place-north" },
       body: JSON.stringify({ text: "" }),
     });
     expect(missingText.statusCode).toBe(400);
     expect(JSON.parse(missingText.body)).toEqual({ error: "missing_text" });
 
-    const invalidSide = await callHandler(handler, {
-      pathParameters: { checkId: "chk-1", side: "Nope" },
+    const invalidPlace = await callHandler(handler, {
+      pathParameters: { checkId: "chk-1" },
       body: JSON.stringify({ text: "trash near the entrance" }),
     });
-    expect(invalidSide.statusCode).toBe(400);
-    expect(JSON.parse(invalidSide.body)).toEqual({ error: "invalid_side" });
+    expect(invalidPlace.statusCode).toBe(400);
+    expect(JSON.parse(invalidPlace.body)).toEqual({
+      error: "missing_place_id",
+    });
   });
 
   it("returns structured validation results", async () => {
@@ -35,13 +37,16 @@ describe("description validation handler", () => {
     const handler = createHandler({ validateDescription: validate });
 
     const res = await callHandler(handler, {
-      pathParameters: { checkId: "chk-1", side: "West" },
-      body: JSON.stringify({ text: "Trash near the west gate." }),
+      pathParameters: { checkId: "chk-1", placeId: "place-west" },
+      body: JSON.stringify({
+        text: "Trash near the west gate.",
+        placeName: "West gate",
+      }),
     });
 
     expect(validate).toHaveBeenCalledWith({
       text: "Trash near the west gate.",
-      side: "West",
+      placeName: "West gate",
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
@@ -58,7 +63,7 @@ describe("description validation handler", () => {
     });
 
     const res = await callHandler(handler, {
-      pathParameters: { checkId: "chk-1", side: "South" },
+      pathParameters: { checkId: "chk-1", placeId: "place-south" },
       body: JSON.stringify({ text: "Graffiti on the south wall." }),
     });
 
@@ -78,7 +83,7 @@ describe("description validation handler", () => {
     });
 
     const res = await callHandler(handler, {
-      pathParameters: { checkId: "chk-1", side: "South" },
+      pathParameters: { checkId: "chk-1", placeId: "place-south" },
       body: JSON.stringify({ text: "Graffiti on the south wall." }),
     });
 

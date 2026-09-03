@@ -6,7 +6,7 @@ export const shell = () => html`
       <button class="check__cancel" id="cancel" type="button">
         <wa-icon name="chevron-left" aria-hidden="true"></wa-icon> Cancel
       </button>
-      <span class="check__side">Report a problem</span>
+      <span class="check__place">Report a problem</span>
       <span class="check__spacer" aria-hidden="true"></span>
     </div>
 

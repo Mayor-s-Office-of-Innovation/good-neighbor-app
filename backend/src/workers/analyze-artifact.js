@@ -35,7 +35,8 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @property {string} checkId
  * @property {string} artifactId
  * @property {string} [s3Key]
- * @property {string} [side]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
  */
@@ -49,7 +50,7 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  */
 function buildMetadata(msg) {
   return {
-    position_descriptor: msg.side ?? "perimeter",
+    position_descriptor: msg.placeName ?? "perimeter",
     reported_at: msg.capturedAt ?? new Date().toISOString(),
     // TODO(product): real per-photo GPS. Read device coordinates AT THE MOMENT
     // EACH PHOTO IS CAPTURED (not at check start or batch submit) and stamp
@@ -136,7 +137,8 @@ async function markFailed({ dynamoTable, msg, err }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.side ? { side: msg.side } : {}),
+    ...(msg.placeId ? { placeId: msg.placeId } : {}),
+    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     status: "failed",
     error: {
       ...(err.code ? { code: err.code } : {}),
@@ -255,7 +257,8 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.side ? { side: msg.side } : {}),
+    ...(msg.placeId ? { placeId: msg.placeId } : {}),
+    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     status: "analyzed",
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,

@@ -47,18 +47,18 @@ let active = 0;
 let idleWaiters = [];
 
 /**
- * Locate a photo item by side + id on the active session. Returns null if the
+ * Locate a photo item by place + id on the active session. Returns null if the
  * session changed underneath us or the item was deleted mid-upload.
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} itemId
  */
-function findItem(checkId, side, itemId) {
+function findItem(checkId, placeId, itemId) {
   const check = getCurrentCheck();
   if (!check || check.id !== checkId) return null;
-  const sideState = check.sides?.[side];
-  if (!sideState) return null;
-  return sideState.items.find((it) => it.id === itemId) || null;
+  const placeState = check.places?.[placeId];
+  if (!placeState) return null;
+  return placeState.items.find((it) => it.id === itemId) || null;
 }
 
 /** @param {number} ms */
@@ -82,15 +82,15 @@ function isRetryable(err) {
  * Queue a captured photo for eager presign+PUT to S3. Fire-and-forget; safe to
  * call again for the same item (a no-op while it is queued, in flight, or done).
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} itemId
  */
-export function enqueueUpload(checkId, side, itemId) {
+export function enqueueUpload(checkId, placeId, itemId) {
   if (!checkId || !itemId || inFlight.has(itemId)) return;
-  const item = findItem(checkId, side, itemId);
+  const item = findItem(checkId, placeId, itemId);
   if (!item || item.upload?.status === "uploaded") return;
   inFlight.add(itemId);
-  queue.push(() => runUpload(checkId, side, itemId));
+  queue.push(() => runUpload(checkId, placeId, itemId));
   pump();
 }
 
@@ -138,23 +138,23 @@ export function settlePendingUploads() {
  * artifact coordinates on the item and swap in a thumbnail; on terminal failure
  * mark it failed so submit falls back to a full upload.
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} itemId
  * @returns {Promise<void>}
  */
-async function runUpload(checkId, side, itemId) {
+async function runUpload(checkId, placeId, itemId) {
   try {
-    setItemUploadStatus(side, itemId, "uploading");
+    setItemUploadStatus(placeId, itemId, "uploading");
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const item = findItem(checkId, side, itemId);
+      const item = findItem(checkId, placeId, itemId);
       // Gone (deleted) or already uploaded+thumbnailed elsewhere: nothing to do.
       if (!item || !item.dataUrl || item.upload?.status === "uploaded") return;
       try {
-        await uploadOnce(checkId, side, item);
+        await uploadOnce(checkId, placeId, item);
         return;
       } catch (err) {
         if (!isRetryable(err) || attempt === MAX_ATTEMPTS) {
-          setItemUploadStatus(side, itemId, "failed");
+          setItemUploadStatus(placeId, itemId, "failed");
           return;
         }
         await sleep(2 ** (attempt - 1) * 1000); // 1s, 2s
@@ -169,15 +169,16 @@ async function runUpload(checkId, side, itemId) {
  * One presign → PUT → record cycle. contentType is read from the FULL-RES dataUrl
  * before the thumbnail swap, so it describes the object actually in S3.
  * @param {string} checkId
- * @param {string} side
- * @param {{ id: string, dataUrl: string }} item
+ * @param {string} placeId
+ * @param {{ id: string, dataUrl: string, placeName: string }} item
  * @returns {Promise<void>}
  */
-async function uploadOnce(checkId, side, item) {
-  const done = span("eager-upload", { art: `${side}:${item.id}` });
+async function uploadOnce(checkId, placeId, item) {
+  const done = span("eager-upload", { art: `${item.placeName}:${item.id}` });
   const contentType = contentTypeFromDataUrl(item.dataUrl);
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    side,
+    placeId,
+    placeName: item.placeName,
     contentType,
   });
   const blob = await dataUrlToBlob(item.dataUrl);
@@ -186,7 +187,12 @@ async function uploadOnce(checkId, side, item) {
     maxDim: THUMB_MAX_DIM,
     quality: THUMB_QUALITY,
   });
-  markItemUploaded(side, item.id, { artifactId, s3Key, contentType, thumbUrl });
+  markItemUploaded(placeId, item.id, {
+    artifactId,
+    s3Key,
+    contentType,
+    thumbUrl,
+  });
   done({ artifactId });
 }
 
@@ -198,15 +204,15 @@ async function uploadOnce(checkId, side, item) {
 export function resumePendingUploads() {
   const check = getCurrentCheck();
   if (!check || check.status !== "in-progress") return;
-  for (const side of check.sideOrder || []) {
-    const items = check.sides?.[side]?.items || [];
+  for (const placeId of check.placeOrder || []) {
+    const items = check.places?.[placeId]?.items || [];
     for (const it of items) {
       if (
         it.kind === "photo" &&
         it.dataUrl &&
         it.upload?.status !== "uploaded"
       ) {
-        enqueueUpload(check.id, side, it.id);
+        enqueueUpload(check.id, placeId, it.id);
       }
     }
   }

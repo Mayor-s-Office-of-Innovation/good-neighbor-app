@@ -2,10 +2,10 @@
   instrument.js — lightweight, toggleable perf tracing for the submit/analysis path.
 
   Purpose: make two things visible in the browser console when a check is submitted
-    1. SEND side — are the per-photo upload legs (presign → PUT → register) actually
+    1. SEND path — are the per-photo upload legs (presign → PUT → register) actually
        overlapping, or running one-after-another? Serial legs show rising `+Nms`
        start stamps; parallel legs cluster their starts near the same stamp.
-    2. RESPONSE side — as `waitForAnalyses` polls, when does each artifact's ANALYSIS
+    2. RESPONSE path — as `waitForAnalyses` polls, when does each artifact's ANALYSIS
        land? First-seen stamps per artifactId reveal whether the backend returns them
        together (parallel) or dribbles them out (serial).
 

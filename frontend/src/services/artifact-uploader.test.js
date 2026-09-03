@@ -18,8 +18,8 @@ class ApiError extends Error {
 // mutators below mutate it so findItem() observes state changes across attempts.
 let check;
 const getCurrentCheck = vi.fn(() => check);
-const markItemUploaded = vi.fn((side, itemId, coords) => {
-  const it = check?.sides?.[side]?.items.find((i) => i.id === itemId);
+const markItemUploaded = vi.fn((placeId, itemId, coords) => {
+  const it = check?.places?.[placeId]?.items.find((i) => i.id === itemId);
   if (!it) return;
   it.upload = {
     status: "uploaded",
@@ -29,8 +29,8 @@ const markItemUploaded = vi.fn((side, itemId, coords) => {
   };
   if (coords.thumbUrl) it.dataUrl = coords.thumbUrl;
 });
-const setItemUploadStatus = vi.fn((side, itemId, status) => {
-  const it = check?.sides?.[side]?.items.find((i) => i.id === itemId);
+const setItemUploadStatus = vi.fn((placeId, itemId, status) => {
+  const it = check?.places?.[placeId]?.items.find((i) => i.id === itemId);
   if (it) it.upload = { ...(it.upload || {}), status };
 });
 
@@ -53,13 +53,16 @@ function seedCheck() {
   check = {
     id: "check-1",
     status: "in-progress",
-    sideOrder: ["North"],
-    sides: {
-      North: {
+    placeOrder: ["place-north"],
+    places: {
+      "place-north": {
+        id: "place-north",
+        name: "North",
         items: [
           {
             id: "item-1",
-            side: "North",
+            placeId: "place-north",
+            placeName: "North",
             kind: "photo",
             dataUrl: "data:image/jpeg;base64,FULLRES==",
           },
@@ -82,7 +85,7 @@ beforeEach(() => {
   seedCheck();
   presignArtifact.mockResolvedValue({
     artifactId: "art-1",
-    s3Key: "checks/site/check-1/art-1.jpg",
+    s3Key: "checks/site/check-1/place-north/art-1.jpg",
     uploadUrl: "https://s3.example/put",
   });
 });
@@ -94,11 +97,12 @@ afterEach(() => {
 describe("enqueueUpload — happy path", () => {
   it("presigns and PUTs the bytes but never registers", async () => {
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
     await flush();
 
     expect(presignArtifact).toHaveBeenCalledWith("check-1", {
-      side: "North",
+      placeId: "place-north",
+      placeName: "North",
       contentType: "image/jpeg",
     });
     expect(putMedia).toHaveBeenCalledWith(
@@ -114,30 +118,30 @@ describe("enqueueUpload — happy path", () => {
 
   it("marks the item uploaded and swaps in the thumbnail", async () => {
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
     await flush();
 
-    expect(markItemUploaded).toHaveBeenCalledWith("North", "item-1", {
+    expect(markItemUploaded).toHaveBeenCalledWith("place-north", "item-1", {
       artifactId: "art-1",
-      s3Key: "checks/site/check-1/art-1.jpg",
+      s3Key: "checks/site/check-1/place-north/art-1.jpg",
       contentType: "image/jpeg",
       thumbUrl: "data:image/jpeg;base64,THUMB==",
     });
-    expect(check.sides.North.items[0].upload.status).toBe("uploaded");
+    expect(check.places["place-north"].items[0].upload.status).toBe("uploaded");
   });
 
   it("is a no-op for an item already uploaded", async () => {
-    check.sides.North.items[0].upload = { status: "uploaded" };
+    check.places["place-north"].items[0].upload = { status: "uploaded" };
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
     await flush();
     expect(presignArtifact).not.toHaveBeenCalled();
   });
 
   it("is a no-op when the item was deleted before it ran", async () => {
-    check.sides.North.items = [];
+    check.places["place-north"].items = [];
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
     await flush();
     expect(presignArtifact).not.toHaveBeenCalled();
   });
@@ -155,7 +159,7 @@ describe("enqueueUpload — failure handling", () => {
       });
 
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
 
     await vi.advanceTimersByTimeAsync(1000); // first backoff
     await vi.runAllTimersAsync();
@@ -167,12 +171,12 @@ describe("enqueueUpload — failure handling", () => {
   it("does not retry a 4xx and marks the item failed", async () => {
     presignArtifact.mockRejectedValue(new ApiError("too big", { status: 413 }));
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
     await flush();
 
     expect(presignArtifact).toHaveBeenCalledTimes(1);
     expect(setItemUploadStatus).toHaveBeenLastCalledWith(
-      "North",
+      "place-north",
       "item-1",
       "failed",
     );
@@ -183,13 +187,13 @@ describe("enqueueUpload — failure handling", () => {
     vi.useFakeTimers();
     presignArtifact.mockRejectedValue(new ApiError("server", { status: 500 }));
     const { enqueueUpload } = await importUploader();
-    enqueueUpload("check-1", "North", "item-1");
+    enqueueUpload("check-1", "place-north", "item-1");
 
     await vi.runAllTimersAsync();
 
     expect(presignArtifact).toHaveBeenCalledTimes(3);
     expect(setItemUploadStatus).toHaveBeenLastCalledWith(
-      "North",
+      "place-north",
       "item-1",
       "failed",
     );
@@ -218,16 +222,17 @@ describe("concurrency cap", () => {
         }),
     );
 
-    check.sides.North.items = [1, 2, 3, 4].map((n) => ({
+    check.places["place-north"].items = [1, 2, 3, 4].map((n) => ({
       id: `item-${n}`,
-      side: "North",
+      placeId: "place-north",
+      placeName: "North",
       kind: "photo",
       dataUrl: "data:image/jpeg;base64,X==",
     }));
 
     const { enqueueUpload } = await importUploader();
-    for (const it of check.sides.North.items) {
-      enqueueUpload("check-1", "North", it.id);
+    for (const it of check.places["place-north"].items) {
+      enqueueUpload("check-1", "place-north", it.id);
     }
     await flush();
 
@@ -242,15 +247,22 @@ describe("concurrency cap", () => {
 
 describe("resumePendingUploads", () => {
   it("re-enqueues photos that are not yet uploaded", async () => {
-    check.sides.North.items = [
+    check.places["place-north"].items = [
       {
         id: "done",
-        side: "North",
+        placeId: "place-north",
+        placeName: "North",
         kind: "photo",
         dataUrl: "t",
         upload: { status: "uploaded" },
       },
-      { id: "pending", side: "North", kind: "photo", dataUrl: "data:,x" },
+      {
+        id: "pending",
+        placeId: "place-north",
+        placeName: "North",
+        kind: "photo",
+        dataUrl: "data:,x",
+      },
     ];
     const { resumePendingUploads } = await importUploader();
     resumePendingUploads();
@@ -258,7 +270,7 @@ describe("resumePendingUploads", () => {
 
     expect(presignArtifact).toHaveBeenCalledTimes(1);
     expect(markItemUploaded).toHaveBeenCalledWith(
-      "North",
+      "place-north",
       "pending",
       expect.any(Object),
     );
