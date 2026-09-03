@@ -53,7 +53,6 @@ export const DEFAULT_CLASSIFIER_SERVICE_CODE_MAP = Object.freeze({
     "Graffiti - Not_Offensive - Building_Commercial": "1.5.2.2.1.0",
     "Graffiti - Not_Offensive - Building_Residential": "1.5.2.2.2.0",
     "Graffiti - Not_Offensive - Building_Other": "1.5.2.2.3.0",
-    "Graffiti - Not_Offensive - Sidewalk_In_Front_Of_Property":
-      "1.5.2.2.4.0",
+    "Graffiti - Not_Offensive - Sidewalk_In_Front_Of_Property": "1.5.2.2.4.0",
   }),
 });

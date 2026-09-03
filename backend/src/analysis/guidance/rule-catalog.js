@@ -165,12 +165,10 @@ export function splitLines(raw) {
  * @returns {{ code: string, payload: Record<string, unknown> }[]}
  */
 export function parseAppActions(raw, options = {}) {
-  const {
-    serviceCodeOrAction = "",
-    responsibleAgencyCode = "",
-  } = /** @type {{ serviceCodeOrAction?: string, responsibleAgencyCode?: string }} */ (
-    options
-  );
+  const { serviceCodeOrAction = "", responsibleAgencyCode = "" } =
+    /** @type {{ serviceCodeOrAction?: string, responsibleAgencyCode?: string }} */ (
+      options
+    );
   return splitLines(raw).map((line) => {
     if (line.includes("311")) {
       const normalizedLine = line.toLowerCase();
@@ -257,15 +255,11 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
       const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
         ? row[12]
         : "";
-      const guidance = isResponsibleAgencyRulebaseShape
-          ? row[13]
-          : row[12];
+      const guidance = isResponsibleAgencyRulebaseShape ? row[13] : row[12];
       const cannotDoReasons = isResponsibleAgencyRulebaseShape
-          ? row[14]
-          : row[13];
-      const source = isResponsibleAgencyRulebaseShape
-          ? row[15]
-          : row[14];
+        ? row[14]
+        : row[13];
+      const source = isResponsibleAgencyRulebaseShape ? row[15] : row[14];
 
       return {
         policyVersion,

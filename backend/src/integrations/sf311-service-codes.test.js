@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_CLASSIFIER_SERVICE_CODE_MAP,
-} from "./sf311-classifier-service-code-map.js";
+import { DEFAULT_CLASSIFIER_SERVICE_CODE_MAP } from "./sf311-classifier-service-code-map.js";
 import {
   parseClassifierServiceCodeMap,
   parseServiceCodeOrAction,
@@ -50,12 +48,7 @@ describe("SF311 service-code resolution", () => {
           "Furniture",
         ],
       }),
-    ).toEqual([
-      "1.1.4.7.10.0",
-      "1.1.4.7.16.0",
-      "1.1.4.7.21.0",
-      "1.1.4.7.7.0",
-    ]);
+    ).toEqual(["1.1.4.7.10.0", "1.1.4.7.16.0", "1.1.4.7.21.0", "1.1.4.7.7.0"]);
   });
 
   it("uses built-in graffiti service-code mappings", () => {
@@ -68,9 +61,9 @@ describe("SF311 service-code resolution", () => {
         ],
       }),
     ).toEqual(["1.5.1.1.1.0", "1.5.2.2.4.0"]);
-    expect(Object.keys(DEFAULT_CLASSIFIER_SERVICE_CODE_MAP.graffiti)).toHaveLength(
-      42,
-    );
+    expect(
+      Object.keys(DEFAULT_CLASSIFIER_SERVICE_CODE_MAP.graffiti),
+    ).toHaveLength(42);
   });
 
   it("rejects unmapped classifier labels", () => {

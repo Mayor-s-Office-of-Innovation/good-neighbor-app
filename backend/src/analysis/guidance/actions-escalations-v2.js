@@ -47,7 +47,7 @@ const ROWS = [
     "76",
     "If there is a small amount of trash, pick it up yourself during your regular checks.",
     "There's too much trash for me to collect\nNot within the immediate area",
-    "Policy lines 68-69"
+    "Policy lines 68-69",
   ],
   [
     "Litter",
@@ -65,7 +65,7 @@ const ROWS = [
     "'-'",
     "If there is too much trash for you to clean up, you can use the app to file a 311 ticket and ask the City for help.",
     "We already filed a ticket",
-    "Public 311 info"
+    "Public 311 info",
   ],
   [
     "Bulky items",
@@ -83,7 +83,7 @@ const ROWS = [
     "76",
     "If the item is yours (like old furniture from your program), call Recology (or a private hauler) to set up a pickup.",
     "It doesn't feel safe",
-    "Policy line 69; Recology public info"
+    "Policy line 69; Recology public info",
   ],
   [
     "Bulky items",
@@ -101,7 +101,7 @@ const ROWS = [
     "'-'",
     "If the item isn't yours, report it to the City. You don't have to move it.",
     "We already filed a ticket",
-    "GNP-2 original; public SF311 taxonomy"
+    "GNP-2 original; public SF311 taxonomy",
   ],
   [
     "Feces and urine",
@@ -119,7 +119,7 @@ const ROWS = [
     "'-'",
     "Stay away from it. Use the app to file a 311 ticket so the City can clean it up.",
     "We already filed a ticket",
-    "Policy line 70; public SF311 taxonomy"
+    "Policy line 70; public SF311 taxonomy",
   ],
   [
     "Feces and urine",
@@ -137,7 +137,7 @@ const ROWS = [
     "76",
     "Call the SFPD non-emergency line: 415-553-0123.",
     "We already called",
-    "Policy line 70; public SF311 taxonomy"
+    "Policy line 70; public SF311 taxonomy",
   ],
   [
     "Needles",
@@ -155,7 +155,7 @@ const ROWS = [
     "'-'",
     "Never pick up a needle yourself. Use the app to file a 311 ticket so the City can safely remove it.",
     "We already filed a ticket",
-    "Policy line 70"
+    "Policy line 70",
   ],
   [
     "Tents, tarps, or bedding",
@@ -173,7 +173,7 @@ const ROWS = [
     "'-'",
     "Encampment resolution is the City's responsibility. Use the app to file a 311 ticket.",
     "We already filed a ticket",
-    "Policy lines 104-108"
+    "Policy lines 104-108",
   ],
   [
     "Tents, tarps, or bedding",
@@ -191,7 +191,7 @@ const ROWS = [
     "76",
     "Call SFPD non-emergency on 415-553-0123 when sidewalk is partially or fully blocked.",
     "We already filed a ticket",
-    "Policy lines 104-108"
+    "Policy lines 104-108",
   ],
   [
     "Graffiti",
@@ -209,7 +209,7 @@ const ROWS = [
     "76",
     "If the graffiti is on your own building, remove it yourself within 3 days.",
     "It doesn't feel safe\nIt's too much for us to clean",
-    "Policy line 115"
+    "Policy line 115",
   ],
   [
     "Graffiti",
@@ -227,7 +227,7 @@ const ROWS = [
     "'-'",
     "If the graffiti is not on your property, report it to the City instead of cleaning it yourself.",
     "We already filed a ticket",
-    "Policy line 116; public DPW info"
+    "Policy line 116; public DPW info",
   ],
   [
     "Graffiti",
@@ -245,7 +245,7 @@ const ROWS = [
     "76",
     "When someone is actively spraying graffiti, call the SFPD non-emergency line.",
     "We already called",
-    "Policy line 116; public DPW info"
+    "Policy line 116; public DPW info",
   ],
   [
     "Graffiti",
@@ -263,7 +263,7 @@ const ROWS = [
     "76",
     "Potential hate speech, especially on the side of a place of worship, must be investigated by the SFPD. Call 911.",
     "We already called 911",
-    "Policy line 116; public DPW info"
+    "Policy line 116; public DPW info",
   ],
   [
     "Fire hazard",
@@ -281,7 +281,7 @@ const ROWS = [
     "'-'",
     "If it looks unsafe but nothing is on fire, use the app to file a 311 ticket.",
     "We already filed a ticket",
-    "Public SFFD info"
+    "Public SFFD info",
   ],
   [
     "Fire hazard",
@@ -299,7 +299,7 @@ const ROWS = [
     "76",
     "If you see fire, smoke, or something about to catch fire, call 911 now.",
     "We already called 911",
-    "Policy Appendix A"
+    "Policy Appendix A",
   ],
   [
     "Blocked doorway or sidewalk",
@@ -317,7 +317,7 @@ const ROWS = [
     "76",
     "If it's your client or guest, and it's safe, just ask them to move.",
     "It doesn't feel safe\nWe already spoke to them",
-    "Policy lines 92, 31"
+    "Policy lines 92, 31",
   ],
   [
     "Blocked doorway or sidewalk",
@@ -335,7 +335,7 @@ const ROWS = [
     "'-'",
     "If it's an object (not a person) blocking the path, use the app to file a 311 ticket.",
     "'-'",
-    "Public SF311 taxonomy"
+    "Public SF311 taxonomy",
   ],
   [
     "Blocked doorway or sidewalk",
@@ -353,7 +353,7 @@ const ROWS = [
     "76",
     "If the path is badly blocked, or they won't move, call the SFPD non-emergency line: 415-553-0123.",
     "'-'",
-    "Policy Appendix A"
+    "Policy Appendix A",
   ],
   [
     "Public drug use",
@@ -371,7 +371,7 @@ const ROWS = [
     "76",
     "If it's your client and it's safe, talk to them calmly. Offer to connect them with help.",
     "It doesn't feel safe\nWe already spoke to them",
-    "Policy lines 93-95, 34"
+    "Policy lines 93-95, 34",
   ],
   [
     "Public drug use",
@@ -389,7 +389,7 @@ const ROWS = [
     "76",
     "If it's not your client, report it to the City. Don't step in.",
     "We already called 911",
-    "Policy line 29, 35"
+    "Policy line 29, 35",
   ],
   [
     "Public drug use",
@@ -407,7 +407,7 @@ const ROWS = [
     "76",
     "Call the SFPD non-emergency line: 415-553-0123",
     "",
-    ""
+    "",
   ],
   [
     "Public drug use",
@@ -425,7 +425,7 @@ const ROWS = [
     "76",
     "If someone looks like they may be overdosing or in serious trouble, call 911 now.",
     "We already called 911",
-    "Policy Appendix A"
+    "Policy Appendix A",
   ],
   [
     "Someone in distress",
@@ -443,7 +443,7 @@ const ROWS = [
     "76",
     "If someone is in real danger right now, call 911. The City will send the right team to help.",
     "We already called 911",
-    "Policy Appendix A; public SF Coordinated Street Response info"
+    "Policy Appendix A; public SF Coordinated Street Response info",
   ],
   [
     "Someone in distress",
@@ -461,7 +461,7 @@ const ROWS = [
     "76",
     "If it's your client, it's not an emergency, and it's safe, talk to them gently and offer to connect them with help.",
     "'-'",
-    "Policy lines 94-95, 34"
+    "Policy lines 94-95, 34",
   ],
   [
     "Someone in distress",
@@ -479,7 +479,7 @@ const ROWS = [
     "76",
     "If it's not your client, or it doesn't feel safe, call 911.",
     "We already called 911",
-    "Policy line 29"
+    "Policy line 29",
   ],
   [
     "Aggressive animals",
@@ -497,7 +497,7 @@ const ROWS = [
     "76",
     "If the animal belongs to one of your clients, remind them to leash it and pick up its waste.",
     "It doesn't feel safe\nWe already reminded them",
-    "Policy lines 119-124"
+    "Policy lines 119-124",
   ],
   [
     "Aggressive animals",
@@ -515,7 +515,7 @@ const ROWS = [
     "76",
     "If it's a stray or unknown animal, call Animal Care and Control on 415-554-9400",
     "We already called SFACC\nWe already filed a ticket",
-    "Public SFACC info"
+    "Public SFACC info",
   ],
   [
     "Aggressive animals",
@@ -533,7 +533,7 @@ const ROWS = [
     "76",
     "If an animal is attacking someone, call 911 now.",
     "We already called 911",
-    "GNP-3"
+    "GNP-3",
   ],
   [
     "Medical emergency",
@@ -551,7 +551,7 @@ const ROWS = [
     "76",
     "If they tell you they need medical help, call 911 immediately.",
     "It doesn't feel safe\nWe already checked in with them",
-    "GNP-3"
+    "GNP-3",
   ],
   [
     "Medical emergency",
@@ -569,7 +569,7 @@ const ROWS = [
     "76",
     "If someone just looks tired or a little unwell, check in and offer help. Keep an eye on them in case it gets worse.",
     "It doesn't feel safe\nWe already checked in with them",
-    "GNP-3"
+    "GNP-3",
   ],
   [
     "Medical emergency",
@@ -587,7 +587,7 @@ const ROWS = [
     "76",
     "If someone is hurt, in pain, or not waking up, call 911 now. Don't wait, even if other people are already helping.",
     "We already called 911",
-    "Policy Appendix A"
+    "Policy Appendix A",
   ],
   [
     "Intimidation, or violence",
@@ -605,7 +605,7 @@ const ROWS = [
     "76",
     "If it turns violent or a weapon is involved, do not get involved. Move to safety and call 911.",
     "We already called 911",
-    "Policy line 28; Appendix A"
+    "Policy line 28; Appendix A",
   ],
   [
     "Intimidation, or violence",
@@ -623,7 +623,7 @@ const ROWS = [
     "76",
     "If it turns violent or a weapon is involved, do not get involved. Move to safety and call 911.",
     "We already called 911",
-    "Policy line 28; Appendix A"
+    "Policy line 28; Appendix A",
   ],
   [
     "Intimidation, or violence",
@@ -641,8 +641,8 @@ const ROWS = [
     "76",
     "If it turns violent or a weapon is involved, do not get involved. Move to safety and call 911.",
     "We already called 911",
-    "Policy line 28; Appendix A"
-  ]
+    "Policy line 28; Appendix A",
+  ],
 ];
 
 export const actionsEscalationsV2Catalog = buildCatalog({
