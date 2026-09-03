@@ -23,3 +23,17 @@ resource "aws_secretsmanager_secret" "posthog_project_api_key" {
   kms_key_id  = aws_kms_key.app.arn
   tags        = var.tags
 }
+
+# Device-token signing key (HS256) for the device auth (docs/adr/0010). Same
+# container-only pattern: the value is set out-of-band; the api Lambda (token
+# minting) and the authorizer Lambda (verification) each read it via this ARN.
+# Generate out-of-band, e.g.:
+#   aws secretsmanager put-secret-value \
+#     --secret-id <this ARN> \
+#     --secret-string "$(openssl rand -base64 48)"
+resource "aws_secretsmanager_secret" "device_token_key" {
+  name        = "${local.name_prefix}-device-token-key"
+  description = "HS256 signing key for device session tokens (value set out-of-band)."
+  kms_key_id  = aws_kms_key.app.arn
+  tags        = var.tags
+}
