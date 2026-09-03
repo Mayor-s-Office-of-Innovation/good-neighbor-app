@@ -9,10 +9,17 @@
 // `SITE_CODE#<code>` item or the verified refresh token — the body never
 // asserts a site. Revocation = `tokenGeneration` bump (or device delete) on the
 // DEVICE# item; the authorizer compares a token's `ver` claim to it, and the
-// refresh path additionally pins rotation to the item's current `refreshJti`.
+// refresh path additionally pins rotation to the item's current `refreshJti`
+// with a conditional write (compare-and-swap), so two concurrent refreshes
+// with the same token cannot both rotate — exactly one wins.
 
 import { randomUUID } from "node:crypto";
-import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  ConditionalCheckFailedException,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -190,13 +197,24 @@ export const refreshDeviceToken = async (event) => {
   }
 
   const now = new Date().toISOString();
+  // Conditional write: rotation applies ONLY from the observed generation +
+  // jti. A concurrent refresh with the same token loses the swap here (one
+  // winner) instead of both succeeding via last-write-wins.
   const session = await mintSession({
     siteId,
     deviceId,
     generation: device.tokenGeneration + 1,
     dynamoTable,
     now,
+    expectGeneration: device.tokenGeneration,
+    expectJti: claims.jti,
   });
+  if (!session) {
+    return jsonResponse(401, {
+      error: "invalid_refresh_token",
+      reason: "revoked_or_replayed",
+    });
+  }
 
   return jsonResponse(200, {
     deviceId,
@@ -207,30 +225,58 @@ export const refreshDeviceToken = async (event) => {
 
 /**
  * Mint the access + refresh pair and persist the new session state (generation
- * + refresh jti + lastSeenAt) onto the DEVICE# item. Shared by register +
- * refresh; the caller has already validated identity and chosen the generation.
- * @param {{ siteId: string, deviceId: string, generation: number, dynamoTable: string, now: string }} s
+ * + refresh jti + lastSeenAt) onto the DEVICE# item — atomically, via a
+ * compare-and-swap on the CURRENT generation + jti. The caller has already
+ * validated identity; the condition (not the earlier read) is what makes the
+ * refresh single-use: a concurrent/replayed refresh loses the swap and 401s.
+ * Registration passes no expected state (fresh row, always applies).
+ * @param {{ siteId: string, deviceId: string, generation: number, dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
  * @returns {Promise<{ token: string, refreshToken: string, expiresIn: number, refreshExpiresIn: number, tokenGeneration: number }>}
  */
-async function mintSession({ siteId, deviceId, generation, dynamoTable, now }) {
+async function mintSession({
+  siteId,
+  deviceId,
+  generation,
+  dynamoTable,
+  now,
+  expectGeneration,
+  expectJti,
+}) {
   const [access, refresh] = await Promise.all([
     mintAccessToken({ siteId, deviceId, tokenGeneration: generation }),
     mintRefreshToken({ siteId, deviceId, tokenGeneration: generation }),
   ]);
 
-  await ddb.send(
-    new UpdateCommand({
-      TableName: dynamoTable,
-      Key: { ...deviceKey(siteId, deviceId) },
-      UpdateExpression:
-        "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen",
-      ExpressionAttributeValues: {
-        ":g": generation,
-        ":jti": refresh.jti,
-        ":seen": now,
-      },
-    }),
-  );
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: dynamoTable,
+        Key: { ...deviceKey(siteId, deviceId) },
+        UpdateExpression:
+          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen",
+        // Atomic compare-and-swap: rotate ONLY from the exact state the read
+        // observed. When omitted (registration) the write is unconditional.
+        ...(expectGeneration !== undefined && {
+          ConditionExpression: "tokenGeneration = :eg AND refreshJti = :ej",
+          ExpressionAttributeValues: {
+            ":eg": expectGeneration,
+            ":ej": expectJti,
+          },
+        }),
+        ExpressionAttributeValues: {
+          ":g": generation,
+          ":jti": refresh.jti,
+          ":seen": now,
+        },
+      }),
+    );
+  } catch (err) {
+    // Lost the race / replayed token — fail closed like the read-path checks.
+    if (err instanceof ConditionalCheckFailedException) {
+      return null;
+    }
+    throw err;
+  }
 
   return {
     token: access.token,
