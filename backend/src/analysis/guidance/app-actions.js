@@ -63,6 +63,47 @@ function priorTicketsByServiceCode(priorResults, actionCode) {
 }
 
 /**
+ * @param {Record<string, unknown>} attachment
+ * @returns {string}
+ */
+function attachmentKey(attachment) {
+  return String(attachment.artifactId ?? attachment.s3Key ?? "");
+}
+
+/**
+ * @param {unknown} attachments
+ * @returns {Map<string, Record<string, unknown>>}
+ */
+function submittedAttachmentsByKey(attachments) {
+  const submitted = new Map();
+  if (!Array.isArray(attachments)) return submitted;
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") continue;
+    const item = /** @type {Record<string, unknown>} */ (attachment);
+    const key = attachmentKey(item);
+    if (key && item.status === "submitted") submitted.set(key, item);
+  }
+  return submitted;
+}
+
+/**
+ * @param {unknown} attachments
+ * @returns {boolean}
+ */
+function hasIncompleteAttachment(attachments) {
+  return (
+    Array.isArray(attachments) &&
+    attachments.some(
+      (attachment) =>
+        attachment &&
+        typeof attachment === "object" &&
+        /** @type {Record<string, unknown>} */ (attachment).status !==
+          "submitted",
+    )
+  );
+}
+
+/**
  * @param {object} opts
  * @param {AppAction} opts.action
  * @param {string} opts.status
@@ -304,6 +345,7 @@ async function imageArtifactsForTask({ tableName, siteId, task }) {
  * @param {import("../../config.js").AppConfig} opts.config
  * @param {string | null} opts.srNum
  * @param {Array<{ artifactId: string, s3Key: string }>} opts.artifacts
+ * @param {unknown} [opts.priorAttachments]
  * @param {Date} opts.nowDate
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
@@ -312,8 +354,10 @@ async function attachImagesToServiceRequest({
   config,
   srNum,
   artifacts,
+  priorAttachments,
   nowDate,
 }) {
+  const submittedPriorAttachments = submittedAttachmentsByKey(priorAttachments);
   if (!srNum) {
     return artifacts.map((artifact) => ({
       ...artifact,
@@ -324,6 +368,13 @@ async function attachImagesToServiceRequest({
 
   const attachments = [];
   for (const artifact of artifacts) {
+    const priorAttachment =
+      submittedPriorAttachments.get(attachmentKey(artifact)) ??
+      submittedPriorAttachments.get(artifact.s3Key);
+    if (priorAttachment) {
+      attachments.push(priorAttachment);
+      continue;
+    }
     try {
       const imageUrl = await presignGet({
         bucket: config.uploadBucket,
@@ -378,10 +429,6 @@ async function execute311Action({
   trigger,
 }) {
   const now = nowDate.toISOString();
-  const priorSubmitted = priorResults.find(
-    (result) => result.code === action.code && result.status === "submitted",
-  );
-  if (priorSubmitted) return priorSubmitted;
   const priorTickets = priorTicketsByServiceCode(priorResults, action.code);
 
   if (!is311SubmissionEnabled(env)) {
@@ -464,7 +511,15 @@ async function execute311Action({
   for (const serviceCode of serviceCodes) {
     const priorTicket = priorTickets.get(serviceCode);
     if (priorTicket) {
-      tickets.push(priorTicket);
+      const attachments = await attachImagesToServiceRequest({
+        sf311,
+        config,
+        srNum: String(priorTicket.srNum),
+        artifacts: imageArtifacts,
+        priorAttachments: priorTicket.attachments,
+        nowDate,
+      });
+      tickets.push({ ...priorTicket, attachments });
       continue;
     }
     const actionPayload =
@@ -526,6 +581,15 @@ async function execute311Action({
         tickets,
       });
     }
+  }
+  if (tickets.some((ticket) => hasIncompleteAttachment(ticket.attachments))) {
+    return build311ActionResult({
+      action,
+      status: "failed",
+      reason: "attachment_submission_failed",
+      recordedAt: now,
+      tickets,
+    });
   }
 
   return build311ActionResult({
