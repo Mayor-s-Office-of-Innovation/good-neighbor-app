@@ -101,8 +101,7 @@ token on a shared device; blast radius one site, mitigated by short expiry + rot
 revocation).
 
 **Shared dependency.** Option 3 needs a **device-provisioning / credential-vending backend**
-(invite codes + STS cred vending). This is the same building block the transcription workstream
-needs ([MVP-TODO](./inprogress/MVP-TODO.md)) — track it as a **shared dependency**, not transcription-only.
+(invite codes + STS cred vending) — track it as a **standalone dependency** of Option 3.
 
 **Demo vs real-data posture.**
 

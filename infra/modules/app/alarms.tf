@@ -113,6 +113,117 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
   }
 }
 
+# --- user feedback filters (docs/runbooks/feedback-ops.md) --------------------
+
+# Every valid feedback submission logs one FeedbackReceived line. The alarm is
+# the notification: ≥1 per 5-min bucket emails the SNS topic (recipients are
+# console-managed per environment — see the plan's Decisions).
+resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
+  name           = "${local.name_prefix}-feedback-received"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackReceived\" }"
+
+  metric_transformation {
+    name          = "FeedbackReceived"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_received" {
+  alarm_name = "${local.name_prefix}-feedback-received"
+  # CloudWatch never stores feedback text (metadata-only line, see
+  # handlers/feedback.js) — the submission content lives in PostHog Surveys
+  # once forwarding is enabled. While the forwarder is log-only (check for
+  # FeedbackLogOnly lines) the text was discarded at intake; the metrics here
+  # (page/site/release/id/textLength) are the whole CloudWatch-side story.
+  alarm_description   = "A user submitted app feedback. Read the note in PostHog → Surveys → 'GNP app feedback' → Results (see docs/runbooks/feedback-ops.md). If CloudWatch shows FeedbackLogOnly lines instead, forwarding is off and the note was discarded at intake — check the survey-ID env vars."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "FeedbackReceived"
+  namespace           = local.error_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# Validation drops are quiet-but-counted (abuse signal, not app failure —
+# alarm only at a clearly abusive level), mirroring client_error_dropped.
+resource "aws_cloudwatch_log_metric_filter" "feedback_dropped" {
+  name           = "${local.name_prefix}-feedback-dropped"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackDropped\" }"
+
+  metric_transformation {
+    name          = "FeedbackDropped"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_dropped" {
+  alarm_name          = "${local.name_prefix}-feedback-dropped"
+  alarm_description   = "Unusually many invalid feedback payloads — possible abuse of the public intake (high threshold; single drops are normal noise)."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  threshold           = 100
+  period              = 300
+  namespace           = local.error_namespace
+  metric_name         = "FeedbackDropped"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# Feedback forwarder failures (PostHog ingest down, egress broken, secret
+# errors) — the feedback twin of client_error_forward_failed. A failure here
+# means feedback arrived but never reached the store (CloudWatch keeps only
+# metadata), so it pages.
+resource "aws_cloudwatch_log_metric_filter" "feedback_forward_failed" {
+  name           = "${local.name_prefix}-feedback-forward-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"FeedbackForwardFailed\" }"
+
+  metric_transformation {
+    name          = "FeedbackForwardFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "feedback_forward_failed" {
+  alarm_name          = "${local.name_prefix}-feedback-forward-failed"
+  alarm_description   = "Feedback forwarder to PostHog is failing (ingest down, egress broken, or secret misread) — feedback arrived but never reached the store. Check the FeedbackForwardFailed WARN lines."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "FeedbackForwardFailed"
+  namespace           = local.error_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
 # --- worker filter ------------------------------------------------------------
 
 resource "aws_cloudwatch_log_metric_filter" "worker_errors" {

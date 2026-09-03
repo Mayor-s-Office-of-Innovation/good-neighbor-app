@@ -66,6 +66,11 @@ module "app" {
   bedrock_model_id         = var.bedrock_model_id
   analyzer_base_url        = "https://ipipaqh985.execute-api.us-east-1.amazonaws.com/dev"
   enable_311_submission    = true
+  # PostHog feedback survey (see docs/runbooks/feedback-ops.md §3): plain
+  # identifiers, not secrets. The phc_ ingest key itself is set out-of-band
+  # via put-secret-value on gnp-dev-posthog-project-api-key.
+  feedback_survey_id       = "01a0633b-35d7-0000-9917-4ad2f1a7aa60"
+  feedback_question_id     = "256e7e9d-9579-489a-ad5f-bcdd1b8e6baf"
   tags                     = local.common_tags
   frontend_domain_names    = [local.frontend_domain_name]
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn

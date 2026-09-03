@@ -8,6 +8,8 @@
  * @property {string} [analyzerApiKeySecretArn]
  * @property {string} [posthogProjectApiKey]
  * @property {string} [posthogApiKeySecretArn]
+ * @property {string} [posthogFeedbackSurveyId]
+ * @property {string} [posthogFeedbackQuestionId]
  * @property {string} [sf311CreateSrUrl]
  * @property {string} [sf311AgencyLookupUrl]
  * @property {string} [sf311BasicAuthSecretArn]
@@ -54,6 +56,17 @@ export function getConfig(env = process.env) {
   }
   if (env.POSTHOG_API_KEY_SECRET_ARN) {
     config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
+  }
+
+  // Feedback survey wiring is optional at load time: with either ID unset the
+  // feedback forwarder stays in log-only mode (validate + log, no egress) —
+  // the pre-config default and the kill switch. Plain identifiers, not
+  // secrets. See handlers/feedback-forwarder.js.
+  if (env.FEEDBACK_SURVEY_ID) {
+    config.posthogFeedbackSurveyId = env.FEEDBACK_SURVEY_ID;
+  }
+  if (env.FEEDBACK_QUESTION_ID) {
+    config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
   }
 
   if (env.SF311_CREATESR_URL) config.sf311CreateSrUrl = env.SF311_CREATESR_URL;

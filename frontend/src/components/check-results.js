@@ -154,15 +154,25 @@ class CheckResults extends HTMLElement {
             ${DECISIONS.map(
               (d) =>
                 html`<li>
-                  <button class="sheet__opt" type="button" data-key="${d.key}">
+                  <wa-button
+                    class="sheet__opt"
+                    type="button"
+                    appearance="outlined"
+                    data-key="${d.key}"
+                  >
                     ${escapeHtml(d.label)}
-                  </button>
+                  </wa-button>
                 </li>`,
             ).join("")}
           </ul>
-          <button class="sheet__cancel" type="button" id="dispute-cancel">
+          <wa-button
+            class="sheet__cancel"
+            type="button"
+            id="dispute-cancel"
+            appearance="plain"
+          >
             Cancel
-          </button>
+          </wa-button>
         </div>
       </dialog>
     `;

@@ -64,6 +64,11 @@ resource "aws_lambda_function" "api" {
       SF311_BASIC_AUTH_SECRET_ARN = aws_secretsmanager_secret.sf311_basic_auth.arn
       SF311_DEFAULT_RESPONSIBLE_AGENCY = var.sf311_default_responsible_agency
       SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+      # Feedback destination (docs/runbooks/feedback-ops.md): plain
+      # identifiers, not secrets. Empty defaults keep the forwarder log-only
+      # until the surveys exist in the project (the kill switch too).
+      FEEDBACK_SURVEY_ID   = var.feedback_survey_id
+      FEEDBACK_QUESTION_ID = var.feedback_question_id
     }
   }
 

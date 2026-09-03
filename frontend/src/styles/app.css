@@ -1635,101 +1635,10 @@ theme-toggle {
   }
 }
 
-/* ---- <in-browser-camera>: opt-in INLINE camera (?webcam) ----
-   Isolated with the rest of the feature (in-browser-camera.js + shellWebcam
-   template) so it can be lifted out cleanly. */
-.camera-panel {
-  margin-bottom: 0.75rem;
-}
-.ibcam {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.9rem;
-}
-.ibcam__stage {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 52vh;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #000;
-  touch-action: none; /* let pinch drive zoom, not the browser */
-}
-.ibcam__video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-/* Capture flash — brief white wash so a tap registers (no separate review step).
-   Motion-gated: reduced-motion users get no flash (the new thumbnail below is the
-   confirmation). Base opacity 0 so the ::after is inert unless the animation runs. */
-.ibcam__stage--flash::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .ibcam__stage--flash::after {
-    animation: ibcam-flash 160ms ease-out;
-  }
-}
-@keyframes ibcam-flash {
-  from {
-    opacity: 0.85;
-  }
-  to {
-    opacity: 0;
-  }
-}
-.ibcam__zoom {
-  position: absolute;
-  top: 0.6rem;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 0.2rem 0.7rem;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-.ibcam__zoom[hidden] {
-  display: none;
-}
-/* Shutter: ink disc + surface ring, sits on the light screen below the camera. */
-.ibcam__shutter {
-  width: 70px;
-  height: 70px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--ink);
-  border: 4px solid var(--surface);
-  box-shadow: 0 0 0 3px var(--ink);
-  cursor: pointer;
-}
-.ibcam__shutter:active {
-  transform: scale(0.94);
-}
-/* Disabled until the stream can be snapshotted (slow start / autoplay hold). */
-.ibcam__shutter:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.ibcam__shutter:disabled:active {
-  transform: none;
-}
-
 /* ==================================================================
    Screen 5c-alt describe instead — typed draft shell. This is the alternate
-   evidence path off the capture screen. Voice/transcription and validation
-   states land in later steps; this pass covers typing, draft save, and
-   unsaved-exit protection.
+   evidence path off the capture screen. This pass covers typing, draft save,
+   and unsaved-exit protection.
    ================================================================== */
 
 .view-describe.describe {
@@ -1784,7 +1693,6 @@ theme-toggle {
 }
 
 .describe__close:focus-visible,
-.describe__voice:focus-visible,
 .describe__continue:focus-visible,
 .describe-modal__secondary:focus-visible,
 .describe-modal__primary:focus-visible {
@@ -1959,61 +1867,6 @@ theme-toggle {
 .describe-chip[data-complete="true"] {
   background: #d9f2e3;
   color: #276246;
-}
-
-.describe__voice {
-  appearance: none;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.625rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--ink);
-  color: var(--on-ink);
-  font: inherit;
-  font-weight: 500;
-  font-size: 1.25rem;
-  line-height: 1.2;
-  padding: 0.9375rem 1.25rem;
-  margin: 0;
-  height: auto;
-  box-shadow: none;
-}
-
-.describe__voice[data-state="recording"] {
-  background: var(--wa-color-danger-fill-normal);
-  color: var(--wa-color-danger-on-normal);
-  text-align: center;
-  font-family: var(--wa-font-family-body);
-  font-size: var(--wa-font-size-l);
-  font-style: normal;
-  font-weight: var(--wa-form-control-label-font-weight);
-  line-height: 1.2;
-}
-
-.describe__voice:disabled {
-  cursor: default;
-  opacity: 0.72;
-}
-
-.describe__voice-status {
-  visibility: visible;
-  min-height: 1.5rem;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.4;
-  text-align: center;
-}
-
-.describe__voice-status[aria-hidden="true"] {
-  visibility: hidden;
-}
-
-.describe__voice-status[data-kind="error"] {
-  color: var(--c-hazard);
 }
 
 .describe__actions {
@@ -2627,7 +2480,13 @@ theme-toggle {
 
 /* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
 /* Native <dialog>: showModal() gives focus trap + Escape for free. The element
-   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss). */
+   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss).
+
+   Show/hide animation is pure CSS (no JS timing): @starting-style defines the
+   pre-open state, `transition-behavior: allow-discrete` keeps the element
+   rendered while it transitions out after close(). Mirrors wa-dialog's fade +
+   scale (`--wa-transition-normal`, its dialog.styles.ts show-dialog keyframes).
+   Browsers without @starting-style skip the animation and show/hide instantly. */
 .sheet {
   padding: 0;
   border: 0;
@@ -2636,9 +2495,59 @@ theme-toggle {
   max-width: none;
   margin: auto;
   color: var(--text);
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition:
+    opacity var(--wa-transition-normal, 150ms) ease,
+    translate var(--wa-transition-normal, 150ms) ease,
+    scale var(--wa-transition-normal, 150ms) ease,
+    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
+    display var(--wa-transition-normal, 150ms) ease allow-discrete;
+}
+/* Closed state: the dialog element when not open (modal + closed = display:none
+   via the UA sheet; allow-discrete keeps it painted during the exit run). */
+.sheet:not([open]) {
+  opacity: 0;
+  translate: 0 0.6rem;
+  scale: 0.96;
+}
+/* Pre-open state: the styles the dialog animates FROM on showModal(). */
+@starting-style {
+  .sheet[open] {
+    opacity: 0;
+    translate: 0 0.6rem;
+    scale: 0.96;
+  }
 }
 .sheet::backdrop {
   background: rgba(0, 0, 0, 0.4);
+  transition:
+    opacity var(--wa-transition-normal, 150ms) ease,
+    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
+    display var(--wa-transition-normal, 150ms) ease allow-discrete;
+}
+/* Backdrop closed state + pre-open, same pattern as the panel. */
+.sheet:not([open])::backdrop {
+  opacity: 0;
+}
+@starting-style {
+  .sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+/* Reduced motion: fade only — no slide/scale (matches the assessment-tile guard). */
+@media (prefers-reduced-motion: reduce) {
+  .sheet:not([open]) {
+    translate: 0 0;
+    scale: 1;
+  }
+  @starting-style {
+    .sheet[open] {
+      translate: 0 0;
+      scale: 1;
+    }
+  }
 }
 .sheet__panel {
   background: var(--surface);
@@ -2681,4 +2590,92 @@ theme-toggle {
 .sheet__cancel::part(button) {
   width: 100%;
   min-height: 46px;
+}
+
+/* ---- Feedback sheet (feedback-dialog.js): textarea + send, then thanks ---- */
+/* Reuses .sheet/.sheet__panel chrome; adds the form-specific bits. */
+/* Trigger: icon-only button pinned to the top-right of the home header. The
+   <feedback-dialog> element itself is a 0×0 box in the flow; the button
+   positions against the nearest positioned ancestor (.home is not positioned,
+   so this anchors to the viewport corner where the header sits). */
+.feedback-dialog {
+  position: static;
+}
+.feedback__open {
+  position: absolute;
+  top: max(0.6rem, env(safe-area-inset-top));
+  right: 0.75rem;
+  z-index: 20; /* above the sticky header (z-index: 10) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem; /* 44px touch target (WCAG 2.5.8) */
+  height: 2.75rem;
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-secondary);
+  /* Undo WA's native-button box: the awesome theme raises every non-plain
+     button with a solid offset shadow + matching margins (same reset as
+     .btn-ink above). */
+  box-shadow: none;
+  margin: 0;
+}
+.feedback__open:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.feedback__open:not(:disabled):active {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.feedback__open:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.feedback__open wa-icon {
+  font-size: 1.15rem;
+}
+.feedback__panel {
+  width: min(calc(100vw - 2rem), 24rem);
+}
+.feedback__intro {
+  margin: 0 0 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+/* The WA form control themes itself off the --wa-* tokens; only the bits the
+   system doesn't cover are set here (width inside the sheet, quiet label). */
+.feedback__textarea {
+  width: 100%;
+}
+.feedback__textarea::part(form-control-label) {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.feedback__error {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+  color: var(--danger, #b3261e);
+}
+.feedback__thanks {
+  margin: 0.4rem 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+}
+.feedback__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.feedback__actions .btn-ink,
+.feedback__actions .btn-outline {
+  min-width: 6.5rem;
 }
