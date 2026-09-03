@@ -1,12 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { getObjectBytes, presignGet, send } = vi.hoisted(() => ({
+const {
+  createAnalyzerClient,
+  getAnalyzerApiKey,
+  getObjectBytes,
+  presignGet,
+  send,
+} = vi.hoisted(() => ({
+  createAnalyzerClient: vi.fn(),
+  getAnalyzerApiKey: vi.fn(),
   getObjectBytes: vi.fn(),
   presignGet: vi.fn(),
   send: vi.fn(),
 }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
 vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
+vi.mock("../api-key.js", () => ({ getAnalyzerApiKey }));
+vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
 
 import {
   executeAppActions,
@@ -261,6 +271,75 @@ describe("app action execution", () => {
       getObjectBytes.mockReset();
       presignGet.mockReset();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("fails classifier-backed 311 actions when no service codes are produced", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          s3Key: "checks/site-1/check-1/North/artifact-1",
+          contentType: "image/jpeg",
+        },
+      ],
+    });
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("image"),
+      contentType: "image/jpeg",
+    });
+    getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    createAnalyzerClient.mockReturnValueOnce({
+      classifyImage: vi.fn().mockResolvedValueOnce({ labels: [] }),
+    });
+
+    try {
+      expect(
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: { serviceCodeOrAction: "Run graffiti analysis" },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              ANALYZER_BASE_URL: "https://analyzer.example.test",
+              ANALYZER_API_KEY: "analyzer-key",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            task: {
+              taskId: "task-1",
+              checkId: "check-1",
+              description: "Graffiti",
+              sourceArtifactIds: ["artifact-1"],
+            },
+          },
+        ),
+      ).toEqual([
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "no_service_codes",
+          payload: { serviceCodeOrAction: "Run graffiti analysis" },
+          recordedAt: "2026-08-18T12:00:00.000Z",
+        },
+      ]);
+    } finally {
+      createAnalyzerClient.mockReset();
+      getAnalyzerApiKey.mockReset();
+      getObjectBytes.mockReset();
+      send.mockReset();
     }
   });
 
