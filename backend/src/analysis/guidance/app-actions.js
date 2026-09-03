@@ -115,9 +115,10 @@ async function resolveLocation({ tableName, siteId, task }) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
+ * @param {import("../../config.js").AppConfig} opts.config
  * @returns {Promise<{ content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }>}
  */
-async function loadClassifierImage({ tableName, siteId, task }) {
+async function loadClassifierImage({ tableName, siteId, task, config }) {
   const artifactIds = new Set(
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
@@ -146,7 +147,7 @@ async function loadClassifierImage({ tableName, siteId, task }) {
     throw new Error("No source image is available for 311 classifier analysis");
   }
   const object = await getObjectBytes({
-    bucket: getConfig().uploadBucket,
+    bucket: config.uploadBucket,
     key: String(artifact.s3Key),
   });
   const contentType = String(artifact.contentType || object.contentType);
@@ -318,7 +319,7 @@ async function execute311Action({
       baseUrl: config.analyzerBaseUrl ?? "",
       apiKey: analyzerApiKey,
     });
-    const image = await loadClassifierImage({ tableName, siteId, task });
+    const image = await loadClassifierImage({ tableName, siteId, task, config });
     const result = /** @type {{ labels?: unknown }} */ (
       await analyzer.classifyImage({
         classifierId: parsed.classifierId,
@@ -335,6 +336,15 @@ async function execute311Action({
       labels,
       map: parseClassifierServiceCodeMap(config.sf311ClassifierServiceCodeMap),
     });
+  }
+  if (serviceCodes.length === 0) {
+    return {
+      code: action.code,
+      status: "failed",
+      reason: "no_service_codes",
+      payload: action.payload ?? {},
+      recordedAt: now,
+    };
   }
 
   const location = await resolveLocation({ tableName, siteId, task });
