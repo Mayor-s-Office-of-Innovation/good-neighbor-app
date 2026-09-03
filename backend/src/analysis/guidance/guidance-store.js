@@ -98,6 +98,20 @@ function hasTaskCreatedAppAction(task) {
 }
 
 /**
+ * @param {Record<string, unknown>} task
+ * @returns {boolean}
+ */
+function hasUserConfirmed311Action(task) {
+  return /** @type {{ code?: unknown, payload?: { executionTrigger?: unknown } }[]} */ (
+    task.appActions ?? []
+  ).some(
+    (action) =>
+      action.code === "create_311_ticket" &&
+      action.payload?.executionTrigger !== "task_created",
+  );
+}
+
+/**
  * @param {unknown} value
  * @param {Date} now
  * @returns {boolean}
@@ -1027,6 +1041,15 @@ export async function completeTaskWithAppActions(opts) {
     existing.Item.status !== "completing"
   ) {
     throw namedError("TerminalConflict", "Task is no longer open");
+  }
+  if (
+    opts.completionMethod === "311_filed" &&
+    !hasUserConfirmed311Action(existing.Item)
+  ) {
+    throw namedError(
+      "InvalidCompletionMethod",
+      "Task has no executable 311 filing action",
+    );
   }
 
   let claimCondition = "#status = :open";

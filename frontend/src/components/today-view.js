@@ -598,11 +598,7 @@ class TodayView extends HTMLElement {
       if (a) actions.push(a);
     }
     if (!actions.length) {
-      actions.push(
-        task.type === "city_escalation"
-          ? { kind: "file311", label: "File 311 ticket", variant: "blue" }
-          : { kind: "done", label: "Done", variant: "ink" },
-      );
+      actions.push({ kind: "done", label: "Done", variant: "ink" });
     }
     if ((task.cannotDoReasons || []).length) {
       actions.push({ kind: "cant", label: "Can't", variant: "outline" });
@@ -628,7 +624,7 @@ class TodayView extends HTMLElement {
         variant: "blue",
       };
     }
-    if (code === "create_311_ticket" || l.includes("311")) {
+    if (code === "create_311_ticket") {
       return {
         kind: "file311",
         label: label || "File 311 ticket",

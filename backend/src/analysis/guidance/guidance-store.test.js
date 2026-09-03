@@ -619,6 +619,42 @@ describe("completeTaskWithAppActions", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects 311-filed completion without a user-confirmed 311 app action", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "escalation",
+        severity: 3,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              executionTrigger: "task_created",
+            },
+          },
+        ],
+      },
+    });
+
+    await expect(
+      completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "311_filed",
+        now: new Date("2026-08-18T12:02:00.000Z"),
+      }),
+    ).rejects.toMatchObject({
+      name: "InvalidCompletionMethod",
+      message: "Task has no executable 311 filing action",
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an active completing task without re-running app actions", async () => {
     send.mockResolvedValueOnce({
       Item: {
