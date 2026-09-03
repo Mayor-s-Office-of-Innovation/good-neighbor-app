@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock("../../db.js", () => ({ ddb: { send } }));
+
 import {
   executeAppActions,
   initialAppActionStatus,
@@ -126,6 +130,130 @@ describe("app action execution", () => {
         recordedAt: "2026-08-18T12:00:00.000Z",
       },
     ]);
+  });
+
+  it("records safe diagnostics for SF311 submission failures", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        location: {
+          latitude: 37.76656393517443,
+          longitude: -122.4213267021692,
+        },
+      },
+    });
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            return_code: "4001",
+            return_message: "NatureofRequest is invalid",
+            password: "do-not-store",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    try {
+      expect(
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "1.1.4.7.20.0",
+                responsibleAgencyCode: "",
+              },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            taskId: "task-1",
+            tableName: "table",
+            siteId: "site-1",
+            task: { taskId: "task-1", description: "Trash" },
+          },
+        ),
+      ).toEqual([
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "4001",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            responsibleAgencyCode: "",
+          },
+          diagnostics: {
+            integration: "sf311",
+            status: 200,
+            code: "4001",
+            request: {
+              SourceAgency: "76",
+              SourceRequestID: "task-1-1147200",
+              SourceOperator: "Good Neighbor App",
+              ResponsibleAgency: "",
+              ResponsibleAgencyRequestID: "",
+              SourceAgencyReceiveDate: "2026-08-18 12:00:00",
+              TransferToResponsiblAgencyDate: "",
+              PublicVisibilityIndicator: "0",
+              CustomerName: "",
+              CustomerPhone: "",
+              CustomerAddress1: "",
+              CustomerAddress2: "",
+              CustomerCity: "",
+              CustomerState: "",
+              CustomerZip: "",
+              CustomerCountry: "",
+              CustomerEmail: "",
+              CallbackRequestedIndicator: "0",
+              CallbackNotes: "",
+              NatureofRequest: "1.1.4.7.20.0",
+              ProblemDescription: "Trash",
+              PriorityType: "",
+              EmergencyType: "",
+              Status: "",
+              LinkID: "",
+              LocationPointofInterest: "",
+              LocationStreetNumber: "",
+              LocationStreetName: "",
+              LocationCrossStreet1: "",
+              LocationCrossStreet2: "",
+              LocationDescription: "",
+              EasID: "",
+              BlockLot: "",
+              CNN: "",
+              DeptAssetType: "",
+              DeptAssetID: "",
+              Xcoordinate: "",
+              Ycoordinate: "",
+              Latitude: "37.76656393517443",
+              Longitude: "-122.4213267021692",
+            },
+            body: {
+              data: {
+                return_code: "4001",
+                return_message: "NatureofRequest is invalid",
+                password: "[redacted]",
+              },
+            },
+          },
+          recordedAt: "2026-08-18T12:00:00.000Z",
+        },
+      ]);
+    } finally {
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("leaves email and form integrations unconfigured", async () => {

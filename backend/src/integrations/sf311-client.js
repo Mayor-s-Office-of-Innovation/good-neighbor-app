@@ -17,7 +17,7 @@ const basicAuthCache = new Map();
  * @returns {string}
  */
 export function hubDateTime(date) {
-  return date.toISOString().replace(/\.\d{3}Z$/, "");
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
 /**
@@ -60,10 +60,42 @@ export function buildCreateSrPayload({
   return {
     SourceAgency: SOURCE_AGENCY,
     SourceRequestID: sourceRequestId({ taskId, serviceCode }),
-    SourceAgencyReceiveDate: hubDateTime(now),
+    SourceOperator: "Good Neighbor App",
     ResponsibleAgency: String(responsibleAgency),
+    ResponsibleAgencyRequestID: "",
+    SourceAgencyReceiveDate: hubDateTime(now),
+    TransferToResponsiblAgencyDate: "",
+    PublicVisibilityIndicator: "0",
+    CustomerName: "",
+    CustomerPhone: "",
+    CustomerAddress1: "",
+    CustomerAddress2: "",
+    CustomerCity: "",
+    CustomerState: "",
+    CustomerZip: "",
+    CustomerCountry: "",
+    CustomerEmail: "",
+    CallbackRequestedIndicator: "0",
+    CallbackNotes: "",
     NatureofRequest: serviceCode,
     ProblemDescription: truncateHubField(problemDescription, 2000),
+    PriorityType: "",
+    EmergencyType: "",
+    Status: "",
+    LinkID: "",
+    LocationPointofInterest: "",
+    LocationStreetNumber: "",
+    LocationStreetName: "",
+    LocationCrossStreet1: "",
+    LocationCrossStreet2: "",
+    LocationDescription: "",
+    EasID: "",
+    BlockLot: "",
+    CNN: "",
+    DeptAssetType: "",
+    DeptAssetID: "",
+    Xcoordinate: "",
+    Ycoordinate: "",
     Latitude: String(location.latitude),
     Longitude: String(location.longitude),
   };
@@ -167,13 +199,15 @@ export class Sf311Error extends Error {
    * @param {number} [opts.status]
    * @param {string} [opts.code]
    * @param {unknown} [opts.body]
+   * @param {unknown} [opts.request]
    */
-  constructor(message, { status, code, body } = {}) {
+  constructor(message, { status, code, body, request } = {}) {
     super(message);
     this.name = "Sf311Error";
     this.status = status;
     this.code = code;
     this.body = body;
+    this.request = request;
   }
 }
 
@@ -270,6 +304,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
           status: res.status,
           code: returnCode || undefined,
           body,
+          request: payload,
         });
       }
       const srNum =

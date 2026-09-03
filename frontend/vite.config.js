@@ -1,5 +1,9 @@
 import { defineConfig } from "vite";
 
+const releaseSha =
+  /** @type {{ process?: { env?: { RELEASE_SHA?: string } } }} */ (globalThis)
+    .process?.env?.RELEASE_SHA ?? "dev";
+
 /*
   Served from the site root (S3/CloudFront), so base is "/" — paired with the
   History-API router (src/router.js). Deep-link/refresh 404s are handled by a
@@ -25,11 +29,7 @@ export default defineConfig({
     // Release stamp for error reports (services/error-report.js reads
     // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
     // (deploy.yml); local builds get "dev". Guarded for non-Node contexts.
-    __RELEASE__: JSON.stringify(
-      typeof process !== "undefined" && process.env.RELEASE_SHA
-        ? process.env.RELEASE_SHA
-        : "dev",
-    ),
+    __RELEASE__: JSON.stringify(releaseSha),
   },
   build: {
     // Source maps for the error tracker's symbolication (Phase 3 of the

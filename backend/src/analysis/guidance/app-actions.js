@@ -28,6 +28,7 @@ import { checkArtifactPrefix, siteMetaKey } from "../../handlers/keys.js";
  * @property {string} status
  * @property {Record<string, unknown>} [payload]
  * @property {string} [reason]
+ * @property {Record<string, unknown>} [diagnostics]
  * @property {string} [externalId]
  * @property {string} recordedAt
  */
@@ -305,6 +306,61 @@ function appActionErrorReason(error) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {number} [depth]
+ * @returns {unknown}
+ */
+function sanitizeDiagnosticValue(value, depth = 0) {
+  if (depth > 4) return "[truncated]";
+  if (value == null) return value;
+  if (typeof value === "string") {
+    return value.length > 1000 ? `${value.slice(0, 1000)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 20)
+      .map((item) => sanitizeDiagnosticValue(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    /** @type {Record<string, unknown>} */
+    const sanitized = {};
+    for (const [key, item] of Object.entries(
+      /** @type {Record<string, unknown>} */ (value),
+    ).slice(0, 60)) {
+      if (/authorization|password|secret|token|api[-_]?key/i.test(key)) {
+        sanitized[key] = "[redacted]";
+      } else {
+        sanitized[key] = sanitizeDiagnosticValue(item, depth + 1);
+      }
+    }
+    return sanitized;
+  }
+  return String(value);
+}
+
+/**
+ * @param {unknown} error
+ * @returns {Record<string, unknown> | undefined}
+ */
+function appActionErrorDiagnostics(error) {
+  if (error instanceof Sf311Error) {
+    return {
+      integration: "sf311",
+      ...(error.status ? { status: error.status } : {}),
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.request !== undefined
+        ? { request: sanitizeDiagnosticValue(error.request) }
+        : {}),
+      ...(error.body !== undefined
+        ? { body: sanitizeDiagnosticValue(error.body) }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
+/**
  * @param {AppAction[]} appActions
  * @param {"task_created" | "user_confirmed" | undefined} trigger
  * @returns {AppAction[]}
@@ -366,11 +422,13 @@ export async function executeAppActions(appActions, opts = {}) {
             }),
           );
         } catch (error) {
+          const diagnostics = appActionErrorDiagnostics(error);
           results.push({
             code: action.code,
             status: "failed",
             reason: appActionErrorReason(error),
             payload,
+            ...(diagnostics ? { diagnostics } : {}),
             recordedAt: now,
           });
         }
