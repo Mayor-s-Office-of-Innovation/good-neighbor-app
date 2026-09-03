@@ -597,6 +597,16 @@ form > wa-button[type="submit"] {
   font-weight: var(--wa-font-weight-body);
   line-height: 1.6;
 }
+.places-flow__error {
+  margin: 0;
+  color: var(--c-hazard);
+  text-align: center;
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-body);
+  line-height: 1.4;
+}
 .places-flow__actions {
   display: flex;
   flex-wrap: wrap;
