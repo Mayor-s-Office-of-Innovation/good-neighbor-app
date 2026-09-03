@@ -5,6 +5,7 @@ import {
 import { getConfig } from "../config.js";
 
 const SOURCE_AGENCY = "76";
+const SENDING_AGENCY = "76";
 
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
@@ -98,6 +99,27 @@ export function buildCreateSrPayload({
     Ycoordinate: "",
     Latitude: String(location.latitude),
     Longitude: String(location.longitude),
+  };
+}
+
+/**
+ * @param {object} params
+ * @param {string} params.srNum
+ * @param {string} params.imageUrl
+ * @param {Date} params.now
+ * @returns {Record<string, string>}
+ */
+export function buildAttachmentUpdatePayload({ srNum, imageUrl, now }) {
+  return {
+    SRnum: srNum,
+    UpdateType: "8",
+    SendingAgency: SENDING_AGENCY,
+    SourceOperator: "Good Neighbor App",
+    NumericSubType: "1",
+    TextSubType: imageUrl,
+    EffectiveDate: hubDateTime(now),
+    ToAgencyDate: "",
+    Notes: "",
   };
 }
 
@@ -215,7 +237,7 @@ export class Sf311Error extends Error {
  * @param {object} options
  * @param {import("../config.js").AppConfig} [options.config]
  * @param {typeof fetch} [options.fetchImpl]
- * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string | null, response: unknown }> }}
+ * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string | null, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }> }}
  */
 export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   if (!config.sf311CreateSrUrl) {
@@ -225,6 +247,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
     throw new Error("SF311_AGENCY_LOOKUP_URL is required");
   }
   const createSrUrl = config.sf311CreateSrUrl;
+  const updateSrUrl = config.sf311UpdateSrUrl;
   const agencyLookupUrl = config.sf311AgencyLookupUrl;
 
   /**
@@ -312,6 +335,53 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
           ? /** @type {Record<string, unknown>} */ (data).SRNum
           : null;
       return { srNum: srNum == null ? null : String(srNum), response: body };
+    },
+
+    /**
+     * @param {Record<string, string>} payload
+     * @returns {Promise<{ updateId: string | null, response: unknown }>}
+     */
+    async updateServiceRequest(payload) {
+      if (!updateSrUrl) {
+        throw new Error("SF311_UPDATESR_URL is required");
+      }
+      const auth = await getSf311BasicAuth(config);
+      const res = await fetchImpl(updateSrUrl, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: basicAuthHeader(auth),
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await readJson(res);
+      const data =
+        body && typeof body === "object" && "data" in body
+          ? /** @type {{ data?: Record<string, unknown> }} */ (body).data
+          : body;
+      const returnCode =
+        data && typeof data === "object"
+          ? String(
+              /** @type {Record<string, unknown>} */ (data).return_code ?? "",
+            )
+          : "";
+      if (!res.ok || (returnCode && returnCode !== "0")) {
+        throw new Sf311Error("SF311 UpdateSR failed", {
+          status: res.status,
+          code: returnCode || undefined,
+          body,
+          request: payload,
+        });
+      }
+      const updateId =
+        data && typeof data === "object"
+          ? /** @type {Record<string, unknown>} */ (data).UpdateID
+          : null;
+      return {
+        updateId: updateId == null ? null : String(updateId),
+        response: body,
+      };
     },
   };
 }

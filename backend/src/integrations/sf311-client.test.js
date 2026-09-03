@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAttachmentUpdatePayload,
   buildCreateSrPayload,
   findResponsibleAgencyInLookup,
   hubDateTime,
@@ -67,6 +68,26 @@ describe("SF311 CreateSR client helpers", () => {
       Ycoordinate: "",
       Latitude: "37.76656393517443",
       Longitude: "-122.4213267021692",
+    });
+  });
+
+  it("builds an UpdateSR attachment payload with HUB field names", () => {
+    expect(
+      buildAttachmentUpdatePayload({
+        srNum: "2000008106",
+        imageUrl: "https://uploads.example.test/photo.jpg",
+        now: new Date("2026-09-02T17:11:12.000Z"),
+      }),
+    ).toEqual({
+      SRnum: "2000008106",
+      UpdateType: "8",
+      SendingAgency: "76",
+      SourceOperator: "Good Neighbor App",
+      NumericSubType: "1",
+      TextSubType: "https://uploads.example.test/photo.jpg",
+      EffectiveDate: "2026-09-02 17:11:12",
+      ToAgencyDate: "",
+      Notes: "",
     });
   });
 

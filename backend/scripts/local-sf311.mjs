@@ -1,4 +1,4 @@
-// Local fake for SF311 HUB/Verint CreateSR. It records CreateSR payloads and
+// Local fake for SF311 HUB/Verint CreateSR/UpdateSR. It records payloads and
 // returns HUB-shaped success responses without making any external requests.
 
 import { createServer } from "node:http";
@@ -123,6 +123,33 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (method === "POST" && url.pathname.includes("updatesr")) {
+      const bodyText = await readBody(req);
+      const payload = bodyText ? JSON.parse(bodyText) : {};
+      const priorRequests = await readRequests();
+      const updateId = priorRequests.length + 1;
+      const entry = {
+        receivedAt: new Date().toISOString(),
+        kind: "updatesr",
+        method,
+        path: url.pathname,
+        authorizationPresent: Boolean(req.headers.authorization),
+        payload,
+        response: { UpdateID: updateId },
+      };
+      await appendRequest(entry);
+      console.log(
+        `[sf311] update sr=${payload.SRnum ?? payload.SRNum ?? "unknown"} ` +
+          `type=${payload.UpdateType ?? "unknown"} update=${updateId}`,
+      );
+      sendJson(res, 200, {
+        UpdateID: updateId,
+        error_description: "",
+        return_code: 0,
+      });
+      return;
+    }
+
     if (method === "POST") {
       const bodyText = await readBody(req);
       const payload = bodyText ? JSON.parse(bodyText) : {};
@@ -130,6 +157,7 @@ const server = createServer(async (req, res) => {
       const srNum = fakeSrNumber(priorRequests.length + 1);
       const entry = {
         receivedAt: new Date().toISOString(),
+        kind: "createsr",
         method,
         path: url.pathname,
         authorizationPresent: Boolean(req.headers.authorization),
@@ -161,6 +189,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`[sf311] fake server listening on http://127.0.0.1:${PORT}`);
   console.log(`[sf311] CreateSR URL: http://127.0.0.1:${PORT}/createsr`);
+  console.log(`[sf311] UpdateSR URL: http://127.0.0.1:${PORT}/updatesr`);
   console.log(`[sf311] lookup URL:   http://127.0.0.1:${PORT}/lookup`);
   console.log(`[sf311] requests:     http://127.0.0.1:${PORT}/requests`);
   console.log(`[sf311] log file:     ${LOG_PATH}`);

@@ -33,7 +33,13 @@ variable "enable_311_submission" {
 variable "sf311_createsr_url" {
   description = "SF311 HUB CreateSR endpoint URL."
   type        = string
-  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/CREATESR/2.0"
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/CREATESR/2.0/servicerequest"
+}
+
+variable "sf311_updatesr_url" {
+  description = "SF311 HUB UpdateSR endpoint URL for service request photo attachments."
+  type        = string
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/UPDATESRREST/1.0/"
 }
 
 variable "sf311_agency_lookup_url" {
