@@ -34,6 +34,7 @@ import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
+import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -114,6 +115,8 @@ const routes = [
   route("GET", "/health", healthHandler),
   // Client error intake (best-effort; handler always 204s)
   route("POST", "/v1/client-errors", clientErrorsHandler),
+  // User feedback intake (log-based store; handler always 204s)
+  route("POST", "/v1/feedback", feedbackHandler),
 ];
 
 /**
