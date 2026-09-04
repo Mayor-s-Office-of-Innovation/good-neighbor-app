@@ -1027,8 +1027,7 @@ export async function executeAppActions(appActions, opts = {}) {
               env,
               priorResults,
               trigger: opts.trigger,
-              completionLeaseExpiresAt:
-                opts.completionLeaseExpiresAt ?? "",
+              completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
             }),
           );
         } catch (error) {
@@ -1080,8 +1079,7 @@ export async function executeAppActions(appActions, opts = {}) {
               tableName: opts.tableName ?? "",
               siteId: opts.siteId ?? "",
               taskId: opts.taskId ?? "",
-              completionLeaseExpiresAt:
-                opts.completionLeaseExpiresAt ?? "",
+              completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
             }),
           );
         } catch (error) {
