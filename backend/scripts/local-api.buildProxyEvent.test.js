@@ -41,6 +41,47 @@ describe("buildProxyEvent", () => {
     );
   });
 
+  it("injects X-Debug-Site as the custom:siteId claim when present", () => {
+    const event = buildProxyEvent({
+      method: "POST",
+      path: "/v1/checks",
+      headers: { "x-debug-site": "site-9" },
+      body: "{}",
+      defaultSub: "s",
+    });
+    expect(event.requestContext.authorizer.jwt.claims["custom:siteId"]).toBe(
+      "site-9",
+    );
+  });
+
+  it("omits custom:siteId when no X-Debug-Site/defaultSite (demo fallback)", () => {
+    const event = buildProxyEvent({
+      method: "GET",
+      path: "/v1/checks",
+      headers: {},
+      body: "",
+      defaultSub: "s",
+      defaultSite: "",
+    });
+    expect(
+      event.requestContext.authorizer.jwt.claims["custom:siteId"],
+    ).toBeUndefined();
+  });
+
+  it("uses defaultSite as the custom:siteId claim when set", () => {
+    const event = buildProxyEvent({
+      method: "GET",
+      path: "/v1/checks",
+      headers: {},
+      body: "",
+      defaultSub: "s",
+      defaultSite: "site-default",
+    });
+    expect(event.requestContext.authorizer.jwt.claims["custom:siteId"]).toBe(
+      "site-default",
+    );
+  });
+
   it("carries method/path and a v2 shape the handlers can read", () => {
     const event = buildProxyEvent({
       method: "POST",

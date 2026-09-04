@@ -6,6 +6,7 @@
 */
 import { setSite } from "../db.js";
 import { formatSiteCode, validateSetupCode } from "../services/onboarding.js";
+import { registerDevice } from "../services/devices.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
@@ -90,10 +91,35 @@ class SiteSetup extends HTMLElement {
 
     stripCodeFromUrl();
     const providerSite = result.providerSite;
+    // Register the device and mint its session (Option 4 device auth —
+    // docs/adr/0010): the token rides the site record; after this point the
+    // setup code is never needed again (the refresh flow renews silently).
+    let session;
+    try {
+      session = await registerDevice(result.code);
+    } catch (err) {
+      if (err instanceof Error && /invalid site code/.test(err.message)) {
+        this._checking = false;
+        this._error = INVALID_MESSAGE;
+        this._render();
+        return;
+      }
+      this._checking = false;
+      this._error = "We couldn't set up this device. Try again in a moment.";
+      this._render();
+      return;
+    }
     const site = await setSite(providerSite.name, {
       code: result.code,
       providerSiteId: providerSite.id,
       siteId: providerSite.siteId,
+      deviceId: session.deviceId,
+      token: session.token,
+      refreshToken: session.refreshToken,
+      tokenExpiresAt: new Date(
+        Date.now() + session.expiresIn * 1000,
+      ).toISOString(),
+      tokenGeneration: session.tokenGeneration,
     });
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),

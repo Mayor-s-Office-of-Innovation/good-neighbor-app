@@ -17,6 +17,24 @@
 export const sitePk = (siteId) => `SITE#${siteId}`;
 
 /**
+ * Device identity item — one per registered tablet (AP4 / identity model).
+ * @param {string} siteId
+ * @param {string} deviceId
+ * @returns {PrimaryKey}
+ */
+export const deviceKey = (siteId, deviceId) => ({
+  pk: sitePk(siteId),
+  sk: `DEVICE#${deviceId}`,
+});
+
+/**
+ * Sort-key prefix that lists a site's devices (AP4).
+ * @param {string} siteId
+ * @returns {string}
+ */
+export const devicePrefix = (siteId) => sitePk(siteId);
+
+/**
  * Site config record.
  * @param {string} siteId
  * @returns {PrimaryKey}

@@ -7,8 +7,13 @@
 locals {
   api_routes = [
     "POST /site-code",
+    # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
+    "POST /v1/devices",
+    "POST /v1/devices/token:refresh",
+    # Site config (feature/142 onboard locations)
     "GET /v1/site",
     "PUT /v1/site/places",
+    # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
     "GET /v1/checks",
     "POST /v1/checks/{checkId}/places/{placeId}/description:validate",
@@ -28,6 +33,19 @@ locals {
     "POST /v1/feedback",
     "GET /health",
   ]
+
+  # Routes an anonymous caller may reach: bootstrap + health + best-effort
+  # intakes. Everything else gets the device-token authorizer (Option 4).
+  # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
+  route_is_open = {
+    "POST /site-code"                = true
+    "POST /v1/devices"               = true
+    "POST /v1/devices/token:refresh" = true
+    "GET /health"                    = true
+    "POST /v1/client-errors"         = true
+    "POST /v1/feedback"              = true
+    "POST /submissions"              = true
+  }
 }
 
 resource "aws_apigatewayv2_api" "http" {
@@ -45,13 +63,45 @@ resource "aws_apigatewayv2_integration" "api" {
   payload_format_version = "2.0"
 }
 
+# Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
+# JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
+# the claim-shaped context handlers read. Identity source = the Authorization
+# header, so API Gateway caches verdicts per token; the TTL bounds revocation
+# propagation.
+resource "aws_apigatewayv2_authorizer" "device_token" {
+  api_id                            = aws_apigatewayv2_api.http.id
+  name                              = "${local.name_prefix}-device-token"
+  authorizer_type                   = "REQUEST"
+  authorizer_uri                    = aws_lambda_function.authorizer.invoke_arn
+  identity_sources                  = ["$request.header.authorization"]
+  authorizer_payload_format_version = "2.0"
+  # The Lambda returns the payload-v2 SIMPLE response ({ isAuthorized,
+  # context }) — without this flag API Gateway expects an IAM policy and
+  # rejects the verdict at runtime.
+  enable_simple_responses          = true
+  authorizer_result_ttl_in_seconds = 60
+}
+
 resource "aws_apigatewayv2_route" "routes" {
-  #checkov:skip=CKV_AWS_309:No authorizer for MVP by design — the site-code flow mints no JWT, so requests resolve to DEMO_SITE_ID. Tenant isolation lands with the deferred JWT authorizer + custom:siteId.
+  # The checkov skip for CKV_AWS_309 applies ONLY to the open routes below
+  # (bootstrap + health + best-effort intakes): they are anonymous by design.
+  # Every other route attaches the device-token authorizer (Option 4), which
+  # satisfies the control — protected routes carry no skip.
   for_each = toset(local.api_routes)
 
   api_id    = aws_apigatewayv2_api.http.id
   route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+
+  # Open routes skip the authorizer; everything else requires the device token
+  # (REQUEST-type Lambda authorizer ⇒ authorization_type CUSTOM — NONE, the
+  # default, would ignore authorizer_id and leave the route anonymous).
+  # `route_is_open` lists ONLY the anonymous routes; `try(..., false)` treats an
+  # unlisted route as protected — a bare map lookup on an absent key is a hard
+  # plan-time "Invalid index" error, and the default is fail-closed.
+  #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
+  authorization_type = try(local.route_is_open[each.value], false) ? null : "CUSTOM"
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : aws_apigatewayv2_authorizer.device_token.id
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

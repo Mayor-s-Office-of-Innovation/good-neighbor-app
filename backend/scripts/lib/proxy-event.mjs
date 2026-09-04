@@ -27,6 +27,7 @@ export function buildProxyEvent({
   headers,
   body,
   defaultSub,
+  defaultSite,
   pathParameters,
   queryStringParameters,
   rawQueryString = "",
@@ -44,6 +45,9 @@ export function buildProxyEvent({
   }
 
   const sub = flatHeaders["x-debug-sub"] ?? defaultSub;
+  // X-Debug-Site stands in for the authorizer-injected `custom:siteId` claim
+  // (deployed value comes from the device token; see lambda/authorizer.js).
+  const siteId = flatHeaders["x-debug-site"] ?? defaultSite;
   const requestId = randomUUID();
 
   return {
@@ -72,10 +76,11 @@ export function buildProxyEvent({
         sourceIp: "127.0.0.1",
         userAgent: flatHeaders["user-agent"] ?? "local-harness",
       },
-      // The stub Cognito authorizer. `sub` is the only claim the handlers read.
+      // The stub Cognito authorizer. `sub` (X-Debug-Sub) and `custom:siteId`
+      // (X-Debug-Site) are the only claims the handlers read.
       authorizer: {
         jwt: {
-          claims: { sub },
+          claims: { sub, ...(siteId ? { "custom:siteId": siteId } : {}) },
           scopes: [],
         },
       },
