@@ -37,7 +37,7 @@ sequenceDiagram
 
   Dev->>API: POST /v1/checks (idempotency-key)
   API->>DB: Put CHECK# header (conditional)
-  Dev->>API: POST .../artifacts:presign {side, contentType}
+  Dev->>API: POST .../artifacts:presign {placeId, placeName, contentType}
   API-->>Dev: presigned PUT url + artifactId + s3Key
   Dev->>S3: PUT bytes (content-type pinned)
   Dev->>API: POST .../artifacts {artifactId, s3Key, capturedAt}

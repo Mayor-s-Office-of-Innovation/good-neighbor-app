@@ -32,7 +32,7 @@ describe("validateDescription", () => {
     await expect(
       validateDescription({
         text: "Trash.",
-        side: "North",
+        placeName: "North",
         modelId: "model-id",
         client,
       }),
@@ -54,7 +54,7 @@ describe("validateDescription", () => {
     await expect(
       validateDescription({
         text: "asdf",
-        side: "North",
+        placeName: "North",
         modelId: "local-stub-model",
       }),
     ).resolves.toEqual({
@@ -72,7 +72,7 @@ describe("validateDescription", () => {
     await expect(
       validateDescription({
         text: "Trash near the gate.",
-        side: "West",
+        placeName: "West",
         modelId: "local-stub-model",
       }),
     ).rejects.toMatchObject({

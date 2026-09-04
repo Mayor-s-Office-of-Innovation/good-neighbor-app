@@ -77,7 +77,11 @@ describe("presignUpload", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { side: "north", contentType: "image/jpeg" },
+        body: {
+          placeId: "place-north",
+          placeName: "North",
+          contentType: "image/jpeg",
+        },
       }),
     );
 
@@ -86,8 +90,10 @@ describe("presignUpload", () => {
     expect(payload.uploadUrl).toBe("https://signed.example/put");
     expect(payload.expiresIn).toBe(300);
     expect(typeof payload.artifactId).toBe("string");
+    expect(payload.placeId).toBe("place-north");
+    expect(payload.placeName).toBe("North");
     expect(payload.s3Key).toBe(
-      `checks/site-1/chk_01/north/${payload.artifactId}`,
+      `checks/site-1/chk_01/place-north/${payload.artifactId}`,
     );
 
     // content-type is pinned into the signature.
@@ -104,14 +110,18 @@ describe("presignUpload", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { side: "north", contentType: "application/pdf" },
+        body: {
+          placeId: "place-north",
+          placeName: "North",
+          contentType: "application/pdf",
+        },
       }),
     );
     expect(res.statusCode).toBe(400);
     expect(presignPut).not.toHaveBeenCalled();
   });
 
-  it("requires a side", async () => {
+  it("requires a place", async () => {
     const res = await callPresign(
       artifactEvent({
         checkId: "chk_01",
@@ -126,8 +136,9 @@ describe("presignUpload", () => {
 describe("registerArtifact", () => {
   const validBody = {
     artifactId: "art_1",
-    side: "north",
-    s3Key: "checks/site-1/chk_01/north/art_1",
+    placeId: "place-north",
+    placeName: "North",
+    s3Key: "checks/site-1/chk_01/place-north/art_1",
     contentType: "image/jpeg",
     capturedAt: "2026-08-14T12:00:00.000Z",
     text: "north gate clear",
@@ -154,9 +165,11 @@ describe("registerArtifact", () => {
     expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
-      sk: "CHECK#chk_01#ART#north#art_1",
+      sk: "CHECK#chk_01#ART#place-north#art_1",
       artifactId: "art_1",
-      s3Key: "checks/site-1/chk_01/north/art_1",
+      placeId: "place-north",
+      placeName: "North",
+      s3Key: "checks/site-1/chk_01/place-north/art_1",
     });
 
     const msg = sqsSend.mock.calls[0][0];
@@ -166,8 +179,9 @@ describe("registerArtifact", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_1",
-      s3Key: "checks/site-1/chk_01/north/art_1",
-      side: "north",
+      s3Key: "checks/site-1/chk_01/place-north/art_1",
+      placeId: "place-north",
+      placeName: "North",
       capturedAt: "2026-08-14T12:00:00.000Z",
       text: "north gate clear",
     });
@@ -180,7 +194,10 @@ describe("registerArtifact", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { ...validBody, s3Key: "checks/other-site/chk_99/north/art_1" },
+        body: {
+          ...validBody,
+          s3Key: "checks/other-site/chk_99/place-north/art_1",
+        },
       }),
     );
     expect(res.statusCode).toBe(400);
@@ -218,7 +235,8 @@ describe("registerArtifact", () => {
     expect(JSON.parse(msg.input.MessageBody)).toMatchObject({
       artifactId: "art_1",
       checkId: "chk_01",
-      side: "north",
+      placeId: "place-north",
+      placeName: "North",
     });
   });
 
@@ -227,7 +245,11 @@ describe("registerArtifact", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { side: "north", s3Key: "checks/site-1/chk_01/north/x" },
+        body: {
+          placeId: "place-north",
+          placeName: "North",
+          s3Key: "checks/site-1/chk_01/place-north/x",
+        },
       }),
     );
     expect(res.statusCode).toBe(400);
@@ -243,7 +265,8 @@ describe("registerArtifact", () => {
         siteClaim: "site-1",
         body: {
           artifactId: "art_text_1",
-          side: "west",
+          placeId: "place-west",
+          placeName: "West",
           capturedAt: "2026-08-21T15:00:00.000Z",
           text: "Graffiti is on the west wall by the entrance.",
         },
@@ -253,7 +276,9 @@ describe("registerArtifact", () => {
     expect(res.statusCode).toBe(202);
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.Item).toMatchObject({
-      sk: "CHECK#chk_01#ART#west#art_text_1",
+      sk: "CHECK#chk_01#ART#place-west#art_text_1",
+      placeId: "place-west",
+      placeName: "West",
       text: "Graffiti is on the west wall by the entrance.",
     });
     expect(put.input.Item).not.toHaveProperty("s3Key");
@@ -263,7 +288,8 @@ describe("registerArtifact", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_text_1",
-      side: "west",
+      placeId: "place-west",
+      placeName: "West",
       capturedAt: "2026-08-21T15:00:00.000Z",
       text: "Graffiti is on the west wall by the entrance.",
     });
@@ -276,7 +302,8 @@ describe("registerArtifact", () => {
         siteClaim: "site-1",
         body: {
           artifactId: "art_text_2",
-          side: "west",
+          placeId: "place-west",
+          placeName: "West",
           text: "x".repeat(4001),
         },
       }),
@@ -318,13 +345,13 @@ const callMedia = (event) =>
   /** @type {any} */ (presignMedia(event, ctx, () => {}));
 
 describe("presignMedia", () => {
-  it("finds the artifact by id (side is in its key) and presigns a GET", async () => {
+  it("finds the artifact by id (place is in its key) and presigns a GET", async () => {
     ddbSend.mockResolvedValueOnce({
       Items: [
         {
-          sk: "CHECK#chk_01#ART#north#art_1",
+          sk: "CHECK#chk_01#ART#place-north#art_1",
           artifactId: "art_1",
-          s3Key: "checks/site-1/chk_01/north/art_1",
+          s3Key: "checks/site-1/chk_01/place-north/art_1",
         },
       ],
     });
@@ -341,7 +368,7 @@ describe("presignMedia", () => {
     expect(res.statusCode).toBe(200);
     const payload = JSON.parse(res.body);
     expect(payload.downloadUrl).toBe("https://signed.example/get");
-    expect(payload.s3Key).toBe("checks/site-1/chk_01/north/art_1");
+    expect(payload.s3Key).toBe("checks/site-1/chk_01/place-north/art_1");
 
     // Query is scoped to the derived site + this check's ART# prefix.
     const q = ddbSend.mock.calls[0][0];
@@ -351,7 +378,7 @@ describe("presignMedia", () => {
     );
     expect(presignGet).toHaveBeenCalledWith({
       bucket: "bucket",
-      key: "checks/site-1/chk_01/north/art_1",
+      key: "checks/site-1/chk_01/place-north/art_1",
       expiresIn: 300,
     });
   });
@@ -360,9 +387,9 @@ describe("presignMedia", () => {
     ddbSend.mockResolvedValueOnce({
       Items: [
         {
-          sk: "CHECK#chk_01#ART#north#art_9",
+          sk: "CHECK#chk_01#ART#place-north#art_9",
           artifactId: "art_9",
-          s3Key: "checks/site-1/chk_01/north/art_9",
+          s3Key: "checks/site-1/chk_01/place-north/art_9",
         },
       ],
     });

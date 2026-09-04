@@ -360,6 +360,386 @@ form > wa-button[type="submit"] {
   border-radius: 4px;
 }
 
+/* ---- Places setup / edit ---- */
+.app__main:has(.places-flow) {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: var(--surface);
+}
+.places-flow {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--text);
+  padding: 4rem 1.5rem;
+  position: relative;
+}
+.places-flow__back,
+.home-settings {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.places-flow__back {
+  position: fixed;
+  top: max(1rem, env(safe-area-inset-top));
+  left: 1rem;
+  z-index: 2;
+}
+.places-flow__panel {
+  width: min(100%, 480px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+.places-flow__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: center;
+}
+.places-flow__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-3xl, 2.5rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.places-flow__subtitle {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-l, 1.25rem);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: pre-line;
+  text-wrap: balance;
+}
+.places-flow__site {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-l, 1.25rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+.places-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.places-row {
+  display: grid;
+  grid-template-columns: 43px minmax(0, 1fr) 62px;
+  gap: 8px;
+  align-items: center;
+  position: relative;
+}
+.places-row--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.places-row__number {
+  min-height: 62px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--wa-color-neutral-on-normal);
+  font-family: "Font Awesome 7 Free", var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m, 1rem);
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+}
+.places-row__input {
+  min-width: 0;
+  --wa-form-control-height: 62px;
+  --wa-form-control-border-radius: 8px;
+  --wa-form-control-padding-block: 0;
+}
+.places-row__input::part(form-control-label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.places-row__input::part(input-wrapper) {
+  min-height: 62px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.places-row__input::part(input) {
+  min-height: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  line-height: 1.2;
+}
+.places-row__menu-wrap {
+  position: relative;
+}
+.places-row__menu-button {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 62px;
+  height: 62px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+.places-row__menu-button wa-icon {
+  font-size: 1.375rem;
+}
+.places-row__dots,
+.places-row__dots::before,
+.places-row__dots::after {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+.places-row__dots {
+  position: relative;
+  display: block;
+}
+.places-row__dots::before,
+.places-row__dots::after {
+  content: "";
+  position: absolute;
+  left: 0;
+}
+.places-row__dots::before {
+  top: -9px;
+}
+.places-row__dots::after {
+  top: 9px;
+}
+.places-menu {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: auto;
+  top: calc(100% + 8px);
+  width: min(276px, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.places-menu__item {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 44px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  margin: 0;
+  box-shadow: none;
+}
+.places-menu__item:disabled {
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+.places-menu__item--danger {
+  color: var(--c-hazard);
+}
+.places-flow__future-note {
+  margin: 0;
+  color: var(--wa-color-text-quiet);
+  text-align: center;
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-body);
+  line-height: 1.6;
+}
+.places-flow__error {
+  margin: 0;
+  color: var(--c-hazard);
+  text-align: center;
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m);
+  font-style: normal;
+  font-weight: var(--wa-font-weight-body);
+  line-height: 1.4;
+}
+.places-flow__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+.places-flow__button {
+  font-size: var(--wa-font-size-l, 1.25rem);
+}
+.places-flow__button--add {
+  width: fit-content;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding-inline: 1.5rem;
+  white-space: nowrap;
+}
+.places-flow__button:disabled,
+.places-row__menu-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.places-modal {
+  border: 0;
+  padding: 0;
+  width: min(400px, calc(100vw - 2rem));
+  border-radius: 24px;
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: none;
+}
+.places-modal::backdrop {
+  background: color-mix(in srgb, var(--text) 64%, transparent);
+}
+.places-modal__card {
+  margin: 0;
+  padding: 24px;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.places-modal__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.places-modal__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+  line-height: 1.2;
+}
+.places-modal__text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-m, 1rem);
+  line-height: 1.6;
+}
+.places-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.places-modal__primary {
+  width: 100%;
+  min-height: 54px;
+}
+.places-modal__danger {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 54px;
+  min-height: 54px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--c-hazard);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: pointer;
+  margin: 0;
+  padding: 0 1rem;
+  box-shadow: none;
+}
+.places-flow__back:focus-visible,
+.home-settings:focus-visible,
+.places-row__menu-button:focus-visible,
+.places-menu__item:focus-visible,
+.places-modal__danger:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+.home {
+  position: relative;
+}
+.home-settings {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2;
+  background: transparent;
+}
+.home-settings__icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: block;
+  background: currentColor;
+  -webkit-mask: url("/icons/gear.svg") center / contain no-repeat;
+  mask: url("/icons/gear.svg") center / contain no-repeat;
+}
+
+@media (max-width: 540px) {
+  .places-flow {
+    padding-inline: 1rem;
+  }
+  .places-flow__title {
+    font-size: 2rem;
+  }
+  .places-flow__subtitle {
+    font-size: 1.05rem;
+  }
+  .places-row {
+    grid-template-columns: 32px minmax(0, 1fr) 43px;
+  }
+}
+
 /* ---- Media preview ---- */
 .media-preview img {
   max-width: 100%;
@@ -1287,7 +1667,7 @@ theme-toggle {
 
 /* ==================================================================
    Screen 5c capture — native camera handoff (MVP). A 3-part top bar, a
-   4-segment progress pill, then a per-side photo grid whose ＋ tile opens
+   Progress pill, then a per-place photo grid whose ＋ tile opens
    the device camera / file picker. Replaces the earlier in-app live
    viewfinder + shutter.
    ================================================================== */
@@ -1302,7 +1682,7 @@ theme-toggle {
 }
 
 /* The check screen owns its own top bar (not the shared .topbar): Cancel /
-   "Side N of 4" / Skip side. */
+   place progress / Skip place. */
 .check__bar {
   display: flex;
   align-items: center;
@@ -1330,7 +1710,7 @@ theme-toggle {
 .check__cancel wa-icon {
   font-size: 1rem;
 }
-.check__side {
+.check__place {
   font-weight: 700;
   font-size: 1.05rem;
 }
@@ -1370,7 +1750,7 @@ theme-toggle {
   height: 2px;
 }
 
-/* This side's shots as a responsive grid; the ＋ tile is the last cell. The grid
+/* This place's shots as a responsive grid; the ＋ tile is the last cell. The grid
    flex-grows to fill the space the viewfinder used to, scrolling if it overflows. */
 .shotgrid {
   flex: 1 1 auto;
@@ -1382,7 +1762,7 @@ theme-toggle {
   min-height: 220px;
   margin-bottom: 1rem;
 }
-/* Empty side: the lone ＋ tile stands centered instead of tiling. */
+/* Empty place: the lone ＋ tile stands centered instead of tiling. */
 .shotgrid--empty {
   display: flex;
   align-items: center;
@@ -1474,7 +1854,7 @@ theme-toggle {
 }
 
 /* ＋ "Add photo" tile — opens the native camera (phone) / file picker (desktop).
-   Compact grid cell by default; larger + centered with a hint on an empty side. */
+   Compact grid cell by default; larger + centered with a hint on an empty place. */
 .addshot {
   appearance: none;
   /* Buttons don't honour a grid item's default justify-self/align-self: stretch,
@@ -2401,8 +2781,8 @@ theme-toggle {
   font-weight: 700;
   font-size: 1.15rem;
 }
-/* Which sides this condition was seen on (e.g. "North · West"). */
-.issue__sides {
+/* Which places this condition was seen at (e.g. "6th St · Front entrance"). */
+.issue__places {
   margin: 0.15rem 0 0;
   font-size: 0.85rem;
   font-weight: 600;

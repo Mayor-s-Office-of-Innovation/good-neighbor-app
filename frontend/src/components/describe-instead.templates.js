@@ -83,7 +83,7 @@ export const shell = ({ hasText }) => html`
       <form class="describe-modal__card" method="dialog">
         <h2 class="describe-modal__title">Discard this description?</h2>
         <p class="describe-modal__text">
-          Your typed changes on this side have not been saved yet.
+          Your typed changes for this place have not been saved yet.
         </p>
         <div class="describe-modal__actions">
           <button class="describe-modal__secondary" type="submit" value="stay">

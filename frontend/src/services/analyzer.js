@@ -82,14 +82,14 @@ function seedFrom(items) {
   for (const it of items) {
     if (it.kind === "note") s += (it.text || "").length;
     else s += (it.size || 0) % 997;
-    s += it.side ? it.side.charCodeAt(0) : 0;
+    s += it.placeName ? it.placeName.charCodeAt(0) : 0;
   }
   return Math.abs(s);
 }
 
 /**
  * Analyze a whole check's captures and return one scorecard.
- * @param {Array<{kind:'photo'|'voice'|'note', side?:string, size?:number, text?:string}>} items
+ * @param {Array<{kind:'photo'|'voice'|'note', placeName?:string, size?:number, text?:string}>} items
  * @returns {Promise<{total_score:number,status_label:string,ratings_details:Array<{category:string,rating:number,hazard:boolean,explanation:string,evidence_indices:number[]}>}>}
  */
 export async function analyzeCheck(items) {

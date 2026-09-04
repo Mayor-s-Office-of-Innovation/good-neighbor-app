@@ -5,9 +5,9 @@
 
   Capture is a native camera handoff: an ＋ "Add photo" tile triggers a hidden
   <input type="file" accept="image/*" capture="environment">, so users get their
-  device's full camera (zoom / focus / flash / lens). Shots for the current side
-  render as an inline grid with per-tile delete. Voice + note capture and compass
-  side-names are out of the MVP UI (photo-only, numbered sides).
+  device's full camera (zoom / focus / flash / lens). Shots for the current place
+  render as an inline grid with per-tile delete. Voice capture is out of the MVP
+  UI; configured place names guide the flow.
 */
 import { html, escapeHtml } from "../lib/html.js";
 
@@ -18,19 +18,19 @@ export const shell = () => html`
       <button class="check__cancel" id="cancel" type="button">
         <wa-icon name="chevron-left" aria-hidden="true"></wa-icon> Cancel
       </button>
-      <span class="check__side" id="side-progress"></span>
-      <button class="check__skip" id="skip-side" type="button">
-        Skip side
+      <span class="check__place" id="place-progress"></span>
+      <button class="check__skip" id="skip-place" type="button">
+        Skip place
       </button>
     </div>
 
-    <div class="segbar" id="segbar" aria-label="Perimeter sides"></div>
+    <div class="segbar" id="segbar" aria-label="Perimeter check places"></div>
 
-    <!-- This side's shots (inline grid + a trailing ＋ tile), rendered by JS. -->
+    <!-- This place's shots (inline grid + a trailing ＋ tile), rendered by JS. -->
     <div
       class="shotgrid"
       id="shotgrid"
-      aria-label="Evidence for this side"
+      aria-label="Evidence for this place"
     ></div>
 
     <!-- Hidden native-camera handoff: opens the rear camera on phones, the file
@@ -49,15 +49,15 @@ export const shell = () => html`
       <div class="check__nav">
         <wa-button
           class="check__previous"
-          id="previous-side"
+          id="previous-place"
           type="button"
           appearance="filled"
         >
-          ‹ Previous side
+          ‹ Previous place
         </wa-button>
         <button
           class="check__next"
-          id="next-side"
+          id="next-place"
           type="button"
           disabled
         ></button>
@@ -102,12 +102,12 @@ export const shell = () => html`
 `;
 
 /*
-  One segment of the 4-part progress pill. State is carried by class AND is announced
+  One segment of the progress pill. State is carried by class AND is announced
   to AT via aria-label (color is never the sole carrier):
     captured (>=1 photo) = solid ink · current = ring · skipped = dashed · pending = grey.
 */
 export const segment = ({ index, state }) => {
-  const label = `Side ${index + 1}: ${state}`;
+  const label = `Place ${index + 1}: ${state}`;
   return html`<span
     class="seg seg--${state}"
     role="img"
@@ -121,7 +121,9 @@ export const shotTile = (item, index) => html`
     <img
       class="shot__img"
       src="${item.dataUrl}"
-      alt="Captured photo ${index + 1}${item.side ? ` for ${item.side}` : ""}"
+      alt="Captured photo ${index + 1}${item.placeName
+        ? ` for ${item.placeName}`
+        : ""}"
     />
     <button
       class="shot__del"
@@ -134,13 +136,13 @@ export const shotTile = (item, index) => html`
   </div>
 `;
 
-export const descriptionTile = ({ side }) => html`
+export const descriptionTile = ({ placeName }) => html`
   <div class="shot shot--description">
     <button
       class="shot__body shot__body--description"
       type="button"
       data-edit-description="true"
-      aria-label="Edit description for ${escapeHtml(side)} side"
+      aria-label="Edit description for ${escapeHtml(placeName)}"
     >
       <span class="shot__icon" aria-hidden="true">
         <wa-icon name="file-lines"></wa-icon>
@@ -159,7 +161,7 @@ export const descriptionTile = ({ side }) => html`
 `;
 
 /*
-  The ＋ "Add photo" tile that opens the camera. Empty side → a larger centered tile
+  The ＋ "Add photo" tile that opens the camera. Empty place → a larger centered tile
   with a one-line hint; once shots exist → a compact trailing tile (no hint).
 */
 export const addTile = (empty) => html`

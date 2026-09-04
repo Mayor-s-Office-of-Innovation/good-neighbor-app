@@ -55,7 +55,7 @@ export const providerMetaKey = (providerId) => ({
 });
 
 /**
- * CHECK header — one item per full perimeter run (all sides).
+ * CHECK header — one item per full perimeter run (all places).
  * @param {string} siteId
  * @param {string} checkId
  * @returns {PrimaryKey}
@@ -66,16 +66,16 @@ export const checkHeaderKey = (siteId, checkId) => ({
 });
 
 /**
- * Artifact (one per captured photo/audio/text, grouped by side).
+ * Artifact (one per captured photo/audio/text, grouped by place).
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} artifactId
  * @returns {PrimaryKey}
  */
-export const artifactKey = (siteId, checkId, side, artifactId) => ({
+export const artifactKey = (siteId, checkId, placeId, artifactId) => ({
   pk: sitePk(siteId),
-  sk: `CHECK#${checkId}#ART#${side}#${artifactId}`,
+  sk: `CHECK#${checkId}#ART#${placeId}#${artifactId}`,
 });
 
 /**
@@ -119,7 +119,7 @@ export const checkAnalysisPrefix = (checkId) => `CHECK#${checkId}#ANALYSIS#`;
 
 /**
  * Sort-key prefix that gathers only a check's ART# items (one per captured
- * photo, across all sides): `begins_with(sk, …)`.
+ * photo, across all places): `begins_with(sk, …)`.
  * @param {string} checkId
  * @returns {string}
  */

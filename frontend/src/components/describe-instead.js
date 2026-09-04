@@ -1,6 +1,6 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /**
- * Describe Instead flow for one side of the perimeter check.
+ * Describe Instead flow for one place in a check.
  * Persists typed input, validates it, and returns to the capture flow.
  */
 import { getSite } from "../db.js";
@@ -9,10 +9,10 @@ import {
   getFlowType,
   getCurrentCheck,
   loadDraft,
-  getActiveSideIndex,
-  getSideOrder,
-  getSideDescription,
-  setSideDescription,
+  getActivePlaceIndex,
+  getPlaceOrder,
+  getPlaceDescription,
+  setPlaceDescription,
   setPostDescribeAction,
 } from "../state/check-session.js";
 import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
@@ -34,10 +34,10 @@ class DescribeInstead extends HTMLElement {
     this._flowType = getFlowType();
     this._routeBase =
       this._flowType === "single-problem" ? "/problem" : "/check";
-    this._sides = getSideOrder();
-    this._sideIndex = getActiveSideIndex() ?? 0;
-    this._side = this._sides[this._sideIndex] || this._sides[0];
-    this._savedDescription = getSideDescription(this._side);
+    this._places = getPlaceOrder();
+    this._placeIndex = getActivePlaceIndex() ?? 0;
+    this._placeId = this._places[this._placeIndex] || this._places[0];
+    this._savedDescription = getPlaceDescription(this._placeId);
     this._savedText = this._savedDescription?.text || "";
     this._text = this._savedText;
     this._programmaticFieldUpdate = false;
@@ -105,7 +105,7 @@ class DescribeInstead extends HTMLElement {
     this._text = "";
     this._savedText = "";
     this._savedDescription = null;
-    setSideDescription(this._side, null);
+    setPlaceDescription(this._placeId, null);
     this._syncClearUi();
     this._field.focus();
   }
@@ -120,7 +120,7 @@ class DescribeInstead extends HTMLElement {
 
   _onClose() {
     if (!this._hasUnsavedChanges()) {
-      this._returnToCurrentSide();
+      this._returnToCurrentPlace();
       navigate(this._routeBase);
       return;
     }
@@ -129,14 +129,14 @@ class DescribeInstead extends HTMLElement {
 
   _discardAndExit() {
     this._dialog.close();
-    this._returnToCurrentSide();
+    this._returnToCurrentPlace();
     navigate(this._routeBase);
   }
 
   async _onContinue() {
     const text = this._text.trim();
     if (!text) return;
-    setSideDescription(this._side, {
+    setPlaceDescription(this._placeId, {
       kind: "note",
       text,
       source: "typed",
@@ -150,13 +150,13 @@ class DescribeInstead extends HTMLElement {
       navigate(this._routeBase);
       return;
     }
-    setPostDescribeAction({ type: "stay", sideIndex: this._sideIndex });
+    setPostDescribeAction({ type: "stay", placeIndex: this._placeIndex });
     navigate(this._routeBase);
   }
 
-  _returnToCurrentSide() {
+  _returnToCurrentPlace() {
     if (this._flowType !== "perimeter") return;
-    setPostDescribeAction({ type: "stay", sideIndex: this._sideIndex });
+    setPostDescribeAction({ type: "stay", placeIndex: this._placeIndex });
   }
 }
 
