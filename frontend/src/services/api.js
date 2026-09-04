@@ -17,6 +17,12 @@
 import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession } from "../db.js";
 import { refreshDeviceToken } from "./devices.js";
+import { ApiError, ReauthRequiredError } from "./api-error.js";
+
+// Public error surface stays on api.js (existing importers); the classes live
+// in api-error.js because devices.js needs them too and importing api.js from
+// devices.js would be a cycle.
+export { ApiError, ReauthRequiredError };
 
 // Same-origin everywhere: in dev the Vite proxy forwards `/v1/*` → the local API
 // on :3001 (no CORS — see vite.config.js); in production the SPA and API share
@@ -26,36 +32,6 @@ import { refreshDeviceToken } from "./devices.js";
 // types (vite/client) aren't wired into this checkJs project, so the
 // host-injected `.env` access is typed locally.
 const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
-
-/** A non-2xx response or a transport failure from the backend. */
-export class ApiError extends Error {
-  /**
-   * @param {string} message
-   * @param {object} [opts]
-   * @param {number} [opts.status]  HTTP status (0 = network/transport failure)
-   * @param {unknown} [opts.body]   parsed error body, when the server sent one
-   */
-  constructor(message, { status = 0, body = undefined } = {}) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.body = body;
-  }
-}
-
-/**
- * Raised when the device session cannot be renewed (refresh rejected after the
- * access token died — months of disuse, or the device was revoked). Callers
- * should route the user back to site setup; nothing else recovers from this.
- */
-export class ReauthRequiredError extends ApiError {
-  constructor() {
-    super("Device session expired — re-registration (site code) required", {
-      status: 401,
-    });
-    this.name = "ReauthRequiredError";
-  }
-}
 
 /*
   Device-token plumbing (Option 4 device auth, docs/adr/0010): every request
@@ -72,20 +48,40 @@ let refreshInFlight;
 /**
  * Exchange the stored refresh token for a fresh pair and persist it. Shared
  * promise so N concurrent 401s trigger exactly one refresh. Throws
- * `ReauthRequiredError` when the refresh is rejected.
- * @param {{ refreshToken?: string }} site
+ * `ReauthRequiredError` when the refresh is rejected as fatal.
+ *
+ * Two stale-snapshot hazards shape this function:
+ * - The caller's `site` was read before its fetch, so `site.refreshToken` can
+ *   be the token a JUST-completed rotation already consumed. Sending it would
+ *   be a doomed replay — so always re-read the stored record and use its
+ *   CURRENT refresh token. If another request's rotation already landed, this
+ *   succeeds (or rotates again — harmless); it never needs the caller's
+ *   snapshot to be fresh.
+ * - A request whose 401 lands AFTER a completed refresh used to poison its own
+ *   retry: `request` re-read the site but the shared promise it awaited had
+ *   already resolved with the older rotation. Re-reading here (inside the
+ *   shared promise) means every waiter observes the latest persisted session.
  * @returns {Promise<{ token: string }>}
  */
-async function refreshSession(site) {
+async function refreshSession() {
   refreshInFlight ??= (async () => {
-    if (!site.refreshToken) throw new ReauthRequiredError();
+    // Re-read inside the shared promise — never trust the caller's snapshot.
+    const site = await getSite().catch(() => null);
+    const refreshToken = site?.refreshToken;
+    if (!refreshToken) throw new ReauthRequiredError();
     try {
-      const session = await refreshDeviceToken(site.refreshToken);
+      const session = await refreshDeviceToken(refreshToken);
       await updateSiteSession(session);
       mark("auth:refreshed", { generation: session.tokenGeneration });
       return { token: session.token };
+    } catch (err) {
+      // A 401 from the refresh endpoint is fatal: the stored session cannot
+      // renew. 5xx/transport stays retryable — the session may be fine.
+      if (is401(err)) throw new ReauthRequiredError();
+      throw err;
     } finally {
-      // Clear AFTER persistence so a crash mid-refresh still fails closed.
+      // Clear in the finally so a rejected refresh can't leave a poisoned
+      // shared promise for later requests to re-await.
       refreshInFlight = null;
     }
   })();
@@ -160,21 +156,32 @@ async function request(
   if (!res.ok) {
     // Expired/revoked access token → ONE silent refresh, then retry. A second
     // 401 (or a rejected refresh) is fatal: ReauthRequiredError.
-    if (res.status === 401 && allowAuthRetry && site?.refreshToken) {
+    if (res.status === 401 && allowAuthRetry) {
+      // Refresh from the CURRENT stored session — `site` here may be stale
+      // (read before this request's fetch); refreshSession re-reads it.
       try {
-        await refreshSession(site);
+        await refreshSession();
       } catch (err) {
         if (err instanceof ReauthRequiredError) throw err;
-        if (is401(err)) throw new ReauthRequiredError();
+        // Retryable refresh failure (5xx/transport): surface as-is — the
+        // stored session may be perfectly valid.
         throw err;
       }
-      // The refreshed session is already persisted; re-read + retry.
-      return request(method, path, {
-        headers,
-        body,
-        signal,
-        allowAuthRetry: false,
-      });
+      // The refreshed session is already persisted; retry with it. A second
+      // 401 on this leg means the fresh token was rejected too — fatal.
+      try {
+        return await request(method, path, {
+          headers,
+          body,
+          signal,
+          allowAuthRetry: false,
+        });
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          throw new ReauthRequiredError();
+        }
+        throw err;
+      }
     }
     const detail =
       parsed && typeof parsed === "object" && "error" in parsed
