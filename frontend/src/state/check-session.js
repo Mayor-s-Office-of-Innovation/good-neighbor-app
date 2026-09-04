@@ -90,6 +90,9 @@ function createPlaceState(place) {
     name: place.name,
     items: [],
     skipped: false,
+    inputMode: "photo",
+    draftText: "",
+    conditionLabels: [],
     description: null,
   };
 }
@@ -100,6 +103,12 @@ function normalizePlaceState(place, placeState = {}) {
     name: place.name,
     items: Array.isArray(placeState.items) ? placeState.items : [],
     skipped: Boolean(placeState.skipped),
+    inputMode: placeState.inputMode === "text" ? "text" : "photo",
+    draftText:
+      typeof placeState.draftText === "string" ? placeState.draftText : "",
+    conditionLabels: Array.isArray(placeState.conditionLabels)
+      ? placeState.conditionLabels.filter((label) => typeof label === "string")
+      : [],
     description: normalizeDescription(placeState.description),
   };
 }
@@ -134,6 +143,11 @@ function normalizeCheck(check) {
         : null,
     placeOrder,
     places,
+    analyzingOpen: Boolean(check.analyzingOpen),
+    openPhotoMenuItemId:
+      typeof check.openPhotoMenuItemId === "string"
+        ? check.openPhotoMenuItemId
+        : null,
   };
 }
 
@@ -248,8 +262,8 @@ export async function loadDraft(flowType) {
   return current;
 }
 
-export function ensureCheck(siteId) {
-  return current || startCheck(siteId);
+export function ensureCheck(siteId, places = []) {
+  return current || startCheck(siteId, places);
 }
 
 export function ensureProblemReport(siteId) {
@@ -298,8 +312,37 @@ export function isCurrentSession(checkId, flowType) {
 
 export function setActivePlaceIndex(index) {
   if (!current) return;
+  if (index === null) {
+    current.activePlaceIndex = null;
+    persist();
+    emit();
+    return;
+  }
   const placeCount = getPlaceOrder().length;
   current.activePlaceIndex = Math.max(0, Math.min(placeCount - 1, index));
+  persist();
+  emit();
+}
+
+export function getAnalyzingOpen() {
+  return Boolean(current?.analyzingOpen);
+}
+
+export function setAnalyzingOpen(open) {
+  if (!current) return;
+  current.analyzingOpen = Boolean(open);
+  persist();
+  emit();
+}
+
+export function getOpenPhotoMenuItemId() {
+  return current?.openPhotoMenuItemId || null;
+}
+
+export function setOpenPhotoMenuItemId(itemId) {
+  if (!current) return;
+  current.openPhotoMenuItemId =
+    typeof itemId === "string" && itemId ? itemId : null;
   persist();
   emit();
 }
@@ -332,6 +375,26 @@ export function setPlaceDescription(placeId, description) {
   return current.places[placeId].description;
 }
 
+export function setPlaceInputMode(placeId, inputMode) {
+  if (!current) return null;
+  const place = current.places[placeId];
+  if (!place) return null;
+  place.inputMode = inputMode === "text" ? "text" : "photo";
+  persist();
+  emit();
+  return place;
+}
+
+export function setPlaceDraftText(placeId, text, { emitChange = false } = {}) {
+  if (!current) return null;
+  const place = current.places[placeId];
+  if (!place) return null;
+  place.draftText = String(text || "");
+  persist();
+  if (emitChange) emit();
+  return place;
+}
+
 export function setPlaceDescriptionValidation(placeId, validation) {
   if (!current) return null;
   const description = current.places[placeId]?.description;
@@ -354,12 +417,38 @@ export function addItem(placeId, item) {
     placeId,
     placeName: placeState.name,
     uploadedAt: new Date().toISOString(),
+    analysis: { status: "idle" },
     ...item,
   };
   placeState.items.push(record);
   persist();
   emit();
   return record;
+}
+
+export function addPlaceToCheck(name) {
+  if (!current) return null;
+  const normalizedName = String(name || "").trim();
+  if (!normalizedName) return null;
+  const duplicate = getPlaceOrder().some((placeId) => {
+    const existing = current.places[placeId]?.name || "";
+    return existing.trim().toLowerCase() === normalizedName.toLowerCase();
+  });
+  if (duplicate) return { duplicate: true };
+  const baseId = normalizedName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  let id = baseId || `place-${current.placeOrder.length + 1}`;
+  let suffix = 2;
+  while (current.places[id]) id = `${baseId}-${suffix++}`;
+  const place = { id, name: normalizedName, order: current.placeOrder.length };
+  current.placeOrder.push(id);
+  current.places[id] = createPlaceState(place);
+  current.activePlaceIndex = current.placeOrder.length - 1;
+  persist();
+  emit();
+  return current.places[id];
 }
 
 export function removeItem(placeId, itemId) {
@@ -375,6 +464,40 @@ function findSessionItem(placeId, itemId) {
   const place = current?.places?.[placeId];
   if (!place) return null;
   return place.items.find((i) => i.id === itemId) || null;
+}
+
+export function updateItem(placeId, itemId, patch) {
+  const item = findSessionItem(placeId, itemId);
+  if (!item) return null;
+  Object.assign(item, patch);
+  persist();
+  emit();
+  return item;
+}
+
+export function updateItemAnalysis(placeId, itemId, analysisPatch) {
+  const item = findSessionItem(placeId, itemId);
+  if (!item) return null;
+  item.analysis = { ...(item.analysis || {}), ...analysisPatch };
+  const place = current?.places?.[placeId];
+  if (place) {
+    const labels = new Set();
+    for (const placeItem of place.items || []) {
+      const hiddenConditionIds = new Set([
+        ...(placeItem.analysis?.resolvedConditionIds || []),
+        ...(placeItem.analysis?.rejectedConditionIds || []),
+      ]);
+      for (const condition of placeItem.analysis?.conditions || []) {
+        if (hiddenConditionIds.has(condition?.conditionId)) continue;
+        const label = condition?.category || condition?.label;
+        if (typeof label === "string" && label.trim()) labels.add(label.trim());
+      }
+    }
+    place.conditionLabels = [...labels];
+  }
+  persist();
+  emit();
+  return item;
 }
 
 /**
