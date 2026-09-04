@@ -1271,18 +1271,15 @@ describe("311 ticket closure", () => {
       recordedAt: "2026-08-18T11:00:00.000Z",
     };
 
-    await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: ENV,
-        now,
-        tableName: "table",
-        siteId: "site-1",
-        taskId: "task-1",
-        completionLeaseExpiresAt: "2026-08-18T12:05:00.000Z",
-        priorResults: [fanout],
-      },
-    );
+    await executeAppActions([{ code: "close_311_ticket", payload: {} }], {
+      env: ENV,
+      now,
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionLeaseExpiresAt: "2026-08-18T12:05:00.000Z",
+      priorResults: [fanout],
+    });
 
     // One checkpoint per successful UpdateSR, each pinned to the completion
     // lease so a reclaimed executor cannot persist stale closures.
@@ -1327,14 +1324,12 @@ describe("311 ticket closure", () => {
   });
 
   it("stops closing remaining tickets when the completion lease is lost mid-loop", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fetchImpl);
     // The first checkpoint fails: the lease was reclaimed by another executor
     // (ConditionalCheckFailedException shape is irrelevant — any send failure
