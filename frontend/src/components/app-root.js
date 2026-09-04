@@ -32,7 +32,7 @@ export function hasConfirmedPlaces(site) {
   return (
     Array.isArray(site?.places) &&
     site.places.some((place) => String(place?.name || "").trim()) &&
-    Boolean(site.placesConfirmedAt)
+    Boolean(site.placesConfirmedAt || site.placesConfiguredAt)
   );
 }
 
@@ -119,6 +119,10 @@ class AppRoot extends HTMLElement {
         this._site = await saveSiteSettings({
           ...site,
           places: remotePlaces.length ? remotePlaces : localPlaces,
+          placesConfirmedAt:
+            site.placesConfirmedAt ||
+            site.placesConfiguredAt ||
+            this._site?.placesConfirmedAt,
           providerSiteId: this._site.providerSiteId || site.providerSiteId,
         });
       }

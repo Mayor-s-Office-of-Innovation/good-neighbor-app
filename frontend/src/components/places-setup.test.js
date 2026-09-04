@@ -133,6 +133,11 @@ describe("places setup helpers", () => {
 
     expect(
       hasConfirmedPlaces({
+        places: [{ id: "place-1", name: "Front entrance" }],
+      }),
+    ).toBe(false);
+    expect(
+      hasConfirmedPlaces({
         placesConfirmedAt: "2026-09-03T00:00:00.000Z",
         places: [{ id: "place-1", name: "   " }],
       }),
@@ -140,6 +145,12 @@ describe("places setup helpers", () => {
     expect(
       hasConfirmedPlaces({
         placesConfirmedAt: "2026-09-03T00:00:00.000Z",
+        places: [{ id: "place-1", name: " Front entrance " }],
+      }),
+    ).toBe(true);
+    expect(
+      hasConfirmedPlaces({
+        placesConfiguredAt: "2026-09-03T00:00:00.000Z",
         places: [{ id: "place-1", name: " Front entrance " }],
       }),
     ).toBe(true);

@@ -144,6 +144,10 @@ class PlacesSetup extends HTMLElement {
         this._site = await saveSiteSettings({
           ...remote,
           places: remotePlaces.length ? remotePlaces : localPlaces,
+          placesConfirmedAt:
+            remote.placesConfirmedAt ||
+            remote.placesConfiguredAt ||
+            this._site?.placesConfirmedAt,
           providerSiteId: this._site.providerSiteId || remote.providerSiteId,
         });
       }
