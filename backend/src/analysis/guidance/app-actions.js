@@ -6,8 +6,11 @@ import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
 import {
   buildAttachmentUpdatePayload,
+  buildCloseSrPayload,
   buildCreateSrPayload,
+  CLOSE_REASON_FIELD_WORK_COMPLETED,
   createSf311Client,
+  GOOD_NEIGHBOR_AGENCY,
   Sf311Error,
 } from "../../integrations/sf311-client.js";
 import {
@@ -72,6 +75,29 @@ function priorTicketsByServiceCode(priorResults, actionCode) {
  */
 function attachmentKey(attachment) {
   return String(attachment.artifactId ?? attachment.s3Key ?? "");
+}
+
+/**
+ * Closure state from earlier close_311_ticket results, keyed by service code.
+ * `closed` tickets are never re-attempted; `failed` ones carry their prior
+ * failure forward for the retry path.
+ * @param {AppActionResult[]} priorResults
+ * @returns {Map<string, Record<string, unknown>>}
+ */
+function priorClosuresFromPriorResults(priorResults) {
+  const closures = new Map();
+  for (const result of priorResults) {
+    if (result.code !== "close_311_ticket") continue;
+    const entries = result.payload?.closures;
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const item = /** @type {Record<string, unknown>} */ (entry);
+      const serviceCode = String(item.serviceCode ?? "");
+      if (serviceCode) closures.set(serviceCode, item);
+    }
+  }
+  return closures;
 }
 
 /**
@@ -623,6 +649,153 @@ function appActionErrorReason(error) {
 }
 
 /**
+ * Tickets this app is allowed to close: informational tickets we filed under
+ * our own agency (76) and reached `submitted` state. City-managed tickets
+ * (filed on user confirmation under a looked-up agency) are never closed by
+ * us. Already-closed tickets stay in the map so the executor can carry their
+ * closure records forward without re-calling HUB.
+ * @param {AppActionResult[]} priorResults
+ * @returns {Map<string, { ticket: Record<string, unknown>, closedReasonCode: string }>}
+ */
+export function eligibleTicketsForClosure(priorResults) {
+  const eligible = new Map();
+  for (const result of priorResults) {
+    if (result.code !== "create_311_ticket") continue;
+    if (result.status !== "submitted") continue;
+    for (const ticket of ticketsFromActionResult(result)) {
+      const serviceCode = String(ticket.serviceCode ?? "");
+      if (!serviceCode || !ticket.srNum) continue;
+      if (String(ticket.responsibleAgency ?? "") !== GOOD_NEIGHBOR_AGENCY) {
+        continue;
+      }
+      eligible.set(serviceCode, {
+        ticket,
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+      });
+    }
+  }
+  return eligible;
+}
+
+/**
+ * @param {object} opts
+ * @param {AppAction} opts.action
+ * @param {string} opts.status
+ * @param {string} opts.recordedAt
+ * @param {Array<Record<string, unknown>>} opts.closures
+ * @param {string} [opts.reason]
+ * @param {Record<string, unknown>} [opts.diagnostics]
+ * @returns {AppActionResult}
+ */
+function buildCloseActionResult({
+  action,
+  status,
+  recordedAt,
+  closures,
+  reason,
+  diagnostics,
+}) {
+  return {
+    code: action.code,
+    status,
+    ...(reason ? { reason } : {}),
+    payload: { ...(action.payload ?? {}), closures },
+    ...(diagnostics ? { diagnostics } : {}),
+    recordedAt,
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {AppAction} opts.action
+ * @param {AppActionResult[]} opts.priorResults
+ * @param {import("../../config.js").AppConfig} opts.config
+ * @param {Date} opts.nowDate
+ * @returns {Promise<AppActionResult>}
+ */
+async function execute311ClosureAction({
+  action,
+  priorResults,
+  config,
+  nowDate,
+}) {
+  const now = nowDate.toISOString();
+  const priorClosuresByServiceCode =
+    priorClosuresFromPriorResults(priorResults);
+  const eligible = eligibleTicketsForClosure(priorResults);
+
+  if (eligible.size === 0) {
+    return {
+      code: action.code,
+      status: "recorded",
+      payload: { closures: [] },
+      recordedAt: now,
+    };
+  }
+
+  const sf311 = createSf311Client({ config });
+  /** @type {Array<Record<string, unknown>>} */
+  const closures = [];
+  for (const [serviceCode, { ticket }] of eligible) {
+    const priorClosure = priorClosuresByServiceCode.get(serviceCode);
+    // Already closed on an earlier attempt: carry the record forward without
+    // another UpdateSR call (HUB closure is not idempotent on its side).
+    if (priorClosure && priorClosure.status === "closed") {
+      closures.push({ ...priorClosure });
+      continue;
+    }
+    try {
+      const payload = buildCloseSrPayload({
+        srNum: String(ticket.srNum),
+        now: nowDate,
+      });
+      const response = await sf311.updateServiceRequest(payload);
+      closures.push({
+        serviceCode,
+        srNum: String(ticket.srNum),
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        status: "closed",
+        ...(response.updateId ? { updateId: response.updateId } : {}),
+      });
+    } catch (error) {
+      closures.push({
+        serviceCode,
+        srNum: String(ticket.srNum),
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        status: "failed",
+        reason: appActionErrorReason(error),
+        ...(appActionErrorDiagnostics(error)
+          ? { diagnostics: appActionErrorDiagnostics(error) }
+          : {}),
+      });
+    }
+  }
+
+  if (closures.every((closure) => closure.status === "closed")) {
+    return buildCloseActionResult({
+      action,
+      status: "submitted",
+      recordedAt: now,
+      closures,
+    });
+  }
+  if (closures.some((closure) => closure.status === "closed")) {
+    return buildCloseActionResult({
+      action,
+      status: "partial",
+      recordedAt: now,
+      closures,
+    });
+  }
+  return buildCloseActionResult({
+    action,
+    status: "failed",
+    recordedAt: now,
+    closures,
+  });
+}
+
+/**
  * @param {unknown} value
  * @param {number} [depth]
  * @returns {unknown}
@@ -801,6 +974,28 @@ export async function executeAppActions(appActions, opts = {}) {
           payload,
           recordedAt: now,
         });
+        break;
+      case "close_311_ticket":
+        try {
+          results.push(
+            await execute311ClosureAction({
+              action,
+              priorResults,
+              config: getConfig(/** @type {NodeJS.ProcessEnv} */ (env)),
+              nowDate,
+            }),
+          );
+        } catch (error) {
+          const diagnostics = appActionErrorDiagnostics(error);
+          results.push({
+            code: action.code,
+            status: "failed",
+            reason: appActionErrorReason(error),
+            payload,
+            ...(diagnostics ? { diagnostics } : {}),
+            recordedAt: now,
+          });
+        }
         break;
       default:
         results.push({
