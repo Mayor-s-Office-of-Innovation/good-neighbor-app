@@ -40,7 +40,10 @@ const shared = {
 
 const entries = [
   { name: "api", entry: resolve(backendRoot, "src/lambda/api.js") },
-  { name: "authorizer", entry: resolve(backendRoot, "src/lambda/authorizer.js") },
+  {
+    name: "authorizer",
+    entry: resolve(backendRoot, "src/lambda/authorizer.js"),
+  },
   { name: "worker", entry: resolve(backendRoot, "src/lambda/worker.js") },
 ];
 
