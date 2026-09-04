@@ -86,6 +86,20 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ReadAnalyzerSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.analyzer_api_key.arn]
+  }
+
+  statement {
+    sid       = "ReadSf311Secret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.sf311_basic_auth.arn]
+  }
+
+  statement {
     sid    = "InvokeBedrockDescriptionValidator"
     effect = "Allow"
     actions = [

@@ -37,3 +37,14 @@ resource "aws_secretsmanager_secret" "device_token_key" {
   kms_key_id  = aws_kms_key.app.arn
   tags        = var.tags
 }
+
+# SF311 HUB Basic Auth credentials for CreateSR and lookup calls. Terraform
+# creates only the secret container; set the JSON value out-of-band:
+# {"username":"...","password":"..."}
+resource "aws_secretsmanager_secret" "sf311_basic_auth" {
+  #checkov:skip=CKV2_AWS_57:SF311 dev credentials are rotated manually out-of-band until a production credential rotation process exists.
+  name        = "${local.name_prefix}-sf311-basic-auth"
+  description = "Basic Auth credentials for SF311 HUB API calls (value set out-of-band)."
+  kms_key_id  = aws_kms_key.app.arn
+  tags        = var.tags
+}

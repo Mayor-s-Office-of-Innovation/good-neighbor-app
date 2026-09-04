@@ -55,13 +55,22 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DYNAMO_TABLE               = aws_dynamodb_table.app.name
-      SQS_QUEUE_URL              = aws_sqs_queue.submissions.url
-      S3_UPLOAD_BUCKET           = aws_s3_bucket.uploads.bucket
-      DEMO_SITE_ID               = "demo-site"
-      BEDROCK_MODEL_ID           = var.bedrock_model_id
-      POSTHOG_API_KEY_SECRET_ARN = aws_secretsmanager_secret.posthog_project_api_key.arn
-      POSTHOG_HOST               = var.posthog_host
+      DYNAMO_TABLE                      = aws_dynamodb_table.app.name
+      SQS_QUEUE_URL                     = aws_sqs_queue.submissions.url
+      S3_UPLOAD_BUCKET                  = aws_s3_bucket.uploads.bucket
+      DEMO_SITE_ID                      = "demo-site"
+      BEDROCK_MODEL_ID                  = var.bedrock_model_id
+      ANALYZER_BASE_URL                 = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN       = aws_secretsmanager_secret.analyzer_api_key.arn
+      POSTHOG_API_KEY_SECRET_ARN        = aws_secretsmanager_secret.posthog_project_api_key.arn
+      POSTHOG_HOST                      = var.posthog_host
+      GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
+      SF311_CREATESR_URL                = var.sf311_createsr_url
+      SF311_UPDATESR_URL                = var.sf311_updatesr_url
+      SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
+      SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
+      SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
+      SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN = aws_secretsmanager_secret.device_token_key.arn

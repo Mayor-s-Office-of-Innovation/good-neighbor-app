@@ -35,6 +35,26 @@ export const deviceKey = (siteId, deviceId) => ({
 export const devicePrefix = (siteId) => sitePk(siteId);
 
 /**
+ * Site config record.
+ * @param {string} siteId
+ * @returns {PrimaryKey}
+ */
+export const siteMetaKey = (siteId) => ({
+  pk: sitePk(siteId),
+  sk: "#META",
+});
+
+/**
+ * Provider config record.
+ * @param {string} providerId
+ * @returns {PrimaryKey}
+ */
+export const providerMetaKey = (providerId) => ({
+  pk: `PROVIDER#${providerId}`,
+  sk: "#META",
+});
+
+/**
  * CHECK header — one item per full perimeter run (all sides).
  * @param {string} siteId
  * @param {string} checkId
