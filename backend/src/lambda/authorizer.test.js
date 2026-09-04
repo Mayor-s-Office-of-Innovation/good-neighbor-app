@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-process.env.DEVICE_TOKEN_SECRET = "test-secret-0123456789abcdef";
+// Test fixture, not a secret — the local/CI token-signing key for unit tests.
+process.env.DEVICE_TOKEN_SECRET = "test-secret-0123456789abcdef"; // gitleaks:allow
 process.env.DYNAMO_TABLE = "gnp-test-app";
 
 const { handler } = await import("./authorizer.js");

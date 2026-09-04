@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-process.env.DEVICE_TOKEN_SECRET = "test-secret-0123456789abcdef";
+// Test fixture, not a secret — the local/CI token-signing key for unit tests.
+process.env.DEVICE_TOKEN_SECRET = "test-secret-0123456789abcdef"; // gitleaks:allow
 
 const {
   mintAccessToken,
