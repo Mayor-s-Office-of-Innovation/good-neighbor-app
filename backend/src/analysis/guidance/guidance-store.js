@@ -1143,6 +1143,10 @@ export async function completeTaskWithAppActions(opts) {
         task: claimed,
         priorResults,
         trigger: "user_confirmed",
+        // Mid-execution closure checkpoints pin their writes to this lease so
+        // a reclaimed executor cannot persist stale results; the value is the
+        // exact attribute the final completion write conditions on.
+        completionLeaseExpiresAt: leaseExpiresAt,
       },
     );
     closureResult = closureResults[0] ?? null;

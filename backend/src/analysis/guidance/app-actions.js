@@ -166,11 +166,47 @@ function build311ActionResult({
 }
 
 /**
+ * Merge a fresh action result into the prior persisted results: same-code
+ * entries are replaced in place (first occurrence wins the slot), everything
+ * else is kept verbatim so results for other action codes survive the write.
+ * Checkpointing with this instead of `[result]` is what keeps closure records
+ * from clobbering the create results that closure eligibility depends on (and
+ * vice versa) across lease-recovery retries.
+ * @param {AppActionResult[]} priorResults
+ * @param {AppActionResult} result
+ * @returns {AppActionResult[]}
+ */
+function mergeAppActionResults(priorResults, result) {
+  const merged = [];
+  let placed = false;
+  for (const prior of priorResults) {
+    if (prior.code === result.code && !placed) {
+      merged.push(result);
+      placed = true;
+      continue;
+    }
+    if (prior.code === result.code) continue;
+    merged.push(prior);
+  }
+  if (!placed) merged.push(result);
+  return merged;
+}
+
+/**
+ * Durably record an action result while the task is mid-completion, so a crash
+ * or lease expiry after a side-effecting HUB call still leaves the persisted
+ * record behind (HUB closure is non-idempotent; the persisted `closed` record
+ * is our dedupe on lease-recovery retries). Merges `result` into `priorResults`
+ * rather than replacing them, and — when the completion lease is known — pins
+ * the write to that exact lease so a stale executor cannot checkpoint after its
+ * lease was reclaimed.
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.taskId
  * @param {AppActionResult} opts.result
+ * @param {AppActionResult[]} opts.priorResults
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @param {string} opts.updatedAt
  * @returns {Promise<void>}
  */
@@ -179,6 +215,8 @@ async function checkpoint311ActionResult({
   siteId,
   taskId,
   result,
+  priorResults,
+  completionLeaseExpiresAt,
   updatedAt,
 }) {
   if (!tableName || !siteId || !taskId) return;
@@ -188,15 +226,23 @@ async function checkpoint311ActionResult({
       Key: taskKey(siteId, taskId),
       UpdateExpression:
         "SET appActionResults = :results, appActionStatus = :status, updatedAt = :updatedAt",
-      ConditionExpression: "#status = :completing",
+      ConditionExpression: completionLeaseExpiresAt
+        ? "#status = :completing AND #lease = :leaseExpiresAt"
+        : "#status = :completing",
       ExpressionAttributeNames: {
         "#status": "status",
+        ...(completionLeaseExpiresAt
+          ? { "#lease": "completionLeaseExpiresAt" }
+          : {}),
       },
       ExpressionAttributeValues: {
-        ":results": [result],
+        ":results": mergeAppActionResults(priorResults, result),
         ":status": summarizeAppActionResults([result]),
         ":updatedAt": updatedAt,
         ":completing": "completing",
+        ...(completionLeaseExpiresAt
+          ? { ":leaseExpiresAt": completionLeaseExpiresAt }
+          : {}),
       },
     }),
   );
@@ -446,6 +492,7 @@ async function attachImagesToServiceRequest({
  * @param {Record<string, string | undefined>} opts.env
  * @param {AppActionResult[]} opts.priorResults
  * @param {"task_created" | "user_confirmed" | undefined} opts.trigger
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311Action({
@@ -457,6 +504,7 @@ async function execute311Action({
   env,
   priorResults,
   trigger,
+  completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
   const priorTickets = priorTicketsByServiceCode(priorResults, action.code);
@@ -606,6 +654,8 @@ async function execute311Action({
             recordedAt: now,
             tickets,
           }),
+          priorResults,
+          completionLeaseExpiresAt: completionLeaseExpiresAt,
           updatedAt: now,
         });
       }
@@ -711,6 +761,10 @@ function buildCloseActionResult({
  * @param {AppActionResult[]} opts.priorResults
  * @param {import("../../config.js").AppConfig} opts.config
  * @param {Date} opts.nowDate
+ * @param {string} [opts.tableName]
+ * @param {string} [opts.siteId]
+ * @param {string} [opts.taskId]
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311ClosureAction({
@@ -718,6 +772,10 @@ async function execute311ClosureAction({
   priorResults,
   config,
   nowDate,
+  tableName = "",
+  siteId = "",
+  taskId = "",
+  completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
   const priorClosuresByServiceCode =
@@ -757,6 +815,39 @@ async function execute311ClosureAction({
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
+      // Persist the closed record immediately: HUB closure is non-idempotent,
+      // so if this process dies (or the lease is lost) before the final task
+      // write, lease recovery must see `closed` here instead of re-closing
+      // the same SR from the original CreateSR result.
+      if (tableName && siteId && taskId) {
+        try {
+          await checkpoint311ActionResult({
+            tableName,
+            siteId,
+            taskId,
+            completionLeaseExpiresAt,
+            result: buildCloseActionResult({
+              action,
+              status: closures.every((closure) => closure.status === "closed")
+                ? "submitted"
+                : "partial",
+              recordedAt: now,
+              // Snapshot: the accumulator keeps mutating across the loop, and
+              // the checkpoint result must record closures as of this call.
+              closures: [...closures],
+            }),
+            priorResults,
+            updatedAt: now,
+          });
+        } catch {
+          // The checkpoint is best-effort: the final transaction write remains
+          // authoritative. Its failure means the lease was likely reclaimed —
+          // stop issuing further HUB updates this run, since a reclaimed task
+          // gets re-executed and the persisted-prior results no longer include
+          // this in-memory closure.
+          break;
+        }
+      }
     } catch (error) {
       closures.push({
         serviceCode,
@@ -902,6 +993,7 @@ function actionsForTrigger(appActions, trigger) {
  * @param {AppActionResult[]} [opts.priorResults]
  * @param {"task_created" | "user_confirmed"} [opts.trigger]
  * @param {Date} [opts.now]
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -935,6 +1027,8 @@ export async function executeAppActions(appActions, opts = {}) {
               env,
               priorResults,
               trigger: opts.trigger,
+              completionLeaseExpiresAt:
+                opts.completionLeaseExpiresAt ?? "",
             }),
           );
         } catch (error) {
@@ -983,6 +1077,11 @@ export async function executeAppActions(appActions, opts = {}) {
               priorResults,
               config: getConfig(/** @type {NodeJS.ProcessEnv} */ (env)),
               nowDate,
+              tableName: opts.tableName ?? "",
+              siteId: opts.siteId ?? "",
+              taskId: opts.taskId ?? "",
+              completionLeaseExpiresAt:
+                opts.completionLeaseExpiresAt ?? "",
             }),
           );
         } catch (error) {

@@ -1056,6 +1056,89 @@ describe("completeTaskWithAppActions", () => {
       ),
     ).toBe(false);
   });
+
+  it("final write merges prior results with the closure result", async () => {
+    // Regression guard for the mid-completion checkpoint design: the final
+    // completion write must carry BOTH the persisted create result (closure
+    // eligibility on any later retry) and the fresh closure result. Replacing
+    // the array here is exactly the clobber the merge-aware checkpoint exists
+    // to prevent.
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: {
+              tickets: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  responsibleAgency: "76",
+                  srNum: "2000008106",
+                  attachments: [],
+                },
+              ],
+            },
+            externalId: "2000008106",
+            recordedAt: "2026-08-18T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "manual",
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example.test/createsr",
+          SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+          SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now: new Date("2026-08-18T12:02:00.000Z"),
+      });
+
+      const finalTx = send.mock.calls.at(-1)?.[0];
+      const persisted = /** @type {any} */ (finalTx?.input?.TransactItems?.[0])
+        ?.Put?.Item?.appActionResults;
+      expect(persisted).toMatchObject([
+        { code: "create_311_ticket", status: "submitted" },
+        {
+          code: "close_311_ticket",
+          status: "submitted",
+          payload: {
+            closures: [{ srNum: "2000008106", status: "closed" }],
+          },
+        },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("markTaskCannotDo", () => {

@@ -94,7 +94,11 @@ action), and `appActionStatus` (rollup). Result shapes (`code` from
   from prior attempts are carried forward into `closures[]` verbatim on later retries, so
   the latest result is always a complete picture. Result status rolls up `submitted` /
   `partial` / `failed`; a closure failure never blocks completion (see
-  [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)).
+  [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)). Each
+  successful HUB close is also checkpointed onto the task immediately (merged into
+  `appActionResults` alongside prior results, conditioned on the completion lease), so a
+  crash or lease expiry after HUB accepts an update leaves the `closed` record durable
+  and lease recovery never re-closes the same SR — HUB closure is non-idempotent.
 
 Because the header and its children all begin with `CHECK#<checkId>`, the **check detail
 screen is a single query**: `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")` returns the
