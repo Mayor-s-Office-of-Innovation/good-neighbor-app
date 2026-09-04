@@ -106,6 +106,11 @@ resource "aws_lambda_function" "authorizer" {
   memory_size      = 256
   timeout          = 5
   kms_key_arn      = aws_kms_key.app.arn
+  # Bound the authorizer's blast radius (cost/abuse) without starving real
+  # traffic: every authorizer-gated request passes through here, so the cap is
+  # 20x the api function's reservation (its verdicts are cached 60s by the
+  # gateway per token). 200 concurrent ≈ 12k RPS — far above honest load.
+  reserved_concurrent_executions = 200
 
   tracing_config {
     mode = "Active"
