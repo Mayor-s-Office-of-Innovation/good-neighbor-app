@@ -94,7 +94,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
   app's own agency id 76 are closed via `UpdateSR` when the task is completed through the done
-  path; tickets filed for city-handled work stay under the city's management.
+  path; tickets filed for city-handled work stay under the city's management. HUB closure is
+  non-idempotent, so each successful close is checkpointed onto the task (merged into
+  `appActionResults`, conditioned on the completion lease) before the next HUB call; lease
+  recovery then carries the durable `closed` record forward instead of re-closing the SR.
 - **Task compatibility:** tasks keep `type: "onsite" | "city_escalation"` alongside the
   richer `kind`/`escalationChannel`/`appActions[]` fields.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,

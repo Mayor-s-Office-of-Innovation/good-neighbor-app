@@ -1233,6 +1233,174 @@ describe("311 ticket closure", () => {
     );
   });
 
+  it("checkpoints each closed ticket so lease recovery never re-closes an SR", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4322, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+    const fanout = {
+      code: "create_311_ticket",
+      status: "submitted",
+      payload: {
+        tickets: [
+          {
+            serviceCode: "1.1.4.7.20.0",
+            responsibleAgency: "76",
+            srNum: "2000008106",
+            attachments: [],
+          },
+          {
+            serviceCode: "1.1.4.7.10.0",
+            responsibleAgency: "76",
+            srNum: "2000008107",
+            attachments: [],
+          },
+        ],
+      },
+      recordedAt: "2026-08-18T11:00:00.000Z",
+    };
+
+    await executeAppActions(
+      [{ code: "close_311_ticket", payload: {} }],
+      {
+        env: ENV,
+        now,
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionLeaseExpiresAt: "2026-08-18T12:05:00.000Z",
+        priorResults: [fanout],
+      },
+    );
+
+    // One checkpoint per successful UpdateSR, each pinned to the completion
+    // lease so a reclaimed executor cannot persist stale closures.
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const [index] of ["2000008106", "2000008107"].entries()) {
+      const checkpoint = send.mock.calls[index][0];
+      expect(checkpoint).toBeInstanceOf(UpdateCommand);
+      expect(checkpoint.input.Key).toEqual({
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+      });
+      expect(checkpoint.input.ConditionExpression).toBe(
+        "#status = :completing AND #lease = :leaseExpiresAt",
+      );
+      expect(
+        checkpoint.input.ExpressionAttributeValues[":leaseExpiresAt"],
+      ).toBe("2026-08-18T12:05:00.000Z");
+      // The write merges with the persisted prior results: the create result
+      // survives alongside the closure, so lease recovery still sees the
+      // `closed` record AND keeps closure eligibility intact.
+      expect(
+        checkpoint.input.ExpressionAttributeValues[":results"],
+      ).toMatchObject([
+        { code: "create_311_ticket", status: "submitted" },
+        {
+          code: "close_311_ticket",
+          status: "submitted",
+          payload: {
+            closures: [
+              { srNum: "2000008106", status: "closed" },
+              ...(index === 1
+                ? [{ srNum: "2000008107", status: "closed" }]
+                : []),
+            ],
+          },
+        },
+      ]);
+      expect(
+        checkpoint.input.ExpressionAttributeValues[":results"],
+      ).toHaveLength(2);
+    }
+  });
+
+  it("stops closing remaining tickets when the completion lease is lost mid-loop", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+    // The first checkpoint fails: the lease was reclaimed by another executor
+    // (ConditionalCheckFailedException shape is irrelevant — any send failure
+    // means the persisted prior results no longer include this closure).
+    send.mockRejectedValueOnce(new Error("The conditional request failed"));
+    const fanout = {
+      code: "create_311_ticket",
+      status: "submitted",
+      payload: {
+        tickets: [
+          {
+            serviceCode: "1.1.4.7.20.0",
+            responsibleAgency: "76",
+            srNum: "2000008106",
+            attachments: [],
+          },
+          {
+            serviceCode: "1.1.4.7.10.0",
+            responsibleAgency: "76",
+            srNum: "2000008107",
+            attachments: [],
+          },
+        ],
+      },
+      recordedAt: "2026-08-18T11:00:00.000Z",
+    };
+
+    const results = await executeAppActions(
+      [{ code: "close_311_ticket", payload: {} }],
+      {
+        env: ENV,
+        now,
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionLeaseExpiresAt: "2026-08-18T12:05:00.000Z",
+        priorResults: [fanout],
+      },
+    );
+
+    // The second SR was never sent to HUB: without a durable closed record,
+    // issuing that update would risk a double close after lease recovery.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The attempted ticket did close at HUB, so the rollup is `submitted`
+    // even though the loop bailed early — the un-attempted ticket simply has
+    // no closure entry and is retried (safely) on lease recovery.
+    expect(results).toEqual([
+      {
+        code: "close_311_ticket",
+        status: "submitted",
+        payload: {
+          closures: [
+            {
+              serviceCode: "1.1.4.7.20.0",
+              srNum: "2000008106",
+              closedReasonCode: "8",
+              status: "closed",
+              updateId: "4321",
+            },
+          ],
+        },
+        recordedAt: "2026-08-18T12:00:00.000Z",
+      },
+    ]);
+  });
+
   it("records no closure result when no eligible tickets exist", async () => {
     const fetchImpl = vi.fn();
     vi.stubGlobal("fetch", fetchImpl);
