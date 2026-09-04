@@ -199,6 +199,36 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
 }
 
 /**
+ * POST /v1/analyses/{analysisId}/conditions/{conditionId}
+ * @param {string} analysisId
+ * @param {string} conditionId
+ * @param {{ description: string, caller?: { request_id?: string } }} body
+ * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
+ */
+export function editAnalysisCondition(analysisId, conditionId, body) {
+  return request(
+    "POST",
+    `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}`,
+    { body },
+  );
+}
+
+/**
+ * POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject
+ * @param {string} analysisId
+ * @param {string} conditionId
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, caller?: { request_id?: string } }} [body]
+ * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
+ */
+export function rejectAnalysisCondition(analysisId, conditionId, body = {}) {
+  return request(
+    "POST",
+    `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
+    { body },
+  );
+}
+
+/**
  * GET /v1/checks — the site's checks, newest `startedAt` first (GSI1), with
  * opaque cursor paging.
  * @param {{ limit?: number, nextToken?: string }} [opts]

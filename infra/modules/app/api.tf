@@ -23,6 +23,8 @@ locals {
     "POST /v1/assessments:evaluate",
     "GET /v1/assessments/{assessmentId}/guidance",
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
+    "POST /v1/analyses/{analysisId}/conditions/{conditionId}",
+    "POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject",
     "POST /submissions",
     "POST /v1/client-errors",
     "POST /v1/feedback",

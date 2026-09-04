@@ -17,6 +17,7 @@ import {
   ApiError,
 } from "./api.js";
 import {
+  addItem,
   getCurrentCheck,
   getPlaceOrder,
   updateItem,
@@ -76,6 +77,12 @@ async function waitForArtifactAnalysis(
 }
 
 function conditionId(artifactId, concern, index) {
+  if (typeof concern.conditionId === "string" && concern.conditionId) {
+    return concern.conditionId;
+  }
+  if (typeof concern.condition_id === "string" && concern.condition_id) {
+    return concern.condition_id;
+  }
   return `${artifactId}-${String(index + 1).padStart(3, "0")}-${slugify(
     concern.category,
   )}`;
@@ -112,6 +119,71 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
   };
 }
 
+async function guidanceFromAnalysis(checkId, artifactId, analysis) {
+  const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
+  const guidance = assessment.conditions.length
+    ? await evaluateAssessment(assessment)
+    : { assessment, conditions: [], tasks: [] };
+  return { analysis, assessment, guidance };
+}
+
+function concernsFromAssessment(assessment) {
+  const conditions = Array.isArray(assessment?.identified_conditions_of_concern)
+    ? assessment.identified_conditions_of_concern
+    : [];
+  return conditions.map((condition) => ({
+    conditionId:
+      typeof condition.condition_id === "string"
+        ? condition.condition_id
+        : undefined,
+    category: condition.category,
+    rating: condition.severity,
+    ratingLabel: condition.severity_label,
+    explanation: condition.description || "",
+    evidenceIndices: condition.evidence_indices || [],
+  }));
+}
+
+function assessmentFromRefreshedAnalysis({
+  checkId,
+  artifactId,
+  analysisId,
+  assessment,
+}) {
+  const analyzedAt = new Date().toISOString();
+  const concerns = concernsFromAssessment(assessment);
+  const revision = analyzedAt.replace(/[^0-9]/g, "");
+  return {
+    assessmentId: `${checkId}-${artifactId}-${revision}`,
+    checkId,
+    reportedAt:
+      assessment?.metadata?.reported_at || assessment?.created_at || analyzedAt,
+    rubricVersion: undefined,
+    grade: assessment?.general_conditions?.label || null,
+    conditions: concerns
+      .filter((concern) => (concern.rating || 0) > 0)
+      .map((concern, index) => ({
+        conditionId: conditionId(artifactId, concern, index),
+        category: concern.category,
+        severity: concern.rating,
+        severityLabel: concern.ratingLabel,
+        description: concern.explanation || "",
+        sourceArtifactIds: [artifactId],
+        evidenceIndices: concern.evidenceIndices || [],
+      })),
+    rawAssessment: {
+      analysisId,
+      checkId,
+      artifactId,
+      analyzedAt,
+      grade: assessment?.general_conditions?.label,
+      summary: assessment?.general_conditions?.description,
+      assessment,
+      concerns,
+    },
+  };
+}
+
 async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
   updateItemAnalysis(placeId, itemId, {
     status: "analyzing",
@@ -127,8 +199,11 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
     return;
   }
 
-  const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
-  const guidance = await evaluateAssessment(assessment);
+  const { assessment, guidance } = await guidanceFromAnalysis(
+    checkId,
+    artifactId,
+    analysis,
+  );
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
     artifactId,
@@ -149,6 +224,112 @@ export function analyzeEvidenceItem(placeId, itemId) {
   if (active.has(key)) return;
   active.add(key);
   void run(placeId, itemId).finally(() => active.delete(key));
+}
+
+export async function refreshEvidenceAnalysis(
+  placeId,
+  itemId,
+  response,
+  opts = {},
+) {
+  const check = getCurrentCheck();
+  if (!check) return;
+  const place = check.places?.[placeId];
+  const item = place?.items?.find((candidate) => candidate.id === itemId);
+  if (!place || !item || !response?.assessment) return;
+
+  const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
+  if (!artifactId) return;
+  const analysisId =
+    response.analysis_id || item.analysis?.sourceAnalysis?.analysisId;
+  const concerns = concernsFromAssessment(response.assessment);
+  const refreshed = assessmentFromRefreshedAnalysis({
+    checkId: check.id,
+    artifactId,
+    analysisId,
+    assessment: response.assessment,
+  });
+  const guidance = refreshed.conditions.length
+    ? await evaluateAssessment(refreshed)
+    : { assessment: refreshed, conditions: [], tasks: [] };
+
+  updateItemAnalysis(placeId, itemId, {
+    status: "analyzed",
+    artifactId,
+    sourceAnalysis: {
+      ...(item.analysis?.sourceAnalysis || {}),
+      analysisId,
+      grade: response.assessment.general_conditions?.label,
+      gradeDescription: response.assessment.general_conditions?.description,
+      concerns,
+    },
+    assessment: guidance.assessment,
+    conditions: guidance.conditions || refreshed.conditions,
+    tasks: guidance.tasks || [],
+    ...(opts.rejectedConditionId
+      ? {
+          rejectedConditionIds: [
+            ...(item.analysis?.rejectedConditionIds || []),
+            opts.rejectedConditionId,
+          ],
+        }
+      : {}),
+  });
+}
+
+export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
+  const check = getCurrentCheck();
+  const place = check?.places?.[placeId];
+  const item = place?.items?.find((candidate) => candidate.id === itemId);
+  if (!check || !place || !item) return null;
+
+  await ensureRemoteCheck(check);
+  const capturedAt = new Date().toISOString();
+  const artifactId = await registerTextArtifact(check.id, {
+    placeId,
+    placeName: place.name,
+    text,
+    capturedAt,
+  });
+  const analysis = await waitForArtifactAnalysis(check.id, artifactId);
+  if (analysis.status && analysis.status !== "analyzed") {
+    throw new ApiError("Analysis failed for edited description", {
+      body: { code: "analysis_failed", artifactId },
+    });
+  }
+
+  const { guidance } = await guidanceFromAnalysis(check.id, artifactId, analysis);
+  const hasProblems = Boolean(
+    (guidance.tasks || []).length || (guidance.conditions || []).length,
+  );
+  if (!hasProblems) {
+    updateItemAnalysis(placeId, itemId, {
+      noIssuesDescription: text,
+      noIssuesTextArtifactId: artifactId,
+      noIssuesTextAnalysis: analysis,
+    });
+    return { status: "no_problems", artifactId };
+  }
+
+  updateItemAnalysis(placeId, itemId, { hideNoIssuesCard: true });
+  const textItem = addItem(placeId, {
+    kind: "text",
+    text,
+    uploadedAt: capturedAt,
+  });
+  if (!textItem) return { status: "problems", artifactId };
+  updateItem(placeId, textItem.id, {
+    upload: { status: "uploaded", artifactId },
+  });
+  updateItemAnalysis(placeId, textItem.id, {
+    status: "analyzed",
+    artifactId,
+    sourceAnalysis: analysis,
+    assessment: guidance.assessment,
+    conditions: guidance.conditions || [],
+    tasks: guidance.tasks || [],
+  });
+  return { status: "problems", artifactId, itemId: textItem.id };
 }
 
 async function run(placeId, itemId) {

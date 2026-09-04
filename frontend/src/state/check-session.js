@@ -479,16 +479,21 @@ export function updateItemAnalysis(placeId, itemId, analysisPatch) {
   const item = findSessionItem(placeId, itemId);
   if (!item) return null;
   item.analysis = { ...(item.analysis || {}), ...analysisPatch };
-  if (Array.isArray(item.analysis.conditions)) {
-    const place = current?.places?.[placeId];
-    if (place) {
-      const labels = new Set(place.conditionLabels || []);
-      for (const condition of item.analysis.conditions) {
+  const place = current?.places?.[placeId];
+  if (place) {
+    const labels = new Set();
+    for (const placeItem of place.items || []) {
+      const hiddenConditionIds = new Set([
+        ...(placeItem.analysis?.resolvedConditionIds || []),
+        ...(placeItem.analysis?.rejectedConditionIds || []),
+      ]);
+      for (const condition of placeItem.analysis?.conditions || []) {
+        if (hiddenConditionIds.has(condition?.conditionId)) continue;
         const label = condition?.category || condition?.label;
         if (typeof label === "string" && label.trim()) labels.add(label.trim());
       }
-      place.conditionLabels = [...labels];
     }
+    place.conditionLabels = [...labels];
   }
   persist();
   emit();

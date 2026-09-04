@@ -17,8 +17,7 @@ export const shell = () => html`
     </div>
 
     <h1 class="check-timeline__title">
-      Take photos at each place. Start with the whole area, then add details if
-      needed.
+      Take photos at each place.
     </h1>
 
     <div class="place-timeline" id="place-timeline"></div>
@@ -100,32 +99,150 @@ export const shell = () => html`
     </dialog>
 
     <dialog
+      class="analysis-dialog"
+      id="analysis-delete-dialog"
+      aria-labelledby="analysis-delete-title"
+      aria-describedby="analysis-delete-copy"
+    >
+      <form class="analysis-dialog__card" method="dialog">
+        <div class="analysis-dialog__copy">
+          <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
+          <p class="analysis-dialog__text" id="analysis-delete-copy">
+            This action can't be undone. The issue details won't be saved.
+          </p>
+          <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
+        </div>
+        <div class="analysis-dialog__actions">
+          <button
+            class="analysis-dialog__button analysis-dialog__button--danger"
+            id="analysis-delete-confirm"
+            type="button"
+          >
+            Delete
+          </button>
+          <button class="analysis-dialog__button" type="submit">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="analysis-dialog"
+      id="analysis-success-dialog"
+      aria-labelledby="analysis-success-title"
+      aria-describedby="analysis-success-copy"
+    >
+      <form class="analysis-dialog__card" method="dialog">
+        <div class="analysis-dialog__copy">
+          <h2 class="analysis-dialog__title" id="analysis-success-title">
+            Great work!
+          </h2>
+          <p class="analysis-dialog__text" id="analysis-success-copy">
+            We've recorded your action. This item is now
+            <span>marked as resolved.</span>
+          </p>
+        </div>
+        <div class="analysis-dialog__actions">
+          <button
+            class="analysis-dialog__button analysis-dialog__button--success"
+            type="submit"
+          >
+            Continue
+          </button>
+          <button
+            class="analysis-dialog__button"
+            id="analysis-success-undo"
+            type="button"
+          >
+            Undo
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
+      class="analysis-dialog"
+      id="analysis-progress-dialog"
+      aria-labelledby="analysis-progress-title"
+    >
+      <div class="analysis-dialog__card analysis-dialog__card--progress">
+        <h2 class="analysis-dialog__title" id="analysis-progress-title">
+          Filing ticket...
+        </h2>
+        <div class="analysis-progress-ring" aria-hidden="true"></div>
+        <button
+          class="analysis-dialog__button"
+          id="analysis-progress-cancel"
+          type="button"
+        >
+          Cancel
+        </button>
+      </div>
+    </dialog>
+
+    <dialog
+      class="analysis-dialog analysis-edit-dialog"
+      id="analysis-edit-dialog"
+      aria-labelledby="analysis-edit-title"
+      aria-describedby="analysis-edit-copy"
+    >
+      <form class="analysis-dialog__card" method="dialog">
+        <div class="analysis-dialog__copy">
+          <h2 class="analysis-dialog__title" id="analysis-edit-title">
+            Edit problem
+          </h2>
+          <p class="analysis-dialog__text" id="analysis-edit-copy">
+            Change the description to match what you see
+          </p>
+          <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
+        </div>
+        <label class="analysis-edit-dialog__field">
+          <span>Description</span>
+          <textarea id="analysis-edit-description" rows="5"></textarea>
+        </label>
+        <div class="analysis-dialog__actions">
+          <button
+            class="analysis-dialog__button analysis-dialog__button--ink"
+            id="analysis-edit-save"
+            type="button"
+          >
+            Save
+          </button>
+          <button
+            class="analysis-dialog__button analysis-dialog__button--danger-text"
+            type="submit"
+          >
+            Discard
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
       class="sheet"
       id="cancel-check-dialog"
       aria-label="Leave this check?"
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
-          <wa-button
+          <button
             class="sheet__cancel"
             type="button"
             id="cancel-check-save"
-            appearance="outlined"
           >
-            Save draft and exit
-          </wa-button>
+            Save my place to resume later
+          </button>
         </div>
         <ul class="sheet__opts">
           <li>
-            <wa-button
+            <button
               class="sheet__opt sheet__opt--danger"
               id="cancel-check-discard"
               type="button"
-              appearance="filled"
-              variant="danger"
             >
-              Discard draft and exit
-            </wa-button>
+              End the check and exit
+            </button>
           </li>
         </ul>
       </div>
@@ -161,7 +278,14 @@ function placeSummary(place) {
   return pieces.join(" · ");
 }
 
-export function placeRow({ place, index, expanded, isLast, openMenuItemId }) {
+export function placeRow({
+  place,
+  index,
+  expanded,
+  isLast,
+  openMenuItemId,
+  photoMenuAnchor,
+}) {
   const summary = placeSummary(place);
   const complete = place.items.length > 0 || place.skipped;
   return html`
@@ -197,24 +321,25 @@ export function placeRow({ place, index, expanded, isLast, openMenuItemId }) {
           ? html`<p class="place-row__summary">${escapeHtml(summary)}</p>`
           : ""}
         ${conditionList(place.conditionLabels || [])}
-        ${expanded ? expandedPlace(place, openMenuItemId) : ""}
+        ${expanded ? expandedPlace(place, openMenuItemId, photoMenuAnchor) : ""}
       </div>
     </section>
   `;
 }
 
-function expandedPlace(place, openMenuItemId) {
+function expandedPlace(place, openMenuItemId, photoMenuAnchor) {
   return html`
     <div class="place-row__expanded">
       ${place.inputMode === "text"
         ? textMode(place)
-        : photoMode(place, openMenuItemId)}
+        : photoMode(place, openMenuItemId, photoMenuAnchor)}
     </div>
   `;
 }
 
-function photoMode(place, openMenuItemId) {
+function photoMode(place, openMenuItemId, photoMenuAnchor) {
   const photos = place.items.filter((item) => item.kind === "photo");
+  const openMenuItem = photos.find((item) => item.id === openMenuItemId);
   return html`
     ${photos.length === 0
       ? html`<p class="place-row__prompt">
@@ -235,6 +360,7 @@ function photoMode(place, openMenuItemId) {
         )
         .join("")}
     </div>
+    ${openMenuItem ? photoMenu(openMenuItem, photoMenuAnchor) : ""}
     ${inlineAnalyzing(place)}
     <div class="place-row__actions">
       <button
@@ -309,7 +435,7 @@ function photoTile(item, index, menuOpen) {
         )}"
       />
       <button
-        class="perimeter-photo__menu-button"
+        class="perimeter-photo__menu-button wa-plain"
         type="button"
         data-photo-menu="${escapeAttr(item.id)}"
         aria-label="Photo options"
@@ -317,14 +443,21 @@ function photoTile(item, index, menuOpen) {
       >
         <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
       </button>
-      ${menuOpen ? photoMenu(item) : ""}
     </div>
   `;
 }
 
-function photoMenu(item) {
+function photoMenu(item, anchor) {
+  const style = anchor
+    ? `--photo-menu-top:${anchor.top}px;--photo-menu-right:${anchor.right}px;`
+    : "";
   return html`
-    <div class="photo-menu" role="menu" aria-label="Photo options">
+    <div
+      class="photo-menu"
+      role="menu"
+      aria-label="Photo options"
+      style="${escapeAttr(style)}"
+    >
       <button
         type="button"
         role="menuitem"
@@ -340,7 +473,7 @@ function photoMenu(item) {
         data-photo-action="replace"
         data-item-id="${escapeAttr(item.id)}"
       >
-        <wa-icon name="rotate" aria-hidden="true"></wa-icon>
+        <wa-icon name="repeat" aria-hidden="true"></wa-icon>
         Replace photo
       </button>
       <button
@@ -409,12 +542,17 @@ export function addPlaceButton() {
   `;
 }
 
-export function footer({ hasEvidence, analyzingOpen }) {
+export function footer({ items, analyzingOpen }) {
+  const active = items.some((item) =>
+    ["queued", "analyzing"].includes(item.analysis?.status),
+  );
+  const problems = problemSummary(items);
+  const problemLabel = active ? "Analyzing..." : problemSummaryLabel(problems);
   return html`
     <button class="check-timeline__done" id="done-check" type="button">
       Done
     </button>
-    ${hasEvidence
+    ${items.length
       ? html`
           <button
             class="check-timeline__analyzing"
@@ -422,8 +560,13 @@ export function footer({ hasEvidence, analyzingOpen }) {
             type="button"
             aria-expanded="${analyzingOpen ? "true" : "false"}"
           >
-            ${analyzingOpen ? "Hide analyzing..." : "Analyzing"}
-            <wa-icon name="chevron-down" aria-hidden="true"></wa-icon>
+            ${problemLabel}
+            <span
+              class="check-timeline__analyzing-caret ${analyzingOpen
+                ? "check-timeline__analyzing-caret--up"
+                : ""}"
+              aria-hidden="true"
+            ></span>
           </button>
         `
       : ""}
@@ -432,19 +575,22 @@ export function footer({ hasEvidence, analyzingOpen }) {
 
 export function analyzingSection(items) {
   if (!items.length) return "";
+  const cards = items.map(analysisCards).flat();
+  const summary = problemSummary(items);
   return html`
     <section
       class="analysis-tray"
       id="analysis-tray"
       aria-label="Analyzing evidence"
     >
-      <h2>
-        We are analyzing your photos. New results will appear here. You can
-        continue the check.
-      </h2>
-      <div class="analysis-tray__cards">
-        ${items.map(analysisCards).flat().join("")}
-      </div>
+      <h2>Analysis results</h2>
+      ${cards.length
+        ? html`<div class="analysis-tray__cards">${cards.join("")}</div>`
+        : summary.hidden > 0
+          ? html`<p class="analysis-tray__empty">
+              All problems were resolved or deleted.
+            </p>`
+          : ""}
     </section>
   `;
 }
@@ -452,14 +598,23 @@ export function analyzingSection(items) {
 function analysisCards(item) {
   const status = item.analysis?.status || "idle";
   if (status !== "analyzed") return [pendingCard(item)];
-  const tasks = item.analysis?.tasks || [];
-  const conditions = item.analysis?.conditions || [];
+  const hiddenConditionIds = hiddenConditionIdSet(item);
+  const tasks = (item.analysis?.tasks || []).filter(
+    (task) => !hiddenConditionIds.has(task.conditionId),
+  );
+  const conditions = (item.analysis?.conditions || []).filter(
+    (condition) => !hiddenConditionIds.has(condition.conditionId),
+  );
   if (!tasks.length && !conditions.length) {
+    if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
     return [
       completedCard(item, {
         title: "No issues found",
-        description: "The analysis did not identify any conditions of concern.",
+        description:
+          item.analysis?.noIssuesDescription ||
+          "The analysis did not identify any conditions of concern.",
         action: "",
+        actionKind: "",
       }),
     ];
   }
@@ -476,7 +631,10 @@ function analysisCards(item) {
         title: task.category || condition.category || "Condition found",
         description:
           task.guidance || condition.description || "Review this condition.",
-        action: task.label || task.actionLabel || actionLabel(task.kind),
+        action: taskButtonLabel(task) || actionLabel(task.kind),
+        actionKind: task.kind || "",
+        taskId: task.taskId || "",
+        conditionId: task.conditionId || condition.conditionId || "",
       });
     });
   }
@@ -485,6 +643,8 @@ function analysisCards(item) {
       title: condition.category || "Condition found",
       description: condition.description || "Review this condition.",
       action: "",
+      actionKind: "",
+      conditionId: condition.conditionId || "",
     }),
   );
 }
@@ -494,7 +654,12 @@ function pendingCard(item) {
     <article class="analysis-card analysis-card--pending">
       <div class="analysis-card__content">
         <p class="analysis-card__meta">
-          <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
+          <img
+            class="analysis-card__star"
+            src="/icons/star.svg"
+            alt=""
+            aria-hidden="true"
+          />
           IN PROGRESS
         </p>
         <h3>Analyzing ${item.kind === "text" ? "description" : "photo"}...</h3>
@@ -506,36 +671,66 @@ function pendingCard(item) {
   `;
 }
 
-function completedCard(item, { title, description, action }) {
+function completedCard(
+  item,
+  { title, description, action, actionKind = "", taskId = "", conditionId = "" },
+) {
+  const actionClass =
+    actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
+  const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
   return html`
-    <article class="analysis-card analysis-card--done">
+    <article
+      class="analysis-card analysis-card--done"
+      data-place-id="${escapeAttr(item.placeId || "")}"
+      data-item-id="${escapeAttr(item.id || "")}"
+      data-task-id="${escapeAttr(taskId)}"
+      data-analysis-id="${escapeAttr(analysisId)}"
+      data-condition-id="${escapeAttr(conditionId)}"
+      data-action-kind="${escapeAttr(actionKind)}"
+      data-card-title="${escapeAttr(title)}"
+      data-card-description="${escapeAttr(description)}"
+    >
       <div class="analysis-card__content">
         <p class="analysis-card__meta">
-          <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
-          NEW${item.analysis?.assessment?.assessmentId
-            ? ` • ${escapeHtml(item.analysis.assessment.assessmentId)}`
+          <img
+            class="analysis-card__star"
+            src="/icons/star.svg"
+            alt=""
+            aria-hidden="true"
+          />
+          <span>NEW</span>${item.analysis?.assessment?.assessmentId
+            ? html`<span>•</span
+                ><span
+                  >${escapeHtml(item.analysis.assessment.assessmentId)}</span
+                >`
             : ""}
         </p>
         <h3>${escapeHtml(title)}</h3>
         <p>${escapeHtml(description)}</p>
         <div class="analysis-card__actions">
           ${action
-            ? html`<button class="analysis-card__primary" type="button">
+            ? html`<button
+                class="analysis-card__primary${actionClass} wa-plain"
+                type="button"
+                data-analysis-action="resolve"
+              >
                 <wa-icon name="circle-check" aria-hidden="true"></wa-icon>
                 ${escapeHtml(action)}
               </button>`
             : ""}
           <button
-            class="analysis-card__icon"
+            class="analysis-card__icon wa-plain"
             type="button"
             aria-label="Edit problem"
+            data-analysis-action="edit"
           >
             <wa-icon name="pen" aria-hidden="true"></wa-icon>
           </button>
           <button
-            class="analysis-card__icon analysis-card__icon--danger"
+            class="analysis-card__icon analysis-card__icon--danger wa-plain"
             type="button"
             aria-label="Remove problem"
+            data-analysis-action="delete"
           >
             <wa-icon name="trash" aria-hidden="true"></wa-icon>
           </button>
@@ -566,11 +761,57 @@ function evidencePreview(item) {
   `;
 }
 
+function taskButtonLabel(task) {
+  return Array.isArray(task.buttons) && task.buttons[0]
+    ? String(task.buttons[0])
+    : "";
+}
+
 function actionLabel(kind) {
   if (kind === "non_actionable_escalation") return "Escalate";
   if (kind === "escalation") return "Escalate";
   if (kind === "action") return "Log action";
   return "";
+}
+
+function problemSummary(items) {
+  return items.reduce((summary, item) => {
+    if (item.analysis?.status !== "analyzed") return summary;
+    const hiddenConditionIds = hiddenConditionIdSet(item);
+    const tasks = item.analysis?.tasks || [];
+    const conditions = item.analysis?.conditions || [];
+    const visibleTasks = tasks.filter(
+      (task) => !hiddenConditionIds.has(task.conditionId),
+    );
+    const visibleConditions = conditions.filter(
+      (condition) => !hiddenConditionIds.has(condition.conditionId),
+    );
+    const visible = Math.max(visibleTasks.length, visibleConditions.length);
+    const total = Math.max(tasks.length, conditions.length);
+    summary.visible += visible;
+    summary.hidden += Math.max(
+      hiddenConditionIds.size,
+      Math.max(0, total - visible),
+    );
+    return summary;
+  }, { visible: 0, hidden: 0 });
+}
+
+function problemSummaryLabel({ visible, hidden }) {
+  if (visible > 0) {
+    return `${visible} ${visible === 1 ? "problem" : "problems"} found`;
+  }
+  if (hidden > 0) return "All problems resolved";
+  return "No problems found";
+}
+
+function hiddenConditionIdSet(item) {
+  return new Set(
+    [
+      ...(item.analysis?.resolvedConditionIds || []),
+      ...(item.analysis?.rejectedConditionIds || []),
+    ].filter(Boolean),
+  );
 }
 
 // Compatibility exports for <problem-report>, which still uses the older grid.
