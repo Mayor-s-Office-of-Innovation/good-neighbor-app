@@ -10,6 +10,8 @@
   rotating refresh token.
 */
 
+import { ApiError } from "./api-error.js";
+
 // Same-origin everywhere (shared strategy with services/api.js): in dev the
 // Vite proxy forwards `/v1/*` → the local API; in production the SPA and API
 // share one CloudFront origin. Cast `import.meta`: Vite's env types aren't
@@ -61,19 +63,36 @@ export async function registerDevice(code, opts = {}) {
  * POST /v1/devices/token:refresh — exchange the stored single-use refresh
  * token for a fresh session pair. The old refresh token is dead after this
  * call; the caller must persist the new one before doing anything else.
+ *
+ * Errors carry their HTTP status so the auth layer can distinguish a fatal
+ * rejection (401 — expired/revoked/replayed: the stored session is unusable
+ * and only re-registration recovers) from a retryable one (5xx or a transport
+ * failure — the session may be fine, trying again later is correct). Mapping
+ * every failure to "re-auth required" would log users out on a blip.
  * @param {string} refreshToken
  * @returns {Promise<DeviceSession>}
- * @throws {Error} "refresh rejected" (401 — expired/revoked/replayed) or a
- *   network/5xx failure
+ * @throws {ApiError} status 401 ("refresh rejected — expired, revoked, or
+ *   replayed"), 0 (transport failure), or the backend's 5xx status
  */
 export async function refreshDeviceToken(refreshToken) {
-  const res = await fetch(`${BASE}/v1/devices/token:refresh`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  });
+  /** @type {Response} */
+  let res;
+  try {
+    res = await fetch(`${BASE}/v1/devices/token:refresh`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+  } catch (err) {
+    // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
+    throw new ApiError(`refresh transport failure: ${err}`, { status: 0 });
+  }
   if (!res.ok) {
-    throw new Error("refresh rejected");
+    const detail =
+      res.status === 401
+        ? "refresh rejected — expired, revoked, or replayed"
+        : `refresh failed (${res.status})`;
+    throw new ApiError(detail, { status: res.status });
   }
   const body = await res.json();
   assertSession(body);
@@ -95,6 +114,6 @@ function assertSession(body) {
     typeof body.expiresIn !== "number" ||
     !body.site?.siteId
   ) {
-    throw new Error("malformed device session response");
+    throw new ApiError("malformed device session response", { status: 0 });
   }
 }

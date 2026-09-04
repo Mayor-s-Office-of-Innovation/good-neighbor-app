@@ -44,6 +44,10 @@ New here? Get your bearings in this order:
   [docs/dynamodb-data-model.md](./docs/dynamodb-data-model.md).
 - Use Terraform for all infrastructure and GitHub Actions for CI/CD.
 
+## Agent Rules
+
+- **Never push or commit code.** The human pushes and commits code changes themselves; agents stop after code changes and say what's ready to review.
+
 ## SDLC Rules
 
 - Keep application code, infrastructure, CI/CD, docs, and configuration in Git.
