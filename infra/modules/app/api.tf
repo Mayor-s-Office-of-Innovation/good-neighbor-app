@@ -7,9 +7,11 @@
 locals {
   api_routes = [
     "POST /site-code",
+    "GET /v1/site",
+    "PUT /v1/site/places",
     "POST /v1/checks",
     "GET /v1/checks",
-    "POST /v1/checks/{checkId}/sides/{side}/description:validate",
+    "POST /v1/checks/{checkId}/places/{placeId}/description:validate",
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "POST /v1/checks/{checkId}/complete",

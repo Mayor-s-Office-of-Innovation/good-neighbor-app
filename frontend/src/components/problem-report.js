@@ -1,7 +1,7 @@
 /*
   problem-report — a single-problem capture flow. Same capture/describe/submit
   architecture as perimeter-check, but scoped to one report instead of multiple
-  sides. Submit runs the existing backend analysis path and lands on the same
+  places. Submit runs the existing backend analysis path and lands on the same
   review/results screen as perimeter checks.
 */
 import { getSite } from "../db.js";
@@ -17,11 +17,11 @@ import {
   loadDraft,
   clearCheck,
   getCurrentCheck,
-  getSideOrder,
-  setActiveSideIndex,
+  getPlaceOrder,
+  setActivePlaceIndex,
   addItem,
   removeItem,
-  isSideCovered,
+  isPlaceCovered,
   getFlowType,
   isCurrentSession,
 } from "../state/check-session.js";
@@ -31,7 +31,7 @@ import { shotTile, addTile } from "./perimeter-check.templates.js";
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
- * @typedef {{ items: Array<{ id: string, dataUrl: string, side?: string }> }} SideState
+ * @typedef {{ items: Array<{ id: string, dataUrl: string, placeId?: string, placeName?: string }> }} PlaceState
  */
 
 class ProblemReport extends HTMLElement {
@@ -44,7 +44,7 @@ class ProblemReport extends HTMLElement {
     /** @type {string} */
     this._checkId = "";
     /** @type {string} */
-    this._side = "";
+    this._placeId = "";
     /** @type {HTMLInputElement | null} */
     this._fileInput = null;
     /** @type {FileReader | null} */
@@ -69,8 +69,8 @@ class ProblemReport extends HTMLElement {
     // Resume any photo upload interrupted by a reload / navigation mid-report.
     resumePendingUploads();
 
-    this._side = getSideOrder()[0];
-    setActiveSideIndex(0);
+    this._placeId = getPlaceOrder()[0];
+    setActivePlaceIndex(0);
 
     this.innerHTML = shell();
     this._fileInput = /** @type {HTMLInputElement | null} */ (
@@ -114,11 +114,11 @@ class ProblemReport extends HTMLElement {
     this._syncControls();
   }
 
-  /** @returns {SideState} */
-  _sideState() {
+  /** @returns {PlaceState} */
+  _placeState() {
     const check = getCurrentCheck();
-    return /** @type {SideState} */ (
-      check?.sides?.[this._side] || { items: [] }
+    return /** @type {PlaceState} */ (
+      check?.places?.[this._placeId] || { items: [] }
     );
   }
 
@@ -165,12 +165,12 @@ class ProblemReport extends HTMLElement {
   /** @param {string} dataUrl */
   _addPhoto(dataUrl) {
     const record = addItem(
-      this._side,
+      this._placeId,
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
     // Start pushing the bytes to S3 now, in the background, so by submit time
     // they're already up and submit only registers the metadata.
-    if (record) enqueueUpload(getCurrentCheck()?.id, record.side, record.id);
+    if (record) enqueueUpload(getCurrentCheck()?.id, record.placeId, record.id);
     this._renderShots();
     this._syncControls();
   }
@@ -185,7 +185,7 @@ class ProblemReport extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      removeItem(this._side, del.getAttribute("data-del"));
+      removeItem(this._placeId, del.getAttribute("data-del"));
       this._renderShots();
       this._syncControls();
     }
@@ -203,7 +203,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _renderShots() {
-    const items = this._sideState().items;
+    const items = this._placeState().items;
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
@@ -216,12 +216,12 @@ class ProblemReport extends HTMLElement {
   _syncControls() {
     const submit = this.querySelector("#submit-report");
     if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = !isSideCovered(this._side);
+    submit.disabled = !isPlaceCovered(this._placeId);
   }
 
   /** @returns {Promise<void>} */
   async _submit() {
-    if (!isSideCovered(this._side)) return;
+    if (!isPlaceCovered(this._placeId)) return;
     try {
       submitCheck({ submissionKind: "problem_report" });
       navigate("/today");

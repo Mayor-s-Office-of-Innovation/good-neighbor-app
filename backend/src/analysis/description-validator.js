@@ -107,10 +107,10 @@ function isLocalValidationAllowed() {
 
 /**
  * @param {string} text
- * @param {string} side
+ * @param {string} placeName
  * @returns {string}
  */
-function buildPrompt(text, side) {
+function buildPrompt(text, placeName) {
   return [
     "You validate short field descriptions for a street-conditions reporting app.",
     "Return JSON only with keys accepted, whatYouCanSee, whereItIs, message.",
@@ -119,7 +119,7 @@ function buildPrompt(text, side) {
     "2. whereItIs is true only if the text includes location or spatial context about where the issue is.",
     "3. accepted is true only if both booleans are true.",
     "4. message should be short and user-facing. If rejected, say what is missing.",
-    `Side context: ${side}.`,
+    `Place context: ${placeName}.`,
     `Text: ${JSON.stringify(text)}`,
   ].join("\n");
 }
@@ -186,12 +186,12 @@ function heuristicValidate(text) {
 }
 
 /**
- * @param {{ text: string, side: string, modelId?: string, client?: Pick<BedrockRuntimeClient, "send"> }} params
+ * @param {{ text: string, placeName: string, modelId?: string, client?: Pick<BedrockRuntimeClient, "send"> }} params
  * @returns {Promise<DescriptionValidationResult>}
  */
 export async function validateDescription({
   text,
-  side,
+  placeName,
   modelId = process.env.BEDROCK_MODEL_ID || LOCAL_STUB_MODEL_ID,
   client: providedClient,
 }) {
@@ -226,7 +226,7 @@ export async function validateDescription({
     messages: [
       {
         role: "user",
-        content: [{ text: buildPrompt(text, side) }],
+        content: [{ text: buildPrompt(text, placeName) }],
       },
     ],
     inferenceConfig: {
