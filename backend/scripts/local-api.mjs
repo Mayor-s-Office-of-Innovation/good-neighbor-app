@@ -32,6 +32,7 @@ import {
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
+import { getSite, putSitePlaces } from "../src/handlers/site.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
@@ -40,7 +41,7 @@ const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
   "access-control-allow-headers": "content-type,idempotency-key,x-debug-sub",
 };
 
@@ -81,9 +82,11 @@ function route(method, pattern, handler) {
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
   route("POST", "/site-code", siteCodeHandler),
+  route("GET", "/v1/site", getSite),
+  route("PUT", "/v1/site/places", putSitePlaces),
   route(
     "POST",
-    "/v1/checks/{checkId}/sides/{side}/description:validate",
+    "/v1/checks/{checkId}/places/{placeId}/description:validate",
     descriptionValidationHandler,
   ),
   // Perimeter checks (analysis-backend Step C)

@@ -1,10 +1,10 @@
 // Check-level synthesis: fold the per-artifact adapted assessments of one
-// perimeter run (all sides) into a single scorecard. The output shape maps
+// perimeter run (all places) into a single scorecard. The output shape maps
 // directly onto the CHECK# header extension persisted at `complete` (see
 // docs/dynamodb-data-model.md § synthesis-on-header): one CHECK# = one full run.
 //
 // The service grades each analyzed position; rolling those up into one perimeter
-// grade (worst across sides) is GNP synthesis, so it lives here. This is also the
+// grade (worst across places) is GNP synthesis, so it lives here. This is also the
 // seam the escalation classifier (built in handlers/checks.js via task-routing.js,
 // still a placeholder matrix) consumes — per-category max rating + source
 // artifacts, keyed off the category identity the service returns.
@@ -15,7 +15,8 @@
 /**
  * @typedef {object} AnalyzedArtifact
  * @property {string} artifactId
- * @property {string} [side]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
  * @property {AdaptedAssessment} adapted
  */
 
@@ -58,7 +59,7 @@ export function synthesizeCheck(artifacts) {
   let grade = null;
   // Overall check summary (Option B — PROVISIONAL, pending team review): rather
   // than compose our own prose, we surface the analyzer's own
-  // general_conditions.description (adapted.gradeDescription) from the side that
+  // general_conditions.description (adapted.gradeDescription) from the place that
   // set the worst grade, so the one-line summary stays coherent with the grade we
   // display. First artifact reaching the worst grade wins on ties. Persisted onto
   // the CHECK# header at complete-time so the home screen reads it from listChecks

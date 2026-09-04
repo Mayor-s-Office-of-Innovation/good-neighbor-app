@@ -36,7 +36,7 @@ import {
   markUploading,
   markAnalyzing,
   markAnalysisFailed,
-  getSideOrder,
+  getPlaceOrder,
   markSubmitted,
 } from "../state/check-session.js";
 import { startRun, span, mark } from "./instrument.js";
@@ -47,7 +47,8 @@ const pendingSubmissions = new Map();
 /**
  * @typedef {object} PlannedArtifact
  * @property {string} kind
- * @property {string} side
+ * @property {string} placeId
+ * @property {string} placeName
  * @property {string} capturedAt
  * @property {string} signature
  * @property {string} [dataUrl]
@@ -201,7 +202,7 @@ async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
 function artifactSignature(artifact) {
   return [
     artifact.kind,
-    artifact.side,
+    artifact.placeId,
     artifact.capturedAt || "",
     artifact.text || "",
   ].join("::");
@@ -215,13 +216,13 @@ function plannedArtifactsForCheck(check) {
   const planned = [];
   const submittedAt =
     check.submittedAt || check.startedAt || new Date().toISOString();
-  const sidesInFlow = check.sideOrder || getSideOrder();
+  const placesInFlow = check.placeOrder || getPlaceOrder();
 
-  for (const side of sidesInFlow) {
-    const sideState = check.sides[side];
-    const photos = sideState.items.filter((it) => it.dataUrl);
-    const descriptionText = sideState.description?.validated
-      ? sideState.description.text
+  for (const placeId of placesInFlow) {
+    const placeState = check.places[placeId];
+    const photos = placeState.items.filter((it) => it.dataUrl);
+    const descriptionText = placeState.description?.validated
+      ? placeState.description.text
       : "";
 
     photos.forEach((it, index) => {
@@ -233,10 +234,11 @@ function plannedArtifactsForCheck(check) {
       const eager = it.upload?.status === "uploaded" ? it.upload : null;
       planned.push({
         kind: "photo",
-        side: it.side,
+        placeId: it.placeId,
+        placeName: it.placeName,
         dataUrl: it.dataUrl,
         capturedAt: it.uploadedAt || submittedAt,
-        tag: `${it.side}#${index}`,
+        tag: `${it.placeName}#${index}`,
         ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
         ...(eager
           ? {
@@ -248,7 +250,8 @@ function plannedArtifactsForCheck(check) {
           : {}),
         signature: artifactSignature({
           kind: "photo",
-          side: it.side,
+          placeId: it.placeId,
+          placeName: it.placeName,
           capturedAt: it.uploadedAt || submittedAt,
           ...(descriptionText && index === 0 ? { text: descriptionText } : {}),
         }),
@@ -258,12 +261,14 @@ function plannedArtifactsForCheck(check) {
     if (photos.length === 0 && descriptionText) {
       planned.push({
         kind: "text",
-        side,
+        placeId,
+        placeName: placeState.name,
         text: descriptionText,
         capturedAt: submittedAt,
         signature: artifactSignature({
           kind: "text",
-          side,
+          placeId,
+          placeName: placeState.name,
           capturedAt: submittedAt,
           text: descriptionText,
         }),
@@ -284,7 +289,8 @@ async function existingArtifactSignatures(checkId) {
     (existing.artifacts || []).map((artifact) =>
       artifactSignature({
         kind: artifact.s3Key ? "photo" : "text",
-        side: artifact.side,
+        placeId: artifact.placeId,
+        placeName: artifact.placeName,
         capturedAt: artifact.capturedAt,
         text: artifact.text,
       }),
@@ -311,7 +317,8 @@ async function uploadPlannedArtifacts(
     .map((artifact) => {
       if (artifact.kind === "text") {
         return registerTextArtifact(checkId, {
-          side: artifact.side,
+          placeId: artifact.placeId,
+          placeName: artifact.placeName,
           text: artifact.text,
           capturedAt: artifact.capturedAt,
         });
@@ -324,7 +331,8 @@ async function uploadPlannedArtifacts(
       // Never eager-uploaded (offline during the walk, a 4xx, or an interrupted
       // attempt): fall back to the full presign → PUT → register.
       return uploadArtifact(checkId, {
-        side: artifact.side,
+        placeId: artifact.placeId,
+        placeName: artifact.placeName,
         dataUrl: artifact.dataUrl,
         capturedAt: artifact.capturedAt,
         text: artifact.text,
@@ -348,7 +356,8 @@ async function registerUploadedArtifact(checkId, artifact) {
   try {
     return await registerArtifact(checkId, {
       artifactId: artifact.artifactId,
-      side: artifact.side,
+      placeId: artifact.placeId,
+      placeName: artifact.placeName,
       s3Key: artifact.s3Key,
       contentType: artifact.contentType,
       capturedAt: artifact.capturedAt,
@@ -398,14 +407,15 @@ async function runSubmittedCheck(
   endSettle();
   const plannedArtifacts = plannedArtifactsForCheck(check);
 
-  // 1. Start the run. `sides` records which sides were skipped (server stores it);
+  // 1. Start the run. `places` records which places were skipped (server stores it);
   //    `siteId` is derived server-side, never sent.
-  const sides = (check.sideOrder || getSideOrder()).map((s) => ({
-    side: s,
-    skipped: !!check.sides[s].skipped,
+  const places = (check.placeOrder || getPlaceOrder()).map((placeId) => ({
+    placeId,
+    placeName: check.places[placeId].name,
+    skipped: !!check.places[placeId].skipped,
   }));
   const endCreate = span("createCheck");
-  await withLeg("start", () => createCheck(check.id, { sides }));
+  await withLeg("start", () => createCheck(check.id, { places }));
   endCreate();
 
   const endUploads = span("uploads");

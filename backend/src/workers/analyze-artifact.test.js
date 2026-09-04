@@ -27,8 +27,9 @@ const baseMsg = {
   siteId: "site-1",
   checkId: "chk_01",
   artifactId: "art_1",
-  s3Key: "checks/site-1/chk_01/north/art_1",
-  side: "north",
+  s3Key: "checks/site-1/chk_01/place-north/art_1",
+  placeId: "place-north",
+  placeName: "North",
   capturedAt: "2026-08-14T12:00:00.000Z",
   text: "north gate clear",
 };
@@ -75,7 +76,7 @@ describe("analyze-artifact worker", () => {
     // Media is fetched by S3 key — never carried on the message.
     expect(getObjectBytes).toHaveBeenCalledWith({
       bucket: "bucket",
-      key: "checks/site-1/chk_01/north/art_1",
+      key: "checks/site-1/chk_01/place-north/art_1",
     });
 
     // The analyzer gets per-photo metadata + image (and text) media, keyed for
@@ -83,7 +84,7 @@ describe("analyze-artifact worker", () => {
     expect(analyze).toHaveBeenCalledTimes(1);
     const call = analyze.mock.calls[0][0];
     expect(call.metadata).toEqual({
-      position_descriptor: "north",
+      position_descriptor: "North",
       reported_at: "2026-08-14T12:00:00.000Z",
       latitude: 0,
       longitude: 0,
@@ -104,6 +105,8 @@ describe("analyze-artifact worker", () => {
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "analyzed",
+      placeId: "place-north",
+      placeName: "North",
       grade: "Fair",
       issueCount: 1,
       maxSeverity: 2,
@@ -220,6 +223,8 @@ describe("analyze-artifact worker", () => {
     expect(put.input.Item).toMatchObject({
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "failed",
+      placeId: "place-north",
+      placeName: "North",
       error: { code: "invalid_request", status: 400, message: "bad request" },
     });
   });
@@ -237,6 +242,8 @@ describe("analyze-artifact worker", () => {
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.Item).toMatchObject({
       status: "failed",
+      placeId: "place-north",
+      placeName: "North",
       error: { code: "unsupported_input_type" },
     });
   });
@@ -255,7 +262,8 @@ describe("analyze-artifact worker", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_text_1",
-      side: "west",
+      placeId: "place-west",
+      placeName: "West entrance",
       capturedAt: "2026-08-21T15:00:00.000Z",
       text: "Trash is next to the west entrance.",
     });

@@ -128,6 +128,23 @@ export async function setSite(name, meta = {}) {
   await tx("site", "readwrite", (os) => os.put(record));
   return record;
 }
+export async function saveSiteSettings(settings = {}) {
+  const current = (await getSite()) || { id: "current", name: "Your site" };
+  const record = {
+    ...current,
+    ...settings,
+    id: "current",
+    name: String(settings.name || current.name || "Your site").trim(),
+  };
+  await tx("site", "readwrite", (os) => os.put(record));
+  return record;
+}
+export async function saveSitePlaces(places, meta = {}) {
+  return saveSiteSettings({
+    ...meta,
+    places: Array.isArray(places) ? places : [],
+  });
+}
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
 }
@@ -193,4 +210,12 @@ export async function saveReview(check) {
 }
 export async function clearReview() {
   return tx("review", "readwrite", (os) => os.delete("current"));
+}
+
+export async function resetLocalAppState() {
+  await Promise.all([
+    tx("site", "readwrite", (os) => os.clear()),
+    tx("draft", "readwrite", (os) => os.clear()),
+    tx("review", "readwrite", (os) => os.clear()),
+  ]);
 }

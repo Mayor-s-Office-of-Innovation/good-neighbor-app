@@ -58,7 +58,12 @@ describe("createCheck", () => {
       checkEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { sides: ["north", "south"] },
+        body: {
+          places: [
+            { placeId: "place-north", placeName: "North", skipped: false },
+            { placeId: "place-south", placeName: "South", skipped: false },
+          ],
+        },
       }),
     );
 
@@ -77,7 +82,10 @@ describe("createCheck", () => {
       status: "in_progress",
       issueCount: 0,
       maxSeverity: 0,
-      sides: ["north", "south"],
+      places: [
+        { placeId: "place-north", placeName: "North", skipped: false },
+        { placeId: "place-south", placeName: "South", skipped: false },
+      ],
     });
     // gsi1sk mirrors startedAt so the timeline query sorts chronologically.
     expect(cmd.input.Item.gsi1sk).toBe(cmd.input.Item.startedAt);
@@ -162,30 +170,41 @@ const headerItem = (status = "in_progress") => ({
  * A registered ART# item (one per captured photo). `completeCheck` gates on
  * every one of these having a matching ANALYSIS# item.
  * @param {string} artifactId
- * @param {string} side
+ * @param {string} placeId
+ * @param {string} placeName
  * @returns {object}
  */
-const artifactItem = (artifactId, side) => ({
-  sk: `CHECK#chk_01#ART#${side}#${artifactId}`,
+const artifactItem = (artifactId, placeId, placeName = placeId) => ({
+  sk: `CHECK#chk_01#ART#${placeId}#${artifactId}`,
   artifactId,
-  side,
+  placeId,
+  placeName,
 });
 
 /**
  * @param {string} artifactId
- * @param {string} side
+ * @param {string} placeId
+ * @param {string} placeName
  * @param {string} grade
  * @param {string} category
  * @param {number} rating
  * @returns {object}
  */
-const analyzedItem = (artifactId, side, grade, category, rating) => ({
+const analyzedItem = (
+  artifactId,
+  placeId,
+  placeName,
+  grade,
+  category,
+  rating,
+) => ({
   sk: `CHECK#chk_01#ANALYSIS#${artifactId}`,
   status: "analyzed",
   artifactId,
-  side,
+  placeId,
+  placeName,
   grade,
-  gradeDescription: `${side} summary (${grade})`,
+  gradeDescription: `${placeName} summary (${grade})`,
   rubricVersion: "1.0.0",
   concerns: [{ category, rating, explanation: "x", evidenceIndices: [] }],
 });
@@ -221,10 +240,17 @@ describe("completeCheck", () => {
     send.mockResolvedValueOnce({
       Items: [
         headerItem(),
-        artifactItem("art_1", "north"),
-        artifactItem("art_2", "south"),
-        analyzedItem("art_1", "north", "Fair", "Litter", 2),
-        analyzedItem("art_2", "south", "Poor", "Hazardous Waste", 4),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+        analyzedItem(
+          "art_2",
+          "place-south",
+          "South",
+          "Poor",
+          "Hazardous Waste",
+          4,
+        ),
       ],
     });
     send.mockResolvedValueOnce({});
@@ -243,16 +269,16 @@ describe("completeCheck", () => {
     expect(tx).toBeInstanceOf(TransactWriteCommand);
     const items = /** @type {any[]} */ (tx.input.TransactItems);
 
-    // Header: worst grade across sides (Poor), completed exactly once.
+    // Header: worst grade across places (Poor), completed exactly once.
     const header = items[0].Update;
     expect(header.Key).toEqual({ pk: "SITE#site-1", sk: "CHECK#chk_01" });
     expect(header.ConditionExpression).toBe(
       "attribute_exists(sk) AND #status <> :completed",
     );
     expect(header.ExpressionAttributeValues[":grade"]).toBe("Poor");
-    // Overall summary = the worst-graded side's analyzer description (south/Poor).
+    // Overall summary = the worst-graded place's analyzer description (South/Poor).
     expect(header.ExpressionAttributeValues[":summary"]).toBe(
-      "south summary (Poor)",
+      "South summary (Poor)",
     );
     expect(header.ExpressionAttributeValues[":issueCount"]).toBe(2);
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
@@ -292,9 +318,9 @@ describe("completeCheck", () => {
     send.mockResolvedValueOnce({
       Items: [
         headerItem(),
-        artifactItem("art_1", "north"),
-        artifactItem("art_9", "south"),
-        analyzedItem("art_1", "north", "Fair", "Litter", 2),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_9", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
         // art_9 failed permanently: no grade/concerns to fold in, but its marker
         // satisfies coverage so the run isn't blocked forever.
         failedItem("art_9"),
@@ -320,9 +346,9 @@ describe("completeCheck", () => {
     send.mockResolvedValueOnce({
       Items: [
         headerItem(),
-        artifactItem("art_1", "north"),
-        artifactItem("art_2", "south"),
-        analyzedItem("art_1", "north", "Excellent", "Litter", 0),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Excellent", "Litter", 0),
       ],
     });
 
@@ -345,8 +371,8 @@ describe("completeCheck", () => {
   it("404s when the header is absent (children but no header)", async () => {
     send.mockResolvedValueOnce({
       Items: [
-        artifactItem("art_1", "north"),
-        analyzedItem("art_1", "north", "Good", "Litter", 1),
+        artifactItem("art_1", "place-north", "North"),
+        analyzedItem("art_1", "place-north", "North", "Good", "Litter", 1),
       ],
     });
 
@@ -384,7 +410,7 @@ describe("completeCheck", () => {
     // Already-completed header: the coverage gate is skipped even though this
     // read shows an un-analyzed artifact, and the conditional write no-ops.
     send.mockResolvedValueOnce({
-      Items: [headerItem("completed"), artifactItem("art_1", "north")],
+      Items: [headerItem("completed"), artifactItem("art_1", "place-north")],
     });
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
@@ -411,17 +437,24 @@ describe("completeCheck", () => {
 
   it("reads all DynamoDB pages before checking coverage and synthesis", async () => {
     send.mockResolvedValueOnce({
-      Items: [headerItem(), artifactItem("art_1", "north")],
+      Items: [headerItem(), artifactItem("art_1", "place-north")],
       LastEvaluatedKey: {
         pk: "SITE#site-1",
-        sk: "CHECK#chk_01#ART#north#art_1",
+        sk: "CHECK#chk_01#ART#place-north#art_1",
       },
     });
     send.mockResolvedValueOnce({
       Items: [
-        artifactItem("art_2", "south"),
-        analyzedItem("art_1", "north", "Fair", "Litter", 2),
-        analyzedItem("art_2", "south", "Poor", "Hazardous Waste", 4),
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+        analyzedItem(
+          "art_2",
+          "place-south",
+          "South",
+          "Poor",
+          "Hazardous Waste",
+          4,
+        ),
       ],
     });
     send.mockResolvedValueOnce({});
@@ -435,7 +468,7 @@ describe("completeCheck", () => {
     expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
     expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
       pk: "SITE#site-1",
-      sk: "CHECK#chk_01#ART#north#art_1",
+      sk: "CHECK#chk_01#ART#place-north#art_1",
     });
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",

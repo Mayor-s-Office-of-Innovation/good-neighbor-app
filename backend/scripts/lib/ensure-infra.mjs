@@ -13,7 +13,11 @@ import {
   DescribeTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import {
   CreateQueueCommand,
   ListQueuesCommand,
@@ -231,6 +235,11 @@ export async function ensureLocalInfra() {
  */
 async function seedLocalSiteCodes(docDdb, tableName) {
   const now = new Date().toISOString();
+  const stJohnPlaces = [
+    { id: "place-15th-st", name: "15th St", order: 0 },
+    { id: "place-front-entrance", name: "Front entrance", order: 1 },
+    { id: "place-caledonia-st", name: "Caledonia St", order: 2 },
+  ];
   const items = [
     {
       pk: "PROVIDER#the-gubbio-project",
@@ -244,14 +253,18 @@ async function seedLocalSiteCodes(docDdb, tableName) {
       pk: "SITE#st-john-the-evangelist",
       sk: "#META",
       entityType: "SITE",
+      type: "site",
       siteId: "st-john-the-evangelist",
       providerId: "the-gubbio-project",
+      providerSiteId: "provider-site-st-john-the-evangelist",
       name: "St. John the Evangelist",
       location: {
         latitude: 37.76656393517443,
         longitude: -122.4213267021692,
       },
+      places: stJohnPlaces,
       seededAt: now,
+      updatedAt: now,
     },
     {
       pk: "SITE_CODE#123456",
@@ -296,4 +309,31 @@ async function seedLocalSiteCodes(docDdb, tableName) {
         }
       });
   }
+
+  await docDdb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { pk: "SITE#st-john-the-evangelist", sk: "#META" },
+      UpdateExpression:
+        "SET #type = if_not_exists(#type, :type), entityType = if_not_exists(entityType, :entityType), providerId = if_not_exists(providerId, :providerId), providerSiteId = if_not_exists(providerSiteId, :providerSiteId), #name = if_not_exists(#name, :name), #location = if_not_exists(#location, :location), places = if_not_exists(places, :places), updatedAt = if_not_exists(updatedAt, :now)",
+      ExpressionAttributeNames: {
+        "#type": "type",
+        "#name": "name",
+        "#location": "location",
+      },
+      ExpressionAttributeValues: {
+        ":type": "site",
+        ":entityType": "SITE",
+        ":providerId": "the-gubbio-project",
+        ":providerSiteId": "provider-site-st-john-the-evangelist",
+        ":name": "St. John the Evangelist",
+        ":location": {
+          latitude: 37.76656393517443,
+          longitude: -122.4213267021692,
+        },
+        ":places": stJohnPlaces,
+        ":now": now,
+      },
+    }),
+  );
 }
