@@ -1,8 +1,8 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  check-review — 5d (design port, screen 15). The per-side coverage ledger, then
-  submit. No second capture step: everything was captured per side; this shows how
-  each side got covered and files the check. On submit we run the (mock) analyzer
+  check-review — 5d (design port, screen 15). The per-place coverage ledger, then
+  submit. No second capture step: everything was captured per place; this shows how
+  each place got covered and files the check. On submit we run the analyzer
   over every item, derive findings, persist the check, and hand off to 5e.
 */
 import { html, escapeHtml } from "../lib/html.js";
@@ -10,9 +10,9 @@ import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
 import {
-  getSideOrder,
+  getPlaceOrder,
   getCurrentCheck,
-  isSideCovered,
+  isPlaceCovered,
   allItems,
 } from "../state/check-session.js";
 
@@ -22,16 +22,16 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-// Per-side one-line summary from real photo counts.
-function summarize(sideState) {
-  if (sideState.skipped) return "Skipped";
-  if (!sideState.items.length) return "Not covered yet";
-  return plural(sideState.items.length, "photo");
+// Per-place one-line summary from real photo counts.
+function summarize(placeState) {
+  if (placeState.skipped) return "Skipped";
+  if (!placeState.items.length) return "Not covered yet";
+  return plural(placeState.items.length, "photo");
 }
 
-// A representative thumbnail for a side: its first photo, else a placeholder glyph.
-function sideThumb(sideState) {
-  const photo = sideState.items.find((i) => i.dataUrl);
+// A representative thumbnail for a place: its first photo, else a placeholder glyph.
+function placeThumb(placeState) {
+  const photo = placeState.items.find((i) => i.dataUrl);
   if (photo)
     return html`<img class="rowcard__thumb" src="${photo.dataUrl}" alt="" />`;
   return html`<span class="rowcard__thumb">▦</span>`;
@@ -45,10 +45,10 @@ class CheckReview extends HTMLElement {
       navigate("/today");
       return;
     }
-    const sides = getSideOrder();
+    const places = getPlaceOrder();
 
-    const covered = sides.filter((s) => isSideCovered(s)).length;
-    const total = sides.length;
+    const covered = places.filter((placeId) => isPlaceCovered(placeId)).length;
+    const total = places.length;
     const items = allItems();
     const itemCount = items.length;
     const ready = covered === total && itemCount > 0;
@@ -74,7 +74,7 @@ class CheckReview extends HTMLElement {
           <div class="topbar__titles">
             <h1 class="topbar__title">Review</h1>
           </div>
-          <span class="topbar__meta">${covered} of ${total} sides</span>
+          <span class="topbar__meta">${covered} of ${total} places</span>
         </div>
 
         <div class="flow-hero">
@@ -83,20 +83,19 @@ class CheckReview extends HTMLElement {
           </p>
           <h2 class="flow-hero__headline">
             ${ready
-              ? `All ${NUM_WORD[total]} sides covered`
+              ? `All ${NUM_WORD[total] || total} places covered`
               : "Finish the walk"}
           </h2>
           <p class="flow-hero__body">
             ${ready
               ? html`${evidenceParts.join(", ")}. All of it feeds the analysis.`
-              : html`Cover every side (or mark it “can’t cover”) before
-                submitting.`}
+              : html`Cover every place (or skip it) before submitting.`}
           </p>
         </div>
 
         <div class="rowcard">
-          ${sides
-            .map((side) => this._sideRow(side, check.sides[side]))
+          ${places
+            .map((placeId) => this._placeRow(check.places[placeId]))
             .join("")}
         </div>
 
@@ -136,18 +135,18 @@ class CheckReview extends HTMLElement {
     });
   }
 
-  _sideRow(side, state) {
+  _placeRow(state) {
     return html`
       <div class="rowcard__row">
-        ${sideThumb(state)}
+        ${placeThumb(state)}
         <div class="rowcard__body">
-          <p class="rowcard__title">${escapeHtml(side)}</p>
+          <p class="rowcard__title">${escapeHtml(state.name)}</p>
           <p class="rowcard__detail">${escapeHtml(summarize(state))}</p>
         </div>
         <button
           class="rowcard__action"
           type="button"
-          data-add="${escapeHtml(side)}"
+          data-add="${escapeHtml(state.id)}"
         >
           Add
         </button>

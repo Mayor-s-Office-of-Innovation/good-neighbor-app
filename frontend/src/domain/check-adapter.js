@@ -7,16 +7,16 @@
     - CHECK# header  : { checkId, status:"in_progress"|"completed", startedAt,
                          completedAt, grade, categories:[{category,maxRating,
                          sourceArtifactIds}], issueCount, maxSeverity }
-    - ANALYSIS# item : per-artifact adapted assessment — carries `side` + the rich
+    - ANALYSIS# item : per-artifact adapted assessment — carries `placeName` + the rich
                        `concerns:[{category, rating, explanation, evidenceIndices}]`
     - TASK# item     : the escalation/worklist routing (city vs on-site)
 
-  The UI's "finding" is `{ category, rating, severity, hazard, explanation, side,
+  The UI's "finding" is `{ category, rating, severity, hazard, explanation, placeName,
   sourceKind }`. `hazard` and `explanation` are NOT on the header — hazard moved
   into task routing and explanation lives on the per-artifact concerns — so:
     - detail reads (getCheck) build rich findings from ANALYSIS# concerns.
     - list reads (listChecks, headers only) build lite findings from the header's
-      category rollup (no explanation/side) — enough for the donut + last-log.
+      category rollup (no explanation/place) — enough for the donut + last-log.
 
   HAZARD ("city action") is read from the authoritative TASK# items, never derived
   here. The backend stamps each task's `type` at creation (backend/src/analysis/
@@ -77,7 +77,7 @@ function occurredAt(header) {
 /**
  * Rich findings from the per-artifact ANALYSIS# items (the detail read). One
  * finding per concern with rating ≥ 1, carrying the concern's explanation and the
- * artifact's side.
+ * artifact's place.
  * @param {any[]} analyses  ANALYSIS# items from getCheck
  * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {Array<object>}
@@ -95,7 +95,8 @@ export function analysesToFindings(analyses = [], cityCategories = new Set()) {
         severity: severityWord(c.rating),
         hazard: cityCategories.has(c.category),
         explanation: c.explanation || "",
-        side: a.side || null,
+        placeId: a.placeId || null,
+        placeName: a.placeName || null,
         sourceKind: "photo",
         evidenceIndices: c.evidenceIndices || [],
       });
@@ -106,7 +107,7 @@ export function analysesToFindings(analyses = [], cityCategories = new Set()) {
 
 /**
  * Lite findings from a CHECK# header's category rollup (the list read — headers
- * carry no explanation or side). Enough for today-view's donut + last-log.
+ * carry no explanation or place). Enough for today-view's donut + last-log.
  * @param {any} header
  * @param {Set<string>} [cityCategories]  escalated category names for this check
  * @returns {Array<object>}
@@ -120,7 +121,8 @@ export function headerToFindings(header, cityCategories = new Set()) {
       severity: severityWord(c.maxRating),
       hazard: cityCategories.has(c.category),
       explanation: "",
-      side: null,
+      placeId: null,
+      placeName: null,
       sourceKind: null,
     }));
 }

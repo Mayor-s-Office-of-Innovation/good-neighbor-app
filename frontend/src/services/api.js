@@ -209,11 +209,28 @@ function qs(params) {
 // ── Checks ────────────────────────────────────────────────────────────────
 
 /**
+ * GET /v1/site — the bound site's settings, including ordered places.
+ * @returns {Promise<{ site: any }>}
+ */
+export function getSiteSettings() {
+  return request("GET", "/v1/site");
+}
+
+/**
+ * PUT /v1/site/places — replace the site's ordered places.
+ * @param {{ id: string, name: string }[]} places
+ * @returns {Promise<{ site: any }>}
+ */
+export function putSitePlaces(places) {
+  return request("PUT", "/v1/site/places", { body: { places } });
+}
+
+/**
  * POST /v1/checks — start a perimeter run. The client-minted `checkId` rides in
  * the `idempotency-key` header (not the body), so a replay can't duplicate the
  * header. `siteId` is server-derived.
  * @param {string} checkId
- * @param {{ sides?: unknown }} [body]
+ * @param {{ places?: unknown }} [body]
  * @returns {Promise<{ checkId: string, status: string, startedAt?: string }>}
  */
 export function createCheck(checkId, body = {}) {
@@ -300,16 +317,16 @@ export function getCheck(checkId) {
 }
 
 /**
- * POST /v1/checks/{checkId}/sides/{side}/description:validate
+ * POST /v1/checks/{checkId}/places/{placeId}/description:validate
  * @param {string} checkId
- * @param {string} side
- * @param {{ text: string }} body
+ * @param {string} placeId
+ * @param {{ text: string, placeName?: string }} body
  * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
  */
-export function validateSideDescription(checkId, side, body) {
+export function validatePlaceDescription(checkId, placeId, body) {
   return request(
     "POST",
-    `/v1/checks/${encodeURIComponent(checkId)}/sides/${encodeURIComponent(side)}/description:validate`,
+    `/v1/checks/${encodeURIComponent(checkId)}/places/${encodeURIComponent(placeId)}/description:validate`,
     { body },
   );
 }
@@ -320,8 +337,8 @@ export function validateSideDescription(checkId, side, body) {
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ side: string, contentType: string }} body
- * @returns {Promise<{ artifactId: string, side: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
+ * @param {{ placeId: string, placeName: string, contentType: string }} body
+ * @returns {Promise<{ artifactId: string, placeId: string, placeName: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body) {
   return request(
@@ -335,7 +352,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, side: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
+ * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -477,21 +494,22 @@ export async function dataUrlToBlob(dataUrl) {
  * (which enqueues the async analysis). Returns the registered artifactId so the
  * caller can wait for exactly these analyses to land.
  * @param {string} checkId
- * @param {{ side: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string }} item
+ * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
  * @returns {Promise<string>} the artifactId
  */
 export async function uploadArtifact(
   checkId,
-  { side, dataUrl, capturedAt, text, tag },
+  { placeId, placeName, dataUrl, capturedAt, text, tag },
 ) {
-  const art = tag ?? side;
+  const art = tag ?? placeName;
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    side,
+    placeId,
+    placeName,
     contentType,
   });
   endPresign({ artifactId });
@@ -504,7 +522,8 @@ export async function uploadArtifact(
   const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
     artifactId,
-    side,
+    placeId,
+    placeName,
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
@@ -517,19 +536,20 @@ export async function uploadArtifact(
 }
 
 /**
- * Register validated text evidence for a side without uploading media bytes.
+ * Register validated text evidence for a place without uploading media bytes.
  * @param {string} checkId
- * @param {{ side: string, text: string, capturedAt?: string }} item
+ * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { side, text, capturedAt },
+  { placeId, placeName, text, capturedAt },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,
-    side,
+    placeId,
+    placeName,
     ...(capturedAt ? { capturedAt } : {}),
     text,
   });

@@ -28,6 +28,7 @@ import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
+import { getSite, putSitePlaces } from "../handlers/site.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
@@ -43,7 +44,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // no authorizer. Everything under /v1/* except these + the intakes is gated.
   "POST /v1/devices": registerDevice,
   "POST /v1/devices/token:refresh": refreshDeviceToken,
-  "POST /v1/checks/{checkId}/sides/{side}/description:validate":
+  // Site config (feature/142 onboard locations)
+  "GET /v1/site": getSite,
+  "PUT /v1/site/places": putSitePlaces,
+  "POST /v1/checks/{checkId}/places/{placeId}/description:validate":
     descriptionValidationHandler,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,

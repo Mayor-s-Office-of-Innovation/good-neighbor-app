@@ -59,7 +59,7 @@ async function queryAllCheckItems(
 
 /**
  * POST /v1/checks — start a perimeter run (one CHECK header per full run across
- * all sides). The client mints the ULID `checkId` and sends it as the
+ * all places). The client mints the ULID `checkId` and sends it as the
  * `idempotency-key` header — the same idempotency contract the offline app
  * already uses — so the write is conditional on that id and an offline replay
  * can't create a duplicate header. `siteId` is derived server-side from the JWT,
@@ -81,7 +81,7 @@ export const createCheck = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { sides } = /** @type {{ sides?: unknown }} */ (body ?? {});
+  const { places } = /** @type {{ places?: unknown }} */ (body ?? {});
 
   const startedAt = new Date().toISOString();
   const item = {
@@ -92,7 +92,7 @@ export const createCheck = async (event) => {
     startedAt,
     issueCount: 0,
     maxSeverity: 0,
-    ...(Array.isArray(sides) ? { sides } : {}),
+    ...(Array.isArray(places) ? { places } : {}),
   };
 
   try {
@@ -119,7 +119,7 @@ export const createCheck = async (event) => {
 
 /**
  * POST /v1/checks/{checkId}/complete — close out a perimeter run: fold every
- * analyzed artifact into one scorecard (worst grade across sides, per-category
+ * analyzed artifact into one scorecard (worst grade across places, per-category
  * max rating), persist the header scorecard, and return an assessment envelope
  * that can be sent to the guidance evaluator.
  *
@@ -192,7 +192,8 @@ export const completeCheck = async (event) => {
         .filter((it) => it.status === "analyzed")
         .map((it) => ({
           artifactId: it.artifactId,
-          side: it.side,
+          placeId: it.placeId,
+          placeName: it.placeName,
           adapted: it,
         }))
     );

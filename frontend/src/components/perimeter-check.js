@@ -1,9 +1,9 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
-  perimeter-check — 5c capture (MVP native-camera port). Walk the four sides
-  (numbered "Side N of 4"); cover each with one or more photos, or Skip a side.
+  perimeter-check — 5c capture (MVP native-camera port). Walk the configured
+  places in order; cover each with one or more photos, a note, or skip it.
   Cancel leaves the walk but keeps the draft (resume from home). After the last
-  side, submit runs the (mock) analyzer and hands off to 5e.
+  place, submit runs the analyzer and hands off to 5e.
 
   Capture is a native camera handoff: the ＋ "Add photo" tile clicks a hidden
   <input type="file" accept="image/*" capture="environment">, so users get their
@@ -25,17 +25,18 @@ import {
   startCheck,
   loadDraft,
   clearCheck,
-  getSideOrder,
+  getPlaceOrder,
+  getPlace,
   getCurrentCheck,
   getFlowType,
-  getActiveSideIndex,
-  setActiveSideIndex,
+  getActivePlaceIndex,
+  setActivePlaceIndex,
   consumePostDescribeAction,
   addItem,
   removeItem,
-  setSideDescription,
-  skipSide,
-  isSideCovered,
+  setPlaceDescription,
+  skipPlace,
+  isPlaceCovered,
   isCurrentSession,
 } from "../state/check-session.js";
 import {
@@ -54,33 +55,36 @@ class PerimeterCheck extends HTMLElement {
     // Resume a persisted draft if one exists; else start fresh.
     const check = getCurrentCheck() || (await loadDraft("perimeter")) || null;
     if (!check) {
-      ensureCheck(this._siteId);
+      ensureCheck(this._siteId, this._site.places || []);
     } else if (getFlowType() !== "perimeter") {
-      startCheck(this._siteId);
+      startCheck(this._siteId, this._site.places || []);
     }
     this._checkId = getCurrentCheck()?.id || "";
-    this._sides = getSideOrder();
+    this._places = getPlaceOrder();
     // Resume any photo uploads interrupted by a reload / navigation mid-walk.
     resumePendingUploads();
 
-    const activeSideIndex = getActiveSideIndex();
-    const hasActiveSide =
-      activeSideIndex >= 0 && activeSideIndex < this._sides.length;
+    const activePlaceIndex = getActivePlaceIndex();
+    const hasActivePlace =
+      activePlaceIndex >= 0 && activePlaceIndex < this._places.length;
     const postDescribeAction = consumePostDescribeAction();
-    // Resume at the explicitly active side when returning from /check/describe.
-    // Otherwise start at the first side that still needs attention.
+    // Resume at the explicitly active place when returning from /check/describe.
+    // Otherwise start at the first place that still needs attention.
     if (postDescribeAction?.type === "stay") {
-      this._sideIndex = postDescribeAction.sideIndex;
+      this._placeIndex = postDescribeAction.placeIndex;
     } else if (postDescribeAction?.type === "advance") {
-      this._sideIndex = postDescribeAction.sideIndex;
+      this._placeIndex = postDescribeAction.placeIndex;
     } else if (postDescribeAction?.type === "submit") {
-      this._sideIndex = this._sides.length - 1;
+      this._placeIndex = this._places.length - 1;
       this._pendingSubmit = true;
-    } else if (hasActiveSide && !isSideCovered(this._sides[activeSideIndex])) {
-      this._sideIndex = activeSideIndex;
+    } else if (
+      hasActivePlace &&
+      !isPlaceCovered(this._places[activePlaceIndex])
+    ) {
+      this._placeIndex = activePlaceIndex;
     } else {
-      const firstOpen = this._sides.findIndex((s) => !isSideCovered(s));
-      this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
+      const firstOpen = this._places.findIndex((s) => !isPlaceCovered(s));
+      this._placeIndex = firstOpen === -1 ? 0 : firstOpen;
     }
 
     this.innerHTML = shell();
@@ -89,13 +93,13 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#cancel").addEventListener("click", () =>
       this._cancel(),
     );
-    this.querySelector("#skip-side").addEventListener("click", () =>
+    this.querySelector("#skip-place").addEventListener("click", () =>
       this._skip(),
     );
-    this.querySelector("#previous-side").addEventListener("click", () =>
+    this.querySelector("#previous-place").addEventListener("click", () =>
       this._back(),
     );
-    this.querySelector("#next-side").addEventListener("click", () =>
+    this.querySelector("#next-place").addEventListener("click", () =>
       this._forward(),
     );
     this.querySelector("#describe-instead").addEventListener("click", () =>
@@ -126,7 +130,7 @@ class PerimeterCheck extends HTMLElement {
     // A photo came back from the file picker.
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
-    this._renderSide();
+    this._renderPlace();
     if (this._pendingSubmit) {
       this._pendingSubmit = false;
       queueMicrotask(() => this._submit());
@@ -138,14 +142,14 @@ class PerimeterCheck extends HTMLElement {
   }
 
   /* ---- inline browser camera (opt-in; isolated for easy removal) ---- */
-  // Mounted once and kept alive across captures and sides; capture events add a
-  // photo to the current side. On unavailable/denied, revert to the native tile.
+  // Mounted once and kept alive across captures and places; capture events add a
+  // photo to the current place. On unavailable/denied, revert to the native tile.
   _mountCamera() {
     const panel = this.querySelector("#camera-panel");
     if (!panel) return;
     this._camera = document.createElement("in-browser-camera");
     this._camera.addEventListener("capture", (e) =>
-      this._addPhoto(this._side, e.detail.dataUrl),
+      this._addPhoto(this._placeId, e.detail.dataUrl),
     );
     this._camera.addEventListener("unavailable", () =>
       this._onCameraUnavailable(),
@@ -163,14 +167,17 @@ class PerimeterCheck extends HTMLElement {
     this._renderShots();
   }
 
-  get _side() {
-    return this._sides[this._sideIndex];
+  get _placeId() {
+    return this._places[this._placeIndex];
+  }
+  get _place() {
+    return getPlace(this._placeId);
   }
   get _isLast() {
-    return this._sideIndex === this._sides.length - 1;
+    return this._placeIndex === this._places.length - 1;
   }
-  _sideState() {
-    return getCurrentCheck().sides[this._side];
+  _placeState() {
+    return getCurrentCheck().places[this._placeId];
   }
 
   /* ---- capture (native handoff) ---- */
@@ -187,7 +194,7 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     const originCheckId = this._checkId;
-    const originSide = this._side;
+    const originPlaceId = this._placeId;
     const reader = new FileReader();
     this._fileReader = reader;
     reader.onload = () => {
@@ -196,7 +203,7 @@ class PerimeterCheck extends HTMLElement {
         return;
       }
       this._fileReader = null;
-      this._addPhoto(originSide, reader.result);
+      this._addPhoto(originPlaceId, reader.result);
     };
     reader.onerror = () => {
       this._fileReader = null;
@@ -207,11 +214,11 @@ class PerimeterCheck extends HTMLElement {
     reader.readAsDataURL(file);
   }
 
-  _addPhoto(side, dataUrl) {
-    const record = addItem(side, { kind: "photo", dataUrl });
+  _addPhoto(placeId, dataUrl) {
+    const record = addItem(placeId, { kind: "photo", dataUrl });
     // Start pushing the bytes to S3 now, in the background, so by submit time
     // they're already up and submit only registers the metadata.
-    if (record) enqueueUpload(getCurrentCheck()?.id, record.side, record.id);
+    if (record) enqueueUpload(getCurrentCheck()?.id, record.placeId, record.id);
     this._renderSegments();
     this._renderShots();
     this._syncControls();
@@ -231,14 +238,14 @@ class PerimeterCheck extends HTMLElement {
     }
     const del = e.target.closest("[data-del]");
     if (del) {
-      removeItem(this._side, del.getAttribute("data-del"));
+      removeItem(this._placeId, del.getAttribute("data-del"));
       this._renderSegments();
       this._renderShots();
       this._syncControls();
       return;
     }
     if (e.target.closest("[data-del-description]")) {
-      setSideDescription(this._side, null);
+      setPlaceDescription(this._placeId, null);
       this._renderSegments();
       this._renderShots();
       this._syncControls();
@@ -251,38 +258,38 @@ class PerimeterCheck extends HTMLElement {
 
   /* ---- navigation ---- */
   _skip() {
-    skipSide(this._side);
-    this._afterSide();
+    skipPlace(this._placeId);
+    this._afterPlace();
   }
 
   _forward() {
-    // Enabled only once the side has a photo (Skip covers the no-photo path).
-    this._afterSide();
+    // Enabled only once the place has evidence (Skip covers the no-evidence path).
+    this._afterPlace();
   }
 
   /** @returns {void} */
   _back() {
-    if (this._sideIndex === 0) return;
-    this._sideIndex -= 1;
-    setActiveSideIndex(this._sideIndex);
-    this._renderSide();
+    if (this._placeIndex === 0) return;
+    this._placeIndex -= 1;
+    setActivePlaceIndex(this._placeIndex);
+    this._renderPlace();
     window.scrollTo?.({ top: 0 });
   }
 
   _describeInstead() {
-    setActiveSideIndex(this._sideIndex);
+    setActivePlaceIndex(this._placeIndex);
     navigate("/check/describe");
   }
 
-  // Advance to the next side, or submit after the last.
-  _afterSide() {
+  // Advance to the next place, or submit after the last.
+  _afterPlace() {
     if (this._isLast) {
       this._submit();
       return;
     }
-    this._sideIndex += 1;
-    setActiveSideIndex(this._sideIndex);
-    this._renderSide();
+    this._placeIndex += 1;
+    setActivePlaceIndex(this._placeIndex);
+    this._renderPlace();
     window.scrollTo?.({ top: 0 });
   }
 
@@ -316,10 +323,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   /* ---- render ---- */
-  _renderSide() {
-    setActiveSideIndex(this._sideIndex);
-    this.querySelector("#side-progress").textContent =
-      `Side ${this._sideIndex + 1} of ${this._sides.length}`;
+  _renderPlace() {
+    setActivePlaceIndex(this._placeIndex);
+    this.querySelector("#place-progress").textContent =
+      `${this._place?.name || "Place"} · ${this._placeIndex + 1} of ${this._places.length}`;
     this._renderSegments();
     this._renderShots();
     this._syncControls();
@@ -327,11 +334,11 @@ class PerimeterCheck extends HTMLElement {
 
   _renderSegments() {
     const check = getCurrentCheck();
-    this.querySelector("#segbar").innerHTML = this._sides
-      .map((side, index) => {
-        const s = check.sides[side];
+    this.querySelector("#segbar").innerHTML = this._places
+      .map((placeId, index) => {
+        const s = check.places[placeId];
         let state;
-        if (index === this._sideIndex) state = "current";
+        if (index === this._placeIndex) state = "current";
         else if (s.items.length) state = "captured";
         else if (s.skipped) state = "skipped";
         else state = "pending";
@@ -340,12 +347,12 @@ class PerimeterCheck extends HTMLElement {
       .join("");
   }
 
-  // This side's shots as an inline grid, with a trailing ＋ "Add photo" tile.
+  // This place's shots as an inline grid, with a trailing ＋ "Add photo" tile.
   _renderShots() {
-    const sideState = this._sideState();
-    const items = sideState.items;
+    const placeState = this._placeState();
+    const items = placeState.items;
     const grid = this.querySelector("#shotgrid");
-    const hasDescription = Boolean(sideState.description?.validated);
+    const hasDescription = Boolean(placeState.description?.validated);
     grid.classList.toggle(
       "shotgrid--empty",
       items.length === 0 && !hasDescription,
@@ -353,20 +360,20 @@ class PerimeterCheck extends HTMLElement {
     const tile = addTile(items.length === 0 && !hasDescription);
     const description = hasDescription
       ? descriptionTile({
-          side: this._side,
+          placeName: this._place?.name || "this place",
         })
       : "";
     grid.innerHTML = items.map(shotTile).join("") + description + tile;
   }
 
   _syncControls() {
-    const side = this._sides[this._sideIndex];
-    const canAdvanceOrSubmit = isSideCovered(side);
-    const previous = this.querySelector("#previous-side");
-    previous.disabled = this._sideIndex === 0;
-    const next = this.querySelector("#next-side");
+    const placeId = this._places[this._placeIndex];
+    const canAdvanceOrSubmit = isPlaceCovered(placeId);
+    const previous = this.querySelector("#previous-place");
+    previous.disabled = this._placeIndex === 0;
+    const next = this.querySelector("#next-place");
     next.disabled = !canAdvanceOrSubmit;
-    next.textContent = this._isLast ? "Submit check" : "Next side ›";
+    next.textContent = this._isLast ? "Submit check" : "Next place ›";
   }
 }
 

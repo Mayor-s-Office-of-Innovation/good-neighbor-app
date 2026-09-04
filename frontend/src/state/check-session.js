@@ -8,8 +8,8 @@
   backend (services/submit-check.js); history + the last-log summary read it back
   from there (services/api.js), not from any local `checks` store.
 
-  A check has four fixed sides (N/E/S/W). Each side is covered by photo captures, or
-  marked "skipped" (still counted "of 4"). The item API stays kind-agnostic on purpose
+  A perimeter check walks the site's configured places in order. Each place is
+  covered by photo captures or marked "skipped". The item API stays kind-agnostic on purpose
   ({kind:'photo', dataUrl}) so post-MVP capture kinds don't require a reshaping. Voice
   capture was removed (native keyboard dictation on the describe screen covers it).
 */
@@ -23,14 +23,36 @@ import {
   clearReview,
 } from "../db.js";
 
-export const SIDES = ["North", "East", "South", "West"];
-export const SINGLE_PROBLEM_SIDE = "Problem";
+export const SINGLE_PROBLEM_PLACE = { id: "problem", name: "Problem" };
 
-function normalizeSideOrder(sideOrder) {
-  const order = Array.isArray(sideOrder)
-    ? sideOrder.map((side) => String(side || "").trim()).filter(Boolean)
+function normalizePlacesList(places) {
+  const source = Array.isArray(places) ? places : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const raw of source) {
+    const id =
+      raw && typeof raw === "object"
+        ? String(raw.id || "").trim()
+        : String(raw || "").trim();
+    const name =
+      raw && typeof raw === "object"
+        ? String(raw.name || "").trim()
+        : String(raw || "").trim();
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({ id, name, order: normalized.length });
+  }
+  return normalized;
+}
+
+function normalizePlaceOrder(placeOrder, places) {
+  const byId = new Set((places || []).map((place) => place.id));
+  const order = Array.isArray(placeOrder)
+    ? placeOrder
+        .map((placeId) => String(placeId || "").trim())
+        .filter((placeId) => byId.has(placeId))
     : [];
-  return order.length ? [...new Set(order)] : [...SIDES];
+  return order.length ? [...new Set(order)] : (places || []).map((p) => p.id);
 }
 
 function normalizeFlowType(flowType) {
@@ -62,43 +84,63 @@ function normalizeDescription(description) {
   };
 }
 
-function createSideState() {
+function createPlaceState(place) {
   return {
+    id: place.id,
+    name: place.name,
     items: [],
     skipped: false,
     description: null,
   };
 }
 
-function normalizeSideState(sideState = {}) {
+function normalizePlaceState(place, placeState = {}) {
   return {
-    items: Array.isArray(sideState.items) ? sideState.items : [],
-    skipped: Boolean(sideState.skipped),
-    description: normalizeDescription(sideState.description),
+    id: place.id,
+    name: place.name,
+    items: Array.isArray(placeState.items) ? placeState.items : [],
+    skipped: Boolean(placeState.skipped),
+    description: normalizeDescription(placeState.description),
   };
 }
 
 function normalizeCheck(check) {
   if (!check) return null;
-  const sideOrder = normalizeSideOrder(check.sideOrder || check.sides?.order);
-  const sides = {};
-  for (const side of sideOrder) {
-    sides[side] = normalizeSideState(check.sides?.[side]);
+  const placesList = normalizePlacesList(
+    check.placeList ||
+      check.placesList ||
+      (check.places && typeof check.places === "object"
+        ? Object.values(check.places)
+        : []),
+  );
+  const placeOrder = normalizePlaceOrder(
+    check.placeOrder || check.places?.order,
+    placesList,
+  );
+  const places = {};
+  for (const placeId of placeOrder) {
+    const place = placesList.find((p) => p.id === placeId) || {
+      id: placeId,
+      name: placeId,
+    };
+    places[placeId] = normalizePlaceState(place, check.places?.[placeId]);
   }
   return {
     ...check,
     flowType: normalizeFlowType(check.flowType),
-    activeSideIndex:
-      typeof check.activeSideIndex === "number" ? check.activeSideIndex : null,
-    sideOrder,
-    sides,
+    activePlaceIndex:
+      typeof check.activePlaceIndex === "number"
+        ? check.activePlaceIndex
+        : null,
+    placeOrder,
+    places,
   };
 }
 
 function rehydrateDerivedFields(check) {
   if (!check) return null;
-  for (const side of check.sideOrder || SIDES) {
-    const description = check.sides[side]?.description;
+  for (const placeId of check.placeOrder || []) {
+    const description = check.places[placeId]?.description;
     if (!description) continue;
     description.validation = {
       whatYouCanSee: true,
@@ -109,7 +151,7 @@ function rehydrateDerivedFields(check) {
   return check;
 }
 
-/** @type {null | {id,siteId,window,startedAt,activeSideIndex:number,sides:Record<string,{items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number,pendingStage?:string,flowType?:string,submissionKind?:string}} */
+/** @type {null | {id,siteId,window,startedAt,activePlaceIndex:number,placeOrder:string[],places:Record<string,{id:string,name:string,items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number,pendingStage?:string,flowType?:string,submissionKind?:string,findings?:any[],assessment?:any}} */
 let current = null;
 let postDescribeAction = null;
 const listeners = new Set();
@@ -140,30 +182,34 @@ function currentWindow() {
   return "evening";
 }
 
-export function startCheck(siteId) {
-  return startFlow(siteId, { flowType: "perimeter", sideOrder: SIDES });
+export function startCheck(siteId, places = []) {
+  return startFlow(siteId, {
+    flowType: "perimeter",
+    places: normalizePlacesList(places),
+  });
 }
 
 export function startProblemReport(siteId) {
   return startFlow(siteId, {
     flowType: "single-problem",
-    sideOrder: [SINGLE_PROBLEM_SIDE],
+    places: [SINGLE_PROBLEM_PLACE],
   });
 }
 
-function startFlow(siteId, { flowType, sideOrder }) {
-  const order = normalizeSideOrder(sideOrder);
-  const sides = {};
-  for (const s of order) sides[s] = createSideState();
+function startFlow(siteId, { flowType, places: configuredPlaces }) {
+  const placeList = normalizePlacesList(configuredPlaces);
+  const placeOrder = placeList.map((place) => place.id);
+  const places = {};
+  for (const place of placeList) places[place.id] = createPlaceState(place);
   current = {
     id: newId(),
     siteId,
     flowType,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
-    activeSideIndex: 0,
-    sideOrder: order,
-    sides,
+    activePlaceIndex: 0,
+    placeOrder,
+    places,
     status: "in-progress",
   };
   persist();
@@ -224,14 +270,18 @@ export async function loadSubmitted() {
   return current;
 }
 
-export function getActiveSideIndex() {
-  return current && typeof current.activeSideIndex === "number"
-    ? current.activeSideIndex
+export function getActivePlaceIndex() {
+  return current && typeof current.activePlaceIndex === "number"
+    ? current.activePlaceIndex
     : null;
 }
 
-export function getSideOrder() {
-  return current?.sideOrder || SIDES;
+export function getPlaceOrder() {
+  return current?.placeOrder || [];
+}
+
+export function getPlace(placeId) {
+  return current?.places?.[placeId] || null;
 }
 
 export function getFlowType() {
@@ -246,10 +296,10 @@ export function isCurrentSession(checkId, flowType) {
   );
 }
 
-export function setActiveSideIndex(index) {
+export function setActivePlaceIndex(index) {
   if (!current) return;
-  const sideCount = getSideOrder().length;
-  current.activeSideIndex = Math.max(0, Math.min(sideCount - 1, index));
+  const placeCount = getPlaceOrder().length;
+  current.activePlaceIndex = Math.max(0, Math.min(placeCount - 1, index));
   persist();
   emit();
 }
@@ -264,27 +314,27 @@ export function consumePostDescribeAction() {
   return action;
 }
 
-export function getSideDescription(side) {
+export function getPlaceDescription(placeId) {
   if (!current) return null;
-  return current.sides[side]?.description || null;
+  return current.places[placeId]?.description || null;
 }
 
-export function setSideDescription(side, description) {
+export function setPlaceDescription(placeId, description) {
   if (!current) return null;
-  current.sides[side].description = normalizeDescription(description);
-  if (current.sides[side].description) {
-    current.sides[side].description.validated =
-      current.sides[side].description.validation.whatYouCanSee &&
-      current.sides[side].description.validation.whereItIs;
+  current.places[placeId].description = normalizeDescription(description);
+  if (current.places[placeId].description) {
+    current.places[placeId].description.validated =
+      current.places[placeId].description.validation.whatYouCanSee &&
+      current.places[placeId].description.validation.whereItIs;
   }
   persist();
   emit();
-  return current.sides[side].description;
+  return current.places[placeId].description;
 }
 
-export function setSideDescriptionValidation(side, validation) {
+export function setPlaceDescriptionValidation(placeId, validation) {
   if (!current) return null;
-  const description = current.sides[side]?.description;
+  const description = current.places[placeId]?.description;
   if (!description) return null;
   description.validation = normalizeValidation(validation);
   description.validated =
@@ -294,36 +344,37 @@ export function setSideDescriptionValidation(side, validation) {
   return description;
 }
 
-/** Add a capture item to a side. `item` = {kind:'photo', dataUrl, ...}. */
-export function addItem(side, item) {
+/** Add a capture item to a place. `item` = {kind:'photo', dataUrl, ...}. */
+export function addItem(placeId, item) {
   if (!current) return null;
-  const sideState = current.sides[side];
-  if (!sideState) return null;
+  const placeState = current.places[placeId];
+  if (!placeState) return null;
   const record = {
     id: newId(),
-    side,
+    placeId,
+    placeName: placeState.name,
     uploadedAt: new Date().toISOString(),
     ...item,
   };
-  sideState.items.push(record);
+  placeState.items.push(record);
   persist();
   emit();
   return record;
 }
 
-export function removeItem(side, itemId) {
+export function removeItem(placeId, itemId) {
   if (!current) return;
-  const s = current.sides[side];
-  if (!s) return;
-  s.items = s.items.filter((i) => i.id !== itemId);
+  const place = current.places[placeId];
+  if (!place) return;
+  place.items = place.items.filter((i) => i.id !== itemId);
   persist();
   emit();
 }
 
-function findSessionItem(side, itemId) {
-  const s = current?.sides?.[side];
-  if (!s) return null;
-  return s.items.find((i) => i.id === itemId) || null;
+function findSessionItem(placeId, itemId) {
+  const place = current?.places?.[placeId];
+  if (!place) return null;
+  return place.items.find((i) => i.id === itemId) || null;
 }
 
 /**
@@ -331,16 +382,16 @@ function findSessionItem(side, itemId) {
  * S3, so stash the artifact coordinates submit needs to register cheaply, and swap
  * the full-res base64 for a thumbnail to bound the draft's size on many-photo walks.
  * No-op if the item was deleted mid-upload.
- * @param {string} side
+ * @param {string} placeId
  * @param {string} itemId
  * @param {{ artifactId: string, s3Key: string, contentType: string, thumbUrl: string }} coords
  */
 export function markItemUploaded(
-  side,
+  placeId,
   itemId,
   { artifactId, s3Key, contentType, thumbUrl },
 ) {
-  const item = findSessionItem(side, itemId);
+  const item = findSessionItem(placeId, itemId);
   if (!item) return null;
   item.upload = { status: "uploaded", artifactId, s3Key, contentType };
   if (thumbUrl) item.dataUrl = thumbUrl;
@@ -354,12 +405,12 @@ export function markItemUploaded(
  * bytes: "uploading" while a presign+PUT attempt runs, "failed" once retries are
  * exhausted. Failed/uploading items keep their full-res dataUrl so submit can still
  * fall back to a full upload. No-op if the item was deleted mid-upload.
- * @param {string} side
+ * @param {string} placeId
  * @param {string} itemId
  * @param {"uploading"|"failed"} status
  */
-export function setItemUploadStatus(side, itemId, status) {
-  const item = findSessionItem(side, itemId);
+export function setItemUploadStatus(placeId, itemId, status) {
+  const item = findSessionItem(placeId, itemId);
   if (!item) return null;
   item.upload = { ...(item.upload || {}), status };
   persist();
@@ -367,29 +418,33 @@ export function setItemUploadStatus(side, itemId, status) {
   return item;
 }
 
-/** Mark a side skipped (still counted in the fixed 4). */
-export function skipSide(side) {
+/** Mark a place skipped. */
+export function skipPlace(placeId) {
   if (!current) return;
-  current.sides[side].skipped = true;
+  current.places[placeId].skipped = true;
   persist();
   emit();
 }
 
-/** A side is "done" once it has >=1 photo or was skipped. */
-export function isSideCovered(side) {
+/** A place is "done" once it has >=1 photo, a description, or was skipped. */
+export function isPlaceCovered(placeId) {
   if (!current) return false;
-  const s = current.sides[side];
-  return s.skipped || s.items.length > 0 || Boolean(s.description?.validated);
+  const place = current.places[placeId];
+  return (
+    place.skipped ||
+    place.items.length > 0 ||
+    Boolean(place.description?.validated)
+  );
 }
 
 export function coveredCount() {
-  return getSideOrder().filter(isSideCovered).length;
+  return getPlaceOrder().filter(isPlaceCovered).length;
 }
 
-/** Flat list of all capture items across sides, in side order. */
+/** Flat list of all capture items across places, in place order. */
 export function allItems() {
   if (!current) return [];
-  return getSideOrder().flatMap((s) => current.sides[s].items);
+  return getPlaceOrder().flatMap((placeId) => current.places[placeId].items);
 }
 
 /**

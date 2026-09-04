@@ -33,6 +33,7 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
+import { getSite, putSitePlaces } from "../src/handlers/site.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
@@ -42,7 +43,7 @@ const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
   "access-control-allow-headers":
     "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site",
 };
@@ -112,9 +113,12 @@ const routes = [
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  // Site config (feature/142 onboard locations)
+  route("GET", "/v1/site", getSite),
+  route("PUT", "/v1/site/places", putSitePlaces),
   route(
     "POST",
-    "/v1/checks/{checkId}/sides/{side}/description:validate",
+    "/v1/checks/{checkId}/places/{placeId}/description:validate",
     descriptionValidationHandler,
   ),
   // Perimeter checks (analysis-backend Step C)

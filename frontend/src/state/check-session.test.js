@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let savedReview = null;
 let nextId = 1;
 
+const TEST_PLACES = [{ id: "place-north", name: "North" }];
+
 vi.mock("../db.js", () => ({
   newId: () => `test-check-id-${nextId++}`,
   saveDraft: vi.fn(),
@@ -38,7 +40,7 @@ describe("loadSubmitted", () => {
       assessment: {},
     };
 
-    const active = startCheck("site-1");
+    const active = startCheck("site-1", TEST_PLACES);
 
     await expect(loadSubmitted()).resolves.toBeNull();
     expect(getCurrentCheck()).toBe(active);
@@ -59,20 +61,20 @@ describe("eager-upload item mutators", () => {
     const { startCheck, addItem, markItemUploaded, getCurrentCheck } =
       await import("./check-session.js");
 
-    startCheck("site-1");
-    const item = addItem("North", {
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", {
       kind: "photo",
       dataUrl: "data:image/jpeg;base64,FULLRES==",
     });
 
-    markItemUploaded("North", item.id, {
+    markItemUploaded("place-north", item.id, {
       artifactId: "art-1",
       s3Key: "checks/site/c/art-1.jpg",
       contentType: "image/jpeg",
       thumbUrl: "data:image/jpeg;base64,THUMB==",
     });
 
-    const stored = getCurrentCheck().sides.North.items[0];
+    const stored = getCurrentCheck().places["place-north"].items[0];
     expect(stored.upload).toEqual({
       status: "uploaded",
       artifactId: "art-1",
@@ -86,15 +88,15 @@ describe("eager-upload item mutators", () => {
     const { startCheck, addItem, setItemUploadStatus, getCurrentCheck } =
       await import("./check-session.js");
 
-    startCheck("site-1");
-    const item = addItem("North", {
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", {
       kind: "photo",
       dataUrl: "data:image/jpeg;base64,FULLRES==",
     });
 
-    setItemUploadStatus("North", item.id, "failed");
+    setItemUploadStatus("place-north", item.id, "failed");
 
-    const stored = getCurrentCheck().sides.North.items[0];
+    const stored = getCurrentCheck().places["place-north"].items[0];
     expect(stored.upload.status).toBe("failed");
     expect(stored.dataUrl).toBe("data:image/jpeg;base64,FULLRES==");
   });
@@ -104,12 +106,12 @@ describe("eager-upload item mutators", () => {
       "./check-session.js"
     );
 
-    startCheck("site-1");
-    const item = addItem("North", { kind: "photo", dataUrl: "data:,x" });
-    removeItem("North", item.id);
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", { kind: "photo", dataUrl: "data:,x" });
+    removeItem("place-north", item.id);
 
     expect(
-      markItemUploaded("North", item.id, {
+      markItemUploaded("place-north", item.id, {
         artifactId: "art-1",
         s3Key: "k",
         contentType: "image/jpeg",
@@ -129,12 +131,12 @@ describe("eager-upload item mutators", () => {
       getCurrentCheck,
     } = await import("./check-session.js");
 
-    startCheck("site-1");
-    const item = addItem("North", {
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", {
       kind: "photo",
       dataUrl: "data:image/jpeg;base64,FULLRES==",
     });
-    markItemUploaded("North", item.id, {
+    markItemUploaded("place-north", item.id, {
       artifactId: "art-1",
       s3Key: "k",
       contentType: "image/jpeg",
@@ -149,7 +151,7 @@ describe("eager-upload item mutators", () => {
     clearCheck();
 
     await loadDraft("perimeter");
-    const rehydrated = getCurrentCheck().sides.North.items[0];
+    const rehydrated = getCurrentCheck().places["place-north"].items[0];
     expect(rehydrated.upload).toEqual({
       status: "uploaded",
       artifactId: "art-1",
@@ -173,7 +175,7 @@ describe("markAnalyzing", () => {
       "./check-session.js"
     );
 
-    startCheck("site-1");
+    startCheck("site-1", TEST_PLACES);
     markAnalyzing({ expectedArtifacts: 4 });
 
     expect(getCurrentCheck()?.expectedArtifacts).toBe(4);
@@ -185,8 +187,8 @@ describe("markAnalyzing", () => {
       "./check-session.js"
     );
 
-    const original = startCheck("site-1");
-    startCheck("site-2");
+    const original = startCheck("site-1", TEST_PLACES);
+    startCheck("site-2", TEST_PLACES);
     markAnalyzing({ checkId: original.id, expectedArtifacts: 4 });
 
     expect(getCurrentCheck()?.id).not.toBe(original.id);

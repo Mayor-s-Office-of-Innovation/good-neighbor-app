@@ -10,10 +10,13 @@ locals {
     # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
+    # Site config (feature/142 onboard locations)
+    "GET /v1/site",
+    "PUT /v1/site/places",
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
     "GET /v1/checks",
-    "POST /v1/checks/{checkId}/sides/{side}/description:validate",
+    "POST /v1/checks/{checkId}/places/{placeId}/description:validate",
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "POST /v1/checks/{checkId}/complete",
