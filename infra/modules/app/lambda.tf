@@ -239,5 +239,10 @@ resource "aws_lambda_permission" "api_gateway_authorizer" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.authorizer.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/$default"
+  # Authorizer invocations use the AUTHORIZER arn form —
+  # arn:aws:execute-api:<region>:<acct>:<api-id>/<stage>/authorizers/<authorizer-id>
+  # — NOT the route form (*/<route-key>). Wildcards stand in for the
+  # region/account/stage and the authorizer id, matching the api Lambda's
+  # /*/* grant granularity above.
+  source_arn = "${aws_apigatewayv2_api.http.execution_arn}/*/authorizers/*"
 }

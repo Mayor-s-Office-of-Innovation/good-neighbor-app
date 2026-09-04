@@ -62,9 +62,9 @@ resource "aws_apigatewayv2_integration" "api" {
 
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
-# the Cognito-shaped claims handlers already read. Identity source = the
-# Authorization header, so API Gateway caches verdicts per token; the TTL bounds
-# revocation propagation.
+# the claim-shaped context handlers read. Identity source = the Authorization
+# header, so API Gateway caches verdicts per token; the TTL bounds revocation
+# propagation.
 resource "aws_apigatewayv2_authorizer" "device_token" {
   api_id                            = aws_apigatewayv2_api.http.id
   name                              = "${local.name_prefix}-device-token"
@@ -72,7 +72,11 @@ resource "aws_apigatewayv2_authorizer" "device_token" {
   authorizer_uri                    = aws_lambda_function.authorizer.invoke_arn
   identity_sources                  = ["$request.header.authorization"]
   authorizer_payload_format_version = "2.0"
-  authorizer_result_ttl_in_seconds  = 60
+  # The Lambda returns the payload-v2 SIMPLE response ({ isAuthorized,
+  # context }) — without this flag API Gateway expects an IAM policy and
+  # rejects the verdict at runtime.
+  enable_simple_responses          = true
+  authorizer_result_ttl_in_seconds = 60
 }
 
 resource "aws_apigatewayv2_route" "routes" {
@@ -86,10 +90,15 @@ resource "aws_apigatewayv2_route" "routes" {
   route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 
-  # Open routes skip the authorizer; everything else requires the device token.
-  # `local.route_is_open` is a map keyed by route for this conditional.
+  # Open routes skip the authorizer; everything else requires the device token
+  # (REQUEST-type Lambda authorizer ⇒ authorization_type CUSTOM — NONE, the
+  # default, would ignore authorizer_id and leave the route anonymous).
+  # `route_is_open` lists ONLY the anonymous routes; `try(..., false)` treats an
+  # unlisted route as protected — a bare map lookup on an absent key is a hard
+  # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
-  authorizer_id = local.route_is_open[each.value] ? null : aws_apigatewayv2_authorizer.device_token.id
+  authorization_type = try(local.route_is_open[each.value], false) ? null : "CUSTOM"
+  authorizer_id       = try(local.route_is_open[each.value], false) ? null : aws_apigatewayv2_authorizer.device_token.id
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

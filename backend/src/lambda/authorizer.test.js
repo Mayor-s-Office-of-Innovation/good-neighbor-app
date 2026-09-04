@@ -116,7 +116,7 @@ describe("authorizer", () => {
     }
   });
 
-  it("allows a valid token and injects the Cognito-shaped claims", async () => {
+  it("allows a valid token and injects the flat REQUEST-authorizer claims", async () => {
     const { token } = await mintAccessToken(
       { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 7 },
       { now: 1000 },
@@ -129,14 +129,14 @@ describe("authorizer", () => {
       const res = await invoke(event(`Bearer ${token}`));
 
       expect(res.isAuthorized).toBe(true);
+      // REQUEST-authorizer context: FLAT string-valued keys only (API Gateway
+      // flattens context to $context.authorizer.<key>; nested objects and the
+      // `claims` placeholder are reserved for JWT authorizers). The
+      // "claims.<claim>" keys mirror what lib/principal.js reads.
       expect(res.context).toEqual({
-        jwt: {
-          claims: {
-            sub: "dev-1",
-            "custom:siteId": "site-1",
-            ver: 7,
-          },
-        },
+        "claims.sub": "dev-1",
+        "claims.custom:siteId": "site-1",
+        "claims.ver": 7,
       });
       // The device lookup is pinned to the token's own partition.
       const cmd = send.mock.calls[0][0];
@@ -160,7 +160,7 @@ describe("authorizer", () => {
       send.mockResolvedValueOnce({ Item: { tokenGeneration: 1 } });
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(true);
-      expect(res.context.jwt.claims["custom:siteId"]).toBe("site-a");
+      expect(res.context["claims.custom:siteId"]).toBe("site-a");
       expect(send.mock.calls[0][0].input.Key.pk).toBe("SITE#site-a");
     } finally {
       vi.useRealTimers();
