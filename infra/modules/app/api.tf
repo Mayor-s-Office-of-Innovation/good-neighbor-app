@@ -98,7 +98,7 @@ resource "aws_apigatewayv2_route" "routes" {
   # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
   authorization_type = try(local.route_is_open[each.value], false) ? null : "CUSTOM"
-  authorizer_id       = try(local.route_is_open[each.value], false) ? null : aws_apigatewayv2_authorizer.device_token.id
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : aws_apigatewayv2_authorizer.device_token.id
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {
