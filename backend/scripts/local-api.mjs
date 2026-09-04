@@ -36,6 +36,10 @@ import { getSite, putSitePlaces } from "../src/handlers/site.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
+import {
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../src/handlers/analysis-amendments.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -112,6 +116,16 @@ const routes = [
     "POST",
     "/v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
     submitConditionAnswers,
+  ),
+  route(
+    "POST",
+    "/v1/analyses/{analysisId}/conditions/{conditionId}",
+    editAnalysisCondition,
+  ),
+  route(
+    "POST",
+    "/v1/analyses/{analysisId}/conditions/{conditionId}/reject",
+    rejectAnalysisCondition,
   ),
   // Legacy demo submission loop + health
   route("POST", "/submissions", submissionsHandler),
