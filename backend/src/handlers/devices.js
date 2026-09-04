@@ -14,12 +14,7 @@
 // with the same token cannot both rotate — exactly one wins.
 
 import { randomUUID } from "node:crypto";
-import {
-  ConditionalCheckFailedException,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -226,12 +221,17 @@ export const refreshDeviceToken = async (event) => {
 /**
  * Mint the access + refresh pair and persist the new session state (generation
  * + refresh jti + lastSeenAt) onto the DEVICE# item — atomically, via a
- * compare-and-swap on the CURRENT generation + jti. The caller has already
- * validated identity; the condition (not the earlier read) is what makes the
- * refresh single-use: a concurrent/replayed refresh loses the swap and 401s.
- * Registration passes no expected state (fresh row, always applies).
+ * compare-and-swap on the CURRENT generation (+ jti, when expected). The
+ * condition — not the earlier read — is what makes the CAS atomic:
+ * - refresh passes expected generation + jti: a concurrent/replayed rotation
+ *   loses the swap → null → 401.
+ * - re-registration passes only the expected generation: a concurrent
+ *   re-register/refresh that moved the generation first loses the swap → null
+ *   → the caller retries from a fresh read.
+ * - fresh registration passes no expected state: the row was just Put, so the
+ *   write is unconditional (nothing to race).
  * @param {{ siteId: string, deviceId: string, generation: number, dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
- * @returns {Promise<{ token: string, refreshToken: string, expiresIn: number, refreshExpiresIn: number, tokenGeneration: number }>}
+ * @returns {Promise<{ token: string, refreshToken: string, expiresIn: number, refreshExpiresIn: number, tokenGeneration: number } | null>} null when the CAS lost
  */
 async function mintSession({
   siteId,
@@ -247,6 +247,10 @@ async function mintSession({
     mintRefreshToken({ siteId, deviceId, tokenGeneration: generation }),
   ]);
 
+  // The CAS condition and its expected-state bindings (:eg/:ej) ride the SAME
+  // command as the SET bindings (:g/:jti/:seen) — one object, so neither side
+  // can clobber the other.
+  const conditional = expectGeneration !== undefined;
   try {
     await ddb.send(
       new UpdateCommand({
@@ -254,25 +258,28 @@ async function mintSession({
         Key: { ...deviceKey(siteId, deviceId) },
         UpdateExpression:
           "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen",
-        // Atomic compare-and-swap: rotate ONLY from the exact state the read
-        // observed. When omitted (registration) the write is unconditional.
-        ...(expectGeneration !== undefined && {
+        ...(conditional && {
           ConditionExpression: "tokenGeneration = :eg AND refreshJti = :ej",
-          ExpressionAttributeValues: {
-            ":eg": expectGeneration,
-            ":ej": expectJti,
-          },
         }),
         ExpressionAttributeValues: {
           ":g": generation,
           ":jti": refresh.jti,
           ":seen": now,
+          ...(conditional && {
+            ":eg": expectGeneration,
+            ":ej": expectJti,
+          }),
         },
       }),
     );
   } catch (err) {
-    // Lost the race / replayed token — fail closed like the read-path checks.
-    if (err instanceof ConditionalCheckFailedException) {
+    // Lost the CAS — a concurrent re-register/refresh rotated the session
+    // between the read and this write. Fail closed; callers retry (register)
+    // or 401 (refresh).
+    if (
+      err instanceof Error &&
+      err.name === "ConditionalCheckFailedException"
+    ) {
       return null;
     }
     throw err;

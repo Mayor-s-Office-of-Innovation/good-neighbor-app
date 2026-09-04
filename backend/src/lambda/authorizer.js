@@ -2,9 +2,9 @@
 // device auth — docs/adr/0010-device-token-auth.md). Verifies the Bearer JWT
 // (signature + expiry via lib/device-token.js), checks it against the DEVICE#
 // item (revocation via the `ver` ↔ tokenGeneration comparison), and returns a
-// simple-response whose context lands at
-// event.requestContext.authorizer.jwt.claims — exactly the shape
-// lib/principal.js (deriveSiteId) and every handler already read.
+// simple-response whose flat context keys land at
+// event.requestContext.authorizer["claims.<claim>"] — the REQUEST-authorizer
+// shape lib/principal.js (deriveSiteId) reads.
 //
 // Attached to every route except the bootstrap/intake set (see api.tf). API
 // Gateway caches by the Authorization header value; the TTL (set in Terraform,
@@ -74,16 +74,16 @@ export const handler = async (event) => {
 
   return {
     ...ALLOW,
-    // Field-for-field what API Gateway's JWT authorizer produces — handlers
-    // read event.requestContext.authorizer.jwt.claims["custom:siteId"] today.
+    // REQUEST-authorizer context: keys flatten to $context.authorizer.<key>
+    // and land at event.requestContext.authorizer.<key> on the integration
+    // event. The `jwt.claims` nesting is reserved for JWT authorizers (a
+    // REQUEST authorizer's context may not populate it), so the claims are
+    // emitted flat; lib/principal.js reads both shapes.
+    // Values must be string|number|boolean|null (coerced otherwise).
     context: {
-      jwt: {
-        claims: {
-          sub: claims.sub,
-          "custom:siteId": claims.siteId,
-          ver: claims.ver,
-        },
-      },
+      "claims.sub": claims.sub,
+      "claims.custom:siteId": claims.siteId,
+      "claims.ver": claims.ver,
     },
   };
 };

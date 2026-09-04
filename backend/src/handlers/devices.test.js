@@ -283,12 +283,18 @@ describe("refreshDeviceToken", () => {
       const update = send.mock.calls
         .map(([cmd]) => cmd)
         .find((cmd) => cmd instanceof UpdateCommand);
-      expect(
-        /** @type {any} */ (update)?.input.ExpressionAttributeValues[":jti"],
-      ).toBe(newJti);
-      expect(
-        /** @type {any} */ (update)?.input.ExpressionAttributeValues[":g"],
-      ).toBe(3);
+      const values = /** @type {any} */ (update)?.input
+        .ExpressionAttributeValues;
+      expect(values[":jti"]).toBe(newJti);
+      expect(values[":g"]).toBe(3);
+      // Regression guard: the CAS condition and its expected-state bindings
+      // (:eg/:ej) must ride the SAME command as the SET bindings (:g/:jti) —
+      // a duplicate key would silently drop one side and break every refresh.
+      expect(/** @type {any} */ (update)?.input.ConditionExpression).toBe(
+        "tokenGeneration = :eg AND refreshJti = :ej",
+      );
+      expect(values[":eg"]).toBe(2);
+      expect(values[":ej"]).toBe(oldJti);
 
       // The new access token is verifiable + carries the rotated generation.
       const { verifyDeviceToken } = await import("../lib/device-token.js");
