@@ -1141,14 +1141,12 @@ describe("311 ticket closure", () => {
   });
 
   it("skips already-closed tickets and retries failed closures", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ UpdateID: 4323, return_code: 0 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ UpdateID: 4323, return_code: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fetchImpl);
     const fanout = {
       code: "create_311_ticket",

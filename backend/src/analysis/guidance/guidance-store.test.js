@@ -758,14 +758,12 @@ describe("completeTaskWithAppActions", () => {
     });
     send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     try {
