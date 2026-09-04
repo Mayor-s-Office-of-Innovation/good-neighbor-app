@@ -87,8 +87,14 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   [guidance-policy-changelog.md](./guidance-policy-changelog.md).
 - **Category resolution:** analyzer category labels → canonical rule categories via aliases;
   unresolved categories become `manual_review`, never a guess (safety-critical rules).
-- **Safety ordering:** emergency outcomes (911) always precede routine guidance; the backend
-  returns metadata only — it never places calls or files tickets itself.
+- **Ticket location resolution:** 311 filing uses the condition/task's own location first, then
+  the site's default location from `SITE#<siteId> / #META`; with neither it fails the app action
+  with a retryable `missing_location` result rather than guessing.
+- **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
+  returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
+  and closed by the app-action layer (not the analyzer): informational tickets filed under the
+  app's own agency id 76 are closed via `UpdateSR` when the task is completed through the done
+  path; tickets filed for city-handled work stay under the city's management.
 - **Task compatibility:** tasks keep `type: "onsite" | "city_escalation"` alongside the
   richer `kind`/`escalationChannel`/`appActions[]` fields.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,

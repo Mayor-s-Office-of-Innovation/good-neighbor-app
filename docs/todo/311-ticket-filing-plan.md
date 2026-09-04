@@ -17,8 +17,10 @@ outcome and app-action trigger.
 - `ResponsibleAgency` is populated from the rulebase `Responsible agency code`
   column. If the column is `'-'`, send the field blank.
 - The HUB agency lookup endpoint remains available as a compatibility fallback
-  for legacy app actions that do not carry a responsible agency code:
-  `https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/HUBWEB/1.0/lookup_agency_table`
+  for legacy app actions that do not carry a responsible agency code. The
+  endpoint URL is provisioned per environment via `SF311_AGENCY_LOOKUP_URL`
+  (see `.env.example` and the Terraform lambda variables); it is not
+  documented in this repo.
 - The rulebase column `311 service code or action` contains either:
   - a concrete service code to send as `NatureofRequest`, or
   - an analysis command such as `Run graffiti analysis` or
@@ -171,9 +173,9 @@ Add configuration:
 - `SF311_BASIC_AUTH_SECRET_ARN`
 - optional `SF311_CLASSIFIER_SERVICE_CODE_MAP` JSON override
 
-Store the dev Basic Auth credentials as a Secrets Manager JSON value. Do not put
-the secret value in Terraform state or source control. The provided dev
-credentials are temporary test credentials and should be rotated before launch.
+Store the Basic Auth credentials as a Secrets Manager JSON value. Do not put
+the secret value in Terraform state or source control. Rotate credentials
+before launch.
 
 ## Frontend behavior
 

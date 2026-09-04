@@ -717,6 +717,347 @@ describe("completeTaskWithAppActions", () => {
       completionStartedAt: "2026-08-18T11:55:00.000Z",
     });
   });
+
+  it("closes an agency-76 ticket when completing with the done path", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              executionTrigger: "task_created",
+            },
+          },
+        ],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: {
+              tickets: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  responsibleAgency: "76",
+                  srNum: "2000008106",
+                  attachments: [],
+                },
+              ],
+            },
+            externalId: "2000008106",
+            recordedAt: "2026-08-18T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const task = await completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "manual",
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example.test/createsr",
+          SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+          SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now: new Date("2026-08-18T12:02:00.000Z"),
+      });
+
+      expect(task).toMatchObject({
+        status: "completed",
+        completionMethod: "manual",
+        appActionStatus: "submitted",
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            externalId: "2000008106",
+          },
+          {
+            code: "close_311_ticket",
+            status: "submitted",
+            payload: {
+              closures: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  srNum: "2000008106",
+                  status: "closed",
+                  updateId: "4321",
+                },
+              ],
+            },
+          },
+        ],
+      });
+      const closeCall = fetchMock.mock.calls[0];
+      expect(JSON.parse(closeCall[1].body)).toMatchObject({
+        SRnum: "2000008106",
+        UpdateType: "11",
+        NumericSubType: "8",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("still completes the task when 311 closure fails", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              executionTrigger: "task_created",
+            },
+          },
+        ],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: {
+              tickets: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  responsibleAgency: "76",
+                  srNum: "2000008106",
+                  attachments: [],
+                },
+              ],
+            },
+            externalId: "2000008106",
+            recordedAt: "2026-08-18T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          return_code: 26,
+          error_description: "SendingAgency Must Be ResponsibleAgency",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const task = await completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "manual",
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example.test/createsr",
+          SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+          SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now: new Date("2026-08-18T12:02:00.000Z"),
+      });
+
+      expect(task).toMatchObject({
+        status: "completed",
+        appActionStatus: "partial",
+        appActionResults: [
+          { code: "create_311_ticket", status: "submitted" },
+          {
+            code: "close_311_ticket",
+            status: "failed",
+            payload: {
+              closures: [
+                { srNum: "2000008106", status: "failed", reason: "26" },
+              ],
+            },
+          },
+        ],
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("never synthesizes closure for the 311_filed completion path", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "escalation",
+        severity: 3,
+        location: {
+          latitude: 37.76656393517443,
+          longitude: -122.4213267021692,
+        },
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              executionTrigger: "user_confirmed",
+            },
+          },
+        ],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: {
+              tickets: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  responsibleAgency: "76",
+                  srNum: "2000008106",
+                  attachments: [],
+                },
+              ],
+            },
+            externalId: "2000008106",
+            recordedAt: "2026-08-18T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    // The 311_filed path re-executes the user_confirmed filing action; the
+    // prior ticket is reused (no CreateSR), and artifact lookup returns none.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "311_filed",
+      env: {
+        GNP_311_SUBMISSION_ENABLED: "true",
+        DYNAMO_TABLE: "table",
+        S3_UPLOAD_BUCKET: "bucket",
+        SQS_QUEUE_URL: "queue",
+        SF311_CREATESR_URL: "https://hub.example.test/createsr",
+        SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
+        SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+        SF311_BASIC_AUTH_USER: "user",
+        SF311_BASIC_AUTH_PASS: "pass",
+      },
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(task).toMatchObject({
+      status: "completed",
+      completionMethod: "311_filed",
+    });
+    // The user_confirmed filing re-ran (idempotent: prior ticket reused) and
+    // no closure action was synthesized for the 311_filed path.
+    expect(
+      /** @type {{ code: string }[]} */ (task.appActionResults).some(
+        (r) => r.code === "close_311_ticket",
+      ),
+    ).toBe(false);
+  });
+
+  it("records no closure when the 311 feature flag is disabled", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: {
+              tickets: [
+                {
+                  serviceCode: "1.1.4.7.20.0",
+                  responsibleAgency: "76",
+                  srNum: "2000008106",
+                  attachments: [],
+                },
+              ],
+            },
+            externalId: "2000008106",
+            recordedAt: "2026-08-18T11:00:00.000Z",
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "manual",
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(task).toMatchObject({
+      status: "completed",
+      appActionStatus: "submitted",
+      appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+    });
+    expect(
+      /** @type {{ code: string }[]} */ (task.appActionResults).some(
+        (r) => r.code === "close_311_ticket",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("markTaskCannotDo", () => {

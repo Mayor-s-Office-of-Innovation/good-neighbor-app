@@ -3,7 +3,7 @@
 *Data-model reference · [index](../README.md) · ← [decision](./adr/0002-datastore-dynamodb.md)*
 
 **Status:** Live model — this is what the app writes and reads today
-**Date:** 2026-08-12 · updated 2026-09-03 for the built state
+**Date:** 2026-08-12 · updated 2026-09-04 for the built state
 
 Purpose: the factual reference for the single-table model — item shapes, keys, GSIs, and
 access patterns. The datastore decision and its alternatives live in
@@ -80,6 +80,21 @@ without a separate timestamp in the key.
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
+
+Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
+item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
+action), and `appActionStatus` (rollup). Result shapes (`code` from
+`backend/src/analysis/guidance/app-actions.js`):
+
+- **`create_311_ticket`** — `payload.tickets[]` with `srNum` and `responsibleAgency`;
+  `externalId` joins the SR numbers.
+- **`close_311_ticket`** — `payload.closures[]`, one entry per eligible ticket
+  (`serviceCode`, `srNum`, `closedReasonCode: "8"`, `status: "closed" | "failed"`, plus
+  `updateId` on success and `reason` on failure). No `externalId`. Already-closed tickets
+  from prior attempts are carried forward into `closures[]` verbatim on later retries, so
+  the latest result is always a complete picture. Result status rolls up `submitted` /
+  `partial` / `failed`; a closure failure never blocks completion (see
+  [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)).
 
 Because the header and its children all begin with `CHECK#<checkId>`, the **check detail
 screen is a single query**: `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")` returns the
