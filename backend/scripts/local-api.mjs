@@ -32,10 +32,7 @@ import {
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
-import {
-  registerDevice,
-  refreshDeviceToken,
-} from "../src/handlers/devices.js";
+import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
@@ -61,9 +58,7 @@ async function resolveClaims(flatHeaders) {
   const m = /^Bearer\s+(.+)$/i.exec(value.trim());
   if (m && process.env.DEVICE_TOKEN_SECRET) {
     try {
-      const { verifyDeviceToken } = await import(
-        "../src/lib/device-token.js"
-      );
+      const { verifyDeviceToken } = await import("../src/lib/device-token.js");
       const claims = await verifyDeviceToken(m[1]);
       if (claims.typ !== "access") throw new Error("not an access token");
       return {
