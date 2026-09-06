@@ -421,6 +421,7 @@ export function addItem(placeId, item) {
     ...item,
   };
   placeState.items.push(record);
+  placeState.skipped = false;
   persist();
   emit();
   return record;
