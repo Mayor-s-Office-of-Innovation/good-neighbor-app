@@ -1245,9 +1245,10 @@ export async function supersedeOpenTasksForCondition(opts) {
             ...task,
             status: "superseded",
             supersededAt: now,
-            supersessionReason:
-              opts.reason ?? "analysis_condition_amended",
-            ...(opts.analysisId ? { supersededByAnalysisId: opts.analysisId } : {}),
+            supersessionReason: opts.reason ?? "analysis_condition_amended",
+            ...(opts.analysisId
+              ? { supersededByAnalysisId: opts.analysisId }
+              : {}),
             updatedAt: now,
             ...taskWorklistDateGsi(
               opts.siteId,

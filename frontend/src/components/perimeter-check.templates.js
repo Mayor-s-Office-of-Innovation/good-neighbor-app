@@ -16,9 +16,7 @@ export const shell = () => html`
       </button>
     </div>
 
-    <h1 class="check-timeline__title">
-      Take photos at each place.
-    </h1>
+    <h1 class="check-timeline__title">Take photos at each place.</h1>
 
     <div class="place-timeline" id="place-timeline"></div>
 
@@ -110,7 +108,11 @@ export const shell = () => html`
           <p class="analysis-dialog__text" id="analysis-delete-copy">
             This action can't be undone. The issue details won't be saved.
           </p>
-          <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
+          <p
+            class="analysis-dialog__error"
+            id="analysis-delete-error"
+            hidden
+          ></p>
         </div>
         <div class="analysis-dialog__actions">
           <button
@@ -120,9 +122,7 @@ export const shell = () => html`
           >
             Delete
           </button>
-          <button class="analysis-dialog__button" type="submit">
-            Cancel
-          </button>
+          <button class="analysis-dialog__button" type="submit">Cancel</button>
         </div>
       </form>
     </dialog>
@@ -410,7 +410,9 @@ function textMode(place) {
         data-text-input="${escapeAttr(place.id)}"
         rows="5"
         placeholder="At ${escapeAttr(place.name)}, ..."
-      >${escapeHtml(place.draftText || "")}</textarea>
+      >
+${escapeHtml(place.draftText || "")}</textarea
+      >
     </label>
     <div class="place-row__actions">
       <button
@@ -687,7 +689,14 @@ function pendingCard(item) {
 
 function completedCard(
   item,
-  { title, description, action, actionKind = "", taskId = "", conditionId = "" },
+  {
+    title,
+    description,
+    action,
+    actionKind = "",
+    taskId = "",
+    conditionId = "",
+  },
 ) {
   const actionClass =
     actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
@@ -789,26 +798,29 @@ function actionLabel(kind) {
 }
 
 function problemSummary(items) {
-  return items.reduce((summary, item) => {
-    if (item.analysis?.status !== "analyzed") return summary;
-    const hiddenConditionIds = hiddenConditionIdSet(item);
-    const tasks = item.analysis?.tasks || [];
-    const conditions = item.analysis?.conditions || [];
-    const visibleTasks = tasks.filter(
-      (task) => !hiddenConditionIds.has(task.conditionId),
-    );
-    const visibleConditions = conditions.filter(
-      (condition) => !hiddenConditionIds.has(condition.conditionId),
-    );
-    const visible = Math.max(visibleTasks.length, visibleConditions.length);
-    const total = Math.max(tasks.length, conditions.length);
-    summary.visible += visible;
-    summary.hidden += Math.max(
-      hiddenConditionIds.size,
-      Math.max(0, total - visible),
-    );
-    return summary;
-  }, { visible: 0, hidden: 0 });
+  return items.reduce(
+    (summary, item) => {
+      if (item.analysis?.status !== "analyzed") return summary;
+      const hiddenConditionIds = hiddenConditionIdSet(item);
+      const tasks = item.analysis?.tasks || [];
+      const conditions = item.analysis?.conditions || [];
+      const visibleTasks = tasks.filter(
+        (task) => !hiddenConditionIds.has(task.conditionId),
+      );
+      const visibleConditions = conditions.filter(
+        (condition) => !hiddenConditionIds.has(condition.conditionId),
+      );
+      const visible = Math.max(visibleTasks.length, visibleConditions.length);
+      const total = Math.max(tasks.length, conditions.length);
+      summary.visible += visible;
+      summary.hidden += Math.max(
+        hiddenConditionIds.size,
+        Math.max(0, total - visible),
+      );
+      return summary;
+    },
+    { visible: 0, hidden: 0 },
+  );
 }
 
 function problemSummaryLabel({ visible, hidden }) {

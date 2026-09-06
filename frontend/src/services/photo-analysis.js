@@ -298,7 +298,11 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     });
   }
 
-  const { guidance } = await guidanceFromAnalysis(check.id, artifactId, analysis);
+  const { guidance } = await guidanceFromAnalysis(
+    check.id,
+    artifactId,
+    analysis,
+  );
   const hasProblems = Boolean(
     (guidance.tasks || []).length || (guidance.conditions || []).length,
   );
