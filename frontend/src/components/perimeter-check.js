@@ -215,7 +215,15 @@ class PerimeterCheck extends HTMLElement {
     if (!check) return;
     for (const placeId of check.placeOrder || []) {
       for (const item of check.places[placeId]?.items || []) {
-        if (["queued", "analyzing"].includes(item.analysis?.status)) {
+        const analysisStatus = item.analysis?.status;
+        const hasUploadedArtifact = Boolean(
+          item.upload?.status === "uploaded" &&
+            (item.analysis?.artifactId || item.upload?.artifactId),
+        );
+        const shouldResume =
+          ["queued", "analyzing"].includes(analysisStatus) ||
+          (analysisStatus === "failed" && hasUploadedArtifact);
+        if (shouldResume) {
           analyzeEvidenceItem(placeId, item.id);
         }
       }
