@@ -14,6 +14,7 @@ import {
 } from "../services/photo-analysis.js";
 import {
   ApiError,
+  completeCheck,
   completeTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
@@ -591,10 +592,19 @@ class PerimeterCheck extends HTMLElement {
     this._finishCheck();
   }
 
-  _finishCheck() {
-    clearCheck();
-    this._doneIncompleteDialog?.close();
-    navigate("/today");
+  async _finishCheck() {
+    const check = getCurrentCheck();
+    try {
+      if (check?.remoteStarted && check.id) {
+        await completeCheck(check.id);
+      }
+      clearCheck();
+      this._doneIncompleteDialog?.close();
+      navigate("/today");
+    } catch (err) {
+      console.error("complete check failed", err);
+      this._showToast("Could not finish the check. Please try again.");
+    }
   }
 
   _incompletePlaceCount() {
