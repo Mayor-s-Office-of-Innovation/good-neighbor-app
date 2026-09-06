@@ -1,10 +1,15 @@
 import { getConfig } from "../config.js";
+import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { ddb } from "../db.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
+import { supersedeOpenTasksForCondition } from "../analysis/guidance/guidance-store.js";
 import { jsonResponse, readJsonBody } from "../http.js";
+import { deriveSiteId } from "../lib/principal.js";
+import { sitePk } from "./keys.js";
 
 const APP_ID = "good-neighbor-app";
 
@@ -64,11 +69,79 @@ function requestId(body, fallback) {
 }
 
 /**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.analysisId
+ * @returns {Promise<{ checkId: string, artifactId: string } | null>}
+ */
+async function findAnalysisContext({ tableName, siteId, analysisId }) {
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+  do {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        FilterExpression: "#analysisId = :analysisId",
+        ProjectionExpression: "checkId, artifactId, analysisId",
+        ExpressionAttributeNames: { "#analysisId": "analysisId" },
+        ExpressionAttributeValues: {
+          ":pk": sitePk(siteId),
+          ":analysisId": analysisId,
+        },
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    const item = result.Items?.[0];
+    if (
+      typeof item?.checkId === "string" &&
+      typeof item.artifactId === "string"
+    ) {
+      return { checkId: item.checkId, artifactId: item.artifactId };
+    }
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return null;
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.analysisId
+ * @param {string} opts.conditionId
+ * @param {string} opts.reason
+ * @param {{ checkId: string, artifactId: string }} opts.context
+ * @returns {Promise<void>}
+ */
+async function supersedeAmendedConditionTasks({
+  tableName,
+  siteId,
+  analysisId,
+  conditionId,
+  reason,
+  context,
+}) {
+  await supersedeOpenTasksForCondition({
+    tableName,
+    siteId,
+    conditionId,
+    checkId: context.checkId,
+    assessmentIdPrefix: `${context.checkId}-${context.artifactId}`,
+    analysisId,
+    reason,
+  });
+}
+
+/**
  * POST /v1/analyses/{analysisId}/conditions/{conditionId}
- * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
  */
 export async function editAnalysisCondition(event) {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
   const { analysisId, conditionId } = event.pathParameters ?? {};
   if (!analysisId || !conditionId) {
     return jsonResponse(400, { error: "Missing analysisId or conditionId" });
@@ -91,11 +164,27 @@ export async function editAnalysisCondition(event) {
   }
 
   try {
+    const context = await findAnalysisContext({
+      tableName: dynamoTable,
+      siteId,
+      analysisId,
+    });
+    if (!context) {
+      return jsonResponse(404, { error: "Analysis not found" });
+    }
     const client = await analyzerClient();
     const result = await client.editCondition(analysisId, conditionId, {
       description: description.trim(),
       appId: APP_ID,
       requestId: requestId(body, `${analysisId}#${conditionId}#edit`),
+    });
+    await supersedeAmendedConditionTasks({
+      tableName: dynamoTable,
+      siteId,
+      analysisId,
+      conditionId,
+      reason: "analysis_condition_edited",
+      context,
     });
     return jsonResponse(200, result);
   } catch (err) {
@@ -105,10 +194,12 @@ export async function editAnalysisCondition(event) {
 
 /**
  * POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject
- * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
  */
 export async function rejectAnalysisCondition(event) {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
   const { analysisId, conditionId } = event.pathParameters ?? {};
   if (!analysisId || !conditionId) {
     return jsonResponse(400, { error: "Missing analysisId or conditionId" });
@@ -138,11 +229,27 @@ export async function rejectAnalysisCondition(event) {
       : undefined;
 
   try {
+    const context = await findAnalysisContext({
+      tableName: dynamoTable,
+      siteId,
+      analysisId,
+    });
+    if (!context) {
+      return jsonResponse(404, { error: "Analysis not found" });
+    }
     const client = await analyzerClient();
     const result = await client.rejectCondition(analysisId, conditionId, {
       ...(reason ? { reason } : {}),
       appId: APP_ID,
       requestId: requestId(body, `${analysisId}#${conditionId}#reject`),
+    });
+    await supersedeAmendedConditionTasks({
+      tableName: dynamoTable,
+      siteId,
+      analysisId,
+      conditionId,
+      reason: "analysis_condition_rejected",
+      context,
     });
     return jsonResponse(200, result);
   } catch (err) {

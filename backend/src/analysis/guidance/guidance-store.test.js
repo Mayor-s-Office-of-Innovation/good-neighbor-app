@@ -1,6 +1,7 @@
 import {
   BatchGetCommand,
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,7 @@ const {
   getAssessmentGuidance,
   markTaskCannotDo,
   storeEvaluatedAssessment,
+  supersedeOpenTasksForCondition,
 } = await import("./guidance-store.js");
 
 /**
@@ -746,6 +748,80 @@ describe("markTaskCannotDo", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(task).toMatchObject({ status: "cannot_do" });
+  });
+});
+
+describe("supersedeOpenTasksForCondition", () => {
+  beforeEach(() => {
+    send.mockReset();
+  });
+
+  it("supersedes only open tasks for the amended condition and artifact", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "action",
+          severity: 2,
+          conditionId: "cond-litter",
+          checkId: "chk-1",
+          assessmentId: "chk-1-art-1",
+        },
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-2",
+          taskId: "task-2",
+          status: "open",
+          kind: "escalation",
+          severity: 3,
+          conditionId: "cond-litter",
+          checkId: "chk-1",
+          assessmentId: "chk-1-art-2",
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const result = await supersedeOpenTasksForCondition({
+      tableName: "table",
+      siteId: "site-1",
+      conditionId: "cond-litter",
+      checkId: "chk-1",
+      assessmentIdPrefix: "chk-1-art-1",
+      analysisId: "ana-1",
+      reason: "analysis_condition_edited",
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(result.supersededTaskIds).toEqual(["task-1"]);
+    expect(send).toHaveBeenCalledTimes(2);
+    const query = send.mock.calls[0][0];
+    expect(query).toBeInstanceOf(QueryCommand);
+    expect(query.input).toMatchObject({
+      IndexName: "GSI2",
+      KeyConditionExpression: "gsi2pk = :worklist",
+      FilterExpression: "#conditionId = :conditionId",
+      ExpressionAttributeValues: {
+        ":worklist": "SITE#site-1#TASK#open",
+        ":conditionId": "cond-litter",
+      },
+    });
+    const tx = send.mock.calls[1][0];
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems).toHaveLength(1);
+    const put = tx.input.TransactItems[0].Put;
+    expect(put.ConditionExpression).toBe("#status = :open");
+    expect(put.Item).toMatchObject({
+      taskId: "task-1",
+      status: "superseded",
+      supersededAt: "2026-08-18T12:02:00.000Z",
+      supersededByAnalysisId: "ana-1",
+      supersessionReason: "analysis_condition_edited",
+      gsi2pk: "SITE#site-1#TASK#superseded",
+    });
   });
 });
 
