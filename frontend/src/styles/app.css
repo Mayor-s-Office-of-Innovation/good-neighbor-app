@@ -2611,7 +2611,7 @@ theme-toggle {
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 0.53125rem;
-  color: #9194a2;
+  color: var(--text-secondary);
   font-family: Roboto, var(--font-sans);
   font-size: 0.625rem;
   font-style: normal;
