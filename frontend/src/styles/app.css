@@ -2865,6 +2865,12 @@ theme-toggle {
   animation: analysis-progress-spin 0.9s linear infinite;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .analysis-progress-ring {
+    animation: none;
+  }
+}
+
 .analysis-edit-dialog__field {
   display: flex;
   flex-direction: column;
