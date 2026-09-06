@@ -217,16 +217,24 @@ export async function rejectAnalysisCondition(event) {
     body
   );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
-  const reason =
-    input.reason && typeof input.reason === "object"
-      ? {
-          key:
-            input.reason.key === "other" ? "other" : "not_a_problem",
-          ...(typeof input.reason.note === "string" && input.reason.note.trim()
-            ? { note: input.reason.note.trim() }
-            : {}),
-        }
-      : undefined;
+  let reason;
+  if (input.reason !== undefined) {
+    if (
+      !input.reason ||
+      typeof input.reason !== "object" ||
+      (input.reason.key !== "not_a_problem" && input.reason.key !== "other")
+    ) {
+      return jsonResponse(400, {
+        error: "reason.key must be one of: not_a_problem, other",
+      });
+    }
+    reason = {
+      key: input.reason.key,
+      ...(typeof input.reason.note === "string" && input.reason.note.trim()
+        ? { note: input.reason.note.trim() }
+        : {}),
+    };
+  }
 
   try {
     const context = await findAnalysisContext({
