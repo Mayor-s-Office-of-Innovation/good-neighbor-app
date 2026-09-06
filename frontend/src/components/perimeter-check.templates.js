@@ -226,23 +226,25 @@ export const shell = () => html`
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
-          <button
+          <wa-button
             class="sheet__cancel"
             type="button"
             id="cancel-check-save"
+            appearance="filled"
           >
             Save my place to resume later
-          </button>
+          </wa-button>
         </div>
         <ul class="sheet__opts">
           <li>
-            <button
+            <wa-button
               class="sheet__opt sheet__opt--danger"
               id="cancel-check-discard"
               type="button"
+              appearance="plain"
             >
               End the check and exit
-            </button>
+            </wa-button>
           </li>
         </ul>
       </div>
@@ -260,6 +262,10 @@ export const shell = () => html`
   </div>
 `;
 
+/**
+ * @param {{ items: Array<{ kind?: string, analysis?: { status?: string } }>, skipped?: boolean }} place
+ * @returns {string}
+ */
 function placeSummary(place) {
   const photoCount = place.items.filter((item) => item.kind === "photo").length;
   const textCount = place.items.filter((item) => item.kind === "text").length;
@@ -278,6 +284,16 @@ function placeSummary(place) {
   return pieces.join(" · ");
 }
 
+/**
+ * @param {object} props
+ * @param {{ id: string, name: string, items: any[], skipped?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[] }} props.place
+ * @param {number} props.index
+ * @param {boolean} props.expanded
+ * @param {boolean} props.isLast
+ * @param {string | null} props.openMenuItemId
+ * @param {{ top: number, right: number } | null} props.photoMenuAnchor
+ * @returns {string}
+ */
 export function placeRow({
   place,
   index,
@@ -394,9 +410,7 @@ function textMode(place) {
         data-text-input="${escapeAttr(place.id)}"
         rows="5"
         placeholder="At ${escapeAttr(place.name)}, ..."
-      >
-${escapeHtml(place.draftText || "")}</textarea
-      >
+      >${escapeHtml(place.draftText || "")}</textarea>
     </label>
     <div class="place-row__actions">
       <button

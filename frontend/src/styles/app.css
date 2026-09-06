@@ -3996,6 +3996,10 @@ theme-toggle {
 .sheet__opt {
   width: 100%;
   margin: 0;
+  height: auto;
+}
+.sheet__opt::part(button) {
+  width: 100%;
   min-height: 46px;
   border: 0;
   border-radius: 999px;
@@ -4003,12 +4007,14 @@ theme-toggle {
   color: var(--c-hazard);
   font: inherit;
   font-weight: 800;
-  cursor: pointer;
 }
 .sheet__cancel {
   display: block;
   width: 100%;
   margin: 0;
+}
+.sheet__cancel::part(button) {
+  width: 100%;
   min-height: 46px;
   border: 0;
   border-radius: 999px;
@@ -4016,10 +4022,11 @@ theme-toggle {
   color: var(--on-ink);
   font: inherit;
   font-weight: 800;
-  cursor: pointer;
 }
 .sheet__opt:focus-visible,
-.sheet__cancel:focus-visible {
+.sheet__cancel:focus-visible,
+.sheet__opt::part(button):focus-visible,
+.sheet__cancel::part(button):focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
 }
