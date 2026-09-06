@@ -18,6 +18,7 @@ import {
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
 import {
+  eligibleTicketsForClosure,
   executeAppActions,
   initialAppActionStatus,
   is311SubmissionEnabled,
@@ -1119,10 +1120,49 @@ export async function completeTaskWithAppActions(opts) {
     priorResults,
     trigger: "user_confirmed",
   });
-  const appActionResults =
-    executedAppActionResults.length > 0
-      ? executedAppActionResults
-      : priorResults;
+
+  // Informational 311 tickets we filed under our own agency (76) are closed
+  // when the site owner marks the underlying work done. The prior filing
+  // result is always carried forward — closure rides on top of it, never
+  // replaces it. Only work-done completions; never the 311_filed path (the
+  // city manages those cases).
+  let closureResult = null;
+  if (
+    opts.completionMethod !== "311_filed" &&
+    is311SubmissionEnabled(opts.env ?? process.env) &&
+    eligibleTicketsForClosure(priorResults).size > 0
+  ) {
+    const closureResults = await executeAppActions(
+      [{ code: "close_311_ticket", payload: {} }],
+      {
+        env: opts.env,
+        now: nowDate,
+        taskId: opts.taskId,
+        tableName: opts.tableName,
+        siteId: opts.siteId,
+        task: claimed,
+        priorResults,
+        trigger: "user_confirmed",
+        // Mid-execution closure checkpoints pin their writes to this lease so
+        // a reclaimed executor cannot persist stale results; the value is the
+        // exact attribute the final completion write conditions on.
+        completionLeaseExpiresAt: leaseExpiresAt,
+      },
+    );
+    closureResult = closureResults[0] ?? null;
+  }
+
+  const appActionResults = [...executedAppActionResults];
+  if (
+    !executedAppActionResults.some(
+      (result) => result.code === "create_311_ticket",
+    )
+  ) {
+    appActionResults.unshift(
+      ...priorResults.filter((result) => result.code === "create_311_ticket"),
+    );
+  }
+  if (closureResult) appActionResults.push(closureResult);
   const appActionStatus = summarizeAppActionResults(appActionResults);
   const appActionFailed = appActionStatus === "failed";
 

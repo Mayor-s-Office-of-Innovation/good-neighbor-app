@@ -6,8 +6,11 @@ import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
 import {
   buildAttachmentUpdatePayload,
+  buildCloseSrPayload,
   buildCreateSrPayload,
+  CLOSE_REASON_FIELD_WORK_COMPLETED,
   createSf311Client,
+  GOOD_NEIGHBOR_AGENCY,
   Sf311Error,
 } from "../../integrations/sf311-client.js";
 import {
@@ -72,6 +75,29 @@ function priorTicketsByServiceCode(priorResults, actionCode) {
  */
 function attachmentKey(attachment) {
   return String(attachment.artifactId ?? attachment.s3Key ?? "");
+}
+
+/**
+ * Closure state from earlier close_311_ticket results, keyed by service code.
+ * `closed` tickets are never re-attempted; `failed` ones carry their prior
+ * failure forward for the retry path.
+ * @param {AppActionResult[]} priorResults
+ * @returns {Map<string, Record<string, unknown>>}
+ */
+function priorClosuresFromPriorResults(priorResults) {
+  const closures = new Map();
+  for (const result of priorResults) {
+    if (result.code !== "close_311_ticket") continue;
+    const entries = result.payload?.closures;
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const item = /** @type {Record<string, unknown>} */ (entry);
+      const serviceCode = String(item.serviceCode ?? "");
+      if (serviceCode) closures.set(serviceCode, item);
+    }
+  }
+  return closures;
 }
 
 /**
@@ -140,11 +166,47 @@ function build311ActionResult({
 }
 
 /**
+ * Merge a fresh action result into the prior persisted results: same-code
+ * entries are replaced in place (first occurrence wins the slot), everything
+ * else is kept verbatim so results for other action codes survive the write.
+ * Checkpointing with this instead of `[result]` is what keeps closure records
+ * from clobbering the create results that closure eligibility depends on (and
+ * vice versa) across lease-recovery retries.
+ * @param {AppActionResult[]} priorResults
+ * @param {AppActionResult} result
+ * @returns {AppActionResult[]}
+ */
+function mergeAppActionResults(priorResults, result) {
+  const merged = [];
+  let placed = false;
+  for (const prior of priorResults) {
+    if (prior.code === result.code && !placed) {
+      merged.push(result);
+      placed = true;
+      continue;
+    }
+    if (prior.code === result.code) continue;
+    merged.push(prior);
+  }
+  if (!placed) merged.push(result);
+  return merged;
+}
+
+/**
+ * Durably record an action result while the task is mid-completion, so a crash
+ * or lease expiry after a side-effecting HUB call still leaves the persisted
+ * record behind (HUB closure is non-idempotent; the persisted `closed` record
+ * is our dedupe on lease-recovery retries). Merges `result` into `priorResults`
+ * rather than replacing them, and — when the completion lease is known — pins
+ * the write to that exact lease so a stale executor cannot checkpoint after its
+ * lease was reclaimed.
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.taskId
  * @param {AppActionResult} opts.result
+ * @param {AppActionResult[]} opts.priorResults
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @param {string} opts.updatedAt
  * @returns {Promise<void>}
  */
@@ -153,6 +215,8 @@ async function checkpoint311ActionResult({
   siteId,
   taskId,
   result,
+  priorResults,
+  completionLeaseExpiresAt,
   updatedAt,
 }) {
   if (!tableName || !siteId || !taskId) return;
@@ -162,15 +226,23 @@ async function checkpoint311ActionResult({
       Key: taskKey(siteId, taskId),
       UpdateExpression:
         "SET appActionResults = :results, appActionStatus = :status, updatedAt = :updatedAt",
-      ConditionExpression: "#status = :completing",
+      ConditionExpression: completionLeaseExpiresAt
+        ? "#status = :completing AND #lease = :leaseExpiresAt"
+        : "#status = :completing",
       ExpressionAttributeNames: {
         "#status": "status",
+        ...(completionLeaseExpiresAt
+          ? { "#lease": "completionLeaseExpiresAt" }
+          : {}),
       },
       ExpressionAttributeValues: {
-        ":results": [result],
+        ":results": mergeAppActionResults(priorResults, result),
         ":status": summarizeAppActionResults([result]),
         ":updatedAt": updatedAt,
         ":completing": "completing",
+        ...(completionLeaseExpiresAt
+          ? { ":leaseExpiresAt": completionLeaseExpiresAt }
+          : {}),
       },
     }),
   );
@@ -420,6 +492,7 @@ async function attachImagesToServiceRequest({
  * @param {Record<string, string | undefined>} opts.env
  * @param {AppActionResult[]} opts.priorResults
  * @param {"task_created" | "user_confirmed" | undefined} opts.trigger
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311Action({
@@ -431,6 +504,7 @@ async function execute311Action({
   env,
   priorResults,
   trigger,
+  completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
   const priorTickets = priorTicketsByServiceCode(priorResults, action.code);
@@ -580,6 +654,8 @@ async function execute311Action({
             recordedAt: now,
             tickets,
           }),
+          priorResults,
+          completionLeaseExpiresAt: completionLeaseExpiresAt,
           updatedAt: now,
         });
       }
@@ -620,6 +696,194 @@ function appActionErrorReason(error) {
   if (error instanceof Sf311Error) return error.code || "sf311_error";
   if (error instanceof Error) return error.message;
   return "app_action_failed";
+}
+
+/**
+ * Tickets this app is allowed to close: informational tickets we filed under
+ * our own agency (76) and reached `submitted` state. City-managed tickets
+ * (filed on user confirmation under a looked-up agency) are never closed by
+ * us. Already-closed tickets stay in the map so the executor can carry their
+ * closure records forward without re-calling HUB.
+ * @param {AppActionResult[]} priorResults
+ * @returns {Map<string, { ticket: Record<string, unknown>, closedReasonCode: string }>}
+ */
+export function eligibleTicketsForClosure(priorResults) {
+  const eligible = new Map();
+  for (const result of priorResults) {
+    if (result.code !== "create_311_ticket") continue;
+    if (result.status !== "submitted") continue;
+    for (const ticket of ticketsFromActionResult(result)) {
+      const serviceCode = String(ticket.serviceCode ?? "");
+      if (!serviceCode || !ticket.srNum) continue;
+      if (String(ticket.responsibleAgency ?? "") !== GOOD_NEIGHBOR_AGENCY) {
+        continue;
+      }
+      eligible.set(serviceCode, {
+        ticket,
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+      });
+    }
+  }
+  return eligible;
+}
+
+/**
+ * @param {object} opts
+ * @param {AppAction} opts.action
+ * @param {string} opts.status
+ * @param {string} opts.recordedAt
+ * @param {Array<Record<string, unknown>>} opts.closures
+ * @param {string} [opts.reason]
+ * @param {Record<string, unknown>} [opts.diagnostics]
+ * @returns {AppActionResult}
+ */
+function buildCloseActionResult({
+  action,
+  status,
+  recordedAt,
+  closures,
+  reason,
+  diagnostics,
+}) {
+  return {
+    code: action.code,
+    status,
+    ...(reason ? { reason } : {}),
+    payload: { ...(action.payload ?? {}), closures },
+    ...(diagnostics ? { diagnostics } : {}),
+    recordedAt,
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {AppAction} opts.action
+ * @param {AppActionResult[]} opts.priorResults
+ * @param {import("../../config.js").AppConfig} opts.config
+ * @param {Date} opts.nowDate
+ * @param {string} [opts.tableName]
+ * @param {string} [opts.siteId]
+ * @param {string} [opts.taskId]
+ * @param {string} [opts.completionLeaseExpiresAt]
+ * @returns {Promise<AppActionResult>}
+ */
+async function execute311ClosureAction({
+  action,
+  priorResults,
+  config,
+  nowDate,
+  tableName = "",
+  siteId = "",
+  taskId = "",
+  completionLeaseExpiresAt = "",
+}) {
+  const now = nowDate.toISOString();
+  const priorClosuresByServiceCode =
+    priorClosuresFromPriorResults(priorResults);
+  const eligible = eligibleTicketsForClosure(priorResults);
+
+  if (eligible.size === 0) {
+    return {
+      code: action.code,
+      status: "recorded",
+      payload: { closures: [] },
+      recordedAt: now,
+    };
+  }
+
+  const sf311 = createSf311Client({ config });
+  /** @type {Array<Record<string, unknown>>} */
+  const closures = [];
+  for (const [serviceCode, { ticket }] of eligible) {
+    const priorClosure = priorClosuresByServiceCode.get(serviceCode);
+    // Already closed on an earlier attempt: carry the record forward without
+    // another UpdateSR call (HUB closure is not idempotent on its side).
+    if (priorClosure && priorClosure.status === "closed") {
+      closures.push({ ...priorClosure });
+      continue;
+    }
+    try {
+      const payload = buildCloseSrPayload({
+        srNum: String(ticket.srNum),
+        now: nowDate,
+      });
+      const response = await sf311.updateServiceRequest(payload);
+      closures.push({
+        serviceCode,
+        srNum: String(ticket.srNum),
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        status: "closed",
+        ...(response.updateId ? { updateId: response.updateId } : {}),
+      });
+      // Persist the closed record immediately: HUB closure is non-idempotent,
+      // so if this process dies (or the lease is lost) before the final task
+      // write, lease recovery must see `closed` here instead of re-closing
+      // the same SR from the original CreateSR result.
+      if (tableName && siteId && taskId) {
+        try {
+          await checkpoint311ActionResult({
+            tableName,
+            siteId,
+            taskId,
+            completionLeaseExpiresAt,
+            result: buildCloseActionResult({
+              action,
+              status: closures.every((closure) => closure.status === "closed")
+                ? "submitted"
+                : "partial",
+              recordedAt: now,
+              // Snapshot: the accumulator keeps mutating across the loop, and
+              // the checkpoint result must record closures as of this call.
+              closures: [...closures],
+            }),
+            priorResults,
+            updatedAt: now,
+          });
+        } catch {
+          // The checkpoint is best-effort: the final transaction write remains
+          // authoritative. Its failure means the lease was likely reclaimed —
+          // stop issuing further HUB updates this run, since a reclaimed task
+          // gets re-executed and the persisted-prior results no longer include
+          // this in-memory closure.
+          break;
+        }
+      }
+    } catch (error) {
+      closures.push({
+        serviceCode,
+        srNum: String(ticket.srNum),
+        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        status: "failed",
+        reason: appActionErrorReason(error),
+        ...(appActionErrorDiagnostics(error)
+          ? { diagnostics: appActionErrorDiagnostics(error) }
+          : {}),
+      });
+    }
+  }
+
+  if (closures.every((closure) => closure.status === "closed")) {
+    return buildCloseActionResult({
+      action,
+      status: "submitted",
+      recordedAt: now,
+      closures,
+    });
+  }
+  if (closures.some((closure) => closure.status === "closed")) {
+    return buildCloseActionResult({
+      action,
+      status: "partial",
+      recordedAt: now,
+      closures,
+    });
+  }
+  return buildCloseActionResult({
+    action,
+    status: "failed",
+    recordedAt: now,
+    closures,
+  });
 }
 
 /**
@@ -729,6 +993,7 @@ function actionsForTrigger(appActions, trigger) {
  * @param {AppActionResult[]} [opts.priorResults]
  * @param {"task_created" | "user_confirmed"} [opts.trigger]
  * @param {Date} [opts.now]
+ * @param {string} [opts.completionLeaseExpiresAt]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -762,6 +1027,7 @@ export async function executeAppActions(appActions, opts = {}) {
               env,
               priorResults,
               trigger: opts.trigger,
+              completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
             }),
           );
         } catch (error) {
@@ -801,6 +1067,32 @@ export async function executeAppActions(appActions, opts = {}) {
           payload,
           recordedAt: now,
         });
+        break;
+      case "close_311_ticket":
+        try {
+          results.push(
+            await execute311ClosureAction({
+              action,
+              priorResults,
+              config: getConfig(/** @type {NodeJS.ProcessEnv} */ (env)),
+              nowDate,
+              tableName: opts.tableName ?? "",
+              siteId: opts.siteId ?? "",
+              taskId: opts.taskId ?? "",
+              completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
+            }),
+          );
+        } catch (error) {
+          const diagnostics = appActionErrorDiagnostics(error);
+          results.push({
+            code: action.code,
+            status: "failed",
+            reason: appActionErrorReason(error),
+            payload,
+            ...(diagnostics ? { diagnostics } : {}),
+            recordedAt: now,
+          });
+        }
         break;
       default:
         results.push({

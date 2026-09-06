@@ -6,6 +6,10 @@ import { getConfig } from "../config.js";
 
 const SOURCE_AGENCY = "76";
 const SENDING_AGENCY = "76";
+// Our agency id in the HUB: informational tickets are filed under it and only
+// these tickets are eligible for closure (HUB return code 26 rejects updates
+// from any agency other than the SR's responsible agency).
+export const GOOD_NEIGHBOR_AGENCY = SOURCE_AGENCY;
 const SF311_REQUEST_TIMEOUT_MS = 10_000;
 
 /** @type {SecretsManagerClient | undefined} */
@@ -124,6 +128,40 @@ export function buildAttachmentUpdatePayload({ srNum, imageUrl, now }) {
     EffectiveDate: hubDateTime(now),
     ToAgencyDate: "",
     Notes: "",
+  };
+}
+
+// HUB UpdateType 11 = ClosedReason; "HUB changes update status to closed"
+// (HUB_Lookup_Tables.xlsx UpdateType sheet). NumericSubType 8 = "Field Work
+// Completed" (ClosedReasonCode sheet). HUB rejects the update with return
+// code 26 unless SendingAgency is the SR's responsible agency, so closure is
+// only ever attempted for tickets we filed under our own agency id.
+export const CLOSE_REASON_FIELD_WORK_COMPLETED = "8";
+
+/**
+ * @param {object} params
+ * @param {string} params.srNum
+ * @param {string} [params.closedReasonCode]
+ * @param {string} [params.notes]
+ * @param {Date} params.now
+ * @returns {Record<string, string>}
+ */
+export function buildCloseSrPayload({
+  srNum,
+  closedReasonCode = CLOSE_REASON_FIELD_WORK_COMPLETED,
+  notes = "",
+  now,
+}) {
+  return {
+    SRnum: srNum,
+    UpdateType: "11",
+    SendingAgency: SENDING_AGENCY,
+    SourceOperator: "Good Neighbor App",
+    NumericSubType: closedReasonCode,
+    TextSubType: "",
+    EffectiveDate: hubDateTime(now),
+    ToAgencyDate: "",
+    Notes: notes,
   };
 }
 

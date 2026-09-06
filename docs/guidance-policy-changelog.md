@@ -2,6 +2,16 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## 311 ticket closure - 2026-09-04
+
+- App-behavior addition (no rulebase change): when a task with a submitted informational
+  311 ticket (recorded `responsibleAgency` 76 — currently always filed silently at task
+  creation) is completed via the done path, the backend closes the ticket in the HUB with
+  `UpdateSR` `UpdateType 11` (`ClosedReason` 8, "Field Work Completed"). Eligibility is
+  tested by responsible agency, not filing trigger, so tickets filed for city-handled work
+  (which resolve to a city agency) are never closed by the app. Closure failures are
+  recorded on the task and never block completion.
+
 ## actions-escalations-v2 - 2026-08-18
 
 - Source asset: `actions-escalations-rules-v2.csv`.
