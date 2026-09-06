@@ -77,7 +77,9 @@ class PerimeterCheck extends HTMLElement {
     this._addPlaceInput = this.querySelector("#add-place-name");
     this._doneIncompleteDialog = this.querySelector("#done-incomplete-dialog");
     this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
-    this._analysisSuccessDialog = this.querySelector("#analysis-success-dialog");
+    this._analysisSuccessDialog = this.querySelector(
+      "#analysis-success-dialog",
+    );
     this._analysisProgressDialog = this.querySelector(
       "#analysis-progress-dialog",
     );
