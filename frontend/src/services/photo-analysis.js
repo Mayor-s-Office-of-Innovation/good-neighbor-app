@@ -375,7 +375,7 @@ async function run(placeId, itemId) {
     updateItem(placeId, itemId, {
       upload: {
         ...(item.upload || {}),
-        status: item.upload?.status || "failed",
+        status: item.upload?.status === "uploaded" ? "uploaded" : "failed",
       },
     });
     updateItemAnalysis(placeId, itemId, {
