@@ -32,6 +32,7 @@ import {
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
+import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
 import { getSite, putSitePlaces } from "../src/handlers/site.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
@@ -39,11 +40,38 @@ import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
+const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
-  "access-control-allow-headers": "content-type,idempotency-key,x-debug-sub",
+  "access-control-allow-headers":
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site",
 };
+
+// Local device-token verification (mirrors lambda/authorizer.js): when a
+// request carries `Authorization: Bearer <jwt>`, verify it and use its claims
+// INSTEAD of the X-Debug stubs — so local dev exercises the production claim
+// contract. Unset DEVICE_TOKEN_SECRET disables verification (stub-only mode).
+async function resolveClaims(flatHeaders) {
+  const bearer = /^(?:authorization)$/i;
+  const header = Object.keys(flatHeaders).find((k) => bearer.test(k));
+  const value = header ? flatHeaders[header] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(value.trim());
+  if (m && process.env.DEVICE_TOKEN_SECRET) {
+    try {
+      const { verifyDeviceToken } = await import("../src/lib/device-token.js");
+      const claims = await verifyDeviceToken(m[1]);
+      if (claims.typ !== "access") throw new Error("not an access token");
+      return {
+        sub: claims.sub,
+        siteId: claims["custom:siteId"],
+      };
+    } catch (err) {
+      return { error: /** @type {Error} */ (err).message };
+    }
+  }
+  return null;
+}
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -82,6 +110,10 @@ function route(method, pattern, handler) {
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
   route("POST", "/site-code", siteCodeHandler),
+  // Device bootstrap (Option 4 device auth): open routes, no authorizer.
+  route("POST", "/v1/devices", registerDevice),
+  route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  // Site config (feature/142 onboard locations)
   route("GET", "/v1/site", getSite),
   route("PUT", "/v1/site/places", putSitePlaces),
   route(
@@ -190,12 +222,30 @@ const server = createServer(async (req, res) => {
     }
     const hasQuery = Object.keys(queryStringParameters).length > 0;
 
+    // Local token verification (production claim contract): a Bearer token
+    // overrides the X-Debug stubs; a BAD token 401s like the real authorizer.
+    const flat = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      flat[k] = Array.isArray(v) ? v.join(",") : v;
+    }
+    const claims = await resolveClaims(flat);
+    if (claims?.error) {
+      res.writeHead(401, {
+        "content-type": "application/json",
+        ...LOCAL_CORS_HEADERS,
+      });
+      res.end(JSON.stringify({ error: "invalid_token", reason: claims.error }));
+      console.log(`[api] ${method} ${path} → 401 (invalid token)`);
+      return;
+    }
+
     const event = buildProxyEvent({
       method,
       path,
       headers: req.headers,
       body,
-      defaultSub: DEFAULT_SUB,
+      defaultSub: claims?.sub ?? DEFAULT_SUB,
+      defaultSite: claims?.siteId ?? DEFAULT_SITE,
       pathParameters: matched.route.names.length
         ? matched.pathParameters
         : undefined,

@@ -27,6 +27,7 @@ import {
 import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
+import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
 import { getSite, putSitePlaces } from "../handlers/site.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
@@ -39,6 +40,11 @@ import { withServerErrorsLogged } from "../lib/log-server-error.js";
 // only ever call them with the event, so the map is typed to that call shape.
 const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /site-code": siteCodeHandler,
+  // Device bootstrap (Option 4 device auth — see docs/adr/0010): open routes,
+  // no authorizer. Everything under /v1/* except these + the intakes is gated.
+  "POST /v1/devices": registerDevice,
+  "POST /v1/devices/token:refresh": refreshDeviceToken,
+  // Site config (feature/142 onboard locations)
   "GET /v1/site": getSite,
   "PUT /v1/site/places": putSitePlaces,
   "POST /v1/checks/{checkId}/places/{placeId}/description:validate":
