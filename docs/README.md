@@ -17,6 +17,9 @@
   immutable; superseded ADRs point forward). Start with
   [ADR 0001](./adr/0001-architecture-stack.md) → [ADR 0002](./adr/0002-datastore-dynamodb.md)
   for the stack + datastore story.
+- **[ADR 0010](./adr/0010-device-token-auth.md)** — the device-token auth
+  decision now wired into the API (amends the identity decision in
+  [security-review.md](./security-review.md)).
 
 ## Operations
 

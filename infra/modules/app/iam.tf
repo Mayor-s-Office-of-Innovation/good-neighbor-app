@@ -79,6 +79,13 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ReadDeviceTokenSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.device_token_key.arn]
+  }
+
+  statement {
     sid       = "ReadAnalyzerSecret"
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
@@ -125,6 +132,60 @@ resource "aws_iam_role_policy" "api" {
   name   = "${local.name_prefix}-api"
   role   = aws_iam_role.api.id
   policy = data.aws_iam_policy_document.api.json
+}
+
+# ---- authorizer Lambda role ---------------------------------------------------
+# Read-only by design: verify token + one DEVICE# GetItem + read the signing
+# key. No write, no S3, no SQS.
+
+resource "aws_iam_role" "authorizer" {
+  name               = "${local.name_prefix}-authorizer"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "authorizer" {
+  statement {
+    sid       = "ReadDeviceItems"
+    effect    = "Allow"
+    actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.app.arn]
+  }
+
+  statement {
+    sid       = "ReadDeviceTokenSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.device_token_key.arn]
+  }
+
+  statement {
+    sid       = "UseAppKey"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.app.arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.authorizer.arn}:*"]
+  }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "authorizer" {
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
+  name   = "${local.name_prefix}-authorizer"
+  role   = aws_iam_role.authorizer.id
+  policy = data.aws_iam_policy_document.authorizer.json
 }
 
 # ---- worker Lambda role -------------------------------------------------------

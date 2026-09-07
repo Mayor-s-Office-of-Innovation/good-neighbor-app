@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildAttachmentUpdatePayload,
+  buildCloseSrPayload,
   buildCreateSrPayload,
   createSf311Client,
   findResponsibleAgencyInLookup,
@@ -100,6 +101,25 @@ describe("SF311 CreateSR client helpers", () => {
         serviceCode: "1.1.4.7.20.0",
       }),
     ).toHaveLength(50);
+  });
+
+  it("builds an UpdateSR close payload with HUB field names", () => {
+    expect(
+      buildCloseSrPayload({
+        srNum: "2000008106",
+        now: new Date("2026-09-02T17:11:12.000Z"),
+      }),
+    ).toEqual({
+      SRnum: "2000008106",
+      UpdateType: "11",
+      SendingAgency: "76",
+      SourceOperator: "Good Neighbor App",
+      NumericSubType: "8",
+      TextSubType: "",
+      EffectiveDate: "2026-09-02 17:11:12",
+      ToAgencyDate: "",
+      Notes: "",
+    });
   });
 
   it("finds ResponsibleAgency in nested lookup responses", () => {
