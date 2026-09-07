@@ -1126,7 +1126,14 @@ export async function completeTaskWithAppActions(opts) {
       ? executedAppActionResults
       : priorResults;
   const appActionStatus = summarizeAppActionResults(appActionResults);
-  const appActionFailed = appActionStatus === "failed";
+  // Whether THIS completion attempt failed — judged only on the actions it ran
+  // for this trigger, NOT on the merged history. A completion for a trigger with
+  // no actions to run (e.g. a manual onsite pickup whose only app action is a
+  // task_created 311 notification for the City's awareness) must not be blocked
+  // by a prior/background app-action failure. A user_confirmed action that runs
+  // and fails still holds the task open (`executedAppActionResults` carries it).
+  const appActionFailed =
+    summarizeAppActionResults(executedAppActionResults) === "failed";
 
   const updated = {
     ...claimed,

@@ -719,6 +719,63 @@ describe("completeTaskWithAppActions", () => {
       completionStartedAt: "2026-08-18T11:55:00.000Z",
     });
   });
+
+  it("completes an onsite task whose only app action is a failed task_created 311 notification", async () => {
+    // Onsite tasks carry a create_311_ticket (task_created) so the City gets a
+    // dedup/awareness signal even though they won't dispatch. When that silent
+    // notification failed at creation, a manual "we picked this up" completion
+    // (user_confirmed) runs no actions for its trigger and must NOT inherit the
+    // stale failure and roll the task back to open.
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              executionTrigger: "task_created",
+              serviceCodeOrAction: null,
+            },
+          },
+        ],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "failed",
+            reason: "missing_service_code",
+          },
+        ],
+        appActionStatus: "failed",
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "manual",
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    // No external 311 call is attempted for a user_confirmed completion of a
+    // task_created-only action: Get + claim + final write, nothing more.
+    expect(send).toHaveBeenCalledTimes(3);
+    const finalTx = send.mock.calls[2][0];
+    expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
+      status: "completed",
+      completedAt: "2026-08-18T12:02:00.000Z",
+      completionMethod: "manual",
+      gsi2pk: "SITE#site-1#TASK#completed",
+    });
+    expect(task).toMatchObject({ status: "completed" });
+  });
 });
 
 describe("markTaskCannotDo", () => {
