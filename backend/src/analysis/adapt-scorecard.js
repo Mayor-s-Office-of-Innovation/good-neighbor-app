@@ -17,6 +17,7 @@
 
 /**
  * @typedef {object} AdaptedConcern
+ * @property {string} [conditionId]
  * @property {string} category
  * @property {number} rating
  * @property {string} [ratingLabel]
@@ -51,6 +52,7 @@ export function adaptAssessment(response) {
       explanation: c.description,
       evidenceIndices: c.evidence_indices ?? [],
     };
+    if (c.condition_id !== undefined) concern.conditionId = c.condition_id;
     if (c.severity_label !== undefined) concern.ratingLabel = c.severity_label;
     return concern;
   });

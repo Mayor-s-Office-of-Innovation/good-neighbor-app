@@ -12,7 +12,9 @@ import {
   assessmentTimelineGsi,
   conditionKey,
   conditionTimelineGsi,
+  GSI2_NAME,
   taskKey,
+  taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
 } from "../../handlers/keys.js";
@@ -1164,7 +1166,14 @@ export async function completeTaskWithAppActions(opts) {
   }
   if (closureResult) appActionResults.push(closureResult);
   const appActionStatus = summarizeAppActionResults(appActionResults);
-  const appActionFailed = appActionStatus === "failed";
+  // Whether THIS completion attempt failed — judged only on the actions it ran
+  // for this trigger, NOT on the merged history. A completion for a trigger with
+  // no actions to run (e.g. a manual onsite pickup whose only app action is a
+  // task_created 311 notification for the City's awareness) must not be blocked
+  // by a prior/background app-action failure. A user_confirmed action that runs
+  // and fails still holds the task open (`executedAppActionResults` carries it).
+  const appActionFailed =
+    summarizeAppActionResults(executedAppActionResults) === "failed";
 
   const updated = {
     ...claimed,
@@ -1210,6 +1219,108 @@ export async function completeTaskWithAppActions(opts) {
     }),
   );
   return updated;
+}
+
+/**
+ * Mark open tasks for one amended analyzer condition as superseded. This is used
+ * when an analysis amendment replaces/rejects a specific condition; sibling
+ * condition tasks from the same assessment remain open.
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.conditionId
+ * @param {string} [opts.checkId]
+ * @param {string} [opts.assessmentIdPrefix]
+ * @param {string} [opts.analysisId]
+ * @param {string} [opts.reason]
+ * @param {Date} [opts.now]
+ * @returns {Promise<{ supersededTaskIds: string[] }>}
+ */
+export async function supersedeOpenTasksForCondition(opts) {
+  const now = (opts.now ?? new Date()).toISOString();
+  /** @type {Record<string, unknown>[]} */
+  const matches = [];
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+
+  do {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: opts.tableName,
+        IndexName: GSI2_NAME,
+        KeyConditionExpression: "gsi2pk = :worklist",
+        FilterExpression: "#conditionId = :conditionId",
+        ExpressionAttributeNames: {
+          "#conditionId": "conditionId",
+        },
+        ExpressionAttributeValues: {
+          ":worklist": taskWorklistPk(opts.siteId, "open"),
+          ":conditionId": opts.conditionId,
+        },
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    matches.push(...(result.Items ?? []));
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+
+  const tasks = matches.filter((task) => {
+    if (task.status !== "open") return false;
+    if (opts.checkId && task.checkId !== opts.checkId) return false;
+    if (
+      opts.assessmentIdPrefix &&
+      !String(task.assessmentId ?? "").startsWith(opts.assessmentIdPrefix)
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  /** @type {string[]} */
+  const supersededTaskIds = tasks
+    .map((task) => task.taskId)
+    .filter((taskId) => typeof taskId === "string" && taskId)
+    .map((taskId) => String(taskId));
+
+  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
+    const chunk = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: chunk.map((task) => {
+          const taskId = String(task.taskId);
+          const updated = {
+            ...task,
+            status: "superseded",
+            supersededAt: now,
+            supersessionReason: opts.reason ?? "analysis_condition_amended",
+            ...(opts.analysisId
+              ? { supersededByAnalysisId: opts.analysisId }
+              : {}),
+            updatedAt: now,
+            ...taskWorklistDateGsi(
+              opts.siteId,
+              "superseded",
+              String(task.kind),
+              Number(task.severity ?? 0),
+              now,
+              taskId,
+            ),
+          };
+          return {
+            Put: {
+              TableName: opts.tableName,
+              Item: updated,
+              ConditionExpression: "#status = :open",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: { ":open": "open" },
+            },
+          };
+        }),
+      }),
+    );
+  }
+
+  return { supersededTaskIds };
 }
 
 /**

@@ -32,6 +32,10 @@ import { getSite, putSitePlaces } from "../handlers/site.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
+import {
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../handlers/analysis-amendments.js";
 import { jsonResponse } from "../http.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
@@ -66,6 +70,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
     submitConditionAnswers,
+  "POST /v1/analyses/{analysisId}/conditions/{conditionId}":
+    editAnalysisCondition,
+  "POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject":
+    rejectAnalysisCondition,
   // Legacy demo submission loop + health
   "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,

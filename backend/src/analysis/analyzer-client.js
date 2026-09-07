@@ -131,6 +131,8 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
 /**
  * @typedef {object} AnalyzerClient
  * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string }) => Promise<AnalysisResponse>} analyze
+ * @property {(analysisId: string, conditionId: string, input: { description: string, requestId?: string, appId?: string }) => Promise<unknown>} editCondition
+ * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
  * @property {() => Promise<unknown>} listRubrics
  */
@@ -236,6 +238,40 @@ export function createAnalyzerClient({
       const body = buildAnalyzeRequest({ metadata, media, requestId, appId });
       return /** @type {Promise<AnalysisResponse>} */ (
         request("/v1/analyses", { method: "POST", body, auth: true })
+      );
+    },
+    editCondition(analysisId, conditionId, { description, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request(
+        `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}`,
+        {
+          method: "POST",
+          body: {
+            description,
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        },
+      );
+    },
+    rejectCondition(analysisId, conditionId, input = {}) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (input.appId !== undefined) caller.app_id = input.appId;
+      if (input.requestId !== undefined) caller.request_id = input.requestId;
+      return request(
+        `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
+        {
+          method: "POST",
+          body: {
+            ...(input.reason ? { reason: input.reason } : {}),
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        },
       );
     },
     classifyImage({ classifierId, image, requestId, appId }) {

@@ -1,6 +1,7 @@
 import {
   BatchGetCommand,
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,7 @@ const {
   getAssessmentGuidance,
   markTaskCannotDo,
   storeEvaluatedAssessment,
+  supersedeOpenTasksForCondition,
 } = await import("./guidance-store.js");
 
 /**
@@ -1139,6 +1141,63 @@ describe("completeTaskWithAppActions", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("completes an onsite task whose only app action is a failed task_created 311 notification", async () => {
+    // Onsite tasks carry a create_311_ticket (task_created) so the City gets a
+    // dedup/awareness signal even though they won't dispatch. When that silent
+    // notification failed at creation, a manual "we picked this up" completion
+    // (user_confirmed) runs no actions for its trigger and must NOT inherit the
+    // stale failure and roll the task back to open.
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "action",
+        severity: 2,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              executionTrigger: "task_created",
+              serviceCodeOrAction: null,
+            },
+          },
+        ],
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "failed",
+            reason: "missing_service_code",
+          },
+        ],
+        appActionStatus: "failed",
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "manual",
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    // No external 311 call is attempted for a user_confirmed completion of a
+    // task_created-only action: Get + claim + final write, nothing more.
+    expect(send).toHaveBeenCalledTimes(3);
+    const finalTx = send.mock.calls[2][0];
+    expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
+      status: "completed",
+      completedAt: "2026-08-18T12:02:00.000Z",
+      completionMethod: "manual",
+      gsi2pk: "SITE#site-1#TASK#completed",
+    });
+    expect(task).toMatchObject({ status: "completed" });
+  });
 });
 
 describe("markTaskCannotDo", () => {
@@ -1168,6 +1227,80 @@ describe("markTaskCannotDo", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(task).toMatchObject({ status: "cannot_do" });
+  });
+});
+
+describe("supersedeOpenTasksForCondition", () => {
+  beforeEach(() => {
+    send.mockReset();
+  });
+
+  it("supersedes only open tasks for the amended condition and artifact", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "action",
+          severity: 2,
+          conditionId: "cond-litter",
+          checkId: "chk-1",
+          assessmentId: "chk-1-art-1",
+        },
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-2",
+          taskId: "task-2",
+          status: "open",
+          kind: "escalation",
+          severity: 3,
+          conditionId: "cond-litter",
+          checkId: "chk-1",
+          assessmentId: "chk-1-art-2",
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const result = await supersedeOpenTasksForCondition({
+      tableName: "table",
+      siteId: "site-1",
+      conditionId: "cond-litter",
+      checkId: "chk-1",
+      assessmentIdPrefix: "chk-1-art-1",
+      analysisId: "ana-1",
+      reason: "analysis_condition_edited",
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(result.supersededTaskIds).toEqual(["task-1"]);
+    expect(send).toHaveBeenCalledTimes(2);
+    const query = send.mock.calls[0][0];
+    expect(query).toBeInstanceOf(QueryCommand);
+    expect(query.input).toMatchObject({
+      IndexName: "GSI2",
+      KeyConditionExpression: "gsi2pk = :worklist",
+      FilterExpression: "#conditionId = :conditionId",
+      ExpressionAttributeValues: {
+        ":worklist": "SITE#site-1#TASK#open",
+        ":conditionId": "cond-litter",
+      },
+    });
+    const tx = send.mock.calls[1][0];
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems).toHaveLength(1);
+    const put = tx.input.TransactItems[0].Put;
+    expect(put.ConditionExpression).toBe("#status = :open");
+    expect(put.Item).toMatchObject({
+      taskId: "task-1",
+      status: "superseded",
+      supersededAt: "2026-08-18T12:02:00.000Z",
+      supersededByAnalysisId: "ana-1",
+      supersessionReason: "analysis_condition_edited",
+      gsi2pk: "SITE#site-1#TASK#superseded",
+    });
   });
 });
 
