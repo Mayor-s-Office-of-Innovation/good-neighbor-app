@@ -114,13 +114,17 @@ describe("analysis amendments", () => {
     vi.unstubAllGlobals();
   });
 
+  /** Minimal ok JSON response for the amendment routes. */
+  const okJson = (body) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(body)),
+    });
+
   it("editAnalysisCondition posts to the artifact-scoped conditions route", async () => {
-    const fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve(JSON.stringify({ analysis_id: "ana_1" })),
-      }),
+    /** @type {any} */ const fetch = vi.fn(() =>
+      okJson({ analysis_id: "ana_1" }),
     );
     vi.stubGlobal("fetch", fetch);
     await editAnalysisCondition("chk_01", "art_1", "cond-1", {
@@ -135,13 +139,7 @@ describe("analysis amendments", () => {
   });
 
   it("encodes path segments so IDs with special chars can't reshape the URL", async () => {
-    const fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("null"),
-      }),
-    );
+    /** @type {any} */ const fetch = vi.fn(() => okJson(null));
     vi.stubGlobal("fetch", fetch);
     await rejectAnalysisCondition("ch k", "art/1", "cond#1", {});
     const [url] = fetch.mock.calls[0];
