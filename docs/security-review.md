@@ -98,7 +98,8 @@ Rejected alternatives: **guest Cognito Identity Pool** (open to anyone — enabl
 but no real scoping, so it does not stop pollution); **onboarding-minted signed token**
 (Option 4 — a viable *lighter fallback* only if device provisioning slips, but it is a bearer
 token on a shared device; blast radius one site, mitigated by short expiry + rotation +
-revocation).
+revocation). Option 4 was realized as that fallback in
+[ADR 0010](./adr/0010-device-token-auth.md).
 
 **Shared dependency.** Option 3 needs a **device-provisioning / credential-vending backend**
 (invite codes + STS cred vending) — track it as a **standalone dependency** of Option 3.

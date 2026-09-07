@@ -1,0 +1,2 @@
+backend/src/lib/device-token.test.js:generic-api-key:3
+backend/src/lambda/authorizer.test.js:generic-api-key:8

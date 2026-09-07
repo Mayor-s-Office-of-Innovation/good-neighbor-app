@@ -117,7 +117,9 @@ export async function getSite() {
   return tx("site", "readonly", (os) => reqToPromise(os.get("current")));
 }
 export async function setSite(name, meta = {}) {
-  // meta may carry the onboarding code (identity provenance); id/name/boundAt are
+  // meta may carry the onboarding code (identity provenance) and, once device
+  // auth lands (services/devices.js), the device session (deviceId, token,
+  // refreshToken, tokenExpiresAt, tokenGeneration). id/name/boundAt are
   // authoritative and can't be clobbered by it.
   const record = {
     ...meta,
@@ -147,6 +149,33 @@ export async function saveSitePlaces(places, meta = {}) {
 }
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
+}
+
+/**
+ * Persist a refreshed device session onto the existing site record (Option 4
+ * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
+ * only the token fields are replaced. Returns the updated record.
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number }} session
+ */
+export async function updateSiteSession({
+  deviceId,
+  token,
+  refreshToken,
+  expiresIn,
+  tokenGeneration,
+}) {
+  const current = await getSite();
+  if (!current) throw new Error("cannot store a token without a bound site");
+  const record = {
+    ...current,
+    deviceId,
+    token,
+    refreshToken,
+    tokenGeneration,
+    tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+  };
+  await tx("site", "readwrite", (os) => os.put(record));
+  return record;
 }
 
 function draftKey(flowType) {
