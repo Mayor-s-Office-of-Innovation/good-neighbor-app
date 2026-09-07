@@ -342,6 +342,8 @@ class PerimeterCheck extends HTMLElement {
     return {
       placeId: card.getAttribute("data-place-id") || "",
       itemId: card.getAttribute("data-item-id") || "",
+      checkId: card.getAttribute("data-check-id") || "",
+      artifactId: card.getAttribute("data-artifact-id") || "",
       taskId: card.getAttribute("data-task-id") || "",
       analysisId: card.getAttribute("data-analysis-id") || "",
       conditionId: card.getAttribute("data-condition-id") || "",
@@ -371,7 +373,7 @@ class PerimeterCheck extends HTMLElement {
   async _confirmDeleteProblem() {
     const problem = this._activeProblem;
     if (!problem) return;
-    if (!problem.analysisId || !problem.conditionId) {
+    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
         this._missingConditionMessage(problem, "deleted"),
@@ -384,7 +386,8 @@ class PerimeterCheck extends HTMLElement {
     this._setDialogError("analysis-delete-error", "");
     try {
       const result = await rejectAnalysisCondition(
-        problem.analysisId,
+        problem.checkId,
+        problem.artifactId,
         problem.conditionId,
         {
           reason: { key: "not_a_problem" },
@@ -474,7 +477,7 @@ class PerimeterCheck extends HTMLElement {
       }
       return;
     }
-    if (!problem.analysisId) {
+    if (!problem.checkId || !problem.artifactId) {
       this._setDialogError(
         "analysis-edit-error",
         this._missingConditionMessage(problem, "edited"),
@@ -487,7 +490,8 @@ class PerimeterCheck extends HTMLElement {
     this._setDialogError("analysis-edit-error", "");
     try {
       const result = await editAnalysisCondition(
-        problem.analysisId,
+        problem.checkId,
+        problem.artifactId,
         problem.conditionId,
         {
           description,
@@ -575,7 +579,7 @@ class PerimeterCheck extends HTMLElement {
     if (!problem.conditionId) {
       return `This card does not have a problem condition that can be ${action}.`;
     }
-    return `This result is missing the original analysis ID, so it cannot be ${action}. Take a new photo and try again.`;
+    return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
   }
 
   _requestId(action, problem) {

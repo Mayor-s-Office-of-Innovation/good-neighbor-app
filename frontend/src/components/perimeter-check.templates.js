@@ -701,11 +701,19 @@ function completedCard(
   const actionClass =
     actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
   const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
+  // Artifact coordinates the amendment endpoints route by. Legacy drafts
+  // persisted before items carried checkId still have it on the analysis
+  // mirror (evaluateArtifact stamps artifactId; checkId falls back to the
+  // live session's id, which is the same check in the only resume path).
+  const artifactId = item.analysis?.artifactId || "";
+  const checkId = item.checkId || item.analysis?.checkId || "";
   return html`
     <article
       class="analysis-card analysis-card--done"
       data-place-id="${escapeAttr(item.placeId || "")}"
       data-item-id="${escapeAttr(item.id || "")}"
+      data-check-id="${escapeAttr(checkId)}"
+      data-artifact-id="${escapeAttr(artifactId)}"
       data-task-id="${escapeAttr(taskId)}"
       data-analysis-id="${escapeAttr(analysisId)}"
       data-condition-id="${escapeAttr(conditionId)}"

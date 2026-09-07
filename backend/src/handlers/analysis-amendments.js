@@ -1,5 +1,5 @@
 import { getConfig } from "../config.js";
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
@@ -9,9 +9,14 @@ import {
 import { supersedeOpenTasksForCondition } from "../analysis/guidance/guidance-store.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import { sitePk } from "./keys.js";
+import { analysisKey } from "./keys.js";
 
 const APP_ID = "good-neighbor-app";
+
+/** Max description length forwarded to the analyzer (matches artifact text). */
+const MAX_DESCRIPTION_LENGTH = 4000;
+/** Max reject-reason note length forwarded to the analyzer. */
+const MAX_NOTE_LENGTH = 1000;
 
 /**
  * @param {string} [message]
@@ -69,40 +74,49 @@ function requestId(body, fallback) {
 }
 
 /**
+ * Resolve the stored analysis for a check artifact with one key-predicated read.
+ *
+ * Routes address the analysis by the coordinates the client already holds
+ * (checkId + artifactId — both stamped on every evidence item), so this is a
+ * single GetItem — NOT a partition-wide FilterExpression query. The analyzer's
+ * `analysisId` is only an attribute on the ANALYSIS# item (the worker stores
+ * what the analyzer returned), so resolving it from the item also guarantees
+ * the analyzer always receives the server-stored ID, never a client-supplied
+ * string. ConsistentRead mirrors completeCheck's rationale: the amendment is
+ * external and non-repeatable, and a stale read that 404s a just-landed
+ * analysis would surface as a spurious user-facing error.
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId
- * @param {string} opts.analysisId
- * @returns {Promise<{ checkId: string, artifactId: string } | null>}
+ * @param {string} opts.checkId
+ * @param {string} opts.artifactId
+ * @returns {Promise<{ analysisId: string, checkId: string, artifactId: string } | null>}
+ *   Null when the artifact has no ANALYSIS# item (not yet analyzed) or the item
+ *   is a failed marker (no analysisId) — callers map null to 404.
  */
-async function findAnalysisContext({ tableName, siteId, analysisId }) {
-  /** @type {Record<string, unknown> | undefined} */
-  let exclusiveStartKey;
-  do {
-    const result = await ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk",
-        FilterExpression: "#analysisId = :analysisId",
-        ProjectionExpression: "checkId, artifactId, analysisId",
-        ExpressionAttributeNames: { "#analysisId": "analysisId" },
-        ExpressionAttributeValues: {
-          ":pk": sitePk(siteId),
-          ":analysisId": analysisId,
-        },
-        ExclusiveStartKey: exclusiveStartKey,
-      }),
-    );
-    const item = result.Items?.[0];
-    if (
-      typeof item?.checkId === "string" &&
-      typeof item.artifactId === "string"
-    ) {
-      return { checkId: item.checkId, artifactId: item.artifactId };
-    }
-    exclusiveStartKey = result.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return null;
+async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: analysisKey(siteId, checkId, artifactId),
+      ConsistentRead: true,
+      ProjectionExpression: "checkId, artifactId, analysisId",
+    }),
+  );
+  const item = result.Item;
+  if (
+    typeof item?.checkId !== "string" ||
+    typeof item?.artifactId !== "string" ||
+    typeof item?.analysisId !== "string" ||
+    !item.analysisId
+  ) {
+    return null;
+  }
+  return {
+    analysisId: item.analysisId,
+    checkId: item.checkId,
+    artifactId: item.artifactId,
+  };
 }
 
 /**
@@ -135,16 +149,18 @@ async function supersedeAmendedConditionTasks({
 }
 
 /**
- * POST /v1/analyses/{analysisId}/conditions/{conditionId}
+ * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
  */
 export async function editAnalysisCondition(event) {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
-  const { analysisId, conditionId } = event.pathParameters ?? {};
-  if (!analysisId || !conditionId) {
-    return jsonResponse(400, { error: "Missing analysisId or conditionId" });
+  const { checkId, artifactId, conditionId } = event.pathParameters ?? {};
+  if (!checkId || !artifactId || !conditionId) {
+    return jsonResponse(400, {
+      error: "Missing checkId, artifactId, or conditionId",
+    });
   }
 
   let body;
@@ -162,26 +178,35 @@ export async function editAnalysisCondition(event) {
       error: "Description must be at least 5 characters",
     });
   }
+  if (description.trim().length > MAX_DESCRIPTION_LENGTH) {
+    return jsonResponse(400, {
+      error: `Description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`,
+    });
+  }
 
   try {
     const context = await findAnalysisContext({
       tableName: dynamoTable,
       siteId,
-      analysisId,
+      checkId,
+      artifactId,
     });
     if (!context) {
       return jsonResponse(404, { error: "Analysis not found" });
     }
     const client = await analyzerClient();
-    const result = await client.editCondition(analysisId, conditionId, {
+    const result = await client.editCondition(context.analysisId, conditionId, {
       description: description.trim(),
       appId: APP_ID,
-      requestId: requestId(body, `${analysisId}#${conditionId}#edit`),
+      requestId: requestId(
+        body,
+        `${context.analysisId}#${conditionId}#edit`,
+      ),
     });
     await supersedeAmendedConditionTasks({
       tableName: dynamoTable,
       siteId,
-      analysisId,
+      analysisId: context.analysisId,
       conditionId,
       reason: "analysis_condition_edited",
       context,
@@ -193,16 +218,18 @@ export async function editAnalysisCondition(event) {
 }
 
 /**
- * POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject
+ * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
  */
 export async function rejectAnalysisCondition(event) {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
-  const { analysisId, conditionId } = event.pathParameters ?? {};
-  if (!analysisId || !conditionId) {
-    return jsonResponse(400, { error: "Missing analysisId or conditionId" });
+  const { checkId, artifactId, conditionId } = event.pathParameters ?? {};
+  if (!checkId || !artifactId || !conditionId) {
+    return jsonResponse(400, {
+      error: "Missing checkId, artifactId, or conditionId",
+    });
   }
 
   let body = {};
@@ -228,11 +255,16 @@ export async function rejectAnalysisCondition(event) {
         error: "reason.key must be one of: not_a_problem, other",
       });
     }
+    const note =
+      typeof input.reason.note === "string" ? input.reason.note.trim() : "";
+    if (note.length > MAX_NOTE_LENGTH) {
+      return jsonResponse(400, {
+        error: `reason.note must be ${MAX_NOTE_LENGTH} characters or fewer`,
+      });
+    }
     reason = {
       key: input.reason.key,
-      ...(typeof input.reason.note === "string" && input.reason.note.trim()
-        ? { note: input.reason.note.trim() }
-        : {}),
+      ...(note ? { note } : {}),
     };
   }
 
@@ -240,21 +272,29 @@ export async function rejectAnalysisCondition(event) {
     const context = await findAnalysisContext({
       tableName: dynamoTable,
       siteId,
-      analysisId,
+      checkId,
+      artifactId,
     });
     if (!context) {
       return jsonResponse(404, { error: "Analysis not found" });
     }
     const client = await analyzerClient();
-    const result = await client.rejectCondition(analysisId, conditionId, {
-      ...(reason ? { reason } : {}),
-      appId: APP_ID,
-      requestId: requestId(body, `${analysisId}#${conditionId}#reject`),
-    });
+    const result = await client.rejectCondition(
+      context.analysisId,
+      conditionId,
+      {
+        ...(reason ? { reason } : {}),
+        appId: APP_ID,
+        requestId: requestId(
+          body,
+          `${context.analysisId}#${conditionId}#reject`,
+        ),
+      },
+    );
     await supersedeAmendedConditionTasks({
       tableName: dynamoTable,
       siteId,
-      analysisId,
+      analysisId: context.analysisId,
       conditionId,
       reason: "analysis_condition_rejected",
       context,

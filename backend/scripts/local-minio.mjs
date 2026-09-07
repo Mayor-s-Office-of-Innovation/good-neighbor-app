@@ -91,6 +91,50 @@ async function main() {
   const minioBin = installed ?? binPath;
   if (!installed) await ensureBinary();
   await mkdir(dataDir, { recursive: true });
+
+  // A MinIO may already be bound to the port (an earlier `npm run dev` that
+  // only half-died, a standalone `local:minio`, …). MinIO instances are
+  // equivalent for dev when they share the same data dir, so probe the health
+  // endpoint: if a healthy MinIO answers, reuse it and exit 0 instead of
+  // EADDRINUSE-crashing — under `concurrently -k` (local:services / dev) that
+  // crash would SIGTERM every other lane (ddb, mq, sf311, api, worker).
+  // Note: unlike fake-sf311, MinIO is NOT stateless across data dirs — a
+  // healthy response from a DIFFERENT data dir is still reused, matching how
+  // the surviving instance was started (same script, same default dir) in
+  // every observed case; a foreign squatter fails the probe below.
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${API_PORT}/minio/health/live`,
+      // A non-MinIO squatter may accept and never answer — don't hang on it.
+      { signal: AbortSignal.timeout(1500) },
+    );
+    if (res.ok) {
+      console.log(
+        `[minio] port ${API_PORT} already serves a healthy MinIO — reusing it`,
+      );
+      return;
+    }
+    console.error(
+      `[minio] port ${API_PORT} responded ${res.status} — not a healthy MinIO; free the port and retry`,
+    );
+    process.exit(1);
+  } catch (err) {
+    // ECONNREFUSED means nothing is listening — proceed to start normally.
+    // fetch wraps connect failures in a TypeError (cause carries the errno).
+    const isRefused =
+      /** @type {NodeJS.ErrnoException} */ (err)?.code === "ECONNREFUSED" ||
+      /** @type {NodeJS.ErrnoException} */ (
+        /** @type {any} */ (err)?.cause
+      )?.code === "ECONNREFUSED";
+    if (isRefused) {
+      // fall through to startup
+    } else {
+      // Port held but unresponsive (non-HTTP squatter) — surface loudly.
+      console.error("[minio] port probe failed:", err);
+      process.exit(1);
+    }
+  }
+
   console.log(
     `[minio] starting MinIO on :${API_PORT} (console :${CONSOLE_PORT}) with ${minioBin}…`,
   );
