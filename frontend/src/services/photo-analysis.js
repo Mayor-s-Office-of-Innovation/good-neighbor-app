@@ -257,7 +257,7 @@ export async function refreshEvidenceAnalysis(
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
     artifactId,
-    checkId,
+    checkId: check.id,
     sourceAnalysis: {
       ...(item.analysis?.sourceAnalysis || {}),
       analysisId,

@@ -198,10 +198,7 @@ export async function editAnalysisCondition(event) {
     const result = await client.editCondition(context.analysisId, conditionId, {
       description: description.trim(),
       appId: APP_ID,
-      requestId: requestId(
-        body,
-        `${context.analysisId}#${conditionId}#edit`,
-      ),
+      requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
     });
     await supersedeAmendedConditionTasks({
       tableName: dynamoTable,
