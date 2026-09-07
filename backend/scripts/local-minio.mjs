@@ -110,8 +110,22 @@ async function main() {
     );
     if (res.ok) {
       console.log(
-        `[minio] port ${API_PORT} already serves a healthy MinIO — reusing it`,
+        `[minio] port ${API_PORT} already serves a healthy MinIO — reusing it (idling while the stack runs)`,
       );
+      // DO NOT exit here: under `concurrently -k` a lane that exits (even 0)
+      // marks the service dead and SIGTERMs every other lane. Park until the
+      // stack is torn down. Same pattern as local-sf311.mjs. Park on a REAL
+      // handle — a never-resolving promise does NOT keep the event loop alive
+      // once the failed listen + probe leave the process with zero handles.
+      const { createServer } = await import("node:http");
+      const park = createServer(() => {});
+      park.on("error", () => {});
+      park.listen(0, "127.0.0.1"); // any free ephemeral port
+      const idle = /** @type {Promise<void>} */ (new Promise(() => {}));
+      process.on("SIGINT", () => process.exit(0));
+      process.on("SIGTERM", () => process.exit(0));
+      await idle;
+      park.close();
       return;
     }
     console.error(
