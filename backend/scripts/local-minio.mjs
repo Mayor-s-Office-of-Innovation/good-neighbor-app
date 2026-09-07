@@ -12,6 +12,7 @@
 // env values must satisfy that (see .env.example).
 
 import { execFile, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -109,6 +110,15 @@ async function main() {
       { signal: AbortSignal.timeout(1500) },
     );
     if (res.ok) {
+      // Identity check: /minio/health/live returns 200 with a `Server: MinIO`
+      // header from real MinIO. A foreign process with a catch-all 200 route
+      // would otherwise be accepted and the stack pointed at non-storage.
+      if (res.headers.get("server") !== "MinIO") {
+        console.error(
+          `[minio] port ${API_PORT} responded OK but is not MinIO (Server header missing) — free the port and retry`,
+        );
+        process.exit(1);
+      }
       console.log(
         `[minio] port ${API_PORT} already serves a healthy MinIO — reusing it (idling while the stack runs)`,
       );
@@ -117,7 +127,6 @@ async function main() {
       // stack is torn down. Same pattern as local-sf311.mjs. Park on a REAL
       // handle — a never-resolving promise does NOT keep the event loop alive
       // once the failed listen + probe leave the process with zero handles.
-      const { createServer } = await import("node:http");
       const park = createServer(() => {});
       park.on("error", () => {});
       park.listen(0, "127.0.0.1"); // any free ephemeral port
@@ -187,8 +196,34 @@ async function main() {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  child.on("exit", (code) => {
+  child.on("exit", async (code) => {
     console.log(`[minio] MinIO exited (${code ?? "signal"})`);
+    // Race recovery: if this child lost the port bind to a simultaneous
+    // launch, the winner is a healthy MinIO serving the same data dir —
+    // park on it (do NOT propagate the exit; under `concurrently -k` that
+    // would tear down the whole stack for a service that is actually up).
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${API_PORT}/minio/health/live`,
+        { signal: AbortSignal.timeout(2500) },
+      );
+      if (res.ok && res.headers.get("server") === "MinIO") {
+        console.log(
+          `[minio] another MinIO owns port ${API_PORT} — reusing it (idling while the stack runs)`,
+        );
+        const park = createServer(() => {});
+        park.on("error", () => {});
+        park.listen(0, "127.0.0.1");
+        const idle = /** @type {Promise<void>} */ (new Promise(() => {}));
+        process.on("SIGINT", () => process.exit(0));
+        process.on("SIGTERM", () => process.exit(0));
+        await idle;
+        park.close();
+        return;
+      }
+    } catch {
+      // port free/unresponsive — genuine failure, fall through to exit
+    }
     process.exit(code ?? 0);
   });
   child.on("error", (err) => {

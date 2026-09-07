@@ -589,9 +589,9 @@ export function footer({ items, analyzingOpen }) {
   `;
 }
 
-export function analyzingSection(items) {
+export function analyzingSection(items, sessionCheckId) {
   if (!items.length) return "";
-  const cards = items.map(analysisCards).flat();
+  const cards = items.map((item) => analysisCards(item, sessionCheckId)).flat();
   const summary = problemSummary(items);
   return html`
     <section
@@ -611,7 +611,7 @@ export function analyzingSection(items) {
   `;
 }
 
-function analysisCards(item) {
+function analysisCards(item, sessionCheckId) {
   const status = item.analysis?.status || "idle";
   if (status !== "analyzed") return [pendingCard(item)];
   const hiddenConditionIds = hiddenConditionIdSet(item);
@@ -624,7 +624,7 @@ function analysisCards(item) {
   if (!tasks.length && !conditions.length) {
     if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
     return [
-      completedCard(item, {
+      completedCard(item, sessionCheckId, {
         title: "No issues found",
         description:
           item.analysis?.noIssuesDescription ||
@@ -643,7 +643,7 @@ function analysisCards(item) {
         ) ||
         conditions[index] ||
         {};
-      return completedCard(item, {
+      return completedCard(item, sessionCheckId, {
         title: task.category || condition.category || "Condition found",
         description:
           task.guidance || condition.description || "Review this condition.",
@@ -655,7 +655,7 @@ function analysisCards(item) {
     });
   }
   return conditions.map((condition) =>
-    completedCard(item, {
+    completedCard(item, sessionCheckId, {
       title: condition.category || "Condition found",
       description: condition.description || "Review this condition.",
       action: "",
@@ -689,6 +689,7 @@ function pendingCard(item) {
 
 function completedCard(
   item,
+  sessionCheckId,
   {
     title,
     description,
@@ -702,11 +703,13 @@ function completedCard(
     actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
   const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
   // Artifact coordinates the amendment endpoints route by. Legacy drafts
-  // persisted before items carried checkId still have it on the analysis
-  // mirror (evaluateArtifact stamps artifactId; checkId falls back to the
-  // live session's id, which is the same check in the only resume path).
+  // persisted before items carried checkId have neither item.checkId nor
+  // analysis.checkId (resume does not re-run analyzed items), so fall back to
+  // the live session's id — authoritative and, in the only resume path, the
+  // same check that produced these items.
   const artifactId = item.analysis?.artifactId || "";
-  const checkId = item.checkId || item.analysis?.checkId || "";
+  const checkId =
+    item.checkId || item.analysis?.checkId || sessionCheckId || "";
   return html`
     <article
       class="analysis-card analysis-card--done"
