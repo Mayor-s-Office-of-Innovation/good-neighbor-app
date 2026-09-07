@@ -123,9 +123,8 @@ async function main() {
     // fetch wraps connect failures in a TypeError (cause carries the errno).
     const isRefused =
       /** @type {NodeJS.ErrnoException} */ (err)?.code === "ECONNREFUSED" ||
-      /** @type {NodeJS.ErrnoException} */ (
-        /** @type {any} */ (err)?.cause
-      )?.code === "ECONNREFUSED";
+      /** @type {NodeJS.ErrnoException} */ (/** @type {any} */ (err)?.cause)
+        ?.code === "ECONNREFUSED";
     if (isRefused) {
       // fall through to startup
     } else {

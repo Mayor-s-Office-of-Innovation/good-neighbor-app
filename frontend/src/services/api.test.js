@@ -127,9 +127,7 @@ describe("analysis amendments", () => {
       description: "Corrected description",
     });
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe(
-      "/v1/checks/chk_01/artifacts/art_1/conditions/cond-1",
-    );
+    expect(url).toBe("/v1/checks/chk_01/artifacts/art_1/conditions/cond-1");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({
       description: "Corrected description",

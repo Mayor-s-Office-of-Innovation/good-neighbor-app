@@ -48,15 +48,18 @@ function amendEvent({
 }) {
   return /** @type {any} */ ({
     pathParameters: { checkId, artifactId, conditionId },
-    requestContext: { authorizer: { jwt: { claims: { "custom:siteId": siteClaim } } } },
+    requestContext: {
+      authorizer: { jwt: { claims: { "custom:siteId": siteClaim } } },
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
 /**
+ * Invoke a handler the way the Lambda runtime would.
  * @param {any} event
- * @param {(event: any) => Promise<any>} handler
- * @returns {Promise<any>}
+ * @param {(event: any, ...rest: any[]) => Promise<any>} handler
+ * @returns {Promise<any>} the handler's proxy result
  */
 const invoke = (event, handler) => handler(event, {}, () => {});
 
