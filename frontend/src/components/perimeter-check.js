@@ -809,7 +809,7 @@ class PerimeterCheck extends HTMLElement {
     if (getAnalyzingOpen() && evidence.length) {
       this.querySelector("#check-footer").insertAdjacentHTML(
         "afterend",
-        analyzingSection(evidence),
+        analyzingSection(evidence, check.id),
       );
     }
     this.querySelector("#add-place-open")?.addEventListener("click", () =>

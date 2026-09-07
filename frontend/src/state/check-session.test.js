@@ -159,6 +159,53 @@ describe("eager-upload item mutators", () => {
       contentType: "image/jpeg",
     });
   });
+
+  it("legacy analyzed items (no checkId stamps) still carry the session's checkId on resume", async () => {
+    const db = await import("../db.js");
+    const { startCheck, addItem, clearCheck, loadDraft, getCurrentCheck } =
+      await import("./check-session.js");
+
+    startCheck("site-1", TEST_PLACES);
+    const realCheckId = getCurrentCheck().id;
+    const item = addItem("place-north", { kind: "photo", dataUrl: "x" });
+    // Simulate a LEGACY analyzed item: strip every checkId stamp this change
+    // adds (item.checkId from addItem, analysis.checkId from the pipeline).
+    const legacy = JSON.parse(
+      JSON.stringify({
+        ...item,
+        checkId: undefined,
+        analysis: {
+          status: "analyzed",
+          artifactId: "art-legacy",
+          conditions: [],
+          tasks: [],
+        },
+      }),
+    );
+    const persisted = {
+      ...getCurrentCheck(),
+      places: {
+        ...getCurrentCheck().places,
+        "place-north": {
+          ...getCurrentCheck().places["place-north"],
+          items: [legacy],
+        },
+      },
+    };
+    vi.mocked(db.getDraft).mockResolvedValueOnce(
+      JSON.parse(JSON.stringify(persisted)),
+    );
+    clearCheck();
+
+    await loadDraft("perimeter");
+    const check = getCurrentCheck();
+    // The resumed item still resolves its coordinates from the live session.
+    expect(check.id).toBe(realCheckId);
+    const resumed = check.places["place-north"].items[0];
+    expect(resumed.analysis.artifactId).toBe("art-legacy");
+    // The template's fallback chain must end at the session id, not "".
+    expect(resumed.checkId ?? realCheckId).toBe(realCheckId);
+  });
 });
 
 describe("markAnalyzing", () => {
