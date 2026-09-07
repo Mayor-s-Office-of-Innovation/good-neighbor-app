@@ -414,6 +414,7 @@ export function addItem(placeId, item) {
   if (!placeState) return null;
   const record = {
     id: newId(),
+    checkId: current.id,
     placeId,
     placeName: placeState.name,
     uploadedAt: new Date().toISOString(),

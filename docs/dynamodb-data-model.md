@@ -139,6 +139,7 @@ header, every artifact, and every analysis together.
 | AP6 | List recent / today's checks | `Query` **GSI1** `SITE#x` (checks partition), SK date range, newest-first |
 | AP7 | Open one check (header+artifacts+analysis) | `Query` base `SITE#x`, `begins_with(sk,"CHECK#<id>")` |
 | AP8 | AI writes analysis back | `PutItem` `…#ANALYSIS#…` + `UpdateItem` header severity/status |
+| AP8a | Amend/reject one analyzed condition (edit/reject routes) | `GetItem` `SITE#x` / `CHECK#<checkId>#ANALYSIS#<artifactId>` (consistent), then analyzer call + GSI2 task supersede. Routes are addressed by `checkId`+`artifactId` (the item's key); the analyzer's `analysisId` is an attribute on the item — never client-supplied. |
 | AP9 | Generate action items | `TransactWrite` tasks |
 | AP10 | Staff worklist (open) | `Query` **GSI2** `SITE#x#TASK#open`, newest-first; app re-sorts each page most-severe-first (date-first key ⇒ severity ranking holds within a page only — a severity-first index is deferred) |
 | AP11 | City escalation queue (all sites) | `Query` **GSI3** `ESCALATION#open` *(post-MVP — GSI3 not yet built)* |
