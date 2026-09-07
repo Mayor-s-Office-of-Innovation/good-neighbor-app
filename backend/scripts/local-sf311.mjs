@@ -186,6 +186,40 @@ const server = createServer(async (req, res) => {
   }
 });
 
+server.on("error", async (err) => {
+  if (/** @type {NodeJS.ErrnoException} */ (err).code !== "EADDRINUSE") {
+    console.error("[sf311] server error:", err);
+    process.exitCode = 1;
+    return;
+  }
+  // A fake sf311 is already bound to the port. Any instance is equivalent
+  // (stateless; same script, same env), so a concurrent `npm run dev` lane or
+  // an already-running standalone copy should NOT crash the dev stack
+  // (concurrently -k would tear everything down). Reuse it and exit cleanly.
+  try {
+    const res = await fetch(`http://127.0.0.1:${PORT}/health`, {
+      // A non-HTTP squatter may accept and never answer — don't hang on it.
+      signal: AbortSignal.timeout(1500),
+    });
+    const body = /** @type {{ service?: unknown }} */ (await res.json());
+    if (res.ok && body.service === "fake-sf311") {
+      console.log(
+        `[sf311] port ${PORT} already serves fake-sf311 — reusing it`,
+      );
+      return;
+    }
+    console.error(
+      `[sf311] port ${PORT} is held by another process (health: ${res.status}) — free it and retry`,
+    );
+    process.exitCode = 1;
+  } catch {
+    console.error(
+      `[sf311] port ${PORT} is held by an unresponsive process — free it and retry`,
+    );
+    process.exitCode = 1;
+  }
+});
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`[sf311] fake server listening on http://127.0.0.1:${PORT}`);
   console.log(`[sf311] CreateSR URL: http://127.0.0.1:${PORT}/createsr`);
