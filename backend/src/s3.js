@@ -16,6 +16,35 @@ const client = new S3Client(
   process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
 );
 
+// Fail loud on a credential mismatch against the local MinIO. A stale MinIO
+// from an earlier stack (different .env.local creds) can still answer health
+// checks — so the reuse lane parks on it and every app S3 operation then fails
+// signature validation. That surfaces here, buried in SDK noise mid-upload;
+// this middleware translates it into one actionable warning. Real AWS shares
+// these error codes, but the remediation hint is scoped to the local endpoint.
+client.middlewareStack.use({
+  applyToStack: (/** @type {any} */ stack) => {
+    stack.add((/** @type {any} */ next) => async (/** @type {any} */ args) => {
+      try {
+        return await next(args);
+      } catch (/** @type {any} */ err) {
+        const code = err?.name ?? err?.Code;
+        if (
+          (code === "SignatureDoesNotMatch" || code === "InvalidAccessKeyId") &&
+          process.env.AWS_ENDPOINT_URL_S3?.includes("127.0.0.1")
+        ) {
+          console.error(
+            "[s3] " +
+              code +
+              " against local MinIO — the running MinIO was likely started with DIFFERENT credentials than this stack's .env.local. Kill it (lsof -ti :9000 | xargs kill) and restart the dev stack.",
+          );
+        }
+        throw err;
+      }
+    });
+  },
+});
+
 /**
  * Presign a PUT so the device can upload media straight to S3. The content-type
  * and key are pinned into the signature — the client must send exactly this

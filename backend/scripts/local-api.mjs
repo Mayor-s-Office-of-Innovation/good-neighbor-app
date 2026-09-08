@@ -151,12 +151,12 @@ const routes = [
   ),
   route(
     "POST",
-    "/v1/analyses/{analysisId}/conditions/{conditionId}",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     editAnalysisCondition,
   ),
   route(
     "POST",
-    "/v1/analyses/{analysisId}/conditions/{conditionId}/reject",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     rejectAnalysisCondition,
   ),
   // Legacy demo submission loop + health
