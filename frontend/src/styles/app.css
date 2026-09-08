@@ -476,6 +476,8 @@ form > wa-button[type="submit"] {
   text-align: center;
 }
 .places-row__input {
+  display: block;
+  width: 100%;
   min-width: 0;
   --wa-form-control-height: 62px;
   --wa-form-control-border-radius: 8px;
