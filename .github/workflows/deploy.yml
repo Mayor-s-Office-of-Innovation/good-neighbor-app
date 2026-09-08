@@ -90,7 +90,15 @@ jobs:
             echo "api_url=$(terraform output -raw api_url)"
             echo "bucket=$(terraform output -raw frontend_bucket_name)"
             echo "dist_id=$(terraform output -raw cloudfront_distribution_id)"
+            echo "dynamo_table=$(terraform output -raw dynamodb_table_name)"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Seed dev site codes
+        if: ${{ inputs.environment == 'dev' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: npm run seed:dev-site-codes -w @good-neighbor/backend
 
       # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
       # so the frontend defaults to a same-origin base ("") and makes relative

@@ -13,11 +13,7 @@ import {
   DescribeTableCommand,
   DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  PutCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
   CreateQueueCommand,
   ListQueuesCommand,
@@ -28,6 +24,7 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { seedSiteCodes } from "./site-code-seeds.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -234,106 +231,8 @@ export async function ensureLocalInfra() {
  * @param {string} tableName
  */
 async function seedLocalSiteCodes(docDdb, tableName) {
-  const now = new Date().toISOString();
-  const stJohnPlaces = [
-    { id: "place-15th-st", name: "15th St", order: 0 },
-    { id: "place-front-entrance", name: "Front entrance", order: 1 },
-    { id: "place-caledonia-st", name: "Caledonia St", order: 2 },
-  ];
-  const items = [
-    {
-      pk: "PROVIDER#the-gubbio-project",
-      sk: "#META",
-      entityType: "PROVIDER",
-      providerId: "the-gubbio-project",
-      name: "The Gubbio Project",
-      seededAt: now,
-    },
-    {
-      pk: "SITE#st-john-the-evangelist",
-      sk: "#META",
-      entityType: "SITE",
-      type: "site",
-      siteId: "st-john-the-evangelist",
-      providerId: "the-gubbio-project",
-      providerSiteId: "provider-site-st-john-the-evangelist",
-      name: "St. John the Evangelist",
-      location: {
-        latitude: 37.76656393517443,
-        longitude: -122.4213267021692,
-      },
-      places: stJohnPlaces,
-      seededAt: now,
-      updatedAt: now,
-    },
-    {
-      pk: "SITE_CODE#123456",
-      sk: "#META",
-      type: "providerSiteCode",
-      code: "123456",
-      active: true,
-      providerId: "the-gubbio-project",
-      providerName: "The Gubbio Project",
-      providerSiteId: "provider-site-st-john-the-evangelist",
-      siteId: "st-john-the-evangelist",
-      siteName: "St. John the Evangelist",
-      seededAt: now,
-    },
-    {
-      pk: "SITE_CODE#000000",
-      sk: "#META",
-      type: "providerSiteCode",
-      code: "000000",
-      active: false,
-      providerSiteId: "provider-site-inactive",
-      siteId: "site-inactive",
-      siteName: "Inactive Test Site",
-      seededAt: now,
-    },
-  ];
-
-  for (const Item of items) {
-    await docDdb
-      .send(
-        new PutCommand({
-          TableName: tableName,
-          Item,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      )
-      .catch((err) => {
-        if (
-          /** @type {Error} */ (err).name !== "ConditionalCheckFailedException"
-        ) {
-          throw err;
-        }
-      });
-  }
-
-  await docDdb.send(
-    new UpdateCommand({
-      TableName: tableName,
-      Key: { pk: "SITE#st-john-the-evangelist", sk: "#META" },
-      UpdateExpression:
-        "SET #type = if_not_exists(#type, :type), entityType = if_not_exists(entityType, :entityType), providerId = if_not_exists(providerId, :providerId), providerSiteId = if_not_exists(providerSiteId, :providerSiteId), #name = if_not_exists(#name, :name), #location = if_not_exists(#location, :location), places = if_not_exists(places, :places), updatedAt = if_not_exists(updatedAt, :now)",
-      ExpressionAttributeNames: {
-        "#type": "type",
-        "#name": "name",
-        "#location": "location",
-      },
-      ExpressionAttributeValues: {
-        ":type": "site",
-        ":entityType": "SITE",
-        ":providerId": "the-gubbio-project",
-        ":providerSiteId": "provider-site-st-john-the-evangelist",
-        ":name": "St. John the Evangelist",
-        ":location": {
-          latitude: 37.76656393517443,
-          longitude: -122.4213267021692,
-        },
-        ":places": stJohnPlaces,
-        ":now": now,
-      },
-    }),
-  );
+  await seedSiteCodes(docDdb, tableName, {
+    includeInactive: true,
+    includeLegacyLocalCode: true,
+  });
 }

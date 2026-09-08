@@ -72,8 +72,18 @@ They install as symlinks (stay current on package updates); remove with `npx ski
 See [Web Awesome → Agent Skills](https://webawesome.com/docs/ai/agent-skills).
 
 The first screen asks for a provider-site code. With the local backend running,
-`123-456` is seeded active for St. John the Evangelist / The Gubbio Project and
-`000-000` is seeded inactive.
+these active dev/test codes are seeded:
+
+| Code | Provider | Site |
+| --- | --- | --- |
+| `MOI-CHL` | MOI | City Hall |
+| `GUB-SJE` | The Gubbio Project | St. John the Evangelist |
+| `CHC-730` | CHC | 730 Polk |
+| `SFA-940` | SFAF | 940 Howard |
+| `THC-440` | THC | 440 Eddy |
+
+Local also keeps `123-456` as an active legacy alias for St. John the
+Evangelist / The Gubbio Project, and `000-000` is seeded inactive.
 
 ### Clearing the local site binding
 
@@ -198,9 +208,9 @@ at `http://127.0.0.1:3999/requests`, or clear them with:
 curl -X DELETE http://127.0.0.1:3999/requests
 ```
 
-> **No seed data yet.** A fresh `npm run dev` creates the table **empty** — there is no seed
-> script (Phase 3 / Phase 8, not built). The GUI shows the table with zero items until you POST
-> a submission through the loop (which writes a `SUBMISSION#…/#RECEIPT` receipt item).
+> **Seed data note.** A fresh `npm run dev` seeds only provider/site login
+> codes and site metadata. It does not seed checks, artifacts, analyses, tasks,
+> or submission receipts; those appear after you submit through the local loop.
 
 **Teardown:** `Ctrl-C` in the `npm run dev` terminal stops all services cleanly (no orphaned
 JVM/MinIO/node processes).

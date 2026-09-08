@@ -8,6 +8,11 @@ output "submission_queue_url" {
   value       = module.app.submission_queue_url
 }
 
+output "dynamodb_table_name" {
+  description = "Single-table DynamoDB store name (DYNAMO_TABLE)."
+  value       = module.app.dynamodb_table_name
+}
+
 output "api_url" {
   description = "Base invoke URL of the HTTP API (for the frontend build + /health smoke test)."
   value       = module.app.api_url
