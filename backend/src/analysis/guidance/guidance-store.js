@@ -27,6 +27,7 @@ import {
   summarizeAppActionResults,
 } from "./app-actions.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { logServerError } from "../../lib/log-server-error.js";
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -1174,6 +1175,26 @@ export async function completeTaskWithAppActions(opts) {
   // and fails still holds the task open (`executedAppActionResults` carries it).
   const appActionFailed =
     summarizeAppActionResults(executedAppActionResults) === "failed";
+  // App-action failures hold the task open but resolve as a 200 — without this
+  // line the failure exists only in the task's stored appActionResults. One
+  // structured ERROR per failed action (Logs Insights-groupable, alarmable;
+  // see lib/log-server-error.js for the convention).
+  if (appActionFailed) {
+    for (const result of executedAppActionResults) {
+      if (result.status !== "failed") continue;
+      logServerError(
+        `task app-action ${result.code}`,
+        new Error(String(result.reason ?? "app action failed")),
+        {
+          extra: {
+            taskId: opts.taskId,
+            siteId: opts.siteId,
+            completionMethod: opts.completionMethod ?? "user_confirmed",
+          },
+        },
+      );
+    }
+  }
 
   const updated = {
     ...claimed,

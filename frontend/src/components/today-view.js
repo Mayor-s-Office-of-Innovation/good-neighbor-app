@@ -718,6 +718,31 @@ class TodayView extends HTMLElement {
     }
   }
 
+  // A "failed" app action holds the task open but still returns 200, so the
+  // caller must read the stored results to know the filing didn't happen.
+  // Map the recorded reason to one actionable line (mirrors SUBMIT_MESSAGES).
+  _appActionFailureMessage(task) {
+    const results = Array.isArray(task?.appActionResults)
+      ? task.appActionResults
+      : [];
+    const failed = results.find((result) => result?.status === "failed");
+    if (!failed) return null;
+    const messages = {
+      missing_location:
+        "We couldn’t file this ticket — the site has no location set. Ask an admin to add the site location, or use “Can’t” to dismiss this card.",
+      missing_service_code:
+        "We couldn’t file this ticket — it has no 311 service code. Use “Can’t” to dismiss this card.",
+      feature_disabled:
+        "311 filing isn’t enabled yet. Use “Can’t” to dismiss this card.",
+      sf311_timeout:
+        "The 311 system didn’t respond in time. Please try again in a moment.",
+    };
+    return (
+      messages[failed.reason] ??
+      "We couldn’t file this ticket right now. Please try again."
+    );
+  }
+
   // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
   // rejects arbitrary ones), plus a cancel.
   _renderReasonPicker(card, task) {
@@ -760,7 +785,9 @@ class TodayView extends HTMLElement {
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable and show an inline, non-destructive error on the card.
+  // re-enable and show an inline, non-destructive error on the card. A 200 that
+  // still carries a failed app action (task held open) surfaces its specific
+  // reason instead of silently doing nothing.
   async _run(card, fn) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
@@ -770,7 +797,17 @@ class TodayView extends HTMLElement {
       err.textContent = "";
     }
     try {
-      await fn();
+      const result = await fn();
+      const task = result?.task;
+      const failure = this._appActionFailureMessage(task);
+      if (failure) {
+        buttons.forEach((b) => (b.disabled = false));
+        if (err) {
+          err.hidden = false;
+          err.textContent = failure;
+        }
+        return;
+      }
       this.connectedCallback();
     } catch (e) {
       console.error("task action failed", e);
