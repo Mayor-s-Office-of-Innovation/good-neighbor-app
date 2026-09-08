@@ -18,7 +18,9 @@ import {
   completeTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
+  waitForAnalyses,
 } from "../services/api.js";
+import { settlePendingUploads } from "../services/artifact-uploader.js";
 import {
   ensureCheck,
   startCheck,
@@ -602,6 +604,17 @@ class PerimeterCheck extends HTMLElement {
     const check = getCurrentCheck();
     try {
       if (check?.remoteStarted && check.id) {
+        // Finalize exactly like the submit path: let in-flight item pipelines
+        // (register → analyze) settle, wait for EVERY registered artifact's
+        // analysis to land, then complete. Completing earlier races the
+        // backend's coverage gate (409 "analyses still pending") and would
+        // leave the check in_progress with a frozen partial scorecard.
+        await settlePendingUploads();
+        const evidence = this._allEvidence();
+        const expected = evidence.filter(
+          (item) => item.analysis?.artifactId,
+        ).length;
+        await waitForAnalyses(check.id, { expected });
         await completeCheck(check.id);
       }
       clearCheck();
@@ -609,7 +622,11 @@ class PerimeterCheck extends HTMLElement {
       navigate("/today");
     } catch (err) {
       console.error("complete check failed", err);
-      this._showToast("Could not finish the check. Please try again.");
+      this._showToast(
+        err?.body?.code === "analyses_pending"
+          ? "The AI is taking longer than expected. Please try again soon."
+          : "Could not finish the check. Please try again.",
+      );
     }
   }
 
