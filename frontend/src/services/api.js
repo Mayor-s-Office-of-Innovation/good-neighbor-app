@@ -297,31 +297,42 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
 }
 
 /**
- * POST /v1/analyses/{analysisId}/conditions/{conditionId}
- * @param {string} analysisId
+ * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
+ *
+ * Addressed by the artifact's own coordinates (the client holds checkId +
+ * artifactId on every evidence item); the backend reads the analyzer's
+ * analysisId off the stored ANALYSIS# item, so the client never supplies it.
+ * @param {string} checkId
+ * @param {string} artifactId
  * @param {string} conditionId
  * @param {{ description: string, caller?: { request_id?: string } }} body
  * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
  */
-export function editAnalysisCondition(analysisId, conditionId, body) {
+export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
   return request(
     "POST",
-    `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}`,
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}`,
     { body },
   );
 }
 
 /**
- * POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject
- * @param {string} analysisId
+ * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject
+ * @param {string} checkId
+ * @param {string} artifactId
  * @param {string} conditionId
  * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, caller?: { request_id?: string } }} [body]
  * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
  */
-export function rejectAnalysisCondition(analysisId, conditionId, body = {}) {
+export function rejectAnalysisCondition(
+  checkId,
+  artifactId,
+  conditionId,
+  body = {},
+) {
   return request(
     "POST",
-    `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
     { body },
   );
 }

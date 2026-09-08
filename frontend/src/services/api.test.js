@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, dataUrlToBlob, waitForAnalyses } from "./api.js";
+import {
+  ApiError,
+  dataUrlToBlob,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+  waitForAnalyses,
+} from "./api.js";
 
 /**
  * A fetch stub whose responses are driven by successive `getCheck` payloads.
@@ -100,6 +106,46 @@ describe("waitForAnalyses", () => {
       expected: 2,
       analyzed: 1,
     });
+  });
+});
+
+describe("analysis amendments", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Minimal ok JSON response for the amendment routes. */
+  const okJson = (body) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(body)),
+    });
+
+  it("editAnalysisCondition posts to the artifact-scoped conditions route", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      okJson({ analysis_id: "ana_1" }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await editAnalysisCondition("chk_01", "art_1", "cond-1", {
+      description: "Corrected description",
+    });
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe("/v1/checks/chk_01/artifacts/art_1/conditions/cond-1");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      description: "Corrected description",
+    });
+  });
+
+  it("encodes path segments so IDs with special chars can't reshape the URL", async () => {
+    /** @type {any} */ const fetch = vi.fn(() => okJson(null));
+    vi.stubGlobal("fetch", fetch);
+    await rejectAnalysisCondition("ch k", "art/1", "cond#1", {});
+    const [url] = fetch.mock.calls[0];
+    expect(url).toBe(
+      "/v1/checks/ch%20k/artifacts/art%2F1/conditions/cond%231/reject",
+    );
   });
 });
 

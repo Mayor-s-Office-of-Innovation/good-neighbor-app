@@ -195,7 +195,9 @@ server.on("error", async (err) => {
   // A fake sf311 is already bound to the port. Any instance is equivalent
   // (stateless; same script, same env), so a concurrent `npm run dev` lane or
   // an already-running standalone copy should NOT crash the dev stack
-  // (concurrently -k would tear everything down). Reuse it and exit cleanly.
+  // (concurrently -k would tear everything down). Reuse it — but DO NOT exit:
+  // under `concurrently -k` a lane that exits (even 0) marks the service dead
+  // and SIGTERMs every other lane. Park until the stack is torn down.
   try {
     const res = await fetch(`http://127.0.0.1:${PORT}/health`, {
       // A non-HTTP squatter may accept and never answer — don't hang on it.
@@ -204,8 +206,22 @@ server.on("error", async (err) => {
     const body = /** @type {{ service?: unknown }} */ (await res.json());
     if (res.ok && body.service === "fake-sf311") {
       console.log(
-        `[sf311] port ${PORT} already serves fake-sf311 — reusing it`,
+        `[sf311] port ${PORT} already serves fake-sf311 — reusing it (idling while the stack runs)`,
       );
+      // Park on a REAL handle, not just a pending promise: after the failed
+      // listen() and the probe, the process holds no active handles, and a
+      // never-resolving promise does NOT keep Node's event loop alive — the
+      // process would drain and exit 0, which `concurrently -k` treats as a
+      // dead service and SIGTERMs the whole stack. An unref'd server re-arms
+      // when signals arrive and keeps one live handle while idling.
+      const park = createServer(() => {});
+      park.on("error", () => {});
+      park.listen(0, "127.0.0.1"); // any free ephemeral port
+      const idle = /** @type {Promise<void>} */ (new Promise(() => {}));
+      process.on("SIGINT", () => process.exit(0));
+      process.on("SIGTERM", () => process.exit(0));
+      await idle;
+      park.close();
       return;
     }
     console.error(

@@ -207,6 +207,7 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
     artifactId,
+    checkId,
     sourceAnalysis: analysis,
     assessment: guidance.assessment,
     conditions: guidance.conditions || assessment.conditions,
@@ -256,6 +257,7 @@ export async function refreshEvidenceAnalysis(
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
     artifactId,
+    checkId: check.id,
     sourceAnalysis: {
       ...(item.analysis?.sourceAnalysis || {}),
       analysisId,
@@ -328,6 +330,7 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
   updateItemAnalysis(placeId, textItem.id, {
     status: "analyzed",
     artifactId,
+    checkId: check.id,
     sourceAnalysis: analysis,
     assessment: guidance.assessment,
     conditions: guidance.conditions || [],

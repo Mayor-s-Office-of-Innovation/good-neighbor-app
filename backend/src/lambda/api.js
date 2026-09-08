@@ -70,9 +70,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
     submitConditionAnswers,
-  "POST /v1/analyses/{analysisId}/conditions/{conditionId}":
+  "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
     editAnalysisCondition,
-  "POST /v1/analyses/{analysisId}/conditions/{conditionId}/reject":
+  "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject":
     rejectAnalysisCondition,
   // Legacy demo submission loop + health
   "POST /submissions": submissionsHandler,

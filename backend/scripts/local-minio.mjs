@@ -12,6 +12,7 @@
 // env values must satisfy that (see .env.example).
 
 import { execFile, spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdir, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -91,6 +92,71 @@ async function main() {
   const minioBin = installed ?? binPath;
   if (!installed) await ensureBinary();
   await mkdir(dataDir, { recursive: true });
+
+  // A MinIO may already be bound to the port (an earlier `npm run dev` that
+  // only half-died, a standalone `local:minio`, …). MinIO instances are
+  // equivalent for dev when they share the same data dir, so probe the health
+  // endpoint: if a healthy MinIO answers, reuse it and exit 0 instead of
+  // EADDRINUSE-crashing — under `concurrently -k` (local:services / dev) that
+  // crash would SIGTERM every other lane (ddb, mq, sf311, api, worker).
+  // Note: unlike fake-sf311, MinIO is NOT stateless across data dirs — a
+  // healthy response from a DIFFERENT data dir is still reused, matching how
+  // the surviving instance was started (same script, same default dir) in
+  // every observed case; a foreign squatter fails the probe below.
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${API_PORT}/minio/health/live`,
+      // A non-MinIO squatter may accept and never answer — don't hang on it.
+      { signal: AbortSignal.timeout(1500) },
+    );
+    if (res.ok) {
+      // Identity check: /minio/health/live returns 200 with a `Server: MinIO`
+      // header from real MinIO. A foreign process with a catch-all 200 route
+      // would otherwise be accepted and the stack pointed at non-storage.
+      if (res.headers.get("server") !== "MinIO") {
+        console.error(
+          `[minio] port ${API_PORT} responded OK but is not MinIO (Server header missing) — free the port and retry`,
+        );
+        process.exit(1);
+      }
+      console.log(
+        `[minio] port ${API_PORT} already serves a healthy MinIO — reusing it (idling while the stack runs)`,
+      );
+      // DO NOT exit here: under `concurrently -k` a lane that exits (even 0)
+      // marks the service dead and SIGTERMs every other lane. Park until the
+      // stack is torn down. Same pattern as local-sf311.mjs. Park on a REAL
+      // handle — a never-resolving promise does NOT keep the event loop alive
+      // once the failed listen + probe leave the process with zero handles.
+      const park = createServer(() => {});
+      park.on("error", () => {});
+      park.listen(0, "127.0.0.1"); // any free ephemeral port
+      const idle = /** @type {Promise<void>} */ (new Promise(() => {}));
+      process.on("SIGINT", () => process.exit(0));
+      process.on("SIGTERM", () => process.exit(0));
+      await idle;
+      park.close();
+      return;
+    }
+    console.error(
+      `[minio] port ${API_PORT} responded ${res.status} — not a healthy MinIO; free the port and retry`,
+    );
+    process.exit(1);
+  } catch (err) {
+    // ECONNREFUSED means nothing is listening — proceed to start normally.
+    // fetch wraps connect failures in a TypeError (cause carries the errno).
+    const isRefused =
+      /** @type {NodeJS.ErrnoException} */ (err)?.code === "ECONNREFUSED" ||
+      /** @type {NodeJS.ErrnoException} */ (/** @type {any} */ (err)?.cause)
+        ?.code === "ECONNREFUSED";
+    if (isRefused) {
+      // fall through to startup
+    } else {
+      // Port held but unresponsive (non-HTTP squatter) — surface loudly.
+      console.error("[minio] port probe failed:", err);
+      process.exit(1);
+    }
+  }
+
   console.log(
     `[minio] starting MinIO on :${API_PORT} (console :${CONSOLE_PORT}) with ${minioBin}…`,
   );
@@ -130,8 +196,34 @@ async function main() {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  child.on("exit", (code) => {
+  child.on("exit", async (code) => {
     console.log(`[minio] MinIO exited (${code ?? "signal"})`);
+    // Race recovery: if this child lost the port bind to a simultaneous
+    // launch, the winner is a healthy MinIO serving the same data dir —
+    // park on it (do NOT propagate the exit; under `concurrently -k` that
+    // would tear down the whole stack for a service that is actually up).
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${API_PORT}/minio/health/live`,
+        { signal: AbortSignal.timeout(2500) },
+      );
+      if (res.ok && res.headers.get("server") === "MinIO") {
+        console.log(
+          `[minio] another MinIO owns port ${API_PORT} — reusing it (idling while the stack runs)`,
+        );
+        const park = createServer(() => {});
+        park.on("error", () => {});
+        park.listen(0, "127.0.0.1");
+        const idle = /** @type {Promise<void>} */ (new Promise(() => {}));
+        process.on("SIGINT", () => process.exit(0));
+        process.on("SIGTERM", () => process.exit(0));
+        await idle;
+        park.close();
+        return;
+      }
+    } catch {
+      // port free/unresponsive — genuine failure, fall through to exit
+    }
     process.exit(code ?? 0);
   });
   child.on("error", (err) => {
