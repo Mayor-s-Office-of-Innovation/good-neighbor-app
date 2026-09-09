@@ -410,6 +410,7 @@ class TodayView extends HTMLElement {
     this._captureFinishedListening = false;
     this._finishCaptureTimer = 0;
     this._focusAfterRender = null;
+    this._captureLauncherSelector = null;
   }
 
   disconnectedCallback() {
@@ -558,22 +559,24 @@ class TodayView extends HTMLElement {
 
     const start = this.querySelector("#start-check");
     if (start) {
-      start.addEventListener("click", () => this._startCapture("perimeter"));
+      start.addEventListener("click", (event) =>
+        this._startCapture("perimeter", event.currentTarget),
+      );
     }
     this.querySelector("#edit-places")?.addEventListener("click", () =>
       navigate("/places/edit"),
     );
     const report = this.querySelector("#report-problem");
     if (report) {
-      report.addEventListener("click", () =>
-        this._startCapture("single-problem"),
+      report.addEventListener("click", (event) =>
+        this._startCapture("single-problem", event.currentTarget),
       );
     }
     this.querySelectorAll("[data-start-capture='single-problem']").forEach(
       (control) => {
         control.addEventListener("click", (event) => {
           event.preventDefault();
-          this._startCapture("single-problem");
+          this._startCapture("single-problem", event.currentTarget);
         });
       },
     );
@@ -864,9 +867,14 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  async _startCapture(flowType) {
+  async _startCapture(flowType, launcher = null) {
     this._captureFlow = flowType;
     this._viewPhase = "entering-capture";
+    this._captureLauncherSelector =
+      launcher instanceof HTMLElement && launcher.id
+        ? `#${CSS.escape(launcher.id)}`
+        : null;
+    this._focusAfterRender = "capture-heading";
     this._scrollCaptureStartIntoView();
     if (flowType === "single-problem") {
       await resumeOrStartProblemReport(this._siteId);
@@ -884,12 +892,15 @@ class TodayView extends HTMLElement {
   async _finishCapture() {
     if (this._viewPhase === "leaving-capture") return;
     this._viewPhase = "leaving-capture";
+    this._focusAfterRender =
+      this._captureLauncherSelector || "home-primary-control";
     this._syncPhaseClass();
     window.clearTimeout(this._finishCaptureTimer);
     this._finishCaptureTimer = window.setTimeout(async () => {
       this._viewPhase = "home";
       this._captureFlow = null;
       await this.connectedCallback();
+      this._captureLauncherSelector = null;
     }, this._motionDuration());
   }
 
@@ -1264,14 +1275,24 @@ class TodayView extends HTMLElement {
     const target = this._focusAfterRender;
     this._focusAfterRender = null;
     if (!target) return;
-    const selector =
-      target === "task-filter-active-item"
-        ? ".task-filter__item--active"
-        : "#task-filter-button";
+    const selector = this._focusSelector(target);
     window.requestAnimationFrame(() => {
-      const element = this.querySelector(selector);
+      const element = selector ? this.querySelector(selector) : null;
       if (element instanceof HTMLElement) element.focus();
     });
+  }
+
+  _focusSelector(target) {
+    if (target === "task-filter-active-item")
+      return ".task-filter__item--active";
+    if (target === "task-filter-button") return "#task-filter-button";
+    if (target === "capture-heading") {
+      return ".check-timeline__title, .single-issue__title, .home-region--capture button";
+    }
+    if (target === "home-primary-control") {
+      return "#start-check, #report-problem, .screen--today-hero h1";
+    }
+    return target;
   }
 
   _primaryCardAction(task) {
