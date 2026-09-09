@@ -66,8 +66,10 @@ class ProblemReport extends HTMLElement {
     this._activeProblem = null;
     this._analysisDeleteDialog = null;
     this._analysisSuccessDialog = null;
+    this._analysisProgressDialog = null;
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
+    this._toastTimer = 0;
   }
 
   /** @returns {Promise<void>} */
@@ -140,6 +142,9 @@ class ProblemReport extends HTMLElement {
     this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-success-dialog")
     );
+    this._analysisProgressDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-progress-dialog")
+    );
     this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-edit-dialog")
     );
@@ -152,6 +157,10 @@ class ProblemReport extends HTMLElement {
     );
     this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
       this._saveProblemEdit(),
+    );
+    this.querySelector("#analysis-progress-cancel")?.addEventListener(
+      "click",
+      () => this._analysisProgressDialog?.close(),
     );
     this.querySelectorAll(".analysis-dialog").forEach((dialog) => {
       dialog.addEventListener("click", (e) => {
@@ -539,18 +548,35 @@ class ProblemReport extends HTMLElement {
   }
 
   async _resolveProblem(problem) {
-    if (problem.taskId) {
-      try {
-        await completeTask(problem.taskId, {
-          completionMethod:
-            problem.actionKind === "escalation" ? "311_filed" : "manual",
-        });
-      } catch (err) {
-        console.error("resolve task failed", err);
-      }
+    if (!problem.taskId) {
+      this._markProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+      return;
     }
-    this._markProblemResolved(problem);
-    this._analysisSuccessDialog?.showModal();
+
+    if (problem.actionKind === "escalation") {
+      this._analysisProgressDialog?.showModal();
+      try {
+        await completeTask(problem.taskId, { completionMethod: "311_filed" });
+        this._analysisProgressDialog?.close();
+        this._markProblemResolved(problem);
+        this._showToast("Success! 311 ticket filed.");
+      } catch (err) {
+        console.error("escalation failed", err);
+        this._analysisProgressDialog?.close();
+        this._showToast("Could not file the 311 ticket. Please try again.");
+      }
+      return;
+    }
+
+    try {
+      await completeTask(problem.taskId, { completionMethod: "manual" });
+      this._markProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+    } catch (err) {
+      console.error("resolve task failed", err);
+      this._showToast("Could not save that action. Please try again.");
+    }
   }
 
   _markProblemResolved(problem) {
@@ -584,6 +610,20 @@ class ProblemReport extends HTMLElement {
     if (!(button instanceof HTMLButtonElement)) return;
     button.disabled = busy;
     button.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  _showToast(message) {
+    let toast = this.querySelector(".check-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.className = "check-toast";
+      toast.setAttribute("role", "status");
+      this.appendChild(toast);
+    }
+    toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
+    toast.querySelector("span").textContent = message;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => toast.remove(), 3500);
   }
 
   _missingConditionMessage(problem, action) {
