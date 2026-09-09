@@ -811,9 +811,13 @@ class TodayView extends HTMLElement {
                   .map((entry) =>
                     taskAnalysisCard({
                       task: entry.task,
-                      action: this._primaryCardAction(entry.task),
+                      action:
+                        entry.homeStatus === "needs_action"
+                          ? this._primaryCardAction(entry.task)
+                          : null,
                       statusLabel: this._taskStatusMeta(entry),
                       isNew: false,
+                      includeControls: entry.homeStatus === "needs_action",
                     }),
                   )
                   .join("")}

@@ -73,4 +73,26 @@ describe("taskAnalysisCard", () => {
       'data-card-edit-description="Trash is piled around the tree well."',
     );
   });
+
+  it("omits action, edit, and delete controls for read-only task cards", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_1",
+        checkId: "check_1",
+        conditionId: "condition_litter",
+        category: "Litter",
+        description: "Trash is piled around the tree well.",
+        guidance: "Clean it up.",
+        buttons: ["Cleaned it up"],
+      },
+      action: { label: "Cleaned it up", variant: "ink", kind: "done" },
+      statusLabel: "YESTERDAY · 10:00AM",
+      isNew: false,
+      includeControls: false,
+    });
+
+    expect(card).not.toContain("Cleaned it up</button>");
+    expect(card).not.toContain('data-analysis-action="edit"');
+    expect(card).not.toContain('data-analysis-action="delete"');
+  });
 });
