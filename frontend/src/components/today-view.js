@@ -179,6 +179,10 @@ export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
   return !session || session.status === "capture-complete";
 }
 
+export function shouldInertHomeResults(viewPhase) {
+  return ["entering-capture", "capture"].includes(viewPhase);
+}
+
 export function issueCountLabel(count) {
   if (!count) return "";
   return `${count} ${count === 1 ? "issue" : "issues"} found`;
@@ -699,6 +703,7 @@ class TodayView extends HTMLElement {
       newTaskEntries.length ||
       bucketTaskEntries.length > 0;
     const phaseClass = `home--${this._viewPhase}`;
+    const resultsInactive = shouldInertHomeResults(this._viewPhase);
 
     return html`
       <div
@@ -738,7 +743,10 @@ class TodayView extends HTMLElement {
           ${captureVisible ? this._captureRegion() : ""}
         </section>
 
-        <section class="home-region home-region--results">
+        <section
+          class="home-region home-region--results"
+          ${resultsInactive ? html`inert aria-hidden="true"` : ""}
+        >
           ${showWorklist
             ? html`
                 ${hasResultCards
@@ -928,6 +936,16 @@ class TodayView extends HTMLElement {
       "home--leaving-capture",
       this._viewPhase === "leaving-capture",
     );
+    const results = this.querySelector(".home-region--results");
+    if (results) {
+      const inactive = shouldInertHomeResults(this._viewPhase);
+      results.toggleAttribute("inert", inactive);
+      if (inactive) {
+        results.setAttribute("aria-hidden", "true");
+      } else {
+        results.removeAttribute("aria-hidden");
+      }
+    }
   }
 
   _motionDuration() {
