@@ -306,6 +306,34 @@ describe("home task status helpers", () => {
     ).toBe(2);
   });
 
+  it("hydrates only new cards and the selected older bucket", async () => {
+    const { visibleTaskEntriesForHydration } = await import("./today-view.js");
+
+    expect(
+      visibleTaskEntriesForHydration(
+        [
+          { task: { taskId: "new" }, isNew: true, homeStatus: "needs_action" },
+          {
+            task: { taskId: "needs_action" },
+            isNew: false,
+            homeStatus: "needs_action",
+          },
+          {
+            task: { taskId: "in_progress" },
+            isNew: false,
+            homeStatus: "in_progress",
+          },
+          {
+            task: { taskId: "resolved" },
+            isNew: false,
+            homeStatus: "resolved",
+          },
+        ],
+        "in_progress",
+      ).map((entry) => entry.task.taskId),
+    ).toEqual(["new", "in_progress"]);
+  });
+
   it("matches backend tasks already represented by live capture cards", async () => {
     const { taskMatchesSessionSignatures, taskSignaturesFromSessionItems } =
       await import("./today-view.js");
