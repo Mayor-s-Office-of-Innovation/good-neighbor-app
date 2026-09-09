@@ -656,8 +656,8 @@ class ProblemReport extends HTMLElement {
     }
     toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
     toast.querySelector("span").textContent = message;
-    clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => toast.remove(), 3500);
+    window.clearTimeout(this._toastTimer);
+    this._toastTimer = window.setTimeout(() => toast.remove(), 3500);
   }
 
   _missingConditionMessage(problem, action) {
