@@ -233,6 +233,14 @@ describe("home task status helpers", () => {
     ).toBe("Needs Action • 6");
   });
 
+  it("renders issue count labels only when issues exist", async () => {
+    const { issueCountLabel } = await import("./today-view.js");
+
+    expect(issueCountLabel(0)).toBe("");
+    expect(issueCountLabel(1)).toBe("1 issue found");
+    expect(issueCountLabel(2)).toBe("2 issues found");
+  });
+
   it("matches backend tasks already represented by live capture cards", async () => {
     const { taskMatchesSessionSignatures, taskSignaturesFromSessionItems } =
       await import("./today-view.js");
