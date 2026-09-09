@@ -18,11 +18,16 @@ import {
   listTasks,
   getCheck,
   getMediaUrl,
+  ApiError,
   completeTask,
   cannotDoTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
 } from "../services/api.js";
+import {
+  analyzeNoIssueDescriptionEdit,
+  refreshEvidenceAnalysis,
+} from "../services/photo-analysis.js";
 import {
   adaptCheckHeader,
   cityCategoriesByCheck,
@@ -39,6 +44,7 @@ import {
   clearSubmittedSession,
   resumeOrStartCheck,
   resumeOrStartProblemReport,
+  updateItemAnalysis,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
 import { mark } from "../services/instrument.js";
@@ -593,6 +599,9 @@ class TodayView extends HTMLElement {
     );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-delete-dialog")
+    );
+    this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-success-dialog")
     );
     this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-edit-dialog")
@@ -1423,6 +1432,12 @@ class TodayView extends HTMLElement {
       if (!task) return;
       this._wireCardButtons(card, task);
     });
+    this.querySelectorAll(".analysis-card").forEach((card) => {
+      if (!card.querySelector("[data-analysis-action]")) return;
+      const taskId = card.getAttribute("data-task-id");
+      const task = taskId ? this._tasksById.get(taskId) || null : null;
+      this._wireAnalysisCardButtons(card, task);
+    });
   }
 
   // (Re)attach click handlers to every [data-action] button currently inside a
@@ -1431,6 +1446,9 @@ class TodayView extends HTMLElement {
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => this._onAction(card, task, btn));
     });
+  }
+
+  _wireAnalysisCardButtons(card, task = null) {
     card.querySelectorAll("[data-analysis-action]").forEach((btn) => {
       btn.addEventListener("click", () =>
         this._onAnalysisAction(card, task, btn),
@@ -1445,20 +1463,28 @@ class TodayView extends HTMLElement {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       this._openEditProblem(problem);
+    } else if (action === "resolve") {
+      this._resolveAnalysisProblem(problem);
     }
   }
 
-  _problemFromCard(card, task) {
+  _problemFromCard(card, task = null) {
     return {
-      checkId: card.getAttribute("data-check-id") || task.checkId || "",
+      placeId: card.getAttribute("data-place-id") || "",
+      itemId: card.getAttribute("data-item-id") || "",
+      checkId: card.getAttribute("data-check-id") || task?.checkId || "",
       artifactId:
-        card.getAttribute("data-artifact-id") || taskArtifactIds(task)[0] || "",
-      taskId: card.getAttribute("data-task-id") || task.taskId || "",
+        card.getAttribute("data-artifact-id") ||
+        (task ? taskArtifactIds(task)[0] : "") ||
+        "",
+      taskId: card.getAttribute("data-task-id") || task?.taskId || "",
       conditionId:
-        card.getAttribute("data-condition-id") || task.conditionId || "",
-      title: card.getAttribute("data-card-title") || task.category || "problem",
+        card.getAttribute("data-condition-id") || task?.conditionId || "",
+      actionKind: card.getAttribute("data-action-kind") || task?.kind || "",
+      title:
+        card.getAttribute("data-card-title") || task?.category || "problem",
       description:
-        card.getAttribute("data-card-description") || task.description || "",
+        card.getAttribute("data-card-description") || task?.description || "",
     };
   }
 
@@ -1494,7 +1520,7 @@ class TodayView extends HTMLElement {
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
-      await rejectAnalysisCondition(
+      const result = await rejectAnalysisCondition(
         problem.checkId,
         problem.artifactId,
         problem.conditionId,
@@ -1503,10 +1529,22 @@ class TodayView extends HTMLElement {
           caller: { request_id: this._requestId("delete", problem) },
         },
       );
+      if (problem.placeId && problem.itemId) {
+        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
+          rejectedConditionId: problem.conditionId,
+        });
+      }
       this._analysisDeleteDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        this._deleteProblemLocally(problem);
+        this._analysisDeleteDialog?.close();
+        this._activeProblem = null;
+        await this.connectedCallback();
+        return;
+      }
       console.error("delete analysis condition failed", err);
       this._setDialogError(
         "analysis-delete-error",
@@ -1533,6 +1571,37 @@ class TodayView extends HTMLElement {
       this._activeProblem = null;
       return;
     }
+    if (!problem.conditionId) {
+      if (!problem.placeId || !problem.itemId) {
+        this._setDialogError(
+          "analysis-edit-error",
+          "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+        );
+        return;
+      }
+      const button = this.querySelector("#analysis-edit-save");
+      this._setBusy(button, true);
+      this._setDialogError("analysis-edit-error", "");
+      try {
+        await analyzeNoIssueDescriptionEdit(
+          problem.placeId,
+          problem.itemId,
+          description,
+        );
+        this._analysisEditDialog?.close();
+        this._activeProblem = null;
+        await this.connectedCallback();
+      } catch (err) {
+        console.error("text-only no-issue reanalysis failed", err);
+        this._setDialogError(
+          "analysis-edit-error",
+          "Could not analyze this description. Please try again.",
+        );
+      } finally {
+        this._setBusy(button, false);
+      }
+      return;
+    }
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-edit-error",
@@ -1545,7 +1614,7 @@ class TodayView extends HTMLElement {
     this._setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
-      await editAnalysisCondition(
+      const result = await editAnalysisCondition(
         problem.checkId,
         problem.artifactId,
         problem.conditionId,
@@ -1554,6 +1623,9 @@ class TodayView extends HTMLElement {
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
+      if (problem.placeId && problem.itemId) {
+        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+      }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
@@ -1566,6 +1638,99 @@ class TodayView extends HTMLElement {
     } finally {
       this._setBusy(button, false);
     }
+  }
+
+  _deleteProblemLocally(problem) {
+    if (!problem.placeId || !problem.itemId) return;
+    const item = this._sessionItem(problem);
+    updateItemAnalysis(problem.placeId, problem.itemId, {
+      tasks: (item?.analysis?.tasks || []).filter(
+        (task) => task.taskId !== problem.taskId,
+      ),
+      rejectedConditionIds: [
+        ...(item?.analysis?.rejectedConditionIds || []),
+        problem.conditionId,
+      ].filter(Boolean),
+    });
+  }
+
+  async _resolveAnalysisProblem(problem) {
+    if (!problem.taskId) {
+      this._markAnalysisProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+      return;
+    }
+
+    if (problem.actionKind === "escalation") {
+      const result = await completeTask(problem.taskId, {
+        completionMethod: "311_filed",
+      }).catch((err) => {
+        console.error("escalation failed", err);
+        return null;
+      });
+      if (!isFiled311Completion(result?.task)) {
+        this._setInlineProblemError(
+          problem,
+          appActionFailureMessage(result?.task, {
+            includeUnsubmitted311: true,
+          }) || "Could not file the 311 ticket. Please try again.",
+        );
+        return;
+      }
+      this._markAnalysisProblemResolved(problem);
+      await this.connectedCallback();
+      return;
+    }
+
+    try {
+      await completeTask(problem.taskId, { completionMethod: "manual" });
+      this._markAnalysisProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+      await this.connectedCallback();
+    } catch (err) {
+      console.error("resolve task failed", err);
+      this._setInlineProblemError(
+        problem,
+        "Could not save that action. Please try again.",
+      );
+    }
+  }
+
+  _markAnalysisProblemResolved(problem) {
+    if (problem.placeId && problem.itemId) {
+      const item = this._sessionItem(problem);
+      updateItemAnalysis(problem.placeId, problem.itemId, {
+        tasks: (item?.analysis?.tasks || []).filter(
+          (task) => task.taskId !== problem.taskId,
+        ),
+        resolvedConditionIds: [
+          ...(item?.analysis?.resolvedConditionIds || []),
+          problem.conditionId,
+        ].filter(Boolean),
+      });
+    }
+    if (problem.taskId) {
+      this._setTaskOverride(problem.taskId, "resolved");
+    }
+  }
+
+  _sessionItem(problem) {
+    return getCurrentCheck()?.places?.[problem.placeId]?.items?.find(
+      (item) => item.id === problem.itemId,
+    );
+  }
+
+  _setInlineProblemError(problem, message) {
+    const card = [...this.querySelectorAll(".analysis-card")].find(
+      (candidate) =>
+        candidate.getAttribute("data-task-id") === problem.taskId &&
+        (!problem.conditionId ||
+          candidate.getAttribute("data-condition-id") === problem.conditionId),
+    );
+    const error = card?.querySelector(".actioncard__error");
+    if (!(error instanceof HTMLElement)) return;
+    error.textContent = message;
+    error.hidden = false;
   }
 
   _setDialogError(id, message) {
