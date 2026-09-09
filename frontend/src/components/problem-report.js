@@ -74,18 +74,25 @@ class ProblemReport extends HTMLElement {
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
     this._toastTimer = 0;
+    this._initGeneration = 0;
   }
 
   /** @returns {Promise<void>} */
   async connectedCallback() {
+    const initGeneration = ++this._initGeneration;
+    this._cleanupSubscription();
     this._embedded = this.hasAttribute("embedded");
     /** @type {SiteRecord | null} */
     this._site = await getSite();
+    if (!this._isCurrentInit(initGeneration)) return;
     this._siteId =
       this._site?.siteId || this._site?.providerSiteId || this._site?.id || "";
 
-    const check =
-      getCurrentCheck() || (await loadDraft("single-problem")) || null;
+    let check = getCurrentCheck();
+    if (!check) {
+      check = (await loadDraft("single-problem")) || null;
+      if (!this._isCurrentInit(initGeneration)) return;
+    }
     if (!check) {
       ensureProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
@@ -96,9 +103,15 @@ class ProblemReport extends HTMLElement {
     this._placeId = getPlaceOrder()[0];
     setActivePlaceIndex(0);
 
-    this._unsubscribe = onCheckSessionChange(() => {
+    const unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
+    if (!this._isCurrentInit(initGeneration)) {
+      unsubscribe();
+      return;
+    }
+    this._cleanupSubscription();
+    this._unsubscribe = unsubscribe;
 
     this.innerHTML = shell({
       embedded: this._embedded,
@@ -179,6 +192,15 @@ class ProblemReport extends HTMLElement {
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._render();
+  }
+
+  _isCurrentInit(initGeneration) {
+    return this.isConnected && initGeneration === this._initGeneration;
+  }
+
+  _cleanupSubscription() {
+    this._unsubscribe?.();
+    this._unsubscribe = null;
   }
 
   /** @returns {PlaceState} */
@@ -329,8 +351,7 @@ class ProblemReport extends HTMLElement {
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
-    this._unsubscribe?.();
-    this._unsubscribe = null;
+    this._cleanupSubscription();
     if (this._embedded) {
       this.dispatchEvent(
         new CustomEvent("capturefinished", {
@@ -360,8 +381,7 @@ class ProblemReport extends HTMLElement {
 
   _exitCapture() {
     this._finishing = true;
-    this._unsubscribe?.();
-    this._unsubscribe = null;
+    this._cleanupSubscription();
     if (this._embedded) {
       this.dispatchEvent(
         new CustomEvent("capturefinished", {
@@ -656,10 +676,11 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   disconnectedCallback() {
+    this._initGeneration += 1;
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
-    this._unsubscribe?.();
+    this._cleanupSubscription();
   }
 }
 
