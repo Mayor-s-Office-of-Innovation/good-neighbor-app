@@ -17,13 +17,17 @@
   tasks are created. Markup is inline via the `html` tag; split into a
   .templates.js file if it grows (see CLAUDE.md convention).
 */
-import { html, escapeHtml } from "../lib/html.js";
+import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { getSite, getDraft } from "../db.js";
 import {
   listChecks,
   listTasks,
+  getCheck,
+  getMediaUrl,
   completeTask,
   cannotDoTask,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
 } from "../services/api.js";
 import {
   adaptCheckHeader,
@@ -41,9 +45,24 @@ import {
 import { navigate } from "../router.js";
 import { mark } from "../services/instrument.js";
 import {
+  analysisResultsTray,
+  taskAnalysisCard,
+} from "./analysis-results.templates.js";
+import { analysisDialogs } from "./perimeter-check.templates.js";
+import {
   resumeSubmittedCheckInBackground,
   resumeUploadingCheckInBackground,
 } from "../services/submit-check.js";
+
+const HOME_FILTERS = [
+  { id: "needs_action", label: "Needs Action" },
+  { id: "in_progress", label: "In progress" },
+  { id: "resolved", label: "Resolved" },
+  { id: "archived", label: "Archived" },
+];
+const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
+const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
+const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
@@ -77,15 +96,331 @@ export function newestTasksFirst(tasks) {
   );
 }
 
+export function activeHomeFilterLabel(filterId, counts) {
+  const filter =
+    HOME_FILTERS.find((candidate) => candidate.id === filterId) ||
+    HOME_FILTERS[0];
+  return `${filter.label} • ${counts[filter.id] || 0}`;
+}
+
+export function homeTaskStatus(task, override, now = new Date()) {
+  if (override?.status === "in_progress") return "in_progress";
+  if (override?.status === "resolved") {
+    return ageMs(override.updatedAt, now) >= ARCHIVE_AFTER_MS
+      ? "archived"
+      : "resolved";
+  }
+  const status = String(task.status || "open");
+  if (status === "completing" || status === "in_progress") {
+    return "in_progress";
+  }
+  if (status === "completed" || status === "cannot_do") {
+    const resolvedAt =
+      task.completedAt ||
+      task.completed_at ||
+      task.resolvedAt ||
+      task.resolved_at ||
+      task.updatedAt ||
+      task.updated_at ||
+      taskCreatedAt(task);
+    return ageMs(resolvedAt, now) >= ARCHIVE_AFTER_MS ? "archived" : "resolved";
+  }
+  return "needs_action";
+}
+
+export function isNewHomeTask(task, override, now = new Date()) {
+  return (
+    homeTaskStatus(task, override, now) === "needs_action" &&
+    ageMs(taskCreatedAt(task), now) < NEW_TASK_WINDOW_MS
+  );
+}
+
+export function taskCreatedAt(task) {
+  if (task.createdAt) return task.createdAt;
+  if (task.created_at) return task.created_at;
+  if (task.updatedAt) return task.updatedAt;
+  if (task.updated_at) return task.updated_at;
+  const gsiDate = /^([^#]+)#/.exec(String(task.gsi2sk || ""));
+  return gsiDate?.[1] || "";
+}
+
+export function displayTaskId(task) {
+  return String(
+    task.shortId ||
+      task.displayId ||
+      task.display_id ||
+      task.assessmentId ||
+      task.taskId ||
+      "",
+  );
+}
+
+export function shouldShowFirstRunHome({
+  captureVisible,
+  last,
+  taskCount,
+  hasResultCards,
+}) {
+  return !captureVisible && !last && taskCount === 0 && !hasResultCards;
+}
+
+export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
+  if (!["entering-capture", "capture", "leaving-capture"].includes(viewPhase)) {
+    return false;
+  }
+  return !session || session.status === "capture-complete";
+}
+
+export function taskSignaturesFromSessionItems(items) {
+  const signatures = {
+    taskIds: new Set(),
+    conditionIds: new Set(),
+    assessmentIds: new Set(),
+    artifactIds: new Set(),
+  };
+  for (const item of items || []) {
+    const artifactId = item?.analysis?.artifactId || item?.upload?.artifactId;
+    if (artifactId) signatures.artifactIds.add(artifactId);
+    const assessmentId = item?.analysis?.assessment?.assessmentId;
+    if (assessmentId) signatures.assessmentIds.add(assessmentId);
+    for (const condition of item?.analysis?.conditions || []) {
+      if (condition?.conditionId) {
+        signatures.conditionIds.add(condition.conditionId);
+      }
+    }
+    for (const task of item?.analysis?.tasks || []) {
+      if (task?.taskId) signatures.taskIds.add(task.taskId);
+      if (task?.conditionId) signatures.conditionIds.add(task.conditionId);
+      if (task?.assessmentId) signatures.assessmentIds.add(task.assessmentId);
+      for (const artifact of task?.sourceArtifactIds || []) {
+        if (artifact) signatures.artifactIds.add(artifact);
+      }
+    }
+  }
+  return signatures;
+}
+
+export function taskMatchesSessionSignatures(task, signatures) {
+  if (!task || !signatures) return false;
+  if (task.taskId && signatures.taskIds.has(task.taskId)) return true;
+  if (task.conditionId && signatures.conditionIds.has(task.conditionId)) {
+    return true;
+  }
+  if (task.assessmentId && signatures.assessmentIds.has(task.assessmentId)) {
+    return true;
+  }
+  return taskArtifactIds(task).some((artifactId) =>
+    signatures.artifactIds.has(artifactId),
+  );
+}
+
+function ageMs(iso, now) {
+  if (!iso) return 0;
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return 0;
+  return Math.max(0, now.getTime() - timestamp);
+}
+
+function uniqueTasks(tasks) {
+  const byId = new Map();
+  for (const task of tasks) {
+    if (!task?.taskId || byId.has(task.taskId)) continue;
+    byId.set(task.taskId, task);
+  }
+  return [...byId.values()];
+}
+
+function taskArtifactIdSet(tasks) {
+  const artifactIds = new Set();
+  for (const task of tasks || []) {
+    for (const artifactId of taskArtifactIds(task)) {
+      if (artifactId) artifactIds.add(artifactId);
+    }
+  }
+  return artifactIds;
+}
+
+function taskArtifactIds(task) {
+  const explicitIds = Array.isArray(task?.sourceArtifactIds)
+    ? task.sourceArtifactIds
+    : [];
+  const assessmentArtifactId = artifactIdFromAssessmentId(task?.assessmentId);
+  return [...explicitIds, assessmentArtifactId].filter(Boolean);
+}
+
+function hasProblemResults(item) {
+  return Boolean(
+    (item.analysis?.tasks || []).length ||
+      (item.analysis?.conditions || []).length,
+  );
+}
+
+export function sessionProblemItemHasBackendCards(item, tasks) {
+  const backendTasks = Array.isArray(tasks) ? tasks : [];
+  const localTasks = item?.analysis?.tasks || [];
+  if (localTasks.length) {
+    return localTasks.every((localTask) =>
+      backendTasks.some((backendTask) =>
+        sameProblemCard(localTask, backendTask),
+      ),
+    );
+  }
+  const localConditions = item?.analysis?.conditions || [];
+  if (localConditions.length) {
+    return localConditions.every((condition) =>
+      backendTasks.some(
+        (backendTask) =>
+          condition.conditionId &&
+          condition.conditionId === backendTask.conditionId,
+      ),
+    );
+  }
+  return false;
+}
+
+function sameProblemCard(localTask, backendTask) {
+  return Boolean(
+    (localTask.taskId && localTask.taskId === backendTask.taskId) ||
+      (localTask.conditionId &&
+        localTask.conditionId === backendTask.conditionId) ||
+      (localTask.assessmentId &&
+        localTask.assessmentId === backendTask.assessmentId),
+  );
+}
+
+async function hydrateTaskEvidence(tasks) {
+  const checkIds = [
+    ...new Set(tasks.map((task) => task?.checkId).filter(Boolean)),
+  ];
+  if (!checkIds.length) return tasks;
+
+  const artifactsByCheck = new Map();
+  await Promise.all(
+    checkIds.map(async (checkId) => {
+      try {
+        const result = await getCheck(checkId);
+        artifactsByCheck.set(checkId, result.artifacts || []);
+      } catch (err) {
+        console.warn("Could not hydrate task evidence", { checkId, err });
+        artifactsByCheck.set(checkId, []);
+      }
+    }),
+  );
+
+  return Promise.all(
+    tasks.map(async (task) => {
+      const artifact = firstTaskArtifact(task, artifactsByCheck);
+      if (!artifact) return task;
+      const evidence = {
+        artifactId: artifact.artifactId || "",
+        placeId: artifact.placeId || task.placeId || "",
+        placeName:
+          artifact.placeName ||
+          task.placeName ||
+          task.positionDescriptor ||
+          task.position_descriptor ||
+          task.location ||
+          "",
+        text: artifact.text || "",
+      };
+      if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
+        try {
+          const media = await getMediaUrl(task.checkId, artifact.artifactId);
+          return {
+            ...task,
+            evidence,
+            mediaUrl: media.downloadUrl,
+            thumbnailUrl: media.downloadUrl,
+          };
+        } catch (err) {
+          console.warn("Could not hydrate task media", {
+            checkId: task.checkId,
+            artifactId: artifact.artifactId,
+            err,
+          });
+        }
+      }
+      return { ...task, evidence };
+    }),
+  );
+}
+
+function firstTaskArtifact(task, artifactsByCheck) {
+  const artifacts = artifactsByCheck.get(task?.checkId) || [];
+  const sourceIds = new Set(taskArtifactIds(task));
+  return (
+    artifacts.find((artifact) =>
+      sourceIds.has(String(artifact.artifactId || "")),
+    ) || null
+  );
+}
+
+function artifactIdFromAssessmentId(assessmentId) {
+  const value = String(assessmentId || "");
+  const uuidPair =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
+      value,
+    );
+  return uuidPair?.[1] || "";
+}
+
+function newestTaskEntriesFirst(entries) {
+  return [...entries].sort((a, b) =>
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+  );
+}
+
+function readTaskStatusOverrides() {
+  try {
+    const raw = localStorage.getItem(TASK_STATUS_OVERRIDES_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskStatusOverrides(overrides) {
+  try {
+    localStorage.setItem(TASK_STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {
+    // Losing this overlay only affects the temporary home bucket assignment.
+  }
+}
+
 class TodayView extends HTMLElement {
+  constructor() {
+    super();
+    this._viewPhase = "home";
+    this._captureFlow = null;
+    this._captureFinishedHandler = () => this._finishCapture();
+    this._captureFinishedListening = false;
+    this._finishCaptureTimer = 0;
+  }
+
   disconnectedCallback() {
     this._sessionUnsub?.();
     this._sessionUnsub = null;
+    this.removeEventListener("capturefinished", this._captureFinishedHandler);
+    this._captureFinishedListening = false;
+    window.clearTimeout(this._finishCaptureTimer);
   }
 
   async connectedCallback() {
     if (!this._sessionUnsub) {
-      this._sessionUnsub = onCheckSessionChange(() => this.connectedCallback());
+      this._sessionUnsub = onCheckSessionChange((session) => {
+        if (session?.status === "in-progress") {
+          return;
+        }
+        if (shouldDeferSessionRenderDuringCapture(this._viewPhase, session)) {
+          return;
+        }
+        this.connectedCallback();
+      });
+    }
+    if (!this._captureFinishedListening) {
+      this.addEventListener("capturefinished", this._captureFinishedHandler);
+      this._captureFinishedListening = true;
     }
 
     this._site = await getSite();
@@ -93,11 +428,20 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
     const active = getCurrentCheck();
+    const captureSession = active?.status === "in-progress" ? active : null;
+    if (captureSession) {
+      this._captureFlow = captureSession.flowType || "perimeter";
+      if (this._viewPhase === "home") this._viewPhase = "capture";
+    }
     const pendingSession =
       active &&
-      ["uploading", "analyzing", "analysis_failed", "submitted"].includes(
-        active.status,
-      )
+      [
+        "capture-complete",
+        "uploading",
+        "analyzing",
+        "analysis_failed",
+        "submitted",
+      ].includes(active.status)
         ? active
         : await loadSubmitted();
 
@@ -106,11 +450,27 @@ class TodayView extends HTMLElement {
     // an error, not a crash.
     let submitted, tasks;
     try {
-      const [{ checks }, tasksResult] = await Promise.all([
+      const [
+        { checks },
+        openTasksResult,
+        completingTasksResult,
+        completedTasksResult,
+        cannotDoTasksResult,
+      ] = await Promise.all([
         listChecks({ limit: 30 }),
         listTasks({ status: "open", limit: 50 }),
+        listTasks({ status: "completing", limit: 50 }),
+        listTasks({ status: "completed", limit: 50 }),
+        listTasks({ status: "cannot_do", limit: 50 }),
       ]);
-      tasks = tasksResult.tasks || [];
+      tasks = await hydrateTaskEvidence(
+        uniqueTasks([
+          ...(openTasksResult.tasks || []),
+          ...(completingTasksResult.tasks || []),
+          ...(completedTasksResult.tasks || []),
+          ...(cannotDoTasksResult.tasks || []),
+        ]),
+      );
       const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
@@ -138,13 +498,20 @@ class TodayView extends HTMLElement {
     ]);
     let effectivePendingSession =
       pendingSession &&
-      ["uploading", "analyzing", "analysis_failed", "submitted"].includes(
-        pendingSession.status,
-      )
+      [
+        "capture-complete",
+        "uploading",
+        "analyzing",
+        "analysis_failed",
+        "submitted",
+      ].includes(pendingSession.status)
         ? pendingSession
         : null;
 
-    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+    if (
+      effectivePendingSession?.status !== "capture-complete" &&
+      this._isStalePendingSession(effectivePendingSession, submitted)
+    ) {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "uploading") {
@@ -163,10 +530,14 @@ class TodayView extends HTMLElement {
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
+    this._taskOverrides = readTaskStatusOverrides();
+    this._homeFilter = this._homeFilter || "needs_action";
+    this._activeProblem = null;
 
     this.innerHTML = this._render({
       last,
       tasks,
+      captureSession,
       pendingSession: effectivePendingSession,
       hasCheckDraft: Boolean(checkDraft),
       hasProblemDraft: Boolean(problemDraft),
@@ -181,27 +552,35 @@ class TodayView extends HTMLElement {
 
     const start = this.querySelector("#start-check");
     if (start) {
-      start.addEventListener("click", async () => {
-        const draft = await loadDraft("perimeter");
-        if (!draft) {
-          startCheck(this._siteId, this._site.places || []);
-        }
-        navigate("/check");
-      });
+      start.addEventListener("click", () => this._startCapture("perimeter"));
     }
     this.querySelector("#edit-places")?.addEventListener("click", () =>
       navigate("/places/edit"),
     );
     const report = this.querySelector("#report-problem");
     if (report) {
-      report.addEventListener("click", async () => {
-        const draft = await loadDraft("single-problem");
-        if (!draft) {
-          startProblemReport(this._siteId);
-        }
-        navigate("/problem");
-      });
+      report.addEventListener("click", () =>
+        this._startCapture("single-problem"),
+      );
     }
+    this.querySelectorAll("[data-start-capture='single-problem']").forEach(
+      (control) => {
+        control.addEventListener("click", (event) => {
+          event.preventDefault();
+          this._startCapture("single-problem");
+        });
+      },
+    );
+    this.querySelector("#task-filter-button")?.addEventListener("click", () =>
+      this._toggleTaskFilter(),
+    );
+    this.querySelectorAll("[data-home-filter]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._homeFilter = button.getAttribute("data-home-filter") || "open";
+        this._filterOpen = false;
+        this.connectedCallback();
+      });
+    });
     const review = this.querySelector("#review-assessment");
     if (review) {
       review.addEventListener("click", () => {
@@ -213,6 +592,15 @@ class TodayView extends HTMLElement {
     }
     this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#cancel-assessment-dialog")
+    );
+    this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-delete-dialog")
+    );
+    this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-edit-dialog")
+    );
+    this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
+      this.querySelector("#analysis-edit-description")
     );
     this.querySelector("#cancel-assessment-open")?.addEventListener(
       "click",
@@ -233,58 +621,292 @@ class TodayView extends HTMLElement {
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
+    this.querySelector("#analysis-delete-confirm")?.addEventListener(
+      "click",
+      () => this._confirmDeleteProblem(),
+    );
+    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
+      this._saveProblemEdit(),
+    );
+    this.querySelectorAll(".analysis-dialog").forEach((dialog) => {
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          /** @type {HTMLDialogElement} */ (dialog).close();
+        }
+      });
+    });
     this._wireCards();
   }
 
-  _render({ last, tasks, pendingSession, hasCheckDraft, hasProblemDraft }) {
-    const onsite = newestTasksFirst(tasks.filter((t) => t.type === "onsite"));
-    const city = newestTasksFirst(
-      tasks.filter((t) => t.type === "city_escalation"),
+  _render({
+    last,
+    tasks,
+    captureSession,
+    pendingSession,
+    hasCheckDraft,
+    hasProblemDraft,
+  }) {
+    const allRecentItems = pendingSession
+      ? this._sessionItems(pendingSession)
+      : [];
+    const taskArtifactIds = taskArtifactIdSet(tasks);
+    const recentItems = allRecentItems.filter((item) => {
+      const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
+      if (item.analysis?.status === "analyzed") {
+        return (
+          !hasProblemResults(item) ||
+          !sessionProblemItemHasBackendCards(item, tasks)
+        );
+      }
+      return !taskArtifactIds.has(artifactId);
+    });
+    const homeTasks = this._homeTasks(tasks);
+    const newTaskEntries = homeTasks.filter((entry) => entry.isNew);
+    const bucketTaskEntries = homeTasks.filter((entry) => !entry.isNew);
+    const statusCounts = this._statusCounts(bucketTaskEntries);
+    const visibleTasks = newestTasksFirst(
+      bucketTaskEntries.filter(
+        (entry) => entry.homeStatus === this._homeFilter,
+      ),
     );
     const hasPendingAssessment = !!pendingSession;
-    const showFirstRun = !last && tasks.length === 0;
+    const hasResultCards = recentItems.length || newTaskEntries.length;
+    const captureVisible =
+      Boolean(captureSession) || this._viewPhase === "leaving-capture";
+    const showFirstRun = shouldShowFirstRunHome({
+      captureVisible,
+      last,
+      taskCount: tasks.length,
+      hasResultCards,
+    });
+    const showWorklist =
+      hasPendingAssessment ||
+      recentItems.length ||
+      newTaskEntries.length ||
+      bucketTaskEntries.length > 0;
+    const phaseClass = `home--${this._viewPhase}`;
 
     return html`
-      <div class="home ${showFirstRun ? "home--first-run" : ""}">
-        <button
-          class="home-settings"
-          id="edit-places"
-          type="button"
-          aria-label="Edit places"
-        >
-          <span class="home-settings__icon" aria-hidden="true"></span>
-        </button>
-        <div
-          class="screen screen--today-hero ${showFirstRun
-            ? "screen--first-run"
-            : ""}"
-          role="group"
-          aria-label="Today"
-        >
-          ${showFirstRun
-            ? this._firstRunBlock({ hasCheckDraft, hasProblemDraft })
-            : this._activityBlock({ last, hasCheckDraft, hasProblemDraft })}
-        </div>
+      <div
+        class="home ${showFirstRun
+          ? "home--first-run"
+          : ""} ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
+      >
+        <section class="home-region home-region--header">
+          <div class="home-top-actions">
+            <button
+              class="home-settings"
+              id="edit-places"
+              type="button"
+              aria-label="Edit places"
+            >
+              <span class="home-settings__icon" aria-hidden="true"></span>
+            </button>
+            <feedback-dialog class="feedback-dialog"></feedback-dialog>
+          </div>
+          <div
+            class="screen screen--today-hero ${showFirstRun
+              ? "screen--first-run"
+              : ""}"
+            role="group"
+            aria-label="Today"
+          >
+            ${showFirstRun
+              ? this._firstRunBlock({ hasCheckDraft, hasProblemDraft })
+              : this._activityBlock({
+                  last,
+                  hasCheckDraft,
+                  hasProblemDraft,
+                })}
+          </div>
+        </section>
 
-        ${hasPendingAssessment || tasks.length
+        <section class="home-region home-region--capture" aria-live="polite">
+          ${captureVisible ? this._captureRegion() : ""}
+        </section>
+
+        <section class="home-region home-region--results">
+          ${showWorklist
+            ? html`
+                ${hasResultCards
+                  ? ""
+                  : html`<div class="home-divider" aria-hidden="true"></div>`}
+                ${this._homeResults({
+                  pendingSession,
+                  recentItems,
+                  newTaskEntries,
+                  visibleTasks,
+                  statusCounts,
+                  hasBucketTasks: bucketTaskEntries.length > 0,
+                })}
+              `
+            : ""}
+        </section>
+        ${pendingSession ? this._cancelAssessmentDialog() : ""}
+        ${showWorklist ? analysisDialogs() : ""}
+      </div>
+    `;
+  }
+
+  _captureRegion() {
+    return html`
+      <div class="home-capture">
+        ${this._captureFlow === "single-problem"
+          ? html`<problem-report embedded></problem-report>`
+          : html`<perimeter-check embedded></perimeter-check>`}
+      </div>
+    `;
+  }
+
+  _homeResults({
+    pendingSession,
+    recentItems,
+    newTaskEntries,
+    visibleTasks,
+    statusCounts,
+    hasBucketTasks,
+  }) {
+    const hasNewResults = recentItems.length || newTaskEntries.length;
+    const hasActiveNewAnalysis = recentItems.some((item) =>
+      ["queued", "analyzing"].includes(item.analysis?.status),
+    );
+    const wrapSection =
+      hasNewResults && !hasActiveNewAnalysis ? this._wrapSection() : "";
+    return html`
+      <div class="home-results">
+        ${pendingSession &&
+        pendingSession.status !== "capture-complete" &&
+        !recentItems.length
+          ? this._assessmentTile(pendingSession)
+          : ""}
+        ${recentItems.length
+          ? analysisResultsTray(recentItems, pendingSession.id, {
+              id: "home-analysis-results",
+              title: "",
+              ariaLabel: "New analysis results",
+              tone: "new",
+              footer: newTaskEntries.length ? "" : wrapSection,
+            })
+          : ""}
+        ${newTaskEntries.length
+          ? this._newTaskCards(newTaskEntries, wrapSection)
+          : ""}
+        ${hasBucketTasks
           ? html`
-              <div class="home-divider" aria-hidden="true"></div>
-              <div class="worklist">
-                ${pendingSession ? this._assessmentTile(pendingSession) : ""}
-                <p class="worklist__counter">To do · ${tasks.length}</p>
-                ${this._group("Site actions", onsite, "")}
-                ${this._group(
-                  "Escalate to the city",
-                  city,
-                  "worklist__group--city",
-                )}
+              ${recentItems.length || newTaskEntries.length
+                ? html`<div
+                    class="home-results__divider"
+                    aria-hidden="true"
+                  ></div>`
+                : ""}
+              ${this._taskFilter(statusCounts)}
+              <div class="home-results__cards">
+                ${visibleTasks
+                  .map((entry) =>
+                    taskAnalysisCard({
+                      task: entry.task,
+                      action: this._primaryCardAction(entry.task),
+                      statusLabel: this._taskStatusMeta(entry),
+                      isNew: false,
+                    }),
+                  )
+                  .join("")}
               </div>
             `
           : ""}
-        ${pendingSession ? this._cancelAssessmentDialog() : ""}
-        <feedback-dialog class="feedback-dialog"></feedback-dialog>
       </div>
     `;
+  }
+
+  _wrapSection() {
+    return html`
+      <section class="home-wrap" aria-label="New issue summary">
+        <h2>That's a wrap</h2>
+        <p>
+          We didn't identify any other new issues.
+          <a
+            class="home-wrap__link"
+            href="#flag-single-issue"
+            data-start-capture="single-problem"
+          >
+            Flag a single issue
+          </a>
+          if we missed something, or check below for older pending or resolved
+          issues.
+        </p>
+      </section>
+    `;
+  }
+
+  _newTaskCards(entries, footer = "") {
+    return html`
+      <section
+        class="analysis-tray analysis-tray--new"
+        aria-label="New analysis results"
+      >
+        <div class="analysis-tray__cards">
+          ${newestTaskEntriesFirst(entries)
+            .map((entry) =>
+              taskAnalysisCard({
+                task: entry.task,
+                action: this._primaryCardAction(entry.task),
+                statusLabel: this._newTaskStatusMeta(entry),
+                isNew: true,
+              }),
+            )
+            .join("")}
+          ${footer}
+        </div>
+      </section>
+    `;
+  }
+
+  async _startCapture(flowType) {
+    this._captureFlow = flowType;
+    this._viewPhase = "entering-capture";
+    if (flowType === "single-problem") {
+      startProblemReport(this._siteId);
+    } else {
+      startCheck(this._siteId, this._site.places || []);
+    }
+    await this.connectedCallback();
+    window.setTimeout(() => {
+      this._viewPhase = "capture";
+      this._syncPhaseClass();
+    }, this._motionDuration());
+  }
+
+  async _finishCapture() {
+    if (this._viewPhase === "leaving-capture") return;
+    this._viewPhase = "leaving-capture";
+    this._syncPhaseClass();
+    window.clearTimeout(this._finishCaptureTimer);
+    this._finishCaptureTimer = window.setTimeout(async () => {
+      this._viewPhase = "home";
+      this._captureFlow = null;
+      await this.connectedCallback();
+    }, this._motionDuration());
+  }
+
+  _syncPhaseClass() {
+    const root = this.querySelector(".home");
+    if (!root) return;
+    root.classList.toggle("home--home", this._viewPhase === "home");
+    root.classList.toggle(
+      "home--entering-capture",
+      this._viewPhase === "entering-capture",
+    );
+    root.classList.toggle("home--capture", this._viewPhase === "capture");
+    root.classList.toggle(
+      "home--leaving-capture",
+      this._viewPhase === "leaving-capture",
+    );
+  }
+
+  _motionDuration() {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+      ? 1
+      : 260;
   }
 
   _isStalePendingSession(session, submitted) {
@@ -460,8 +1082,8 @@ class TodayView extends HTMLElement {
         <div class="home-first-run">
           <h1 class="home-first-run__title">Start your first check</h1>
           ${this._homeActions({
-            checkLabel: hasCheckDraft ? "Resume check" : "Start a check",
-            reportLabel: hasProblemDraft ? "Resume report" : "Report a problem",
+            checkLabel: "Start a full check",
+            reportLabel: "Flag a single issue",
             stacked: true,
           })}
         </div>
@@ -483,8 +1105,8 @@ class TodayView extends HTMLElement {
         </div>
         ${this._summaryBlock(last)}
         ${this._homeActions({
-          checkLabel: hasCheckDraft ? "Resume check" : "Start a check",
-          reportLabel: hasProblemDraft ? "Resume report" : "Report a problem",
+          checkLabel: "Start a full check",
+          reportLabel: "Flag a single issue",
         })}
       </div>
     `;
@@ -543,6 +1165,97 @@ class TodayView extends HTMLElement {
       ? `${worst.category || "Finding"} — ${triageStatus(worst)}`
       : "All clear";
     return { eyebrow, headline };
+  }
+
+  _sessionItems(session) {
+    if (!session?.places || !Array.isArray(session.placeOrder)) return [];
+    return session.placeOrder.flatMap(
+      (placeId) => session.places[placeId]?.items || [],
+    );
+  }
+
+  _homeTasks(tasks) {
+    const now = new Date();
+    return tasks.map((task) => ({
+      task,
+      createdAt: taskCreatedAt(task),
+      homeStatus: homeTaskStatus(task, this._taskOverrides?.[task.taskId], now),
+      isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
+    }));
+  }
+
+  _statusCounts(entries) {
+    return HOME_FILTERS.reduce((counts, filter) => {
+      counts[filter.id] = entries.filter(
+        (entry) => entry.homeStatus === filter.id,
+      ).length;
+      return counts;
+    }, {});
+  }
+
+  _taskFilter(counts) {
+    const label = activeHomeFilterLabel(this._homeFilter, counts);
+    return html`
+      <div class="task-filter">
+        <button
+          class="task-filter__button"
+          id="task-filter-button"
+          type="button"
+          aria-expanded="${this._filterOpen ? "true" : "false"}"
+        >
+          ${escapeHtml(label)}
+          <span
+            class="task-filter__caret ${this._filterOpen
+              ? "task-filter__caret--up"
+              : ""}"
+            aria-hidden="true"
+          ></span>
+        </button>
+        ${this._filterOpen
+          ? html`
+              <div class="task-filter__menu" role="menu">
+                ${HOME_FILTERS.map(
+                  (filter) => html`
+                    <button
+                      class="task-filter__item ${filter.id === this._homeFilter
+                        ? "task-filter__item--active"
+                        : ""}"
+                      type="button"
+                      role="menuitem"
+                      data-home-filter="${escapeAttr(filter.id)}"
+                    >
+                      ${escapeHtml(activeHomeFilterLabel(filter.id, counts))}
+                    </button>
+                  `,
+                ).join("")}
+              </div>
+            `
+          : ""}
+      </div>
+    `;
+  }
+
+  _toggleTaskFilter() {
+    this._filterOpen = !this._filterOpen;
+    this.connectedCallback();
+  }
+
+  _primaryCardAction(task) {
+    return this._cardActions(task)[0] || null;
+  }
+
+  _taskStatusMeta(entry) {
+    const createdAt = taskCreatedAt(entry.task);
+    const when = createdAt
+      ? `${relativeDay(createdAt)} • ${timeOf(createdAt)}`
+      : "Existing";
+    const id = displayTaskId(entry.task);
+    return id ? `${when} • ${id}` : when;
+  }
+
+  _newTaskStatusMeta(entry) {
+    const id = displayTaskId(entry.task);
+    return id ? `NEW • ${id}` : "NEW";
   }
 
   // A boxed worklist group (design "D2 boxed groups"). Omitted when empty.
@@ -682,7 +1395,7 @@ class TodayView extends HTMLElement {
   }
 
   _wireCards() {
-    this.querySelectorAll(".actioncard").forEach((card) => {
+    this.querySelectorAll("[data-task-id]").forEach((card) => {
       const taskId = card.getAttribute("data-task-id");
       const task = this._tasksById.get(taskId);
       if (!task) return;
@@ -696,6 +1409,161 @@ class TodayView extends HTMLElement {
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => this._onAction(card, task, btn));
     });
+    card.querySelectorAll("[data-analysis-action]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        this._onAnalysisAction(card, task, btn),
+      );
+    });
+  }
+
+  _onAnalysisAction(card, task, btn) {
+    const action = btn.getAttribute("data-analysis-action");
+    const problem = this._problemFromCard(card, task);
+    if (action === "delete") {
+      this._openDeleteProblem(problem);
+    } else if (action === "edit") {
+      this._openEditProblem(problem);
+    }
+  }
+
+  _problemFromCard(card, task) {
+    return {
+      checkId: card.getAttribute("data-check-id") || task.checkId || "",
+      artifactId:
+        card.getAttribute("data-artifact-id") || taskArtifactIds(task)[0] || "",
+      taskId: card.getAttribute("data-task-id") || task.taskId || "",
+      conditionId:
+        card.getAttribute("data-condition-id") || task.conditionId || "",
+      title: card.getAttribute("data-card-title") || task.category || "problem",
+      description:
+        card.getAttribute("data-card-description") || task.description || "",
+    };
+  }
+
+  _openDeleteProblem(problem) {
+    this._activeProblem = problem;
+    this._setDialogError("analysis-delete-error", "");
+    const title = this.querySelector("#analysis-delete-title");
+    if (title) title.textContent = `Delete "${problem.title}"?`;
+    this._analysisDeleteDialog?.showModal();
+  }
+
+  _openEditProblem(problem) {
+    this._activeProblem = problem;
+    this._setDialogError("analysis-edit-error", "");
+    if (this._analysisEditDescription) {
+      this._analysisEditDescription.value = problem.description;
+    }
+    this._analysisEditDialog?.showModal();
+  }
+
+  async _confirmDeleteProblem() {
+    const problem = this._activeProblem;
+    if (!problem) return;
+    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
+      this._setDialogError(
+        "analysis-delete-error",
+        "This result is missing its original evidence coordinates, so it cannot be deleted. Take a new photo and try again.",
+      );
+      return;
+    }
+
+    const button = this.querySelector("#analysis-delete-confirm");
+    this._setBusy(button, true);
+    this._setDialogError("analysis-delete-error", "");
+    try {
+      await rejectAnalysisCondition(
+        problem.checkId,
+        problem.artifactId,
+        problem.conditionId,
+        {
+          reason: { key: "not_a_problem" },
+          caller: { request_id: this._requestId("delete", problem) },
+        },
+      );
+      this._analysisDeleteDialog?.close();
+      this._activeProblem = null;
+      await this.connectedCallback();
+    } catch (err) {
+      console.error("delete analysis condition failed", err);
+      this._setDialogError(
+        "analysis-delete-error",
+        "Could not delete this problem. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
+    }
+  }
+
+  async _saveProblemEdit() {
+    const problem = this._activeProblem;
+    if (!problem) return;
+    const description = this._analysisEditDescription?.value?.trim() || "";
+    if (description.length < 5) {
+      this._setDialogError(
+        "analysis-edit-error",
+        "Description must be at least 5 characters.",
+      );
+      return;
+    }
+    if (description === problem.description.trim()) {
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      return;
+    }
+    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
+      this._setDialogError(
+        "analysis-edit-error",
+        "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+      );
+      return;
+    }
+
+    const button = this.querySelector("#analysis-edit-save");
+    this._setBusy(button, true);
+    this._setDialogError("analysis-edit-error", "");
+    try {
+      await editAnalysisCondition(
+        problem.checkId,
+        problem.artifactId,
+        problem.conditionId,
+        {
+          description,
+          caller: { request_id: this._requestId("edit", problem) },
+        },
+      );
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      await this.connectedCallback();
+    } catch (err) {
+      console.error("edit analysis condition failed", err);
+      this._setDialogError(
+        "analysis-edit-error",
+        "Could not save this edit. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
+    }
+  }
+
+  _setDialogError(id, message) {
+    const error = this.querySelector(`#${id}`);
+    if (!(error instanceof HTMLElement)) return;
+    error.textContent = message;
+    error.hidden = !message;
+  }
+
+  _setBusy(button, busy) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.disabled = busy;
+    button.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  _requestId(action, problem) {
+    const suffix =
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${problem.checkId}:${problem.artifactId}:${problem.conditionId}:${action}:${suffix}`;
   }
 
   _onAction(card, task, btn) {
@@ -703,19 +1571,45 @@ class TodayView extends HTMLElement {
     if (action === "done") {
       this._run(card, () =>
         completeTask(task.taskId, { completionMethod: "manual" }),
-      );
+      ).then((ok) => {
+        if (ok) {
+          this._setTaskOverride(task.taskId, "resolved");
+          this.connectedCallback();
+        }
+      });
     } else if (action === "file311") {
       this._run(card, () =>
         completeTask(task.taskId, { completionMethod: "311_filed" }),
-      );
+      ).then((ok) => {
+        if (ok) {
+          this._setTaskOverride(task.taskId, "in_progress");
+          this.connectedCallback();
+        }
+      });
     } else if (action === "cant") {
       this._renderReasonPicker(card, task);
     } else if (action === "cant-reason") {
       const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason }));
+      this._run(card, () => cannotDoTask(task.taskId, { reason })).then(
+        (ok) => {
+          if (ok) {
+            this._setTaskOverride(task.taskId, "resolved");
+            this.connectedCallback();
+          }
+        },
+      );
     } else if (action === "cant-cancel") {
       this._restoreActions(card, task);
     }
+  }
+
+  _setTaskOverride(taskId, status) {
+    const overrides = {
+      ...readTaskStatusOverrides(),
+      [taskId]: { status, updatedAt: new Date().toISOString() },
+    };
+    writeTaskStatusOverrides(overrides);
+    this._taskOverrides = overrides;
   }
 
   // A "failed" app action holds the task open but still returns 200, so the
@@ -746,7 +1640,9 @@ class TodayView extends HTMLElement {
   // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
   // rejects arbitrary ones), plus a cancel.
   _renderReasonPicker(card, task) {
-    const actions = card.querySelector(".actioncard__actions");
+    const actions = card.querySelector(
+      ".analysis-card__actions, .actioncard__actions",
+    );
     if (!actions) return;
     const reasons = task.cannotDoReasons || [];
     actions.innerHTML = html`
@@ -775,7 +1671,9 @@ class TodayView extends HTMLElement {
   }
 
   _restoreActions(card, task) {
-    const actions = card.querySelector(".actioncard__actions");
+    const actions = card.querySelector(
+      ".analysis-card__actions, .actioncard__actions",
+    );
     if (!actions) return;
     actions.innerHTML = this._cardActions(task)
       .map((a) => this._actionButton(a))
@@ -808,7 +1706,7 @@ class TodayView extends HTMLElement {
         }
         return;
       }
-      this.connectedCallback();
+      return true;
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
@@ -816,6 +1714,7 @@ class TodayView extends HTMLElement {
         err.hidden = false;
         err.textContent = "Couldn’t save that — please try again.";
       }
+      return false;
     }
   }
 

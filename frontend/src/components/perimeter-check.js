@@ -14,13 +14,10 @@ import {
 } from "../services/photo-analysis.js";
 import {
   ApiError,
-  completeCheck,
   completeTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
-  waitForAnalyses,
 } from "../services/api.js";
-import { settlePendingUploads } from "../services/artifact-uploader.js";
 import {
   ensureCheck,
   startCheck,
@@ -44,7 +41,9 @@ import {
   setPlaceDraftText,
   updateItem,
   updateItemAnalysis,
+  markCaptureComplete,
   onCheckSessionChange,
+  pauseCheck,
 } from "../state/check-session.js";
 import {
   shell,
@@ -56,11 +55,17 @@ import {
 
 class PerimeterCheck extends HTMLElement {
   async connectedCallback() {
+    this._finishing = false;
+    this._embedded = this.hasAttribute("embedded");
     this._photoMenuAnchor = null;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
-    const check = getCurrentCheck() || (await loadDraft("perimeter")) || null;
+    const currentCheck = getCurrentCheck();
+    const check =
+      currentCheck?.status === "in-progress"
+        ? currentCheck
+        : (await loadDraft("perimeter")) || null;
     if (!check) {
       ensureCheck(this._siteId, this._site.places || []);
     } else if (getFlowType() !== "perimeter") {
@@ -70,9 +75,9 @@ class PerimeterCheck extends HTMLElement {
     this._checkId = getCurrentCheck()?.id || "";
     this._placeIndex = getActivePlaceIndex() ?? 0;
     this._unsubscribe = onCheckSessionChange(() => {
-      if (this.isConnected) this._render();
+      if (this.isConnected && !this._finishing) this._render();
     });
-    this.innerHTML = shell();
+    this.innerHTML = shell({ embedded: this._embedded });
     this._fileInput = this.querySelector("#file-input");
     this._cancelDialog = this.querySelector("#cancel-check-dialog");
     this._addPlaceDialog = this.querySelector("#add-place-dialog");
@@ -90,19 +95,20 @@ class PerimeterCheck extends HTMLElement {
       "#analysis-edit-description",
     );
 
-    this.querySelector("#cancel").addEventListener("click", () =>
+    this.querySelector("#cancel")?.addEventListener("click", () =>
       this._cancel(),
     );
     this.querySelector("#cancel-check-save")?.addEventListener("click", () => {
       this._cancelDialog?.close();
-      navigate("/today");
+      this._exitCapture();
+      window.setTimeout(() => pauseCheck(), 0);
     });
     this.querySelector("#cancel-check-discard")?.addEventListener(
       "click",
       () => {
-        clearCheck();
         this._cancelDialog?.close();
-        navigate("/today");
+        this._exitCapture();
+        window.setTimeout(() => clearCheck(), 0);
       },
     );
     this._cancelDialog?.addEventListener("click", (e) => {
@@ -194,8 +200,8 @@ class PerimeterCheck extends HTMLElement {
 
   _cancel() {
     if (!this._hasCheckContent()) {
-      clearCheck();
-      navigate("/today");
+      this._exitCapture();
+      window.setTimeout(() => clearCheck(), 0);
       return;
     }
     this._cancelDialog?.showModal();
@@ -602,32 +608,34 @@ class PerimeterCheck extends HTMLElement {
 
   async _finishCheck() {
     const check = getCurrentCheck();
-    try {
-      if (check?.remoteStarted && check.id) {
-        // Finalize exactly like the submit path: let in-flight item pipelines
-        // (register → analyze) settle, wait for EVERY registered artifact's
-        // analysis to land, then complete. Completing earlier races the
-        // backend's coverage gate (409 "analyses still pending") and would
-        // leave the check in_progress with a frozen partial scorecard.
-        await settlePendingUploads();
-        const evidence = this._allEvidence();
-        const expected = evidence.filter(
-          (item) => item.analysis?.artifactId,
-        ).length;
-        await waitForAnalyses(check.id, { expected });
-        await completeCheck(check.id);
-      }
-      clearCheck();
-      this._doneIncompleteDialog?.close();
-      navigate("/today");
-    } catch (err) {
-      console.error("complete check failed", err);
-      this._showToast(
-        err?.body?.code === "analyses_pending"
-          ? "The AI is taking longer than expected. Please try again soon."
-          : "Could not finish the check. Please try again.",
+    this._finishing = true;
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    this._doneIncompleteDialog?.close();
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
       );
+      window.setTimeout(() => {
+        markCaptureComplete({ checkId: check?.id, submissionKind: "check" });
+      }, 0);
+      return;
     }
+    markCaptureComplete({ checkId: check?.id, submissionKind: "check" });
+    navigate("/today");
+  }
+
+  _exitCapture() {
+    this._finishing = true;
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
+      );
+      return;
+    }
+    navigate("/today");
   }
 
   _incompletePlaceCount() {
