@@ -218,9 +218,16 @@ export function analysisCards(item, sessionCheckId) {
  * @param {CardAction | null} params.action
  * @param {string} params.statusLabel
  * @param {boolean} [params.isNew]
+ * @param {boolean} [params.includeControls]
  * @returns {string}
  */
-export function taskAnalysisCard({ task, action, statusLabel, isNew = false }) {
+export function taskAnalysisCard({
+  task,
+  action,
+  statusLabel,
+  isNew = false,
+  includeControls = true,
+}) {
   const mediaUrl =
     task.thumbnailUrl ||
     task.thumbUrl ||
@@ -255,14 +262,14 @@ export function taskAnalysisCard({ task, action, statusLabel, isNew = false }) {
       task.category || task.analyzerCategory || task.label || "Condition found",
     description: task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
-    action: action?.label || "Done",
+    action: includeControls ? action?.label || "Done" : "",
     actionKind: action?.variant === "blue" ? "escalation" : "action",
     taskId: task.taskId || "",
     conditionId: task.conditionId || "",
     metaLabel: statusLabel || (isNew ? "NEW" : "NEEDS ACTION"),
     actionAttribute: "data-action",
     actionValue: action?.kind || "done",
-    includeEditDelete: true,
+    includeEditDelete: includeControls,
     isNew,
     showStar: isNew,
   });
