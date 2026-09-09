@@ -25,7 +25,9 @@ export const shell = ({ embedded = false } = {}) => html`
       </button>
     </div>
 
-    <h1 class="check-timeline__title">Take photos at each place.</h1>
+    <h1 class="check-timeline__title" tabindex="-1">
+      Take photos at each place.
+    </h1>
 
     <div class="place-timeline" id="place-timeline"></div>
 

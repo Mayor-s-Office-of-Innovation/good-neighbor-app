@@ -19,7 +19,7 @@ export const shell = ({
       </button>
     </div>
 
-    <h1 class="single-issue__title">${escapeHtml(title)}</h1>
+    <h1 class="single-issue__title" tabindex="-1">${escapeHtml(title)}</h1>
 
     <div
       class="shotgrid"
