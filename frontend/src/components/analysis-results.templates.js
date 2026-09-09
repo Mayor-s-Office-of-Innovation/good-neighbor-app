@@ -180,6 +180,7 @@ export function analysisCards(item, sessionCheckId) {
           "The analysis did not identify any conditions of concern.",
         action: "",
         actionKind: "",
+        includeDelete: false,
       }),
     ];
   }
@@ -314,6 +315,7 @@ function completedEvidenceCard(
     actionAttribute = "data-analysis-action",
     actionValue = "resolve",
     includeEditDelete = true,
+    includeDelete = includeEditDelete,
     isNew = true,
     showStar = true,
   },
@@ -382,6 +384,10 @@ function completedEvidenceCard(
                 >
                   <wa-icon name="pen" aria-hidden="true"></wa-icon>
                 </button>
+              `
+            : ""}
+          ${includeDelete
+            ? html`
                 <button
                   class="analysis-card__icon analysis-card__icon--danger wa-plain"
                   type="button"

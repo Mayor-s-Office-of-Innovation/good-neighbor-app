@@ -87,6 +87,27 @@ describe("analysis result summaries", () => {
     expect(problemSummary([item])).toEqual({ visible: 1, hidden: 1 });
     expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
   });
+
+  it("keeps no-issue cards editable without offering delete", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("No issues found");
+    expect(cards[0]).toContain('data-analysis-action="edit"');
+    expect(cards[0]).not.toContain('data-analysis-action="delete"');
+  });
 });
 
 describe("taskAnalysisCard", () => {
