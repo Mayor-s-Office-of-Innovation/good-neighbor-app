@@ -110,19 +110,39 @@ describe("home task status helpers", () => {
     ).toBe(false);
   });
 
-  it("maps open tasks to needs action and 311 overrides to in progress", async () => {
+  it("maps open tasks to needs action and backend 311 filings to in progress", async () => {
     const { homeTaskStatus } = await import("./today-view.js");
 
     expect(homeTaskStatus({ status: "open" }, null)).toBe("needs_action");
     expect(
       homeTaskStatus(
-        { status: "completed", updatedAt: "2026-09-08T10:00:00.000Z" },
+        {
+          status: "completed",
+          completionMethod: "311_filed",
+          updatedAt: "2026-09-08T10:00:00.000Z",
+        },
+        null,
+      ),
+    ).toBe("in_progress");
+  });
+
+  it("lets backend terminal state override stale local task overrides", async () => {
+    const { homeTaskStatus } = await import("./today-view.js");
+
+    expect(
+      homeTaskStatus(
+        {
+          status: "completed",
+          completionMethod: "manual",
+          updatedAt: "2026-09-08T10:00:00.000Z",
+        },
         {
           status: "in_progress",
           updatedAt: "2026-09-08T10:05:00.000Z",
         },
+        new Date("2026-09-08T12:00:00.000Z"),
       ),
-    ).toBe("in_progress");
+    ).toBe("resolved");
   });
 
   it("archives resolved tasks after 72 hours", async () => {
