@@ -68,6 +68,8 @@ const HOME_FILTERS = [
 const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
 const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
 const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
+const CHECK_ARTIFACTS_CACHE = new Map();
+const MEDIA_URL_CACHE = new Map();
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
@@ -334,13 +336,7 @@ async function hydrateTaskEvidence(tasks) {
   const artifactsByCheck = new Map();
   await Promise.all(
     checkIds.map(async (checkId) => {
-      try {
-        const result = await getCheck(checkId);
-        artifactsByCheck.set(checkId, result.artifacts || []);
-      } catch (err) {
-        console.warn("Could not hydrate task evidence", { checkId, err });
-        artifactsByCheck.set(checkId, []);
-      }
+      artifactsByCheck.set(checkId, await cachedCheckArtifacts(checkId));
     }),
   );
 
@@ -362,12 +358,15 @@ async function hydrateTaskEvidence(tasks) {
       };
       if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
         try {
-          const media = await getMediaUrl(task.checkId, artifact.artifactId);
+          const downloadUrl = await cachedMediaUrl(
+            task.checkId,
+            artifact.artifactId,
+          );
           return {
             ...task,
             evidence,
-            mediaUrl: media.downloadUrl,
-            thumbnailUrl: media.downloadUrl,
+            mediaUrl: downloadUrl,
+            thumbnailUrl: downloadUrl,
           };
         } catch (err) {
           console.warn("Could not hydrate task media", {
@@ -380,6 +379,38 @@ async function hydrateTaskEvidence(tasks) {
       return { ...task, evidence };
     }),
   );
+}
+
+async function cachedCheckArtifacts(checkId) {
+  if (!CHECK_ARTIFACTS_CACHE.has(checkId)) {
+    CHECK_ARTIFACTS_CACHE.set(
+      checkId,
+      getCheck(checkId)
+        .then((result) => result.artifacts || [])
+        .catch((err) => {
+          console.warn("Could not hydrate task evidence", { checkId, err });
+          CHECK_ARTIFACTS_CACHE.delete(checkId);
+          return [];
+        }),
+    );
+  }
+  return CHECK_ARTIFACTS_CACHE.get(checkId);
+}
+
+async function cachedMediaUrl(checkId, artifactId) {
+  const key = `${checkId}:${artifactId}`;
+  if (!MEDIA_URL_CACHE.has(key)) {
+    MEDIA_URL_CACHE.set(
+      key,
+      getMediaUrl(checkId, artifactId)
+        .then((media) => media.downloadUrl)
+        .catch((err) => {
+          MEDIA_URL_CACHE.delete(key);
+          throw err;
+        }),
+    );
+  }
+  return MEDIA_URL_CACHE.get(key);
 }
 
 function firstTaskArtifact(task, artifactsByCheck) {
@@ -405,6 +436,31 @@ function newestTaskEntriesFirst(entries) {
   return [...entries].sort((a, b) =>
     String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
   );
+}
+
+export function visibleTaskEntriesForHydration(entries, homeFilter) {
+  return entries.filter(
+    (entry) => entry.isNew || entry.homeStatus === homeFilter,
+  );
+}
+
+function needsTaskEvidenceHydration(task) {
+  return Boolean(
+    task?.checkId &&
+      taskArtifactIds(task).length &&
+      !task?.evidence?.artifactId &&
+      !task?.mediaUrl &&
+      !task?.thumbnailUrl,
+  );
+}
+
+function mergeHydratedTasks(tasks, hydratedTasks) {
+  const hydratedById = new Map(
+    hydratedTasks
+      .filter((task) => task?.taskId)
+      .map((task) => [task.taskId, task]),
+  );
+  return tasks.map((task) => hydratedById.get(task.taskId) || task);
 }
 
 function readTaskStatusOverrides() {
@@ -447,6 +503,8 @@ class TodayView extends HTMLElement {
     this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
     this._captureLauncherSelector = null;
+    this._homeModel = null;
+    this._hydrationGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -514,14 +572,12 @@ class TodayView extends HTMLElement {
         listTasks({ status: "completed", limit: 50 }),
         listTasks({ status: "cannot_do", limit: 50 }),
       ]);
-      tasks = await hydrateTaskEvidence(
-        uniqueTasks([
-          ...(openTasksResult.tasks || []),
-          ...(completingTasksResult.tasks || []),
-          ...(completedTasksResult.tasks || []),
-          ...(cannotDoTasksResult.tasks || []),
-        ]),
-      );
+      tasks = uniqueTasks([
+        ...(openTasksResult.tasks || []),
+        ...(completingTasksResult.tasks || []),
+        ...(completedTasksResult.tasks || []),
+        ...(cannotDoTasksResult.tasks || []),
+      ]);
       const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
@@ -571,20 +627,25 @@ class TodayView extends HTMLElement {
 
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
-    // Index tasks by id so card action handlers can read the task (e.g. its
-    // allowlisted cannot-do reasons) at click time.
-    this._tasksById = new Map(tasks.map((t) => [t.taskId, t]));
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter = this._homeFilter || "needs_action";
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
-
-    this.innerHTML = this._render({
+    this._renderHome({
       last,
       tasks,
       captureSession,
       pendingSession: effectivePendingSession,
     });
+    void this._hydrateVisibleHomeTasks();
+  }
+
+  _renderHome(model) {
+    this._homeModel = model;
+    // Index tasks by id so card action handlers can read the task (e.g. its
+    // allowlisted cannot-do reasons) at click time.
+    this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
+    this.innerHTML = this._render(model);
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -621,10 +682,14 @@ class TodayView extends HTMLElement {
     );
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._homeFilter = button.getAttribute("data-home-filter") || "open";
+        this._homeFilter =
+          button.getAttribute("data-home-filter") || "needs_action";
         this._filterOpen = false;
         this._focusAfterRender = "task-filter-button";
-        void this.connectedCallback();
+        if (this._homeModel) {
+          this._renderHome(this._homeModel);
+          void this._hydrateVisibleHomeTasks();
+        }
       });
     });
     const review = this.querySelector("#review-assessment");
@@ -686,6 +751,30 @@ class TodayView extends HTMLElement {
     });
     this._wireCards();
     this._restoreFocusAfterRender();
+  }
+
+  async _hydrateVisibleHomeTasks() {
+    const model = this._homeModel;
+    if (!model) return;
+    const hydrationGeneration = ++this._hydrationGeneration;
+    const visibleTasks = visibleTaskEntriesForHydration(
+      this._homeTasks(model.tasks),
+      this._homeFilter,
+    )
+      .map((entry) => entry.task)
+      .filter((task) => needsTaskEvidenceHydration(task));
+    if (!visibleTasks.length) return;
+
+    const hydratedTasks = await hydrateTaskEvidence(uniqueTasks(visibleTasks));
+    if (
+      hydrationGeneration !== this._hydrationGeneration ||
+      !this.isConnected ||
+      this._homeModel !== model
+    ) {
+      return;
+    }
+    const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
+    this._renderHome({ ...model, tasks });
   }
 
   _render({ last, tasks, captureSession, pendingSession }) {
@@ -1341,7 +1430,7 @@ class TodayView extends HTMLElement {
     this._focusAfterRender = this._filterOpen
       ? "task-filter-active-item"
       : "task-filter-button";
-    void this.connectedCallback();
+    if (this._homeModel) this._renderHome(this._homeModel);
   }
 
   _restoreFocusAfterRender() {
