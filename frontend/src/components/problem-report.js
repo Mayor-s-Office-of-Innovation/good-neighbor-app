@@ -16,6 +16,10 @@ import {
   rejectAnalysisCondition,
 } from "../services/api.js";
 import {
+  expectedArtifactCountForCheck,
+  finalizeCaptureScorecardInBackground,
+} from "../services/submit-check.js";
+import {
   ensureProblemReport,
   startProblemReport,
   loadDraft,
@@ -307,6 +311,7 @@ class ProblemReport extends HTMLElement {
       this._exitCapture();
       return;
     }
+    const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._unsubscribe?.();
     this._unsubscribe = null;
@@ -322,14 +327,18 @@ class ProblemReport extends HTMLElement {
         markCaptureComplete({
           checkId: check?.id,
           submissionKind: "problem_report",
+          expectedArtifacts,
         });
+        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
       }, 0);
       return;
     }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "problem_report",
+      expectedArtifacts,
     });
+    finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
     navigate("/today");
   }
 
