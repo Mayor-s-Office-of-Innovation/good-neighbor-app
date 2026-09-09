@@ -46,6 +46,47 @@ describe("analysis result summaries", () => {
     expect(problemSummary(items)).toEqual({ visible: 1, hidden: 0 });
     expect(problemSummaryLabel(problemSummary(items))).toBe("1 problem found");
   });
+
+  it("counts a visible unpaired condition after all task conditions are hidden", () => {
+    const item = {
+      id: "item_1",
+      kind: "photo",
+      placeName: "15th St",
+      analysis: {
+        status: "analyzed",
+        rejectedConditionIds: ["condition_litter"],
+        tasks: [
+          {
+            taskId: "task_1",
+            conditionId: "condition_litter",
+            category: "Litter",
+            guidance: "File a 311 ticket.",
+            kind: "escalation",
+            buttons: ["File 311 ticket"],
+          },
+        ],
+        conditions: [
+          {
+            conditionId: "condition_litter",
+            category: "Litter",
+            description: "Trash is visible.",
+          },
+          {
+            conditionId: "condition_needles",
+            category: "Needles",
+            description: "A needle is visible.",
+          },
+        ],
+      },
+    };
+
+    const cards = analysisCards(item, "check_1");
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("Needles");
+    expect(problemSummary([item])).toEqual({ visible: 1, hidden: 1 });
+    expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
+  });
 });
 
 describe("taskAnalysisCard", () => {

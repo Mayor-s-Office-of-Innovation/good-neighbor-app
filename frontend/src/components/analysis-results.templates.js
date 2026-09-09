@@ -116,6 +116,13 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  */
 
 /**
+ * @typedef {object} VisibleProblemSelection
+ * @property {Set<string>} hiddenConditionIds
+ * @property {AnalysisTask[]} visibleTasks
+ * @property {AnalysisCondition[]} visibleConditions
+ */
+
+/**
  * @param {AnalysisItem[]} items
  * @param {string} sessionCheckId
  * @param {TrayOptions} [options]
@@ -161,14 +168,9 @@ export function analysisResultsTray(
 export function analysisCards(item, sessionCheckId) {
   const status = item.analysis?.status || "idle";
   if (status !== "analyzed") return [pendingCard(item)];
-  const hiddenConditionIds = hiddenConditionIdSet(item);
-  const tasks = (item.analysis?.tasks || []).filter(
-    (task) => !hiddenConditionIds.has(task.conditionId),
-  );
-  const conditions = (item.analysis?.conditions || []).filter(
-    (condition) => !hiddenConditionIds.has(condition.conditionId),
-  );
-  if (!tasks.length && !conditions.length) {
+  const { hiddenConditionIds, visibleTasks, visibleConditions } =
+    visibleProblemSelection(item);
+  if (!visibleTasks.length && !visibleConditions.length) {
     if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
     return [
       completedEvidenceCard(item, sessionCheckId, {
@@ -181,14 +183,14 @@ export function analysisCards(item, sessionCheckId) {
       }),
     ];
   }
-  if (tasks.length) {
-    return tasks.map((task, index) => {
+  if (visibleTasks.length) {
+    return visibleTasks.map((task, index) => {
       const condition =
-        conditions.find(
+        visibleConditions.find(
           (candidate) =>
             task.conditionId && candidate.conditionId === task.conditionId,
         ) ||
-        conditions[index] ||
+        visibleConditions[index] ||
         {};
       return completedEvidenceCard(item, sessionCheckId, {
         title: task.category || condition.category || "Condition found",
@@ -201,7 +203,7 @@ export function analysisCards(item, sessionCheckId) {
       });
     });
   }
-  return conditions.map((condition) =>
+  return visibleConditions.map((condition) =>
     completedEvidenceCard(item, sessionCheckId, {
       title: condition.category || "Condition found",
       description: condition.description || "Review this condition.",
@@ -459,16 +461,9 @@ export function problemSummary(items) {
   return items.reduce(
     (summary, item) => {
       if (item.analysis?.status !== "analyzed") return summary;
-      const hiddenConditionIds = hiddenConditionIdSet(item);
-      const tasks = item.analysis?.tasks || [];
-      const conditions = item.analysis?.conditions || [];
-      const visibleTasks = tasks.filter(
-        (task) => !hiddenConditionIds.has(task.conditionId),
-      );
-      const visibleConditions = conditions.filter(
-        (condition) => !hiddenConditionIds.has(condition.conditionId),
-      );
-      const visible = tasks.length
+      const { hiddenConditionIds, visibleTasks, visibleConditions } =
+        visibleProblemSelection(item);
+      const visible = visibleTasks.length
         ? visibleTasks.length
         : visibleConditions.length;
       summary.visible += visible;
@@ -498,4 +493,22 @@ function hiddenConditionIdSet(item) {
       ...(item.analysis?.rejectedConditionIds || []),
     ].filter(Boolean),
   );
+}
+
+/**
+ * Select the exact problem units the tray should render for an analyzed item.
+ * Prefer visible task cards when tasks remain; otherwise fall back to visible
+ * analyzer conditions.
+ * @param {AnalysisItem} item
+ * @returns {VisibleProblemSelection}
+ */
+function visibleProblemSelection(item) {
+  const hiddenConditionIds = hiddenConditionIdSet(item);
+  const visibleTasks = (item.analysis?.tasks || []).filter(
+    (task) => !hiddenConditionIds.has(task.conditionId),
+  );
+  const visibleConditions = (item.analysis?.conditions || []).filter(
+    (condition) => !hiddenConditionIds.has(condition.conditionId),
+  );
+  return { hiddenConditionIds, visibleTasks, visibleConditions };
 }
