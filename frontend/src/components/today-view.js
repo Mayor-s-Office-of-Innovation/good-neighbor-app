@@ -109,17 +109,14 @@ export function activeHomeFilterLabel(filterId, counts) {
 }
 
 export function homeTaskStatus(task, override, now = new Date()) {
-  if (override?.status === "in_progress") return "in_progress";
-  if (override?.status === "resolved") {
-    return ageMs(override.updatedAt, now) >= ARCHIVE_AFTER_MS
-      ? "archived"
-      : "resolved";
-  }
   const status = String(task.status || "open");
   if (status === "completing" || status === "in_progress") {
     return "in_progress";
   }
   if (status === "completed" || status === "cannot_do") {
+    if (status === "completed" && task.completionMethod === "311_filed") {
+      return "in_progress";
+    }
     const resolvedAt =
       task.completedAt ||
       task.completed_at ||
@@ -129,6 +126,12 @@ export function homeTaskStatus(task, override, now = new Date()) {
       task.updated_at ||
       taskCreatedAt(task);
     return ageMs(resolvedAt, now) >= ARCHIVE_AFTER_MS ? "archived" : "resolved";
+  }
+  if (override?.status === "in_progress") return "in_progress";
+  if (override?.status === "resolved") {
+    return ageMs(override.updatedAt, now) >= ARCHIVE_AFTER_MS
+      ? "archived"
+      : "resolved";
   }
   return "needs_action";
 }
@@ -1677,7 +1680,7 @@ class TodayView extends HTMLElement {
         );
         return;
       }
-      this._markAnalysisProblemResolved(problem);
+      this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
     }
@@ -1696,7 +1699,7 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _markAnalysisProblemResolved(problem) {
+  _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
     if (problem.placeId && problem.itemId) {
       const item = this._sessionItem(problem);
       updateItemAnalysis(problem.placeId, problem.itemId, {
@@ -1709,8 +1712,8 @@ class TodayView extends HTMLElement {
         ].filter(Boolean),
       });
     }
-    if (problem.taskId) {
-      this._setTaskOverride(problem.taskId, "resolved");
+    if (problem.taskId && taskStatus) {
+      this._setTaskOverride(problem.taskId, taskStatus);
     }
   }
 
@@ -1771,7 +1774,6 @@ class TodayView extends HTMLElement {
         { requireSubmitted311: true },
       ).then((ok) => {
         if (ok) {
-          this._setTaskOverride(task.taskId, "in_progress");
           this.connectedCallback();
         }
       });
