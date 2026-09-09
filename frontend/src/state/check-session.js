@@ -173,7 +173,12 @@ const listeners = new Set();
 // Fire-and-forget mirror of the in-memory check to the draft store. Renders read
 // the synchronous `current`; persistence catches up in the background.
 function persist() {
-  if (current) void saveDraft(current);
+  if (!current) return;
+  if (current.status === "in-progress") {
+    void saveDraft(current);
+  } else {
+    void saveReview(current);
+  }
 }
 
 function emit() {
@@ -263,11 +268,16 @@ export async function loadDraft(flowType) {
 }
 
 export function ensureCheck(siteId, places = []) {
-  return current || startCheck(siteId, places);
+  return current?.status === "in-progress" && current.flowType === "perimeter"
+    ? current
+    : startCheck(siteId, places);
 }
 
 export function ensureProblemReport(siteId) {
-  return current || startProblemReport(siteId);
+  return current?.status === "in-progress" &&
+    current.flowType === "single-problem"
+    ? current
+    : startProblemReport(siteId);
 }
 
 /**
@@ -651,6 +661,27 @@ export function markAnalysisFailed(message, { checkId } = {}) {
 }
 
 /**
+ * Capture has ended, but photo/description analysis may still be flowing back
+ * into the same session. Keep it review-backed so home can render live results.
+ * @param {{ submissionKind?: "check" | "problem_report", checkId?: string }} [opts]
+ */
+export function markCaptureComplete({
+  submissionKind = "check",
+  checkId,
+} = {}) {
+  if (!current || !canMutateCurrentSession(checkId)) return null;
+  current.status = "capture-complete";
+  current.submittedAt = current.submittedAt || new Date().toISOString();
+  current.submissionKind = submissionKind;
+  current.pendingStage = "analyze";
+  delete current.analysisError;
+  persistReview();
+  void clearDraft(current.flowType);
+  emit();
+  return current;
+}
+
+/**
  * Drop only the persisted review-backed submitted/analyzing session. Used when the
  * local pending marker is stale and should no longer override the backend home view.
  */
@@ -673,5 +704,11 @@ export function clearCheck() {
   void clearDraft(flowType);
   if (flowType) void clearDraft();
   void clearReview();
+  emit();
+}
+
+export function pauseCheck() {
+  persist();
+  current = null;
   emit();
 }

@@ -243,3 +243,46 @@ describe("markAnalyzing", () => {
     expect(savedReview).toBeNull();
   });
 });
+
+describe("markCaptureComplete", () => {
+  beforeEach(async () => {
+    savedReview = null;
+    nextId = 1;
+    const { clearCheck } = await import("./check-session.js");
+    clearCheck();
+    vi.clearAllMocks();
+  });
+
+  it("persists later analysis updates to the review-backed home session", async () => {
+    const db = await import("../db.js");
+    const {
+      startCheck,
+      addItem,
+      markCaptureComplete,
+      updateItemAnalysis,
+      getCurrentCheck,
+    } = await import("./check-session.js");
+
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", {
+      kind: "photo",
+      dataUrl: "data:image/jpeg;base64,THUMB==",
+    });
+    markCaptureComplete({ checkId: getCurrentCheck().id });
+    vi.mocked(db.saveDraft).mockClear();
+    vi.mocked(db.saveReview).mockClear();
+
+    updateItemAnalysis("place-north", item.id, {
+      status: "analyzed",
+      artifactId: "art-1",
+      conditions: [{ conditionId: "cond-1", category: "Litter" }],
+      tasks: [{ taskId: "task-1", conditionId: "cond-1" }],
+    });
+
+    expect(db.saveDraft).not.toHaveBeenCalled();
+    expect(db.saveReview).toHaveBeenCalled();
+    expect(savedReview?.places["place-north"].items[0].analysis.status).toBe(
+      "analyzed",
+    );
+  });
+});
