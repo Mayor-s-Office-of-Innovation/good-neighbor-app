@@ -102,11 +102,14 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#cancel")?.addEventListener("click", () =>
       this._cancel(),
     );
-    this.querySelector("#cancel-check-save")?.addEventListener("click", () => {
-      this._cancelDialog?.close();
-      this._exitCapture();
-      window.setTimeout(() => pauseCheck(), 0);
-    });
+    this.querySelector("#cancel-check-save")?.addEventListener(
+      "click",
+      async () => {
+        this._cancelDialog?.close();
+        await pauseCheck();
+        this._exitCapture();
+      },
+    );
     this.querySelector("#cancel-check-discard")?.addEventListener(
       "click",
       () => {

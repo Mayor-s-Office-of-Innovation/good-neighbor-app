@@ -28,12 +28,13 @@ import {
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
 import {
-  startCheck,
-  startProblemReport,
   getCurrentCheck,
+  hasDraft,
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
+  resumeOrStartCheck,
+  resumeOrStartProblemReport,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
 import { mark } from "../services/instrument.js";
@@ -526,6 +527,7 @@ class TodayView extends HTMLElement {
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter = this._homeFilter || "needs_action";
     this._activeProblem = null;
+    this._hasPerimeterDraft = await hasDraft("perimeter");
 
     this.innerHTML = this._render({
       last,
@@ -851,9 +853,9 @@ class TodayView extends HTMLElement {
     this._viewPhase = "entering-capture";
     this._scrollCaptureStartIntoView();
     if (flowType === "single-problem") {
-      startProblemReport(this._siteId);
+      await resumeOrStartProblemReport(this._siteId);
     } else {
-      startCheck(this._siteId, this._site.places || []);
+      await resumeOrStartCheck(this._siteId, this._site.places || []);
     }
     await this.connectedCallback();
     this._scrollCaptureStartIntoView();
@@ -1083,7 +1085,7 @@ class TodayView extends HTMLElement {
         <div class="home-first-run">
           <h1 class="home-first-run__title">Start your first check</h1>
           ${this._homeActions({
-            checkLabel: "Start a full check",
+            checkLabel: this._checkActionLabel(),
             reportLabel: "Flag a single issue",
             stacked: true,
           })}
@@ -1106,11 +1108,15 @@ class TodayView extends HTMLElement {
         </div>
         ${this._summaryBlock(last, issueCount)}
         ${this._homeActions({
-          checkLabel: "Start a full check",
+          checkLabel: this._checkActionLabel(),
           reportLabel: "Flag a single issue",
         })}
       </div>
     `;
+  }
+
+  _checkActionLabel() {
+    return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
   }
 
   _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {

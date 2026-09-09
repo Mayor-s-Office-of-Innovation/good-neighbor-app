@@ -112,11 +112,14 @@ class ProblemReport extends HTMLElement {
     this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#cancel-report-dialog")
     );
-    this.querySelector("#cancel-report-save")?.addEventListener("click", () => {
-      this._cancelDialog?.close();
-      this._exitCapture();
-      window.setTimeout(() => pauseCheck(), 0);
-    });
+    this.querySelector("#cancel-report-save")?.addEventListener(
+      "click",
+      async () => {
+        this._cancelDialog?.close();
+        await pauseCheck();
+        this._exitCapture();
+      },
+    );
     this.querySelector("#cancel-report-discard")?.addEventListener(
       "click",
       () => {
