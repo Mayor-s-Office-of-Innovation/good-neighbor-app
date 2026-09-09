@@ -4,6 +4,7 @@ import {
   analysisCards,
   problemSummary,
   problemSummaryLabel,
+  taskAnalysisCard,
 } from "./analysis-results.templates.js";
 
 describe("analysis result summaries", () => {
@@ -44,5 +45,32 @@ describe("analysis result summaries", () => {
     expect(analysisCards(items[0], "check_1")).toHaveLength(1);
     expect(problemSummary(items)).toEqual({ visible: 1, hidden: 0 });
     expect(problemSummaryLabel(problemSummary(items))).toBe("1 problem found");
+  });
+});
+
+describe("taskAnalysisCard", () => {
+  it("keeps action guidance visible while preserving the condition description for edits", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_1",
+        checkId: "check_1",
+        conditionId: "condition_litter",
+        category: "Litter",
+        description: "Trash is piled around the tree well.",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        buttons: ["File 311 ticket"],
+      },
+      action: { label: "File 311 ticket", variant: "blue", kind: "file311" },
+      statusLabel: "TODAY · 10:00AM",
+      isNew: false,
+    });
+
+    expect(card).toContain(
+      "If there is too much trash for you to clean up, ask the City for help.",
+    );
+    expect(card).toContain(
+      'data-card-edit-description="Trash is piled around the tree well."',
+    );
   });
 });

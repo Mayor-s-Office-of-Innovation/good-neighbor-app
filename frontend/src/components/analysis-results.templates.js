@@ -120,6 +120,7 @@ export function taskAnalysisCard({ task, action, statusLabel, isNew = false }) {
     title:
       task.category || task.analyzerCategory || task.label || "Condition found",
     description: task.guidance || task.description || task.category || "",
+    editableDescription: task.description || "",
     action: action?.label || "Done",
     actionKind: action?.variant === "blue" ? "escalation" : "action",
     taskId: task.taskId || "",
@@ -161,6 +162,7 @@ function completedEvidenceCard(
   {
     title,
     description,
+    editableDescription = description,
     action,
     actionKind = "",
     taskId = "",
@@ -194,6 +196,7 @@ function completedEvidenceCard(
       data-action-kind="${escapeAttr(actionKind)}"
       data-card-title="${escapeAttr(title)}"
       data-card-description="${escapeAttr(description)}"
+      data-card-edit-description="${escapeAttr(editableDescription)}"
     >
       <div class="analysis-card__content">
         <p class="analysis-card__meta">
