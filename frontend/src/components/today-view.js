@@ -12,7 +12,7 @@
   .templates.js file if it grows (see CLAUDE.md convention).
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { getSite, getDraft } from "../db.js";
+import { getSite } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -28,7 +28,6 @@ import {
   cityCategoriesByCheck,
 } from "../domain/check-adapter.js";
 import {
-  loadDraft,
   startCheck,
   startProblemReport,
   getCurrentCheck,
@@ -484,17 +483,6 @@ class TodayView extends HTMLElement {
     }
 
     const last = submitted[0];
-    const currentDraft = /** @type {any} */ (getCurrentCheck());
-    const [checkDraft, problemDraft] = await Promise.all([
-      currentDraft?.status === "in-progress" &&
-      currentDraft.flowType === "perimeter"
-        ? Promise.resolve(currentDraft)
-        : getDraft("perimeter"),
-      currentDraft?.status === "in-progress" &&
-      currentDraft.flowType === "single-problem"
-        ? Promise.resolve(currentDraft)
-        : getDraft("single-problem"),
-    ]);
     let effectivePendingSession =
       pendingSession &&
       [
@@ -538,8 +526,6 @@ class TodayView extends HTMLElement {
       tasks,
       captureSession,
       pendingSession: effectivePendingSession,
-      hasCheckDraft: Boolean(checkDraft),
-      hasProblemDraft: Boolean(problemDraft),
     });
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
@@ -637,14 +623,7 @@ class TodayView extends HTMLElement {
     this._wireCards();
   }
 
-  _render({
-    last,
-    tasks,
-    captureSession,
-    pendingSession,
-    hasCheckDraft,
-    hasProblemDraft,
-  }) {
+  _render({ last, tasks, captureSession, pendingSession }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -711,12 +690,10 @@ class TodayView extends HTMLElement {
             aria-label="Today"
           >
             ${showFirstRun
-              ? this._firstRunBlock({ hasCheckDraft, hasProblemDraft })
+              ? this._firstRunBlock()
               : this._activityBlock({
                   last,
                   issueCount: tasks.length,
-                  hasCheckDraft,
-                  hasProblemDraft,
                 })}
           </div>
         </section>
@@ -1092,7 +1069,7 @@ class TodayView extends HTMLElement {
       </dialog>
     `;
   }
-  _firstRunBlock({ hasCheckDraft, hasProblemDraft }) {
+  _firstRunBlock() {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">
         <div class="home-first-run">
@@ -1107,7 +1084,7 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _activityBlock({ last, issueCount, hasCheckDraft, hasProblemDraft }) {
+  _activityBlock({ last, issueCount }) {
     const identity = this._siteIdentity();
     return html`
       <div class="screen__sec home-lead">
