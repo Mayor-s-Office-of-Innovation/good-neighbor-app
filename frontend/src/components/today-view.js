@@ -2,15 +2,9 @@
   today-view — the home hub (the screen with the "Perimeter check" button).
 
   One always-on screen (no due/up-to-date fork), driven by real data. When we have
-  the data, it shows two sections:
-    1. Overall summary of the last perimeter check — the analyzer's own one-line
-       summary (CHECK# header `summary`, synthesized at complete-time), with the
-       LAST LOG timestamp beneath it. Falls back to a derived headline for checks
-       completed before the summary field existed; omitted entirely if there is no
-       submitted check yet.
-    2. Open tasks — the site's real TASK# worklist, in boxed groups: SITE ACTIONS
-       (onsite) then ESCALATE TO THE CITY (city). Cards carry the task's own action
-       buttons, wired to the real complete / cannot-do endpoints.
+  the data, it shows a timestamp for the last check, the current issue count,
+  and the site's real TASK# worklist. Cards carry the task's own action buttons,
+  wired to the real complete / cannot-do endpoints.
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
@@ -169,6 +163,11 @@ export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
     return false;
   }
   return !session || session.status === "capture-complete";
+}
+
+export function issueCountLabel(count) {
+  if (!count) return "";
+  return `${count} ${count === 1 ? "issue" : "issues"} found`;
 }
 
 export function taskSignaturesFromSessionItems(items) {
@@ -715,6 +714,7 @@ class TodayView extends HTMLElement {
               ? this._firstRunBlock({ hasCheckDraft, hasProblemDraft })
               : this._activityBlock({
                   last,
+                  issueCount: tasks.length,
                   hasCheckDraft,
                   hasProblemDraft,
                 })}
@@ -864,12 +864,14 @@ class TodayView extends HTMLElement {
   async _startCapture(flowType) {
     this._captureFlow = flowType;
     this._viewPhase = "entering-capture";
+    this._scrollCaptureStartIntoView();
     if (flowType === "single-problem") {
       startProblemReport(this._siteId);
     } else {
       startCheck(this._siteId, this._site.places || []);
     }
     await this.connectedCallback();
+    this._scrollCaptureStartIntoView();
     window.setTimeout(() => {
       this._viewPhase = "capture";
       this._syncPhaseClass();
@@ -907,6 +909,20 @@ class TodayView extends HTMLElement {
     return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
       ? 1
       : 260;
+  }
+
+  _scrollCaptureStartIntoView() {
+    const scrollingElement =
+      document.scrollingElement || document.documentElement || document.body;
+    if (scrollingElement) {
+      scrollingElement.scrollTop = 0;
+      scrollingElement.scrollLeft = 0;
+    }
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch {
+      window.scrollTo(0, 0);
+    }
   }
 
   _isStalePendingSession(session, submitted) {
@@ -1091,7 +1107,7 @@ class TodayView extends HTMLElement {
     `;
   }
 
-  _activityBlock({ last, hasCheckDraft, hasProblemDraft }) {
+  _activityBlock({ last, issueCount, hasCheckDraft, hasProblemDraft }) {
     const identity = this._siteIdentity();
     return html`
       <div class="screen__sec home-lead">
@@ -1103,7 +1119,7 @@ class TodayView extends HTMLElement {
             : ""}
           <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
         </div>
-        ${this._summaryBlock(last)}
+        ${this._summaryBlock(last, issueCount)}
         ${this._homeActions({
           checkLabel: "Start a full check",
           reportLabel: "Flag a single issue",
@@ -1133,18 +1149,17 @@ class TodayView extends HTMLElement {
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
-  // Section 1: the overall summary of the last submitted check + LAST LOG stamp.
-  // Prefer the analyzer's own summary (header `summary`); fall back to a derived
-  // one-liner for older checks; render nothing when there is no submitted check.
-  _summaryBlock(last) {
+  // Section 1: timestamp for the last submitted check, with issue count when
+  // there are task cards for the site. Overall condition text is no longer used.
+  _summaryBlock(last, issueCount = 0) {
     if (!last || !last.submittedAt) return "";
     const log = this._lastLog(last);
-    const line = last.summary || log.headline;
+    const issues = issueCountLabel(issueCount);
+    const label = [log.eyebrow, issues].filter(Boolean).join(" · ");
     return html`
       <div class="lastlog">
-        <p class="lastlog__summary">${escapeHtml(line)}</p>
-        ${log.eyebrow
-          ? html`<p class="lastlog__eyebrow">${escapeHtml(log.eyebrow)}</p>`
+        ${label
+          ? html`<p class="lastlog__eyebrow">${escapeHtml(label)}</p>`
           : ""}
       </div>
     `;
@@ -1152,19 +1167,14 @@ class TodayView extends HTMLElement {
 
   // The last submitted check as a one-line log:
   //   eyebrow  = "LAST LOG · <relative day> · <time>"
-  //   headline = derived fallback used only when the header carries no summary.
   _lastLog(last) {
     if (!last || !last.submittedAt) {
-      return { eyebrow: "", headline: "No activity recorded yet" };
+      return { eyebrow: "" };
     }
     const eyebrow = `LAST LOG · ${relativeDay(last.submittedAt)} · ${timeOf(
       last.submittedAt,
     )}`;
-    const worst = worstFinding(last.findings || []);
-    const headline = worst
-      ? `${worst.category || "Finding"} — ${triageStatus(worst)}`
-      : "All clear";
-    return { eyebrow, headline };
+    return { eyebrow };
   }
 
   _sessionItems(session) {
@@ -1770,23 +1780,6 @@ function relativeDay(iso) {
   if (ago <= 0) return "TODAY";
   if (ago === 1) return "YESTERDAY";
   return d.toLocaleDateString([], { weekday: "long" }).toUpperCase();
-}
-
-// The check's most notable finding: hazards first, then highest rating.
-function worstFinding(findings) {
-  if (!findings.length) return null;
-  return [...findings].sort(
-    (a, b) =>
-      Number(b.hazard) - Number(a.hazard) || (b.rating || 0) - (a.rating || 0),
-  )[0];
-}
-
-// The triage bucket phrase for a finding (mirrors check-results.js buckets):
-//   hazard -> city action · non-hazard rating>=2 -> handle · rating 1 -> noted.
-function triageStatus(f) {
-  if (f.hazard) return "escalated to 311";
-  if ((f.rating || 0) >= 2) return "flagged to handle";
-  return "noted, no action";
 }
 
 function splitSiteIdentity(name) {

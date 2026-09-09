@@ -1129,8 +1129,7 @@ theme-toggle {
   border-radius: 6px;
 }
 
-/* Overall summary of the last check: the analyzer's italic sentence, with the
-   LAST LOG timestamp stamped beneath it. */
+/* Last submitted check metadata shown under the site title. */
 .lastlog {
   display: flex;
   flex-direction: column;
