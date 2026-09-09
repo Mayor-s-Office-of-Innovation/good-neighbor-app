@@ -1,5 +1,126 @@
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
+/**
+ * @typedef {object} AnalysisCondition
+ * @property {string} [conditionId]
+ * @property {string} [category]
+ * @property {string} [description]
+ */
+
+/**
+ * @typedef {object} AnalysisTask
+ * @property {string} [taskId]
+ * @property {string} [conditionId]
+ * @property {string} [category]
+ * @property {string} [analyzerCategory]
+ * @property {string} [label]
+ * @property {string} [description]
+ * @property {string} [guidance]
+ * @property {string} [kind]
+ * @property {string[]} [buttons]
+ */
+
+/**
+ * @typedef {object} AnalysisSource
+ * @property {string} [analysisId]
+ */
+
+/**
+ * @typedef {object} AnalysisAssessment
+ * @property {string} [assessmentId]
+ */
+
+/**
+ * @typedef {object} AnalysisState
+ * @property {string} [status]
+ * @property {string} [artifactId]
+ * @property {string} [checkId]
+ * @property {AnalysisAssessment} [assessment]
+ * @property {AnalysisSource} [sourceAnalysis]
+ * @property {AnalysisTask[]} [tasks]
+ * @property {AnalysisCondition[]} [conditions]
+ * @property {string[]} [resolvedConditionIds]
+ * @property {string[]} [rejectedConditionIds]
+ * @property {boolean} [hideNoIssuesCard]
+ * @property {string} [noIssuesDescription]
+ */
+
+/**
+ * @typedef {object} AnalysisItem
+ * @property {string} [id]
+ * @property {"photo" | "text" | string} [kind]
+ * @property {string} [dataUrl]
+ * @property {string} [text]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
+ * @property {string} [checkId]
+ * @property {AnalysisState} [analysis]
+ * @property {{ artifactId?: string }} [upload]
+ */
+
+/**
+ * @typedef {object} TaskEvidence
+ * @property {string} [artifactId]
+ * @property {string} [placeName]
+ * @property {string} [text]
+ */
+
+/**
+ * @typedef {object} HomeTask
+ * @property {string} [taskId]
+ * @property {string} [conditionId]
+ * @property {string} [checkId]
+ * @property {string} [assessmentId]
+ * @property {string} [category]
+ * @property {string} [analyzerCategory]
+ * @property {string} [label]
+ * @property {string} [description]
+ * @property {string} [guidance]
+ * @property {string} [thumbnailUrl]
+ * @property {string} [thumbUrl]
+ * @property {string} [mediaUrl]
+ * @property {string} [photoUrl]
+ * @property {string} [imageUrl]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
+ * @property {string} [positionDescriptor]
+ * @property {string} [position_descriptor]
+ * @property {string} [location]
+ * @property {string} [text]
+ * @property {string[]} [sourceArtifactIds]
+ * @property {TaskEvidence} [evidence]
+ * @property {string[]} [buttons]
+ */
+
+/**
+ * @typedef {object} CardAction
+ * @property {string} [label]
+ * @property {string} [variant]
+ * @property {string} [kind]
+ */
+
+/**
+ * @typedef {object} TrayOptions
+ * @property {string} [id]
+ * @property {string} [title]
+ * @property {string} [ariaLabel]
+ * @property {string} [emptyText]
+ * @property {string} [tone]
+ * @property {string} [footer]
+ */
+
+/**
+ * @typedef {object} ProblemSummary
+ * @property {number} visible
+ * @property {number} hidden
+ */
+
+/**
+ * @param {AnalysisItem[]} items
+ * @param {string} sessionCheckId
+ * @param {TrayOptions} [options]
+ * @returns {string}
+ */
 export function analysisResultsTray(
   items,
   sessionCheckId,
@@ -32,6 +153,11 @@ export function analysisResultsTray(
   `;
 }
 
+/**
+ * @param {AnalysisItem} item
+ * @param {string} sessionCheckId
+ * @returns {string[]}
+ */
 export function analysisCards(item, sessionCheckId) {
   const status = item.analysis?.status || "idle";
   if (status !== "analyzed") return [pendingCard(item)];
@@ -86,6 +212,14 @@ export function analysisCards(item, sessionCheckId) {
   );
 }
 
+/**
+ * @param {object} params
+ * @param {HomeTask} params.task
+ * @param {CardAction | null} params.action
+ * @param {string} params.statusLabel
+ * @param {boolean} [params.isNew]
+ * @returns {string}
+ */
 export function taskAnalysisCard({ task, action, statusLabel, isNew = false }) {
   const mediaUrl =
     task.thumbnailUrl ||
@@ -310,6 +444,10 @@ function taskArtifactId(task) {
   return uuidPair?.[1] || "";
 }
 
+/**
+ * @param {AnalysisItem[]} items
+ * @returns {ProblemSummary}
+ */
 export function problemSummary(items) {
   return items.reduce(
     (summary, item) => {
@@ -334,6 +472,10 @@ export function problemSummary(items) {
   );
 }
 
+/**
+ * @param {ProblemSummary} summary
+ * @returns {string}
+ */
 export function problemSummaryLabel({ visible, hidden }) {
   if (visible > 0) {
     return `${visible} ${visible === 1 ? "problem" : "problems"} found`;
