@@ -285,4 +285,17 @@ describe("markCaptureComplete", () => {
       "analyzed",
     );
   });
+
+  it("persists expected artifact coverage when capture completes", async () => {
+    const { startCheck, markCaptureComplete, getCurrentCheck } = await import(
+      "./check-session.js"
+    );
+
+    startCheck("site-1", TEST_PLACES);
+    const checkId = getCurrentCheck().id;
+    markCaptureComplete({ checkId, expectedArtifacts: 2 });
+
+    expect(savedReview?.status).toBe("capture-complete");
+    expect(savedReview?.expectedArtifacts).toBe(2);
+  });
 });

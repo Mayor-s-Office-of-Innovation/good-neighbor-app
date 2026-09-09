@@ -234,6 +234,10 @@ describe("submitCheck / resumeSubmittedCheck", () => {
     vi.resetModules();
     vi.clearAllMocks();
     getCurrentCheck.mockReturnValue(makeDraft());
+    waitForAnalyses.mockResolvedValue({
+      artifacts: [{ artifactId: "artifact-uploaded" }],
+      analyses: [{ artifactId: "artifact-uploaded" }],
+    });
   });
 
   it("routes initial and resumed finalization through one registry", async () => {
@@ -274,5 +278,66 @@ describe("submitCheck / resumeSubmittedCheck", () => {
 
     expect(waitForAnalyses).toHaveBeenCalledTimes(1);
     expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capture scorecard finalization", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    getCurrentCheck.mockReturnValue(makeDraft());
+    waitForAnalyses.mockResolvedValue({
+      artifacts: [{ artifactId: "artifact-uploaded" }],
+      analyses: [{ artifactId: "artifact-uploaded" }],
+    });
+  });
+
+  it("counts already captured evidence without registering anything on Done", async () => {
+    const { expectedArtifactCountForCheck } = await import("./submit-check.js");
+    const draft = makeDraft();
+    draft.places["place-north"].items.push(
+      /** @type {any} */ ({
+        id: "item-2",
+        kind: "text",
+        placeId: "place-north",
+        placeName: "North",
+        text: "There is litter near the entrance.",
+        uploadedAt: "2026-08-27T00:22:00.000Z",
+      }),
+    );
+
+    expect(expectedArtifactCountForCheck(draft)).toBe(2);
+    expect(createCheck).not.toHaveBeenCalled();
+    expect(uploadArtifact).not.toHaveBeenCalled();
+    expect(registerTextArtifact).not.toHaveBeenCalled();
+  });
+
+  it("finalizes the run-level scorecard without changing visible submitted state", async () => {
+    const { finalizeCaptureScorecardInBackground } = await import(
+      "./submit-check.js"
+    );
+
+    await finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 1,
+    });
+
+    expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+    expect(markSubmitted).not.toHaveBeenCalled();
+    expect(markAnalysisFailed).not.toHaveBeenCalled();
+  });
+
+  it("skips background scorecard finalization when capture has no evidence", async () => {
+    const { finalizeCaptureScorecardInBackground } = await import(
+      "./submit-check.js"
+    );
+
+    const result = finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 0,
+    });
+
+    expect(result).toBeNull();
+    expect(waitForAnalyses).not.toHaveBeenCalled();
+    expect(completeCheck).not.toHaveBeenCalled();
   });
 });

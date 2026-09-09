@@ -663,17 +663,21 @@ export function markAnalysisFailed(message, { checkId } = {}) {
 /**
  * Capture has ended, but photo/description analysis may still be flowing back
  * into the same session. Keep it review-backed so home can render live results.
- * @param {{ submissionKind?: "check" | "problem_report", checkId?: string }} [opts]
+ * @param {{ submissionKind?: "check" | "problem_report", checkId?: string, expectedArtifacts?: number }} [opts]
  */
 export function markCaptureComplete({
   submissionKind = "check",
   checkId,
+  expectedArtifacts,
 } = {}) {
   if (!current || !canMutateCurrentSession(checkId)) return null;
   current.status = "capture-complete";
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.submissionKind = submissionKind;
   current.pendingStage = "analyze";
+  if (typeof expectedArtifacts === "number") {
+    current.expectedArtifacts = expectedArtifacts;
+  }
   delete current.analysisError;
   persistReview();
   void clearDraft(current.flowType);

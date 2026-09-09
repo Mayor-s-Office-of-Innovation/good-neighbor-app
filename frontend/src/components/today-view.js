@@ -43,6 +43,7 @@ import {
 } from "./analysis-results.templates.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
 import {
+  finalizeCaptureScorecardInBackground,
   resumeSubmittedCheckInBackground,
   resumeUploadingCheckInBackground,
 } from "../services/submit-check.js";
@@ -502,6 +503,10 @@ class TodayView extends HTMLElement {
     ) {
       await clearSubmittedSession();
       effectivePendingSession = null;
+    } else if (effectivePendingSession?.status === "capture-complete") {
+      finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
+        expectedArtifacts: effectivePendingSession.expectedArtifacts,
+      });
     } else if (effectivePendingSession?.status === "uploading") {
       resumeUploadingCheckInBackground(effectivePendingSession.id, {
         flowType: effectivePendingSession.flowType,

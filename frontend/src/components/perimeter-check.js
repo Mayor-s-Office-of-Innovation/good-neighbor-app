@@ -19,6 +19,10 @@ import {
   rejectAnalysisCondition,
 } from "../services/api.js";
 import {
+  expectedArtifactCountForCheck,
+  finalizeCaptureScorecardInBackground,
+} from "../services/submit-check.js";
+import {
   ensureCheck,
   startCheck,
   loadDraft,
@@ -608,6 +612,7 @@ class PerimeterCheck extends HTMLElement {
 
   async _finishCheck() {
     const check = getCurrentCheck();
+    const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._unsubscribe?.();
     this._unsubscribe = null;
@@ -617,11 +622,21 @@ class PerimeterCheck extends HTMLElement {
         new CustomEvent("capturefinished", { bubbles: true, composed: true }),
       );
       window.setTimeout(() => {
-        markCaptureComplete({ checkId: check?.id, submissionKind: "check" });
+        markCaptureComplete({
+          checkId: check?.id,
+          submissionKind: "check",
+          expectedArtifacts,
+        });
+        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
       }, 0);
       return;
     }
-    markCaptureComplete({ checkId: check?.id, submissionKind: "check" });
+    markCaptureComplete({
+      checkId: check?.id,
+      submissionKind: "check",
+      expectedArtifacts,
+    });
+    finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
     navigate("/today");
   }
 
