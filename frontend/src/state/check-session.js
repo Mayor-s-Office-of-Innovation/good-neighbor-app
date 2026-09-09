@@ -267,6 +267,22 @@ export async function loadDraft(flowType) {
   return current;
 }
 
+export async function hasDraft(flowType) {
+  const requestedFlow = normalizeFlowType(flowType);
+  if (current?.status === "in-progress" && current.flowType === requestedFlow) {
+    return true;
+  }
+  return Boolean(await getDraft(requestedFlow));
+}
+
+export async function resumeOrStartCheck(siteId, places = []) {
+  return (await loadDraft("perimeter")) || startCheck(siteId, places);
+}
+
+export async function resumeOrStartProblemReport(siteId) {
+  return (await loadDraft("single-problem")) || startProblemReport(siteId);
+}
+
 export function ensureCheck(siteId, places = []) {
   return current?.status === "in-progress" && current.flowType === "perimeter"
     ? current
@@ -711,8 +727,12 @@ export function clearCheck() {
   emit();
 }
 
-export function pauseCheck() {
-  persist();
+export async function pauseCheck() {
+  if (current?.status === "in-progress") {
+    await saveDraft(current);
+  } else {
+    persist();
+  }
   current = null;
   emit();
 }
