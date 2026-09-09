@@ -1487,7 +1487,10 @@ class TodayView extends HTMLElement {
       title:
         card.getAttribute("data-card-title") || task?.category || "problem",
       description:
-        card.getAttribute("data-card-description") || task?.description || "",
+        card.getAttribute("data-card-edit-description") ||
+        task?.description ||
+        card.getAttribute("data-card-description") ||
+        "",
     };
   }
 
