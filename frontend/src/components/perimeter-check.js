@@ -23,6 +23,10 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
 import {
+  appActionFailureMessage,
+  isFiled311Completion,
+} from "../domain/task-actions.js";
+import {
   ensureCheck,
   startCheck,
   loadDraft,
@@ -537,8 +541,18 @@ class PerimeterCheck extends HTMLElement {
     if (problem.actionKind === "escalation") {
       this._analysisProgressDialog?.showModal();
       try {
-        await completeTask(problem.taskId, { completionMethod: "311_filed" });
+        const result = await completeTask(problem.taskId, {
+          completionMethod: "311_filed",
+        });
         this._analysisProgressDialog?.close();
+        if (!isFiled311Completion(result?.task)) {
+          this._showToast(
+            appActionFailureMessage(result?.task, {
+              includeUnsubmitted311: true,
+            }) || "Could not file the 311 ticket. Please try again.",
+          );
+          return;
+        }
         this._markProblemResolved(problem);
         this._showToast("Success! 311 ticket filed.");
       } catch (err) {
