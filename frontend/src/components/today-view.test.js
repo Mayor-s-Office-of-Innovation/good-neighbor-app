@@ -261,6 +261,19 @@ describe("home task status helpers", () => {
     expect(issueCountLabel(2)).toBe("2 issues found");
   });
 
+  it("counts only current unresolved work in the home issue headline", async () => {
+    const { currentIssueCount } = await import("./today-view.js");
+
+    expect(
+      currentIssueCount([
+        { homeStatus: "needs_action" },
+        { homeStatus: "in_progress" },
+        { homeStatus: "resolved" },
+        { homeStatus: "archived" },
+      ]),
+    ).toBe(2);
+  });
+
   it("matches backend tasks already represented by live capture cards", async () => {
     const { taskMatchesSessionSignatures, taskSignaturesFromSessionItems } =
       await import("./today-view.js");

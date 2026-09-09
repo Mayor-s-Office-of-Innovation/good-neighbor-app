@@ -184,6 +184,12 @@ export function issueCountLabel(count) {
   return `${count} ${count === 1 ? "issue" : "issues"} found`;
 }
 
+export function currentIssueCount(entries) {
+  return entries.filter((entry) =>
+    ["needs_action", "in_progress"].includes(entry.homeStatus),
+  ).length;
+}
+
 export function taskSignaturesFromSessionItems(items) {
   const signatures = {
     taskIds: new Set(),
@@ -668,6 +674,7 @@ class TodayView extends HTMLElement {
       return !taskArtifactIds.has(artifactId);
     });
     const homeTasks = this._homeTasks(tasks);
+    const issueCount = currentIssueCount(homeTasks);
     const newTaskEntries = homeTasks.filter((entry) => entry.isNew);
     const bucketTaskEntries = homeTasks.filter((entry) => !entry.isNew);
     const statusCounts = this._statusCounts(bucketTaskEntries);
@@ -722,7 +729,7 @@ class TodayView extends HTMLElement {
               ? this._firstRunBlock()
               : this._activityBlock({
                   last,
-                  issueCount: tasks.length,
+                  issueCount,
                 })}
           </div>
         </section>
