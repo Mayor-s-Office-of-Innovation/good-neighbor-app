@@ -110,6 +110,15 @@ describe("home task status helpers", () => {
     ).toBe(false);
   });
 
+  it("removes hidden home results from focus only while capture is active", async () => {
+    const { shouldInertHomeResults } = await import("./today-view.js");
+
+    expect(shouldInertHomeResults("entering-capture")).toBe(true);
+    expect(shouldInertHomeResults("capture")).toBe(true);
+    expect(shouldInertHomeResults("leaving-capture")).toBe(false);
+    expect(shouldInertHomeResults("home")).toBe(false);
+  });
+
   it("maps open tasks to needs action and backend 311 filings to in progress", async () => {
     const { homeTaskStatus } = await import("./today-view.js");
 
