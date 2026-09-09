@@ -394,6 +394,7 @@ class TodayView extends HTMLElement {
     this._captureFinishedHandler = () => this._finishCapture();
     this._captureFinishedListening = false;
     this._finishCaptureTimer = 0;
+    this._focusAfterRender = null;
   }
 
   disconnectedCallback() {
@@ -563,7 +564,8 @@ class TodayView extends HTMLElement {
       button.addEventListener("click", () => {
         this._homeFilter = button.getAttribute("data-home-filter") || "open";
         this._filterOpen = false;
-        this.connectedCallback();
+        this._focusAfterRender = "task-filter-button";
+        void this.connectedCallback();
       });
     });
     const review = this.querySelector("#review-assessment");
@@ -621,6 +623,7 @@ class TodayView extends HTMLElement {
       });
     });
     this._wireCards();
+    this._restoreFocusAfterRender();
   }
 
   _render({ last, tasks, captureSession, pendingSession }) {
@@ -1224,7 +1227,24 @@ class TodayView extends HTMLElement {
 
   _toggleTaskFilter() {
     this._filterOpen = !this._filterOpen;
-    this.connectedCallback();
+    this._focusAfterRender = this._filterOpen
+      ? "task-filter-active-item"
+      : "task-filter-button";
+    void this.connectedCallback();
+  }
+
+  _restoreFocusAfterRender() {
+    const target = this._focusAfterRender;
+    this._focusAfterRender = null;
+    if (!target) return;
+    const selector =
+      target === "task-filter-active-item"
+        ? ".task-filter__item--active"
+        : "#task-filter-button";
+    window.requestAnimationFrame(() => {
+      const element = this.querySelector(selector);
+      if (element instanceof HTMLElement) element.focus();
+    });
   }
 
   _primaryCardAction(task) {
