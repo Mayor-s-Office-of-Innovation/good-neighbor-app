@@ -119,6 +119,29 @@ describe("home task status helpers", () => {
     expect(shouldInertHomeResults("home")).toBe(false);
   });
 
+  it("derives capture fallback timing from computed animation CSS", async () => {
+    const { captureAnimationFallbackMs } = await import("./today-view.js");
+
+    expect(
+      captureAnimationFallbackMs({
+        animationDuration: "260ms",
+        animationDelay: "0s",
+      }),
+    ).toBe(310);
+    expect(
+      captureAnimationFallbackMs({
+        animationDuration: "0.3s",
+        animationDelay: "50ms",
+      }),
+    ).toBe(400);
+    expect(
+      captureAnimationFallbackMs({
+        animationDuration: "1ms",
+        animationDelay: "0s",
+      }),
+    ).toBe(51);
+  });
+
   it("maps open tasks to needs action and backend 311 filings to in progress", async () => {
     const { homeTaskStatus } = await import("./today-view.js");
 

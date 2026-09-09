@@ -183,6 +183,20 @@ export function shouldInertHomeResults(viewPhase) {
   return ["entering-capture", "capture"].includes(viewPhase);
 }
 
+export function captureAnimationFallbackMs(style) {
+  const durations = cssTimeListMs(style.animationDuration);
+  const delays = cssTimeListMs(style.animationDelay);
+  const count = Math.max(durations.length, delays.length, 1);
+  let max = 0;
+  for (let i = 0; i < count; i++) {
+    max = Math.max(
+      max,
+      (durations[i % durations.length] || 0) + (delays[i % delays.length] || 0),
+    );
+  }
+  return max > 0 ? max + 50 : 1;
+}
+
 export function issueCountLabel(count) {
   if (!count) return "";
   return `${count} ${count === 1 ? "issue" : "issues"} found`;
@@ -411,6 +425,18 @@ function writeTaskStatusOverrides(overrides) {
   }
 }
 
+function cssTimeListMs(value) {
+  return String(value || "0s")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const numeric = Number.parseFloat(part);
+      if (!Number.isFinite(numeric)) return 0;
+      return part.endsWith("ms") ? numeric : numeric * 1000;
+    });
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -418,7 +444,7 @@ class TodayView extends HTMLElement {
     this._captureFlow = null;
     this._captureFinishedHandler = () => this._finishCapture();
     this._captureFinishedListening = false;
-    this._finishCaptureTimer = 0;
+    this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
     this._captureLauncherSelector = null;
   }
@@ -428,7 +454,7 @@ class TodayView extends HTMLElement {
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
     this._captureFinishedListening = false;
-    window.clearTimeout(this._finishCaptureTimer);
+    window.clearTimeout(this._capturePhaseTimer);
   }
 
   async connectedCallback() {
@@ -902,10 +928,10 @@ class TodayView extends HTMLElement {
     }
     await this.connectedCallback();
     this._scrollCaptureStartIntoView();
-    window.setTimeout(() => {
+    this._afterCaptureAnimation("entering-capture", () => {
       this._viewPhase = "capture";
       this._syncPhaseClass();
-    }, this._motionDuration());
+    });
   }
 
   async _finishCapture() {
@@ -914,13 +940,12 @@ class TodayView extends HTMLElement {
     this._focusAfterRender =
       this._captureLauncherSelector || "home-primary-control";
     this._syncPhaseClass();
-    window.clearTimeout(this._finishCaptureTimer);
-    this._finishCaptureTimer = window.setTimeout(async () => {
+    this._afterCaptureAnimation("leaving-capture", async () => {
       this._viewPhase = "home";
       this._captureFlow = null;
       await this.connectedCallback();
       this._captureLauncherSelector = null;
-    }, this._motionDuration());
+    });
   }
 
   _syncPhaseClass() {
@@ -948,10 +973,29 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _motionDuration() {
-    return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-      ? 1
-      : 260;
+  _afterCaptureAnimation(expectedPhase, callback) {
+    window.clearTimeout(this._capturePhaseTimer);
+    const capture = this.querySelector(".home-region--capture");
+    if (!capture) {
+      void callback();
+      return;
+    }
+    let completed = false;
+    const finish = () => {
+      if (completed || this._viewPhase !== expectedPhase) return;
+      completed = true;
+      capture.removeEventListener("animationend", onAnimationEnd);
+      window.clearTimeout(this._capturePhaseTimer);
+      void callback();
+    };
+    const onAnimationEnd = (event) => {
+      if (event.target === capture) finish();
+    };
+    const fallbackMs = captureAnimationFallbackMs(
+      window.getComputedStyle(capture),
+    );
+    capture.addEventListener("animationend", onAnimationEnd);
+    this._capturePhaseTimer = window.setTimeout(finish, fallbackMs);
   }
 
   _scrollCaptureStartIntoView() {
