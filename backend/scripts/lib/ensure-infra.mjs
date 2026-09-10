@@ -12,6 +12,7 @@ import {
   CreateTableCommand,
   DescribeTableCommand,
   DynamoDBClient,
+  UpdateTableCommand,
 } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
@@ -168,6 +169,7 @@ export async function ensureLocalInfra() {
     }
   }
 
+  await ensureLocalTableIndexes(ddb, tableName);
   await seedLocalSiteCodes(docDdb, tableName);
 
   // SQS: derive the queue name from the configured URL's last path segment.
@@ -245,4 +247,79 @@ async function seedLocalSiteCodes(docDdb, tableName) {
     includeInactive: true,
     includeLegacyLocalCode: true,
   });
+}
+
+/**
+ * DynamoDB Local keeps persisted tables between runs, so create-table changes
+ * need a small reconciliation path for indexes added after a developer's first
+ * bootstrap.
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @returns {Promise<void>}
+ */
+async function ensureLocalTableIndexes(ddb, tableName) {
+  const description = await describeTable(ddb, tableName);
+  const existing = new Set(
+    description.Table?.GlobalSecondaryIndexes?.map((index) => index.IndexName),
+  );
+  const missing = (TABLE_SCHEMA.GlobalSecondaryIndexes ?? []).filter(
+    (index) => !existing.has(index.IndexName),
+  );
+
+  for (const index of missing) {
+    console.log(
+      `[bootstrap] adding DynamoDB local index "${index.IndexName}" to "${tableName}"`,
+    );
+    await ddb.send(
+      new UpdateTableCommand({
+        TableName: tableName,
+        AttributeDefinitions: attributeDefinitionsForIndex(index),
+        GlobalSecondaryIndexUpdates: [{ Create: index }],
+      }),
+    );
+    await waitForIndex(ddb, tableName, index.IndexName);
+  }
+}
+
+/**
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @returns {Promise<import("@aws-sdk/client-dynamodb").DescribeTableCommandOutput>}
+ */
+async function describeTable(ddb, tableName) {
+  return ddb.send(new DescribeTableCommand({ TableName: tableName }));
+}
+
+/**
+ * @param {import("@aws-sdk/client-dynamodb").GlobalSecondaryIndex} index
+ * @returns {import("@aws-sdk/client-dynamodb").AttributeDefinition[]}
+ */
+function attributeDefinitionsForIndex(index) {
+  const attributeNames = new Set(
+    index.KeySchema?.map((key) => key.AttributeName).filter(Boolean),
+  );
+  return TABLE_SCHEMA.AttributeDefinitions.filter((attribute) =>
+    attributeNames.has(attribute.AttributeName),
+  );
+}
+
+/**
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @param {string | undefined} indexName
+ * @returns {Promise<void>}
+ */
+async function waitForIndex(ddb, tableName, indexName) {
+  const attempts = 80;
+  for (let i = 1; i <= attempts; i += 1) {
+    const description = await describeTable(ddb, tableName);
+    const index = description.Table?.GlobalSecondaryIndexes?.find(
+      (candidate) => candidate.IndexName === indexName,
+    );
+    if (index?.IndexStatus === "ACTIVE") return;
+    await sleep(250);
+  }
+  throw new Error(
+    `DynamoDB local index "${indexName}" on "${tableName}" was not active after ${attempts} attempts`,
+  );
 }
