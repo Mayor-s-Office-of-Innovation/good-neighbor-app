@@ -340,4 +340,36 @@ describe("capture scorecard finalization", () => {
     expect(waitForAnalyses).not.toHaveBeenCalled();
     expect(completeCheck).not.toHaveBeenCalled();
   });
+
+  it("counts a converted describe-only text item so Done files the report", async () => {
+    // Finding 1 (PR review 192): a text-only problem report used to contribute
+    // 0 expected artifacts (place.description was never counted), so Done
+    // silently dropped it. Describe-instead now converts the description into
+    // a kind:"text" item through the same pipeline as photos — this asserts the
+    // counter and the finalization path accept that item.
+    const {
+      expectedArtifactCountForCheck,
+      finalizeCaptureScorecardInBackground,
+    } = await import("./submit-check.js");
+    const draft = makeDraft();
+    draft.places["place-north"].items = [
+      /** @type {any} */ ({
+        id: "item-text",
+        kind: "text",
+        placeId: "place-north",
+        placeName: "North",
+        text: "There is a large pothole near the north entrance.",
+        uploadedAt: "2026-08-27T00:22:00.000Z",
+      }),
+    ];
+    draft.places["place-north"].description = null;
+
+    expect(expectedArtifactCountForCheck(draft)).toBe(1);
+
+    await finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 1,
+    });
+    expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
 });

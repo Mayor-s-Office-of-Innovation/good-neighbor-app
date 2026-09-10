@@ -6,6 +6,7 @@
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
 import {
+  addItem,
   getFlowType,
   getCurrentCheck,
   loadDraft,
@@ -14,7 +15,9 @@ import {
   getPlaceDescription,
   setPlaceDescription,
   setPostDescribeAction,
+  updateItem,
 } from "../state/check-session.js";
+import { analyzeEvidenceItem } from "../services/photo-analysis.js";
 import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 
 class DescribeInstead extends HTMLElement {
@@ -136,6 +139,19 @@ class DescribeInstead extends HTMLElement {
   async _onContinue() {
     const text = this._text.trim();
     if (!text) return;
+    if (this._flowType === "single-problem") {
+      // A described problem report is real evidence: file it as a text item
+      // through the same incremental pipeline as photos, so Done's capture-
+      // complete path counts it and the backend never misses a text-only report
+      // (place.description is not counted by expectedArtifactCountForCheck).
+      const record = addItem(this._placeId, { kind: "text", text });
+      updateItem(this._placeId, record.id, {
+        upload: { status: "uploaded" },
+      });
+      analyzeEvidenceItem(this._placeId, record.id);
+      navigate(this._routeBase);
+      return;
+    }
     setPlaceDescription(this._placeId, {
       kind: "note",
       text,
@@ -146,10 +162,6 @@ class DescribeInstead extends HTMLElement {
         whereItIs: true,
       },
     });
-    if (this._flowType === "single-problem") {
-      navigate(this._routeBase);
-      return;
-    }
     setPostDescribeAction({ type: "stay", placeIndex: this._placeIndex });
     navigate(this._routeBase);
   }
