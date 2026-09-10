@@ -66,6 +66,7 @@ const invoke = (event, handler) => handler(event, {}, () => {});
 /**
  * Stored ANALYSIS# item the GetItem returns.
  * @param {{ analysisId?: string, checkId?: string, artifactId?: string }} [over]
+ * @returns {{ checkId: string, artifactId: string, analysisId: string }}
  */
 const analysisItem = (over = {}) => ({
   checkId: "chk_01",

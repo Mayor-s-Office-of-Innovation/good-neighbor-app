@@ -116,6 +116,17 @@ function hasUserConfirmed311Action(task) {
 }
 
 /**
+ * @param {import("./app-actions.js").AppActionResult[]} results
+ * @returns {boolean}
+ */
+function hasSubmitted311ActionResult(results) {
+  return results.some(
+    (result) =>
+      result.code === "create_311_ticket" && result.status === "submitted",
+  );
+}
+
+/**
  * @param {unknown} value
  * @param {Date} now
  * @returns {boolean}
@@ -1174,7 +1185,9 @@ export async function completeTaskWithAppActions(opts) {
   // by a prior/background app-action failure. A user_confirmed action that runs
   // and fails still holds the task open (`executedAppActionResults` carries it).
   const appActionFailed =
-    summarizeAppActionResults(executedAppActionResults) === "failed";
+    summarizeAppActionResults(executedAppActionResults) === "failed" ||
+    (opts.completionMethod === "311_filed" &&
+      !hasSubmitted311ActionResult(executedAppActionResults));
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
