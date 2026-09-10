@@ -321,7 +321,6 @@ function completedEvidenceCard(
     taskId = "",
     conditionId = "",
     question = null,
-    category = "",
     metaLabel = "NEW",
     actionAttribute = "data-analysis-action",
     actionValue = "resolve",
@@ -374,7 +373,7 @@ function completedEvidenceCard(
         </p>
         <h3>${escapeHtml(title)}</h3>
         <p>${escapeHtml(description)}</p>
-        ${question ? clarifyingQuestion(question, conditionId, category) : ""}
+        ${question ? clarifyingQuestion(question, conditionId) : ""}
         <div class="analysis-card__actions">
           ${action
             ? html`<button
@@ -427,7 +426,7 @@ function displayCategory(record) {
   );
 }
 
-function clarifyingQuestion(question, conditionId, category) {
+function clarifyingQuestion(question, conditionId) {
   const key = typeof question.key === "string" ? question.key : "";
   const prompt = typeof question.prompt === "string" ? question.prompt : "";
   const options = Array.isArray(question.options) ? question.options : [];
