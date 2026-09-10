@@ -316,7 +316,7 @@ class PerimeterCheck extends HTMLElement {
     const placeId = target.getAttribute("data-text-input");
     if (!placeId) return;
     setPlaceDraftText(placeId, target.value);
-    const button = this.querySelector(`[data-review-text="${placeId}"]`);
+    const button = findReviewTextButton(this, placeId);
     if (button instanceof HTMLButtonElement) {
       button.disabled = !canSubmitTextDescription(target.value);
     }
@@ -905,5 +905,13 @@ export function shouldResumeEvidenceItem(item) {
     ["queued", "analyzing"].includes(analysisStatus) ||
       (analysisStatus === "failed" &&
         (hasUploadedArtifact || isRetryableTextRegistration)),
+  );
+}
+
+export function findReviewTextButton(root, placeId) {
+  return (
+    [...root.querySelectorAll("[data-review-text]")].find(
+      (candidate) => candidate.getAttribute("data-review-text") === placeId,
+    ) || null
   );
 }
