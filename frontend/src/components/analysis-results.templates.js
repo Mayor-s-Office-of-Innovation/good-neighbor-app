@@ -188,14 +188,18 @@ export function analysisCards(item, sessionCheckId) {
     ];
   }
   if (visibleTasks.length) {
-    return visibleTasks.map((task, index) => {
+    const taskConditionIds = new Set(
+      visibleTasks.map((task) => task.conditionId).filter(Boolean),
+    );
+    const unpairedConditions = visibleConditions.filter(
+      (condition) => !taskConditionIds.has(condition.conditionId),
+    );
+    const taskCards = visibleTasks.map((task) => {
       const condition =
         visibleConditions.find(
           (candidate) =>
             task.conditionId && candidate.conditionId === task.conditionId,
-        ) ||
-        visibleConditions[index] ||
-        {};
+        ) || {};
       return completedEvidenceCard(item, sessionCheckId, {
         title:
           displayCategory(task) ||
@@ -209,20 +213,35 @@ export function analysisCards(item, sessionCheckId) {
         conditionId: task.conditionId || condition.conditionId || "",
       });
     });
+    return [
+      ...taskCards,
+      ...unpairedConditions.map((condition) =>
+        conditionEvidenceCard(item, sessionCheckId, condition),
+      ),
+    ];
   }
   return visibleConditions.map((condition) =>
-    completedEvidenceCard(item, sessionCheckId, {
-      title: condition.needsAnswer
-        ? "More details needed"
-        : displayCategory(condition) || "Condition found",
-      description: condition.description || "Review this condition.",
-      action: "",
-      actionKind: "",
-      conditionId: condition.conditionId || "",
-      question: condition.needsAnswer,
-      category: displayCategory(condition),
-    }),
+    conditionEvidenceCard(item, sessionCheckId, condition),
   );
+}
+
+/**
+ * @param {AnalysisItem} item
+ * @param {string} sessionCheckId
+ * @param {AnalysisCondition} condition
+ * @returns {string}
+ */
+function conditionEvidenceCard(item, sessionCheckId, condition) {
+  return completedEvidenceCard(item, sessionCheckId, {
+    title: condition.needsAnswer
+      ? "More details needed"
+      : displayCategory(condition) || "Condition found",
+    description: condition.description || "Review this condition.",
+    action: "",
+    actionKind: "",
+    conditionId: condition.conditionId || "",
+    question: condition.needsAnswer,
+  });
 }
 
 /**
@@ -519,9 +538,13 @@ export function problemSummary(items) {
       if (item.analysis?.status !== "analyzed") return summary;
       const { hiddenConditionIds, visibleTasks, visibleConditions } =
         visibleProblemSelection(item);
-      const visible = visibleTasks.length
-        ? visibleTasks.length
-        : visibleConditions.length;
+      const taskConditionIds = new Set(
+        visibleTasks.map((task) => task.conditionId).filter(Boolean),
+      );
+      const unpairedConditionCount = visibleConditions.filter(
+        (condition) => !taskConditionIds.has(condition.conditionId),
+      ).length;
+      const visible = visibleTasks.length + unpairedConditionCount;
       summary.visible += visible;
       summary.hidden += hiddenConditionIds.size;
       return summary;
