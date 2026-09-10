@@ -347,8 +347,7 @@ async function getDevice(siteId, deviceId) {
 function isSetupCodeConditionFailure(err, consumeIndex) {
   return (
     consumeIndex >= 0 &&
-    err.CancellationReasons?.[consumeIndex]?.Code ===
-      "ConditionalCheckFailed"
+    err.CancellationReasons?.[consumeIndex]?.Code === "ConditionalCheckFailed"
   );
 }
 

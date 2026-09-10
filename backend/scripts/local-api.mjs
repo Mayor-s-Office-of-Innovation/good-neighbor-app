@@ -202,7 +202,11 @@ const routes = [
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
   route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
   route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
-  route("POST", "/admin/v1/sites/{siteId}/master-contacts", createMasterContact),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/master-contacts",
+    createMasterContact,
+  ),
   route(
     "DELETE",
     "/admin/v1/sites/{siteId}/master-contacts/{emailHash}",
@@ -217,11 +221,7 @@ const routes = [
   ),
   route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
   route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
-  route(
-    "DELETE",
-    "/admin/v1/sites/{siteId}/devices/{deviceId}",
-    revokeDevice,
-  ),
+  route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
 ];
 
 /**

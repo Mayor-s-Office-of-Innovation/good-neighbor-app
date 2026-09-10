@@ -291,9 +291,9 @@ describe("issueSetupCode", () => {
       generateCode: vi.fn().mockReturnValue("CCCCCC"),
     });
 
-    expect(
-      send.mock.calls.some(([cmd]) => cmd instanceof QueryCommand),
-    ).toBe(false);
+    expect(send.mock.calls.some(([cmd]) => cmd instanceof QueryCommand)).toBe(
+      false,
+    );
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
     expect(tx.input.TransactItems?.[1]).toMatchObject({
       Update: {
@@ -317,7 +317,7 @@ describe("issueSetupCode", () => {
           currentCodePk: "SETUP_CODE#winner",
         },
       })
-      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
 
     const { code } = await issueSetupCode({
       siteId: "site-1",
@@ -358,9 +358,7 @@ describe("verifierSecret", () => {
     await expect(verifierSecret()).resolves.toBe("deployed-secret");
 
     expect(secretSend).toHaveBeenCalledTimes(1);
-    expect(secretSend.mock.calls[0][0].input.SecretId).toContain(
-      "setup-code",
-    );
+    expect(secretSend.mock.calls[0][0].input.SecretId).toContain("setup-code");
   });
 
   it("fails closed when no verifier secret is configured", async () => {

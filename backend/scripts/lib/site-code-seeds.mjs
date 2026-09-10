@@ -358,14 +358,14 @@ async function putDynamicSetupCode(docDdb, tableName, seed, now) {
           issuedTo: seed.contactEmail.toLowerCase(),
           issuedBy: "local-seed",
           createdAt: now,
-        updatedAt: now,
-        gsi6pk: `SETUP_CODE_PENDING#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
-        gsi6sk: now,
-        gsi7pk: `SETUP_CODE_PENDING_SITE#${seed.siteId}`,
-        gsi7sk: now,
-      },
-      ConditionExpression: "attribute_not_exists(pk)",
-    }),
+          updatedAt: now,
+          gsi6pk: `SETUP_CODE_PENDING#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
+          gsi6sk: now,
+          gsi7pk: `SETUP_CODE_PENDING_SITE#${seed.siteId}`,
+          gsi7sk: now,
+        },
+        ConditionExpression: "attribute_not_exists(pk)",
+      }),
     );
   } catch (err) {
     if (/** @type {Error} */ (err).name !== "ConditionalCheckFailedException") {

@@ -190,7 +190,11 @@ export const deactivateProvider = (event) =>
     );
     await Promise.all(
       activeMemberships.map((membership) =>
-        cleanupDeactivatedSite(String(membership.siteId), "provider_deactivated", now),
+        cleanupDeactivatedSite(
+          String(membership.siteId),
+          "provider_deactivated",
+          now,
+        ),
       ),
     );
     return jsonResponse(200, { provider: res.Attributes });
@@ -215,7 +219,9 @@ export const createSite = (event) =>
       return jsonResponse(404, { error: "provider_not_found" });
     }
     const siteId = slug(body.siteId, `${providerId}-${name}`);
-    const providerSiteId = String(body.providerSiteId ?? `provider-site-${siteId}`);
+    const providerSiteId = String(
+      body.providerSiteId ?? `provider-site-${siteId}`,
+    );
     const now = new Date().toISOString();
     const site = {
       pk: `SITE#${siteId}`,
@@ -439,7 +445,10 @@ export const deactivateSite = (event) =>
   });
 
 export const listMasterContacts = contactLister("MASTER_CONTACT#");
-export const createMasterContact = contactCreator("MASTER_CONTACT#", "masterContact");
+export const createMasterContact = contactCreator(
+  "MASTER_CONTACT#",
+  "masterContact",
+);
 export const deactivateMasterContact = contactDeactivator("MASTER_CONTACT#");
 export const listCodeContacts = contactLister("CODE_CONTACT#");
 export const createCodeContact = contactCreator("CODE_CONTACT#", "codeContact");
@@ -540,21 +549,23 @@ export const revokeDevice = (event) =>
  * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 function contactLister(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ ((event) =>
-    adminOnly(event, async () => {
-      const siteId = event.pathParameters?.siteId ?? "";
-      const res = await ddb.send(
-        new QueryCommand({
-          TableName: getDynamoTableName(),
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `SITE#${siteId}`,
-            ":prefix": prefix,
-          },
-        }),
-      );
-      return jsonResponse(200, { contacts: res.Items ?? [] });
-    }));
+  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
+    (event) =>
+      adminOnly(event, async () => {
+        const siteId = event.pathParameters?.siteId ?? "";
+        const res = await ddb.send(
+          new QueryCommand({
+            TableName: getDynamoTableName(),
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+          }),
+        );
+        return jsonResponse(200, { contacts: res.Items ?? [] });
+      })
+  );
 }
 
 /**
@@ -563,33 +574,35 @@ function contactLister(prefix) {
  * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 function contactCreator(prefix, type) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ ((event) =>
-    adminOnly(event, async (body) => {
-      const siteId = event.pathParameters?.siteId ?? "";
-      const email = normalizeEmail(String(body.email ?? ""));
-      if (!email) return jsonResponse(400, { error: "email_required" });
-      const now = new Date().toISOString();
-      const hash = await emailHash(email);
-      const item = {
-        pk: `SITE#${siteId}`,
-        sk: `${prefix}${hash}`,
-        type,
-        email,
-        emailHash: hash,
-        name: String(body.name ?? "").trim() || undefined,
-        siteId,
-        status: "active",
-        createdAt: now,
-        updatedAt: now,
-      };
-      await ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: item,
-        }),
-      );
-      return jsonResponse(201, { contact: item });
-    }));
+  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
+    (event) =>
+      adminOnly(event, async (body) => {
+        const siteId = event.pathParameters?.siteId ?? "";
+        const email = normalizeEmail(String(body.email ?? ""));
+        if (!email) return jsonResponse(400, { error: "email_required" });
+        const now = new Date().toISOString();
+        const hash = await emailHash(email);
+        const item = {
+          pk: `SITE#${siteId}`,
+          sk: `${prefix}${hash}`,
+          type,
+          email,
+          emailHash: hash,
+          name: String(body.name ?? "").trim() || undefined,
+          siteId,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        };
+        await ddb.send(
+          new PutCommand({
+            TableName: getDynamoTableName(),
+            Item: item,
+          }),
+        );
+        return jsonResponse(201, { contact: item });
+      })
+  );
 }
 
 /**
@@ -597,32 +610,34 @@ function contactCreator(prefix, type) {
  * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 function contactDeactivator(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ ((event) =>
-    adminOnly(event, async () => {
-      const siteId = event.pathParameters?.siteId ?? "";
-      const hash = event.pathParameters?.emailHash ?? "";
-      const now = new Date().toISOString();
-      const res = await ddb.send(
-        new UpdateCommand({
-          TableName: getDynamoTableName(),
-          Key: { pk: `SITE#${siteId}`, sk: `${prefix}${hash}` },
-          UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-          ConditionExpression: "attribute_exists(pk)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":inactive": "inactive",
-            ":now": now,
-          },
-          ReturnValues: "ALL_NEW",
-        }),
-      );
-      await revokePendingSetupCodes({
-        siteId,
-        contactHash: hash,
-        reason: "contact_removed",
-      });
-      return jsonResponse(200, { contact: res.Attributes });
-    }));
+  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
+    (event) =>
+      adminOnly(event, async () => {
+        const siteId = event.pathParameters?.siteId ?? "";
+        const hash = event.pathParameters?.emailHash ?? "";
+        const now = new Date().toISOString();
+        const res = await ddb.send(
+          new UpdateCommand({
+            TableName: getDynamoTableName(),
+            Key: { pk: `SITE#${siteId}`, sk: `${prefix}${hash}` },
+            UpdateExpression: "SET #status = :inactive, updatedAt = :now",
+            ConditionExpression: "attribute_exists(pk)",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":inactive": "inactive",
+              ":now": now,
+            },
+            ReturnValues: "ALL_NEW",
+          }),
+        );
+        await revokePendingSetupCodes({
+          siteId,
+          contactHash: hash,
+          reason: "contact_removed",
+        });
+        return jsonResponse(200, { contact: res.Attributes });
+      })
+  );
 }
 
 /**
@@ -685,10 +700,7 @@ async function deactivateProviderSites(providerId, memberships, now) {
                 TableName: getDynamoTableName(),
                 Key: {
                   pk: "SITE_SEARCH#ACTIVE",
-                  sk: siteSearchSk(
-                    String(membership.siteName ?? ""),
-                    siteId,
-                  ),
+                  sk: siteSearchSk(String(membership.siteName ?? ""), siteId),
                 },
               },
             },
@@ -798,7 +810,14 @@ function putProviderSearch(providerId, name, now) {
  * @param {string} now
  * @returns {Record<string, unknown>}
  */
-function siteSearchItem(siteId, name, providerId, providerName, providerSiteId, now) {
+function siteSearchItem(
+  siteId,
+  name,
+  providerId,
+  providerName,
+  providerSiteId,
+  now,
+) {
   return {
     pk: "SITE_SEARCH#ACTIVE",
     sk: siteSearchSk(name, siteId),

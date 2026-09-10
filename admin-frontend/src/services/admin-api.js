@@ -43,13 +43,10 @@ export const adminApi = {
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
   createSite: (providerId, name) =>
-    adminFetch(
-      `/admin/v1/providers/${encodeURIComponent(providerId)}/sites`,
-      {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      },
-    ),
+    adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/sites`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
   deactivateSite: (siteId) =>
@@ -57,9 +54,7 @@ export const adminApi = {
       method: "DELETE",
     }),
   listMasterContacts: (siteId) =>
-    adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts`,
-    ),
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts`),
   addMasterContact: (siteId, email, name) =>
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts`,
@@ -74,13 +69,10 @@ export const adminApi = {
       { method: "DELETE" },
     ),
   issueSetupCode: (siteId, email) =>
-    adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}/setup-codes`,
-      {
-        method: "POST",
-        body: JSON.stringify({ email }),
-      },
-    ),
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/setup-codes`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
   listDevices: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/devices`),
   revokeDevice: (siteId, deviceId) =>

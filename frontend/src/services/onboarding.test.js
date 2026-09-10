@@ -33,9 +33,7 @@ describe("searchSites", () => {
       ok: true,
       sites: [{ siteId: "site-1", name: "City Hall" }],
     });
-    expect(fetch.mock.calls[0][0]).toBe(
-      "/v1/sites:search?q=city%20hall",
-    );
+    expect(fetch.mock.calls[0][0]).toBe("/v1/sites:search?q=city%20hall");
   });
 
   it("does not search for one-character queries", async () => {

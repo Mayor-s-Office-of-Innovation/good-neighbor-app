@@ -221,10 +221,7 @@ class AdminApp extends HTMLElement {
    */
   async issueSetupCodeForEmail(email) {
     if (!this.state.site || !email.trim()) return;
-    const result = await adminApi.issueSetupCode(
-      this.state.site.siteId,
-      email,
-    );
+    const result = await adminApi.issueSetupCode(this.state.site.siteId, email);
     this.state.issuedCode = result.setupCode;
     this.render();
   }
@@ -286,9 +283,7 @@ class AdminApp extends HTMLElement {
     });
     this.querySelectorAll("[data-deactivate-provider]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.deactivateProvider(
-          dataAttr(button, "data-deactivate-provider"),
-        ),
+        this.deactivateProvider(dataAttr(button, "data-deactivate-provider")),
       );
     });
     this.querySelectorAll("[data-site]").forEach((button) => {

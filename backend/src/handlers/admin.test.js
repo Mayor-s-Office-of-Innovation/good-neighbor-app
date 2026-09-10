@@ -144,11 +144,9 @@ describe("provider and site management", () => {
 
     const res = await call(
       createMasterContact,
-      event(
-        { email: "Lead@Example.org", name: "Site Lead" },
-        "central-admin",
-        { siteId: "site-1" },
-      ),
+      event({ email: "Lead@Example.org", name: "Site Lead" }, "central-admin", {
+        siteId: "site-1",
+      }),
     );
 
     expect(res.statusCode).toBe(201);
@@ -281,10 +279,12 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
-    expect(send.mock.calls[0][0].input.ExpressionAttributeValues).toMatchObject({
-      ":pk": "PROVIDER#provider-one",
-      ":site": "SITE#",
-    });
+    expect(send.mock.calls[0][0].input.ExpressionAttributeValues).toMatchObject(
+      {
+        ":pk": "PROVIDER#provider-one",
+        ":site": "SITE#",
+      },
+    );
     const siteTransactions = send.mock.calls
       .map(([cmd]) => cmd)
       .filter((cmd) => cmd instanceof TransactWriteCommand);
@@ -438,7 +438,9 @@ describe("provider and site management", () => {
     });
     const setupCodeRevoke = send.mock.calls
       .map(([cmd]) => cmd)
-      .find((cmd) => cmd instanceof PutCommand && cmd.input.Item?.type !== "site");
+      .find(
+        (cmd) => cmd instanceof PutCommand && cmd.input.Item?.type !== "site",
+      );
     expect(setupCodeRevoke?.input.Item).toMatchObject({
       pk: "SETUP_CODE#old",
       status: "revoked",
@@ -448,8 +450,7 @@ describe("provider and site management", () => {
       .map(([cmd]) => cmd)
       .find(
         (cmd) =>
-          cmd instanceof UpdateCommand &&
-          cmd.input.Key?.sk === "DEVICE#dev-1",
+          cmd instanceof UpdateCommand && cmd.input.Key?.sk === "DEVICE#dev-1",
       );
     expect(deviceRevoke?.input.UpdateExpression).toContain("tokenGeneration");
     expect(JSON.parse(res.body).site).toMatchObject({
