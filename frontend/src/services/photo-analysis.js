@@ -356,7 +356,7 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
  * @param {string} conditionId
  * @param {string} answerKey
  * @param {unknown} answerValue
- * @returns {Promise<AnswerAnalysisQuestionResult | null>}
+ * @returns {Promise<AnswerAnalysisQuestionResult>}
  */
 export async function answerAnalysisQuestion(
   placeId,
@@ -377,7 +377,9 @@ export async function answerAnalysisQuestion(
     !conditionId ||
     !answerKey
   ) {
-    return null;
+    throw new ApiError("This item has no assessment to answer against.", {
+      body: { code: "missing_assessment" },
+    });
   }
 
   const result = await submitConditionAnswers(assessmentId, conditionId, {
