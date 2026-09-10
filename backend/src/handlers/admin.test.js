@@ -14,6 +14,7 @@ const {
   createProvider,
   createSite,
   deactivateSite,
+  deactivateMasterContact,
   issueAdminSetupCode,
   listProviders,
   revokeDevice,
@@ -155,6 +156,52 @@ describe("provider and site management", () => {
       email: "lead@example.org",
       status: "active",
     });
+  });
+
+  it("revokes pending setup codes when removing master contacts", async () => {
+    send
+      .mockResolvedValueOnce({
+        Attributes: {
+          pk: "SITE#site-1",
+          sk: "MASTER_CONTACT#contact-hash",
+          emailHash: "contact-hash",
+          status: "inactive",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SETUP_CODE#old",
+            sk: "#META",
+            status: "pending",
+            gsi6pk: "SETUP_CODE_PENDING#site-1#contact-hash",
+            gsi6sk: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      deactivateMasterContact,
+      event(undefined, "central-admin", {
+        siteId: "site-1",
+        emailHash: "contact-hash",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const query = /** @type {QueryCommand} */ (send.mock.calls[1][0]);
+    expect(query).toBeInstanceOf(QueryCommand);
+    expect(query.input.ExpressionAttributeValues).toMatchObject({
+      ":pk": "SETUP_CODE_PENDING#site-1#contact-hash",
+    });
+    const revoke = /** @type {PutCommand} */ (send.mock.calls[2][0]);
+    expect(revoke.input.Item).toMatchObject({
+      pk: "SETUP_CODE#old",
+      status: "revoked",
+      revokedReason: "contact_removed",
+    });
+    expect(revoke.input.Item?.gsi6pk).toBeUndefined();
   });
 
   it("lists providers from the provider search partition", async () => {

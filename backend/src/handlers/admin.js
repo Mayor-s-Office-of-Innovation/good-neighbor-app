@@ -10,7 +10,12 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { emailHash, issueSetupCode, normalizeEmail } from "./setup-codes.js";
+import {
+  emailHash,
+  issueSetupCode,
+  normalizeEmail,
+  revokePendingSetupCodes,
+} from "./setup-codes.js";
 
 /**
  * @param {import("aws-lambda").APIGatewayProxyEventV2} event
@@ -599,6 +604,11 @@ function contactDeactivator(prefix) {
           ReturnValues: "ALL_NEW",
         }),
       );
+      await revokePendingSetupCodes({
+        siteId,
+        contactHash: hash,
+        reason: "contact_removed",
+      });
       return jsonResponse(200, { contact: res.Attributes });
     }));
 }
