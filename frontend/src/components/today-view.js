@@ -82,6 +82,13 @@ export function isStalePendingSession(session, submitted) {
   if (session.status === "submitted") {
     return submitted.length > 0 && submitted[0].id !== session.id;
   }
+  if (session.status === "capture-complete") {
+    // The background scorecard has no terminal transition, so a completed
+    // backend check with the same id is the only signal the run has landed —
+    // the local mirror can then be dropped (re-finalizing it is idempotent,
+    // but repeats on every home load otherwise).
+    return submitted.some((check) => check.id === session.id);
+  }
   if (submitted.some((check) => check.id === session.id)) return false;
   if (!session.submittedAt || !submitted.length) return false;
   return submitted.some(
@@ -604,10 +611,7 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
-    if (
-      effectivePendingSession?.status !== "capture-complete" &&
-      this._isStalePendingSession(effectivePendingSession, submitted)
-    ) {
+    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "capture-complete") {
