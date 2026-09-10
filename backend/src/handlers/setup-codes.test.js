@@ -2,23 +2,46 @@ import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { secretSend } = vi.hoisted(() => ({ secretSend: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("@aws-sdk/client-secrets-manager", () => ({
+  GetSecretValueCommand: class GetSecretValueCommand {
+    /** @param {Record<string, unknown>} input */
+    constructor(input) {
+      this.input = input;
+    }
+  },
+  SecretsManagerClient: class SecretsManagerClient {
+    /**
+     * @param {Record<string, unknown>} command
+     * @returns {unknown}
+     */
+    send(command) {
+      return secretSend(command);
+    }
+  },
+}));
 
 const {
   consumeSetupCodeTransactItem,
   emailHash,
   issueSetupCode,
+  resetSetupCodeSecretCache,
   setupCodePk,
   validateSetupCode,
+  verifierSecret,
 } = await import("./setup-codes.js");
 
 beforeEach(() => {
   send.mockReset();
+  secretSend.mockReset();
+  resetSetupCodeSecretCache();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
 
 afterEach(() => {
+  resetSetupCodeSecretCache();
   vi.unstubAllEnvs();
 });
 
@@ -26,7 +49,7 @@ describe("validateSetupCode", () => {
   it("accepts a pending dynamic setup code", async () => {
     send.mockResolvedValueOnce({
       Item: {
-        pk: setupCodePk("ABC123"),
+        pk: await setupCodePk("ABC123"),
         sk: "#META",
         type: "setupCode",
         status: "pending",
@@ -46,7 +69,7 @@ describe("validateSetupCode", () => {
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          Key: { pk: setupCodePk("ABC123"), sk: "#META" },
+          Key: { pk: await setupCodePk("ABC123"), sk: "#META" },
         }),
       }),
     );
@@ -117,7 +140,7 @@ describe("issueSetupCode", () => {
             pk: "SETUP_CODE#old",
             sk: "#META",
             status: "pending",
-            gsi6pk: `SETUP_CODE_PENDING#site-1#${emailHash("Lead@Example.org")}`,
+            gsi6pk: `SETUP_CODE_PENDING#site-1#${await emailHash("Lead@Example.org")}`,
             gsi6sk: "2026-01-01T00:00:00.000Z",
           },
         ],
@@ -147,5 +170,35 @@ describe("issueSetupCode", () => {
 
     const put = /** @type {PutCommand} */ (send.mock.calls[2][0]);
     expect(put.input.Item?.pk).toMatch(/^SETUP_CODE#/);
+  });
+});
+
+describe("verifierSecret", () => {
+  it("loads and caches the deployed Secrets Manager value", async () => {
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "");
+    vi.stubEnv("DEVICE_TOKEN_SECRET", "");
+    vi.stubEnv(
+      "DEVICE_TOKEN_SECRET_SECRET_ARN",
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:setup-code",
+    );
+    secretSend.mockResolvedValueOnce({ SecretString: "deployed-secret" });
+
+    await expect(verifierSecret()).resolves.toBe("deployed-secret");
+    await expect(verifierSecret()).resolves.toBe("deployed-secret");
+
+    expect(secretSend).toHaveBeenCalledTimes(1);
+    expect(secretSend.mock.calls[0][0].input.SecretId).toContain(
+      "setup-code",
+    );
+  });
+
+  it("fails closed when no verifier secret is configured", async () => {
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "");
+    vi.stubEnv("DEVICE_TOKEN_SECRET", "");
+    vi.stubEnv("DEVICE_TOKEN_SECRET_SECRET_ARN", "");
+
+    await expect(verifierSecret()).rejects.toThrow(
+      "No setup-code verifier secret configured",
+    );
   });
 });

@@ -530,7 +530,7 @@ function contactCreator(prefix, type) {
       const email = normalizeEmail(String(body.email ?? ""));
       if (!email) return jsonResponse(400, { error: "email_required" });
       const now = new Date().toISOString();
-      const hash = emailHash(email);
+      const hash = await emailHash(email);
       const item = {
         pk: `SITE#${siteId}`,
         sk: `${prefix}${hash}`,
