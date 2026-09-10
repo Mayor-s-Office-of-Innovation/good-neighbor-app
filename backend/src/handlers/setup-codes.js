@@ -154,7 +154,7 @@ export async function issueSetupCode(input) {
     nowIso,
     contactHash,
   });
-  await revokePendingSetupCodes(pendingCodes, nowIso);
+  await revokePendingSetupCodeItems(pendingCodes, nowIso, "superseded");
 
   return { code, item };
 }
@@ -277,10 +277,25 @@ async function queryPendingSetupCodes({ siteId, contactHash }) {
 }
 
 /**
+ * @param {{ siteId: string, contactHash: string, reason?: string, now?: Date }} input
+ * @returns {Promise<void>}
+ */
+export async function revokePendingSetupCodes({
+  siteId,
+  contactHash,
+  reason = "revoked",
+  now = new Date(),
+}) {
+  const items = await queryPendingSetupCodes({ siteId, contactHash });
+  await revokePendingSetupCodeItems(items, now.toISOString(), reason);
+}
+
+/**
  * @param {Record<string, unknown>[]} items
  * @param {string} nowIso
+ * @param {string} reason
  */
-async function revokePendingSetupCodes(items, nowIso) {
+async function revokePendingSetupCodeItems(items, nowIso, reason) {
   await Promise.all(
     items.map((item) =>
       ddb.send(
@@ -289,7 +304,7 @@ async function revokePendingSetupCodes(items, nowIso) {
           Item: {
             ...item,
             status: "revoked",
-            revokedReason: "superseded",
+            revokedReason: reason,
             updatedAt: nowIso,
             gsi6pk: undefined,
             gsi6sk: undefined,
