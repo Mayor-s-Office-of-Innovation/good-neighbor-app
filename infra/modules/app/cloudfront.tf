@@ -33,6 +33,29 @@ resource "aws_cloudfront_origin_access_control" "admin_frontend" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_function" "admin_spa_rewrite" {
+  name    = "${local.name_prefix}-admin-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite admin SPA navigation requests to index.html while leaving API routes untouched."
+  publish = true
+  code    = <<-EOT
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+
+  if (uri.indexOf("/admin/v1/") === 0) {
+    return request;
+  }
+
+  if (uri === "/" || uri.slice(-1) === "/" || uri.indexOf(".") === -1) {
+    request.uri = "/index.html";
+  }
+
+  return request;
+}
+EOT
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
@@ -199,6 +222,11 @@ resource "aws_cloudfront_distribution" "admin" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.admin_spa_rewrite.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -211,20 +239,6 @@ resource "aws_cloudfront_distribution" "admin" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
-  }
-
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
   }
 
   restrictions {
