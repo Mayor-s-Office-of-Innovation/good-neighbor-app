@@ -61,6 +61,46 @@ describe("searchSites", () => {
     });
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
   });
+
+  it("continues searching later pages until enough matches are collected", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [],
+        LastEvaluatedKey: { pk: "SITE_SEARCH#ACTIVE", sk: "first-page" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-2",
+            providerSiteId: "provider-site-2",
+            siteName: "St. John",
+            providerName: "Gubbio",
+            label: "St. John (Gubbio)",
+          },
+        ],
+      });
+
+    const res = await call(
+      searchSites,
+      /** @type {any} */ ({ queryStringParameters: { q: "john" } }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).sites).toEqual([
+      {
+        siteId: "site-2",
+        providerSiteId: "provider-site-2",
+        name: "St. John",
+        providerName: "Gubbio",
+        label: "St. John (Gubbio)",
+      },
+    ]);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
+      pk: "SITE_SEARCH#ACTIVE",
+      sk: "first-page",
+    });
+  });
 });
 
 describe("requestSetupCode", () => {
