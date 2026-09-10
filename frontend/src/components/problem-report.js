@@ -44,6 +44,7 @@ import {
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
 import { shotTile, addTile } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
@@ -77,6 +78,7 @@ class ProblemReport extends HTMLElement {
     this._analysisEditDescription = null;
     this._toastTimer = 0;
     this._initGeneration = 0;
+    this._answeringConditionIds = new Set();
   }
 
   /** @returns {Promise<void>} */
@@ -637,8 +639,10 @@ class ProblemReport extends HTMLElement {
       this._showToast("Could not save that answer. Please try again.");
       return;
     }
+    if (this._answeringConditionIds.has(problem.conditionId)) return;
 
-    this._setBusy(button, true);
+    this._answeringConditionIds.add(problem.conditionId);
+    setQuestionAnswerBusy(this, problem.conditionId, true);
     try {
       await answerAnalysisQuestion(
         problem.placeId,
@@ -652,7 +656,8 @@ class ProblemReport extends HTMLElement {
       console.error("answer condition failed", err);
       this._showToast("Could not save that answer. Please try again.");
     } finally {
-      this._setBusy(button, false);
+      this._answeringConditionIds.delete(problem.conditionId);
+      setQuestionAnswerBusy(this, problem.conditionId, false);
     }
   }
 
