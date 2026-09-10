@@ -5,6 +5,7 @@
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import {
+  answerAnalysisQuestion,
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
@@ -43,6 +44,7 @@ import {
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
 import { shotTile, addTile } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
@@ -76,6 +78,7 @@ class ProblemReport extends HTMLElement {
     this._analysisEditDescription = null;
     this._toastTimer = 0;
     this._initGeneration = 0;
+    this._answeringConditionIds = new Set();
   }
 
   /** @returns {Promise<void>} */
@@ -418,6 +421,8 @@ class ProblemReport extends HTMLElement {
           this._openEditProblem(problem);
         } else if (action === "resolve") {
           this._resolveProblem(problem);
+        } else if (action === "answer") {
+          this._answerProblemQuestion(problem, target);
         }
       });
     });
@@ -618,6 +623,41 @@ class ProblemReport extends HTMLElement {
     } catch (err) {
       console.error("resolve task failed", err);
       this._showToast("Could not save that action. Please try again.");
+    }
+  }
+
+  async _answerProblemQuestion(problem, button) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    const answerKey = button.getAttribute("data-answer-key") || "";
+    const answerValue = button.getAttribute("data-answer-value") === "true";
+    if (
+      !problem.placeId ||
+      !problem.itemId ||
+      !problem.conditionId ||
+      !answerKey
+    ) {
+      this._showToast("Could not save that answer. Please try again.");
+      return;
+    }
+    if (this._answeringConditionIds.has(problem.conditionId)) return;
+
+    this._answeringConditionIds.add(problem.conditionId);
+    setQuestionAnswerBusy(this, problem.conditionId, true);
+    try {
+      await answerAnalysisQuestion(
+        problem.placeId,
+        problem.itemId,
+        problem.conditionId,
+        answerKey,
+        answerValue,
+      );
+      this._render();
+    } catch (err) {
+      console.error("answer condition failed", err);
+      this._showToast("Could not save that answer. Please try again.");
+    } finally {
+      this._answeringConditionIds.delete(problem.conditionId);
+      setQuestionAnswerBusy(this, problem.conditionId, false);
     }
   }
 
