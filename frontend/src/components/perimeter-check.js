@@ -322,7 +322,12 @@ class PerimeterCheck extends HTMLElement {
     const target = e.target;
     if (!(target instanceof HTMLTextAreaElement)) return;
     const placeId = target.getAttribute("data-text-input");
-    if (placeId) setPlaceDraftText(placeId, target.value);
+    if (!placeId) return;
+    setPlaceDraftText(placeId, target.value);
+    const button = this.querySelector(`[data-review-text="${placeId}"]`);
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = !target.value.trim();
+    }
   }
 
   _onFooterClick(e) {
