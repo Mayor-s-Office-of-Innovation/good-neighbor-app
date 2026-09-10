@@ -50,15 +50,12 @@ async function adminOnly(event, fn) {
  */
 export const listProviders = (event) =>
   adminOnly(event, async () => {
-    const res = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": "PROVIDER_SEARCH#ACTIVE" },
-        Limit: 100,
-      }),
-    );
-    return jsonResponse(200, { providers: res.Items ?? [] });
+    const providers = await queryAll({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": "PROVIDER_SEARCH#ACTIVE" },
+      Limit: 100,
+    });
+    return jsonResponse(200, { providers });
   });
 
 /**
@@ -673,4 +670,27 @@ function siteSearchItem(siteId, name, providerId, providerName, providerSiteId, 
  */
 function siteSearchSk(name, siteId) {
   return `${name.toLowerCase()}#${siteId}`;
+}
+
+/**
+ * @param {Omit<import("@aws-sdk/lib-dynamodb").QueryCommandInput, "TableName">} input
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function queryAll(input) {
+  /** @type {Record<string, unknown>[]} */
+  const items = [];
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: getDynamoTableName(),
+        ...input,
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    items.push(...(res.Items ?? []));
+    exclusiveStartKey = res.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return items;
 }
