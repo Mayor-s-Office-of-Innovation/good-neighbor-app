@@ -1,5 +1,10 @@
 import { createHmac, randomInt } from "node:crypto";
-import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import {
   GetSecretValueCommand,
   SecretsManagerClient,
@@ -12,6 +17,7 @@ const CODE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const SETUP_CODE_TTL_MS = 72 * 60 * 60 * 1000;
 const SETUP_CODE_MAX_USES = 3;
 const SETUP_CODE_GENERATION_ATTEMPTS = 5;
+const SETUP_CODE_ISSUANCE_ATTEMPTS = 5;
 const GENERIC_REQUEST_MESSAGE =
   "If that email is authorized for this site, we will send a new setup code.";
 
@@ -81,6 +87,7 @@ export async function validateSetupCode(rawCode, options = {}) {
   if (setup) {
     if (!isSetupCodeUsable(setup, now)) return null;
     if (!(await isSiteActive(setup.siteId, tableName))) return null;
+    if (!(await isCurrentSetupCode(setup, tableName))) return null;
     return {
       kind: "setupCode",
       code,
@@ -146,19 +153,28 @@ export async function issueSetupCode(input) {
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
   const contactHash = await emailHash(input.issuedTo);
-  const pendingCodes = await queryPendingSetupCodes({
-    siteId: input.siteId,
-    contactHash,
-  });
-  const { code, item } = await reserveSetupCode({
-    ...input,
-    now,
-    nowIso,
-    contactHash,
-  });
-  await revokePendingSetupCodeItems(pendingCodes, nowIso, "superseded");
-
-  return { code, item };
+  for (
+    let attempt = 1;
+    attempt <= SETUP_CODE_ISSUANCE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const current = await getCurrentSetupCodeReference({
+      siteId: input.siteId,
+      contactHash,
+    });
+    try {
+      return await reserveCurrentSetupCode({
+        ...input,
+        now,
+        nowIso,
+        contactHash,
+        current,
+      });
+    } catch (err) {
+      if (!isConditionalCheckFailed(err)) throw err;
+    }
+  }
+  throw new Error("Unable to issue setup code after bounded contention retries");
 }
 
 /**
@@ -333,10 +349,32 @@ async function revokePendingSetupCodeItems(items, nowIso, reason) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, generateCode?: () => string }} input
+ * @typedef {object} CurrentSetupCodeReference
+ * @property {string} pk
+ * @property {string} sk
+ * @property {string | undefined} [currentCodePk]
+ */
+
+/**
+ * @param {{ siteId: string, contactHash: string }} input
+ * @returns {Promise<CurrentSetupCodeReference | undefined>}
+ */
+async function getCurrentSetupCodeReference({ siteId, contactHash }) {
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: getDynamoTableName(),
+      Key: currentSetupCodeKey(siteId, contactHash),
+      ConsistentRead: true,
+    }),
+  );
+  return /** @type {CurrentSetupCodeReference | undefined} */ (res.Item);
+}
+
+/**
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, current?: CurrentSetupCodeReference, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
-async function reserveSetupCode(input) {
+async function reserveCurrentSetupCode(input) {
   for (
     let attempt = 1;
     attempt <= SETUP_CODE_GENERATION_ATTEMPTS;
@@ -345,20 +383,67 @@ async function reserveSetupCode(input) {
     const code = input.generateCode?.() ?? generateSetupCode();
     const codeVerifier = await setupCodeVerifier(code);
     const item = setupCodeItem({ ...input, code, codeVerifier });
-    try {
-      await ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: item,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      );
-      return { code, item };
-    } catch (err) {
-      if (!isConditionalCheckFailed(err)) throw err;
-    }
+    await writeCurrentSetupCode(input, item);
+    return { code, item };
   }
   throw new Error("Unable to issue a unique setup code after bounded retries");
+}
+
+/**
+ * @param {{ siteId: string, contactHash: string, issuedTo: string, nowIso: string, current?: CurrentSetupCodeReference }} input
+ * @param {SetupCodeItem} item
+ * @returns {Promise<void>}
+ */
+function writeCurrentSetupCode(input, item) {
+  const tableName = getDynamoTableName();
+  /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
+  const transactItems = [
+    {
+      Put: {
+        TableName: tableName,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(pk)",
+      },
+    },
+    {
+      Put: {
+        TableName: tableName,
+        Item: currentSetupCodeReferenceItem(input, item),
+        ConditionExpression: input.current?.currentCodePk
+          ? "currentCodePk = :expectedCodePk"
+          : "attribute_not_exists(pk)",
+        ExpressionAttributeValues: input.current?.currentCodePk
+          ? { ":expectedCodePk": input.current.currentCodePk }
+          : undefined,
+      },
+    },
+  ];
+
+  if (input.current?.currentCodePk) {
+    transactItems.splice(1, 0, {
+      Update: {
+        TableName: tableName,
+        Key: { pk: input.current.currentCodePk, sk: "#META" },
+        UpdateExpression:
+          "SET #status = :revoked, revokedReason = :reason, updatedAt = :now REMOVE gsi6pk, gsi6sk, gsi7pk, gsi7sk",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":revoked": "revoked",
+          ":reason": "superseded",
+          ":now": input.nowIso,
+        },
+      },
+    });
+  }
+
+  return ddb
+    .send(
+      new TransactWriteCommand({
+        TransactItems: transactItems,
+      }),
+    )
+    .then(() => undefined);
 }
 
 /**
@@ -390,6 +475,36 @@ function setupCodeItem(input) {
     gsi7pk: `SETUP_CODE_PENDING_SITE#${input.siteId}`,
     gsi7sk: input.nowIso,
   });
+}
+
+/**
+ * @param {string} siteId
+ * @param {string} contactHash
+ * @returns {{ pk: string, sk: string }}
+ */
+function currentSetupCodeKey(siteId, contactHash) {
+  return {
+    pk: `SETUP_CODE_CURRENT#${siteId}#${contactHash}`,
+    sk: "#META",
+  };
+}
+
+/**
+ * @param {{ siteId: string, contactHash: string, issuedTo: string, nowIso: string }} input
+ * @param {SetupCodeItem} item
+ * @returns {Record<string, unknown>}
+ */
+function currentSetupCodeReferenceItem(input, item) {
+  return {
+    ...currentSetupCodeKey(input.siteId, input.contactHash),
+    type: "setupCodeCurrent",
+    siteId: input.siteId,
+    contactHash: input.contactHash,
+    issuedTo: normalizeEmail(input.issuedTo),
+    currentCodePk: item.pk,
+    currentCodeId: item.codeId,
+    updatedAt: input.nowIso,
+  };
 }
 
 /**
@@ -433,6 +548,25 @@ async function isSiteActive(siteId, tableName) {
   );
   const site = /** @type {{ status?: string } | undefined} */ (res.Item);
   return Boolean(site && site.status !== "inactive");
+}
+
+/**
+ * @param {SetupCodeItem} item
+ * @param {string} tableName
+ * @returns {Promise<boolean>}
+ */
+async function isCurrentSetupCode(item, tableName) {
+  if (!item.issuedTo) return false;
+  const contactHash = await emailHash(item.issuedTo);
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: currentSetupCodeKey(item.siteId, contactHash),
+      ConsistentRead: true,
+    }),
+  );
+  const current = /** @type {CurrentSetupCodeReference | undefined} */ (res.Item);
+  return current?.currentCodePk === item.pk;
 }
 
 /**
