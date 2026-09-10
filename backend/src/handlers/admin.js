@@ -359,6 +359,8 @@ export const issueAdminSetupCode = (event) =>
         maxUses: issued.item.maxUses,
         uses: issued.item.uses,
         siteId,
+        siteName: issued.item.siteName,
+        issuedTo: issued.item.issuedTo,
       },
     });
   });

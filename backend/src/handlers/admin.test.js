@@ -123,7 +123,15 @@ describe("provider and site management", () => {
     );
 
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.body).setupCode.code).toMatch(/^[A-Z0-9]{6}$/);
+    const body = JSON.parse(res.body);
+    expect(body.setupCode).toMatchObject({
+      issuedTo: "lead@example.org",
+      siteId: "site-1",
+      siteName: "City Hall",
+      maxUses: 3,
+      uses: 0,
+    });
+    expect(body.setupCode.code).toMatch(/^[A-Z0-9]{6}$/);
   });
 
   it("revokes devices by bumping token generation", async () => {
