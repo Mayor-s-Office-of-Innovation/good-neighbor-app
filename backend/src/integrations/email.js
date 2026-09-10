@@ -15,9 +15,10 @@
  * @returns {Promise<{ provider: "log", messageId: string }>}
  */
 export async function sendSetupCodeEmail(email) {
-  const url = new URL(email.appUrl);
-  url.searchParams.set("code", email.code);
   const messageId = `local-${Date.now()}`;
+  const localOpenUrl = localCodeLoggingEnabled()
+    ? setupCodeUrl(email.appUrl, email.code)
+    : undefined;
 
   console.info(
     JSON.stringify({
@@ -27,10 +28,30 @@ export async function sendSetupCodeEmail(email) {
       to: email.to,
       siteName: email.siteName,
       expiresAt: email.expiresAt,
-      openUrl: url.toString(),
-      // Intentionally omit the raw code from structured logs.
+      ...(localOpenUrl && { localOpenUrl }),
     }),
   );
 
   return { provider: "log", messageId };
+}
+
+/**
+ * @returns {boolean}
+ */
+function localCodeLoggingEnabled() {
+  return (
+    process.env.SETUP_CODE_EMAIL_LOG_CODES === "true" ||
+    Boolean(process.env.LOCAL_API_PORT)
+  );
+}
+
+/**
+ * @param {string} appUrl
+ * @param {string} code
+ * @returns {string}
+ */
+function setupCodeUrl(appUrl, code) {
+  const url = new URL(appUrl);
+  url.searchParams.set("code", code);
+  return url.toString();
 }
