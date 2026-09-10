@@ -1,5 +1,9 @@
 import { createHmac, randomInt } from "node:crypto";
 import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { normalizeSiteCode } from "./site-code.js";
@@ -9,6 +13,12 @@ const SETUP_CODE_TTL_MS = 72 * 60 * 60 * 1000;
 const SETUP_CODE_MAX_USES = 3;
 const GENERIC_REQUEST_MESSAGE =
   "If that email is authorized for this site, we will send a new setup code.";
+
+/** @type {SecretsManagerClient | undefined} */
+let secretsClient;
+
+/** @type {Map<string, string>} */
+const setupCodeSecretCache = new Map();
 
 /**
  * @typedef {object} SetupCodeItem
@@ -133,12 +143,14 @@ export async function issueSetupCode(input) {
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
   const code = generateSetupCode();
+  const contactHash = await emailHash(input.issuedTo);
+  const codeVerifier = await setupCodeVerifier(code);
   const item = /** @type {SetupCodeItem} */ ({
-    pk: setupCodePk(code),
+    pk: setupCodePkFromVerifier(codeVerifier),
     sk: "#META",
     type: "setupCode",
     codeId: randomCodeId(),
-    codeVerifier: setupCodeVerifier(code),
+    codeVerifier,
     status: "pending",
     expiresAt: new Date(now.getTime() + SETUP_CODE_TTL_MS).toISOString(),
     maxUses: SETUP_CODE_MAX_USES,
@@ -152,7 +164,7 @@ export async function issueSetupCode(input) {
     issuedBy: input.issuedBy,
     createdAt: nowIso,
     updatedAt: nowIso,
-    gsi6pk: `SETUP_CODE_PENDING#${input.siteId}#${emailHash(input.issuedTo)}`,
+    gsi6pk: `SETUP_CODE_PENDING#${input.siteId}#${contactHash}`,
     gsi6sk: nowIso,
   });
 
@@ -182,10 +194,10 @@ export function normalizeEmail(email) {
 
 /**
  * @param {string} email
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function emailHash(email) {
-  return createHmac("sha256", verifierSecret())
+export async function emailHash(email) {
+  return createHmac("sha256", await verifierSecret())
     .update(normalizeEmail(email))
     .digest("hex");
 }
@@ -210,20 +222,20 @@ export function generateSetupCode() {
 
 /**
  * @param {string} code
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function setupCodeVerifier(code) {
-  return createHmac("sha256", verifierSecret())
+export async function setupCodeVerifier(code) {
+  return createHmac("sha256", await verifierSecret())
     .update(normalizeSiteCode(code))
     .digest("hex");
 }
 
 /**
  * @param {string} code
- * @returns {string}
+ * @returns {Promise<string>}
  */
-export function setupCodePk(code) {
-  return `SETUP_CODE#${setupCodeVerifier(code)}`;
+export async function setupCodePk(code) {
+  return setupCodePkFromVerifier(await setupCodeVerifier(code));
 }
 
 /**
@@ -235,7 +247,7 @@ async function getSetupCode(code, tableName) {
   const res = await ddb.send(
     new GetCommand({
       TableName: tableName,
-      Key: { pk: setupCodePk(code), sk: "#META" },
+      Key: { pk: await setupCodePk(code), sk: "#META" },
     }),
   );
   return /** @type {SetupCodeItem | undefined} */ (res?.Item);
@@ -275,7 +287,7 @@ function isSetupCodeUsable(item, now) {
  * @param {{ siteId: string, issuedTo: string, nowIso: string }} input
  */
 async function invalidatePendingSetupCodes({ siteId, issuedTo, nowIso }) {
-  const contactHash = emailHash(issuedTo);
+  const contactHash = await emailHash(issuedTo);
   const res = await ddb.send(
     new QueryCommand({
       TableName: getDynamoTableName(),
@@ -323,12 +335,46 @@ function cryptoRandomFallback() {
 }
 
 /**
+ * @param {string} verifier
  * @returns {string}
  */
-function verifierSecret() {
-  return (
-    process.env.SETUP_CODE_VERIFIER_SECRET ||
-    process.env.DEVICE_TOKEN_SECRET ||
-    "local-dev-setup-code-verifier-secret"
+function setupCodePkFromVerifier(verifier) {
+  return `SETUP_CODE#${verifier}`;
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {Promise<string>}
+ */
+export async function verifierSecret(env = process.env) {
+  if (env.SETUP_CODE_VERIFIER_SECRET) return env.SETUP_CODE_VERIFIER_SECRET;
+  if (env.DEVICE_TOKEN_SECRET) return env.DEVICE_TOKEN_SECRET;
+
+  const secretArn = env.DEVICE_TOKEN_SECRET_SECRET_ARN;
+  if (secretArn) {
+    const cached = setupCodeSecretCache.get(secretArn);
+    if (cached) return cached;
+
+    secretsClient ??= new SecretsManagerClient({});
+    const res = await secretsClient.send(
+      new GetSecretValueCommand({ SecretId: secretArn }),
+    );
+    const value = res.SecretString;
+    if (!value) {
+      throw new Error(
+        `Setup-code verifier secret ${secretArn} has no SecretString value`,
+      );
+    }
+    setupCodeSecretCache.set(secretArn, value);
+    return value;
+  }
+
+  throw new Error(
+    "No setup-code verifier secret configured: set SETUP_CODE_VERIFIER_SECRET (local) or DEVICE_TOKEN_SECRET_SECRET_ARN (deployed)",
   );
+}
+
+/** Drop the cached setup-code verifier secret so a subsequent call re-fetches. */
+export function resetSetupCodeSecretCache() {
+  setupCodeSecretCache.clear();
 }

@@ -79,7 +79,7 @@ export const requestSetupCode = async (event) => {
 
   const message = genericSetupCodeRequestMessage();
   const tableName = getDynamoTableName();
-  const contactHash = emailHash(email);
+  const contactHash = await emailHash(email);
   const [siteRes, codeContactRes, masterContactRes] = await Promise.all([
     ddb.send(
       new GetCommand({
