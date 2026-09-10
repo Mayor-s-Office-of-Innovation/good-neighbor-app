@@ -47,7 +47,6 @@ import {
   getOpenPhotoMenuItemId,
   setOpenPhotoMenuItemId,
   setPlaceDraftText,
-  updateItem,
   updateItemAnalysis,
   markCaptureComplete,
   onCheckSessionChange,
@@ -237,15 +236,7 @@ class PerimeterCheck extends HTMLElement {
     if (!check) return;
     for (const placeId of check.placeOrder || []) {
       for (const item of check.places[placeId]?.items || []) {
-        const analysisStatus = item.analysis?.status;
-        const hasUploadedArtifact = Boolean(
-          item.upload?.status === "uploaded" &&
-            (item.analysis?.artifactId || item.upload?.artifactId),
-        );
-        const shouldResume =
-          ["queued", "analyzing"].includes(analysisStatus) ||
-          (analysisStatus === "failed" && hasUploadedArtifact);
-        if (shouldResume) {
+        if (shouldResumeEvidenceItem(item)) {
           analyzeEvidenceItem(placeId, item.id);
         }
       }
@@ -783,7 +774,6 @@ class PerimeterCheck extends HTMLElement {
     if (!text) return;
     const record = addItem(placeId, { kind: "text", text });
     setPlaceDraftText(placeId, "");
-    updateItem(placeId, record.id, { upload: { status: "uploaded" } });
     setAnalyzingOpen(true);
     analyzeEvidenceItem(record.placeId, record.id);
     this._advanceOrSkip(placeId);
@@ -898,3 +888,21 @@ class PerimeterCheck extends HTMLElement {
 }
 
 customElements.define("perimeter-check", PerimeterCheck);
+
+export function shouldResumeEvidenceItem(item) {
+  const analysisStatus = item?.analysis?.status;
+  const hasArtifact = Boolean(
+    item?.analysis?.artifactId || item?.upload?.artifactId,
+  );
+  const hasUploadedArtifact = Boolean(
+    item?.upload?.status === "uploaded" && hasArtifact,
+  );
+  const isRetryableTextRegistration = Boolean(
+    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
+  );
+  return Boolean(
+    ["queued", "analyzing"].includes(analysisStatus) ||
+      (analysisStatus === "failed" &&
+        (hasUploadedArtifact || isRetryableTextRegistration)),
+  );
+}
