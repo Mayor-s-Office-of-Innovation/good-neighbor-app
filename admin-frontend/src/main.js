@@ -119,12 +119,17 @@ class AdminApp extends HTMLElement {
   async issueSetupCode(form) {
     if (!this.state.site) return;
     const email = new FormData(form).get("setup-email");
+    await this.issueSetupCodeForEmail(String(email || ""));
+    form.reset();
+  }
+
+  async issueSetupCodeForEmail(email) {
+    if (!this.state.site || !email.trim()) return;
     const result = await adminApi.issueSetupCode(
       this.state.site.siteId,
-      String(email || ""),
+      email,
     );
     this.state.issuedCode = result.setupCode;
-    form.reset();
     this.render();
   }
 
@@ -194,6 +199,13 @@ class AdminApp extends HTMLElement {
     this.querySelectorAll("[data-remove-contact]").forEach((button) => {
       button.addEventListener("click", () =>
         this.removeMasterContact(button.getAttribute("data-remove-contact")),
+      );
+    });
+    this.querySelectorAll("[data-issue-contact-code]").forEach((button) => {
+      button.addEventListener("click", () =>
+        this.issueSetupCodeForEmail(
+          button.getAttribute("data-issue-contact-code") || "",
+        ),
       );
     });
     this.querySelectorAll("[data-revoke-device]").forEach((button) => {
@@ -330,6 +342,9 @@ class AdminApp extends HTMLElement {
                       (c) => `
                         <div class="row">
                           <p>${escapeHtml(c.name || c.email)} ${escapeHtml(c.email)}</p>
+                          <button type="button" data-issue-contact-code="${escapeHtml(c.email)}">
+                            Generate code
+                          </button>
                           <button type="button" data-remove-contact="${escapeHtml(c.emailHash)}">
                             Remove
                           </button>
@@ -347,7 +362,7 @@ class AdminApp extends HTMLElement {
                 </form>
                 ${
                   this.state.issuedCode
-                    ? `<p class="success">Code ${escapeHtml(this.state.issuedCode.code)} expires ${escapeHtml(this.state.issuedCode.expiresAt)}</p>`
+                    ? `<p class="success">Code ${escapeHtml(this.state.issuedCode.code)} for ${escapeHtml(this.state.issuedCode.issuedTo)} expires ${escapeHtml(this.state.issuedCode.expiresAt)}</p>`
                     : ""
                 }
                 <h3>Devices</h3>
