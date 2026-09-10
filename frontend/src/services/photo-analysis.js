@@ -30,6 +30,14 @@ const POLL_INTERVAL_MS = 2000;
 
 const active = new Set();
 
+/**
+ * @typedef {object} AnswerAnalysisQuestionResult
+ * @property {Record<string, unknown>} [assessmentItem] Updated guidance assessment.
+ * @property {Record<string, unknown>} [conditionItem] Updated answered condition.
+ * @property {Record<string, unknown> | null} [taskItem] Task created for the answer, when applicable.
+ * @property {Record<string, unknown> | null} [evaluation] Rulebase evaluation returned by the backend.
+ */
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -340,6 +348,16 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
   return { status: "problems", artifactId, itemId: textItem.id };
 }
 
+/**
+ * Submit an answer for an analyzer follow-up question and merge the refreshed
+ * condition/task state back into the local capture item.
+ * @param {string} placeId
+ * @param {string} itemId
+ * @param {string} conditionId
+ * @param {string} answerKey
+ * @param {unknown} answerValue
+ * @returns {Promise<AnswerAnalysisQuestionResult | null>}
+ */
 export async function answerAnalysisQuestion(
   placeId,
   itemId,
