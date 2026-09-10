@@ -517,7 +517,11 @@ export function updateItemAnalysis(placeId, itemId, analysisPatch) {
       ]);
       for (const condition of placeItem.analysis?.conditions || []) {
         if (hiddenConditionIds.has(condition?.conditionId)) continue;
-        const label = condition?.category || condition?.label;
+        const label =
+          condition?.category ||
+          condition?.analyzerCategory ||
+          condition?.canonicalCategory ||
+          condition?.label;
         if (typeof label === "string" && label.trim()) labels.add(label.trim());
       }
     }

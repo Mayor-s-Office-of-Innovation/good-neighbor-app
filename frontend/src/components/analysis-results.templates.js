@@ -4,7 +4,10 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @typedef {object} AnalysisCondition
  * @property {string} [conditionId]
  * @property {string} [category]
+ * @property {string} [analyzerCategory]
+ * @property {string} [canonicalCategory]
  * @property {string} [description]
+ * @property {{ key?: string, prompt?: string, options?: { label?: string, value?: boolean }[] } | null} [needsAnswer]
  */
 
 /**
@@ -194,7 +197,10 @@ export function analysisCards(item, sessionCheckId) {
         visibleConditions[index] ||
         {};
       return completedEvidenceCard(item, sessionCheckId, {
-        title: task.category || condition.category || "Condition found",
+        title:
+          displayCategory(task) ||
+          displayCategory(condition) ||
+          "Condition found",
         description:
           task.guidance || condition.description || "Review this condition.",
         action: taskButtonLabel(task) || actionLabel(task.kind),
@@ -206,11 +212,15 @@ export function analysisCards(item, sessionCheckId) {
   }
   return visibleConditions.map((condition) =>
     completedEvidenceCard(item, sessionCheckId, {
-      title: condition.category || "Condition found",
+      title: condition.needsAnswer
+        ? "More details needed"
+        : displayCategory(condition) || "Condition found",
       description: condition.description || "Review this condition.",
       action: "",
       actionKind: "",
       conditionId: condition.conditionId || "",
+      question: condition.needsAnswer,
+      category: displayCategory(condition),
     }),
   );
 }
@@ -261,8 +271,7 @@ export function taskAnalysisCard({
     },
   };
   return completedEvidenceCard(pseudoItem, task.checkId || "", {
-    title:
-      task.category || task.analyzerCategory || task.label || "Condition found",
+    title: displayCategory(task) || task.label || "Condition found",
     description: task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
     action: includeControls ? action?.label || "Done" : "",
@@ -311,6 +320,8 @@ function completedEvidenceCard(
     actionKind = "",
     taskId = "",
     conditionId = "",
+    question = null,
+    category = "",
     metaLabel = "NEW",
     actionAttribute = "data-analysis-action",
     actionValue = "resolve",
@@ -363,6 +374,7 @@ function completedEvidenceCard(
         </p>
         <h3>${escapeHtml(title)}</h3>
         <p>${escapeHtml(description)}</p>
+        ${question ? clarifyingQuestion(question, conditionId, category) : ""}
         <div class="analysis-card__actions">
           ${action
             ? html`<button
@@ -403,6 +415,45 @@ function completedEvidenceCard(
       </div>
       ${evidencePreview(item)}
     </article>
+  `;
+}
+
+function displayCategory(record) {
+  return (
+    record?.category ||
+    record?.analyzerCategory ||
+    record?.canonicalCategory ||
+    ""
+  );
+}
+
+function clarifyingQuestion(question, conditionId, category) {
+  const key = typeof question.key === "string" ? question.key : "";
+  const prompt = typeof question.prompt === "string" ? question.prompt : "";
+  const options = Array.isArray(question.options) ? question.options : [];
+  if (!key || !prompt || !options.length) return "";
+  return html`
+    <div class="analysis-card__question">
+      <p class="analysis-card__question-prompt">${escapeHtml(prompt)}</p>
+      <div class="analysis-card__question-actions">
+        ${options
+          .map(
+            (option) => html`
+              <button
+                class="analysis-card__primary"
+                type="button"
+                data-analysis-action="answer"
+                data-answer-key="${escapeAttr(key)}"
+                data-answer-value="${escapeAttr(String(option.value))}"
+                data-condition-id="${escapeAttr(conditionId)}"
+              >
+                ${escapeHtml(option.label || String(option.value))}
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
   `;
 }
 

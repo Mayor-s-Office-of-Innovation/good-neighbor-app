@@ -25,6 +25,7 @@ import {
   rejectAnalysisCondition,
 } from "../services/api.js";
 import {
+  answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
 } from "../services/photo-analysis.js";
@@ -1655,6 +1656,8 @@ class TodayView extends HTMLElement {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
       this._resolveAnalysisProblem(problem);
+    } else if (action === "answer") {
+      this._answerAnalysisQuestion(problem, btn);
     }
   }
 
@@ -1889,6 +1892,45 @@ class TodayView extends HTMLElement {
     }
   }
 
+  async _answerAnalysisQuestion(problem, button) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    const answerKey = button.getAttribute("data-answer-key") || "";
+    const answerValue = button.getAttribute("data-answer-value") === "true";
+    if (
+      !problem.placeId ||
+      !problem.itemId ||
+      !problem.conditionId ||
+      !answerKey
+    ) {
+      this._setInlineProblemError(
+        problem,
+        "Could not save that answer. Please try again.",
+      );
+      return;
+    }
+
+    this._setBusy(button, true);
+    this._setInlineProblemError(problem, "");
+    try {
+      await answerAnalysisQuestion(
+        problem.placeId,
+        problem.itemId,
+        problem.conditionId,
+        answerKey,
+        answerValue,
+      );
+      await this.connectedCallback();
+    } catch (err) {
+      console.error("answer condition failed", err);
+      this._setInlineProblemError(
+        problem,
+        "Could not save that answer. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
+    }
+  }
+
   _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
     if (problem.placeId && problem.itemId) {
       const item = this._sessionItem(problem);
@@ -1923,7 +1965,7 @@ class TodayView extends HTMLElement {
     const error = card?.querySelector(".actioncard__error");
     if (!(error instanceof HTMLElement)) return;
     error.textContent = message;
-    error.hidden = false;
+    error.hidden = !message;
   }
 
   _setDialogError(id, message) {

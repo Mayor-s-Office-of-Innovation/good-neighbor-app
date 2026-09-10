@@ -88,6 +88,75 @@ describe("analysis result summaries", () => {
     expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
   });
 
+  it("renders a clarifying question instead of a generic condition title", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+              needsAnswer: {
+                key: "affiliated",
+                prompt: "Is this animal owned by a site client or resident?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain("Dogs are off-leash near traffic.");
+    expect(cards[0]).toContain(
+      "Is this animal owned by a site client or resident?",
+    );
+    expect(cards[0]).not.toContain("Dangerous animals");
+    expect(cards[0]).toContain('data-analysis-action="answer"');
+    expect(cards[0]).toContain('data-answer-key="affiliated"');
+    expect(cards[0]).not.toContain("Condition found");
+  });
+
+  it("uses analyzer category fields for condition-only cards", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("Dangerous animals");
+    expect(cards[0]).not.toContain("Condition found");
+  });
+
   it("keeps no-issue cards editable without offering delete", () => {
     const cards = analysisCards(
       {
