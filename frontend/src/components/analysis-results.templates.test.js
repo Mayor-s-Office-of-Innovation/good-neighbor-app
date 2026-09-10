@@ -8,7 +8,7 @@ import {
 } from "./analysis-results.templates.js";
 
 describe("analysis result summaries", () => {
-  it("counts the same problem units that the tray renders when tasks and conditions differ", () => {
+  it("renders task cards alongside unpaired condition questions", () => {
     const items = [
       {
         id: "item_1",
@@ -34,17 +34,32 @@ describe("analysis result summaries", () => {
             },
             {
               conditionId: "condition_extra",
-              category: "Needles",
-              description: "A second analyzer condition is present.",
+              category: "Dangerous animals",
+              description: "Dogs are off-leash.",
+              needsAnswer: {
+                key: "affiliated",
+                prompt: "Is this animal owned by a site client or resident?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
             },
           ],
         },
       },
     ];
 
-    expect(analysisCards(items[0], "check_1")).toHaveLength(1);
-    expect(problemSummary(items)).toEqual({ visible: 1, hidden: 0 });
-    expect(problemSummaryLabel(problemSummary(items))).toBe("1 problem found");
+    const cards = analysisCards(items[0], "check_1");
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain("Litter");
+    expect(cards[1]).toContain("More details needed");
+    expect(cards[1]).toContain(
+      "Is this animal owned by a site client or resident?",
+    );
+    expect(problemSummary(items)).toEqual({ visible: 2, hidden: 0 });
+    expect(problemSummaryLabel(problemSummary(items))).toBe("2 problems found");
   });
 
   it("counts a visible unpaired condition after all task conditions are hidden", () => {
@@ -86,6 +101,75 @@ describe("analysis result summaries", () => {
     expect(cards[0]).toContain("Needles");
     expect(problemSummary([item])).toEqual({ visible: 1, hidden: 1 });
     expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
+  });
+
+  it("renders a clarifying question instead of a generic condition title", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+              needsAnswer: {
+                key: "affiliated",
+                prompt: "Is this animal owned by a site client or resident?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain("Dogs are off-leash near traffic.");
+    expect(cards[0]).toContain(
+      "Is this animal owned by a site client or resident?",
+    );
+    expect(cards[0]).not.toContain("Dangerous animals");
+    expect(cards[0]).toContain('data-analysis-action="answer"');
+    expect(cards[0]).toContain('data-answer-key="affiliated"');
+    expect(cards[0]).not.toContain("Condition found");
+  });
+
+  it("uses analyzer category fields for condition-only cards", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("Dangerous animals");
+    expect(cards[0]).not.toContain("Condition found");
   });
 
   it("keeps no-issue cards editable without offering delete", () => {

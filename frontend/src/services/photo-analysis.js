@@ -12,6 +12,7 @@ import {
   createCheck,
   evaluateAssessment,
   getCheck,
+  submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
   ApiError,
@@ -28,6 +29,14 @@ const POLL_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 2000;
 
 const active = new Set();
+
+/**
+ * @typedef {object} AnswerAnalysisQuestionResult
+ * @property {Record<string, unknown>} [assessmentItem] Updated guidance assessment.
+ * @property {Record<string, unknown>} [conditionItem] Updated answered condition.
+ * @property {Record<string, unknown> | null} [taskItem] Task created for the answer, when applicable.
+ * @property {Record<string, unknown> | null} [evaluation] Rulebase evaluation returned by the backend.
+ */
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -337,6 +346,69 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     tasks: guidance.tasks || [],
   });
   return { status: "problems", artifactId, itemId: textItem.id };
+}
+
+/**
+ * Submit an answer for an analyzer follow-up question and merge the refreshed
+ * condition/task state back into the local capture item.
+ * @param {string} placeId
+ * @param {string} itemId
+ * @param {string} conditionId
+ * @param {string} answerKey
+ * @param {unknown} answerValue
+ * @returns {Promise<AnswerAnalysisQuestionResult>}
+ */
+export async function answerAnalysisQuestion(
+  placeId,
+  itemId,
+  conditionId,
+  answerKey,
+  answerValue,
+) {
+  const check = getCurrentCheck();
+  const place = check?.places?.[placeId];
+  const item = place?.items?.find((candidate) => candidate.id === itemId);
+  const assessmentId = item?.analysis?.assessment?.assessmentId;
+  if (
+    !check ||
+    !place ||
+    !item ||
+    !assessmentId ||
+    !conditionId ||
+    !answerKey
+  ) {
+    throw new ApiError("This item has no assessment to answer against.", {
+      body: { code: "missing_assessment" },
+    });
+  }
+
+  const result = await submitConditionAnswers(assessmentId, conditionId, {
+    answers: { [answerKey]: answerValue },
+  });
+  const condition = result?.conditionItem;
+  const task = result?.taskItem;
+  const existingConditions = item.analysis?.conditions || [];
+  const nextConditions = existingConditions.map((candidate) =>
+    candidate.conditionId === conditionId ? condition || candidate : candidate,
+  );
+  if (
+    condition &&
+    !nextConditions.some((candidate) => candidate.conditionId === conditionId)
+  ) {
+    nextConditions.push(condition);
+  }
+
+  const nextTasks = (item.analysis?.tasks || []).filter(
+    (candidate) => candidate.conditionId !== conditionId,
+  );
+  if (task) nextTasks.push(task);
+
+  updateItemAnalysis(placeId, itemId, {
+    conditions: nextConditions,
+    tasks: nextTasks,
+    assessment: result?.assessmentItem || item.analysis?.assessment,
+  });
+  return result;
 }
 
 async function run(placeId, itemId) {

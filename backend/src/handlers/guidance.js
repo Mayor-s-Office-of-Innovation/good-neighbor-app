@@ -238,6 +238,79 @@ export const getGuidance = async (event) => {
 };
 
 /**
+ * @param {Record<string, unknown>} storedAnswers
+ * @param {Record<string, unknown>} submittedAnswers
+ * @returns {boolean}
+ */
+function includesSubmittedAnswers(storedAnswers, submittedAnswers) {
+  return Object.entries(submittedAnswers).every(([key, value]) =>
+    Object.is(storedAnswers[key], value),
+  );
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.assessmentId
+ * @param {string} opts.conditionId
+ * @param {Record<string, unknown>} opts.answers
+ * @returns {Promise<{ assessmentItem: Record<string, unknown>, conditionItem: Record<string, unknown>, taskItem: Record<string, unknown> | null, evaluation: null } | null>}
+ */
+async function recoverAnsweredCondition({
+  tableName,
+  siteId,
+  assessmentId,
+  conditionId,
+  answers,
+}) {
+  const guidance = await getAssessmentGuidance({
+    tableName,
+    siteId,
+    assessmentId,
+  });
+  const condition = guidance.conditions.find(
+    (item) => item.conditionId === conditionId,
+  );
+  if (
+    !guidance.assessment ||
+    !condition ||
+    condition.status === "needs_answer"
+  ) {
+    return null;
+  }
+
+  const storedAnswers =
+    condition.answers &&
+    typeof condition.answers === "object" &&
+    !Array.isArray(condition.answers)
+      ? /** @type {Record<string, unknown>} */ (condition.answers)
+      : {};
+  if (!includesSubmittedAnswers(storedAnswers, answers)) {
+    return null;
+  }
+
+  const taskIds = Array.isArray(condition.taskIds)
+    ? /** @type {unknown[]} */ (condition.taskIds)
+        .filter((taskId) => typeof taskId === "string")
+        .reverse()
+    : [];
+  const taskItem =
+    taskIds
+      .map((taskId) => guidance.tasks.find((task) => task.taskId === taskId))
+      .find(Boolean) ??
+    guidance.tasks.find((task) => task.conditionId === conditionId) ??
+    null;
+
+  return {
+    assessmentItem: guidance.assessment,
+    conditionItem: condition,
+    taskItem: taskItem ?? null,
+    evaluation: null,
+  };
+}
+
+/**
  * POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
@@ -274,6 +347,14 @@ export const submitConditionAnswers = async (event) => {
       return jsonResponse(404, { error: "Condition not found" });
     }
     if (err instanceof Error && err.name === "TransactionCanceledException") {
+      const recovered = await recoverAnsweredCondition({
+        tableName: dynamoTable,
+        siteId,
+        assessmentId,
+        conditionId,
+        answers: /** @type {Record<string, unknown>} */ (answers),
+      });
+      if (recovered) return jsonResponse(200, recovered);
       return jsonResponse(409, { error: "Condition is not awaiting answers" });
     }
     if (err instanceof Error && err.name === "CatalogUnavailable") {

@@ -3018,6 +3018,38 @@ theme-toggle {
   margin-top: 1rem;
 }
 
+.analysis-card__question {
+  display: grid;
+  gap: 0.625rem;
+  margin-top: 1rem;
+}
+
+.analysis-card__question-category,
+.analysis-card__question-prompt {
+  margin: 0;
+}
+
+.analysis-card__question-category {
+  color: var(--muted);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.analysis-card__question-prompt {
+  color: var(--text);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.analysis-card__question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .analysis-card__primary,
 .analysis-card__icon {
   appearance: none;
