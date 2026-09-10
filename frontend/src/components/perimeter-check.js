@@ -61,8 +61,14 @@ import {
   footer,
   analyzingSection,
 } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 class PerimeterCheck extends HTMLElement {
+  constructor() {
+    super();
+    this._answeringConditionIds = new Set();
+  }
+
   async connectedCallback() {
     this._finishing = false;
     this._embedded = this.hasAttribute("embedded");
@@ -589,8 +595,10 @@ class PerimeterCheck extends HTMLElement {
       this._showToast("Could not save that answer. Please try again.");
       return;
     }
+    if (this._answeringConditionIds.has(problem.conditionId)) return;
 
-    this._setBusy(button, true);
+    this._answeringConditionIds.add(problem.conditionId);
+    setQuestionAnswerBusy(this, problem.conditionId, true);
     try {
       await answerAnalysisQuestion(
         problem.placeId,
@@ -604,7 +612,8 @@ class PerimeterCheck extends HTMLElement {
       console.error("answer condition failed", err);
       this._showToast("Could not save that answer. Please try again.");
     } finally {
-      this._setBusy(button, false);
+      this._answeringConditionIds.delete(problem.conditionId);
+      setQuestionAnswerBusy(this, problem.conditionId, false);
     }
   }
 

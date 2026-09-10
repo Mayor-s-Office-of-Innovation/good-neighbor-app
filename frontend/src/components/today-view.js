@@ -53,6 +53,7 @@ import {
   analysisResultsTray,
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
 import {
   finalizeCaptureScorecardInBackground,
@@ -513,6 +514,7 @@ class TodayView extends HTMLElement {
     this._captureLauncherSelector = null;
     this._homeModel = null;
     this._hydrationGeneration = 0;
+    this._answeringConditionIds = new Set();
   }
 
   disconnectedCallback() {
@@ -1908,8 +1910,10 @@ class TodayView extends HTMLElement {
       );
       return;
     }
+    if (this._answeringConditionIds.has(problem.conditionId)) return;
 
-    this._setBusy(button, true);
+    this._answeringConditionIds.add(problem.conditionId);
+    setQuestionAnswerBusy(this, problem.conditionId, true);
     this._setInlineProblemError(problem, "");
     try {
       await answerAnalysisQuestion(
@@ -1927,7 +1931,8 @@ class TodayView extends HTMLElement {
         "Could not save that answer. Please try again.",
       );
     } finally {
-      this._setBusy(button, false);
+      this._answeringConditionIds.delete(problem.conditionId);
+      setQuestionAnswerBusy(this, problem.conditionId, false);
     }
   }
 
