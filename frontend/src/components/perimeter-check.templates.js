@@ -413,6 +413,7 @@ export function orderedPhotoItems(items) {
 }
 
 function textMode(place) {
+  const canSaveText = Boolean(place.draftText?.trim());
   return html`
     <p class="place-row__prompt">
       Describe the whole area, even if there are no problems.
@@ -430,6 +431,14 @@ ${escapeHtml(place.draftText || "")}</textarea
       >
     </label>
     <div class="place-row__actions">
+      <button
+        class="btn-pill btn-pill--filled"
+        type="button"
+        data-review-text="${escapeAttr(place.id)}"
+        ${canSaveText ? "" : "disabled"}
+      >
+        Save changes
+      </button>
       <button
         class="btn-pill btn-pill--outline"
         type="button"
