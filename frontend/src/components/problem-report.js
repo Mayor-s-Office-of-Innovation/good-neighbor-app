@@ -47,7 +47,8 @@ import { shotTile, addTile } from "./perimeter-check.templates.js";
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
- * @typedef {{ items: Array<{ id: string, dataUrl: string, placeId?: string, placeName?: string, analysis?: { status?: string } }> }} PlaceState
+ * @typedef {{ kind?: "photo" | "text", id: string, dataUrl?: string, text?: string, placeId?: string, placeName?: string, analysis?: { status?: string } }} PlaceItem
+ * @typedef {{ items: PlaceItem[] }} PlaceState
  */
 
 class ProblemReport extends HTMLElement {
@@ -293,13 +294,20 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _renderShots() {
-    const items = this._placeState().items;
+    // The shot grid is photo-only: typed descriptions are items too, but they
+    // render as analysis cards below (shotTile assumes item.dataUrl is an img src).
+    const items = this._photoItems();
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
     const tile = addTile(items.length === 0);
     grid.innerHTML =
       items.map((item, index) => shotTile(item, index)).join("") + tile;
+  }
+
+  /** @returns {PlaceItem[]} */
+  _photoItems() {
+    return this._placeState().items.filter((item) => item.kind !== "text");
   }
 
   /** @returns {void} */
