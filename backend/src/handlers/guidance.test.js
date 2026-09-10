@@ -308,6 +308,85 @@ describe("guidance handlers", () => {
     });
   });
 
+  it("recovers a completed condition answer retry when answers match", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "ASSESSMENT#asm-1",
+        assessmentId: "asm-1",
+        status: "tasks_created",
+        policyVersion: "actions-escalations-v2",
+        summary: {
+          totalConditions: 1,
+          conditionsNeedAnswer: 0,
+          conditionsResolvedToTasks: 1,
+          openTaskCount: 1,
+          actionCount: 0,
+          escalationCount: 1,
+          emergencyCount: 0,
+          manualReviewCount: 0,
+        },
+      },
+    });
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "ASSESSMENT#asm-1#COND#cond-1",
+        conditionId: "cond-1",
+        assessmentId: "asm-1",
+        policyVersion: "actions-escalations-v2",
+        status: "tasks_created",
+        analyzerCategory: "Graffiti",
+        canonicalCategory: "Graffiti",
+        severity: 2,
+        answers: { onsite: false },
+        taskIds: ["task-1"],
+      },
+    });
+    send.mockResolvedValueOnce({
+      Item: {
+        assessmentId: "asm-1",
+        status: "tasks_created",
+      },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          conditionId: "cond-1",
+          status: "tasks_created",
+          answers: { onsite: false },
+          taskIds: ["task-1"],
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({
+      Responses: { table: [{ taskId: "task-1", conditionId: "cond-1" }] },
+    });
+
+    const res = await invoke(
+      submitConditionAnswers,
+      event({
+        pathParameters: { assessmentId: "asm-1", conditionId: "cond-1" },
+        body: { answers: { onsite: false } },
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[2][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(BatchGetCommand);
+    expect(parse(res)).toMatchObject({
+      assessmentItem: { assessmentId: "asm-1" },
+      conditionItem: {
+        conditionId: "cond-1",
+        status: "tasks_created",
+        answers: { onsite: false },
+      },
+      taskItem: { taskId: "task-1", conditionId: "cond-1" },
+      evaluation: null,
+    });
+  });
+
   it("records cannot-do on a task", async () => {
     send.mockResolvedValueOnce({
       Item: {
