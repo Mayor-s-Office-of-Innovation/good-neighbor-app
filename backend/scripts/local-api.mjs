@@ -71,9 +71,9 @@ const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups",
 };
 
 // Local device-token verification (mirrors lambda/authorizer.js): when a
