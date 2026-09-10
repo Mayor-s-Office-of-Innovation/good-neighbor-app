@@ -138,6 +138,7 @@ describe("registerDevice", () => {
     send
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // legacy site-code lookup
+      .mockResolvedValueOnce({ Item: { status: "active" } }) // site status lookup
       .mockResolvedValueOnce({}) // GetCommand (known-device check) → none
       .mockResolvedValueOnce({}) // TransactWrite DEVICE#
       // lib/principal.js contract: claims resolve to SITE#site-1 keys
@@ -177,6 +178,7 @@ describe("registerDevice", () => {
     send
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // legacy site-code lookup
+      .mockResolvedValueOnce({ Item: { status: "active" } }) // site status lookup
       .mockResolvedValueOnce({
         Item: {
           deviceId: "dev-x",
@@ -203,6 +205,7 @@ describe("registerDevice", () => {
   it("401s when dynamic setup-code consumption fails its condition", async () => {
     send
       .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockRejectedValueOnce(
         transactionCanceled([
           { Code: "None" },
@@ -219,6 +222,7 @@ describe("registerDevice", () => {
   it("does not report unrelated transaction cancellations as invalid codes", async () => {
     send
       .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockRejectedValueOnce(
         transactionCanceled([
           { Code: "TransactionConflict" },

@@ -3,6 +3,7 @@ import {
   PutCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -293,7 +294,21 @@ describe("provider and site management", () => {
           status: "active",
         },
       })
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SETUP_CODE#old",
+            sk: "#META",
+            status: "pending",
+            gsi7pk: "SETUP_CODE_PENDING_SITE#site-1",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [{ pk: "SITE#site-1", sk: "DEVICE#dev-1" }],
+      })
+      .mockResolvedValue({});
 
     const res = await call(
       deactivateSite,
@@ -312,6 +327,30 @@ describe("provider and site management", () => {
         },
       },
     });
+    const setupCodeQuery = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find(
+        (cmd) => cmd instanceof QueryCommand && cmd.input.IndexName === "GSI7",
+      );
+    expect(setupCodeQuery?.input.ExpressionAttributeValues).toMatchObject({
+      ":pk": "SETUP_CODE_PENDING_SITE#site-1",
+    });
+    const setupCodeRevoke = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find((cmd) => cmd instanceof PutCommand && cmd.input.Item?.type !== "site");
+    expect(setupCodeRevoke?.input.Item).toMatchObject({
+      pk: "SETUP_CODE#old",
+      status: "revoked",
+      revokedReason: "site_deactivated",
+    });
+    const deviceRevoke = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find(
+        (cmd) =>
+          cmd instanceof UpdateCommand &&
+          cmd.input.Key?.sk === "DEVICE#dev-1",
+      );
+    expect(deviceRevoke?.input.UpdateExpression).toContain("tokenGeneration");
     expect(JSON.parse(res.body).site).toMatchObject({
       siteId: "site-1",
       status: "inactive",
