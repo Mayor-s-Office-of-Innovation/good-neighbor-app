@@ -137,7 +137,8 @@ export const registerDevice = async (event) => {
   } catch (err) {
     if (
       err instanceof Error &&
-      err.name === "TransactionCanceledException"
+      err.name === "TransactionCanceledException" &&
+      isSetupCodeConditionFailure(err, consume ? 1 : -1)
     ) {
       return jsonResponse(401, { error: "invalid_site_code" });
     }
@@ -336,6 +337,19 @@ async function getDevice(siteId, deviceId) {
   );
   const item = /** @type {DeviceItem | undefined} */ (res.Item);
   return item?.deviceId === deviceId ? item : undefined;
+}
+
+/**
+ * @param {Error & { CancellationReasons?: Array<{ Code?: string }> }} err
+ * @param {number} consumeIndex
+ * @returns {boolean}
+ */
+function isSetupCodeConditionFailure(err, consumeIndex) {
+  return (
+    consumeIndex >= 0 &&
+    err.CancellationReasons?.[consumeIndex]?.Code ===
+      "ConditionalCheckFailed"
+  );
 }
 
 /**
