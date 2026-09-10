@@ -3,4 +3,6 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
   clientId: "YOUR_ADMIN_APP_CLIENT_ID",
   redirectUri: "https://admin.goodneighborsf.org/auth/callback",
   logoutUri: "https://admin.goodneighborsf.org/",
+  apiBase: "",
+  localDebugAdmin: false,
 };

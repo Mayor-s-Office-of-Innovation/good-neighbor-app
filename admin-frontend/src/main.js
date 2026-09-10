@@ -217,6 +217,11 @@ class AdminApp extends HTMLElement {
           }
         </header>
         ${
+          this.state.authConfig.localDebugAdmin
+            ? '<p class="muted">Local debug admin mode is active.</p>'
+            : ""
+        }
+        ${
           this.state.hasToken
             ? ""
             : `

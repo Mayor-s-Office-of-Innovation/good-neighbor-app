@@ -1,18 +1,23 @@
 import { getAdminToken } from "./admin-auth.js";
-
-const BASE = "";
+import { getAdminConfig } from "../config.js";
 
 /**
  * @param {string} path
  * @param {RequestInit} [init]
  */
 async function adminFetch(path, init = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const config = getAdminConfig();
+  const token = getAdminToken();
+  const res = await fetch(`${config.apiBase}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
-      ...(getAdminToken()
-        ? { authorization: `Bearer ${getAdminToken()}` }
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(config.localDebugAdmin
+        ? {
+            "x-debug-groups": "central-admin",
+            "x-debug-sub": "local-admin",
+          }
         : {}),
       ...(init.headers || {}),
     },

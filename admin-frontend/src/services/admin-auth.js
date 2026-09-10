@@ -22,6 +22,7 @@ export function getAdminToken() {
  * @returns {boolean}
  */
 export function hasAdminSession() {
+  if (getAdminConfig().localDebugAdmin) return true;
   return Boolean(getAdminToken());
 }
 
@@ -109,6 +110,10 @@ export async function completeAdminLoginFromUrl() {
 export function signOutAdmin() {
   const config = getAdminConfig();
   clearAdminSession();
+  if (config.localDebugAdmin) {
+    location.assign(config.logoutUri || location.href);
+    return;
+  }
   if (!config.cognitoDomain || !config.clientId) {
     location.assign(config.logoutUri || "/");
     return;
@@ -120,7 +125,7 @@ export function signOutAdmin() {
 }
 
 /**
- * @returns {{ cognitoDomain: string, clientId: string, redirectUri: string, logoutUri: string }}
+ * @returns {{ cognitoDomain: string, clientId: string, redirectUri: string, logoutUri: string, apiBase: string, localDebugAdmin: boolean }}
  */
 function requireAuthConfig() {
   const config = getAdminConfig();
