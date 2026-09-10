@@ -92,17 +92,18 @@ export const requestSetupCode = async (event) => {
   ]);
 
   const site = /** @type {any} */ (siteRes.Item);
-  const contact =
-    /** @type {any} */ (codeContactRes.Item) ??
-    /** @type {any} */ (masterContactRes.Item);
+  const codeContact = /** @type {any} */ (codeContactRes.Item);
+  const masterContact = /** @type {any} */ (masterContactRes.Item);
+  const authorized =
+    codeContact?.status === "active" || masterContact?.status === "active";
   if (
     site?.siteId &&
     site.status !== "inactive" &&
-    contact?.status === "active"
+    authorized
   ) {
     const issued = await issueSetupCode({
       siteId,
-      siteName: site?.name ?? contact.siteName ?? "Good Neighbor site",
+      siteName: site?.name ?? "Good Neighbor site",
       providerId: site?.providerId,
       providerName: site?.providerName,
       providerSiteId: site?.providerSiteId,

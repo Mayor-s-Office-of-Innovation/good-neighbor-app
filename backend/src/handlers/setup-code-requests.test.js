@@ -113,6 +113,35 @@ describe("requestSetupCode", () => {
     expect(JSON.parse(res.body).message).toContain("If that email");
     expect(sendSetupCodeEmail).not.toHaveBeenCalled();
   });
+
+  it("authorizes an active master contact when code-contact is inactive", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { status: "inactive" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+
+    const res = await callRequest({
+      siteId: "site-1",
+      email: "lead@example.org",
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(sendSetupCodeEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "lead@example.org",
+        siteName: "City Hall",
+      }),
+    );
+  });
 });
 
 /**
