@@ -1923,7 +1923,6 @@ class TodayView extends HTMLElement {
         answerKey,
         answerValue,
       );
-      await this.connectedCallback();
     } catch (err) {
       console.error("answer condition failed", err);
       this._setInlineProblemError(
