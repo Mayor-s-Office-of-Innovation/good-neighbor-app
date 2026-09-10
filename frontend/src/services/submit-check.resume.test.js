@@ -234,6 +234,10 @@ describe("submitCheck / resumeSubmittedCheck", () => {
     vi.resetModules();
     vi.clearAllMocks();
     getCurrentCheck.mockReturnValue(makeDraft());
+    waitForAnalyses.mockResolvedValue({
+      artifacts: [{ artifactId: "artifact-uploaded" }],
+      analyses: [{ artifactId: "artifact-uploaded" }],
+    });
   });
 
   it("routes initial and resumed finalization through one registry", async () => {
@@ -273,6 +277,99 @@ describe("submitCheck / resumeSubmittedCheck", () => {
     await resumed;
 
     expect(waitForAnalyses).toHaveBeenCalledTimes(1);
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capture scorecard finalization", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    getCurrentCheck.mockReturnValue(makeDraft());
+    waitForAnalyses.mockResolvedValue({
+      artifacts: [{ artifactId: "artifact-uploaded" }],
+      analyses: [{ artifactId: "artifact-uploaded" }],
+    });
+  });
+
+  it("counts already captured evidence without registering anything on Done", async () => {
+    const { expectedArtifactCountForCheck } = await import("./submit-check.js");
+    const draft = makeDraft();
+    draft.places["place-north"].items.push(
+      /** @type {any} */ ({
+        id: "item-2",
+        kind: "text",
+        placeId: "place-north",
+        placeName: "North",
+        text: "There is litter near the entrance.",
+        uploadedAt: "2026-08-27T00:22:00.000Z",
+      }),
+    );
+
+    expect(expectedArtifactCountForCheck(draft)).toBe(2);
+    expect(createCheck).not.toHaveBeenCalled();
+    expect(uploadArtifact).not.toHaveBeenCalled();
+    expect(registerTextArtifact).not.toHaveBeenCalled();
+  });
+
+  it("finalizes the run-level scorecard without changing visible submitted state", async () => {
+    const { finalizeCaptureScorecardInBackground } = await import(
+      "./submit-check.js"
+    );
+
+    await finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 1,
+    });
+
+    expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
+    expect(completeCheck).toHaveBeenCalledTimes(1);
+    expect(markSubmitted).not.toHaveBeenCalled();
+    expect(markAnalysisFailed).not.toHaveBeenCalled();
+  });
+
+  it("skips background scorecard finalization when capture has no evidence", async () => {
+    const { finalizeCaptureScorecardInBackground } = await import(
+      "./submit-check.js"
+    );
+
+    const result = finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 0,
+    });
+
+    expect(result).toBeNull();
+    expect(waitForAnalyses).not.toHaveBeenCalled();
+    expect(completeCheck).not.toHaveBeenCalled();
+  });
+
+  it("counts a converted describe-only text item so Done files the report", async () => {
+    // Finding 1 (PR review 192): a text-only problem report used to contribute
+    // 0 expected artifacts (place.description was never counted), so Done
+    // silently dropped it. Describe-instead now converts the description into
+    // a kind:"text" item through the same pipeline as photos — this asserts the
+    // counter and the finalization path accept that item.
+    const {
+      expectedArtifactCountForCheck,
+      finalizeCaptureScorecardInBackground,
+    } = await import("./submit-check.js");
+    const draft = makeDraft();
+    draft.places["place-north"].items = [
+      /** @type {any} */ ({
+        id: "item-text",
+        kind: "text",
+        placeId: "place-north",
+        placeName: "North",
+        text: "There is a large pothole near the north entrance.",
+        uploadedAt: "2026-08-27T00:22:00.000Z",
+      }),
+    ];
+    draft.places["place-north"].description = null;
+
+    expect(expectedArtifactCountForCheck(draft)).toBe(1);
+
+    await finalizeCaptureScorecardInBackground("check-1", {
+      expectedArtifacts: 1,
+    });
+    expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
     expect(completeCheck).toHaveBeenCalledTimes(1);
   });
 });

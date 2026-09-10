@@ -657,6 +657,57 @@ describe("completeTaskWithAppActions", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a 311-filed task open when filing does not submit", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "open",
+        kind: "escalation",
+        severity: 3,
+        appActions: [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              executionTrigger: "user_confirmed",
+            },
+          },
+        ],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "311_filed",
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
+      now: new Date("2026-08-18T12:02:00.000Z"),
+    });
+
+    expect(task).toMatchObject({
+      status: "open",
+      appActionStatus: "skipped",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "skipped",
+          reason: "feature_disabled",
+        },
+      ],
+    });
+    const finalTx = send.mock.calls[2][0];
+    expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
+      status: "open",
+      completionLeaseExpiresAt: null,
+      gsi2pk: "SITE#site-1#TASK#open",
+    });
+  });
+
   it("rejects an active completing task without re-running app actions", async () => {
     send.mockResolvedValueOnce({
       Item: {

@@ -5,9 +5,18 @@
   photo or typed description analyzes independently.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import {
+  analysisResultsTray,
+  problemSummary,
+  problemSummaryLabel,
+} from "./analysis-results.templates.js";
 
-export const shell = () => html`
-  <div class="flow view-check check check-timeline">
+export const shell = ({ embedded = false } = {}) => html`
+  <div
+    class="flow view-check check check-timeline ${embedded
+      ? "check-timeline--embedded"
+      : ""}"
+  >
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">
@@ -16,7 +25,9 @@ export const shell = () => html`
       </button>
     </div>
 
-    <h1 class="check-timeline__title">Take photos at each place.</h1>
+    <h1 class="check-timeline__title" tabindex="-1">
+      Take photos at each place.
+    </h1>
 
     <div class="place-timeline" id="place-timeline"></div>
 
@@ -96,128 +107,7 @@ export const shell = () => html`
       </form>
     </dialog>
 
-    <dialog
-      class="analysis-dialog"
-      id="analysis-delete-dialog"
-      aria-labelledby="analysis-delete-title"
-      aria-describedby="analysis-delete-copy"
-    >
-      <form class="analysis-dialog__card" method="dialog">
-        <div class="analysis-dialog__copy">
-          <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
-          <p class="analysis-dialog__text" id="analysis-delete-copy">
-            This action can't be undone. The issue details won't be saved.
-          </p>
-          <p
-            class="analysis-dialog__error"
-            id="analysis-delete-error"
-            hidden
-          ></p>
-        </div>
-        <div class="analysis-dialog__actions">
-          <button
-            class="analysis-dialog__button analysis-dialog__button--danger"
-            id="analysis-delete-confirm"
-            type="button"
-          >
-            Delete
-          </button>
-          <button class="analysis-dialog__button" type="submit">Cancel</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog
-      class="analysis-dialog"
-      id="analysis-success-dialog"
-      aria-labelledby="analysis-success-title"
-      aria-describedby="analysis-success-copy"
-    >
-      <form class="analysis-dialog__card" method="dialog">
-        <div class="analysis-dialog__copy">
-          <h2 class="analysis-dialog__title" id="analysis-success-title">
-            Great work!
-          </h2>
-          <p class="analysis-dialog__text" id="analysis-success-copy">
-            We've recorded your action. This item is now
-            <span>marked as resolved.</span>
-          </p>
-        </div>
-        <div class="analysis-dialog__actions">
-          <button
-            class="analysis-dialog__button analysis-dialog__button--success"
-            type="submit"
-          >
-            Continue
-          </button>
-          <button
-            class="analysis-dialog__button"
-            id="analysis-success-undo"
-            type="button"
-          >
-            Undo
-          </button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog
-      class="analysis-dialog"
-      id="analysis-progress-dialog"
-      aria-labelledby="analysis-progress-title"
-    >
-      <div class="analysis-dialog__card analysis-dialog__card--progress">
-        <h2 class="analysis-dialog__title" id="analysis-progress-title">
-          Filing ticket...
-        </h2>
-        <div class="analysis-progress-ring" aria-hidden="true"></div>
-        <button
-          class="analysis-dialog__button"
-          id="analysis-progress-cancel"
-          type="button"
-        >
-          Cancel
-        </button>
-      </div>
-    </dialog>
-
-    <dialog
-      class="analysis-dialog analysis-edit-dialog"
-      id="analysis-edit-dialog"
-      aria-labelledby="analysis-edit-title"
-      aria-describedby="analysis-edit-copy"
-    >
-      <form class="analysis-dialog__card" method="dialog">
-        <div class="analysis-dialog__copy">
-          <h2 class="analysis-dialog__title" id="analysis-edit-title">
-            Edit problem
-          </h2>
-          <p class="analysis-dialog__text" id="analysis-edit-copy">
-            Change the description to match what you see
-          </p>
-          <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
-        </div>
-        <label class="analysis-edit-dialog__field">
-          <span>Description</span>
-          <textarea id="analysis-edit-description" rows="5"></textarea>
-        </label>
-        <div class="analysis-dialog__actions">
-          <button
-            class="analysis-dialog__button analysis-dialog__button--ink"
-            id="analysis-edit-save"
-            type="button"
-          >
-            Save
-          </button>
-          <button
-            class="analysis-dialog__button analysis-dialog__button--danger-text"
-            type="submit"
-          >
-            Discard
-          </button>
-        </div>
-      </form>
-    </dialog>
+    ${analysisDialogs()}
 
     <dialog
       class="sheet"
@@ -260,6 +150,127 @@ export const shell = () => html`
       capture="environment"
     />
   </div>
+`;
+
+export const analysisDialogs = () => html`
+  <dialog
+    class="analysis-dialog"
+    id="analysis-delete-dialog"
+    aria-labelledby="analysis-delete-title"
+    aria-describedby="analysis-delete-copy"
+  >
+    <form class="analysis-dialog__card" method="dialog">
+      <div class="analysis-dialog__copy">
+        <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
+        <p class="analysis-dialog__text" id="analysis-delete-copy">
+          This action can't be undone. The issue details won't be saved.
+        </p>
+        <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
+      </div>
+      <div class="analysis-dialog__actions">
+        <button
+          class="analysis-dialog__button analysis-dialog__button--danger"
+          id="analysis-delete-confirm"
+          type="button"
+        >
+          Delete
+        </button>
+        <button class="analysis-dialog__button" type="submit">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog
+    class="analysis-dialog"
+    id="analysis-success-dialog"
+    aria-labelledby="analysis-success-title"
+    aria-describedby="analysis-success-copy"
+  >
+    <form class="analysis-dialog__card" method="dialog">
+      <div class="analysis-dialog__copy">
+        <h2 class="analysis-dialog__title" id="analysis-success-title">
+          Great work!
+        </h2>
+        <p class="analysis-dialog__text" id="analysis-success-copy">
+          We've recorded your action. This item is now
+          <span>marked as resolved.</span>
+        </p>
+      </div>
+      <div class="analysis-dialog__actions">
+        <button
+          class="analysis-dialog__button analysis-dialog__button--success"
+          type="submit"
+        >
+          Continue
+        </button>
+        <button
+          class="analysis-dialog__button"
+          id="analysis-success-undo"
+          type="button"
+        >
+          Undo
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog
+    class="analysis-dialog"
+    id="analysis-progress-dialog"
+    aria-labelledby="analysis-progress-title"
+  >
+    <div class="analysis-dialog__card analysis-dialog__card--progress">
+      <h2 class="analysis-dialog__title" id="analysis-progress-title">
+        Filing ticket...
+      </h2>
+      <div class="analysis-progress-ring" aria-hidden="true"></div>
+      <button
+        class="analysis-dialog__button"
+        id="analysis-progress-cancel"
+        type="button"
+      >
+        Cancel
+      </button>
+    </div>
+  </dialog>
+
+  <dialog
+    class="analysis-dialog analysis-edit-dialog"
+    id="analysis-edit-dialog"
+    aria-labelledby="analysis-edit-title"
+    aria-describedby="analysis-edit-copy"
+  >
+    <form class="analysis-dialog__card" method="dialog">
+      <div class="analysis-dialog__copy">
+        <h2 class="analysis-dialog__title" id="analysis-edit-title">
+          Edit problem
+        </h2>
+        <p class="analysis-dialog__text" id="analysis-edit-copy">
+          Change the description to match what you see
+        </p>
+        <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
+      </div>
+      <label class="analysis-edit-dialog__field">
+        <span>Description</span>
+        <textarea id="analysis-edit-description" rows="5"></textarea>
+      </label>
+      <div class="analysis-dialog__actions">
+        <button
+          class="analysis-dialog__button analysis-dialog__button--ink"
+          id="analysis-edit-save"
+          type="button"
+        >
+          Save
+        </button>
+        <button
+          class="analysis-dialog__button analysis-dialog__button--danger-text"
+          type="submit"
+        >
+          Discard
+        </button>
+      </div>
+    </form>
+  </dialog>
 `;
 
 /**
@@ -590,265 +601,10 @@ export function footer({ items, analyzingOpen }) {
 }
 
 export function analyzingSection(items, sessionCheckId) {
-  if (!items.length) return "";
-  const cards = items.map((item) => analysisCards(item, sessionCheckId)).flat();
-  const summary = problemSummary(items);
-  return html`
-    <section
-      class="analysis-tray"
-      id="analysis-tray"
-      aria-label="Analyzing evidence"
-    >
-      <h2>Analysis results</h2>
-      ${cards.length
-        ? html`<div class="analysis-tray__cards">${cards.join("")}</div>`
-        : summary.hidden > 0
-          ? html`<p class="analysis-tray__empty">
-              All problems were resolved or deleted.
-            </p>`
-          : ""}
-    </section>
-  `;
-}
-
-function analysisCards(item, sessionCheckId) {
-  const status = item.analysis?.status || "idle";
-  if (status !== "analyzed") return [pendingCard(item)];
-  const hiddenConditionIds = hiddenConditionIdSet(item);
-  const tasks = (item.analysis?.tasks || []).filter(
-    (task) => !hiddenConditionIds.has(task.conditionId),
-  );
-  const conditions = (item.analysis?.conditions || []).filter(
-    (condition) => !hiddenConditionIds.has(condition.conditionId),
-  );
-  if (!tasks.length && !conditions.length) {
-    if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
-    return [
-      completedCard(item, sessionCheckId, {
-        title: "No issues found",
-        description:
-          item.analysis?.noIssuesDescription ||
-          "The analysis did not identify any conditions of concern.",
-        action: "",
-        actionKind: "",
-      }),
-    ];
-  }
-  if (tasks.length) {
-    return tasks.map((task, index) => {
-      const condition =
-        conditions.find(
-          (candidate) =>
-            task.conditionId && candidate.conditionId === task.conditionId,
-        ) ||
-        conditions[index] ||
-        {};
-      return completedCard(item, sessionCheckId, {
-        title: task.category || condition.category || "Condition found",
-        description:
-          task.guidance || condition.description || "Review this condition.",
-        action: taskButtonLabel(task) || actionLabel(task.kind),
-        actionKind: task.kind || "",
-        taskId: task.taskId || "",
-        conditionId: task.conditionId || condition.conditionId || "",
-      });
-    });
-  }
-  return conditions.map((condition) =>
-    completedCard(item, sessionCheckId, {
-      title: condition.category || "Condition found",
-      description: condition.description || "Review this condition.",
-      action: "",
-      actionKind: "",
-      conditionId: condition.conditionId || "",
-    }),
-  );
-}
-
-function pendingCard(item) {
-  return html`
-    <article class="analysis-card analysis-card--pending">
-      <div class="analysis-card__content">
-        <p class="analysis-card__meta">
-          <img
-            class="analysis-card__star"
-            src="/icons/star.svg"
-            alt=""
-            aria-hidden="true"
-          />
-          IN PROGRESS
-        </p>
-        <h3>Analyzing ${item.kind === "text" ? "description" : "photo"}...</h3>
-        <span class="skeleton-line skeleton-line--wide"></span>
-        <span class="skeleton-line skeleton-line--mid"></span>
-      </div>
-      ${evidencePreview(item)}
-    </article>
-  `;
-}
-
-function completedCard(
-  item,
-  sessionCheckId,
-  {
-    title,
-    description,
-    action,
-    actionKind = "",
-    taskId = "",
-    conditionId = "",
-  },
-) {
-  const actionClass =
-    actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
-  const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
-  // Artifact coordinates the amendment endpoints route by. Legacy drafts
-  // persisted before items carried checkId have neither item.checkId nor
-  // analysis.checkId (resume does not re-run analyzed items), so fall back to
-  // the live session's id — authoritative and, in the only resume path, the
-  // same check that produced these items.
-  const artifactId = item.analysis?.artifactId || "";
-  const checkId =
-    item.checkId || item.analysis?.checkId || sessionCheckId || "";
-  return html`
-    <article
-      class="analysis-card analysis-card--done"
-      data-place-id="${escapeAttr(item.placeId || "")}"
-      data-item-id="${escapeAttr(item.id || "")}"
-      data-check-id="${escapeAttr(checkId)}"
-      data-artifact-id="${escapeAttr(artifactId)}"
-      data-task-id="${escapeAttr(taskId)}"
-      data-analysis-id="${escapeAttr(analysisId)}"
-      data-condition-id="${escapeAttr(conditionId)}"
-      data-action-kind="${escapeAttr(actionKind)}"
-      data-card-title="${escapeAttr(title)}"
-      data-card-description="${escapeAttr(description)}"
-    >
-      <div class="analysis-card__content">
-        <p class="analysis-card__meta">
-          <img
-            class="analysis-card__star"
-            src="/icons/star.svg"
-            alt=""
-            aria-hidden="true"
-          />
-          <span>NEW</span>${item.analysis?.assessment?.assessmentId
-            ? html`<span>•</span
-                ><span
-                  >${escapeHtml(item.analysis.assessment.assessmentId)}</span
-                >`
-            : ""}
-        </p>
-        <h3>${escapeHtml(title)}</h3>
-        <p>${escapeHtml(description)}</p>
-        <div class="analysis-card__actions">
-          ${action
-            ? html`<button
-                class="analysis-card__primary${actionClass} wa-plain"
-                type="button"
-                data-analysis-action="resolve"
-              >
-                <wa-icon name="circle-check" aria-hidden="true"></wa-icon>
-                ${escapeHtml(action)}
-              </button>`
-            : ""}
-          <button
-            class="analysis-card__icon wa-plain"
-            type="button"
-            aria-label="Edit problem"
-            data-analysis-action="edit"
-          >
-            <wa-icon name="pen" aria-hidden="true"></wa-icon>
-          </button>
-          <button
-            class="analysis-card__icon analysis-card__icon--danger wa-plain"
-            type="button"
-            aria-label="Remove problem"
-            data-analysis-action="delete"
-          >
-            <wa-icon name="trash" aria-hidden="true"></wa-icon>
-          </button>
-        </div>
-      </div>
-      ${evidencePreview(item)}
-    </article>
-  `;
-}
-
-function evidencePreview(item) {
-  if (item.kind === "text") {
-    return html`
-      <div class="analysis-card__media analysis-card__media--text">
-        <span>${escapeHtml(item.placeName || "Place")}</span>
-        <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
-      </div>
-    `;
-  }
-  return html`
-    <div class="analysis-card__media">
-      <img
-        src="${escapeAttr(item.dataUrl)}"
-        alt="Evidence from ${escapeAttr(item.placeName || "this place")}"
-      />
-      <span>${escapeHtml(item.placeName || "Place")}</span>
-    </div>
-  `;
-}
-
-function taskButtonLabel(task) {
-  return Array.isArray(task.buttons) && task.buttons[0]
-    ? String(task.buttons[0])
-    : "";
-}
-
-function actionLabel(kind) {
-  if (kind === "non_actionable_escalation") return "Escalate";
-  if (kind === "escalation") return "Escalate";
-  if (kind === "action") return "Log action";
-  return "";
-}
-
-function problemSummary(items) {
-  return items.reduce(
-    (summary, item) => {
-      if (item.analysis?.status !== "analyzed") return summary;
-      const hiddenConditionIds = hiddenConditionIdSet(item);
-      const tasks = item.analysis?.tasks || [];
-      const conditions = item.analysis?.conditions || [];
-      const visibleTasks = tasks.filter(
-        (task) => !hiddenConditionIds.has(task.conditionId),
-      );
-      const visibleConditions = conditions.filter(
-        (condition) => !hiddenConditionIds.has(condition.conditionId),
-      );
-      const visible = Math.max(visibleTasks.length, visibleConditions.length);
-      const total = Math.max(tasks.length, conditions.length);
-      summary.visible += visible;
-      summary.hidden += Math.max(
-        hiddenConditionIds.size,
-        Math.max(0, total - visible),
-      );
-      return summary;
-    },
-    { visible: 0, hidden: 0 },
-  );
-}
-
-function problemSummaryLabel({ visible, hidden }) {
-  if (visible > 0) {
-    return `${visible} ${visible === 1 ? "problem" : "problems"} found`;
-  }
-  if (hidden > 0) return "All problems resolved";
-  return "No problems found";
-}
-
-function hiddenConditionIdSet(item) {
-  return new Set(
-    [
-      ...(item.analysis?.resolvedConditionIds || []),
-      ...(item.analysis?.rejectedConditionIds || []),
-    ].filter(Boolean),
-  );
+  return analysisResultsTray(items, sessionCheckId, {
+    ariaLabel: "Analyzing evidence",
+    emptyText: "All problems were resolved or deleted.",
+  });
 }
 
 // Compatibility exports for <problem-report>, which still uses the older grid.

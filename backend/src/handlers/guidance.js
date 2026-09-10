@@ -374,6 +374,9 @@ export const completeTask = async (event) => {
         error: "Task completion already in progress",
       });
     }
+    if (err instanceof Error && err.name === "InvalidCompletionMethod") {
+      return jsonResponse(400, { error: err.message });
+    }
     if (
       err instanceof Error &&
       (err.name === "TerminalConflict" ||

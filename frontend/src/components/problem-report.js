@@ -1,16 +1,28 @@
 /*
-  problem-report — a single-problem capture flow. Same capture/describe/submit
-  architecture as perimeter-check, but scoped to one report instead of multiple
-  places. Submit runs the existing backend analysis path and lands on the same
-  review/results screen as perimeter checks.
+  problem-report — a single-problem capture flow. Each captured photo analyzes
+  immediately and renders through the same live result cards as perimeter check.
 */
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { submitCheck, submitErrorMessage } from "../services/submit-check.js";
 import {
-  enqueueUpload,
-  resumePendingUploads,
-} from "../services/artifact-uploader.js";
+  analyzeEvidenceItem,
+  analyzeNoIssueDescriptionEdit,
+  refreshEvidenceAnalysis,
+} from "../services/photo-analysis.js";
+import {
+  ApiError,
+  completeTask,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../services/api.js";
+import {
+  expectedArtifactCountForCheck,
+  finalizeCaptureScorecardInBackground,
+} from "../services/submit-check.js";
+import {
+  appActionFailureMessage,
+  isFiled311Completion,
+} from "../domain/task-actions.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -24,14 +36,19 @@ import {
   isPlaceCovered,
   getFlowType,
   isCurrentSession,
+  updateItemAnalysis,
+  markCaptureComplete,
+  onCheckSessionChange,
+  pauseCheck,
 } from "../state/check-session.js";
-import { shell } from "./problem-report.templates.js";
+import { shell, analysisSection } from "./problem-report.templates.js";
 import { shotTile, addTile } from "./perimeter-check.templates.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
- * @typedef {{ items: Array<{ id: string, dataUrl: string, placeId?: string, placeName?: string }> }} PlaceState
+ * @typedef {{ kind?: "photo" | "text", id: string, dataUrl?: string, text?: string, placeId?: string, placeName?: string, analysis?: { status?: string } }} PlaceItem
+ * @typedef {{ items: PlaceItem[] }} PlaceState
  */
 
 class ProblemReport extends HTMLElement {
@@ -49,36 +66,64 @@ class ProblemReport extends HTMLElement {
     this._fileInput = null;
     /** @type {FileReader | null} */
     this._fileReader = null;
+    this._finishing = false;
+    this._unsubscribe = null;
+    this._activeProblem = null;
+    this._analysisDeleteDialog = null;
+    this._analysisSuccessDialog = null;
+    this._analysisProgressDialog = null;
+    this._analysisEditDialog = null;
+    this._analysisEditDescription = null;
+    this._toastTimer = 0;
+    this._initGeneration = 0;
   }
 
   /** @returns {Promise<void>} */
   async connectedCallback() {
+    const initGeneration = ++this._initGeneration;
+    this._cleanupSubscription();
+    this._embedded = this.hasAttribute("embedded");
     /** @type {SiteRecord | null} */
     this._site = await getSite();
+    if (!this._isCurrentInit(initGeneration)) return;
     this._siteId =
       this._site?.siteId || this._site?.providerSiteId || this._site?.id || "";
 
-    const check =
-      getCurrentCheck() || (await loadDraft("single-problem")) || null;
+    let check = getCurrentCheck();
+    if (!check) {
+      check = (await loadDraft("single-problem")) || null;
+      if (!this._isCurrentInit(initGeneration)) return;
+    }
     if (!check) {
       ensureProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
       startProblemReport(this._siteId);
     }
     this._checkId = getCurrentCheck()?.id || "";
-    // Resume any photo upload interrupted by a reload / navigation mid-report.
-    resumePendingUploads();
 
     this._placeId = getPlaceOrder()[0];
     setActivePlaceIndex(0);
 
-    this.innerHTML = shell();
+    const unsubscribe = onCheckSessionChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
+    if (!this._isCurrentInit(initGeneration)) {
+      unsubscribe();
+      return;
+    }
+    this._cleanupSubscription();
+    this._unsubscribe = unsubscribe;
+
+    this.innerHTML = shell({
+      embedded: this._embedded,
+      title: this._titleText(),
+    });
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
     if (!this._fileInput) return;
 
-    this.querySelector("#cancel").addEventListener("click", () =>
+    this.querySelector("#cancel")?.addEventListener("click", () =>
       this._cancel(),
     );
     this.querySelector("#describe-instead").addEventListener("click", () =>
@@ -87,31 +132,76 @@ class ProblemReport extends HTMLElement {
     this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#cancel-report-dialog")
     );
-    this.querySelector("#cancel-report-save")?.addEventListener("click", () => {
-      this._cancelDialog?.close();
-      navigate("/today");
-    });
+    this.querySelector("#cancel-report-save")?.addEventListener(
+      "click",
+      async () => {
+        this._cancelDialog?.close();
+        await pauseCheck();
+        this._exitCapture();
+      },
+    );
     this.querySelector("#cancel-report-discard")?.addEventListener(
       "click",
       () => {
-        clearCheck();
         this._cancelDialog?.close();
-        navigate("/today");
+        this._exitCapture();
+        window.setTimeout(() => clearCheck(), 0);
       },
     );
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
     this.querySelector("#submit-report").addEventListener("click", () =>
-      this._submit(),
+      this._done(),
     );
+    this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-delete-dialog")
+    );
+    this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-success-dialog")
+    );
+    this._analysisProgressDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-progress-dialog")
+    );
+    this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#analysis-edit-dialog")
+    );
+    this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
+      this.querySelector("#analysis-edit-description")
+    );
+    this.querySelector("#analysis-delete-confirm")?.addEventListener(
+      "click",
+      () => this._confirmDeleteProblem(),
+    );
+    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
+      this._saveProblemEdit(),
+    );
+    this.querySelector("#analysis-progress-cancel")?.addEventListener(
+      "click",
+      () => this._analysisProgressDialog?.close(),
+    );
+    this.querySelectorAll(".analysis-dialog").forEach((dialog) => {
+      dialog.addEventListener("click", (e) => {
+        if (e.target === dialog) {
+          /** @type {HTMLDialogElement} */ (dialog).close();
+        }
+      });
+    });
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
     );
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
-    this._renderShots();
-    this._syncControls();
+    this._render();
+  }
+
+  _isCurrentInit(initGeneration) {
+    return this.isConnected && initGeneration === this._initGeneration;
+  }
+
+  _cleanupSubscription() {
+    this._unsubscribe?.();
+    this._unsubscribe = null;
   }
 
   /** @returns {PlaceState} */
@@ -168,11 +258,8 @@ class ProblemReport extends HTMLElement {
       this._placeId,
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
-    // Start pushing the bytes to S3 now, in the background, so by submit time
-    // they're already up and submit only registers the metadata.
-    if (record) enqueueUpload(getCurrentCheck()?.id, record.placeId, record.id);
-    this._renderShots();
-    this._syncControls();
+    if (record) analyzeEvidenceItem(record.placeId, record.id);
+    this._render();
   }
 
   /** @param {Event} e */
@@ -186,13 +273,17 @@ class ProblemReport extends HTMLElement {
     const del = target.closest("[data-del]");
     if (del) {
       removeItem(this._placeId, del.getAttribute("data-del"));
-      this._renderShots();
-      this._syncControls();
+      this._render();
     }
   }
 
   /** @returns {void} */
   _cancel() {
+    if (!isPlaceCovered(this._placeId)) {
+      this._exitCapture();
+      window.setTimeout(() => clearCheck(), 0);
+      return;
+    }
     this._cancelDialog?.showModal();
   }
 
@@ -203,7 +294,9 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _renderShots() {
-    const items = this._placeState().items;
+    // The shot grid is photo-only: typed descriptions are items too, but they
+    // render as analysis cards below (shotTile assumes item.dataUrl is an img src).
+    const items = this._photoItems();
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
@@ -212,45 +305,390 @@ class ProblemReport extends HTMLElement {
       items.map((item, index) => shotTile(item, index)).join("") + tile;
   }
 
+  /** @returns {PlaceItem[]} */
+  _photoItems() {
+    return this._placeState().items.filter((item) => item.kind !== "text");
+  }
+
+  /** @returns {void} */
+  _renderAnalysis() {
+    const container = this.querySelector("#single-issue-analysis");
+    if (!container) return;
+    const items = this._placeState().items;
+    container.innerHTML = items.length
+      ? analysisSection(items, this._checkId)
+      : "";
+    this._wireAnalysisCards();
+  }
+
+  /** @returns {void} */
+  _renderTitle() {
+    const title = this.querySelector(".single-issue__title");
+    if (title) title.textContent = this._titleText();
+  }
+
+  /** @returns {void} */
+  _render() {
+    this._renderTitle();
+    this._renderShots();
+    this._renderAnalysis();
+    this._syncControls();
+  }
+
+  /** @returns {string} */
+  _titleText() {
+    return this._placeState().items.length
+      ? "Flag another issue"
+      : "Flag a single issue";
+  }
+
   /** @returns {void} */
   _syncControls() {
     const submit = this.querySelector("#submit-report");
     if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = !isPlaceCovered(this._placeId);
+    submit.disabled = false;
   }
 
   /** @returns {Promise<void>} */
-  async _submit() {
-    if (!isPlaceCovered(this._placeId)) return;
+  async _done() {
+    const check = getCurrentCheck();
+    if (!isPlaceCovered(this._placeId)) {
+      clearCheck();
+      this._exitCapture();
+      return;
+    }
+    const expectedArtifacts = expectedArtifactCountForCheck(check);
+    this._finishing = true;
+    this._cleanupSubscription();
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", {
+          bubbles: true,
+          composed: true,
+          detail: { flowType: "single-problem" },
+        }),
+      );
+      window.setTimeout(() => {
+        markCaptureComplete({
+          checkId: check?.id,
+          submissionKind: "problem_report",
+          expectedArtifacts,
+        });
+        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+      }, 0);
+      return;
+    }
+    markCaptureComplete({
+      checkId: check?.id,
+      submissionKind: "problem_report",
+      expectedArtifacts,
+    });
+    finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+    navigate("/today");
+  }
+
+  _exitCapture() {
+    this._finishing = true;
+    this._cleanupSubscription();
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", {
+          bubbles: true,
+          composed: true,
+          detail: { flowType: "single-problem" },
+        }),
+      );
+      return;
+    }
+    navigate("/today");
+  }
+
+  _wireAnalysisCards() {
+    this.querySelectorAll("[data-analysis-action]").forEach((button) => {
+      button.addEventListener("click", (e) => {
+        const target = e.currentTarget;
+        if (!(target instanceof Element)) return;
+        const card = target.closest(".analysis-card");
+        if (!card) return;
+        const action = target.getAttribute("data-analysis-action");
+        const problem = this._problemFromCard(card);
+        if (action === "delete") {
+          this._openDeleteProblem(problem);
+        } else if (action === "edit") {
+          this._openEditProblem(problem);
+        } else if (action === "resolve") {
+          this._resolveProblem(problem);
+        }
+      });
+    });
+  }
+
+  _problemFromCard(card) {
+    return {
+      placeId: card.getAttribute("data-place-id") || "",
+      itemId: card.getAttribute("data-item-id") || "",
+      checkId: card.getAttribute("data-check-id") || "",
+      artifactId: card.getAttribute("data-artifact-id") || "",
+      taskId: card.getAttribute("data-task-id") || "",
+      conditionId: card.getAttribute("data-condition-id") || "",
+      actionKind: card.getAttribute("data-action-kind") || "",
+      title: card.getAttribute("data-card-title") || "problem",
+      description: card.getAttribute("data-card-description") || "",
+    };
+  }
+
+  _openDeleteProblem(problem) {
+    this._activeProblem = problem;
+    this._setDialogError("analysis-delete-error", "");
+    const title = this.querySelector("#analysis-delete-title");
+    if (title) title.textContent = `Delete "${problem.title}"?`;
+    this._analysisDeleteDialog?.showModal();
+  }
+
+  _openEditProblem(problem) {
+    this._activeProblem = problem;
+    this._setDialogError("analysis-edit-error", "");
+    if (this._analysisEditDescription) {
+      this._analysisEditDescription.value = problem.description;
+    }
+    this._analysisEditDialog?.showModal();
+  }
+
+  async _confirmDeleteProblem() {
+    const problem = this._activeProblem;
+    if (!problem) return;
+    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
+      this._setDialogError(
+        "analysis-delete-error",
+        this._missingConditionMessage(problem, "deleted"),
+      );
+      return;
+    }
+
+    const button = this.querySelector("#analysis-delete-confirm");
+    this._setBusy(button, true);
+    this._setDialogError("analysis-delete-error", "");
     try {
-      submitCheck({ submissionKind: "problem_report" });
-      navigate("/today");
+      const result = await rejectAnalysisCondition(
+        problem.checkId,
+        problem.artifactId,
+        problem.conditionId,
+        {
+          reason: { key: "not_a_problem" },
+          caller: { request_id: this._requestId("delete", problem) },
+        },
+      );
+      await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
+        rejectedConditionId: problem.conditionId,
+      });
+      this._analysisDeleteDialog?.close();
+      this._activeProblem = null;
+      this._render();
     } catch (err) {
-      console.error("submitCheck failed", err);
-      this._showSubmitError(err);
+      if (err instanceof ApiError && err.status === 404) {
+        this._deleteProblemLocally(problem);
+        this._analysisDeleteDialog?.close();
+        this._activeProblem = null;
+        return;
+      }
+      console.error("delete analysis condition failed", err);
+      this._setDialogError(
+        "analysis-delete-error",
+        "Could not delete this problem. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
     }
   }
 
-  /** @param {unknown} err @returns {void} */
-  _showSubmitError(err) {
-    let el = this.querySelector(".check__error");
-    if (!el) {
-      el = document.createElement("p");
-      el.className = "check__error flow-error";
-      el.setAttribute("role", "alert");
-      this.querySelector(".check__actions")?.insertAdjacentElement(
-        "afterend",
-        el,
+  _deleteProblemLocally(problem) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item) return;
+    updateItemAnalysis(problem.placeId, problem.itemId, {
+      tasks: (item.analysis?.tasks || []).filter(
+        (task) => task.taskId !== problem.taskId,
+      ),
+      rejectedConditionIds: [
+        ...(item.analysis?.rejectedConditionIds || []),
+        problem.conditionId,
+      ].filter(Boolean),
+    });
+    this._render();
+  }
+
+  async _saveProblemEdit() {
+    const problem = this._activeProblem;
+    if (!problem) return;
+    const description = this._analysisEditDescription?.value?.trim() || "";
+    if (description.length < 5) {
+      this._setDialogError(
+        "analysis-edit-error",
+        "Description must be at least 5 characters.",
       );
+      return;
     }
-    el.textContent = submitErrorMessage(err);
+    if (description === problem.description.trim()) {
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      return;
+    }
+
+    const button = this.querySelector("#analysis-edit-save");
+    this._setBusy(button, true);
+    this._setDialogError("analysis-edit-error", "");
+    try {
+      if (!problem.conditionId) {
+        await analyzeNoIssueDescriptionEdit(
+          problem.placeId,
+          problem.itemId,
+          description,
+        );
+      } else {
+        if (!problem.checkId || !problem.artifactId) {
+          this._setDialogError(
+            "analysis-edit-error",
+            this._missingConditionMessage(problem, "edited"),
+          );
+          return;
+        }
+        const result = await editAnalysisCondition(
+          problem.checkId,
+          problem.artifactId,
+          problem.conditionId,
+          {
+            description,
+            caller: { request_id: this._requestId("edit", problem) },
+          },
+        );
+        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+      }
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      this._render();
+    } catch (err) {
+      console.error("edit analysis condition failed", err);
+      this._setDialogError(
+        "analysis-edit-error",
+        "Could not save this edit. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
+    }
+  }
+
+  async _resolveProblem(problem) {
+    if (!problem.taskId) {
+      this._markProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+      return;
+    }
+
+    if (problem.actionKind === "escalation") {
+      this._analysisProgressDialog?.showModal();
+      try {
+        const result = await completeTask(problem.taskId, {
+          completionMethod: "311_filed",
+        });
+        this._analysisProgressDialog?.close();
+        if (!isFiled311Completion(result?.task)) {
+          this._showToast(
+            appActionFailureMessage(result?.task, {
+              includeUnsubmitted311: true,
+            }) || "Could not file the 311 ticket. Please try again.",
+          );
+          return;
+        }
+        this._markProblemResolved(problem);
+        this._showToast("Success! 311 ticket filed.");
+      } catch (err) {
+        console.error("escalation failed", err);
+        this._analysisProgressDialog?.close();
+        this._showToast("Could not file the 311 ticket. Please try again.");
+      }
+      return;
+    }
+
+    try {
+      await completeTask(problem.taskId, { completionMethod: "manual" });
+      this._markProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+    } catch (err) {
+      console.error("resolve task failed", err);
+      this._showToast("Could not save that action. Please try again.");
+    }
+  }
+
+  _markProblemResolved(problem) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item) return;
+    updateItemAnalysis(problem.placeId, problem.itemId, {
+      tasks: (item.analysis?.tasks || []).filter(
+        (task) => task.taskId !== problem.taskId,
+      ),
+      resolvedConditionIds: [
+        ...(item.analysis?.resolvedConditionIds || []),
+        problem.conditionId,
+      ].filter(Boolean),
+    });
+    this._render();
+  }
+
+  _setDialogError(id, message) {
+    const error = /** @type {HTMLElement | null} */ (
+      this.querySelector(`#${id}`)
+    );
+    if (!error) return;
+    error.textContent = message;
+    error.hidden = !message;
+  }
+
+  _setBusy(button, busy) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.disabled = busy;
+    button.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  _showToast(message) {
+    let toast = this.querySelector(".check-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.className = "check-toast";
+      toast.setAttribute("role", "status");
+      this.appendChild(toast);
+    }
+    toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
+    toast.querySelector("span").textContent = message;
+    window.clearTimeout(this._toastTimer);
+    this._toastTimer = window.setTimeout(() => toast.remove(), 3500);
+  }
+
+  _missingConditionMessage(problem, action) {
+    if (!problem.conditionId) {
+      return `This card does not have a problem condition that can be ${action}.`;
+    }
+    return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
+  }
+
+  _requestId(action, problem) {
+    const suffix =
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
   }
 
   /** @returns {void} */
   disconnectedCallback() {
+    this._initGeneration += 1;
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
+    this._cleanupSubscription();
   }
 }
 

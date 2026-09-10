@@ -717,13 +717,25 @@ form > wa-button[type="submit"] {
 .home {
   position: relative;
 }
-.home-settings {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
+
+.home-top-actions {
+  width: min(100%, 550px);
+  min-height: 2.75rem;
+  margin: 0 auto 0.75rem;
+  padding-inline: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  position: relative;
   z-index: 2;
+}
+
+.home-settings {
+  flex: 0 0 auto;
   background: transparent;
 }
+
 .home-settings__icon {
   width: 1.25rem;
   height: 1.25rem;
@@ -804,9 +816,139 @@ theme-toggle {
 }
 
 .home {
-  max-width: 440px;
+  width: min(100%, 550px);
+  max-width: 550px;
   margin-inline: auto;
 }
+
+.home-region {
+  transition:
+    opacity 220ms ease,
+    transform 260ms ease;
+  will-change: opacity, transform;
+}
+
+.home-region--header {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.home-region--capture {
+  display: none;
+  transform: translateY(-2rem);
+  opacity: 0;
+}
+
+.home-region--results {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.home--entering-capture .home-region--header,
+.home--capture .home-region--header {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  pointer-events: none;
+  transform: translateY(-0.75rem);
+  opacity: 0;
+}
+
+.home--capture .home-region--header {
+  display: none;
+}
+
+.home--entering-capture .home-region--capture,
+.home--capture .home-region--capture,
+.home--leaving-capture .home-region--capture {
+  display: block;
+}
+
+.home--entering-capture .home-region--capture,
+.home--capture .home-region--capture {
+  animation: home-capture-in 260ms ease both;
+}
+
+.home--leaving-capture .home-region--capture {
+  animation: home-capture-out 260ms ease both;
+  inset-block-start: 0;
+  inset-inline: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.home--entering-capture .home-region--results,
+.home--capture .home-region--results {
+  pointer-events: none;
+  transform: translateY(2rem);
+  opacity: 0;
+}
+
+.home--leaving-capture .home-region--header {
+  animation: home-fade-in 260ms ease both;
+}
+
+.home--leaving-capture .home-region--results {
+  animation: home-results-up 260ms ease both;
+}
+
+@keyframes home-capture-in {
+  from {
+    transform: translateY(-2rem);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes home-capture-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-2rem);
+    opacity: 0;
+  }
+}
+
+@keyframes home-results-up {
+  from {
+    transform: translateY(2rem);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes home-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-region {
+    transition-duration: 1ms;
+  }
+
+  .home--entering-capture .home-region--capture,
+  .home--capture .home-region--capture,
+  .home--leaving-capture .home-region--capture,
+  .home--leaving-capture .home-region--header,
+  .home--leaving-capture .home-region--results {
+    animation-duration: 1ms;
+  }
+}
+
 .home--first-run {
   max-width: none;
   width: 100%;
@@ -814,7 +956,13 @@ theme-toggle {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+}
+.home--first-run .home-region--header {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 .screen {
   background: var(--surface);
@@ -832,6 +980,7 @@ theme-toggle {
 }
 .screen--first-run {
   width: 100%;
+  flex: 1;
   min-height: min(
     47rem,
     calc(100dvh - max(1rem, env(safe-area-inset-top)) - 2rem)
@@ -980,8 +1129,7 @@ theme-toggle {
   border-radius: 6px;
 }
 
-/* Overall summary of the last check: the analyzer's italic sentence, with the
-   LAST LOG timestamp stamped beneath it. */
+/* Last submitted check metadata shown under the site title. */
 .lastlog {
   display: flex;
   flex-direction: column;
@@ -1014,6 +1162,205 @@ theme-toggle {
   height: 1px;
   margin: 1.5rem auto 1.15rem;
   background: var(--c-line);
+}
+
+.home-capture {
+  margin-top: 1.5rem;
+}
+
+.home--has-capture .home-capture {
+  margin-top: 0;
+}
+
+.home-capture .check-timeline {
+  width: 100%;
+  min-height: auto;
+  padding: 0;
+}
+
+.home-capture .single-issue {
+  width: 100%;
+  max-width: none;
+  min-height: auto;
+  padding: 0;
+}
+
+.single-issue {
+  gap: 1.25rem;
+}
+
+.single-issue__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--wa-font-family-heading, var(--font-sans));
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.single-issue .shotgrid {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.single-issue__describe {
+  align-self: center;
+  margin-top: -0.5rem;
+}
+
+.single-issue .check__actions {
+  justify-content: flex-start;
+}
+
+.single-issue__analysis {
+  width: 100%;
+}
+
+.check-timeline--embedded {
+  background: transparent;
+}
+
+.home-results {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+}
+
+.home-results .analysis-tray {
+  margin-top: 0;
+}
+
+.home-results__divider {
+  width: 100%;
+  height: 1px;
+  background: var(--c-line);
+}
+
+.home-results__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.home-wrap {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 0.875rem;
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.home-wrap h2 {
+  margin: 0 0 0.35rem;
+  color: var(--brand-blue);
+  font-size: 1.45rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.home-wrap p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.home-wrap__link {
+  color: var(--brand-blue);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.home-wrap__link:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.task-filter {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+  z-index: 3;
+}
+
+.task-filter__button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  min-height: 2.375rem;
+  border: 1px solid var(--wa-color-neutral-border-loud, var(--text));
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.task-filter__caret {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-0.125rem) rotate(45deg);
+}
+
+.task-filter__caret--up {
+  transform: translateY(0.125rem) rotate(225deg);
+}
+
+.task-filter__menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 4;
+  min-width: max(13rem, 100%);
+  padding: 0.5rem;
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.task-filter__item {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.task-filter__item--active {
+  background: var(--surface-2);
 }
 
 .assessment-tile {
@@ -2581,6 +2928,10 @@ theme-toggle {
   background: var(--brand-blue-bg);
 }
 
+.analysis-tray--standard .analysis-tray__cards {
+  background: var(--surface-2);
+}
+
 .analysis-tray__empty {
   margin: 0;
   color: var(--text-secondary);
@@ -2635,6 +2986,10 @@ theme-toggle {
   font-size: var(--wa-font-size-l, 1.25rem);
   font-weight: 700;
   line-height: 1.2;
+}
+
+.analysis-card--standard h3 {
+  color: var(--text);
 }
 
 .analysis-card p {
@@ -4041,18 +4396,13 @@ theme-toggle {
 
 /* ---- Feedback sheet (feedback-dialog.js): textarea + send, then thanks ---- */
 /* Reuses .sheet/.sheet__panel chrome; adds the form-specific bits. */
-/* Trigger: icon-only button pinned to the top-right of the home header. The
-   <feedback-dialog> element itself is a 0×0 box in the flow; the button
-   positions against the nearest positioned ancestor (.home is not positioned,
-   so this anchors to the viewport corner where the header sits). */
+/* Trigger: icon-only button in the home top-actions row. */
 .feedback-dialog {
-  position: static;
+  display: block;
+  flex: 0 0 auto;
 }
 .feedback__open {
-  position: absolute;
-  top: max(0.6rem, env(safe-area-inset-top));
-  right: 0.75rem;
-  z-index: 20; /* above the sticky header (z-index: 10) */
+  position: static;
   display: inline-flex;
   align-items: center;
   justify-content: center;

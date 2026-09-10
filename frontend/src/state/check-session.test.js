@@ -206,6 +206,77 @@ describe("eager-upload item mutators", () => {
     // The template's fallback chain must end at the session id, not "".
     expect(resumed.checkId ?? realCheckId).toBe(realCheckId);
   });
+
+  it("reports a resumable perimeter draft without hydrating it", async () => {
+    const db = await import("../db.js");
+    const { hasDraft, getCurrentCheck } = await import("./check-session.js");
+    vi.mocked(db.getDraft).mockResolvedValueOnce({
+      id: "saved-check",
+      siteId: "site-1",
+      flowType: "perimeter",
+      status: "in-progress",
+      placeOrder: ["place-north"],
+      places: {
+        "place-north": {
+          id: "place-north",
+          name: "North",
+          items: [],
+        },
+      },
+    });
+
+    await expect(hasDraft("perimeter")).resolves.toBe(true);
+    expect(getCurrentCheck()).toBeNull();
+  });
+
+  it("resumes a perimeter draft instead of starting a fresh check", async () => {
+    const db = await import("../db.js");
+    const { resumeOrStartCheck, getCurrentCheck } = await import(
+      "./check-session.js"
+    );
+    vi.mocked(db.getDraft).mockResolvedValueOnce({
+      id: "saved-check",
+      siteId: "site-1",
+      flowType: "perimeter",
+      status: "in-progress",
+      activePlaceIndex: 1,
+      placeList: [
+        { id: "place-north", name: "North" },
+        { id: "place-south", name: "South" },
+      ],
+      placeOrder: ["place-north", "place-south"],
+      places: {
+        "place-north": {
+          id: "place-north",
+          name: "North",
+          items: [
+            {
+              id: "item-1",
+              kind: "photo",
+              analysis: {
+                status: "analyzed",
+                artifactId: "art-1",
+                conditions: [{ label: "Litter" }],
+              },
+            },
+          ],
+        },
+        "place-south": {
+          id: "place-south",
+          name: "South",
+          items: [],
+        },
+      },
+    });
+
+    const resumed = await resumeOrStartCheck("site-1", TEST_PLACES);
+
+    expect(resumed.id).toBe("saved-check");
+    expect(resumed.activePlaceIndex).toBe(1);
+    expect(
+      getCurrentCheck().places["place-north"].items[0].analysis.artifactId,
+    ).toBe("art-1");
+  });
 });
 
 describe("markAnalyzing", () => {
@@ -241,5 +312,61 @@ describe("markAnalyzing", () => {
     expect(getCurrentCheck()?.id).not.toBe(original.id);
     expect(getCurrentCheck()?.status).toBe("in-progress");
     expect(savedReview).toBeNull();
+  });
+});
+
+describe("markCaptureComplete", () => {
+  beforeEach(async () => {
+    savedReview = null;
+    nextId = 1;
+    const { clearCheck } = await import("./check-session.js");
+    clearCheck();
+    vi.clearAllMocks();
+  });
+
+  it("persists later analysis updates to the review-backed home session", async () => {
+    const db = await import("../db.js");
+    const {
+      startCheck,
+      addItem,
+      markCaptureComplete,
+      updateItemAnalysis,
+      getCurrentCheck,
+    } = await import("./check-session.js");
+
+    startCheck("site-1", TEST_PLACES);
+    const item = addItem("place-north", {
+      kind: "photo",
+      dataUrl: "data:image/jpeg;base64,THUMB==",
+    });
+    markCaptureComplete({ checkId: getCurrentCheck().id });
+    vi.mocked(db.saveDraft).mockClear();
+    vi.mocked(db.saveReview).mockClear();
+
+    updateItemAnalysis("place-north", item.id, {
+      status: "analyzed",
+      artifactId: "art-1",
+      conditions: [{ conditionId: "cond-1", category: "Litter" }],
+      tasks: [{ taskId: "task-1", conditionId: "cond-1" }],
+    });
+
+    expect(db.saveDraft).not.toHaveBeenCalled();
+    expect(db.saveReview).toHaveBeenCalled();
+    expect(savedReview?.places["place-north"].items[0].analysis.status).toBe(
+      "analyzed",
+    );
+  });
+
+  it("persists expected artifact coverage when capture completes", async () => {
+    const { startCheck, markCaptureComplete, getCurrentCheck } = await import(
+      "./check-session.js"
+    );
+
+    startCheck("site-1", TEST_PLACES);
+    const checkId = getCurrentCheck().id;
+    markCaptureComplete({ checkId, expectedArtifacts: 2 });
+
+    expect(savedReview?.status).toBe("capture-complete");
+    expect(savedReview?.expectedArtifacts).toBe(2);
   });
 });

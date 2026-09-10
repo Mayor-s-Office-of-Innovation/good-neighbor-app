@@ -42,6 +42,7 @@ import {
 import { startRun, span, mark } from "./instrument.js";
 
 const pendingFinalizations = new Map();
+const pendingScorecardFinalizations = new Map();
 const pendingSubmissions = new Map();
 
 /**
@@ -195,6 +196,29 @@ async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   return last;
 }
 
+async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
+  startRun("captureScorecard", { checkId });
+  const endAnalyze = span("captureScorecard:wait", {
+    expected: expectedArtifacts,
+  });
+  const last = await withLeg("analyze", () =>
+    waitForAnalyses(checkId, { expected: expectedArtifacts }),
+  );
+  endAnalyze({
+    analyzed: last.analyses.length,
+    artifacts: last.artifacts.length,
+  });
+
+  const endComplete = span("captureScorecard:completeCheck");
+  const completion = await withLeg("complete", () => completeCheck(checkId));
+  endComplete({ grade: completion?.grade, issues: completion?.issueCount });
+  mark("captureScorecard:done", {
+    expectedArtifacts: last.artifacts.length,
+    checkId,
+  });
+  return completion;
+}
+
 /**
  * @param {PlannedArtifact} artifact
  * @returns {string}
@@ -277,6 +301,35 @@ function plannedArtifactsForCheck(check) {
   }
 
   return planned;
+}
+
+/**
+ * Count the evidence items already captured for this check. This is used only as
+ * the coverage target for background run-level scorecard finalization; it does
+ * not register or analyze anything on Done.
+ * @param {any} check
+ * @returns {number}
+ */
+export function expectedArtifactCountForCheck(check) {
+  if (!check?.places) return 0;
+  return (check.placeOrder || Object.keys(check.places)).reduce(
+    (count, placeId) => {
+      const items = Array.isArray(check.places[placeId]?.items)
+        ? check.places[placeId].items
+        : [];
+      return (
+        count +
+        items.filter(
+          (item) =>
+            item?.kind === "text" ||
+            item?.dataUrl ||
+            item?.upload?.artifactId ||
+            item?.analysis?.artifactId,
+        ).length
+      );
+    },
+    0,
+  );
 }
 
 /**
@@ -441,6 +494,27 @@ async function runSubmittedCheck(
 
 export function resumeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   return startFinalization(checkId, { expectedArtifacts });
+}
+
+export function finalizeCaptureScorecardInBackground(
+  checkId,
+  { expectedArtifacts } = {},
+) {
+  if (!checkId || expectedArtifacts === 0) return null;
+  if (pendingScorecardFinalizations.has(checkId)) {
+    return pendingScorecardFinalizations.get(checkId);
+  }
+  const run = finalizeCaptureScorecard(checkId, { expectedArtifacts })
+    .catch((err) => {
+      console.error("finalizeCaptureScorecard failed", err);
+      throw err;
+    })
+    .finally(() => {
+      pendingScorecardFinalizations.delete(checkId);
+    });
+  pendingScorecardFinalizations.set(checkId, run);
+  void run.catch(() => {});
+  return run;
 }
 
 export async function resumeUploadingCheck(
