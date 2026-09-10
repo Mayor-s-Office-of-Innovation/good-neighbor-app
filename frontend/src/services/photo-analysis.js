@@ -12,6 +12,7 @@ import {
   createCheck,
   evaluateAssessment,
   getCheck,
+  submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
   ApiError,
@@ -337,6 +338,57 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     tasks: guidance.tasks || [],
   });
   return { status: "problems", artifactId, itemId: textItem.id };
+}
+
+export async function answerAnalysisQuestion(
+  placeId,
+  itemId,
+  conditionId,
+  answerKey,
+  answerValue,
+) {
+  const check = getCurrentCheck();
+  const place = check?.places?.[placeId];
+  const item = place?.items?.find((candidate) => candidate.id === itemId);
+  const assessmentId = item?.analysis?.assessment?.assessmentId;
+  if (
+    !check ||
+    !place ||
+    !item ||
+    !assessmentId ||
+    !conditionId ||
+    !answerKey
+  ) {
+    return null;
+  }
+
+  const result = await submitConditionAnswers(assessmentId, conditionId, {
+    answers: { [answerKey]: answerValue },
+  });
+  const condition = result?.conditionItem;
+  const task = result?.taskItem;
+  const existingConditions = item.analysis?.conditions || [];
+  const nextConditions = existingConditions.map((candidate) =>
+    candidate.conditionId === conditionId ? condition || candidate : candidate,
+  );
+  if (
+    condition &&
+    !nextConditions.some((candidate) => candidate.conditionId === conditionId)
+  ) {
+    nextConditions.push(condition);
+  }
+
+  const nextTasks = (item.analysis?.tasks || []).filter(
+    (candidate) => candidate.conditionId !== conditionId,
+  );
+  if (task) nextTasks.push(task);
+
+  updateItemAnalysis(placeId, itemId, {
+    conditions: nextConditions,
+    tasks: nextTasks,
+    assessment: result?.assessmentItem || item.analysis?.assessment,
+  });
+  return result;
 }
 
 async function run(placeId, itemId) {

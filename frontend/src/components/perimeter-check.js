@@ -8,6 +8,7 @@
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import {
+  answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
   refreshEvidenceAnalysis,
@@ -354,6 +355,8 @@ class PerimeterCheck extends HTMLElement {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
       this._resolveProblem(problem);
+    } else if (action === "answer") {
+      this._answerProblemQuestion(problem, button);
     }
   }
 
@@ -570,6 +573,38 @@ class PerimeterCheck extends HTMLElement {
     } catch (err) {
       console.error("resolve task failed", err);
       this._showToast("Could not save that action. Please try again.");
+    }
+  }
+
+  async _answerProblemQuestion(problem, button) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    const answerKey = button.getAttribute("data-answer-key") || "";
+    const answerValue = button.getAttribute("data-answer-value") === "true";
+    if (
+      !problem.placeId ||
+      !problem.itemId ||
+      !problem.conditionId ||
+      !answerKey
+    ) {
+      this._showToast("Could not save that answer. Please try again.");
+      return;
+    }
+
+    this._setBusy(button, true);
+    try {
+      await answerAnalysisQuestion(
+        problem.placeId,
+        problem.itemId,
+        problem.conditionId,
+        answerKey,
+        answerValue,
+      );
+      this._render();
+    } catch (err) {
+      console.error("answer condition failed", err);
+      this._showToast("Could not save that answer. Please try again.");
+    } finally {
+      this._setBusy(button, false);
     }
   }
 
