@@ -24,20 +24,30 @@ export const searchSites = async (event) => {
     return jsonResponse(200, { sites: [] });
   }
 
-  const res = await ddb.send(
-    new QueryCommand({
-      TableName: getDynamoTableName(),
-      KeyConditionExpression: "pk = :pk",
-      FilterExpression: "contains(searchText, :q)",
-      ExpressionAttributeValues: {
-        ":pk": "SITE_SEARCH#ACTIVE",
-        ":q": q,
-      },
-      Limit: MAX_SITE_SEARCH_RESULTS,
-    }),
-  );
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+  /** @type {any[]} */
+  const items = [];
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: getDynamoTableName(),
+        KeyConditionExpression: "pk = :pk",
+        FilterExpression: "contains(searchText, :q)",
+        ExpressionAttributeValues: {
+          ":pk": "SITE_SEARCH#ACTIVE",
+          ":q": q,
+        },
+        ExclusiveStartKey: exclusiveStartKey,
+        Limit: MAX_SITE_SEARCH_RESULTS,
+      }),
+    );
+    items.push(...(res.Items ?? []));
+    exclusiveStartKey =
+      items.length < MAX_SITE_SEARCH_RESULTS ? res.LastEvaluatedKey : undefined;
+  } while (exclusiveStartKey);
 
-  const sites = (res.Items ?? []).map((item) => ({
+  const sites = items.slice(0, MAX_SITE_SEARCH_RESULTS).map((item) => ({
     siteId: item.siteId,
     providerSiteId: item.providerSiteId,
     name: item.siteName,
