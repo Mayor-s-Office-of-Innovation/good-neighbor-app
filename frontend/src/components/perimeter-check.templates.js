@@ -365,7 +365,7 @@ function expandedPlace(place, openMenuItemId, photoMenuAnchor) {
 }
 
 function photoMode(place, openMenuItemId, photoMenuAnchor) {
-  const photos = place.items.filter((item) => item.kind === "photo");
+  const photos = orderedPhotoItems(place.items);
   const openMenuItem = photos.find((item) => item.id === openMenuItemId);
   return html`
     ${photos.length === 0
@@ -406,6 +406,10 @@ function photoMode(place, openMenuItemId, photoMenuAnchor) {
       </button>
     </div>
   `;
+}
+
+export function orderedPhotoItems(items) {
+  return items.filter((item) => item.kind === "photo").reverse();
 }
 
 function textMode(place) {
