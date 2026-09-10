@@ -3,6 +3,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
@@ -300,21 +301,51 @@ export const deactivateSite = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const now = new Date().toISOString();
-    const res = await ddb.send(
-      new UpdateCommand({
-        TableName: getDynamoTableName(),
+    const tableName = getDynamoTableName();
+    const siteRes = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
         Key: { pk: `SITE#${siteId}`, sk: "#META" },
-        UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-        ConditionExpression: "attribute_exists(pk)",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: {
-          ":inactive": "inactive",
-          ":now": now,
-        },
-        ReturnValues: "ALL_NEW",
       }),
     );
-    return jsonResponse(200, { site: res.Attributes });
+    const site = /** @type {any} */ (siteRes.Item);
+    if (!site?.siteId) return jsonResponse(404, { error: "not_found" });
+
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: `SITE#${siteId}`, sk: "#META" },
+              UpdateExpression: "SET #status = :inactive, updatedAt = :now",
+              ConditionExpression: "attribute_exists(pk)",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":inactive": "inactive",
+                ":now": now,
+              },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: {
+                pk: "SITE_SEARCH#ACTIVE",
+                sk: siteSearchSk(site.name, siteId),
+              },
+            },
+          },
+        ],
+      }),
+    );
+    return jsonResponse(200, {
+      site: {
+        ...site,
+        status: "inactive",
+        updatedAt: now,
+      },
+    });
   });
 
 export const listMasterContacts = contactLister("MASTER_CONTACT#");
@@ -552,7 +583,7 @@ function putSiteSearch(siteId, name, providerId, providerName, providerSiteId, n
       TableName: getDynamoTableName(),
       Item: {
         pk: "SITE_SEARCH#ACTIVE",
-        sk: `${name.toLowerCase()}#${siteId}`,
+        sk: siteSearchSk(name, siteId),
         type: "siteSearch",
         siteId,
         siteName: name,
@@ -566,4 +597,13 @@ function putSiteSearch(siteId, name, providerId, providerName, providerSiteId, n
       },
     }),
   );
+}
+
+/**
+ * @param {string} name
+ * @param {string} siteId
+ * @returns {string}
+ */
+function siteSearchSk(name, siteId) {
+  return `${name.toLowerCase()}#${siteId}`;
 }
