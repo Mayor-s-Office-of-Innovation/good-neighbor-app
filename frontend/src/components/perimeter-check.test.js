@@ -45,3 +45,18 @@ describe("shouldResumeEvidenceItem", () => {
     ).toBe(false);
   });
 });
+
+describe("findReviewTextButton", () => {
+  it("finds the save button for place ids that are not selector-safe", async () => {
+    const { findReviewTextButton } = await import("./perimeter-check.js");
+    const matching = {
+      getAttribute: (name) =>
+        name === "data-review-text" ? 'place["north"]' : null,
+    };
+    const root = {
+      querySelectorAll: () => [{ getAttribute: () => "place-south" }, matching],
+    };
+
+    expect(findReviewTextButton(root, 'place["north"]')).toBe(matching);
+  });
+});
