@@ -1,4 +1,5 @@
 import {
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -14,6 +15,7 @@ const {
   createMasterContact,
   createProvider,
   createSite,
+  deactivateProvider,
   deactivateSite,
   deactivateMasterContact,
   issueAdminSetupCode,
@@ -234,6 +236,105 @@ describe("provider and site management", () => {
     expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
       pk: "PROVIDER_SEARCH#ACTIVE",
       sk: "p1",
+    });
+  });
+
+  it("deactivates active sites when deactivating a provider", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-1",
+            siteName: "City Hall",
+            status: "active",
+          },
+          {
+            siteId: "site-2",
+            siteName: "Library",
+            status: "active",
+          },
+          {
+            siteId: "site-3",
+            siteName: "Closed Site",
+            status: "inactive",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Attributes: {
+          providerId: "provider-one",
+          status: "inactive",
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] });
+
+    const res = await call(
+      deactivateProvider,
+      event(undefined, "central-admin", { providerId: "provider-one" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[0][0].input.ExpressionAttributeValues).toMatchObject({
+      ":pk": "PROVIDER#provider-one",
+      ":site": "SITE#",
+    });
+    const siteTransactions = send.mock.calls
+      .map(([cmd]) => cmd)
+      .filter((cmd) => cmd instanceof TransactWriteCommand);
+    expect(siteTransactions).toHaveLength(2);
+    expect(siteTransactions[0].input.TransactItems).toMatchObject([
+      {
+        Update: {
+          Key: { pk: "SITE#site-1", sk: "#META" },
+        },
+      },
+      {
+        Update: {
+          Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
+        },
+      },
+      {
+        Delete: {
+          Key: { pk: "SITE_SEARCH#ACTIVE", sk: "city hall#site-1" },
+        },
+      },
+    ]);
+    expect(siteTransactions[1].input.TransactItems?.[0]).toMatchObject({
+      Update: { Key: { pk: "SITE#site-2", sk: "#META" } },
+    });
+    expect(
+      siteTransactions.some((tx) =>
+        tx.input.TransactItems?.some(
+          (item) => item.Update?.Key?.pk === "SITE#site-3",
+        ),
+      ),
+    ).toBe(false);
+    const providerUpdate = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find(
+        (cmd) =>
+          cmd instanceof UpdateCommand &&
+          cmd.input.Key?.pk === "PROVIDER#provider-one" &&
+          cmd.input.Key?.sk === "#META",
+      );
+    expect(providerUpdate?.input.UpdateExpression).toContain("#status");
+    const providerSearchDelete = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find(
+        (cmd) =>
+          cmd instanceof DeleteCommand &&
+          cmd.input.Key?.pk === "PROVIDER_SEARCH#ACTIVE",
+      );
+    expect(providerSearchDelete?.input.Key).toEqual({
+      pk: "PROVIDER_SEARCH#ACTIVE",
+      sk: "provider-one",
     });
   });
 
