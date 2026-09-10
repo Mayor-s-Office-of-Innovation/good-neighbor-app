@@ -413,7 +413,7 @@ export function orderedPhotoItems(items) {
 }
 
 function textMode(place) {
-  const canSaveText = Boolean(place.draftText?.trim());
+  const canSaveText = canSubmitTextDescription(place.draftText);
   return html`
     <p class="place-row__prompt">
       Describe the whole area, even if there are no problems.
@@ -448,6 +448,14 @@ ${escapeHtml(place.draftText || "")}</textarea
       </button>
     </div>
   `;
+}
+
+/**
+ * @param {string | undefined | null} text
+ * @returns {boolean}
+ */
+export function canSubmitTextDescription(text) {
+  return String(text || "").trim().length >= 5;
 }
 
 function addPhotoTile(label, placeId) {

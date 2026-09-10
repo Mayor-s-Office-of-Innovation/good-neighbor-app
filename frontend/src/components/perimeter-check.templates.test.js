@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { orderedPhotoItems, placeRow } from "./perimeter-check.templates.js";
+import {
+  canSubmitTextDescription,
+  orderedPhotoItems,
+  placeRow,
+} from "./perimeter-check.templates.js";
 
 describe("orderedPhotoItems", () => {
   it("renders captured photos newest-first after the add-photo tile", () => {
@@ -59,5 +63,12 @@ describe("placeRow", () => {
 
     expect(markup).toContain("Save changes");
     expect(markup).toContain("disabled");
+  });
+
+  it("requires at least five trimmed characters before text can submit", () => {
+    expect(canSubmitTextDescription("abcd")).toBe(false);
+    expect(canSubmitTextDescription(" abc ")).toBe(false);
+    expect(canSubmitTextDescription("abcde")).toBe(true);
+    expect(canSubmitTextDescription("  abcde  ")).toBe(true);
   });
 });
