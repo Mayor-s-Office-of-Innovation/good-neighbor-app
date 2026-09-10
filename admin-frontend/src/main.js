@@ -8,7 +8,49 @@ import {
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
 
+/**
+ * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
+ * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
+ * @typedef {{ siteId: string, siteName?: string, name?: string, sk?: string, providerId?: string, providerName?: string, status?: string }} AdminSite
+ * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
+ * @typedef {{ email: string, emailHash: string, name?: string, status?: string }} AdminContact
+ * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
+ * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
+ * @typedef {object} AdminState
+ * @property {AdminProvider[]} providers
+ * @property {AdminProvider | null} provider
+ * @property {AdminSite | null} site
+ * @property {AdminContact[]} contacts
+ * @property {AdminDevice[]} devices
+ * @property {AdminIssuedCode | null} issuedCode
+ * @property {string} error
+ * @property {boolean} hasToken
+ * @property {AdminConfig} authConfig
+ * @property {boolean} authBusy
+ */
+
 class AdminApp extends HTMLElement {
+  constructor() {
+    super();
+    /** @type {AdminState} */
+    this.state = {
+      providers: [],
+      provider: null,
+      site: null,
+      contacts: [],
+      devices: [],
+      issuedCode: null,
+      error: "",
+      hasToken: false,
+      authConfig: getAdminConfig(),
+      authBusy: false,
+    };
+  }
+
+  /**
+   * Initialize admin auth state and load provider data when signed in.
+   * @returns {Promise<void>}
+   */
   async connectedCallback() {
     this.state = {
       providers: [],
@@ -34,6 +76,10 @@ class AdminApp extends HTMLElement {
     if (this.state.hasToken) this.loadProviders();
   }
 
+  /**
+   * Load active providers visible to central admins.
+   * @returns {Promise<void>}
+   */
   async loadProviders() {
     try {
       const data = await adminApi.listProviders();
@@ -45,6 +91,11 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  /**
+   * Create a provider from the add-provider form.
+   * @param {HTMLFormElement} form
+   * @returns {Promise<void>}
+   */
   async createProvider(form) {
     const name = new FormData(form).get("provider-name");
     if (!name) return;
@@ -53,6 +104,11 @@ class AdminApp extends HTMLElement {
     await this.loadProviders();
   }
 
+  /**
+   * Open one provider and list its sites.
+   * @param {string} providerId
+   * @returns {Promise<void>}
+   */
   async openProvider(providerId) {
     const data = await adminApi.getProvider(providerId);
     this.state.provider = data.provider;
@@ -62,6 +118,11 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  /**
+   * Deactivate a provider and return to the provider list.
+   * @param {string} providerId
+   * @returns {Promise<void>}
+   */
   async deactivateProvider(providerId) {
     await adminApi.deactivateProvider(providerId);
     this.state.provider = null;
@@ -69,6 +130,11 @@ class AdminApp extends HTMLElement {
     await this.loadProviders();
   }
 
+  /**
+   * Create a site under the currently open provider.
+   * @param {HTMLFormElement} form
+   * @returns {Promise<void>}
+   */
   async createSite(form) {
     const name = new FormData(form).get("site-name");
     if (!name || !this.state.provider) return;
@@ -77,6 +143,11 @@ class AdminApp extends HTMLElement {
     await this.openProvider(this.state.provider.providerId);
   }
 
+  /**
+   * Open a site with its contacts and devices.
+   * @param {string} siteId
+   * @returns {Promise<void>}
+   */
   async openSite(siteId) {
     const [site, contacts, devices] = await Promise.all([
       adminApi.getSite(siteId),
@@ -90,6 +161,11 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  /**
+   * Deactivate a site and refresh the current provider.
+   * @param {string} siteId
+   * @returns {Promise<void>}
+   */
   async deactivateSite(siteId) {
     await adminApi.deactivateSite(siteId);
     this.state.site = null;
@@ -98,6 +174,11 @@ class AdminApp extends HTMLElement {
     }
   }
 
+  /**
+   * Add a master contact to the currently open site.
+   * @param {HTMLFormElement} form
+   * @returns {Promise<void>}
+   */
   async addMasterContact(form) {
     if (!this.state.site) return;
     const data = new FormData(form);
@@ -110,12 +191,22 @@ class AdminApp extends HTMLElement {
     await this.openSite(this.state.site.siteId);
   }
 
+  /**
+   * Remove a master contact from the currently open site.
+   * @param {string} emailHash
+   * @returns {Promise<void>}
+   */
   async removeMasterContact(emailHash) {
     if (!this.state.site) return;
     await adminApi.removeMasterContact(this.state.site.siteId, emailHash);
     await this.openSite(this.state.site.siteId);
   }
 
+  /**
+   * Issue a setup code from the arbitrary email form.
+   * @param {HTMLFormElement} form
+   * @returns {Promise<void>}
+   */
   async issueSetupCode(form) {
     if (!this.state.site) return;
     const email = new FormData(form).get("setup-email");
@@ -123,6 +214,11 @@ class AdminApp extends HTMLElement {
     form.reset();
   }
 
+  /**
+   * Issue a setup code to a specific email on the currently open site.
+   * @param {string} email
+   * @returns {Promise<void>}
+   */
   async issueSetupCodeForEmail(email) {
     if (!this.state.site || !email.trim()) return;
     const result = await adminApi.issueSetupCode(
@@ -133,12 +229,21 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  /**
+   * Revoke a registered site device.
+   * @param {string} deviceId
+   * @returns {Promise<void>}
+   */
   async revokeDevice(deviceId) {
     if (!this.state.site) return;
     await adminApi.revokeDevice(this.state.site.siteId, deviceId);
     await this.openSite(this.state.site.siteId);
   }
 
+  /**
+   * Bind event handlers to the currently rendered DOM.
+   * @returns {void}
+   */
   bind() {
     this.querySelector("#sign-in")?.addEventListener("click", async () => {
       this.state.authBusy = true;
@@ -160,61 +265,65 @@ class AdminApp extends HTMLElement {
     });
     this.querySelector("#provider-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createProvider(e.currentTarget);
+      this.createProvider(asForm(e.currentTarget));
     });
     this.querySelector("#site-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createSite(e.currentTarget);
+      this.createSite(asForm(e.currentTarget));
     });
     this.querySelector("#contact-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.addMasterContact(e.currentTarget);
+      this.addMasterContact(asForm(e.currentTarget));
     });
     this.querySelector("#setup-code-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.issueSetupCode(e.currentTarget);
+      this.issueSetupCode(asForm(e.currentTarget));
     });
     this.querySelectorAll("[data-provider]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.openProvider(button.getAttribute("data-provider")),
+        this.openProvider(dataAttr(button, "data-provider")),
       );
     });
     this.querySelectorAll("[data-deactivate-provider]").forEach((button) => {
       button.addEventListener("click", () =>
         this.deactivateProvider(
-          button.getAttribute("data-deactivate-provider"),
+          dataAttr(button, "data-deactivate-provider"),
         ),
       );
     });
     this.querySelectorAll("[data-site]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.openSite(button.getAttribute("data-site")),
+        this.openSite(dataAttr(button, "data-site")),
       );
     });
     this.querySelectorAll("[data-deactivate-site]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.deactivateSite(button.getAttribute("data-deactivate-site")),
+        this.deactivateSite(dataAttr(button, "data-deactivate-site")),
       );
     });
     this.querySelectorAll("[data-remove-contact]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.removeMasterContact(button.getAttribute("data-remove-contact")),
+        this.removeMasterContact(dataAttr(button, "data-remove-contact")),
       );
     });
     this.querySelectorAll("[data-issue-contact-code]").forEach((button) => {
       button.addEventListener("click", () =>
         this.issueSetupCodeForEmail(
-          button.getAttribute("data-issue-contact-code") || "",
+          dataAttr(button, "data-issue-contact-code"),
         ),
       );
     });
     this.querySelectorAll("[data-revoke-device]").forEach((button) => {
       button.addEventListener("click", () =>
-        this.revokeDevice(button.getAttribute("data-revoke-device")),
+        this.revokeDevice(dataAttr(button, "data-revoke-device")),
       );
     });
   }
 
+  /**
+   * Render the current admin application state.
+   * @returns {void}
+   */
   render() {
     const provider = this.state.provider;
     const site = this.state.site;
@@ -391,6 +500,24 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
+
+/**
+ * @param {EventTarget | null} target
+ * @returns {HTMLFormElement}
+ */
+function asForm(target) {
+  if (target instanceof HTMLFormElement) return target;
+  throw new TypeError("Expected form event target");
+}
+
+/**
+ * @param {Element} element
+ * @param {string} name
+ * @returns {string}
+ */
+function dataAttr(element, name) {
+  return element.getAttribute(name) ?? "";
+}
 
 /**
  * @param {unknown} value
