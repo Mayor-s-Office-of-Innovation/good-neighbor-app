@@ -351,7 +351,7 @@ async function run(placeId, itemId) {
     let artifactId = item.analysis?.artifactId;
     if (!artifactId) {
       if (item.kind === "text") {
-        updateItem(placeId, itemId, { upload: { status: "uploaded" } });
+        updateItem(placeId, itemId, { upload: { status: "uploading" } });
         artifactId = await registerTextArtifact(check.id, {
           placeId,
           placeName: place.name,
@@ -379,10 +379,17 @@ async function run(placeId, itemId) {
     await evaluateArtifact(check.id, placeId, itemId, artifactId);
   } catch (err) {
     console.error("analyzeEvidenceItem failed", err);
+    const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
+      (candidate) => candidate.id === itemId,
+    );
+    const hasUploadedArtifact = Boolean(
+      latestItem?.upload?.status === "uploaded" &&
+        (latestItem?.analysis?.artifactId || latestItem?.upload?.artifactId),
+    );
     updateItem(placeId, itemId, {
       upload: {
-        ...(item.upload || {}),
-        status: item.upload?.status === "uploaded" ? "uploaded" : "failed",
+        ...(latestItem?.upload || item.upload || {}),
+        status: hasUploadedArtifact ? "uploaded" : "failed",
       },
     });
     updateItemAnalysis(placeId, itemId, {

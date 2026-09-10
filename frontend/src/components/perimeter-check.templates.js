@@ -365,7 +365,7 @@ function expandedPlace(place, openMenuItemId, photoMenuAnchor) {
 }
 
 function photoMode(place, openMenuItemId, photoMenuAnchor) {
-  const photos = place.items.filter((item) => item.kind === "photo");
+  const photos = orderedPhotoItems(place.items);
   const openMenuItem = photos.find((item) => item.id === openMenuItemId);
   return html`
     ${photos.length === 0
@@ -408,7 +408,16 @@ function photoMode(place, openMenuItemId, photoMenuAnchor) {
   `;
 }
 
+/**
+ * @param {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>} items
+ * @returns {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>}
+ */
+export function orderedPhotoItems(items) {
+  return items.filter((item) => item.kind === "photo").reverse();
+}
+
 function textMode(place) {
+  const canSaveText = canSubmitTextDescription(place.draftText);
   return html`
     <p class="place-row__prompt">
       Describe the whole area, even if there are no problems.
@@ -427,6 +436,14 @@ ${escapeHtml(place.draftText || "")}</textarea
     </label>
     <div class="place-row__actions">
       <button
+        class="btn-pill btn-pill--filled"
+        type="button"
+        data-review-text="${escapeAttr(place.id)}"
+        ${canSaveText ? "" : "disabled"}
+      >
+        Save changes
+      </button>
+      <button
         class="btn-pill btn-pill--outline"
         type="button"
         data-photo-place="${escapeAttr(place.id)}"
@@ -435,6 +452,14 @@ ${escapeHtml(place.draftText || "")}</textarea
       </button>
     </div>
   `;
+}
+
+/**
+ * @param {string | undefined | null} text
+ * @returns {boolean}
+ */
+export function canSubmitTextDescription(text) {
+  return String(text || "").trim().length >= 5;
 }
 
 function addPhotoTile(label, placeId) {
