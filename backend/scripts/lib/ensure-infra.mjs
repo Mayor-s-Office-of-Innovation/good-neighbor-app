@@ -76,6 +76,8 @@ const TABLE_SCHEMA = {
     { AttributeName: "gsi4sk", AttributeType: "S" },
     { AttributeName: "gsi5pk", AttributeType: "S" },
     { AttributeName: "gsi5sk", AttributeType: "S" },
+    { AttributeName: "gsi6pk", AttributeType: "S" },
+    { AttributeName: "gsi6sk", AttributeType: "S" },
   ],
   KeySchema: [
     { AttributeName: "pk", KeyType: "HASH" },
@@ -111,6 +113,14 @@ const TABLE_SCHEMA = {
       KeySchema: [
         { AttributeName: "gsi5pk", KeyType: "HASH" },
         { AttributeName: "gsi5sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "GSI6",
+      KeySchema: [
+        { AttributeName: "gsi6pk", KeyType: "HASH" },
+        { AttributeName: "gsi6sk", KeyType: "RANGE" },
       ],
       Projection: { ProjectionType: "ALL" },
     },

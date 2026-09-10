@@ -1,19 +1,5 @@
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
-import { getDynamoTableName } from "../config.js";
-import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-
-/**
- * @typedef {object} ProviderSiteCodeItem
- * @property {string} pk
- * @property {string} sk
- * @property {"providerSiteCode"} type
- * @property {string} code
- * @property {boolean} active
- * @property {string} providerSiteId
- * @property {string} siteId
- * @property {string} siteName
- */
+import { validateSetupCode } from "./setup-codes.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const handler = async (event) => {
@@ -26,24 +12,17 @@ export const handler = async (event) => {
     return jsonResponse(400, { error: "missing_site_code" });
   }
 
-  const res = await ddb.send(
-    new GetCommand({
-      TableName: getDynamoTableName(),
-      Key: { pk: `SITE_CODE#${code}`, sk: "#META" },
-    }),
-  );
-
-  const item = /** @type {ProviderSiteCodeItem | undefined} */ (res.Item);
-  if (!item?.active || !item.siteId || !item.siteName) {
+  const valid = await validateSetupCode(code);
+  if (!valid) {
     return jsonResponse(401, { error: "invalid_site_code" });
   }
 
   return jsonResponse(200, {
     code,
     providerSite: {
-      id: item.providerSiteId,
-      siteId: item.siteId,
-      name: item.siteName,
+      id: valid.providerSiteId,
+      siteId: valid.siteId,
+      name: valid.siteName,
     },
   });
 };

@@ -47,7 +47,9 @@ export function buildProxyEvent({
   const sub = flatHeaders["x-debug-sub"] ?? defaultSub;
   // X-Debug-Site stands in for the authorizer-injected `custom:siteId` claim
   // (deployed value comes from the device token; see lambda/authorizer.js).
+  // X-Debug-Groups stands in for Cognito groups on admin routes.
   const siteId = flatHeaders["x-debug-site"] ?? defaultSite;
+  const groups = flatHeaders["x-debug-groups"] ?? "";
   const requestId = randomUUID();
 
   return {
@@ -80,7 +82,11 @@ export function buildProxyEvent({
       // (X-Debug-Site) are the only claims the handlers read.
       authorizer: {
         jwt: {
-          claims: { sub, ...(siteId ? { "custom:siteId": siteId } : {}) },
+          claims: {
+            sub,
+            ...(siteId ? { "custom:siteId": siteId } : {}),
+            ...(groups ? { "cognito:groups": groups } : {}),
+          },
           scopes: [],
         },
       },

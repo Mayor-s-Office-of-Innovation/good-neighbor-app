@@ -45,6 +45,9 @@
 - **[security-review.md](./security-review.md)** — the written security review: threat model,
   auth postures (demo deterrence-grade vs Option 3 real), hardening checklist, and the
   pre-launch TODOs.
+- **[site-code-lifecycle-plan.md](./site-code-lifecycle-plan.md)** — planned replacement for
+  fixed public site codes: request-by-email setup codes, revocation, and a separate central
+  support admin console.
 
 ## ADRs — `adr/`
 
