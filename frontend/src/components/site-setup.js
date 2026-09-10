@@ -35,6 +35,7 @@ class SiteSetup extends HTMLElement {
       error: "",
     };
     this._siteSearchTimer = null;
+    this._siteSearchGeneration = 0;
     this._render();
     if (this._code.length === CODE_LENGTH) {
       this._validate();
@@ -85,6 +86,7 @@ class SiteSetup extends HTMLElement {
     form?.addEventListener("input", () => this._syncRequestSubmit());
     form?.addEventListener("change", () => this._syncRequestSubmit());
     this.querySelector("#show-code-entry")?.addEventListener("click", () => {
+      this._cancelSiteSearch();
       this._mode = "code";
       this._render();
     });
@@ -148,6 +150,7 @@ class SiteSetup extends HTMLElement {
     const query = this._request.query;
     clearTimeout(this._siteSearchTimer);
     if (query.trim().length < 2) {
+      this._siteSearchGeneration += 1;
       const hadSearchUi =
         this._request.searching ||
         this._request.sites.length > 0 ||
@@ -159,22 +162,37 @@ class SiteSetup extends HTMLElement {
       }
       return;
     }
+    const generation = this._siteSearchGeneration + 1;
+    this._siteSearchGeneration = generation;
     this._request.searching = true;
     this._syncRequestStatus();
     this._siteSearchTimer = setTimeout(() => {
-      this._searchSites(query);
+      this._searchSites(query, generation);
     }, SITE_SEARCH_DELAY_MS);
   }
 
-  async _searchSites(query = this._request.query) {
+  async _searchSites(query = this._request.query, generation = this._siteSearchGeneration) {
     const result = await searchSites(query);
-    if (this._request.query !== query) return;
+    if (
+      this._mode !== "request" ||
+      this._siteSearchGeneration !== generation ||
+      this._request.query !== query
+    ) {
+      return;
+    }
     this._request.searching = false;
     this._request.sites = result.ok ? result.sites : [];
     this._request.error = result.ok
       ? ""
       : "We couldn't search sites. Try again in a moment.";
     this._renderRequestPreservingFocus();
+  }
+
+  _cancelSiteSearch() {
+    clearTimeout(this._siteSearchTimer);
+    this._siteSearchTimer = null;
+    this._siteSearchGeneration += 1;
+    this._request.searching = false;
   }
 
   _renderRequestPreservingFocus() {
