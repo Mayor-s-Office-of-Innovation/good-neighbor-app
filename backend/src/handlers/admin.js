@@ -15,6 +15,7 @@ import {
   issueSetupCode,
   normalizeEmail,
   revokePendingSetupCodes,
+  revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
 
 /**
@@ -417,6 +418,13 @@ export const deactivateSite = (event) =>
         ],
       }),
     );
+    await Promise.all([
+      revokePendingSetupCodesForSite({
+        siteId,
+        reason: "site_deactivated",
+      }),
+      revokeSiteDevices(siteId, now),
+    ]);
     return jsonResponse(200, {
       site: {
         ...site,
@@ -611,6 +619,42 @@ function contactDeactivator(prefix) {
       });
       return jsonResponse(200, { contact: res.Attributes });
     }));
+}
+
+/**
+ * @param {string} siteId
+ * @param {string} now
+ * @returns {Promise<void>}
+ */
+async function revokeSiteDevices(siteId, now) {
+  const devices = await queryAll({
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":device": "DEVICE#",
+    },
+  });
+
+  await Promise.all(
+    devices.map((device) =>
+      ddb.send(
+        new UpdateCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `SITE#${siteId}`, sk: device.sk },
+          UpdateExpression:
+            "SET #status = :revoked, revokedAt = :now, updatedAt = :now, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":revoked": "revoked",
+            ":now": now,
+            ":zero": 0,
+            ":one": 1,
+          },
+        }),
+      ),
+    ),
+  );
 }
 
 /**

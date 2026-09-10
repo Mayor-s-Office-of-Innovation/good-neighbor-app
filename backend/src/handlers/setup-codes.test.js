@@ -60,7 +60,7 @@ describe("validateSetupCode", () => {
         siteName: "City Hall",
         providerSiteId: "provider-site-1",
       },
-    });
+    }).mockResolvedValueOnce({ Item: { status: "active" } });
 
     const valid = await validateSetupCode("abc-123");
 
@@ -89,6 +89,24 @@ describe("validateSetupCode", () => {
         },
       })
       .mockResolvedValueOnce({});
+
+    await expect(validateSetupCode("ABC123")).resolves.toBeNull();
+  });
+
+  it("rejects setup codes for inactive sites", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          type: "setupCode",
+          status: "pending",
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          maxUses: 3,
+          uses: 0,
+          siteId: "site-1",
+          siteName: "City Hall",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { status: "inactive" } });
 
     await expect(validateSetupCode("ABC123")).resolves.toBeNull();
   });
@@ -142,6 +160,8 @@ describe("issueSetupCode", () => {
             status: "pending",
             gsi6pk: `SETUP_CODE_PENDING#site-1#${await emailHash("Lead@Example.org")}`,
             gsi6sk: "2026-01-01T00:00:00.000Z",
+            gsi7pk: "SETUP_CODE_PENDING_SITE#site-1",
+            gsi7sk: "2026-01-01T00:00:00.000Z",
           },
         ],
       })
@@ -171,6 +191,7 @@ describe("issueSetupCode", () => {
 
     const revoke = /** @type {PutCommand} */ (send.mock.calls[2][0]);
     expect(revoke.input.Item?.status).toBe("revoked");
+    expect(revoke.input.Item?.gsi7pk).toBeUndefined();
   });
 
   it("retries code collisions before revoking the previous pending code", async () => {

@@ -80,6 +80,7 @@ export async function validateSetupCode(rawCode, options = {}) {
   const setup = await getSetupCode(code, tableName);
   if (setup) {
     if (!isSetupCodeUsable(setup, now)) return null;
+    if (!(await isSiteActive(setup.siteId, tableName))) return null;
     return {
       kind: "setupCode",
       code,
@@ -94,6 +95,7 @@ export async function validateSetupCode(rawCode, options = {}) {
   // out. New production codes should use SETUP_CODE# verifier records.
   const legacy = await getLegacySiteCode(code, tableName);
   if (legacy?.active && legacy.siteId && legacy.siteName) {
+    if (!(await isSiteActive(legacy.siteId, tableName))) return null;
     return {
       kind: "legacy",
       code,
@@ -291,6 +293,19 @@ export async function revokePendingSetupCodes({
 }
 
 /**
+ * @param {{ siteId: string, reason?: string, now?: Date }} input
+ * @returns {Promise<void>}
+ */
+export async function revokePendingSetupCodesForSite({
+  siteId,
+  reason = "site_deactivated",
+  now = new Date(),
+}) {
+  const items = await queryPendingSetupCodesForSite(siteId);
+  await revokePendingSetupCodeItems(items, now.toISOString(), reason);
+}
+
+/**
  * @param {Record<string, unknown>[]} items
  * @param {string} nowIso
  * @param {string} reason
@@ -308,6 +323,8 @@ async function revokePendingSetupCodeItems(items, nowIso, reason) {
             updatedAt: nowIso,
             gsi6pk: undefined,
             gsi6sk: undefined,
+            gsi7pk: undefined,
+            gsi7sk: undefined,
           },
         }),
       ),
@@ -370,7 +387,52 @@ function setupCodeItem(input) {
     updatedAt: input.nowIso,
     gsi6pk: `SETUP_CODE_PENDING#${input.siteId}#${input.contactHash}`,
     gsi6sk: input.nowIso,
+    gsi7pk: `SETUP_CODE_PENDING_SITE#${input.siteId}`,
+    gsi7sk: input.nowIso,
   });
+}
+
+/**
+ * @param {string} siteId
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function queryPendingSetupCodesForSite(siteId) {
+  /** @type {Record<string, unknown>[]} */
+  const items = [];
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: getDynamoTableName(),
+        IndexName: "GSI7",
+        KeyConditionExpression: "gsi7pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": `SETUP_CODE_PENDING_SITE#${siteId}`,
+        },
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    items.push(...(res.Items ?? []));
+    exclusiveStartKey = res.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return items;
+}
+
+/**
+ * @param {string} siteId
+ * @param {string} tableName
+ * @returns {Promise<boolean>}
+ */
+async function isSiteActive(siteId, tableName) {
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: "#META" },
+    }),
+  );
+  const site = /** @type {{ status?: string } | undefined} */ (res.Item);
+  return Boolean(site && site.status !== "inactive");
 }
 
 /**

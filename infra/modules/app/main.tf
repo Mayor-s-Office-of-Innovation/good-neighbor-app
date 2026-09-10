@@ -428,6 +428,17 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
+  # GSI7 keys — pending setup codes by site.
+  attribute {
+    name = "gsi7pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi7sk"
+    type = "S"
+  }
+
   # GSI1 — checks timeline: SITE#<siteId> / <startedAt ISO>. (AP6, AP12)
   global_secondary_index {
     name            = "GSI1"
@@ -471,6 +482,15 @@ resource "aws_dynamodb_table" "app" {
     name            = "GSI6"
     hash_key        = "gsi6pk"
     range_key       = "gsi6sk"
+    projection_type = "ALL"
+  }
+
+  # GSI7 — sparse pending setup-code lookup for deactivating a site:
+  # SETUP_CODE_PENDING_SITE#<siteId> / <createdAt>.
+  global_secondary_index {
+    name            = "GSI7"
+    hash_key        = "gsi7pk"
+    range_key       = "gsi7sk"
     projection_type = "ALL"
   }
 
