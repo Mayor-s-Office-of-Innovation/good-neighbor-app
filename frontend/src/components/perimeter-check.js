@@ -58,6 +58,7 @@ import {
   addPlaceButton,
   footer,
   analyzingSection,
+  canSubmitTextDescription,
 } from "./perimeter-check.templates.js";
 
 class PerimeterCheck extends HTMLElement {
@@ -317,7 +318,7 @@ class PerimeterCheck extends HTMLElement {
     setPlaceDraftText(placeId, target.value);
     const button = this.querySelector(`[data-review-text="${placeId}"]`);
     if (button instanceof HTMLButtonElement) {
-      button.disabled = !target.value.trim();
+      button.disabled = !canSubmitTextDescription(target.value);
     }
   }
 
@@ -771,7 +772,7 @@ class PerimeterCheck extends HTMLElement {
       (candidate) => candidate.getAttribute("data-text-input") === placeId,
     );
     const text = input?.value?.trim();
-    if (!text) return;
+    if (!canSubmitTextDescription(text)) return;
     const record = addItem(placeId, { kind: "text", text });
     setPlaceDraftText(placeId, "");
     setAnalyzingOpen(true);
