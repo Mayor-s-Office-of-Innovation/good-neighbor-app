@@ -109,6 +109,27 @@ describe("provider and site management", () => {
     });
   });
 
+  it("lists providers across all provider search pages", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [{ providerId: "p1" }],
+        LastEvaluatedKey: { pk: "PROVIDER_SEARCH#ACTIVE", sk: "p1" },
+      })
+      .mockResolvedValueOnce({ Items: [{ providerId: "p2" }] });
+
+    const res = await call(listProviders, event());
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      providers: [{ providerId: "p1" }, { providerId: "p2" }],
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
+      pk: "PROVIDER_SEARCH#ACTIVE",
+      sk: "p1",
+    });
+  });
+
   it("issues setup codes for central support", async () => {
     send
       .mockResolvedValueOnce({
