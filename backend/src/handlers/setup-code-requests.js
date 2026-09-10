@@ -107,11 +107,7 @@ export const requestSetupCode = async (event) => {
   const masterContact = /** @type {any} */ (masterContactRes.Item);
   const authorized =
     codeContact?.status === "active" || masterContact?.status === "active";
-  if (
-    site?.siteId &&
-    site.status !== "inactive" &&
-    authorized
-  ) {
+  if (site?.siteId && site.status !== "inactive" && authorized) {
     const now = new Date();
     const throttleAcquired = await acquireRequestThrottle({
       siteId,

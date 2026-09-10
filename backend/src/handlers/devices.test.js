@@ -1,7 +1,4 @@
-import {
-  TransactWriteCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handlers' writes hit a spy, not AWS.
@@ -91,9 +88,8 @@ function putItem() {
   const transact = send.mock.calls
     .map(([cmd]) => cmd)
     .find((cmd) => cmd instanceof TransactWriteCommand);
-  return /** @type {any} */ (transact)?.input.TransactItems.find(
-    isDevicePut,
-  )?.Put.Item;
+  return /** @type {any} */ (transact)?.input.TransactItems.find(isDevicePut)
+    ?.Put.Item;
 }
 
 /**

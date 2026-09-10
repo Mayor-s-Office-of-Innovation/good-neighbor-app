@@ -171,7 +171,10 @@ class SiteSetup extends HTMLElement {
     }, SITE_SEARCH_DELAY_MS);
   }
 
-  async _searchSites(query = this._request.query, generation = this._siteSearchGeneration) {
+  async _searchSites(
+    query = this._request.query,
+    generation = this._siteSearchGeneration,
+  ) {
     const result = await searchSites(query);
     if (
       this._mode !== "request" ||

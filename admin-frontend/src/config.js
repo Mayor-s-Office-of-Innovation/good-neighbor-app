@@ -11,7 +11,9 @@ export function getAdminConfig() {
   return {
     cognitoDomain: String(globalConfig.cognitoDomain ?? "").replace(/\/$/, ""),
     clientId: String(globalConfig.clientId ?? ""),
-    redirectUri: String(globalConfig.redirectUri ?? location.origin + location.pathname),
+    redirectUri: String(
+      globalConfig.redirectUri ?? location.origin + location.pathname,
+    ),
     logoutUri: String(globalConfig.logoutUri ?? location.origin + "/"),
     apiBase: String(globalConfig.apiBase ?? "").replace(/\/$/, ""),
     localDebugAdmin: Boolean(globalConfig.localDebugAdmin),

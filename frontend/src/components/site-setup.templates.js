@@ -21,7 +21,11 @@ export const codeEntryView = ({
 
       <div class="login__copy">
         <h1 id="login-title">Welcome to Good Neighbor.</h1>
-        <p>${mode === "request" ? "Request a new site code" : "Enter a site code"}</p>
+        <p>
+          ${mode === "request"
+            ? "Request a new site code"
+            : "Enter a site code"}
+        </p>
       </div>
 
       ${mode === "request"

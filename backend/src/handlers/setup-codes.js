@@ -153,11 +153,7 @@ export async function issueSetupCode(input) {
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
   const contactHash = await emailHash(input.issuedTo);
-  for (
-    let attempt = 1;
-    attempt <= SETUP_CODE_ISSUANCE_ATTEMPTS;
-    attempt += 1
-  ) {
+  for (let attempt = 1; attempt <= SETUP_CODE_ISSUANCE_ATTEMPTS; attempt += 1) {
     const current = await getCurrentSetupCodeReference({
       siteId: input.siteId,
       contactHash,
@@ -174,7 +170,9 @@ export async function issueSetupCode(input) {
       if (!isConditionalCheckFailed(err)) throw err;
     }
   }
-  throw new Error("Unable to issue setup code after bounded contention retries");
+  throw new Error(
+    "Unable to issue setup code after bounded contention retries",
+  );
 }
 
 /**
@@ -565,7 +563,9 @@ async function isCurrentSetupCode(item, tableName) {
       ConsistentRead: true,
     }),
   );
-  const current = /** @type {CurrentSetupCodeReference | undefined} */ (res.Item);
+  const current = /** @type {CurrentSetupCodeReference | undefined} */ (
+    res.Item
+  );
   return current?.currentCodePk === item.pk;
 }
 
@@ -574,9 +574,7 @@ async function isCurrentSetupCode(item, tableName) {
  * @returns {boolean}
  */
 function isConditionalCheckFailed(err) {
-  return (
-    err instanceof Error && err.name === "ConditionalCheckFailedException"
-  );
+  return err instanceof Error && err.name === "ConditionalCheckFailedException";
 }
 
 /**
@@ -590,8 +588,9 @@ function randomCodeId() {
  * @returns {string}
  */
 function cryptoRandomFallback() {
-  return Array.from({ length: 16 }, () =>
-    CODE_ALPHABET[randomInt(CODE_ALPHABET.length)],
+  return Array.from(
+    { length: 16 },
+    () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)],
   ).join("");
 }
 

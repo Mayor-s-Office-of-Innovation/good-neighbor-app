@@ -187,6 +187,8 @@ resource "aws_cloudfront_distribution" "frontend" {
 resource "aws_cloudfront_distribution" "admin" {
   #checkov:skip=CKV_AWS_310:Single-origin static admin SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:City admin app — no geo restriction is intentional.
+  #checkov:skip=CKV_AWS_174:Custom SSL is configured with TLSv1.2_2021 whenever admin_domain_names is non-empty; the default certificate branch exists only for no-alias deployments.
+  #checkov:skip=CKV2_AWS_47:Log4j is covered by AWSManagedRulesKnownBadInputsRuleSet (active, non-override) on the attached WAF ACL.
   #checkov:skip=CKV2_AWS_42:Custom SSL is configured whenever admin_domain_names is non-empty; the default certificate branch exists only for no-alias deployments.
   enabled             = true
   is_ipv6_enabled     = true
