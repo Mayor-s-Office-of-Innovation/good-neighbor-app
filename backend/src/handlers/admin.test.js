@@ -69,11 +69,70 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(201);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx.input.TransactItems).toHaveLength(3);
+    expect(tx.input.TransactItems?.[0]).toMatchObject({
+      Put: {
+        Item: {
+          pk: "SITE#provider-one-main-site",
+          sk: "#META",
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+      },
+    });
+    expect(tx.input.TransactItems?.[1]).toMatchObject({
+      Put: {
+        Item: {
+          pk: "PROVIDER#provider-one",
+          sk: "SITE#provider-one-main-site",
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+      },
+    });
+    expect(tx.input.TransactItems?.[2]).toMatchObject({
+      Put: {
+        Item: {
+          pk: "SITE_SEARCH#ACTIVE",
+          sk: "main site#provider-one-main-site",
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+      },
+    });
     expect(JSON.parse(res.body).site).toMatchObject({
       siteId: "provider-one-main-site",
       providerId: "provider-one",
       name: "Main Site",
     });
+  });
+
+  it("does not write site companion records outside the create transaction", async () => {
+    const conflict = new Error("duplicate");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-one",
+          name: "Provider One",
+          status: "active",
+        },
+      })
+      .mockRejectedValueOnce(conflict);
+
+    await expect(
+      call(
+        createSite,
+        event({ name: "Main Site" }, "central-admin", {
+          providerId: "provider-one",
+        }),
+      ),
+    ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
   });
 
   it("adds master contacts to a site", async () => {
