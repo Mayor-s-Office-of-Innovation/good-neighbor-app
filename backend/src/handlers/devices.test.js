@@ -32,6 +32,7 @@ const SETUP_CODE_ITEM = {
   providerSiteId: "provider-1",
   siteId: "site-1",
   siteName: "City Hall",
+  issuedTo: "lead@example.org",
 };
 
 /** @param {string} secret */
@@ -206,6 +207,7 @@ describe("registerDevice", () => {
     send
       .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
       .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Item: { currentCodePk: SETUP_CODE_ITEM.pk } })
       .mockRejectedValueOnce(
         transactionCanceled([
           { Code: "None" },
@@ -223,6 +225,7 @@ describe("registerDevice", () => {
     send
       .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
       .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Item: { currentCodePk: SETUP_CODE_ITEM.pk } })
       .mockRejectedValueOnce(
         transactionCanceled([
           { Code: "TransactionConflict" },
