@@ -1,4 +1,4 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -11,6 +11,7 @@ import {
 } from "./setup-codes.js";
 
 const MAX_SITE_SEARCH_RESULTS = 25;
+const SETUP_CODE_REQUEST_COOLDOWN_MS = 15 * 60 * 1000;
 
 /**
  * GET /v1/sites:search?q=...
@@ -111,6 +112,14 @@ export const requestSetupCode = async (event) => {
     site.status !== "inactive" &&
     authorized
   ) {
+    const now = new Date();
+    const throttleAcquired = await acquireRequestThrottle({
+      siteId,
+      contactHash,
+      now,
+    });
+    if (!throttleAcquired) return jsonResponse(202, { message });
+
     const issued = await issueSetupCode({
       siteId,
       siteName: site?.name ?? "Good Neighbor site",
@@ -138,4 +147,43 @@ export const requestSetupCode = async (event) => {
  */
 function isPlausibleEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/**
+ * @param {{ siteId: string, contactHash: string, now: Date }} input
+ * @returns {Promise<boolean>}
+ */
+async function acquireRequestThrottle({ siteId, contactHash, now }) {
+  const nowIso = now.toISOString();
+  const nextAllowedAt = new Date(
+    now.getTime() + SETUP_CODE_REQUEST_COOLDOWN_MS,
+  ).toISOString();
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: getDynamoTableName(),
+        Item: {
+          pk: `SETUP_CODE_REQUEST#${siteId}#${contactHash}`,
+          sk: "#THROTTLE",
+          type: "setupCodeRequestThrottle",
+          siteId,
+          contactHash,
+          requestedAt: nowIso,
+          nextAllowedAt,
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) OR nextAllowedAt <= :now",
+        ExpressionAttributeValues: { ":now": nowIso },
+      }),
+    );
+    return true;
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.name === "ConditionalCheckFailedException"
+    ) {
+      return false;
+    }
+    throw err;
+  }
 }
