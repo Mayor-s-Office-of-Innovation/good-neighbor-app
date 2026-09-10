@@ -3,6 +3,7 @@ import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { ddb } from "../../db.js";
@@ -13,6 +14,8 @@ import {
   conditionKey,
   conditionTimelineGsi,
   GSI2_NAME,
+  siteMetaKey,
+  taskDisplayCounterKey,
   taskKey,
   taskWorklistPk,
   taskWorklistDateGsi,
@@ -37,6 +40,7 @@ import { logServerError } from "../../lib/log-server-error.js";
 const MAX_TRANSACTION_ITEMS = 100;
 const BATCH_GET_LIMIT = 100;
 const TASK_COMPLETION_LEASE_MS = 5 * 60 * 1000;
+const SHORT_CODE_LENGTH = 3;
 
 /**
  * @param {number} ms
@@ -53,6 +57,89 @@ function namedError(name, message) {
   const err = new Error(message);
   err.name = name;
   return err;
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} fallback
+ * @returns {string}
+ */
+function normalizeShortCode(value, fallback) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (normalized) return normalized;
+  return (
+    String(fallback)
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, SHORT_CODE_LENGTH) || "GNP"
+  );
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @returns {Promise<{ providerShortCode: string, siteShortCode: string }>}
+ */
+async function getTaskShortCodeParts({ tableName, siteId }) {
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: siteMetaKey(siteId),
+      ConsistentRead: true,
+    }),
+  );
+  const site = result.Item ?? {};
+  return {
+    providerShortCode: normalizeShortCode(
+      site.providerShortCode,
+      String(site.providerId ?? siteId),
+    ),
+    siteShortCode: normalizeShortCode(
+      site.siteShortCode,
+      String(site.name ?? siteId),
+    ),
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {number} opts.count
+ * @returns {Promise<string[]>}
+ */
+async function allocateTaskShortIds({ tableName, siteId, count }) {
+  if (count <= 0) return [];
+  const [codes, counter] = await Promise.all([
+    getTaskShortCodeParts({ tableName, siteId }),
+    ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: taskDisplayCounterKey(siteId),
+        UpdateExpression:
+          "SET entityType = if_not_exists(entityType, :entityType), #type = if_not_exists(#type, :type), siteId = if_not_exists(siteId, :siteId) ADD nextTaskDisplayNumber :count",
+        ExpressionAttributeNames: { "#type": "type" },
+        ExpressionAttributeValues: {
+          ":entityType": "COUNTER",
+          ":type": "task-display-id-counter",
+          ":siteId": siteId,
+          ":count": count,
+        },
+        ReturnValues: "UPDATED_NEW",
+      }),
+    ),
+  ]);
+  const end = Number(counter.Attributes?.nextTaskDisplayNumber ?? 0);
+  const start = end - count + 1;
+  return Array.from({ length: count }, (_, index) => {
+    const nnn = String(start + index).padStart(3, "0");
+    return `${codes.providerShortCode}-${codes.siteShortCode}-${nnn}`;
+  });
 }
 
 /**
@@ -368,6 +455,7 @@ function buildConditionItem({
  * @param {string} opts.conditionId
  * @param {import("./rule-catalog.js").GuidanceRule} opts.rule
  * @param {string} opts.taskId
+ * @param {string} opts.shortId
  * @param {string} opts.now
  * @returns {Record<string, unknown>}
  */
@@ -379,6 +467,7 @@ function buildTaskItem({
   conditionId,
   rule,
   taskId,
+  shortId,
   now,
 }) {
   const status = "open";
@@ -387,6 +476,7 @@ function buildTaskItem({
     ...taskKey(siteId, taskId),
     entityType: "TASK",
     taskId,
+    shortId,
     assessmentId,
     checkId,
     conditionId,
@@ -446,8 +536,8 @@ export async function storeEvaluatedAssessment(input, options) {
 
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
-  /** @type {Record<string, unknown>[]} */
-  const taskItems = [];
+  /** @type {Parameters<typeof buildTaskItem>[0][]} */
+  const pendingTaskInputs = [];
 
   for (const [index, condition] of input.conditions.entries()) {
     const conditionId =
@@ -477,18 +567,17 @@ export async function storeEvaluatedAssessment(input, options) {
     if (evaluation && evaluation.kind === "outcome") {
       const taskId = idFactory();
       taskIds.push(taskId);
-      taskItems.push(
-        buildTaskItem({
-          siteId: input.siteId,
-          assessmentId: input.assessmentId,
-          checkId: input.checkId,
-          condition,
-          conditionId,
-          rule: evaluation.rule,
-          taskId,
-          now,
-        }),
-      );
+      pendingTaskInputs.push({
+        siteId: input.siteId,
+        assessmentId: input.assessmentId,
+        checkId: input.checkId,
+        condition,
+        conditionId,
+        rule: evaluation.rule,
+        taskId,
+        shortId: "",
+        now,
+      });
     }
 
     conditionItems.push(
@@ -508,6 +597,15 @@ export async function storeEvaluatedAssessment(input, options) {
       }),
     );
   }
+
+  const shortIds = await allocateTaskShortIds({
+    tableName: options.tableName,
+    siteId: input.siteId,
+    count: pendingTaskInputs.length,
+  });
+  const taskItems = pendingTaskInputs.map((taskInput, index) =>
+    buildTaskItem({ ...taskInput, shortId: shortIds[index] }),
+  );
 
   const conditionsNeedAnswer = conditionItems.filter(
     (item) => item.status === "needs_answer",
@@ -807,6 +905,11 @@ export async function answerCondition(opts) {
     let taskIds = /** @type {string[]} */ (conditionItem.taskIds ?? []);
     if (evaluation.kind === "outcome") {
       const taskId = (opts.idFactory ?? randomUUID)();
+      const [shortId] = await allocateTaskShortIds({
+        tableName: opts.tableName,
+        siteId: opts.siteId,
+        count: 1,
+      });
       taskIds = [...taskIds, taskId];
       taskItem = buildTaskItem({
         siteId: opts.siteId,
@@ -829,6 +932,7 @@ export async function answerCondition(opts) {
         conditionId: opts.conditionId,
         rule: evaluation.rule,
         taskId,
+        shortId,
         now,
       });
     }
