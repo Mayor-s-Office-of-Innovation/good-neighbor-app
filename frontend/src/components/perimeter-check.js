@@ -47,7 +47,6 @@ import {
   getOpenPhotoMenuItemId,
   setOpenPhotoMenuItemId,
   setPlaceDraftText,
-  updateItem,
   updateItemAnalysis,
   markCaptureComplete,
   onCheckSessionChange,
@@ -59,6 +58,7 @@ import {
   addPlaceButton,
   footer,
   analyzingSection,
+  canSubmitTextDescription,
 } from "./perimeter-check.templates.js";
 
 class PerimeterCheck extends HTMLElement {
@@ -237,15 +237,7 @@ class PerimeterCheck extends HTMLElement {
     if (!check) return;
     for (const placeId of check.placeOrder || []) {
       for (const item of check.places[placeId]?.items || []) {
-        const analysisStatus = item.analysis?.status;
-        const hasUploadedArtifact = Boolean(
-          item.upload?.status === "uploaded" &&
-            (item.analysis?.artifactId || item.upload?.artifactId),
-        );
-        const shouldResume =
-          ["queued", "analyzing"].includes(analysisStatus) ||
-          (analysisStatus === "failed" && hasUploadedArtifact);
-        if (shouldResume) {
+        if (shouldResumeEvidenceItem(item)) {
           analyzeEvidenceItem(placeId, item.id);
         }
       }
@@ -322,7 +314,12 @@ class PerimeterCheck extends HTMLElement {
     const target = e.target;
     if (!(target instanceof HTMLTextAreaElement)) return;
     const placeId = target.getAttribute("data-text-input");
-    if (placeId) setPlaceDraftText(placeId, target.value);
+    if (!placeId) return;
+    setPlaceDraftText(placeId, target.value);
+    const button = findReviewTextButton(this, placeId);
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = !canSubmitTextDescription(target.value);
+    }
   }
 
   _onFooterClick(e) {
@@ -775,10 +772,9 @@ class PerimeterCheck extends HTMLElement {
       (candidate) => candidate.getAttribute("data-text-input") === placeId,
     );
     const text = input?.value?.trim();
-    if (!text) return;
+    if (!canSubmitTextDescription(text)) return;
     const record = addItem(placeId, { kind: "text", text });
     setPlaceDraftText(placeId, "");
-    updateItem(placeId, record.id, { upload: { status: "uploaded" } });
     setAnalyzingOpen(true);
     analyzeEvidenceItem(record.placeId, record.id);
     this._advanceOrSkip(placeId);
@@ -893,3 +889,29 @@ class PerimeterCheck extends HTMLElement {
 }
 
 customElements.define("perimeter-check", PerimeterCheck);
+
+export function shouldResumeEvidenceItem(item) {
+  const analysisStatus = item?.analysis?.status;
+  const hasArtifact = Boolean(
+    item?.analysis?.artifactId || item?.upload?.artifactId,
+  );
+  const hasUploadedArtifact = Boolean(
+    item?.upload?.status === "uploaded" && hasArtifact,
+  );
+  const isRetryableTextRegistration = Boolean(
+    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
+  );
+  return Boolean(
+    ["queued", "analyzing"].includes(analysisStatus) ||
+      (analysisStatus === "failed" &&
+        (hasUploadedArtifact || isRetryableTextRegistration)),
+  );
+}
+
+export function findReviewTextButton(root, placeId) {
+  return (
+    [...root.querySelectorAll("[data-review-text]")].find(
+      (candidate) => candidate.getAttribute("data-review-text") === placeId,
+    ) || null
+  );
+}
