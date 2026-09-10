@@ -1,4 +1,4 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -116,6 +116,7 @@ describe("requestSetupCode", () => {
       })
       .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({});
 
@@ -127,6 +128,9 @@ describe("requestSetupCode", () => {
     expect(res.statusCode).toBe(202);
     expect(JSON.parse(res.body).message).toContain("If that email");
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    const throttle = /** @type {PutCommand} */ (send.mock.calls[3][0]);
+    expect(throttle).toBeInstanceOf(PutCommand);
+    expect(throttle.input.Item?.pk).toMatch(/^SETUP_CODE_REQUEST#site-1#/);
     expect(sendSetupCodeEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "lead@example.org",
@@ -166,6 +170,7 @@ describe("requestSetupCode", () => {
       })
       .mockResolvedValueOnce({ Item: { status: "inactive" } })
       .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({});
 
@@ -181,6 +186,34 @@ describe("requestSetupCode", () => {
         siteName: "City Hall",
       }),
     );
+  });
+
+  it("returns the generic response without issuing when the request is throttled", async () => {
+    const throttled = new Error("cooldown");
+    throttled.name = "ConditionalCheckFailedException";
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(throttled);
+
+    const res = await callRequest({
+      siteId: "site-1",
+      email: "lead@example.org",
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.body).message).toContain("If that email");
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls[3][0]).toBeInstanceOf(PutCommand);
+    expect(sendSetupCodeEmail).not.toHaveBeenCalled();
   });
 });
 
