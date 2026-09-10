@@ -279,18 +279,72 @@ export const updateSite = (event) =>
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
     const now = new Date().toISOString();
-    const res = await ddb.send(
-      new UpdateCommand({
-        TableName: getDynamoTableName(),
+    const tableName = getDynamoTableName();
+    const siteRes = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
         Key: { pk: `SITE#${siteId}`, sk: "#META" },
-        UpdateExpression: "SET #name = :name, updatedAt = :now",
-        ConditionExpression: "attribute_exists(pk)",
-        ExpressionAttributeNames: { "#name": "name" },
-        ExpressionAttributeValues: { ":name": name, ":now": now },
-        ReturnValues: "ALL_NEW",
       }),
     );
-    return jsonResponse(200, { site: res.Attributes });
+    const site = /** @type {any} */ (siteRes.Item);
+    if (!site?.siteId) return jsonResponse(404, { error: "not_found" });
+
+    const nextSite = {
+      ...site,
+      name,
+      updatedAt: now,
+    };
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const transactItems = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          UpdateExpression: "SET #name = :name, updatedAt = :now",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeNames: { "#name": "name" },
+          ExpressionAttributeValues: { ":name": name, ":now": now },
+        },
+      },
+    ];
+    if (site.providerId) {
+      transactItems.push({
+        Update: {
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${site.providerId}`, sk: `SITE#${siteId}` },
+          UpdateExpression: "SET siteName = :name, updatedAt = :now",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeValues: { ":name": name, ":now": now },
+        },
+      });
+    }
+    if (site.status !== "inactive") {
+      const oldSearchSk = siteSearchSk(site.name, siteId);
+      const nextSearchSk = siteSearchSk(name, siteId);
+      if (oldSearchSk !== nextSearchSk) {
+        transactItems.push({
+          Delete: {
+            TableName: tableName,
+            Key: { pk: "SITE_SEARCH#ACTIVE", sk: oldSearchSk },
+          },
+        });
+      }
+      transactItems.push({
+        Put: {
+          TableName: tableName,
+          Item: siteSearchItem(
+            siteId,
+            name,
+            site.providerId,
+            site.providerName,
+            site.providerSiteId,
+            now,
+          ),
+        },
+      });
+    }
+    await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
+    return jsonResponse(200, { site: nextSite });
   });
 
 /**
@@ -581,22 +635,35 @@ function putSiteSearch(siteId, name, providerId, providerName, providerSiteId, n
   return ddb.send(
     new PutCommand({
       TableName: getDynamoTableName(),
-      Item: {
-        pk: "SITE_SEARCH#ACTIVE",
-        sk: siteSearchSk(name, siteId),
-        type: "siteSearch",
-        siteId,
-        siteName: name,
-        providerId,
-        providerName,
-        providerSiteId,
-        label: `${name} (${providerName})`,
-        searchText: `${name} ${providerName}`.toLowerCase(),
-        status: "active",
-        updatedAt: now,
-      },
+      Item: siteSearchItem(siteId, name, providerId, providerName, providerSiteId, now),
     }),
   );
+}
+
+/**
+ * @param {string} siteId
+ * @param {string} name
+ * @param {string} providerId
+ * @param {string} providerName
+ * @param {string} providerSiteId
+ * @param {string} now
+ * @returns {Record<string, unknown>}
+ */
+function siteSearchItem(siteId, name, providerId, providerName, providerSiteId, now) {
+  return {
+    pk: "SITE_SEARCH#ACTIVE",
+    sk: siteSearchSk(name, siteId),
+    type: "siteSearch",
+    siteId,
+    siteName: name,
+    providerId,
+    providerName,
+    providerSiteId,
+    label: `${name} (${providerName})`,
+    searchText: `${name} ${providerName}`.toLowerCase(),
+    status: "active",
+    updatedAt: now,
+  };
 }
 
 /**

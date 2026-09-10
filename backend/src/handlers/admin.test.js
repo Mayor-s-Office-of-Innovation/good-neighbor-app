@@ -17,6 +17,7 @@ const {
   issueAdminSetupCode,
   listProviders,
   revokeDevice,
+  updateSite,
 } = await import("./admin.js");
 
 beforeEach(() => {
@@ -187,6 +188,56 @@ describe("provider and site management", () => {
     expect(JSON.parse(res.body).site).toMatchObject({
       siteId: "site-1",
       status: "inactive",
+    });
+  });
+
+  it("updates provider membership and public search records when renaming sites", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerId: "provider-one",
+          providerName: "Provider One",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event({ name: "Civic Center" }, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems?.[1]).toMatchObject({
+      Update: {
+        Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
+        UpdateExpression: expect.stringContaining("siteName"),
+      },
+    });
+    expect(tx.input.TransactItems?.[2]).toMatchObject({
+      Delete: {
+        Key: { pk: "SITE_SEARCH#ACTIVE", sk: "city hall#site-1" },
+      },
+    });
+    expect(tx.input.TransactItems?.[3]).toMatchObject({
+      Put: {
+        Item: {
+          pk: "SITE_SEARCH#ACTIVE",
+          sk: "civic center#site-1",
+          siteName: "Civic Center",
+          label: "Civic Center (Provider One)",
+          searchText: "civic center provider one",
+        },
+      },
+    });
+    expect(JSON.parse(res.body).site).toMatchObject({
+      siteId: "site-1",
+      name: "Civic Center",
     });
   });
 });
