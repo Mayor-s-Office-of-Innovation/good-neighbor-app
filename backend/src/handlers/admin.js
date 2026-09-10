@@ -229,22 +229,44 @@ export const createSite = (event) =>
       createdAt: now,
       updatedAt: now,
     };
-    await Promise.all([
-      ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: site,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      ),
-      ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: membership,
-        }),
-      ),
-      putSiteSearch(siteId, name, providerId, provider.Item.name, providerSiteId, now),
-    ]);
+    const tableName = getDynamoTableName();
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName,
+              Item: site,
+              ConditionExpression:
+                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: membership,
+              ConditionExpression:
+                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: siteSearchItem(
+                siteId,
+                name,
+                providerId,
+                provider.Item.name,
+                providerSiteId,
+                now,
+              ),
+              ConditionExpression:
+                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+            },
+          },
+        ],
+      }),
+    );
     return jsonResponse(201, { site });
   });
 
@@ -615,24 +637,6 @@ function putProviderSearch(providerId, name, now) {
         status: "active",
         updatedAt: now,
       },
-    }),
-  );
-}
-
-/**
- * @param {string} siteId
- * @param {string} name
- * @param {string} providerId
- * @param {string} providerName
- * @param {string} providerSiteId
- * @param {string} now
- * @returns {Promise<unknown>}
- */
-function putSiteSearch(siteId, name, providerId, providerName, providerSiteId, now) {
-  return ddb.send(
-    new PutCommand({
-      TableName: getDynamoTableName(),
-      Item: siteSearchItem(siteId, name, providerId, providerName, providerSiteId, now),
     }),
   );
 }
