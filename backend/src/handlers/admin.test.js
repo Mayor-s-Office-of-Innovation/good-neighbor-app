@@ -1,4 +1,9 @@
-import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -8,6 +13,7 @@ const {
   createMasterContact,
   createProvider,
   createSite,
+  deactivateSite,
   issueAdminSetupCode,
   listProviders,
   revokeDevice,
@@ -148,6 +154,40 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(200);
     const update = /** @type {any} */ (send.mock.calls[0][0]);
     expect(update.input.UpdateExpression).toContain("tokenGeneration");
+  });
+
+  it("removes the public search record when deactivating sites", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      deactivateSite,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems?.[1]).toMatchObject({
+      Delete: {
+        Key: {
+          pk: "SITE_SEARCH#ACTIVE",
+          sk: "city hall#site-1",
+        },
+      },
+    });
+    expect(JSON.parse(res.body).site).toMatchObject({
+      siteId: "site-1",
+      status: "inactive",
+    });
   });
 });
 
