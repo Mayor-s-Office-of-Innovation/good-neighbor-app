@@ -132,7 +132,7 @@ describe("consumeSetupCodeTransactItem", () => {
 });
 
 describe("issueSetupCode", () => {
-  it("invalidates prior pending code for the same site/contact and writes a six-character code", async () => {
+  it("writes a six-character code before revoking prior pending codes", async () => {
     send
       .mockResolvedValueOnce({
         Items: [
@@ -165,11 +165,53 @@ describe("issueSetupCode", () => {
     expect(query).toBeInstanceOf(QueryCommand);
     expect(query.input.IndexName).toBe("GSI6");
 
-    const revoke = /** @type {PutCommand} */ (send.mock.calls[1][0]);
-    expect(revoke.input.Item?.status).toBe("revoked");
-
-    const put = /** @type {PutCommand} */ (send.mock.calls[2][0]);
+    const put = /** @type {PutCommand} */ (send.mock.calls[1][0]);
     expect(put.input.Item?.pk).toMatch(/^SETUP_CODE#/);
+    expect(put.input.ConditionExpression).toBe("attribute_not_exists(pk)");
+
+    const revoke = /** @type {PutCommand} */ (send.mock.calls[2][0]);
+    expect(revoke.input.Item?.status).toBe("revoked");
+  });
+
+  it("retries code collisions before revoking the previous pending code", async () => {
+    const collision = new Error("collision");
+    collision.name = "ConditionalCheckFailedException";
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SETUP_CODE#old",
+            sk: "#META",
+            status: "pending",
+          },
+        ],
+      })
+      .mockRejectedValueOnce(collision)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const { code } = await issueSetupCode({
+      siteId: "site-1",
+      siteName: "City Hall",
+      providerSiteId: "provider-site-1",
+      issuedTo: "lead@example.org",
+      issuedBy: "test",
+      now: new Date("2026-01-02T00:00:00.000Z"),
+      generateCode: vi
+        .fn()
+        .mockReturnValueOnce("AAAAAA")
+        .mockReturnValueOnce("BBBBBB"),
+    });
+
+    expect(code).toBe("BBBBBB");
+    const firstPut = /** @type {PutCommand} */ (send.mock.calls[1][0]);
+    const secondPut = /** @type {PutCommand} */ (send.mock.calls[2][0]);
+    const revoke = /** @type {PutCommand} */ (send.mock.calls[3][0]);
+    expect(firstPut.input.Item?.codeVerifier).not.toBe(
+      secondPut.input.Item?.codeVerifier,
+    );
+    expect(revoke.input.Item?.pk).toBe("SETUP_CODE#old");
+    expect(revoke.input.Item?.status).toBe("revoked");
   });
 });
 
