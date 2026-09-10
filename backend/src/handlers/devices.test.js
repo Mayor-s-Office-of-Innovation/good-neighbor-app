@@ -19,6 +19,21 @@ const SITE_CODE_ITEM = {
   siteName: "City Hall",
 };
 
+const SETUP_CODE_ITEM = {
+  pk: "SETUP_CODE#abc",
+  sk: "#META",
+  type: "setupCode",
+  codeId: "code-1",
+  codeVerifier: "abc",
+  status: "pending",
+  expiresAt: "2999-01-01T00:00:00.000Z",
+  maxUses: 3,
+  uses: 0,
+  providerSiteId: "provider-1",
+  siteId: "site-1",
+  siteName: "City Hall",
+};
+
 /** @param {string} secret */
 const withSecret = (secret) => {
   process.env.DEVICE_TOKEN_SECRET = secret;
@@ -86,6 +101,16 @@ function putItem() {
  */
 function isDevicePut(item) {
   return item.Put?.Item?.type === "device";
+}
+
+/**
+ * @param {Array<{ Code: string }>} reasons
+ * @returns {Error & { CancellationReasons: Array<{ Code: string }> }}
+ */
+function transactionCanceled(reasons) {
+  const err = new Error("transaction canceled");
+  err.name = "TransactionCanceledException";
+  return Object.assign(err, { CancellationReasons: reasons });
 }
 
 beforeEach(() => {
@@ -173,6 +198,37 @@ describe("registerDevice", () => {
     // …and advances the session generation (old tokens die).
     expect(item.tokenGeneration).toBe(5);
     expect(JSON.parse(res.body).tokenGeneration).toBe(5);
+  });
+
+  it("401s when dynamic setup-code consumption fails its condition", async () => {
+    send
+      .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ]),
+      );
+
+    const res = await callRegister({ code: "ABC123" });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe("invalid_site_code");
+  });
+
+  it("does not report unrelated transaction cancellations as invalid codes", async () => {
+    send
+      .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "TransactionConflict" },
+          { Code: "None" },
+        ]),
+      );
+
+    await expect(callRegister({ code: "ABC123" })).rejects.toMatchObject({
+      name: "TransactionCanceledException",
+    });
   });
 });
 
