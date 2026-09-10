@@ -408,6 +408,10 @@ function photoMode(place, openMenuItemId, photoMenuAnchor) {
   `;
 }
 
+/**
+ * @param {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>} items
+ * @returns {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>}
+ */
 export function orderedPhotoItems(items) {
   return items.filter((item) => item.kind === "photo").reverse();
 }
