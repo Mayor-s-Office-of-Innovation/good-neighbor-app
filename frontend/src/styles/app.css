@@ -337,8 +337,8 @@ form > wa-button[type="submit"] {
   display: grid;
   gap: 6px;
   color: var(--text);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: 0.875rem;
+  line-height: 1.429;
 }
 .login__field input {
   width: 100%;
@@ -377,8 +377,8 @@ form > wa-button[type="submit"] {
 .login__message {
   margin: 0;
   color: var(--text);
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 @media (max-width: 480px) {
