@@ -336,33 +336,40 @@ async function putMasterContact(docDdb, tableName, seed, now) {
  */
 async function putDynamicSetupCode(docDdb, tableName, seed, now) {
   const verifier = hashCode(seed.code);
-  await docDdb.send(
-    new PutCommand({
-      TableName: tableName,
-      Item: {
-        pk: `SETUP_CODE#${verifier}`,
-        sk: "#META",
-        type: "setupCode",
-        codeId: `seed-${seed.siteId}`,
-        codeVerifier: verifier,
-        status: "pending",
-        expiresAt: "2999-01-01T00:00:00.000Z",
-        maxUses: 3,
-        uses: 0,
-        siteId: seed.siteId,
-        siteName: seed.siteName,
-        providerId: seed.providerId,
-        providerName: seed.providerName,
-        providerSiteId: seed.providerSiteId,
-        issuedTo: seed.contactEmail.toLowerCase(),
-        issuedBy: "local-seed",
-        createdAt: now,
-        updatedAt: now,
-        gsi6pk: `SETUP_CODE_PENDING#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
-        gsi6sk: now,
-      },
-    }),
-  );
+  try {
+    await docDdb.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          pk: `SETUP_CODE#${verifier}`,
+          sk: "#META",
+          type: "setupCode",
+          codeId: `seed-${seed.siteId}`,
+          codeVerifier: verifier,
+          status: "pending",
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          maxUses: 3,
+          uses: 0,
+          siteId: seed.siteId,
+          siteName: seed.siteName,
+          providerId: seed.providerId,
+          providerName: seed.providerName,
+          providerSiteId: seed.providerSiteId,
+          issuedTo: seed.contactEmail.toLowerCase(),
+          issuedBy: "local-seed",
+          createdAt: now,
+          updatedAt: now,
+          gsi6pk: `SETUP_CODE_PENDING#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
+          gsi6sk: now,
+        },
+        ConditionExpression: "attribute_not_exists(pk)",
+      }),
+    );
+  } catch (err) {
+    if (/** @type {Error} */ (err).name !== "ConditionalCheckFailedException") {
+      throw err;
+    }
+  }
 }
 
 /**
