@@ -11,6 +11,7 @@ import { normalizeSiteCode } from "./site-code.js";
 const CODE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const SETUP_CODE_TTL_MS = 72 * 60 * 60 * 1000;
 const SETUP_CODE_MAX_USES = 3;
+const SETUP_CODE_GENERATION_ATTEMPTS = 5;
 const GENERIC_REQUEST_MESSAGE =
   "If that email is authorized for this site, we will send a new setup code.";
 
@@ -136,50 +137,24 @@ export function consumeSetupCodeTransactItem(valid, nowIso) {
 /**
  * Issue a setup code for a site/contact, invalidating any pending code for the
  * same pair before writing the replacement.
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now?: Date }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now?: Date, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 export async function issueSetupCode(input) {
   const now = input.now ?? new Date();
   const nowIso = now.toISOString();
-  const code = generateSetupCode();
   const contactHash = await emailHash(input.issuedTo);
-  const codeVerifier = await setupCodeVerifier(code);
-  const item = /** @type {SetupCodeItem} */ ({
-    pk: setupCodePkFromVerifier(codeVerifier),
-    sk: "#META",
-    type: "setupCode",
-    codeId: randomCodeId(),
-    codeVerifier,
-    status: "pending",
-    expiresAt: new Date(now.getTime() + SETUP_CODE_TTL_MS).toISOString(),
-    maxUses: SETUP_CODE_MAX_USES,
-    uses: 0,
+  const pendingCodes = await queryPendingSetupCodes({
     siteId: input.siteId,
-    siteName: input.siteName,
-    providerId: input.providerId,
-    providerName: input.providerName,
-    providerSiteId: input.providerSiteId,
-    issuedTo: normalizeEmail(input.issuedTo),
-    issuedBy: input.issuedBy,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-    gsi6pk: `SETUP_CODE_PENDING#${input.siteId}#${contactHash}`,
-    gsi6sk: nowIso,
+    contactHash,
   });
-
-  await invalidatePendingSetupCodes({
-    siteId: input.siteId,
-    issuedTo: input.issuedTo,
+  const { code, item } = await reserveSetupCode({
+    ...input,
+    now,
     nowIso,
+    contactHash,
   });
-  await ddb.send(
-    new PutCommand({
-      TableName: getDynamoTableName(),
-      Item: item,
-      ConditionExpression: "attribute_not_exists(pk)",
-    }),
-  );
+  await revokePendingSetupCodes(pendingCodes, nowIso);
 
   return { code, item };
 }
@@ -284,10 +259,10 @@ function isSetupCodeUsable(item, now) {
 }
 
 /**
- * @param {{ siteId: string, issuedTo: string, nowIso: string }} input
+ * @param {{ siteId: string, contactHash: string }} input
+ * @returns {Promise<Record<string, unknown>[]>}
  */
-async function invalidatePendingSetupCodes({ siteId, issuedTo, nowIso }) {
-  const contactHash = await emailHash(issuedTo);
+async function queryPendingSetupCodes({ siteId, contactHash }) {
   const res = await ddb.send(
     new QueryCommand({
       TableName: getDynamoTableName(),
@@ -298,9 +273,16 @@ async function invalidatePendingSetupCodes({ siteId, issuedTo, nowIso }) {
       },
     }),
   );
+  return res.Items ?? [];
+}
 
+/**
+ * @param {Record<string, unknown>[]} items
+ * @param {string} nowIso
+ */
+async function revokePendingSetupCodes(items, nowIso) {
   await Promise.all(
-    (res.Items ?? []).map((item) =>
+    items.map((item) =>
       ddb.send(
         new PutCommand({
           TableName: getDynamoTableName(),
@@ -315,6 +297,74 @@ async function invalidatePendingSetupCodes({ siteId, issuedTo, nowIso }) {
         }),
       ),
     ),
+  );
+}
+
+/**
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, generateCode?: () => string }} input
+ * @returns {Promise<{ code: string, item: SetupCodeItem }>}
+ */
+async function reserveSetupCode(input) {
+  for (
+    let attempt = 1;
+    attempt <= SETUP_CODE_GENERATION_ATTEMPTS;
+    attempt += 1
+  ) {
+    const code = input.generateCode?.() ?? generateSetupCode();
+    const codeVerifier = await setupCodeVerifier(code);
+    const item = setupCodeItem({ ...input, code, codeVerifier });
+    try {
+      await ddb.send(
+        new PutCommand({
+          TableName: getDynamoTableName(),
+          Item: item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+      return { code, item };
+    } catch (err) {
+      if (!isConditionalCheckFailed(err)) throw err;
+    }
+  }
+  throw new Error("Unable to issue a unique setup code after bounded retries");
+}
+
+/**
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
+ * @returns {SetupCodeItem}
+ */
+function setupCodeItem(input) {
+  return /** @type {SetupCodeItem} */ ({
+    pk: setupCodePkFromVerifier(input.codeVerifier),
+    sk: "#META",
+    type: "setupCode",
+    codeId: randomCodeId(),
+    codeVerifier: input.codeVerifier,
+    status: "pending",
+    expiresAt: new Date(input.now.getTime() + SETUP_CODE_TTL_MS).toISOString(),
+    maxUses: SETUP_CODE_MAX_USES,
+    uses: 0,
+    siteId: input.siteId,
+    siteName: input.siteName,
+    providerId: input.providerId,
+    providerName: input.providerName,
+    providerSiteId: input.providerSiteId,
+    issuedTo: normalizeEmail(input.issuedTo),
+    issuedBy: input.issuedBy,
+    createdAt: input.nowIso,
+    updatedAt: input.nowIso,
+    gsi6pk: `SETUP_CODE_PENDING#${input.siteId}#${input.contactHash}`,
+    gsi6sk: input.nowIso,
+  });
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isConditionalCheckFailed(err) {
+  return (
+    err instanceof Error && err.name === "ConditionalCheckFailedException"
   );
 }
 
