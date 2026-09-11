@@ -5,6 +5,10 @@
   The perimeter check is now a place-by-place capture container. Each photo or
   typed description is analyzed independently as soon as it is submitted.
 */
+import {
+  deleteAnalysisCard,
+  isDeletingAnalysisCard,
+} from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
 import {
@@ -379,6 +383,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _openDeleteProblem(problem) {
+    if (this._deletingProblem) return;
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
@@ -397,7 +402,7 @@ class PerimeterCheck extends HTMLElement {
 
   async _confirmDeleteProblem() {
     const problem = this._activeProblem;
-    if (!problem) return;
+    if (!problem || this._deletingProblem) return;
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
@@ -406,39 +411,53 @@ class PerimeterCheck extends HTMLElement {
       return;
     }
 
+    this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
-      const result = await rejectAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          reason: { key: "not_a_problem" },
-          caller: { request_id: this._requestId("delete", problem) },
+      await deleteAnalysisCard(
+        this,
+        problem,
+        async () => {
+          let result;
+          try {
+            result = await rejectAnalysisCondition(
+              problem.checkId,
+              problem.artifactId,
+              problem.conditionId,
+              {
+                reason: { key: "not_a_problem" },
+                caller: { request_id: this._requestId("delete", problem) },
+              },
+            );
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 404) throw err;
+            this._deleteProblemLocally(problem);
+            return;
+          }
+          if (problem.placeId && problem.itemId) {
+            await refreshEvidenceAnalysis(
+              problem.placeId,
+              problem.itemId,
+              result,
+              {
+                rejectedConditionId: problem.conditionId,
+              },
+            );
+          }
         },
+        () => this._render(),
       );
-      await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
-        rejectedConditionId: problem.conditionId,
-      });
-      this._analysisDeleteDialog?.close();
       this._activeProblem = null;
-      this._render();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        this._deleteProblemLocally(problem);
-        this._analysisDeleteDialog?.close();
-        this._activeProblem = null;
-        this._showToast("Problem deleted.");
-        return;
-      }
       console.error("delete analysis condition failed", err);
       this._setDialogError(
         "analysis-delete-error",
         "Could not delete this problem. Please try again.",
       );
     } finally {
+      this._deletingProblem = false;
       this._setBusy(button, false);
     }
   }
@@ -878,6 +897,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _render() {
+    if (isDeletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
     const timeline = this.querySelector("#place-timeline");

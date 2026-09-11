@@ -457,3 +457,24 @@ describe("home task status helpers", () => {
     ).toBe(true);
   });
 });
+
+describe("card deletion events", () => {
+  it.each([false, true])(
+    "handles child-originated deletion: %s",
+    async (fromChild) => {
+      await import("./today-view.js");
+      const registration = vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "today-view");
+      const View = /** @type {any} */ (registration[1]);
+      const view = new View();
+      view._viewPhase = "capture";
+      view._deferredDeletionRender = true;
+      view.connectedCallback = vi.fn();
+      view._cardDeletedHandler({ target: fromChild ? {} : view });
+      expect(view._deferredDeletionRender).toBe(false);
+      expect(view.connectedCallback).toHaveBeenCalledTimes(fromChild ? 1 : 0);
+      expect(view._focusAfterRender).toBe(fromChild ? "capture-heading" : null);
+    },
+  );
+});
