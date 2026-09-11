@@ -8,6 +8,114 @@ import {
 } from "./analysis-results.templates.js";
 
 describe("analysis result summaries", () => {
+  it("shows task short ids instead of raw assessment ids on task cards", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: "long-assessment-id" },
+          tasks: [
+            {
+              taskId: "task_1",
+              shortId: "GUB-STJ-001",
+              assessmentId: "long-assessment-id",
+              conditionId: "condition_tents",
+              category: "Tents, tarps, or bedding",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+              buttons: ["File 311 ticket"],
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_tents",
+              category: "Tents, tarps, or bedding",
+              description: "Tent on the sidewalk.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("NEW • GUB-STJ-001");
+    expect(cards[0]).not.toContain("long-assessment-id");
+  });
+
+  it("falls back to assessment ids for legacy task cards without display ids", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              assessmentId: "legacy-assessment-id",
+              conditionId: "condition_litter",
+              category: "Litter",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_litter",
+              category: "Litter",
+              description: "Trash is visible.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("NEW • legacy-assessment-id");
+  });
+
+  it("does not show raw assessment ids on condition cards awaiting answers", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: "long-assessment-id" },
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_blocking",
+              category: "Blocking access",
+              description: "A couch is blocking the sidewalk.",
+              needsAnswer: {
+                key: "onsite",
+                prompt: "Is this from your site?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain(">NEW</span>");
+    expect(cards[0]).not.toContain("long-assessment-id");
+  });
+
   it("renders task cards alongside unpaired condition questions", () => {
     const items = [
       {

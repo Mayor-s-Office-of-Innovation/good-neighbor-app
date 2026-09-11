@@ -11,6 +11,10 @@
   tasks are created. Markup is inline via the `html` tag; split into a
   .templates.js file if it grows (see CLAUDE.md convention).
 */
+import {
+  deleteAnalysisCard,
+  isDeletingAnalysisCard,
+} from "./analysis-card-deletion.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { getSite } from "../db.js";
 import {
@@ -508,6 +512,17 @@ class TodayView extends HTMLElement {
     this._viewPhase = "home";
     this._captureFlow = null;
     this._captureFinishedHandler = () => this._finishCapture();
+    this._cardDeletedHandler = (event) => {
+      if (!this._deferredDeletionRender) return;
+      this._deferredDeletionRender = false;
+      if (event.target === this) return;
+      this._focusAfterRender = ["capture", "entering-capture"].includes(
+        this._viewPhase,
+      )
+        ? "capture-heading"
+        : "home-primary-control";
+      void this.connectedCallback();
+    };
     this._captureFinishedListening = false;
     this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
@@ -521,11 +536,16 @@ class TodayView extends HTMLElement {
     this._sessionUnsub?.();
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
+    this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     this._captureFinishedListening = false;
     window.clearTimeout(this._capturePhaseTimer);
   }
 
   async connectedCallback() {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
         if (session?.status === "in-progress") {
@@ -539,6 +559,7 @@ class TodayView extends HTMLElement {
     }
     if (!this._captureFinishedListening) {
       this.addEventListener("capturefinished", this._captureFinishedHandler);
+      this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
       this._captureFinishedListening = true;
     }
 
@@ -648,6 +669,10 @@ class TodayView extends HTMLElement {
   }
 
   _renderHome(model) {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
     this._homeModel = model;
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
@@ -712,16 +737,18 @@ class TodayView extends HTMLElement {
       this.querySelector("#cancel-assessment-dialog")
     );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-delete-dialog")
+      this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
     this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-success-dialog")
+      this.querySelector(":scope > .home > #analysis-success-dialog")
     );
     this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-edit-dialog")
+      this.querySelector(":scope > .home > #analysis-edit-dialog")
     );
     this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector("#analysis-edit-description")
+      this.querySelector(
+        ":scope > .home > #analysis-edit-dialog #analysis-edit-description",
+      )
     );
     this.querySelector("#cancel-assessment-open")?.addEventListener(
       "click",
@@ -742,20 +769,21 @@ class TodayView extends HTMLElement {
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
-    this.querySelector("#analysis-delete-confirm")?.addEventListener(
-      "click",
-      () => this._confirmDeleteProblem(),
+    this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
+    )?.addEventListener("click", () => this._confirmDeleteProblem());
+    this.querySelector(
+      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+    )?.addEventListener("click", () => this._saveProblemEdit());
+    this.querySelectorAll(":scope > .home > .analysis-dialog").forEach(
+      (dialog) => {
+        dialog.addEventListener("click", (e) => {
+          if (e.target === dialog) {
+            /** @type {HTMLDialogElement} */ (dialog).close();
+          }
+        });
+      },
     );
-    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
-      this._saveProblemEdit(),
-    );
-    this.querySelectorAll(".analysis-dialog").forEach((dialog) => {
-      dialog.addEventListener("click", (e) => {
-        if (e.target === dialog) {
-          /** @type {HTMLDialogElement} */ (dialog).close();
-        }
-      });
-    });
     this._wireCards();
     this._restoreFocusAfterRender();
   }
@@ -1619,13 +1647,17 @@ class TodayView extends HTMLElement {
   }
 
   _wireCards() {
-    this.querySelectorAll("[data-task-id]").forEach((card) => {
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results [data-task-id]",
+    ).forEach((card) => {
       const taskId = card.getAttribute("data-task-id");
       const task = this._tasksById.get(taskId);
       if (!task) return;
       this._wireCardButtons(card, task);
     });
-    this.querySelectorAll(".analysis-card").forEach((card) => {
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results .analysis-card",
+    ).forEach((card) => {
       if (!card.querySelector("[data-analysis-action]")) return;
       const taskId = card.getAttribute("data-task-id");
       const task = taskId ? this._tasksById.get(taskId) || null : null;
@@ -1687,9 +1719,12 @@ class TodayView extends HTMLElement {
   }
 
   _openDeleteProblem(problem) {
+    if (this._deletingProblem) return;
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
-    const title = this.querySelector("#analysis-delete-title");
+    const title = this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
+    );
     if (title) title.textContent = `Delete "${problem.title}"?`;
     this._analysisDeleteDialog?.showModal();
   }
@@ -1705,7 +1740,7 @@ class TodayView extends HTMLElement {
 
   async _confirmDeleteProblem() {
     const problem = this._activeProblem;
-    if (!problem) return;
+    if (!problem || this._deletingProblem) return;
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
@@ -1714,41 +1749,55 @@ class TodayView extends HTMLElement {
       return;
     }
 
-    const button = this.querySelector("#analysis-delete-confirm");
+    this._deletingProblem = true;
+    const button = this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
+    );
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
-      const result = await rejectAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          reason: { key: "not_a_problem" },
-          caller: { request_id: this._requestId("delete", problem) },
+      await deleteAnalysisCard(
+        this,
+        problem,
+        async () => {
+          let result;
+          try {
+            result = await rejectAnalysisCondition(
+              problem.checkId,
+              problem.artifactId,
+              problem.conditionId,
+              {
+                reason: { key: "not_a_problem" },
+                caller: { request_id: this._requestId("delete", problem) },
+              },
+            );
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 404) throw err;
+            this._deleteProblemLocally(problem);
+            return;
+          }
+          if (problem.placeId && problem.itemId) {
+            await refreshEvidenceAnalysis(
+              problem.placeId,
+              problem.itemId,
+              result,
+              {
+                rejectedConditionId: problem.conditionId,
+              },
+            );
+          }
         },
+        () => this.connectedCallback(),
       );
-      if (problem.placeId && problem.itemId) {
-        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
-          rejectedConditionId: problem.conditionId,
-        });
-      }
-      this._analysisDeleteDialog?.close();
       this._activeProblem = null;
-      await this.connectedCallback();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        this._deleteProblemLocally(problem);
-        this._analysisDeleteDialog?.close();
-        this._activeProblem = null;
-        await this.connectedCallback();
-        return;
-      }
       console.error("delete analysis condition failed", err);
       this._setDialogError(
         "analysis-delete-error",
         "Could not delete this problem. Please try again.",
       );
     } finally {
+      this._deletingProblem = false;
       this._setBusy(button, false);
     }
   }
@@ -1777,7 +1826,9 @@ class TodayView extends HTMLElement {
         );
         return;
       }
-      const button = this.querySelector("#analysis-edit-save");
+      const button = this.querySelector(
+        ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+      );
       this._setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
@@ -1808,7 +1859,9 @@ class TodayView extends HTMLElement {
       return;
     }
 
-    const button = this.querySelector("#analysis-edit-save");
+    const button = this.querySelector(
+      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+    );
     this._setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
@@ -1960,7 +2013,11 @@ class TodayView extends HTMLElement {
   }
 
   _setInlineProblemError(problem, message) {
-    const card = [...this.querySelectorAll(".analysis-card")].find(
+    const card = [
+      ...this.querySelectorAll(
+        ":scope > .home > .home-region--results .analysis-card",
+      ),
+    ].find(
       (candidate) =>
         candidate.getAttribute("data-task-id") === problem.taskId &&
         (!problem.conditionId ||
@@ -1973,7 +2030,9 @@ class TodayView extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = this.querySelector(`#${id}`);
+    const error = this.querySelector(
+      `:scope > .home > .analysis-dialog #${id}`,
+    );
     if (!(error instanceof HTMLElement)) return;
     error.textContent = message;
     error.hidden = !message;
@@ -2130,6 +2189,10 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
     const identity = this._siteIdentity();
     this.innerHTML = html`
       <div class="home">
