@@ -79,6 +79,7 @@ class AppRoot extends HTMLElement {
 
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
+    this.append(document.createElement("app-toasts"));
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
   }

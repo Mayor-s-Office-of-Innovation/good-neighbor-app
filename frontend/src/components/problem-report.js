@@ -2,6 +2,8 @@
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
@@ -24,10 +26,7 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import {
-  appActionFailureMessage,
-  isFiled311Completion,
-} from "../domain/task-actions.js";
+import { isFiled311Completion } from "../domain/task-actions.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -120,6 +119,9 @@ class ProblemReport extends HTMLElement {
     }
     this._cleanupSubscription();
     this._unsubscribe = unsubscribe;
+    this._deletionUnsub = onDeletionsChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
 
     this.innerHTML = shell({
       embedded: this._embedded,
@@ -207,6 +209,8 @@ class ProblemReport extends HTMLElement {
   }
 
   _cleanupSubscription() {
+    this._deletionUnsub?.();
+    this._deletionUnsub = null;
     this._unsubscribe?.();
     this._unsubscribe = null;
   }
@@ -478,6 +482,7 @@ class ProblemReport extends HTMLElement {
 
     this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
@@ -498,10 +503,15 @@ class ProblemReport extends HTMLElement {
             );
           } catch (err) {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            this._deleteProblemLocally(problem);
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
             return;
           }
-          if (problem.placeId && problem.itemId) {
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
             await refreshEvidenceAnalysis(
               problem.placeId,
               problem.itemId,
@@ -509,10 +519,15 @@ class ProblemReport extends HTMLElement {
               {
                 rejectedConditionId: problem.conditionId,
               },
-            );
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
           }
         },
         () => this._render(),
+        { focusUndo },
       );
       this._activeProblem = null;
     } catch (err) {
@@ -542,7 +557,7 @@ class ProblemReport extends HTMLElement {
         problem.conditionId,
       ].filter(Boolean),
     });
-    this._render();
+    if (this.isConnected) this._render();
   }
 
   async _saveProblemEdit() {
@@ -620,19 +635,15 @@ class ProblemReport extends HTMLElement {
         });
         this._analysisProgressDialog?.close();
         if (!isFiled311Completion(result?.task)) {
-          this._showToast(
-            appActionFailureMessage(result?.task, {
-              includeUnsubmitted311: true,
-            }) || "Could not file the 311 ticket. Please try again.",
-          );
+          show311ErrorToast();
           return;
         }
         this._markProblemResolved(problem);
-        this._showToast("Success! 311 ticket filed.");
+        show311SuccessToast();
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
-        this._showToast("Could not file the 311 ticket. Please try again.");
+        show311ErrorToast();
       }
       return;
     }

@@ -130,3 +130,18 @@ from the pieces above and adds **no new visual vocabulary**: hub-card archetype 
 actions, and WA controls for the code field. The only setup-specific CSS is full-width CTAs and
 the "Don't have a code?" disclosure (`app.css`, "First-run setup"). That's the target shape for
 a screen matched to the design without a mockup.
+
+## Action notifications
+
+`app-toasts` lives outside the routed view. `show311SuccessToast()` uses the
+confirmed submission result and links to `/today?filter=in_progress`.
+`show311ErrorToast()` uses the same layout with a red circular cross and retry
+copy for unsuccessful submissions, including transport failures. It stays until
+dismissed; the task remains available to retry.
+`deleteAnalysisCard()` collapses the card and offers Undo for 10 seconds before
+saving the rejection. Hover, keyboard focus, and a hidden browser tab pause the
+timer; keyboard-triggered deletion focuses Undo. Dismissing the toast saves
+immediately. Failed saves restore the item and leave a dismissible error notice.
+The deletion overlay survives in-app navigation but is never persisted, so a
+reload or app close before saving cancels the pending deletion. Saves against
+the same evidence are serialized to avoid overlapping assessment refreshes.
