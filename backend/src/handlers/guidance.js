@@ -6,6 +6,7 @@ import {
   answerCondition,
   completeTaskWithAppActions,
   getAssessmentGuidance,
+  getPublishedAssessmentGuidance,
   markTaskCannotDo,
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
@@ -14,7 +15,7 @@ const MAX_ASSESSMENT_CONDITIONS = 49;
 
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
+ * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -114,6 +115,10 @@ function normalizeAssessmentBody(body) {
       typeof input.assessmentId === "string"
         ? input.assessmentId
         : randomUUID(),
+    previousAssessmentId:
+      typeof input.previousAssessmentId === "string"
+        ? input.previousAssessmentId
+        : undefined,
     checkId: typeof input.checkId === "string" ? input.checkId : undefined,
     reportedAt,
     rubricVersion:
@@ -162,8 +167,22 @@ export const evaluateAssessment = async (event) => {
       tasks: result.taskItems,
     });
   } catch (err) {
+    if (
+      err instanceof Error &&
+      ["AssessmentRevisionConflict", "TaskTransitionConflict"].includes(
+        err.name,
+      )
+    ) {
+      const existing = await getPublishedAssessmentGuidance({
+        tableName: dynamoTable,
+        siteId,
+        assessmentId: input.assessmentId,
+      });
+      if (existing.assessment) return jsonResponse(200, existing);
+      return jsonResponse(409, { code: err.name, error: err.message });
+    }
     if (err instanceof Error && err.name === "TransactionCanceledException") {
-      const existing = await getAssessmentGuidance({
+      const existing = await getPublishedAssessmentGuidance({
         tableName: dynamoTable,
         siteId,
         assessmentId: input.assessmentId,
@@ -173,7 +192,10 @@ export const evaluateAssessment = async (event) => {
         error: "Assessment evaluation was not stored",
       });
     }
-    if (err instanceof Error && err.name === "TransactionTooLarge") {
+    if (
+      err instanceof Error &&
+      ["TransactionTooLarge", "InvalidAssessmentRevision"].includes(err.name)
+    ) {
       return jsonResponse(400, { error: err.message });
     }
     throw err;
@@ -191,11 +213,18 @@ export const getGuidance = async (event) => {
   if (!assessmentId)
     return jsonResponse(400, { error: "Missing assessmentId" });
 
-  const result = await getAssessmentGuidance({
-    tableName: dynamoTable,
-    siteId,
-    assessmentId,
-  });
+  let result;
+  try {
+    result = await getPublishedAssessmentGuidance({
+      tableName: dynamoTable,
+      siteId,
+      assessmentId,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AssessmentRevisionConflict")
+      return jsonResponse(409, { code: err.name, error: err.message });
+    throw err;
+  }
   if (!result.assessment)
     return jsonResponse(404, { error: "Assessment not found" });
   return jsonResponse(200, result);
@@ -307,6 +336,9 @@ export const submitConditionAnswers = async (event) => {
     });
     return jsonResponse(200, result);
   } catch (err) {
+    if (err instanceof Error && err.name === "AssessmentRevisionConflict") {
+      return jsonResponse(409, { code: err.name, error: err.message });
+    }
     if (err instanceof Error && err.name === "NotFound") {
       return jsonResponse(404, { error: "Condition not found" });
     }

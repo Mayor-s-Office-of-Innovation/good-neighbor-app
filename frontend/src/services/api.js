@@ -281,7 +281,7 @@ export function getAssessmentGuidance(assessmentId) {
  * @param {string} assessmentId
  * @param {string} conditionId
  * @param {{ answers: Record<string, unknown> }} body
- * @returns {Promise<{ conditionItem: any, taskItem: any, evaluation: any }>}
+ * @returns {Promise<{ assessmentItem?: any, conditionItem: any, taskItem: any, evaluation: any }>}
  */
 export function submitConditionAnswers(assessmentId, conditionId, body) {
   return request(

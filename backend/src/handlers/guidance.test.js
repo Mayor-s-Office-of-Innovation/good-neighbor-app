@@ -527,3 +527,32 @@ describe("guidance handlers", () => {
     });
   });
 });
+
+it("resolves a replaced assessment through the current pointer", async () => {
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) return { Items: [] };
+    if (command instanceof GetCommand) {
+      const sk = command.input.Key?.sk;
+      if (sk === "ASSESSMENT#old")
+        return {
+          Item: {
+            assessmentId: "old",
+            checkId: "check",
+            lineageId: "artifact",
+            supersededByAssessmentId: "middle",
+          },
+        };
+      if (String(sk).startsWith("GUIDANCE_CURRENT#"))
+        return { Item: { assessmentId: "latest" } };
+      if (sk === "ASSESSMENT#latest")
+        return { Item: { assessmentId: "latest" } };
+    }
+    throw new Error("Unexpected database access");
+  });
+  const response = await invoke(
+    getGuidance,
+    event({ pathParameters: { assessmentId: "old" } }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(parse(response).assessment.assessmentId).toBe("latest");
+});
