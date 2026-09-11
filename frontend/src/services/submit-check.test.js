@@ -59,20 +59,8 @@ describe("submitErrorMessage", () => {
     expect(server).not.toBe(network);
   });
 
-  it("has a dedicated message for a missing assessment", () => {
-    const err = new Error("Check completed without an assessment to evaluate.");
-    /** @type {any} */ (err).leg = "assessment";
-    expect(submitErrorMessage(err)).toContain("results couldn’t be read");
-  });
-
   it("falls back to a generic message for an untagged error", () => {
     const msg = submitErrorMessage(new Error("boom"));
     expect(msg).toContain("Couldn’t file this check");
-  });
-
-  it("uses a leg's default when the cause is unmapped for that leg", () => {
-    // 'assessment' has only a default; any cause resolves to it.
-    const msg = submitErrorMessage(tagged("assessment", { status: 500 }));
-    expect(msg).toContain("results couldn’t be read");
   });
 });

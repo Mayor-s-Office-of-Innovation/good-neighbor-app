@@ -242,9 +242,10 @@ export function createCheck(checkId, body = {}) {
 
 /**
  * POST /v1/checks/{checkId}/complete — close the run: fold analyzed artifacts
- * into one scorecard and return an assessment envelope for guidance evaluation.
+ * into the header scorecard and return it. (Guidance minting is per-item at
+ * capture time; nothing consumes the envelope anymore.)
  * @param {string} checkId
- * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, assessmentReady?: boolean, assessment?: any }>}
+ * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number }>}
  */
 export function completeCheck(checkId) {
   return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`);
@@ -252,19 +253,13 @@ export function completeCheck(checkId) {
 
 /**
  * POST /v1/assessments:evaluate — store an assessment/report, evaluate
- * conditions, and create any immediately resolvable guidance tasks. `dispositions`
- * maps a condition's stable conditionId -> the reviewer's clarification
- * ("not_present" | "better" | "worse" | "other"). Every disposition is recorded
- * for false-positive analysis, but only "not_present" ("I don't see this problem")
- * suppresses task minting for that condition. Keying by conditionId (not category)
- * means disputing one condition never affects a sibling that shares its category.
+ * conditions, and create any immediately resolvable guidance tasks.
  * @param {any} assessment
- * @param {Record<string, string>} [dispositions]
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment, dispositions = {}) {
+export function evaluateAssessment(assessment) {
   return request("POST", "/v1/assessments:evaluate", {
-    body: { ...assessment, dispositions },
+    body: { ...assessment },
   });
 }
 
@@ -355,21 +350,6 @@ export function listChecks({ limit, nextToken } = {}) {
  */
 export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
-}
-
-/**
- * POST /v1/checks/{checkId}/places/{placeId}/description:validate
- * @param {string} checkId
- * @param {string} placeId
- * @param {{ text: string, placeName?: string }} body
- * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
- */
-export function validatePlaceDescription(checkId, placeId, body) {
-  return request(
-    "POST",
-    `/v1/checks/${encodeURIComponent(checkId)}/places/${encodeURIComponent(placeId)}/description:validate`,
-    { body },
-  );
 }
 
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
