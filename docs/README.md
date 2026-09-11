@@ -20,6 +20,10 @@
 - **[legacy-submit-path-retirement-plan.md](./legacy-submit-path-retirement-plan.md)** —
   approved plan to delete the unreachable pre-#192 batch submit + dispute pipeline
   (verified dead code, deletion batches, terraform inventory, verification gates).
+- **[admin-interface-simplification-plan.md](./admin-interface-simplification-plan.md)** —
+  companion plan for the post-#201 admin code: verified complexity findings
+  (dead issuance retry loop, stored-but-unread `codeId`, route-table drift, admin.js
+  split) with declines recorded; extends the retirement plan's PR-B/C/D batches.
 - **[ADR directory](./adr/)** — every significant decision and its "why" (numbered,
   immutable; superseded ADRs point forward). Start with
   [ADR 0001](./adr/0001-architecture-stack.md) → [ADR 0002](./adr/0002-datastore-dynamodb.md)
@@ -54,7 +58,10 @@
   pre-launch TODOs.
 - **[site-code-lifecycle-plan.md](./site-code-lifecycle-plan.md)** — planned replacement for
   fixed public site codes: request-by-email setup codes, revocation, and a separate central
-  support admin console.
+  support admin console. **Partial drift warning:** the built implementation deviates from
+  this plan's data-model sketch (global verifier pk + GSI6/7 instead of site-scoped
+  `SETUP_CODE#` keys) and its audit claim is unimplemented — deviations are being recorded
+  in [admin-interface-simplification-plan.md](./admin-interface-simplification-plan.md) § 2.6.
 
 ## ADRs — `adr/`
 

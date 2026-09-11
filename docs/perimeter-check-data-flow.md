@@ -5,6 +5,19 @@
 **Status:** Live flow — this is what happens today
 **Date:** 2026-09-10 · traced file-by-file against the code (anchors throughout)
 
+> **Accuracy warning (2026-09-11):** after this doc was written, the dead-code sweep in
+> [legacy-submit-path-retirement-plan.md](./legacy-submit-path-retirement-plan.md)
+> established that **§ 2–3 below narrate the unreachable legacy flow** (Continue-time
+> task minting, the dispute branch, the batch submit). The *live* flow mints tasks
+> per-item at capture-time `evaluateAssessment` (photo-analysis.js:134), Done only
+> finalizes the scorecard, and dispute-at-review is unreachable (its only disposition
+> sender is check-results.js:206-211). The record shapes, gates section (§ 4), and code
+> anchors (§ 5) remain accurate. § 2–3 and the dispute branch will be rewritten/cut in
+> the retirement plan's PR-D — until then, read § 1, § 4–6 as authoritative and treat
+> the phase framing in § 2–3 as the legacy picture. The two-phase "orientation" below is
+> likewise the legacy framing; the live flow is one continuous per-item pipeline with a
+> background scorecard fold at Done.
+
 This doc walks one typical perimeter check end-to-end: what the user does, what the app
 sends to the Street Conditions analyzer and what comes back, what lands in DynamoDB at
 each moment, and how the analysis data becomes the cards the user sees and dismisses.
