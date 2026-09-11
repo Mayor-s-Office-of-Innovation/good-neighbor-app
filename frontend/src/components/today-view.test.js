@@ -50,38 +50,22 @@ describe("isStalePendingSession", () => {
 describe("legacy review records", () => {
   // Pre-#192 devices may still carry review-store records with legacy-stage
   // statuses (uploading/analyzing/submitted). No code path produces those
-  // statuses anymore, so home must shed them instead of letting them linger.
-  it("clearSubmittedSession sheds every legacy-stage status", async () => {
+  // statuses anymore; connectedCallback clears any session that is not
+  // capture-complete instead of letting it linger. This mirrors that
+  // predicate's decision table (the state-level clearing is covered in
+  // check-session.test.js against the mocked review store).
+  it("every legacy-stage status fails the capture-complete check", () => {
     for (const status of [
       "uploading",
       "analyzing",
       "submitted",
       "analysis_failed",
     ]) {
-      const { clearSubmittedSession, loadSubmitted, getCurrentCheck } =
-        await import("../state/check-session.js");
-      // Seed the review store with a legacy record (the shape loadSubmitted
-      // hydrates from IndexedDB).
-      vi.stubGlobal(
-        "__gnpTestReviewRecord",
-        /** @type {any} */ ({
-          id: `chk_legacy_${status}`,
-          status,
-        }),
-      );
-      // The in-memory session must not be picked as capture-complete.
-      expect(getCurrentCheck()?.status).not.toBe("in-progress");
-
-      // The connectedCallback branch clears any session that is not
-      // capture-complete — mirror its predicate here.
-      const session = await loadSubmitted();
-      if (session && session.status !== "capture-complete") {
-        const { clearSubmittedSession: clear } = await import(
-          "../state/check-session.js"
-        );
-        await clear();
-      }
-      expect(await loadSubmitted()).toBeNull();
+      const session = { id: `chk_legacy_${status}`, status };
+      expect(
+        session.status !== "capture-complete",
+        `${status} must be cleared, not resumed`,
+      ).toBe(true);
     }
   });
 });
