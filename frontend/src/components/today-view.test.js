@@ -52,7 +52,12 @@ describe("legacy review records", () => {
   // statuses (uploading/analyzing/submitted). No code path produces those
   // statuses anymore, so home must shed them instead of letting them linger.
   it("clearSubmittedSession sheds every legacy-stage status", async () => {
-    for (const status of ["uploading", "analyzing", "submitted", "analysis_failed"]) {
+    for (const status of [
+      "uploading",
+      "analyzing",
+      "submitted",
+      "analysis_failed",
+    ]) {
       const { clearSubmittedSession, loadSubmitted, getCurrentCheck } =
         await import("../state/check-session.js");
       // Seed the review store with a legacy record (the shape loadSubmitted

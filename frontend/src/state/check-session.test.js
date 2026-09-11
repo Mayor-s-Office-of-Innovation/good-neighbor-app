@@ -70,9 +70,7 @@ describe("legacy review records", () => {
       }
 
       // The connectedCallback predicate: not capture-complete → clear.
-      const loaded = await (
-        await import("./check-session.js")
-      ).loadSubmitted();
+      const loaded = await (await import("./check-session.js")).loadSubmitted();
       if (loaded && loaded.status !== "capture-complete") {
         await clearSubmittedSession();
       }
