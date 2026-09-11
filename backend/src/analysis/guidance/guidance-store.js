@@ -367,11 +367,13 @@ function buildConditionItem({
           : evaluation.kind === "manual_review"
             ? "manual_review"
             : "completed",
-    selectedRuleId: evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+    selectedRuleId:
+      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
     outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
     resolvedToTasks: evaluation.kind === "outcome",
-    needsAnswer: evaluation.kind === "needs_answer" ? evaluation.question : null,
+    needsAnswer:
+      evaluation.kind === "needs_answer" ? evaluation.question : null,
     cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
