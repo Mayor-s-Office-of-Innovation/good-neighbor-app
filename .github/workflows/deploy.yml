@@ -90,6 +90,10 @@ jobs:
             echo "api_url=$(terraform output -raw api_url)"
             echo "bucket=$(terraform output -raw frontend_bucket_name)"
             echo "dist_id=$(terraform output -raw cloudfront_distribution_id)"
+            echo "admin_bucket=$(terraform output -raw admin_frontend_bucket_name)"
+            echo "admin_dist_id=$(terraform output -raw admin_cloudfront_distribution_id)"
+            echo "admin_cognito_client_id=$(terraform output -raw admin_cognito_client_id)"
+            echo "cognito_managed_login_domain=$(terraform output -raw cognito_managed_login_domain)"
             echo "dynamo_table=$(terraform output -raw dynamodb_table_name)"
           } >> "$GITHUB_OUTPUT"
 
@@ -119,6 +123,20 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: npm run build -w @good-neighbor/frontend
+
+      - name: Configure admin frontend
+        working-directory: ${{ github.workspace }}
+        run: |
+          cat > admin-frontend/config.js <<CONFIG
+          window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
+            cognitoDomain: "${{ steps.tf.outputs.cognito_managed_login_domain }}",
+            clientId: "${{ steps.tf.outputs.admin_cognito_client_id }}",
+            redirectUri: location.origin + "/auth/callback",
+            logoutUri: location.origin + "/",
+            apiBase: "",
+            localDebugAdmin: false,
+          };
+          CONFIG
 
       # Upload sourcemaps to the error tracker so client stack traces
       # symbolicate for contributors. The upload is per-release (the sha the
@@ -165,9 +183,20 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete --exclude "*.map"
 
+      - name: Publish admin frontend to S3
+        working-directory: ${{ github.workspace }}
+        run: |
+          aws s3 sync admin-frontend "s3://${{ steps.tf.outputs.admin_bucket }}" \
+            --delete \
+            --exclude "README.md" \
+            --exclude "config.example.js"
+
       # Env-scoped: only this environment's distribution is invalidated.
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
+
+      - name: Invalidate admin CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.admin_dist_id }}" --paths "/*"
 
       - name: Smoke test /health
         run: curl -fsS "${{ steps.tf.outputs.api_url }}/health"

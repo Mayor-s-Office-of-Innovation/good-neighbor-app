@@ -33,6 +33,10 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
+import {
+  requestSetupCode,
+  searchSites,
+} from "../src/handlers/setup-code-requests.js";
 import { getSite, putSitePlaces } from "../src/handlers/site.js";
 import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
@@ -41,15 +45,35 @@ import {
   editAnalysisCondition,
   rejectAnalysisCondition,
 } from "../src/handlers/analysis-amendments.js";
+import {
+  createCodeContact,
+  createMasterContact,
+  createProvider,
+  createSite,
+  deactivateCodeContact,
+  deactivateMasterContact,
+  deactivateProvider,
+  deactivateSite,
+  getAdminSite,
+  getProvider,
+  issueAdminSetupCode,
+  listCodeContacts,
+  listDevices,
+  listMasterContacts,
+  listProviders,
+  revokeDevice,
+  updateProvider,
+  updateSite,
+} from "../src/handlers/admin.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups",
 };
 
 // Local device-token verification (mirrors lambda/authorizer.js): when a
@@ -117,6 +141,8 @@ const routes = [
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  route("GET", "/v1/sites:search", searchSites),
+  route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config (feature/142 onboard locations)
   route("GET", "/v1/site", getSite),
   route("PUT", "/v1/site/places", putSitePlaces),
@@ -166,6 +192,36 @@ const routes = [
   route("POST", "/v1/client-errors", clientErrorsHandler),
   // User feedback intake (log-based store; handler always 204s)
   route("POST", "/v1/feedback", feedbackHandler),
+  route("GET", "/admin/v1/providers", listProviders),
+  route("POST", "/admin/v1/providers", createProvider),
+  route("GET", "/admin/v1/providers/{providerId}", getProvider),
+  route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
+  route("DELETE", "/admin/v1/providers/{providerId}", deactivateProvider),
+  route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
+  route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
+  route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
+  route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
+  route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/master-contacts",
+    createMasterContact,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/master-contacts/{emailHash}",
+    deactivateMasterContact,
+  ),
+  route("GET", "/admin/v1/sites/{siteId}/code-contacts", listCodeContacts),
+  route("POST", "/admin/v1/sites/{siteId}/code-contacts", createCodeContact),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/code-contacts/{emailHash}",
+    deactivateCodeContact,
+  ),
+  route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
+  route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
+  route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
 ];
 
 /**

@@ -23,8 +23,8 @@ resource "aws_kms_key" "app" {
       },
       {
         # CloudFront OAC reads SSE-KMS objects from the frontend bucket; without
-        # this the distribution returns AccessDenied on every object. Scoped to
-        # this env's distribution via SourceArn.
+        # this the distributions return AccessDenied on every object. Scoped to
+        # this env's distributions via SourceArn.
         Sid    = "AllowCloudFrontDecryptFrontend"
         Effect = "Allow"
         Principal = {
@@ -34,7 +34,10 @@ resource "aws_kms_key" "app" {
         Resource = "*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+            "AWS:SourceArn" = [
+              aws_cloudfront_distribution.frontend.arn,
+              aws_cloudfront_distribution.admin.arn
+            ]
           }
         }
       },
@@ -93,6 +96,11 @@ resource "aws_kms_alias" "app" {
 
 resource "aws_s3_bucket" "frontend" {
   bucket_prefix = "${local.name_prefix}-frontend-"
+  force_destroy = false
+}
+
+resource "aws_s3_bucket" "admin_frontend" {
+  bucket_prefix = "${local.name_prefix}-admin-frontend-"
   force_destroy = false
 }
 
@@ -189,6 +197,61 @@ resource "aws_s3_bucket_lifecycle_configuration" "frontend" {
 
   rule {
     id     = "expire-noncurrent-frontend-assets"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "admin_frontend" {
+  bucket                  = aws_s3_bucket.admin_frontend.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_logging" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "admin-frontend/"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  rule {
+    id     = "expire-noncurrent-admin-frontend-assets"
     status = "Enabled"
 
     filter {
@@ -354,6 +417,28 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
+  # GSI6 keys — pending setup codes by site/contact.
+  attribute {
+    name = "gsi6pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi6sk"
+    type = "S"
+  }
+
+  # GSI7 keys — pending setup codes by site.
+  attribute {
+    name = "gsi7pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi7sk"
+    type = "S"
+  }
+
   # GSI1 — checks timeline: SITE#<siteId> / <startedAt ISO>. (AP6, AP12)
   global_secondary_index {
     name            = "GSI1"
@@ -390,6 +475,25 @@ resource "aws_dynamodb_table" "app" {
     projection_type = "ALL"
   }
 
+  # GSI6 — sparse pending setup-code lookup for invalidating a prior code when
+  # an approved contact requests a replacement:
+  # SETUP_CODE_PENDING#<siteId>#<contactHash> / <createdAt>.
+  global_secondary_index {
+    name            = "GSI6"
+    hash_key        = "gsi6pk"
+    range_key       = "gsi6sk"
+    projection_type = "ALL"
+  }
+
+  # GSI7 — sparse pending setup-code lookup for deactivating a site:
+  # SETUP_CODE_PENDING_SITE#<siteId> / <createdAt>.
+  global_secondary_index {
+    name            = "GSI7"
+    hash_key        = "gsi7pk"
+    range_key       = "gsi7sk"
+    projection_type = "ALL"
+  }
+
   point_in_time_recovery {
     enabled = true
   }
@@ -416,6 +520,12 @@ resource "aws_cognito_user_pool" "users" {
   name = "${local.name_prefix}-users"
 
   deletion_protection = var.environment == "prod" ? "ACTIVE" : "INACTIVE"
+  # "ON" = MFA required for every sign-in; users must enroll TOTP on first login.
+  mfa_configuration = "ON"
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
 
   account_recovery_setting {
     recovery_mechanism {
@@ -464,6 +574,44 @@ resource "aws_cognito_user_pool_client" "web" {
   ]
 
   prevent_user_existence_errors = "ENABLED"
+}
+
+resource "aws_cognito_user_pool_client" "admin" {
+  name         = "${local.name_prefix}-admin"
+  user_pool_id = aws_cognito_user_pool.users.id
+
+  explicit_auth_flows = [
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH"
+  ]
+
+  prevent_user_existence_errors = "ENABLED"
+
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile"]
+  callback_urls = distinct(concat(
+    var.admin_callback_urls,
+    [for name in var.admin_domain_names : "https://${name}/auth/callback"],
+    ["https://${aws_cloudfront_distribution.admin.domain_name}/auth/callback"]
+  ))
+  logout_urls = distinct(concat(
+    var.admin_logout_urls,
+    [for name in var.admin_domain_names : "https://${name}/"],
+    ["https://${aws_cloudfront_distribution.admin.domain_name}/"]
+  ))
+  supported_identity_providers = ["COGNITO"]
+}
+
+resource "aws_cognito_user_pool_domain" "managed_login" {
+  domain       = var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix
+  user_pool_id = aws_cognito_user_pool.users.id
+}
+
+resource "aws_cognito_user_group" "central_admin" {
+  name         = "central-admin"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Central support and program administrators for Good Neighbor."
 }
 
 resource "aws_cloudfront_response_headers_policy" "security" {

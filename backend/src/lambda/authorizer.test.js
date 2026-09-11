@@ -124,7 +124,9 @@ describe("authorizer", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2000 * 1000));
     try {
-      send.mockResolvedValueOnce({ Item: { tokenGeneration: 7 } });
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
+        .mockResolvedValueOnce({ Item: { status: "active" } });
 
       const res = await invoke(event(`Bearer ${token}`));
 
@@ -147,6 +149,27 @@ describe("authorizer", () => {
     }
   });
 
+  it("denies valid device tokens for inactive sites", async () => {
+    const { token } = await mintAccessToken(
+      { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 7 },
+      { now: 1000 },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2000 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
+        .mockResolvedValueOnce({ Item: { status: "inactive" } });
+
+      const res = await invoke(event(`Bearer ${token}`));
+
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("site_inactive");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("derives siteId from the claims, never the request (negative test core)", async () => {
     // Token minted for site-A: the lookup key MUST be SITE#site-a, and a site-B
     // device item would never even be consulted.
@@ -157,7 +180,9 @@ describe("authorizer", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2000 * 1000));
     try {
-      send.mockResolvedValueOnce({ Item: { tokenGeneration: 1 } });
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 1 } })
+        .mockResolvedValueOnce({ Item: { status: "active" } });
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(true);
       expect(res.context["claims.custom:siteId"]).toBe("site-a");

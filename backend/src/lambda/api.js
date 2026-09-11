@@ -28,6 +28,10 @@ import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
+import {
+  requestSetupCode,
+  searchSites,
+} from "../handlers/setup-code-requests.js";
 import { getSite, putSitePlaces } from "../handlers/site.js";
 import { handler as descriptionValidationHandler } from "../handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
@@ -36,6 +40,26 @@ import {
   editAnalysisCondition,
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
+import {
+  createCodeContact,
+  createMasterContact,
+  createProvider,
+  createSite,
+  deactivateCodeContact,
+  deactivateMasterContact,
+  deactivateProvider,
+  deactivateSite,
+  getAdminSite,
+  getProvider,
+  issueAdminSetupCode,
+  listCodeContacts,
+  listDevices,
+  listMasterContacts,
+  listProviders,
+  revokeDevice,
+  updateProvider,
+  updateSite,
+} from "../handlers/admin.js";
 import { jsonResponse } from "../http.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
@@ -48,6 +72,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // no authorizer. Everything under /v1/* except these + the intakes is gated.
   "POST /v1/devices": registerDevice,
   "POST /v1/devices/token:refresh": refreshDeviceToken,
+  "GET /v1/sites:search": searchSites,
+  "POST /v1/setup-codes:request": requestSetupCode,
   // Site config (feature/142 onboard locations)
   "GET /v1/site": getSite,
   "PUT /v1/site/places": putSitePlaces,
@@ -81,6 +107,26 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/client-errors": clientErrorsHandler,
   // User feedback intake (log-based store; handler always 204s — see handlers/feedback.js)
   "POST /v1/feedback": feedbackHandler,
+  "GET /admin/v1/providers": listProviders,
+  "POST /admin/v1/providers": createProvider,
+  "GET /admin/v1/providers/{providerId}": getProvider,
+  "PATCH /admin/v1/providers/{providerId}": updateProvider,
+  "DELETE /admin/v1/providers/{providerId}": deactivateProvider,
+  "POST /admin/v1/providers/{providerId}/sites": createSite,
+  "GET /admin/v1/sites/{siteId}": getAdminSite,
+  "PATCH /admin/v1/sites/{siteId}": updateSite,
+  "DELETE /admin/v1/sites/{siteId}": deactivateSite,
+  "GET /admin/v1/sites/{siteId}/master-contacts": listMasterContacts,
+  "POST /admin/v1/sites/{siteId}/master-contacts": createMasterContact,
+  "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}":
+    deactivateMasterContact,
+  "GET /admin/v1/sites/{siteId}/code-contacts": listCodeContacts,
+  "POST /admin/v1/sites/{siteId}/code-contacts": createCodeContact,
+  "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}":
+    deactivateCodeContact,
+  "POST /admin/v1/sites/{siteId}/setup-codes": issueAdminSetupCode,
+  "GET /admin/v1/sites/{siteId}/devices": listDevices,
+  "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}": revokeDevice,
 });
 
 /**
