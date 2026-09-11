@@ -14,6 +14,7 @@
 // reaped between runs.
 
 import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import DynamoDbLocal from "dynamodb-local";
@@ -26,8 +27,12 @@ DynamoDbLocal.configureInstaller({
 });
 
 async function main() {
+  // A null dbPath makes the launcher use -inMemory, losing all local records
+  // whenever the dev stack restarts. Keep data alongside the other local stores.
+  const dataPath = join(backendDir, ".local", "dynamodb-data");
+  await mkdir(dataPath, { recursive: true });
   console.log(`[ddb] starting DynamoDB Local on :${PORT} (JRE 17+ required)…`);
-  await DynamoDbLocal.launch(PORT, null, ["-sharedDb"]);
+  await DynamoDbLocal.launch(PORT, dataPath, ["-sharedDb"]);
   console.log(`[ddb] DynamoDB Local ready on http://localhost:${PORT}`);
 
   let stopping = false;

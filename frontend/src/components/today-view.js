@@ -11,6 +11,11 @@
   tasks are created. Markup is inline via the `html` tag; split into a
   .templates.js file if it grows (see CLAUDE.md convention).
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import {
+  onDeletionsChange,
+  isTaskPendingDeletion,
+} from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
@@ -533,6 +538,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._deletionUnsub?.();
+    this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
@@ -545,6 +552,13 @@ class TodayView extends HTMLElement {
     if (isDeletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
+    }
+    if (!this._deletionUnsub) {
+      this._deletionUnsub = onDeletionsChange((status) => {
+        if (!this.isConnected) return;
+        if (status === "saved") void this.connectedCallback();
+        else if (this._homeModel) this._renderHome(this._homeModel);
+      });
     }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
@@ -568,7 +582,16 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
     const active = getCurrentCheck();
-    const captureSession = active?.status === "in-progress" ? active : null;
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
+    // The toast's link opens the worklist while retaining the resumable draft.
+    const showRequestedWorklist =
+      requestedFilter === "in_progress" && this._viewPhase === "home";
+    const captureSession =
+      active?.status === "in-progress" && !showRequestedWorklist
+        ? active
+        : null;
     if (captureSession) {
       this._captureFlow = captureSession.flowType || "perimeter";
       if (this._viewPhase === "home") this._viewPhase = "capture";
@@ -656,7 +679,9 @@ class TodayView extends HTMLElement {
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
-    this._homeFilter = this._homeFilter || "needs_action";
+    this._homeFilter =
+      this._homeFilter ||
+      (requestedFilter === "in_progress" ? "in_progress" : "needs_action");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
@@ -1401,12 +1426,18 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks.map((task) => ({
-      task,
-      createdAt: taskCreatedAt(task),
-      homeStatus: homeTaskStatus(task, this._taskOverrides?.[task.taskId], now),
-      isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
-    }));
+    return tasks
+      .filter((task) => !isTaskPendingDeletion(task))
+      .map((task) => ({
+        task,
+        createdAt: taskCreatedAt(task),
+        homeStatus: homeTaskStatus(
+          task,
+          this._taskOverrides?.[task.taskId],
+          now,
+        ),
+        isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
+      }));
   }
 
   _statusCounts(entries) {
@@ -1753,6 +1784,7 @@ class TodayView extends HTMLElement {
     const button = this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     );
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
@@ -1773,10 +1805,15 @@ class TodayView extends HTMLElement {
             );
           } catch (err) {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            this._deleteProblemLocally(problem);
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
             return;
           }
-          if (problem.placeId && problem.itemId) {
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
             await refreshEvidenceAnalysis(
               problem.placeId,
               problem.itemId,
@@ -1784,10 +1821,17 @@ class TodayView extends HTMLElement {
               {
                 rejectedConditionId: problem.conditionId,
               },
-            );
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
           }
         },
-        () => this.connectedCallback(),
+        () => {
+          if (this._homeModel) this._renderHome(this._homeModel);
+        },
+        { focusUndo },
       );
       this._activeProblem = null;
     } catch (err) {
@@ -1920,14 +1964,10 @@ class TodayView extends HTMLElement {
         return null;
       });
       if (!isFiled311Completion(result?.task)) {
-        this._setInlineProblemError(
-          problem,
-          appActionFailureMessage(result?.task, {
-            includeUnsubmitted311: true,
-          }) || "Could not file the 311 ticket. Please try again.",
-        );
+        show311ErrorToast();
         return;
       }
+      show311SuccessToast();
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
@@ -2069,6 +2109,7 @@ class TodayView extends HTMLElement {
         { requireSubmitted311: true },
       ).then((ok) => {
         if (ok) {
+          show311SuccessToast();
           this.connectedCallback();
         }
       });
@@ -2147,9 +2188,9 @@ class TodayView extends HTMLElement {
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable and show an inline, non-destructive error on the card. A 200 that
-  // still carries a failed app action (task held open) surfaces its specific
-  // reason instead of silently doing nothing.
+  // re-enable the card. Explicit 311 failures use the app error toast; other
+  // actions keep their inline error. A 200 with a failed app action still
+  // counts as a failure and leaves the task available to retry.
   async _run(card, fn, { requireSubmitted311 = false } = {}) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
@@ -2168,7 +2209,8 @@ class TodayView extends HTMLElement {
           : appActionFailureMessage(task);
       if (failure) {
         buttons.forEach((b) => (b.disabled = false));
-        if (err) {
+        if (requireSubmitted311) show311ErrorToast();
+        else if (err) {
           err.hidden = false;
           err.textContent = failure;
         }
@@ -2178,7 +2220,8 @@ class TodayView extends HTMLElement {
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
-      if (err) {
+      if (requireSubmitted311) show311ErrorToast();
+      else if (err) {
         err.hidden = false;
         err.textContent = "Couldn’t save that — please try again.";
       }
