@@ -1,8 +1,10 @@
 # Developer command reference
 
-**Prereqs:** Node 22 LTS+, npm 10+. The backend local harness also needs **JRE 17+** (DynamoDB
-Local + ElasticMQ are Java jars) — install with `brew install --cask temurin`, confirm
-`java -version` reports 17+. The frontend, tests, lint, and typecheck do **not** need Java.
+**Prereqs:** Node 22 LTS+, npm 10+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+for approved operators only — developers work through Git and CI. The backend local harness also
+needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
+`brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
+frontend, tests, lint, and typecheck do **not** need Java.
 
 ## One-time setup
 
@@ -27,6 +29,62 @@ Local + ElasticMQ are Java jars) — install with `brew install --cask temurin`,
 |---|---|
 | `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
 
+### Theme toggle (dark/light)
+
+The dark/light theme toggle is hidden by default. Add the `?themeToggle` URL param to reveal it
+(e.g. `http://localhost:5173/today?themeToggle`). It's per-load — the toggle shows only while that
+param is in the current URL. OS-following theming still applies regardless of the param.
+
+### In-app browser camera (`?webcam`)
+
+Photo capture defaults to the **native camera** handoff (a hidden `<input type="file"
+capture="environment">` — the device's own camera app). An opt-in **in-app browser camera** can be
+enabled instead: an inline live camera becomes the main element on the perimeter-check screen, with
+the shutter below it and thumbnails accumulating underneath (`getUserMedia` + canvas snapshot, with
+pinch-to-zoom).
+
+| URL param | Effect |
+|---|---|
+| `?webcam` or `?webcam=1` | Enable the in-app browser camera |
+| `?webcam=0` (also `false`/`off`/`no`) | Disable it (back to native) |
+
+Unlike `?themeToggle`, this preference is **persisted per-device** (localStorage key
+`gnp.captureMode`), so it survives reloads and later checks without re-passing the param — the
+param is consumed once and stripped from the URL (e.g. `http://localhost:5173/today?webcam`).
+Zoom uses the camera's **hardware** zoom where the track exposes it (Android Chrome) and falls
+back to a **digital** canvas center-crop elsewhere (incl. iOS Safari). If the camera is denied or
+unavailable, capture falls back to the native file input so the flow never dead-ends. To clear the
+preference manually: `localStorage.removeItem('gnp.captureMode')` (or just load `?webcam=0`).
+
+### Web Awesome AI agent skill
+
+The UI uses [Web Awesome](https://webawesome.com) (`@awesome.me/webawesome`) for `<wa-*>` components.
+The package ships Claude Code "agent skills" (a component reference + a design companion) inside
+`node_modules` after `npm install`, so an AI agent can pull accurate component docs instead of
+guessing. Register them once and they're available in future sessions:
+
+```bash
+npx skills add ./node_modules/@awesome.me/webawesome/dist/skills/webawesome
+npx skills add ./node_modules/@awesome.me/webawesome/dist/skills/webawesome-design   # optional design companion
+```
+
+They install as symlinks (stay current on package updates); remove with `npx skills remove webawesome`.
+See [Web Awesome → Agent Skills](https://webawesome.com/docs/ai/agent-skills).
+
+The first screen asks for a provider-site code. With the local backend running,
+these active dev/test codes are seeded:
+
+| Code | Provider | Site |
+| --- | --- | --- |
+| `MOI-CHL` | MOI | City Hall |
+| `GUB-SJE` | The Gubbio Project | St. John the Evangelist |
+| `CHC-730` | CHC | 730 Polk |
+| `SFA-940` | SFAF | 940 Howard |
+| `THC-440` | THC | 440 Eddy |
+
+Local also keeps `123-456` as an active legacy alias for St. John the
+Evangelist / The Gubbio Project, and `000-000` is seeded inactive.
+
 ### Clearing the local site binding
 
 First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
@@ -49,9 +107,10 @@ close the tab — the surgical per-record delete above does not.)
 
 ## Backend local harness (Docker-free)
 
-Runs the **exact Lambda handler + worker code** against local emulators. Ports: API **:3000**,
-DynamoDB Local **:8000**, ElasticMQ **:9324**, GUI **:8001**, MinIO (local S3) **:9000** with its
-console on **:9001**.
+Runs the **exact Lambda handler + worker code** against local emulators (design rationale:
+[ADR 0006](adr/0006-docker-free-local-dev-harness.md)). Ports: API **:3001**, DynamoDB Local
+**:8000**, ElasticMQ **:9324**, GUI **:8001**, MinIO (local S3) **:9000** with its console on
+**:9001**.
 
 | Command | Does |
 |---|---|
@@ -59,7 +118,8 @@ console on **:9001**.
 | `npm run db:gui -w backend` | Browse the local table at http://localhost:8001 (run in a second terminal) |
 | `npm run local:services -w backend` | Just the emulators (DynamoDB Local + ElasticMQ + MinIO) |
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
-| `npm run local:api -w backend` | Just the in-process API router (:3000) |
+| `npm run local:sf311 -w backend` | Fake local SF311 CreateSR server (:3999) that records requests without calling HUB |
+| `npm run local:api -w backend` | Just the in-process API router (:3001) |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
 | `npm run analyze:smoke -w backend` | Hand-run live analyzer smoke test (reads `backend/.env`, needs a real API key) |
@@ -96,10 +156,10 @@ With `npm run dev -w backend` running, in another terminal:
 
 ```bash
 # health check → {"ok":true,...}
-curl -s localhost:3000/health
+curl -s localhost:3001/health
 
 # POST a submission → 202 queued; flows curl → SQS → worker → DynamoDB
-curl -s -X POST localhost:3000/submissions \
+curl -s -X POST localhost:3001/submissions \
   -H 'idempotency-key: t1' -H 'X-Debug-Sub: dev' \
   -H 'content-type: application/json' -d '{"hello":"world"}'
 ```
@@ -107,9 +167,65 @@ curl -s -X POST localhost:3000/submissions \
 Re-POSTing with the same `idempotency-key` flips the stored item's status to `duplicate_replay`
 (the conditional-write replay branch). `X-Debug-Sub` stands in for the Cognito JWT `sub`.
 
-> **No seed data yet.** A fresh `npm run dev` creates the table **empty** — there is no seed
-> script (Phase 3 / Phase 8, not built). The GUI shows the table with zero items until you POST
-> a submission through the loop (which writes a `SUBMISSION#…/#RECEIPT` receipt item).
+### Fake SF311 server
+
+`npm run dev -w backend` starts the fake server alongside the API and worker.
+The root `.env.example` enables filing against this fake; copy its `GNP_311_*`
+and `SF311_*` settings into an older `.env.local` and restart the API and worker
+if filing reports `feature_disabled`. A missing enable flag disables filing
+before any network call; this is not a browser localhost restriction.
+
+To run the fake endpoint separately:
+
+```bash
+npm run local:sf311 -w backend
+```
+
+Then start the local API with these env overrides:
+
+```bash
+GNP_311_SUBMISSION_ENABLED=true \
+SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
+SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
+SF311_BASIC_AUTH_USER=local \
+SF311_BASIC_AUTH_PASS=local \
+npm run local:api -w backend
+```
+
+Start the worker in another terminal with the same overrides:
+
+```bash
+GNP_311_SUBMISSION_ENABLED=true \
+SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
+SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
+SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
+SF311_BASIC_AUTH_USER=local \
+SF311_BASIC_AUTH_PASS=local \
+npm run local:worker -w backend
+```
+
+The fake server returns `LOCAL-SR-000001` style SR numbers and accepts UpdateSR
+attachment requests at `/updatesr`. Inspect captured CreateSR/UpdateSR payloads
+at `http://127.0.0.1:3999/requests`, or clear them with:
+
+```bash
+curl -X DELETE http://127.0.0.1:3999/requests
+```
+
+> **Seed data note.** A fresh `npm run dev` seeds only provider/site login
+> codes and site metadata. It does not seed checks, artifacts, analyses, tasks,
+> or submission receipts; those appear after you submit through the local loop.
+
+Local DynamoDB records persist in `backend/.local/dynamodb-data/` across stack
+restarts (alongside the existing persistent MinIO files). Restart only
+`local:api` / `local:worker` when changing their environment configuration.
 
 **Teardown:** `Ctrl-C` in the `npm run dev` terminal stops all services cleanly (no orphaned
 JVM/MinIO/node processes).
+
+## Browse locally from phone
+
+Use ```npm run dev:lan -w frontend```
+
+This will print out IP address you can use from external phone to access the app on the same network as your machine that is running it

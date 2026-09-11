@@ -31,3 +31,7 @@ override.tf.json
 .DS_Store
 .idea/
 .vscode/
+
+# Local agent workspace artifacts
+.agents/
+skills-lock.json

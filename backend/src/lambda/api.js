@@ -1,0 +1,144 @@
+// API Gateway (HTTP API v2) entrypoint for the whole check/artifact API. One
+// Lambda backs every route; API Gateway sets `event.routeKey` to the matched
+// route (e.g. "POST /v1/checks/{checkId}"), so we dispatch on it directly — no
+// path-param regex needed (the gateway already matched). This table mirrors
+// `scripts/local-api.mjs` (the in-process dev stand-in) and the Terraform
+// `aws_apigatewayv2_route` set; keep all three in step.
+
+import {
+  createCheck,
+  completeCheck,
+  listChecks,
+  getCheck,
+} from "../handlers/checks.js";
+import {
+  presignUpload,
+  registerArtifact,
+  presignMedia,
+} from "../handlers/artifacts.js";
+import { listTasks } from "../handlers/tasks.js";
+import {
+  cannotDoTask,
+  completeTask,
+  evaluateAssessment,
+  getGuidance,
+  submitConditionAnswers,
+} from "../handlers/guidance.js";
+import { handler as submissionsHandler } from "../handlers/submissions.js";
+import { handler as healthHandler } from "../handlers/health.js";
+import { handler as siteCodeHandler } from "../handlers/site-code.js";
+import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
+import {
+  requestSetupCode,
+  searchSites,
+} from "../handlers/setup-code-requests.js";
+import { getSite, putSitePlaces } from "../handlers/site.js";
+import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
+import { handler as feedbackHandler } from "../handlers/feedback.js";
+import {
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../handlers/analysis-amendments.js";
+import {
+  createCodeContact,
+  createMasterContact,
+  createProvider,
+  createSite,
+  deactivateCodeContact,
+  deactivateMasterContact,
+  deactivateProvider,
+  deactivateSite,
+  getAdminSite,
+  getProvider,
+  issueAdminSetupCode,
+  listCodeContacts,
+  listDevices,
+  listMasterContacts,
+  listProviders,
+  revokeDevice,
+  updateProvider,
+  updateSite,
+} from "../handlers/admin.js";
+import { jsonResponse } from "../http.js";
+import { withServerErrorsLogged } from "../lib/log-server-error.js";
+
+// Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
+// The individual handlers carry richer (event, context, callback) signatures; we
+// only ever call them with the event, so the map is typed to that call shape.
+const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
+  "POST /site-code": siteCodeHandler,
+  // Device bootstrap (Option 4 device auth — see docs/adr/0010): open routes,
+  // no authorizer. Everything under /v1/* except these + the intakes is gated.
+  "POST /v1/devices": registerDevice,
+  "POST /v1/devices/token:refresh": refreshDeviceToken,
+  "GET /v1/sites:search": searchSites,
+  "POST /v1/setup-codes:request": requestSetupCode,
+  // Site config (feature/142 onboard locations)
+  "GET /v1/site": getSite,
+  "PUT /v1/site/places": putSitePlaces,
+  // Perimeter checks (analysis-backend Step C)
+  "POST /v1/checks": createCheck,
+  "GET /v1/checks": listChecks,
+  "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
+  "POST /v1/checks/{checkId}/artifacts": registerArtifact,
+  "POST /v1/checks/{checkId}/complete": completeCheck,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
+  "GET /v1/checks/{checkId}": getCheck,
+  // Staff worklist (AP10)
+  "GET /v1/tasks": listTasks,
+  "POST /v1/tasks/{taskId}/complete": completeTask,
+  "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
+  // Assessment guidance workflow
+  "POST /v1/assessments:evaluate": evaluateAssessment,
+  "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
+  "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
+    submitConditionAnswers,
+  "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
+    editAnalysisCondition,
+  "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject":
+    rejectAnalysisCondition,
+  // Legacy demo submission loop + health
+  "POST /submissions": submissionsHandler,
+  "GET /health": healthHandler,
+  // Client error intake (best-effort; handler always 204s — see handlers/client-errors.js)
+  "POST /v1/client-errors": clientErrorsHandler,
+  // User feedback intake (log-based store; handler always 204s — see handlers/feedback.js)
+  "POST /v1/feedback": feedbackHandler,
+  "GET /admin/v1/providers": listProviders,
+  "POST /admin/v1/providers": createProvider,
+  "GET /admin/v1/providers/{providerId}": getProvider,
+  "PATCH /admin/v1/providers/{providerId}": updateProvider,
+  "DELETE /admin/v1/providers/{providerId}": deactivateProvider,
+  "POST /admin/v1/providers/{providerId}/sites": createSite,
+  "GET /admin/v1/sites/{siteId}": getAdminSite,
+  "PATCH /admin/v1/sites/{siteId}": updateSite,
+  "DELETE /admin/v1/sites/{siteId}": deactivateSite,
+  "GET /admin/v1/sites/{siteId}/master-contacts": listMasterContacts,
+  "POST /admin/v1/sites/{siteId}/master-contacts": createMasterContact,
+  "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}":
+    deactivateMasterContact,
+  "GET /admin/v1/sites/{siteId}/code-contacts": listCodeContacts,
+  "POST /admin/v1/sites/{siteId}/code-contacts": createCodeContact,
+  "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}":
+    deactivateCodeContact,
+  "POST /admin/v1/sites/{siteId}/setup-codes": issueAdminSetupCode,
+  "GET /admin/v1/sites/{siteId}/devices": listDevices,
+  "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}": revokeDevice,
+});
+
+/**
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const handler = async (event) => {
+  const routeKey = /** @type {any} */ (event).routeKey;
+  const fn = routes[routeKey];
+  if (!fn) {
+    return jsonResponse(404, { error: "not_found", routeKey });
+  }
+  // Server-side error convention (logServerError): uncaught handler errors
+  // land as one structured JSON line (Logs Insights-groupable, alarmable)
+  // before the platform turns them into a 500.
+  return withServerErrorsLogged(`api ${routeKey}`, () => fn(event), {
+    reqId: /** @type {any} */ (event)?.requestContext?.requestId,
+  });
+};

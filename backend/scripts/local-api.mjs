@@ -22,12 +22,83 @@ import {
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import { listTasks } from "../src/handlers/tasks.js";
+import {
+  cannotDoTask,
+  completeTask,
+  evaluateAssessment,
+  getGuidance,
+  submitConditionAnswers,
+} from "../src/handlers/guidance.js";
 import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
+import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
+import {
+  requestSetupCode,
+  searchSites,
+} from "../src/handlers/setup-code-requests.js";
+import { getSite, putSitePlaces } from "../src/handlers/site.js";
+import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
+import { handler as feedbackHandler } from "../src/handlers/feedback.js";
+import {
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../src/handlers/analysis-amendments.js";
+import {
+  createCodeContact,
+  createMasterContact,
+  createProvider,
+  createSite,
+  deactivateCodeContact,
+  deactivateMasterContact,
+  deactivateProvider,
+  deactivateSite,
+  getAdminSite,
+  getProvider,
+  issueAdminSetupCode,
+  listCodeContacts,
+  listDevices,
+  listMasterContacts,
+  listProviders,
+  revokeDevice,
+  updateProvider,
+  updateSite,
+} from "../src/handlers/admin.js";
 
-const PORT = 3000;
+const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
+const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
+const LOCAL_CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+  "access-control-allow-headers":
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups",
+};
+
+// Local device-token verification (mirrors lambda/authorizer.js): when a
+// request carries `Authorization: Bearer <jwt>`, verify it and use its claims
+// INSTEAD of the X-Debug stubs — so local dev exercises the production claim
+// contract. Unset DEVICE_TOKEN_SECRET disables verification (stub-only mode).
+async function resolveClaims(flatHeaders) {
+  const bearer = /^(?:authorization)$/i;
+  const header = Object.keys(flatHeaders).find((k) => bearer.test(k));
+  const value = header ? flatHeaders[header] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(value.trim());
+  if (m && process.env.DEVICE_TOKEN_SECRET) {
+    try {
+      const { verifyDeviceToken } = await import("../src/lib/device-token.js");
+      const claims = await verifyDeviceToken(m[1]);
+      if (claims.typ !== "access") throw new Error("not an access token");
+      return {
+        sub: claims.sub,
+        siteId: claims["custom:siteId"],
+      };
+    } catch (err) {
+      return { error: /** @type {Error} */ (err).message };
+    }
+  }
+  return null;
+}
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -66,6 +137,14 @@ function route(method, pattern, handler) {
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
   route("POST", "/site-code", siteCodeHandler),
+  // Device bootstrap (Option 4 device auth): open routes, no authorizer.
+  route("POST", "/v1/devices", registerDevice),
+  route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  route("GET", "/v1/sites:search", searchSites),
+  route("POST", "/v1/setup-codes:request", requestSetupCode),
+  // Site config (feature/142 onboard locations)
+  route("GET", "/v1/site", getSite),
+  route("PUT", "/v1/site/places", putSitePlaces),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
@@ -74,15 +153,69 @@ const routes = [
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",
-    "/v1/checks/{checkId}/artifacts/{artifactId}:media",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/media",
     presignMedia,
   ),
   route("GET", "/v1/checks/{checkId}", getCheck),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/tasks/{taskId}/complete", completeTask),
+  route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
+  // Assessment guidance workflow
+  route("POST", "/v1/assessments:evaluate", evaluateAssessment),
+  route("GET", "/v1/assessments/{assessmentId}/guidance", getGuidance),
+  route(
+    "POST",
+    "/v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
+    submitConditionAnswers,
+  ),
+  route(
+    "POST",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
+    editAnalysisCondition,
+  ),
+  route(
+    "POST",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
+    rejectAnalysisCondition,
+  ),
   // Legacy demo submission loop + health
   route("POST", "/submissions", submissionsHandler),
   route("GET", "/health", healthHandler),
+  // Client error intake (best-effort; handler always 204s)
+  route("POST", "/v1/client-errors", clientErrorsHandler),
+  // User feedback intake (log-based store; handler always 204s)
+  route("POST", "/v1/feedback", feedbackHandler),
+  route("GET", "/admin/v1/providers", listProviders),
+  route("POST", "/admin/v1/providers", createProvider),
+  route("GET", "/admin/v1/providers/{providerId}", getProvider),
+  route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
+  route("DELETE", "/admin/v1/providers/{providerId}", deactivateProvider),
+  route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
+  route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
+  route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
+  route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
+  route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/master-contacts",
+    createMasterContact,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/master-contacts/{emailHash}",
+    deactivateMasterContact,
+  ),
+  route("GET", "/admin/v1/sites/{siteId}/code-contacts", listCodeContacts),
+  route("POST", "/admin/v1/sites/{siteId}/code-contacts", createCodeContact),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/code-contacts/{emailHash}",
+    deactivateCodeContact,
+  ),
+  route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
+  route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
+  route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
 ];
 
 /**
@@ -121,10 +254,22 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
 
+  if (method === "OPTIONS") {
+    res.writeHead(204, {
+      ...LOCAL_CORS_HEADERS,
+      "access-control-max-age": "86400",
+    });
+    res.end();
+    return;
+  }
+
   const matched = matchRoute(method, path);
 
   if (!matched) {
-    res.writeHead(404, { "content-type": "application/json" });
+    res.writeHead(404, {
+      "content-type": "application/json",
+      ...LOCAL_CORS_HEADERS,
+    });
     res.end(JSON.stringify({ error: "not found", method, path }));
     return;
   }
@@ -141,12 +286,30 @@ const server = createServer(async (req, res) => {
     }
     const hasQuery = Object.keys(queryStringParameters).length > 0;
 
+    // Local token verification (production claim contract): a Bearer token
+    // overrides the X-Debug stubs; a BAD token 401s like the real authorizer.
+    const flat = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      flat[k] = Array.isArray(v) ? v.join(",") : v;
+    }
+    const claims = await resolveClaims(flat);
+    if (claims?.error) {
+      res.writeHead(401, {
+        "content-type": "application/json",
+        ...LOCAL_CORS_HEADERS,
+      });
+      res.end(JSON.stringify({ error: "invalid_token", reason: claims.error }));
+      console.log(`[api] ${method} ${path} → 401 (invalid token)`);
+      return;
+    }
+
     const event = buildProxyEvent({
       method,
       path,
       headers: req.headers,
       body,
-      defaultSub: DEFAULT_SUB,
+      defaultSub: claims?.sub ?? DEFAULT_SUB,
+      defaultSite: claims?.siteId ?? DEFAULT_SITE,
       pathParameters: matched.route.names.length
         ? matched.pathParameters
         : undefined,
@@ -163,12 +326,21 @@ const server = createServer(async (req, res) => {
     );
 
     const { statusCode = 200, headers = {}, body: resBody = "" } = result ?? {};
-    res.writeHead(statusCode, /** @type {any} */ (headers));
+    res.writeHead(
+      statusCode,
+      /** @type {any} */ ({
+        ...headers,
+        ...LOCAL_CORS_HEADERS,
+      }),
+    );
     res.end(resBody);
     console.log(`[api] ${method} ${path} → ${statusCode}`);
   } catch (err) {
     console.error(`[api] ${method} ${path} threw:`, err);
-    res.writeHead(500, { "content-type": "application/json" });
+    res.writeHead(500, {
+      "content-type": "application/json",
+      ...LOCAL_CORS_HEADERS,
+    });
     res.end(JSON.stringify({ error: "internal error" }));
   }
 });

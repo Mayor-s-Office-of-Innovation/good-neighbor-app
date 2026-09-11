@@ -5,7 +5,7 @@
 // into our stored shape is `adapt-scorecard.js`'s job, kept separate so the wire
 // contract and our persistence stay decoupled.
 //
-// Invariants (see MVP-TODO 🔒 analyzer-auth + media-handling):
+// Invariants (see security-review.md, analyzer-auth + media-handling):
 //   - `x-api-key` (GNP's per-consumer key) is a *server-side* credential — held
 //     by our Lambda (Secrets Manager in prod, env for local), never on device.
 //   - `store_input:false` always — the analyzer must never retain our media;
@@ -131,6 +131,9 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
 /**
  * @typedef {object} AnalyzerClient
  * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string }) => Promise<AnalysisResponse>} analyze
+ * @property {(analysisId: string, conditionId: string, input: { description: string, requestId?: string, appId?: string }) => Promise<unknown>} editCondition
+ * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
+ * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
  * @property {() => Promise<unknown>} listRubrics
  */
 
@@ -192,15 +195,21 @@ export function createAnalyzerClient({
           },
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         });
-      } catch (cause) {
+      } catch {
         // Transport failure (DNS/connection/TLS) — retry, then give up.
         if (attempt < maxRetries) {
           await sleep(baseDelayMs * 2 ** attempt);
           continue;
         }
+        // Security: the request that just failed carried the `x-api-key` header
+        // (GNP's server-side analyzer credential), so the fetch error is on that
+        // key's taint path. The worker pumps log this error whole on redelivery,
+        // so we deliberately do NOT attach the raw fetch error as `cause` — that
+        // would be the one edge by which the key could reach clear-text logs.
+        // "network" + retryable is all the caller acts on; the HTTP-error path
+        // below still carries status/code for diagnosis.
         throw new AnalyzerError("Analyzer request failed (network)", {
           retryable: true,
-          cause,
         });
       }
 
@@ -230,6 +239,54 @@ export function createAnalyzerClient({
       return /** @type {Promise<AnalysisResponse>} */ (
         request("/v1/analyses", { method: "POST", body, auth: true })
       );
+    },
+    editCondition(analysisId, conditionId, { description, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request(
+        `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}`,
+        {
+          method: "POST",
+          body: {
+            description,
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        },
+      );
+    },
+    rejectCondition(analysisId, conditionId, input = {}) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (input.appId !== undefined) caller.app_id = input.appId;
+      if (input.requestId !== undefined) caller.request_id = input.requestId;
+      return request(
+        `/v1/analyses/${encodeURIComponent(analysisId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
+        {
+          method: "POST",
+          body: {
+            ...(input.reason ? { reason: input.reason } : {}),
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        },
+      );
+    },
+    classifyImage({ classifierId, image, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request(`/v1/classifiers/${encodeURIComponent(classifierId)}`, {
+        method: "POST",
+        body: {
+          image,
+          ...(Object.keys(caller).length > 0 ? { caller } : {}),
+        },
+        auth: true,
+      });
     },
     listRubrics() {
       return request("/v1/rubrics", { method: "GET", auth: false });

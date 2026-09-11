@@ -1,10 +1,92 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatSiteCode, validateSetupCode } from "./onboarding.js";
+import {
+  formatSiteCode,
+  requestSetupCode,
+  searchSites,
+  validateSetupCode,
+} from "./onboarding.js";
 
 describe("formatSiteCode", () => {
   it("normalizes visual separators", () => {
     expect(formatSiteCode("123-456")).toBe("123456");
     expect(formatSiteCode(" 123 456 ")).toBe("123456");
+  });
+});
+
+describe("searchSites", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("searches public-safe site records", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          sites: [{ siteId: "site-1", name: "City Hall" }],
+        }),
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(searchSites("city hall")).resolves.toEqual({
+      ok: true,
+      sites: [{ siteId: "site-1", name: "City Hall" }],
+    });
+    expect(fetch.mock.calls[0][0]).toBe("/v1/sites:search?q=city%20hall");
+  });
+
+  it("does not search for one-character queries", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(searchSites("c")).resolves.toEqual({
+      ok: false,
+      reason: "empty",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("requestSetupCode", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("requests a code email and returns the generic message", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: () =>
+        Promise.resolve({
+          message:
+            "If that email is authorized for this site, we will send a new setup code.",
+        }),
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      requestSetupCode({ siteId: "site-1", email: "lead@example.org" }),
+    ).resolves.toEqual({
+      ok: true,
+      message:
+        "If that email is authorized for this site, we will send a new setup code.",
+    });
+    expect(fetch.mock.calls[0][0]).toBe("/v1/setup-codes:request");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      siteId: "site-1",
+      email: "lead@example.org",
+    });
+  });
+
+  it("rejects malformed local requests before fetch", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      requestSetupCode({ siteId: "site-1", email: "not-email" }),
+    ).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -38,17 +120,20 @@ describe("validateSetupCode", () => {
         name: "Health Center Mission",
       },
     });
+    // Same-origin path in dev — the Vite proxy forwards it to the local API, so
+    // it works identically from localhost and from a phone on the LAN. No
+    // hostname sniffing (which broke LAN-IP origins).
     expect(fetch.mock.calls[0][0]).toBe("/site-code");
   });
 
-  it("uses the same-origin API path when the frontend runs on localhost", async () => {
+  it("uses a same-origin path regardless of the frontend hostname", async () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
       json: () => Promise.resolve({ error: "invalid_site_code" }),
     });
     vi.stubGlobal("fetch", fetch);
-    vi.stubGlobal("location", { hostname: "127.0.0.1" });
+    vi.stubGlobal("location", { hostname: "10.18.37.82" });
 
     await validateSetupCode("654321");
 

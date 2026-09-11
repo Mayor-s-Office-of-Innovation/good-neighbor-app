@@ -6,20 +6,34 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.64"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 
-  # Configure before first shared deployment.
-  # backend "s3" {
-  #   bucket         = "good-neighbor-app-terraform-state"
-  #   key            = "dev/terraform.tfstate"
-  #   region         = "us-west-2"
-  #   dynamodb_table = "good-neighbor-app-terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "good-neighbor-app-terraform-state"
+    key            = "dev/terraform.tfstate"
+    region         = "us-west-2"
+    dynamodb_table = "good-neighbor-app-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = local.common_tags
+  }
+}
+
+# CLOUDFRONT-scoped WAF must be created in us-east-1; the module takes this as an
+# aliased provider.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
 
   default_tags {
     tags = local.common_tags
@@ -39,10 +53,27 @@ locals {
 }
 
 module "app" {
-  source = "../../modules/app"
+  source                        = "../../modules/app"
+  setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
+  provider_app_url              = "https://${local.frontend_domain_name}/"
 
-  application         = var.application
-  environment         = var.environment
-  data_classification = var.data_classification
-  tags                = local.common_tags
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  application           = var.application
+  environment           = var.environment
+  data_classification   = var.data_classification
+  bedrock_model_id      = var.bedrock_model_id
+  analyzer_base_url     = "https://ipipaqh985.execute-api.us-east-1.amazonaws.com/dev"
+  enable_311_submission = true
+  # PostHog feedback survey (see docs/runbooks/feedback-ops.md §3): plain
+  # identifiers, not secrets. The phc_ ingest key itself is set out-of-band
+  # via put-secret-value on gnp-dev-posthog-project-api-key.
+  feedback_survey_id       = "01a0633b-35d7-0000-9917-4ad2f1a7aa60"
+  feedback_question_id     = "256e7e9d-9579-489a-ad5f-bcdd1b8e6baf"
+  tags                     = local.common_tags
+  frontend_domain_names    = [local.frontend_domain_name]
+  frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
 }
