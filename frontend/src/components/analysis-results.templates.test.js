@@ -1,0 +1,352 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  analysisCards,
+  problemSummary,
+  problemSummaryLabel,
+  taskAnalysisCard,
+} from "./analysis-results.templates.js";
+
+describe("analysis result summaries", () => {
+  it("shows task short ids instead of raw assessment ids on task cards", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: "long-assessment-id" },
+          tasks: [
+            {
+              taskId: "task_1",
+              shortId: "GUB-STJ-001",
+              assessmentId: "long-assessment-id",
+              conditionId: "condition_tents",
+              category: "Tents, tarps, or bedding",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+              buttons: ["File 311 ticket"],
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_tents",
+              category: "Tents, tarps, or bedding",
+              description: "Tent on the sidewalk.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("NEW • GUB-STJ-001");
+    expect(cards[0]).not.toContain("long-assessment-id");
+  });
+
+  it("falls back to assessment ids for legacy task cards without display ids", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              assessmentId: "legacy-assessment-id",
+              conditionId: "condition_litter",
+              category: "Litter",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_litter",
+              category: "Litter",
+              description: "Trash is visible.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("NEW • legacy-assessment-id");
+  });
+
+  it("does not show raw assessment ids on condition cards awaiting answers", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: "long-assessment-id" },
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_blocking",
+              category: "Blocking access",
+              description: "A couch is blocking the sidewalk.",
+              needsAnswer: {
+                key: "onsite",
+                prompt: "Is this from your site?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain(">NEW</span>");
+    expect(cards[0]).not.toContain("long-assessment-id");
+  });
+
+  it("renders task cards alongside unpaired condition questions", () => {
+    const items = [
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              conditionId: "condition_litter",
+              category: "Litter",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+              buttons: ["File 311 ticket"],
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_litter",
+              category: "Litter",
+              description: "Trash is visible.",
+            },
+            {
+              conditionId: "condition_extra",
+              category: "Dangerous animals",
+              description: "Dogs are off-leash.",
+              needsAnswer: {
+                key: "affiliated",
+                prompt: "Is this animal owned by a site client or resident?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const cards = analysisCards(items[0], "check_1");
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain("Litter");
+    expect(cards[1]).toContain("More details needed");
+    expect(cards[1]).toContain(
+      "Is this animal owned by a site client or resident?",
+    );
+    expect(problemSummary(items)).toEqual({ visible: 2, hidden: 0 });
+    expect(problemSummaryLabel(problemSummary(items))).toBe("2 problems found");
+  });
+
+  it("counts a visible unpaired condition after all task conditions are hidden", () => {
+    const item = {
+      id: "item_1",
+      kind: "photo",
+      placeName: "15th St",
+      analysis: {
+        status: "analyzed",
+        rejectedConditionIds: ["condition_litter"],
+        tasks: [
+          {
+            taskId: "task_1",
+            conditionId: "condition_litter",
+            category: "Litter",
+            guidance: "File a 311 ticket.",
+            kind: "escalation",
+            buttons: ["File 311 ticket"],
+          },
+        ],
+        conditions: [
+          {
+            conditionId: "condition_litter",
+            category: "Litter",
+            description: "Trash is visible.",
+          },
+          {
+            conditionId: "condition_needles",
+            category: "Needles",
+            description: "A needle is visible.",
+          },
+        ],
+      },
+    };
+
+    const cards = analysisCards(item, "check_1");
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("Needles");
+    expect(problemSummary([item])).toEqual({ visible: 1, hidden: 1 });
+    expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
+  });
+
+  it("renders a clarifying question instead of a generic condition title", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+              needsAnswer: {
+                key: "affiliated",
+                prompt: "Is this animal owned by a site client or resident?",
+                options: [
+                  { label: "Yes", value: true },
+                  { label: "No", value: false },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain("Dogs are off-leash near traffic.");
+    expect(cards[0]).toContain(
+      "Is this animal owned by a site client or resident?",
+    );
+    expect(cards[0]).not.toContain("Dangerous animals");
+    expect(cards[0]).toContain('data-analysis-action="answer"');
+    expect(cards[0]).toContain('data-answer-key="affiliated"');
+    expect(cards[0]).not.toContain("Condition found");
+  });
+
+  it("uses analyzer category fields for condition-only cards", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "Problem",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "condition_animals",
+              analyzerCategory: "Dangerous animals",
+              canonicalCategory: "Aggressive animals",
+              description: "Dogs are off-leash near traffic.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("Dangerous animals");
+    expect(cards[0]).not.toContain("Condition found");
+  });
+
+  it("keeps no-issue cards editable without offering delete", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [],
+          conditions: [],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("No issues found");
+    expect(cards[0]).toContain('data-analysis-action="edit"');
+    expect(cards[0]).not.toContain('data-analysis-action="delete"');
+  });
+});
+
+describe("taskAnalysisCard", () => {
+  it("keeps action guidance visible while preserving the condition description for edits", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_1",
+        checkId: "check_1",
+        conditionId: "condition_litter",
+        category: "Litter",
+        description: "Trash is piled around the tree well.",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        buttons: ["File 311 ticket"],
+      },
+      action: { label: "File 311 ticket", variant: "blue", kind: "file311" },
+      statusLabel: "TODAY · 10:00AM",
+      isNew: false,
+    });
+
+    expect(card).toContain(
+      "If there is too much trash for you to clean up, ask the City for help.",
+    );
+    expect(card).toContain(
+      'data-card-edit-description="Trash is piled around the tree well."',
+    );
+  });
+
+  it("omits action, edit, and delete controls for read-only task cards", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_1",
+        checkId: "check_1",
+        conditionId: "condition_litter",
+        category: "Litter",
+        description: "Trash is piled around the tree well.",
+        guidance: "Clean it up.",
+        buttons: ["Cleaned it up"],
+      },
+      action: { label: "Cleaned it up", variant: "ink", kind: "done" },
+      statusLabel: "YESTERDAY · 10:00AM",
+      isNew: false,
+      includeControls: false,
+    });
+
+    expect(card).not.toContain("Cleaned it up</button>");
+    expect(card).not.toContain('data-analysis-action="edit"');
+    expect(card).not.toContain('data-analysis-action="delete"');
+  });
+});

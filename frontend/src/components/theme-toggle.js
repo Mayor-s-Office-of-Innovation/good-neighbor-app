@@ -9,6 +9,11 @@
 */
 class ThemeToggle extends HTMLElement {
   connectedCallback() {
+    // Hidden unless the ?themeToggle URL param is present (per-load, dev affordance).
+    if (!new URLSearchParams(location.search).has("themeToggle")) {
+      this.style.display = "none";
+      return;
+    }
     this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
       <style>

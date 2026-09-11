@@ -58,7 +58,12 @@ describe("createCheck", () => {
       checkEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { sides: ["north", "south"] },
+        body: {
+          places: [
+            { placeId: "place-north", placeName: "North", skipped: false },
+            { placeId: "place-south", placeName: "South", skipped: false },
+          ],
+        },
       }),
     );
 
@@ -77,7 +82,10 @@ describe("createCheck", () => {
       status: "in_progress",
       issueCount: 0,
       maxSeverity: 0,
-      sides: ["north", "south"],
+      places: [
+        { placeId: "place-north", placeName: "North", skipped: false },
+        { placeId: "place-south", placeName: "South", skipped: false },
+      ],
     });
     // gsi1sk mirrors startedAt so the timeline query sorts chronologically.
     expect(cmd.input.Item.gsi1sk).toBe(cmd.input.Item.startedAt);
@@ -147,21 +155,71 @@ const invokeComplete = (event) =>
   /** @type {any} */ (completeCheck(event, /** @type {any} */ ({}), () => {}));
 
 /**
+ * The CHECK# header item, as the children query returns it alongside artifacts
+ * and analyses.
+ * @param {string} [status]
+ * @returns {object}
+ */
+const headerItem = (status = "in_progress") => ({
+  sk: "CHECK#chk_01",
+  checkId: "chk_01",
+  status,
+});
+
+/**
+ * A registered ART# item (one per captured photo). `completeCheck` gates on
+ * every one of these having a matching ANALYSIS# item.
  * @param {string} artifactId
- * @param {string} side
+ * @param {string} placeId
+ * @param {string} placeName
+ * @returns {object}
+ */
+const artifactItem = (artifactId, placeId, placeName = placeId) => ({
+  sk: `CHECK#chk_01#ART#${placeId}#${artifactId}`,
+  artifactId,
+  placeId,
+  placeName,
+});
+
+/**
+ * @param {string} artifactId
+ * @param {string} placeId
+ * @param {string} placeName
  * @param {string} grade
  * @param {string} category
  * @param {number} rating
  * @returns {object}
  */
-const analyzedItem = (artifactId, side, grade, category, rating) => ({
+const analyzedItem = (
+  artifactId,
+  placeId,
+  placeName,
+  grade,
+  category,
+  rating,
+) => ({
   sk: `CHECK#chk_01#ANALYSIS#${artifactId}`,
   status: "analyzed",
   artifactId,
-  side,
+  placeId,
+  placeName,
   grade,
+  gradeDescription: `${placeName} summary (${grade})`,
   rubricVersion: "1.0.0",
   concerns: [{ category, rating, explanation: "x", evidenceIndices: [] }],
+});
+
+/**
+ * A permanent-failure ANALYSIS# marker: carries no concerns, but still counts
+ * toward coverage so a failed photo can't block completion.
+ * @param {string} artifactId
+ * @returns {object}
+ */
+const failedItem = (artifactId) => ({
+  sk: `CHECK#chk_01#ANALYSIS#${artifactId}`,
+  status: "failed",
+  artifactId,
+  error: { code: "invalid_request", message: "bad" },
 });
 
 describe("completeCheck", () => {
@@ -178,11 +236,21 @@ describe("completeCheck", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("synthesizes the worst grade, builds routed tasks, and writes the scorecard atomically", async () => {
+  it("synthesizes the worst grade, writes the scorecard, and returns it", async () => {
     send.mockResolvedValueOnce({
       Items: [
-        analyzedItem("art_1", "north", "Fair", "Litter", 2),
-        analyzedItem("art_2", "south", "Poor", "Hazardous Waste", 4),
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+        analyzedItem(
+          "art_2",
+          "place-south",
+          "South",
+          "Poor",
+          "Hazardous Waste",
+          4,
+        ),
       ],
     });
     send.mockResolvedValueOnce({});
@@ -191,59 +259,51 @@ describe("completeCheck", () => {
       completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
     );
 
-    // Reads only this check's ANALYSIS# items, scoped to the derived site.
+    // Reads this check's header + children in one query, scoped to the site.
     const q = send.mock.calls[0][0];
     expect(q).toBeInstanceOf(QueryCommand);
     expect(q.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
-    expect(q.input.ExpressionAttributeValues[":prefix"]).toBe(
-      "CHECK#chk_01#ANALYSIS#",
-    );
+    expect(q.input.ExpressionAttributeValues[":prefix"]).toBe("CHECK#chk_01");
 
     const tx = send.mock.calls[1][0];
     expect(tx).toBeInstanceOf(TransactWriteCommand);
     const items = /** @type {any[]} */ (tx.input.TransactItems);
 
-    // Header: worst grade across sides (Poor), completed exactly once.
+    // Header: worst grade across places (Poor), completed exactly once.
     const header = items[0].Update;
     expect(header.Key).toEqual({ pk: "SITE#site-1", sk: "CHECK#chk_01" });
     expect(header.ConditionExpression).toBe(
       "attribute_exists(sk) AND #status <> :completed",
     );
     expect(header.ExpressionAttributeValues[":grade"]).toBe("Poor");
+    // Overall summary = the worst-graded place's analyzer description (South/Poor).
+    expect(header.ExpressionAttributeValues[":summary"]).toBe(
+      "South summary (Poor)",
+    );
     expect(header.ExpressionAttributeValues[":issueCount"]).toBe(2);
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
 
-    // One task per concerning category, routed by the placeholder matrix.
-    const tasks = items.slice(1).map((t) => t.Put.Item);
-    const byCategory = Object.fromEntries(tasks.map((t) => [t.category, t]));
-    expect(byCategory["Litter"].type).toBe("onsite");
-    expect(byCategory["Litter"].severity).toBe(2);
-    expect(byCategory["Litter"].status).toBe("open");
-    expect(byCategory["Litter"].sourceArtifactIds).toEqual(["art_1"]);
-    expect(byCategory["Hazardous Waste"].type).toBe("city_escalation");
-    // Worklist GSI: partitioned by status, sorted severity#createdAt.
-    expect(byCategory["Hazardous Waste"].gsi2pk).toBe("SITE#site-1#TASK#open");
-    expect(byCategory["Hazardous Waste"].gsi2sk).toMatch(/^4#/);
+    // Phase 4: complete only updates the check header. Guidance tasks are
+    // minted per-item at capture time via POST /v1/assessments:evaluate.
+    expect(items).toHaveLength(1);
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
       grade: "Poor",
-      taskCount: 2,
     });
   });
 
-  it("excludes failed-analysis markers from synthesis", async () => {
+  it("counts a failed marker toward coverage but excludes it from synthesis", async () => {
     send.mockResolvedValueOnce({
       Items: [
-        analyzedItem("art_1", "north", "Fair", "Litter", 2),
-        // A failure marker: no grade/concerns to fold in.
-        {
-          sk: "CHECK#chk_01#ANALYSIS#art_9",
-          status: "failed",
-          artifactId: "art_9",
-          error: { code: "invalid_request", message: "bad" },
-        },
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_9", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+        // art_9 failed permanently: no grade/concerns to fold in, but its marker
+        // satisfies coverage so the run isn't blocked forever.
+        failedItem("art_9"),
       ],
     });
     send.mockResolvedValueOnce({});
@@ -255,15 +315,57 @@ describe("completeCheck", () => {
     const items = /** @type {any[]} */ (
       send.mock.calls[1][0].input.TransactItems
     );
-    // Grade comes only from the analyzed artifact; the marker adds no task.
+    // Grade comes only from the analyzed artifact; no tasks are written here.
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBe("Fair");
-    const tasks = items.slice(1).map((t) => t.Put.Item);
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].category).toBe("Litter");
+    expect(items).toHaveLength(1);
   });
 
-  it("completes a check with no analyses (null grade, no tasks)", async () => {
-    send.mockResolvedValueOnce({ Items: [] });
+  it("409s (no write) when a registered artifact has no analysis yet", async () => {
+    // Two photos registered, only one analyzed — the classic premature-complete
+    // race. Must NOT fold a partial scorecard onto the header.
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Excellent", "Litter", 0),
+      ],
+    });
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({
+      checkId: "chk_01",
+      status: "analyzing",
+      expected: 2,
+      analyzed: 1,
+      pending: 1,
+    });
+    // Only the read happened — no TransactWrite, so the header stays open.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("404s when the header is absent (children but no header)", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        artifactItem("art_1", "place-north", "North"),
+        analyzedItem("art_1", "place-north", "North", "Good", "Litter", 1),
+      ],
+    });
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes a check with no artifacts (null grade, empty summary)", async () => {
+    send.mockResolvedValueOnce({ Items: [headerItem()] });
     send.mockResolvedValueOnce({});
 
     const res = await invokeComplete(
@@ -276,14 +378,18 @@ describe("completeCheck", () => {
     // Header-only transaction — no tasks.
     expect(items).toHaveLength(1);
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBeNull();
+    expect(items[0].Update.ExpressionAttributeValues[":summary"]).toBeNull();
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
-      taskCount: 0,
     });
   });
 
-  it("treats a re-completed check as an idempotent success (no duplicate tasks)", async () => {
-    send.mockResolvedValueOnce({ Items: [] });
+  it("treats a re-completed check as an idempotent success (gate skipped)", async () => {
+    // Already-completed header: the coverage gate is skipped even though this
+    // read shows an un-analyzed artifact, and the conditional write no-ops.
+    send.mockResolvedValueOnce({
+      Items: [headerItem("completed"), artifactItem("art_1", "place-north")],
+    });
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
         name: "TransactionCanceledException",
@@ -298,6 +404,49 @@ describe("completeCheck", () => {
     expect(JSON.parse(res.body)).toMatchObject({
       checkId: "chk_01",
       status: "completed",
+    });
+  });
+
+  it("reads all DynamoDB pages before checking coverage and synthesis", async () => {
+    send.mockResolvedValueOnce({
+      Items: [headerItem(), artifactItem("art_1", "place-north")],
+      LastEvaluatedKey: {
+        pk: "SITE#site-1",
+        sk: "CHECK#chk_01#ART#place-north#art_1",
+      },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        artifactItem("art_2", "place-south", "South"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+        analyzedItem(
+          "art_2",
+          "place-south",
+          "South",
+          "Poor",
+          "Hazardous Waste",
+          4,
+        ),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01#ART#place-north#art_1",
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      status: "completed",
+      grade: "Poor",
+      issueCount: 2,
+      maxSeverity: 4,
     });
   });
 });

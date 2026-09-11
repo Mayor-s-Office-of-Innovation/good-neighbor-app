@@ -3,6 +3,7 @@ locals {
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "aws_kms_key" "app" {
   description             = "KMS key for ${var.application} ${var.environment} application data"
@@ -19,6 +20,69 @@ resource "aws_kms_key" "app" {
         }
         Action   = "kms:*"
         Resource = "*"
+      },
+      {
+        # CloudFront OAC reads SSE-KMS objects from the frontend bucket; without
+        # this the distributions return AccessDenied on every object. Scoped to
+        # this env's distributions via SourceArn.
+        Sid    = "AllowCloudFrontDecryptFrontend"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "kms:Decrypt"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = [
+              aws_cloudfront_distribution.frontend.arn,
+              aws_cloudfront_distribution.admin.arn
+            ]
+          }
+        }
+      },
+      {
+        # CloudWatch Logs encrypts the Lambda/API log groups with this CMK.
+        # Scoped to this account's log groups in this region via the encryption
+        # context (AWS's documented pattern).
+        Sid    = "AllowCloudWatchLogs"
+        Effect = "Allow"
+        Principal = {
+          Service = "logs.${data.aws_region.current.name}.amazonaws.com"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"
+          }
+        }
+      },
+      {
+        # CloudWatch alarms publish to the KMS-encrypted SNS alarms topic
+        # (alarms.tf); without service permission to decrypt + generate data
+        # keys, alarm state changes fail instead of notifying.
+        Sid    = "AllowCloudWatchAlarmsPublish"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudwatch.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = "${data.aws_caller_identity.current.account_id}"
+          }
+        }
       }
     ]
   })
@@ -32,6 +96,11 @@ resource "aws_kms_alias" "app" {
 
 resource "aws_s3_bucket" "frontend" {
   bucket_prefix = "${local.name_prefix}-frontend-"
+  force_destroy = false
+}
+
+resource "aws_s3_bucket" "admin_frontend" {
+  bucket_prefix = "${local.name_prefix}-admin-frontend-"
   force_destroy = false
 }
 
@@ -144,6 +213,61 @@ resource "aws_s3_bucket_lifecycle_configuration" "frontend" {
   }
 }
 
+resource "aws_s3_bucket_public_access_block" "admin_frontend" {
+  bucket                  = aws_s3_bucket.admin_frontend.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_logging" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "admin-frontend/"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
+  bucket = aws_s3_bucket.admin_frontend.id
+
+  rule {
+    id     = "expire-noncurrent-admin-frontend-assets"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket" "uploads" {
   bucket_prefix = "${local.name_prefix}-uploads-"
   force_destroy = false
@@ -204,11 +328,29 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   }
 }
 
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+
+  # Media is uploaded directly from the browser via presigned PUT URLs, so the
+  # bucket must answer CORS preflight for the frontend origin(s). Reads stay
+  # server-side (worker), but GET/HEAD are allowed for presigned preview URLs.
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
   message_retention_seconds  = 345600
-  visibility_timeout_seconds = 60
+  visibility_timeout_seconds = 1800 # ≥ worker Lambda timeout (300s); AWS-recommended 6× for the SQS event source mapping
   tags                       = var.tags
 }
 
@@ -242,7 +384,7 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI2 keys — set only on tasks (per-site worklist by severity).
+  # GSI2 keys — set only on tasks (per-site worklist).
   attribute {
     name = "gsi2pk"
     type = "S"
@@ -250,6 +392,50 @@ resource "aws_dynamodb_table" "app" {
 
   attribute {
     name = "gsi2sk"
+    type = "S"
+  }
+
+  # GSI4 keys — set only on conditions (site/date/severity condition history).
+  attribute {
+    name = "gsi4pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi4sk"
+    type = "S"
+  }
+
+  # GSI5 keys — set only on unresolved conditions.
+  attribute {
+    name = "gsi5pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi5sk"
+    type = "S"
+  }
+
+  # GSI6 keys — pending setup codes by site/contact.
+  attribute {
+    name = "gsi6pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi6sk"
+    type = "S"
+  }
+
+  # GSI7 keys — pending setup codes by site.
+  attribute {
+    name = "gsi7pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi7sk"
     type = "S"
   }
 
@@ -261,13 +447,50 @@ resource "aws_dynamodb_table" "app" {
     projection_type = "ALL"
   }
 
-  # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <severity>#<createdAt>. (AP10)
+  # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <createdAt>#<kind>#<severity>#<taskId>. (AP10)
   # GSI3 (cross-site escalation queue) is sparse and deferred to Phase 7 — it can
   # be added to the live table later with no rebuild.
   global_secondary_index {
     name            = "GSI2"
     hash_key        = "gsi2pk"
     range_key       = "gsi2sk"
+    projection_type = "ALL"
+  }
+
+  # GSI4 — site condition history by severity:
+  # SITE#<siteId>#CONDITION#SEV#<severity> / <reportedAt>#<assessmentId>#<conditionId>.
+  global_secondary_index {
+    name            = "GSI4"
+    hash_key        = "gsi4pk"
+    range_key       = "gsi4sk"
+    projection_type = "ALL"
+  }
+
+  # GSI5 — sparse unresolved-condition queue:
+  # SITE#<siteId>#CONDITION#UNRESOLVED / <reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>.
+  global_secondary_index {
+    name            = "GSI5"
+    hash_key        = "gsi5pk"
+    range_key       = "gsi5sk"
+    projection_type = "ALL"
+  }
+
+  # GSI6 — sparse pending setup-code lookup for invalidating a prior code when
+  # an approved contact requests a replacement:
+  # SETUP_CODE_PENDING#<siteId>#<contactHash> / <createdAt>.
+  global_secondary_index {
+    name            = "GSI6"
+    hash_key        = "gsi6pk"
+    range_key       = "gsi6sk"
+    projection_type = "ALL"
+  }
+
+  # GSI7 — sparse pending setup-code lookup for deactivating a site:
+  # SETUP_CODE_PENDING_SITE#<siteId> / <createdAt>.
+  global_secondary_index {
+    name            = "GSI7"
+    hash_key        = "gsi7pk"
+    range_key       = "gsi7sk"
     projection_type = "ALL"
   }
 
@@ -297,6 +520,12 @@ resource "aws_cognito_user_pool" "users" {
   name = "${local.name_prefix}-users"
 
   deletion_protection = var.environment == "prod" ? "ACTIVE" : "INACTIVE"
+  # "ON" = MFA required for every sign-in; users must enroll TOTP on first login.
+  mfa_configuration = "ON"
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
 
   account_recovery_setting {
     recovery_mechanism {
@@ -306,6 +535,40 @@ resource "aws_cognito_user_pool" "users" {
   }
 
   auto_verified_attributes = ["email"]
+
+  email_configuration {
+    email_sending_account = "DEVELOPER"
+    source_arn            = var.setup_code_email_identity_arn
+    from_email_address    = "Good Neighbor <${var.setup_code_email_from}>"
+  }
+
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+
+    # AWS provider 5.x sends omitted invitation fields as empty strings on
+    # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
+    invite_message_template {
+      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor admin invitation"
+      email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."
+      sms_message   = "Your Good Neighbor username is {username} and temporary password is {####}."
+    }
+  }
+
+  # Per-tenant site binding for the deferred JWT authorizer. Schema attributes
+  # are add-only on a live pool, so we declare it now (harmless while unused) to
+  # avoid a painful migration once token issuance + the authorizer land.
+  schema {
+    name                     = "siteId"
+    attribute_data_type      = "String"
+    mutable                  = true
+    required                 = false
+    developer_only_attribute = false
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 128
+    }
+  }
 
   password_policy {
     minimum_length                   = 14
@@ -331,10 +594,110 @@ resource "aws_cognito_user_pool_client" "web" {
   prevent_user_existence_errors = "ENABLED"
 }
 
+resource "aws_cognito_user_pool_client" "admin" {
+  name         = "${local.name_prefix}-admin"
+  user_pool_id = aws_cognito_user_pool.users.id
+
+  explicit_auth_flows = [
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH"
+  ]
+
+  prevent_user_existence_errors = "ENABLED"
+
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile"]
+  callback_urls = distinct(concat(
+    var.admin_callback_urls,
+    [for name in var.admin_domain_names : "https://${name}/auth/callback"],
+    ["https://${aws_cloudfront_distribution.admin.domain_name}/auth/callback"]
+  ))
+  logout_urls = distinct(concat(
+    var.admin_logout_urls,
+    [for name in var.admin_domain_names : "https://${name}/"],
+    ["https://${aws_cloudfront_distribution.admin.domain_name}/"]
+  ))
+  supported_identity_providers = ["COGNITO"]
+}
+
+resource "aws_cognito_user_pool_domain" "managed_login" {
+  domain       = var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix
+  user_pool_id = aws_cognito_user_pool.users.id
+}
+
+resource "aws_cognito_user_group" "central_admin" {
+  name         = "central-admin"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Central support and program administrators for Good Neighbor."
+}
+
 resource "aws_cloudfront_response_headers_policy" "security" {
   name = "${local.name_prefix}-security-headers"
 
   security_headers_config {
+    content_security_policy {
+      # script-src allows 'self' plus one sha256 hash: the pre-paint theme-init
+      # inline script in frontend/index.html (kept inline on purpose to avoid a
+      # theme flash before first paint). No 'unsafe-inline' — only that one
+      # known script is permitted; an injected inline script hashes differently
+      # and stays blocked. This hash is coupled to the exact bytes of that
+      # script, so it MUST be regenerated and deployed with the frontend on any
+      # edit to it. Regenerate from a fresh build with:
+      #   cd frontend && npm run build && node -e 'const fs=require("fs"),c=require("crypto");const h=fs.readFileSync("dist/index.html","utf8");const m=/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i.exec(h);console.log("sha256-"+c.createHash("sha256").update(m[1],"utf8").digest("base64"))'
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
+      override                = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = true
+      override                   = true
+    }
+
+    xss_protection {
+      mode_block = true
+      protection = true
+      override   = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      override = true
+      value    = "camera=(), microphone=(), geolocation=()"
+    }
+  }
+}
+
+resource "aws_cloudfront_response_headers_policy" "admin_security" {
+  name = "${local.name_prefix}-admin-security-headers"
+
+  security_headers_config {
+    content_security_policy {
+      # Only the admin app needs cross-origin access to Cognito's token endpoint.
+      # Derive the domain string without a pool dependency (the pool invite
+      # template references this distribution).
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      override                = true
+    }
+
     content_type_options {
       override = true
     }
@@ -373,6 +736,9 @@ resource "aws_cloudfront_response_headers_policy" "security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
+  # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
+  provider = aws.us_east_1
+
   name  = "${local.name_prefix}-web-acl"
   scope = "CLOUDFRONT"
 
@@ -442,6 +808,127 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Per-path rate limits for the public, unauthenticated intakes (client-error
+  # reports + user feedback). API Gateway v2 has stage-level throttle only, so
+  # WAF rate-based rules with path scope-downs are the route-level guards the
+  # error-tracking and feedback plans call for — only these endpoints are
+  # bounded. Errors are rare + client-side deduped (100/5min/IP); honest
+  # feedback submissions are one-per-visit (20/5min/IP).
+  rule {
+    name     = "ClientErrorsRateLimit"
+    priority = 4
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 100
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/client-errors"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-client-errors-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "FeedbackRateLimit"
+    priority = 5
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 20
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/feedback"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-feedback-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Device-auth bootstrap routes (ADR 0010): /v1/devices (register) and
+  # /v1/devices/token:refresh. Anonymous + keyed only by the 6-char site code,
+  # so WAF is the brute-force guard. Generous by design — several hundred
+  # clients across many sites/IPs: registration is once-per-device and refresh
+  # ~once per 30 days per device (plus rare 401 retries), so honest traffic is
+  # single digits per IP per 5 min. 300/5min/IP leaves >30x headroom while
+  # capping code-guessing at ~900k tries/5min (vs 1M codespace, unusable).
+  rule {
+    name     = "DeviceAuthRateLimit"
+    priority = 6
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 300
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/devices"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-device-auth-rate"
       sampled_requests_enabled   = true
     }
   }

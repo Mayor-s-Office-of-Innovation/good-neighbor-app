@@ -1,13 +1,12 @@
 // Check-level synthesis: fold the per-artifact adapted assessments of one
-// perimeter run (all sides) into a single scorecard. The output shape maps
+// perimeter run (all places) into a single scorecard. The output shape maps
 // directly onto the CHECK# header extension persisted at `complete` (see
 // docs/dynamodb-data-model.md § synthesis-on-header): one CHECK# = one full run.
 //
 // The service grades each analyzed position; rolling those up into one perimeter
-// grade (worst across sides) is GNP synthesis, so it lives here. This is also the
-// seam the escalation classifier (built in handlers/checks.js via task-routing.js,
-// still a placeholder matrix) consumes — per-category max rating + source
-// artifacts, keyed off the category identity the service returns.
+// grade (worst across places) is GNP synthesis, so it lives here. The rollup is
+// per-category max rating + source artifacts, keyed off the category identity the
+// service returns.
 
 /** @typedef {import("./adapt-scorecard.js").AdaptedAssessment} AdaptedAssessment */
 /** @typedef {import("./contract.js").GeneralConditionsLabel} GeneralConditionsLabel */
@@ -15,7 +14,8 @@
 /**
  * @typedef {object} AnalyzedArtifact
  * @property {string} artifactId
- * @property {string} [side]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
  * @property {AdaptedAssessment} adapted
  */
 
@@ -29,6 +29,7 @@
 /**
  * @typedef {object} CheckScorecard
  * @property {GeneralConditionsLabel | null} grade
+ * @property {string | null} summary
  * @property {string | null} rubricVersion
  * @property {CategoryRollup[]} categories
  * @property {number} issueCount
@@ -55,13 +56,27 @@ const worseGrade = (a, b) =>
 export function synthesizeCheck(artifacts) {
   /** @type {GeneralConditionsLabel | null} */
   let grade = null;
+  // Overall check summary (Option B — PROVISIONAL, pending team review): rather
+  // than compose our own prose, we surface the analyzer's own
+  // general_conditions.description (adapted.gradeDescription) from the place that
+  // set the worst grade, so the one-line summary stays coherent with the grade we
+  // display. First artifact reaching the worst grade wins on ties. Persisted onto
+  // the CHECK# header at complete-time so the home screen reads it from listChecks
+  // without a detail fetch. If the team revisits this, this is the only seam to
+  // change (plus the header persistence in handlers/checks.js).
+  /** @type {string | null} */
+  let summary = null;
   /** @type {string | null} */
   let rubricVersion = null;
   /** @type {Map<string, CategoryRollup>} */
   const byCategory = new Map();
 
   for (const { artifactId, adapted } of artifacts) {
-    grade = worseGrade(grade, adapted.grade);
+    const worse = worseGrade(grade, adapted.grade);
+    if (worse !== grade) {
+      grade = worse;
+      summary = adapted.gradeDescription || null;
+    }
     rubricVersion ??= adapted.rubricVersion;
 
     for (const concern of adapted.concerns) {
@@ -89,6 +104,7 @@ export function synthesizeCheck(artifacts) {
 
   return {
     grade,
+    summary,
     rubricVersion,
     categories,
     issueCount: categories.filter((c) => c.maxRating > 0).length,

@@ -1,86 +1,186 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). See memory step2-gnp-port-scope.
 /*
-  submitCheck — file the in-progress walk against the backend (online cutover).
+  submit-check — background run-level scorecard finalization.
 
-  The single seam that turns a captured walk into a persisted, analyzed record. The
-  mock analyzer + local `checks` persistence are gone (docs/archive/frontend-api-wiring-plan.md):
-    1. create the check (client-minted id → `idempotency-key`)
-    2. per photo: presign → PUT to S3 → register (each register enqueues the
-       artifact's async analysis)
-    3. wait for the analyses to land (bounded poll), then complete (folds the
-       scorecard + mints tasks)
-    4. read the authoritative completed check and adapt its analyses → findings,
-       stored on the in-memory session so 5e results renders them.
+  Guidance is minted per evidence item at capture time (photo-analysis.js
+  evaluateAssessment), so the only work left for Done is folding the run's
+  per-artifact analyses into one header scorecard:
+    1. wait for every registered artifact's analysis to land (bounded poll)
+    2. complete the check (backend synthesizes + persists the scorecard)
 
-  No local fallback: any failure throws so the caller shows an error (offline is
-  post-MVP; there is no write queue). The just-submitted photos stay in the session
-  for the results evidence strip; only the resumable draft is dropped.
+  No local fallback: any failure throws (offline is post-MVP; there is no write
+  queue). The capture-complete session persists the checkId, so home re-kicks the
+  finalization idempotently on every load until the completed header lands.
 */
-import { clearDraft } from "../db.js";
-import {
-  createCheck,
-  uploadArtifact,
-  waitForAnalyses,
-  completeCheck,
-  getCheck,
-  listTasks,
-} from "./api.js";
-import {
-  analysesToFindings,
-  cityCategoriesForCheck,
-} from "../domain/check-adapter.js";
-import {
-  SIDES,
-  allItems,
-  getCurrentCheck,
-  markSubmitted,
-} from "../state/check-session.js";
+import { waitForAnalyses, completeCheck } from "./api.js";
+import { startRun, span, mark } from "./instrument.js";
+
+const pendingScorecardFinalizations = new Map();
 
 /**
- * Submit the current walk to the backend and hydrate the session with findings.
- * Throws on any backend/network failure (no silent local fallback).
- * @returns {Promise<object|null>} the getCheck detail payload, or null if no walk.
+ * Run one submit step and stamp the failing leg onto its error so the message
+ * layer can say *which* step broke. The first leg to fail wins (a nested call
+ * that already tagged keeps its own, more specific, leg), which matters for the
+ * parallel uploads: `Promise.all`'s first rejection carries the real cause.
+ * @template T
+ * @param {"start"|"upload"|"analyze"|"complete"} leg
+ * @param {() => Promise<T>} work
+ * @returns {Promise<T>}
  */
-export async function submitCheck() {
-  const active = getCurrentCheck();
-  if (!active) return null;
-
-  // 1. Start the run. `sides` records which sides were skipped (server stores it);
-  //    `siteId` is derived server-side, never sent.
-  const sides = SIDES.map((s) => ({
-    side: s,
-    skipped: !!active.sides[s].skipped,
-  }));
-  await createCheck(active.id, { sides });
-
-  // 2. Upload every captured photo straight to S3, then register it. Bytes never
-  //    transit our API; register enqueues the artifact's async analysis.
-  const photos = allItems().filter((it) => it.dataUrl);
-  for (const it of photos) {
-    await uploadArtifact(active.id, {
-      side: it.side,
-      dataUrl: it.dataUrl,
-      capturedAt: it.uploadedAt,
-    });
+async function withLeg(leg, work) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err && typeof err === "object" && err.leg === undefined) err.leg = leg;
+    throw err;
   }
+}
 
-  // 3. Let the analyses land (worker → analyzer), then close the run out —
-  //    complete folds the analyzed artifacts into one scorecard and mints tasks.
-  await waitForAnalyses(active.id, { expected: photos.length });
-  await completeCheck(active.id);
+/**
+ * Reduce an error to one cause bucket. Order matters: the analyses-timeout error
+ * carries status 0 (it never made an HTTP round-trip) but is a "still working",
+ * NOT a connection failure, so `analyses_pending` is checked before status 0.
+ * @param {any} err
+ * @returns {"pending"|"network"|"conflict"|"too_large"|"rejected"|"server"}
+ */
+function causeOf(err) {
+  if (err?.body?.code === "analyses_pending") return "pending";
+  const status = err?.status;
+  if (!status) return "network"; // 0 or undefined = transport failure / no round-trip
+  if (status === 409) return "conflict";
+  if (status === 413) return "too_large";
+  if (status >= 400 && status < 500) return "rejected";
+  return "server";
+}
 
-  // 4. Read the authoritative completed check + analyses and adapt to findings.
-  //    complete just minted the TASK# items, so fetch them to classify each
-  //    finding city-vs-handle from the backend's stamped `type` (no client-side
-  //    escalation rule). 5e reads these findings + the session photos.
-  const [detail, { tasks }] = await Promise.all([
-    getCheck(active.id),
-    listTasks({ status: "open" }),
-  ]);
-  const cityCategories = cityCategoriesForCheck(tasks, active.id);
-  markSubmitted(analysesToFindings(detail.analyses, cityCategories));
+/**
+ * Per-leg cause → user message. Each leg has a `default` for causes it doesn't
+ * spell out; an untagged error falls back to a single generic line. Every string
+ * names both the step that failed and what to do next, so no two failure modes
+ * read the same.
+ */
+const SUBMIT_MESSAGES = {
+  start: {
+    network:
+      "Couldn’t start this check — we couldn’t reach the server. Check your connection and try again.",
+    conflict:
+      "This check may already have been filed. Go home to check before submitting again.",
+    rejected:
+      "The server wouldn’t accept this check. Please try again; if it keeps happening, report it.",
+    default:
+      "Something went wrong on our end starting this check. Please try again in a moment.",
+  },
+  upload: {
+    network:
+      "Couldn’t upload your photos — we couldn’t reach the server. Check your connection and try again.",
+    too_large:
+      "One of your photos was too large to upload. Retake it and try again.",
+    conflict:
+      "One of your photos looks already uploaded. Go home to check, or try again.",
+    rejected:
+      "The server rejected one of your photos. Please try again; if it keeps happening, report it.",
+    default:
+      "Something went wrong on our end uploading your photos. Please try again in a moment.",
+  },
+  analyze: {
+    pending: "The AI is taking longer than expected. Please try again soon.",
+    network:
+      "Lost connection while waiting for the AI analysis. Check your connection and reopen this check.",
+    default: "The analysis service had a problem. Please try again soon.",
+  },
+  complete: {
+    network:
+      "Couldn’t finish filing this check — the connection dropped. Reopen it to finish.",
+    default:
+      "Something went wrong finishing this check. Please try again soon.",
+  },
+};
 
-  // Drop the resumable draft (home won't offer Resume); keep the in-memory session.
-  await clearDraft();
-  return detail;
+/**
+ * Map a submit/analysis failure to a unique, actionable message keyed on the
+ * failing leg (stamped by `withLeg`) and the cause bucket. Used by both the
+ * foreground submit screens and the background "AI analysis paused" home tile so
+ * there is a single source of truth for these strings.
+ * @param {any} err
+ * @returns {string}
+ */
+export function submitErrorMessage(err) {
+  const leg = SUBMIT_MESSAGES[err?.leg];
+  if (!leg) {
+    return "Couldn’t file this check. Check your connection and try again.";
+  }
+  return leg[causeOf(err)] ?? leg.default;
+}
+
+async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
+  startRun("captureScorecard", { checkId });
+  const endAnalyze = span("captureScorecard:wait", {
+    expected: expectedArtifacts,
+  });
+  const last = await withLeg("analyze", () =>
+    waitForAnalyses(checkId, { expected: expectedArtifacts }),
+  );
+  endAnalyze({
+    analyzed: last.analyses.length,
+    artifacts: last.artifacts.length,
+  });
+
+  const endComplete = span("captureScorecard:completeCheck");
+  const completion = await withLeg("complete", () => completeCheck(checkId));
+  endComplete({ grade: completion?.grade, issues: completion?.issueCount });
+  mark("captureScorecard:done", {
+    expectedArtifacts: last.artifacts.length,
+    checkId,
+  });
+  return completion;
+}
+
+/**
+ * Count the evidence items already captured for this check. This is used only as
+ * the coverage target for background run-level scorecard finalization; it does
+ * not register or analyze anything on Done.
+ * @param {any} check
+ * @returns {number}
+ */
+export function expectedArtifactCountForCheck(check) {
+  if (!check?.places) return 0;
+  return (check.placeOrder || Object.keys(check.places)).reduce(
+    (count, placeId) => {
+      const items = Array.isArray(check.places[placeId]?.items)
+        ? check.places[placeId].items
+        : [];
+      return (
+        count +
+        items.filter(
+          (item) =>
+            item?.kind === "text" ||
+            item?.dataUrl ||
+            item?.upload?.artifactId ||
+            item?.analysis?.artifactId,
+        ).length
+      );
+    },
+    0,
+  );
+}
+
+export function finalizeCaptureScorecardInBackground(
+  checkId,
+  { expectedArtifacts } = {},
+) {
+  if (!checkId || expectedArtifacts === 0) return null;
+  if (pendingScorecardFinalizations.has(checkId)) {
+    return pendingScorecardFinalizations.get(checkId);
+  }
+  const run = finalizeCaptureScorecard(checkId, { expectedArtifacts })
+    .catch((err) => {
+      console.error("finalizeCaptureScorecard failed", err);
+      throw err;
+    })
+    .finally(() => {
+      pendingScorecardFinalizations.delete(checkId);
+    });
+  pendingScorecardFinalizations.set(checkId, run);
+  void run.catch(() => {});
+  return run;
 }

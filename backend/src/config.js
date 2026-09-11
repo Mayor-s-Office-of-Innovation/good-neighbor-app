@@ -6,6 +6,18 @@
  * @property {string} [analyzerBaseUrl]
  * @property {string} [analyzerApiKey]
  * @property {string} [analyzerApiKeySecretArn]
+ * @property {string} [posthogProjectApiKey]
+ * @property {string} [posthogApiKeySecretArn]
+ * @property {string} [posthogFeedbackSurveyId]
+ * @property {string} [posthogFeedbackQuestionId]
+ * @property {string} [sf311CreateSrUrl]
+ * @property {string} [sf311UpdateSrUrl]
+ * @property {string} [sf311AgencyLookupUrl]
+ * @property {string} [sf311BasicAuthSecretArn]
+ * @property {string} [sf311BasicAuthUser]
+ * @property {string} [sf311BasicAuthPass]
+ * @property {string} [sf311DefaultResponsibleAgency]
+ * @property {string} [sf311ClassifierServiceCodeMap]
  */
 
 /**
@@ -35,6 +47,49 @@ export function getConfig(env = process.env) {
   if (env.ANALYZER_API_KEY) config.analyzerApiKey = env.ANALYZER_API_KEY;
   if (env.ANALYZER_API_KEY_SECRET_ARN) {
     config.analyzerApiKeySecretArn = env.ANALYZER_API_KEY_SECRET_ARN;
+  }
+
+  // PostHog forwarder wiring is likewise optional at load time: unset/empty
+  // means the client-error forwarder runs in log-only mode (validate + log,
+  // no egress) — the governance-gate default. See handlers/posthog-api-key.js.
+  if (env.POSTHOG_PROJECT_API_KEY) {
+    config.posthogProjectApiKey = env.POSTHOG_PROJECT_API_KEY;
+  }
+  if (env.POSTHOG_API_KEY_SECRET_ARN) {
+    config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
+  }
+
+  // Feedback survey wiring is optional at load time: with either ID unset the
+  // feedback forwarder stays in log-only mode (validate + log, no egress) —
+  // the pre-config default and the kill switch. Plain identifiers, not
+  // secrets. See handlers/feedback-forwarder.js.
+  if (env.FEEDBACK_SURVEY_ID) {
+    config.posthogFeedbackSurveyId = env.FEEDBACK_SURVEY_ID;
+  }
+  if (env.FEEDBACK_QUESTION_ID) {
+    config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
+  }
+
+  if (env.SF311_CREATESR_URL) config.sf311CreateSrUrl = env.SF311_CREATESR_URL;
+  if (env.SF311_UPDATESR_URL) config.sf311UpdateSrUrl = env.SF311_UPDATESR_URL;
+  if (env.SF311_AGENCY_LOOKUP_URL) {
+    config.sf311AgencyLookupUrl = env.SF311_AGENCY_LOOKUP_URL;
+  }
+  if (env.SF311_BASIC_AUTH_SECRET_ARN) {
+    config.sf311BasicAuthSecretArn = env.SF311_BASIC_AUTH_SECRET_ARN;
+  }
+  if (env.SF311_BASIC_AUTH_USER) {
+    config.sf311BasicAuthUser = env.SF311_BASIC_AUTH_USER;
+  }
+  if (env.SF311_BASIC_AUTH_PASS) {
+    config.sf311BasicAuthPass = env.SF311_BASIC_AUTH_PASS;
+  }
+  if (env.SF311_DEFAULT_RESPONSIBLE_AGENCY) {
+    config.sf311DefaultResponsibleAgency = env.SF311_DEFAULT_RESPONSIBLE_AGENCY;
+  }
+  if (env.SF311_CLASSIFIER_SERVICE_CODE_MAP) {
+    config.sf311ClassifierServiceCodeMap =
+      env.SF311_CLASSIFIER_SERVICE_CODE_MAP;
   }
 
   return config;

@@ -4,9 +4,8 @@
   register our own components, mount the app.
 
   Web Awesome is adopted in HYBRID fashion: WA supplies form controls, buttons,
-  badges, callouts, spinners and icons; we keep our own shell, bottom nav and the
-  camera/mic capture plumbing. APIs were pulled from the shipped agent skill in
-  node_modules (never guessed).
+  badges, callouts, spinners and icons; we keep our own shell and bottom nav.
+  APIs were pulled from the shipped agent skill in node_modules (never guessed).
 
   CDN-free note: wa-icon loads from the Font Awesome CDN by default. We self-host a
   small icon set in /public/icons and register it as the `default` library below, so
@@ -19,6 +18,12 @@
   (No service worker ships in the MVP — real offline/precaching is a later pass; see
   vite.config.js and memory step2-gnp-port-scope.)
 */
+// Error capture installs FIRST — this is the first import in the module graph,
+// and the module self-installs its `error` + `unhandledrejection` listeners at
+// evaluation time, so exceptions while loading Web Awesome or any later import
+// are still captured. No-ops under tests and when `gnp:errors=off`.
+import "./services/error-report.js";
+
 import { registerIconLibrary } from "@awesome.me/webawesome/dist/components/icon/library.js";
 
 // Resolve icons from our self-hosted set. BASE_URL keeps paths correct under a
@@ -39,7 +44,9 @@ import "./styles/wa-awesome.css";
 import "@awesome.me/webawesome/dist/components/button/button.js";
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/input/input.js";
+import "@awesome.me/webawesome/dist/components/otp-input/otp-input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
+import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "@awesome.me/webawesome/dist/components/badge/badge.js";
@@ -52,17 +59,16 @@ import "./styles/app.css";
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
-import "./components/capture-audio.js";
 import "./components/today-view.js";
+import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
-import "./components/check-review.js";
-import "./components/check-results.js";
+import "./components/problem-report.js";
+import "./components/describe-instead.js";
+import "./components/places-setup.js";
 import "./components/site-setup.js";
+import "./components/app-toasts.js";
+import "./components/app-root.js";
 
-// Demo seed: a no-op unless a `?demo=` param is present (see demo/seed.js). It must
-// finish writing IndexedDB BEFORE app-root reads it, so app-root — the only element
-// already in the DOM — is imported dynamically here, after the seed resolves. Every
-// other component is a static import above; only app-root's mount timing matters.
-import { maybeRunDemo } from "./demo/seed.js";
-await maybeRunDemo();
-await import("./components/app-root.js");
+if (import.meta.env.DEV) {
+  await import("./components/guidance-harness.js");
+}

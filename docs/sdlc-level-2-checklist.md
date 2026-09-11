@@ -16,7 +16,7 @@ Source: https://sfgov.github.io/ccsf-sdlc-requirements/
 - [x] Terraform-based infrastructure with environment roots and reusable modules.
 - [x] GitHub Actions CI for lint, test, build, security scans, and Terraform validation.
 - [x] Dependabot configured.
-- [x] CODEOWNERS configured.
+- [x] Code ownership control: `main` branch locked to the two admin accounts. *(CODEOWNERS removed 2026-08-18 — no GitHub teams; the branch lock is the ownership control for this 2-person repo. Re-add naming individual handles if code-owner review is ever required.)*
 - [x] Required CCSF cloud tags encoded in Terraform.
 - [x] Managed AWS services selected for compute, API, queueing, AI, auth, storage, CDN, WAF, and database.
 - [x] Secrets storage pattern documented.

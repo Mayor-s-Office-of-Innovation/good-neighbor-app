@@ -1,6 +1,16 @@
 name: Deploy
 
+# Reusable deploy core. Invoked by:
+#   - deploy-dev.yml   (push to `dev`         -> environment: dev)
+#   - deploy-prod.yml  (release published     -> environment: prod)
+# and directly via the Actions tab for manual reruns (workflow_dispatch).
 on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment to deploy (dev or prod)
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       environment:
@@ -17,9 +27,14 @@ permissions:
 
 jobs:
   terraform-apply:
-    name: Terraform apply
+    name: Terraform apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
+    # Gates on the GitHub Environment: role ARN + region come from its
+    # secret/variable, and prod's required-reviewer approval applies here.
     environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: infra/environments/${{ inputs.environment }}
@@ -33,10 +48,30 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # Install once at the repo root; workspaces (backend + frontend) share the
+      # lockfile. Needed for both the Lambda bundles and the frontend build.
+      - name: Install dependencies
+        working-directory: ${{ github.workspace }}
+        run: npm ci
+
+      # Bundle the api + worker Lambdas into backend/dist/{api,worker} BEFORE
+      # terraform plan — data.archive_file zips these dirs and its hash drives
+      # Lambda redeploys, so the artifacts must exist before plan reads them.
+      - name: Build Lambda bundles
+        working-directory: ${{ github.workspace }}
+        run: npm run build:lambdas -w @good-neighbor/backend
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Init
         run: terraform init
@@ -46,3 +81,132 @@ jobs:
 
       - name: Apply
         run: terraform apply -auto-approve tfplan
+
+      # Read the invoke URL + publish targets from state for the frontend build
+      # and CloudFront invalidation below.
+      - name: Capture Terraform outputs
+        id: tf
+        run: |
+          set -euo pipefail
+          terraform output -json > "$RUNNER_TEMP/good-neighbor-tf-outputs.json"
+          jq -er '
+            {
+              api_url: .api_url.value,
+              bucket: .frontend_bucket_name.value,
+              dist_id: .cloudfront_distribution_id.value,
+              admin_bucket: .admin_frontend_bucket_name.value,
+              admin_dist_id: .admin_cloudfront_distribution_id.value,
+              admin_cognito_client_id: .admin_cognito_client_id.value,
+              cognito_managed_login_domain: .cognito_managed_login_domain.value,
+              dynamo_table: .dynamodb_table_name.value
+            }
+            | to_entries[]
+            | if (.value | type) == "string" and (.value | length) > 0
+              then "\(.key)=\(.value)"
+              else error("Missing Terraform output: " + .key)
+              end
+          ' "$RUNNER_TEMP/good-neighbor-tf-outputs.json" >> "$GITHUB_OUTPUT"
+
+      - name: Seed dev site codes
+        if: ${{ inputs.environment == 'dev' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: npm run seed:dev-site-codes -w @good-neighbor/backend
+
+      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
+      # so the frontend defaults to a same-origin base ("") and makes relative
+      # calls (/site-code, /v1/*). This resolves to whichever origin served the
+      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
+      # so it stays within connect-src 'self' instead of triggering a cross-origin
+      # CSP violation. (api_url is still used for the /health smoke test below.)
+      # No VITE_API_BASE: the SPA and the API share one CloudFront distribution,
+      # so the frontend defaults to a same-origin base ("") and makes relative
+      # calls (/site-code, /v1/*). This resolves to whichever origin served the
+      # page — the CloudFront URL or a custom alias like dev.goodneighborsf.org —
+      # so it stays within connect-src 'self' instead of triggering a cross-origin
+      # CSP violation. (api_url is still used for the /health smoke test below.)
+      # RELEASE stamps the build for the error tracker (error-report.js reads
+      # __RELEASE__, defined in vite.config.js) and keys the sourcemap upload.
+      - name: Build frontend
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: npm run build -w @good-neighbor/frontend
+
+      - name: Configure admin frontend
+        working-directory: ${{ github.workspace }}
+        run: |
+          cat > admin-frontend/config.js <<CONFIG
+          window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
+            cognitoDomain: "${{ steps.tf.outputs.cognito_managed_login_domain }}",
+            clientId: "${{ steps.tf.outputs.admin_cognito_client_id }}",
+            redirectUri: location.origin + "/auth/callback",
+            logoutUri: location.origin + "/",
+            apiBase: "",
+            localDebugAdmin: false,
+          };
+          CONFIG
+
+      # Upload sourcemaps to the error tracker so client stack traces
+      # symbolicate for contributors. The upload is per-release (the sha the
+      # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
+      # per-env GH Environment secret) + POSTHOG_CLI_PROJECT_ID (per-env GH
+      # Environment variable) — the CLI's headless-CI auth variables. The
+      # pipeline is inject → upload: inject stamps the built chunks with
+      # release/chunk metadata (required for the upload to be usable), upload
+      # then associates the maps with the release named after the commit sha.
+      # Best-effort: a failed upload must not fail the deploy (errors just
+      # stay minified until the next green run), hence continue-on-error on
+      # both steps + the CLI's --no-fail on the upload.
+      - name: Inject PostHog metadata into bundles
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx @posthog/cli sourcemap inject \
+            --directory frontend/dist
+        continue-on-error: true
+
+      - name: Upload sourcemaps to PostHog
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npx @posthog/cli sourcemap upload \
+            --directory frontend/dist \
+            --release-name good-neighbor \
+            --release-version "$RELEASE_SHA" \
+            --host https://us.i.posthog.com \
+            --no-fail
+        continue-on-error: true
+
+      # Maps must not go public — they'd leak full source. They live in
+      # PostHog (uploaded above) and only there.
+      - name: Publish frontend to S3
+        working-directory: ${{ github.workspace }}
+        run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete --exclude "*.map"
+
+      - name: Publish admin frontend to S3
+        working-directory: ${{ github.workspace }}
+        run: |
+          aws s3 sync admin-frontend "s3://${{ steps.tf.outputs.admin_bucket }}" \
+            --delete \
+            --exclude "README.md" \
+            --exclude "config.example.js"
+
+      # Env-scoped: only this environment's distribution is invalidated.
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
+
+      - name: Invalidate admin CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.admin_dist_id }}" --paths "/*"
+
+      - name: Smoke test /health
+        run: curl -fsS "${{ steps.tf.outputs.api_url }}/health"

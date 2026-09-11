@@ -7,16 +7,16 @@
 //
 // We adopt the service `grade` (`general_conditions.label`) directly and do NOT
 // compute a total_score: the grade is already computed server-side from every
-// category's severity × weighting, so no rubric data needs to live here. (The
-// escalation classifier — built in handlers/checks.js via task-routing.js, still
-// a placeholder matrix pending product input — routes concerns via a GNP-owned
-// policy keyed off category + severity, sourcing any rubric weightings from the
-// service rather than a vendored copy.)
+// category's severity × weighting, so no rubric data needs to live here. (Task
+// routing is the GNP-owned guidance rulebase, keyed off category + severity in
+// analysis/guidance/, sourcing any rubric weightings from the service rather than
+// a vendored copy.)
 
 /** @typedef {import("./contract.js").AnalysisResponse} AnalysisResponse */
 
 /**
  * @typedef {object} AdaptedConcern
+ * @property {string} [conditionId]
  * @property {string} category
  * @property {number} rating
  * @property {string} [ratingLabel]
@@ -51,6 +51,7 @@ export function adaptAssessment(response) {
       explanation: c.description,
       evidenceIndices: c.evidence_indices ?? [],
     };
+    if (c.condition_id !== undefined) concern.conditionId = c.condition_id;
     if (c.severity_label !== undefined) concern.ratingLabel = c.severity_label;
     return concern;
   });

@@ -25,28 +25,28 @@ export const realPoorSampleResponse = {
       type: "text",
       content_type: "text/plain; charset=utf-8",
       s3_uri:
-        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-0.txt",
+        "s3://example-analysis-bucket/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-0.txt",
     },
     {
       index: 1,
       type: "image",
       content_type: "image/jpeg",
       s3_uri:
-        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-1.jpg",
+        "s3://example-analysis-bucket/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-1.jpg",
     },
     {
       index: 2,
       type: "image",
       content_type: "image/jpeg",
       s3_uri:
-        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-2.jpg",
+        "s3://example-analysis-bucket/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-2.jpg",
     },
     {
       index: 3,
       type: "image",
       content_type: "image/jpeg",
       s3_uri:
-        "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-3.jpg",
+        "s3://example-analysis-bucket/dev/analyses/2026/08/14/ana_20260814_54234580279c/input-3.jpg",
     },
   ],
   assessment: {
@@ -139,6 +139,6 @@ export const realPoorSampleResponse = {
   },
   result_storage: {
     s3_uri:
-      "s3://streetconditionsanalysis--imageanalysisservicestre-1urlwrwdgxof/dev/analyses/2026/08/14/ana_20260814_54234580279c/result.json",
+      "s3://example-analysis-bucket/dev/analyses/2026/08/14/ana_20260814_54234580279c/result.json",
   },
 };

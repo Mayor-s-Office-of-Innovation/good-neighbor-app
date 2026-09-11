@@ -9,7 +9,9 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#0f172a" />
+    <!-- Updated at runtime by the theme init below so the browser-chrome band
+         matches the sticky header (--surface) in both themes. -->
+    <meta name="theme-color" content="#ffffff" />
     <title>Good Neighbor App</title>
 
     <!--
@@ -40,6 +42,11 @@
             el = document.documentElement;
           el.classList.toggle("wa-dark", dark);
           el.classList.toggle("wa-light", !dark);
+          // Match the browser-chrome color to the header surface (tokens.css:
+          // --surface light #ffffff / dark #1a1a1a) so the URL-bar band blends
+          // instead of reading as a mismatched stripe when it shows/hides.
+          var tc = document.querySelector('meta[name="theme-color"]');
+          if (tc) tc.setAttribute("content", dark ? "#1a1a1a" : "#ffffff");
           window.dispatchEvent(
             new CustomEvent("themechange", {
               detail: { dark: dark, following: !override() },

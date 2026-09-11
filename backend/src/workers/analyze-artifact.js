@@ -5,7 +5,7 @@
 // header's running counters. `completeCheck` (C4) does the authoritative
 // roll-up; the counters here are a best-effort in-progress display.
 //
-// Invariants (see MVP-TODO 🔒 media-handling):
+// Invariants (see security-review.md, media-handling):
 //   - Media bytes reach this worker only via the S3 key on the message — never
 //     through the queue body — and are never logged.
 //   - The analyzer API key is server-side (api-key.js) and `store_input:false`
@@ -34,8 +34,9 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @property {string} siteId
  * @property {string} checkId
  * @property {string} artifactId
- * @property {string} s3Key
- * @property {string} [side]
+ * @property {string} [s3Key]
+ * @property {string} [placeId]
+ * @property {string} [placeName]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
  */
@@ -49,12 +50,12 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  */
 function buildMetadata(msg) {
   return {
-    position_descriptor: msg.side ?? "perimeter",
+    position_descriptor: msg.placeName ?? "perimeter",
     reported_at: msg.capturedAt ?? new Date().toISOString(),
     // TODO(product): real per-photo GPS. Read device coordinates AT THE MOMENT
     // EACH PHOTO IS CAPTURED (not at check start or batch submit) and stamp
     // them on the artifact so these are the true location of this photo.
-    // Pending the v1 capture-flow UI (analysis-backend-lambdas-plan.md §6);
+    // Pending the v1 capture-flow UI (per-photo GPS is a deferred follow-up);
     // 0,0 placeholder until then.
     latitude: 0,
     longitude: 0,
@@ -136,7 +137,8 @@ async function markFailed({ dynamoTable, msg, err }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.side ? { side: msg.side } : {}),
+    ...(msg.placeId ? { placeId: msg.placeId } : {}),
+    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     status: "failed",
     error: {
       ...(err.code ? { code: err.code } : {}),
@@ -177,38 +179,56 @@ async function markFailed({ dynamoTable, msg, err }) {
  * @returns {Promise<void>}
  */
 async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
-  // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
-  const object = await getObjectBytes({ bucket: uploadBucket, key: msg.s3Key });
-  const { bytes, contentType } = await downscaleImage(
-    object.bytes,
-    object.contentType ?? "application/octet-stream",
-  );
+  /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
+  const media = [];
+  if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
+    // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
+    const object = await getObjectBytes({
+      bucket: uploadBucket,
+      key: msg.s3Key,
+    });
+    const { bytes, contentType } = await downscaleImage(
+      object.bytes,
+      object.contentType ?? "application/octet-stream",
+    );
 
-  if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
-    // A key that isn't one of our accepted image types can never analyze —
-    // treat it as a permanent failure rather than retry forever.
+    if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
+      // A key that isn't one of our accepted image types can never analyze —
+      // treat it as a permanent failure rather than retry forever.
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: new AnalyzerError(
+          `Unsupported media content-type: ${contentType}`,
+          {
+            code: "unsupported_input_type",
+          },
+        ),
+      });
+      return;
+    }
+
+    media.push(
+      /** @type {import("../analysis/analyzer-client.js").ImageMedia} */ ({
+        type: "image",
+        content_type: contentType,
+        base64: bytes.toString("base64"),
+      }),
+    );
+  }
+  if (typeof msg.text === "string" && msg.text.length > 0) {
+    media.push({ type: "text", text: msg.text });
+  }
+  if (media.length === 0) {
     await markFailed({
       dynamoTable,
       msg,
-      err: new AnalyzerError(`Unsupported media content-type: ${contentType}`, {
-        code: "unsupported_input_type",
+      err: new AnalyzerError("Artifact contained neither image nor text.", {
+        code: "invalid_request",
       }),
     });
     return;
   }
-
-  // content-type is validated above, so this shape is a sound AnalyzeMedia.
-  const media =
-    /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */ ([
-      {
-        type: "image",
-        content_type: contentType,
-        base64: bytes.toString("base64"),
-      },
-      ...(typeof msg.text === "string" && msg.text.length > 0
-        ? [{ type: "text", text: msg.text }]
-        : []),
-    ]);
 
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.
@@ -237,7 +257,8 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.side ? { side: msg.side } : {}),
+    ...(msg.placeId ? { placeId: msg.placeId } : {}),
+    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     status: "analyzed",
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,
@@ -279,9 +300,13 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
 }
 
 /**
- * SQS entry point. Builds the analyzer client once per batch, then processes
- * each record. A thrown record fails the batch (SQS redelivers); permanent
- * analyzer failures are consumed via a failure marker inside `analyzeArtifact`.
+ * SQS entry point. Builds the analyzer client once per batch, then analyzes
+ * every record in the batch CONCURRENTLY (each artifact is an independent remote
+ * call whose latency is all in the analyzer's response, so batch wall-clock ≈ the
+ * slowest single call, not the sum). Failures are isolated per message via a
+ * partial-batch response — only the rejected artifacts redeliver, never the whole
+ * batch. Permanent analyzer failures are consumed via a failure marker inside
+ * `analyzeArtifact` and never surface here.
  * @type {import("aws-lambda").SQSHandler}
  */
 export const handler = async (event) => {
@@ -292,10 +317,38 @@ export const handler = async (event) => {
     );
   }
   const apiKey = await getAnalyzerApiKey();
-  const client = createAnalyzerClient({ baseUrl: analyzerBaseUrl, apiKey });
+  // Retries disabled (maxRetries: 0): one analyzer call per artifact, no hidden
+  // exponential backoff. A transient failure surfaces as a rejected promise below
+  // and redelivers via SQS, rather than being masked (and re-timed) in-process.
+  const client = createAnalyzerClient({
+    baseUrl: analyzerBaseUrl,
+    apiKey,
+    maxRetries: 0,
+  });
 
-  for (const record of event.Records) {
-    const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
-    await analyzeArtifact(msg, { client, dynamoTable, uploadBucket });
-  }
+  // Fan out: fire every artifact's analysis at once and await them together.
+  const settled = await Promise.allSettled(
+    event.Records.map(async (record) => {
+      const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
+      await analyzeArtifact(msg, { client, dynamoTable, uploadBucket });
+    }),
+  );
+
+  // Report only the failed messages back to SQS (the event source mapping sets
+  // function_response_types = ["ReportBatchItemFailures"]). Succeeded artifacts
+  // are acknowledged and never re-analyzed; only the rejected ones redeliver.
+  /** @type {{ itemIdentifier: string }[]} */
+  const batchItemFailures = [];
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const { messageId } = event.Records[index];
+      console.error("analyzeArtifact failed; message will redeliver", {
+        messageId,
+        error: result.reason,
+      });
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+  });
+
+  return { batchItemFailures };
 };

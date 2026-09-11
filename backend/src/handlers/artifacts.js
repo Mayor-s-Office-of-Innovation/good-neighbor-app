@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { QueryCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
 import { presignGet, presignPut } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import {
-  artifactKey,
-  checkArtifactPrefix,
-  checkHeaderKey,
-  sitePk,
-} from "./keys.js";
+import { artifactKey, checkArtifactPrefix, sitePk } from "./keys.js";
 
 const sqs = new SQSClient({});
 
@@ -23,6 +18,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 const PRESIGN_EXPIRY_SECONDS = 300;
+const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -30,12 +26,12 @@ const PRESIGN_EXPIRY_SECONDS = 300;
  * `registerArtifact` can reject any key that doesn't.
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} artifactId
  * @returns {string}
  */
-const mediaKey = (siteId, checkId, side, artifactId) =>
-  `checks/${siteId}/${checkId}/${side}/${artifactId}`;
+const mediaKey = (siteId, checkId, placeId, artifactId) =>
+  `checks/${siteId}/${checkId}/${placeId}/${artifactId}`;
 
 /**
  * POST /v1/checks/{checkId}/artifacts:presign — mint an `artifactId` + S3 key
@@ -57,11 +53,16 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { side, contentType } =
-    /** @type {{ side?: unknown, contentType?: unknown }} */ (body ?? {});
+  const { placeId, placeName, contentType } =
+    /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
+      body ?? {}
+    );
 
-  if (typeof side !== "string" || side.length === 0) {
-    return jsonResponse(400, { error: "Missing side" });
+  if (typeof placeId !== "string" || placeId.length === 0) {
+    return jsonResponse(400, { error: "Missing placeId" });
+  }
+  if (typeof placeName !== "string" || placeName.trim().length === 0) {
+    return jsonResponse(400, { error: "Missing placeName" });
   }
   if (
     typeof contentType !== "string" ||
@@ -71,7 +72,7 @@ export const presignUpload = async (event) => {
   }
 
   const artifactId = randomUUID();
-  const key = mediaKey(siteId, checkId, side, artifactId);
+  const key = mediaKey(siteId, checkId, placeId, artifactId);
   const uploadUrl = await presignPut({
     bucket: uploadBucket,
     key,
@@ -81,7 +82,8 @@ export const presignUpload = async (event) => {
 
   return jsonResponse(200, {
     artifactId,
-    side,
+    placeId,
+    placeName: placeName.trim(),
     s3Key: key,
     contentType,
     uploadUrl,
@@ -91,10 +93,20 @@ export const presignUpload = async (event) => {
 
 /**
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
- * its analysis. Writes are a TransactWrite: a ConditionCheck that the parent
- * CHECK header exists (no grafting an artifact onto a missing/foreign check)
- * plus a conditional Put of the ART item (no duplicate). Only then do we enqueue
- * — the message carries the S3 key, never the media bytes.
+ * its analysis. A single conditional Put of the ART item (attribute_not_exists,
+ * so a replay can't duplicate it); only then do we enqueue — the message carries
+ * the S3 key, never the media bytes.
+ *
+ * Tenant isolation is the partition key (`SITE#<siteId>`, siteId derived from the
+ * JWT and enforced by the IAM LeadingKeys condition) plus the s3Key prefix check
+ * below — NOT a parent-header lookup. We deliberately do not read the CHECK header
+ * here. It used to be a ConditionCheck in a TransactWrite, but that routed every
+ * one of a submit's parallel registrations through the same header item, and
+ * DynamoDB cancels concurrent transactions contending on a shared item
+ * (TransactionConflict) — surfacing as a spurious 409 on multi-photo submits. The
+ * client always awaits createCheck before uploading, and getCheck/completeCheck
+ * key off the header (a would-be orphan is simply never read), so "parent exists"
+ * is a client-guaranteed invariant rather than one re-proven on every photo.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
@@ -110,22 +122,43 @@ export const registerArtifact = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { artifactId, side, s3Key, contentType, capturedAt, text } =
-    /** @type {{ artifactId?: unknown, side?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, text?: unknown }} */ (
+  const {
+    artifactId,
+    placeId,
+    placeName,
+    s3Key,
+    contentType,
+    capturedAt,
+    text,
+  } =
+    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, text?: unknown }} */ (
       body ?? {}
     );
 
   if (typeof artifactId !== "string" || !artifactId) {
     return jsonResponse(400, { error: "Missing artifactId" });
   }
-  if (typeof side !== "string" || !side) {
-    return jsonResponse(400, { error: "Missing side" });
+  if (typeof placeId !== "string" || !placeId) {
+    return jsonResponse(400, { error: "Missing placeId" });
   }
-  if (typeof s3Key !== "string" || !s3Key) {
-    return jsonResponse(400, { error: "Missing s3Key" });
+  const normalizedPlaceName =
+    typeof placeName === "string" ? placeName.trim() : "";
+  if (!normalizedPlaceName) {
+    return jsonResponse(400, { error: "Missing placeName" });
+  }
+  const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
+  const normalizedText = typeof text === "string" ? text.trim() : "";
+  const hasText = normalizedText.length > 0;
+  if (!hasS3Key && !hasText) {
+    return jsonResponse(400, { error: "Missing s3Key or text" });
+  }
+  if (normalizedText.length > MAX_ARTIFACT_TEXT_LENGTH) {
+    return jsonResponse(400, {
+      error: `text must be ${MAX_ARTIFACT_TEXT_LENGTH} characters or fewer`,
+    });
   }
   // No-graft: the key the client hands back must live under this site + check.
-  if (!s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
+  if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
   }
 
@@ -134,49 +167,51 @@ export const registerArtifact = async (event) => {
   // `reported_at`, so it must describe THIS artifact, not the batch.
   const capturedAtValue = typeof capturedAt === "string" ? capturedAt : now;
   const item = {
-    ...artifactKey(siteId, checkId, side, artifactId),
+    ...artifactKey(siteId, checkId, placeId, artifactId),
     checkId,
     artifactId,
-    side,
-    s3Key,
+    placeId,
+    placeName: normalizedPlaceName,
+    ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(typeof contentType === "string" ? { contentType } : {}),
-    ...(typeof text === "string" ? { text } : {}),
+    ...(hasText ? { text: normalizedText } : {}),
   };
 
+  let alreadyRegistered = false;
   try {
     await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            ConditionCheck: {
-              TableName: dynamoTable,
-              Key: checkHeaderKey(siteId, checkId),
-              ConditionExpression: "attribute_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: item,
-              ConditionExpression: "attribute_not_exists(sk)",
-            },
-          },
-        ],
+      new PutCommand({
+        TableName: dynamoTable,
+        Item: item,
+        // No duplicate: write only if this artifactId isn't already registered.
+        // Touches only this artifact's own item, so a submit's parallel
+        // registrations never contend (see the header note above).
+        ConditionExpression: "attribute_not_exists(sk)",
       }),
     );
   } catch (err) {
-    if (err instanceof Error && err.name === "TransactionCanceledException") {
-      // Parent check missing, or this artifact was already registered.
-      return jsonResponse(409, {
-        error: "check not found or artifact already registered",
-      });
+    if (
+      err instanceof Error &&
+      err.name === "ConditionalCheckFailedException"
+    ) {
+      // The ART item already exists — but the Put and the SQS send below are not
+      // atomic, so a PRIOR attempt may have persisted the item then failed before
+      // enqueuing (or its 202 was lost and the client retried). We can't tell
+      // "already queued" from "persisted but never queued", so we fall through and
+      // (re)enqueue anyway rather than returning here. The worker's ANALYSIS# write
+      // is conditional/idempotent, so a duplicate analyze message is harmless —
+      // and NOT re-enqueuing would strand an artifact that exists-but-was-never-
+      // queued, hanging the client's waitForAnalyses poll until it times out.
+      alreadyRegistered = true;
+    } else {
+      throw err;
     }
-    throw err;
   }
 
   // Media bytes NEVER travel through the queue — only the S3 key the worker
-  // will fetch, downscale, and forward to the analyzer.
+  // will fetch, downscale, and forward to the analyzer. Enqueued on BOTH the fresh
+  // and the already-registered path (see above) so analysis is always driven.
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: queueUrl,
@@ -184,21 +219,26 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        s3Key,
-        side,
+        placeId,
+        placeName: normalizedPlaceName,
         capturedAt: capturedAtValue,
-        ...(typeof text === "string" ? { text } : {}),
+        ...(hasS3Key ? { s3Key } : {}),
+        ...(hasText ? { text: normalizedText } : {}),
       }),
     }),
   );
 
-  return jsonResponse(202, { artifactId, status: "queued" });
+  // Keep 409 on replay so the client still learns this was a duplicate; the
+  // enqueue above means treating that 409 as success is now safe.
+  return alreadyRegistered
+    ? jsonResponse(409, { error: "artifact already registered" })
+    : jsonResponse(202, { artifactId, status: "queued" });
 };
 
 /**
- * GET /v1/checks/{checkId}/artifacts/{artifactId}:media — mint a short-lived
+ * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — mint a short-lived
  * presigned GET so staff can review the original photo. The route carries only
- * checkId + artifactId, but the sort key embeds `side`, so we query this check's
+ * checkId + artifactId, but the sort key embeds `placeId`, so we query this check's
  * ART# items and match on `artifactId` (rather than reconstruct the key). Scoped
  * to the derived site, so one tenant can never sign another's media.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}

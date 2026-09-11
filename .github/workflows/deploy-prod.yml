@@ -1,0 +1,26 @@
+name: Deploy prod
+
+# Deploy prod when a GitHub Release is published (cut from `main`).
+# The release points at a tag on a `main` commit, so checkout builds that
+# reviewed commit — never `dev`'s tip. The prod Environment's required-reviewer
+# approval gates the apply.
+#
+# NOTE: a release event runs on the tag ref (refs/tags/<tag>), NOT refs/heads/main.
+# The prod Environment's deployment rule must allow the release TAG pattern
+# (e.g. v*) under "Selected branches and tags" — a `main` branch-only rule
+# blocks this deploy.
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: prod
+    secrets: inherit

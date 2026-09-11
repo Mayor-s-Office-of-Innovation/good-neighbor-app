@@ -1,212 +1,994 @@
-// @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+// @ts-nocheck -- lenient migration baseline (checkJs).
 /*
-  perimeter-check — 5c capture (MVP native-camera port). Walk the four sides
-  (numbered "Side N of 4"); cover each with one or more photos, or Skip a side.
-  Cancel leaves the walk but keeps the draft (resume from home). After the last
-  side, submit runs the (mock) analyzer and hands off to 5e.
+  perimeter-check — timeline capture flow.
 
-  Capture is a native camera handoff: the ＋ "Add photo" tile clicks a hidden
-  <input type="file" accept="image/*" capture="environment">, so users get their
-  device's full camera (zoom / focus / flash / lens). On desktop the same input is
-  a file picker. The returned file is read to a JPEG data-URL, which serializes
-  straight into the IndexedDB draft and matches the analyzer's base64 flow.
-  Photo-only by design — voice/note capture is deferred post-MVP (its plumbing is
-  left intact but unused). See docs/mvp-design-trim-plan.md.
+  The perimeter check is now a place-by-place capture container. Each photo or
+  typed description is analyzed independently as soon as it is submitted.
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { onDeletionsChange } from "../state/pending-deletions.js";
+import {
+  deleteAnalysisCard,
+  isDeletingAnalysisCard,
+} from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
-import { submitCheck } from "../services/submit-check.js";
 import {
-  SIDES,
+  answerAnalysisQuestion,
+  analyzeNoIssueDescriptionEdit,
+  analyzeEvidenceItem,
+  refreshEvidenceAnalysis,
+} from "../services/photo-analysis.js";
+import {
+  ApiError,
+  completeTask,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} from "../services/api.js";
+import {
+  expectedArtifactCountForCheck,
+  finalizeCaptureScorecardInBackground,
+} from "../services/submit-check.js";
+import { isFiled311Completion } from "../domain/task-actions.js";
+import {
   ensureCheck,
+  startCheck,
   loadDraft,
+  clearCheck,
+  getPlaceOrder,
+  getPlace,
   getCurrentCheck,
+  getFlowType,
+  getActivePlaceIndex,
+  setActivePlaceIndex,
   addItem,
-  removeItem,
-  skipSide,
-  isSideCovered,
+  skipPlace,
+  isCurrentSession,
+  setPlaceInputMode,
+  addPlaceToCheck,
+  getAnalyzingOpen,
+  setAnalyzingOpen,
+  getOpenPhotoMenuItemId,
+  setOpenPhotoMenuItemId,
+  setPlaceDraftText,
+  updateItemAnalysis,
+  markCaptureComplete,
+  onCheckSessionChange,
+  pauseCheck,
 } from "../state/check-session.js";
 import {
   shell,
-  segment,
-  shotTile,
-  addTile,
+  placeRow,
+  addPlaceButton,
+  footer,
+  analyzingSection,
+  canSubmitTextDescription,
 } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 class PerimeterCheck extends HTMLElement {
+  constructor() {
+    super();
+    this._answeringConditionIds = new Set();
+  }
+
   async connectedCallback() {
+    this._finishing = false;
+    this._embedded = this.hasAttribute("embedded");
+    this._photoMenuAnchor = null;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
-    // Resume a persisted draft if one exists; else start fresh.
-    const check = getCurrentCheck() || (await loadDraft()) || null;
-    if (!check) ensureCheck(this._siteId);
+    const currentCheck = getCurrentCheck();
+    const check =
+      currentCheck?.status === "in-progress"
+        ? currentCheck
+        : (await loadDraft("perimeter")) || null;
+    if (!check) {
+      ensureCheck(this._siteId, this._site.places || []);
+    } else if (getFlowType() !== "perimeter") {
+      startCheck(this._siteId, this._site.places || []);
+    }
 
-    // Resume at the first side that still needs attention (else the first side).
-    const firstOpen = SIDES.findIndex((s) => !isSideCovered(s));
-    this._sideIndex = firstOpen === -1 ? 0 : firstOpen;
-
-    this.innerHTML = shell();
+    this._checkId = getCurrentCheck()?.id || "";
+    this._placeIndex = getActivePlaceIndex() ?? 0;
+    this._deletionUnsub?.();
+    this._deletionUnsub = onDeletionsChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
+    this._unsubscribe = onCheckSessionChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
+    this.innerHTML = shell({ embedded: this._embedded });
     this._fileInput = this.querySelector("#file-input");
+    this._cancelDialog = this.querySelector("#cancel-check-dialog");
+    this._addPlaceDialog = this.querySelector("#add-place-dialog");
+    this._addPlaceInput = this.querySelector("#add-place-name");
+    this._doneIncompleteDialog = this.querySelector("#done-incomplete-dialog");
+    this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
+    this._analysisSuccessDialog = this.querySelector(
+      "#analysis-success-dialog",
+    );
+    this._analysisProgressDialog = this.querySelector(
+      "#analysis-progress-dialog",
+    );
+    this._analysisEditDialog = this.querySelector("#analysis-edit-dialog");
+    this._analysisEditDescription = this.querySelector(
+      "#analysis-edit-description",
+    );
 
-    this.querySelector("#cancel").addEventListener("click", () =>
+    this.querySelector("#cancel")?.addEventListener("click", () =>
       this._cancel(),
     );
-    this.querySelector("#skip-side").addEventListener("click", () =>
-      this._skip(),
+    this.querySelector("#cancel-check-save")?.addEventListener(
+      "click",
+      async () => {
+        this._cancelDialog?.close();
+        await pauseCheck();
+        this._exitCapture();
+      },
     );
-    this.querySelector("#next-side").addEventListener("click", () =>
-      this._forward(),
+    this.querySelector("#cancel-check-discard")?.addEventListener(
+      "click",
+      () => {
+        this._cancelDialog?.close();
+        this._exitCapture();
+        window.setTimeout(() => clearCheck(), 0);
+      },
     );
-    // The ＋ tile and per-shot delete are re-rendered each change, so delegate.
-    this.querySelector("#shotgrid").addEventListener("click", (e) =>
-      this._onGridClick(e),
+    this._cancelDialog?.addEventListener("click", (e) => {
+      if (e.target === this._cancelDialog) this._cancelDialog.close();
+    });
+    this._doneIncompleteDialog?.addEventListener("click", (e) => {
+      if (e.target === this._doneIncompleteDialog) {
+        this._doneIncompleteDialog.close();
+      }
+    });
+    this.querySelector("#done-incomplete-finish")?.addEventListener(
+      "click",
+      () => this._finishCheck(),
     );
-    // A photo came back from the camera / file picker.
+
+    this.querySelector("#place-timeline").addEventListener("click", (e) =>
+      this._onTimelineClick(e),
+    );
+    this.querySelector("#place-timeline").addEventListener("input", (e) =>
+      this._onTimelineInput(e),
+    );
+    this.querySelector("#check-footer").addEventListener("click", (e) =>
+      this._onFooterClick(e),
+    );
+    this.addEventListener("click", (e) => this._onAnalysisClick(e));
     this._fileInput.addEventListener("change", () => this._onFilePicked());
+    this._addPlaceInput.addEventListener("input", () =>
+      this._syncAddPlaceDialog(),
+    );
+    this.querySelector("#add-place-submit").addEventListener("click", () =>
+      this._addPlace(),
+    );
+    this._addPlaceDialog?.addEventListener("close", () => {
+      this._addPlaceInput.value = "";
+      this._syncAddPlaceDialog();
+    });
+    [
+      this._analysisDeleteDialog,
+      this._analysisSuccessDialog,
+      this._analysisEditDialog,
+    ].forEach((dialog) => {
+      dialog?.addEventListener("click", (e) => {
+        if (e.target === dialog) dialog.close();
+      });
+    });
+    this.querySelector("#analysis-delete-confirm")?.addEventListener(
+      "click",
+      () => this._confirmDeleteProblem(),
+    );
+    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
+      this._saveProblemEdit(),
+    );
+    this.querySelector("#analysis-success-undo")?.addEventListener(
+      "click",
+      () => this._analysisSuccessDialog?.close(),
+    );
+    this.querySelector("#analysis-progress-cancel")?.addEventListener(
+      "click",
+      () => this._analysisProgressDialog?.close(),
+    );
 
-    this._renderSide();
+    document.addEventListener(
+      "click",
+      (this._documentClick = (event) => {
+        const path = event.composedPath?.() || [];
+        const withinPhotoMenu = path.some(
+          (node) =>
+            node instanceof Element &&
+            (node.matches(".photo-menu") || node.matches("[data-photo-menu]")),
+        );
+        if (getOpenPhotoMenuItemId() && !withinPhotoMenu) {
+          this._photoMenuAnchor = null;
+          setOpenPhotoMenuItemId(null);
+        }
+      }),
+    );
+
+    this._render();
+    this._resumePendingEvidence();
   }
 
-  get _side() {
-    return SIDES[this._sideIndex];
-  }
-  get _isLast() {
-    return this._sideIndex === SIDES.length - 1;
-  }
-  _sideState() {
-    return getCurrentCheck().sides[this._side];
+  get _places() {
+    return getPlaceOrder();
   }
 
-  /* ---- capture (native handoff) ---- */
-  // Open the device camera (phone) / file picker (desktop).
+  get _placeId() {
+    return this._places[this._placeIndex];
+  }
+
+  _cancel() {
+    if (!this._hasCheckContent()) {
+      this._exitCapture();
+      window.setTimeout(() => clearCheck(), 0);
+      return;
+    }
+    this._cancelDialog?.showModal();
+  }
+
+  _hasCheckContent() {
+    const check = getCurrentCheck();
+    if (!check) return false;
+    return (check.placeOrder || []).some((placeId) => {
+      const place = check.places[placeId];
+      if (!place) return false;
+      return Boolean(
+        place.items?.length ||
+          place.description?.text?.trim() ||
+          place.draftText?.trim(),
+      );
+    });
+  }
+
+  _resumePendingEvidence() {
+    const check = getCurrentCheck();
+    if (!check) return;
+    for (const placeId of check.placeOrder || []) {
+      for (const item of check.places[placeId]?.items || []) {
+        if (shouldResumeEvidenceItem(item)) {
+          analyzeEvidenceItem(placeId, item.id);
+        }
+      }
+    }
+  }
+
+  _onTimelineClick(e) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+
+    const toggle = target.closest("[data-toggle-place]");
+    if (toggle) {
+      this._activatePlace(toggle.getAttribute("data-toggle-place"));
+      return;
+    }
+
+    const addPhoto = target.closest("[data-add-photo]");
+    if (addPhoto) {
+      this._pendingPhotoPlaceId = addPhoto.getAttribute("data-add-photo");
+      this._openCamera();
+      return;
+    }
+
+    const next = target.closest("[data-next-place]");
+    if (next) {
+      this._advanceOrSkip(next.getAttribute("data-next-place"));
+      return;
+    }
+
+    const type = target.closest("[data-type-place]");
+    if (type) {
+      setPlaceInputMode(type.getAttribute("data-type-place"), "text");
+      this._photoMenuAnchor = null;
+      setOpenPhotoMenuItemId(null);
+      this._render();
+      return;
+    }
+
+    const photo = target.closest("[data-photo-place]");
+    if (photo) {
+      setPlaceInputMode(photo.getAttribute("data-photo-place"), "photo");
+      this._render();
+      return;
+    }
+
+    const menu = target.closest("[data-photo-menu]");
+    if (menu) {
+      const itemId = menu.getAttribute("data-photo-menu");
+      if (getOpenPhotoMenuItemId() === itemId) {
+        this._photoMenuAnchor = null;
+        setOpenPhotoMenuItemId(null);
+      } else {
+        this._photoMenuAnchor = this._anchorForPhotoMenu(menu);
+        setOpenPhotoMenuItemId(itemId);
+      }
+      this._render();
+      return;
+    }
+
+    if (target.closest("[data-photo-action]")) {
+      this._photoMenuAnchor = null;
+      setOpenPhotoMenuItemId(null);
+      this._render();
+      return;
+    }
+
+    const reviewText = target.closest("[data-review-text]");
+    if (reviewText) {
+      this._submitText(reviewText.getAttribute("data-review-text"));
+    }
+  }
+
+  _onTimelineInput(e) {
+    const target = e.target;
+    if (!(target instanceof HTMLTextAreaElement)) return;
+    const placeId = target.getAttribute("data-text-input");
+    if (!placeId) return;
+    setPlaceDraftText(placeId, target.value);
+    const button = findReviewTextButton(this, placeId);
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = !canSubmitTextDescription(target.value);
+    }
+  }
+
+  _onFooterClick(e) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("#done-check")) {
+      this._done();
+      return;
+    }
+    if (target.closest("#toggle-analyzing")) {
+      setAnalyzingOpen(!getAnalyzingOpen());
+      this._render();
+    }
+  }
+
+  _onAnalysisClick(e) {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest("[data-analysis-action]");
+    if (!button) return;
+    const card = button.closest(".analysis-card");
+    if (!card) return;
+
+    const action = button.getAttribute("data-analysis-action");
+    const problem = this._problemFromCard(card);
+    if (action === "delete") {
+      this._openDeleteProblem(problem);
+    } else if (action === "edit") {
+      this._openEditProblem(problem);
+    } else if (action === "resolve") {
+      this._resolveProblem(problem);
+    } else if (action === "answer") {
+      this._answerProblemQuestion(problem, button);
+    }
+  }
+
+  _problemFromCard(card) {
+    return {
+      placeId: card.getAttribute("data-place-id") || "",
+      itemId: card.getAttribute("data-item-id") || "",
+      checkId: card.getAttribute("data-check-id") || "",
+      artifactId: card.getAttribute("data-artifact-id") || "",
+      taskId: card.getAttribute("data-task-id") || "",
+      analysisId: card.getAttribute("data-analysis-id") || "",
+      conditionId: card.getAttribute("data-condition-id") || "",
+      actionKind: card.getAttribute("data-action-kind") || "",
+      title: card.getAttribute("data-card-title") || "problem",
+      description: card.getAttribute("data-card-description") || "",
+    };
+  }
+
+  _openDeleteProblem(problem) {
+    if (this._deletingProblem) return;
+    this._activeProblem = problem;
+    this._setDialogError("analysis-delete-error", "");
+    const title = this.querySelector("#analysis-delete-title");
+    if (title) title.textContent = `Delete "${problem.title}"?`;
+    this._analysisDeleteDialog?.showModal();
+  }
+
+  _openEditProblem(problem) {
+    this._activeProblem = problem;
+    this._setDialogError("analysis-edit-error", "");
+    if (this._analysisEditDescription) {
+      this._analysisEditDescription.value = problem.description;
+    }
+    this._analysisEditDialog?.showModal();
+  }
+
+  async _confirmDeleteProblem() {
+    const problem = this._activeProblem;
+    if (!problem || this._deletingProblem) return;
+    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
+      this._setDialogError(
+        "analysis-delete-error",
+        this._missingConditionMessage(problem, "deleted"),
+      );
+      return;
+    }
+
+    this._deletingProblem = true;
+    const button = this.querySelector("#analysis-delete-confirm");
+    const focusUndo = button?.matches(":focus-visible") || false;
+    this._setBusy(button, true);
+    this._setDialogError("analysis-delete-error", "");
+    try {
+      await deleteAnalysisCard(
+        this,
+        problem,
+        async () => {
+          let result;
+          try {
+            result = await rejectAnalysisCondition(
+              problem.checkId,
+              problem.artifactId,
+              problem.conditionId,
+              {
+                reason: { key: "not_a_problem" },
+                caller: { request_id: this._requestId("delete", problem) },
+              },
+            );
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 404) throw err;
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
+            return;
+          }
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
+            await refreshEvidenceAnalysis(
+              problem.placeId,
+              problem.itemId,
+              result,
+              {
+                rejectedConditionId: problem.conditionId,
+              },
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
+          }
+        },
+        () => this._render(),
+        { focusUndo },
+      );
+      this._activeProblem = null;
+    } catch (err) {
+      console.error("delete analysis condition failed", err);
+      this._setDialogError(
+        "analysis-delete-error",
+        "Could not delete this problem. Please try again.",
+      );
+    } finally {
+      this._deletingProblem = false;
+      this._setBusy(button, false);
+    }
+  }
+
+  _deleteProblemLocally(problem) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item) return;
+
+    updateItemAnalysis(problem.placeId, problem.itemId, {
+      tasks: (item.analysis?.tasks || []).filter(
+        (task) => task.taskId !== problem.taskId,
+      ),
+      rejectedConditionIds: [
+        ...(item.analysis?.rejectedConditionIds || []),
+        problem.conditionId,
+      ].filter(Boolean),
+    });
+    if (this.isConnected) this._render();
+  }
+
+  async _saveProblemEdit() {
+    const problem = this._activeProblem;
+    if (!problem) return;
+    const description = this._analysisEditDescription?.value?.trim() || "";
+    if (description.length < 5) {
+      this._setDialogError(
+        "analysis-edit-error",
+        "Description must be at least 5 characters.",
+      );
+      return;
+    }
+    if (description === problem.description.trim()) {
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      return;
+    }
+    if (!problem.conditionId) {
+      const button = this.querySelector("#analysis-edit-save");
+      this._setBusy(button, true);
+      this._setDialogError("analysis-edit-error", "");
+      try {
+        await analyzeNoIssueDescriptionEdit(
+          problem.placeId,
+          problem.itemId,
+          description,
+        );
+        this._analysisEditDialog?.close();
+        this._activeProblem = null;
+        this._render();
+      } catch (err) {
+        console.error("text-only no-issue reanalysis failed", err);
+        this._setDialogError(
+          "analysis-edit-error",
+          "Could not analyze this description. Please try again.",
+        );
+      } finally {
+        this._setBusy(button, false);
+      }
+      return;
+    }
+    if (!problem.checkId || !problem.artifactId) {
+      this._setDialogError(
+        "analysis-edit-error",
+        this._missingConditionMessage(problem, "edited"),
+      );
+      return;
+    }
+
+    const button = this.querySelector("#analysis-edit-save");
+    this._setBusy(button, true);
+    this._setDialogError("analysis-edit-error", "");
+    try {
+      const result = await editAnalysisCondition(
+        problem.checkId,
+        problem.artifactId,
+        problem.conditionId,
+        {
+          description,
+          caller: { request_id: this._requestId("edit", problem) },
+        },
+      );
+      await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+      this._analysisEditDialog?.close();
+      this._activeProblem = null;
+      this._render();
+    } catch (err) {
+      console.error("edit analysis condition failed", err);
+      this._setDialogError(
+        "analysis-edit-error",
+        "Could not save this edit. Please try again.",
+      );
+    } finally {
+      this._setBusy(button, false);
+    }
+  }
+
+  async _resolveProblem(problem) {
+    if (!problem.taskId) {
+      this._analysisSuccessDialog?.showModal();
+      return;
+    }
+
+    if (problem.actionKind === "escalation") {
+      this._analysisProgressDialog?.showModal();
+      try {
+        const result = await completeTask(problem.taskId, {
+          completionMethod: "311_filed",
+        });
+        this._analysisProgressDialog?.close();
+        if (!isFiled311Completion(result?.task)) {
+          show311ErrorToast();
+          return;
+        }
+        this._markProblemResolved(problem);
+        show311SuccessToast();
+      } catch (err) {
+        console.error("escalation failed", err);
+        this._analysisProgressDialog?.close();
+        show311ErrorToast();
+      }
+      return;
+    }
+
+    try {
+      await completeTask(problem.taskId, { completionMethod: "manual" });
+      this._markProblemResolved(problem);
+      this._analysisSuccessDialog?.showModal();
+    } catch (err) {
+      console.error("resolve task failed", err);
+      this._showToast("Could not save that action. Please try again.");
+    }
+  }
+
+  async _answerProblemQuestion(problem, button) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    const answerKey = button.getAttribute("data-answer-key") || "";
+    const answerValue = button.getAttribute("data-answer-value") === "true";
+    if (
+      !problem.placeId ||
+      !problem.itemId ||
+      !problem.conditionId ||
+      !answerKey
+    ) {
+      this._showToast("Could not save that answer. Please try again.");
+      return;
+    }
+    if (this._answeringConditionIds.has(problem.conditionId)) return;
+
+    this._answeringConditionIds.add(problem.conditionId);
+    setQuestionAnswerBusy(this, problem.conditionId, true);
+    try {
+      await answerAnalysisQuestion(
+        problem.placeId,
+        problem.itemId,
+        problem.conditionId,
+        answerKey,
+        answerValue,
+      );
+      this._render();
+    } catch (err) {
+      console.error("answer condition failed", err);
+      this._showToast("Could not save that answer. Please try again.");
+    } finally {
+      this._answeringConditionIds.delete(problem.conditionId);
+      setQuestionAnswerBusy(this, problem.conditionId, false);
+    }
+  }
+
+  _markProblemResolved(problem) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item) return;
+    updateItemAnalysis(problem.placeId, problem.itemId, {
+      tasks: (item.analysis?.tasks || []).filter(
+        (task) => task.taskId !== problem.taskId,
+      ),
+      resolvedConditionIds: [
+        ...(item.analysis?.resolvedConditionIds || []),
+        problem.conditionId,
+      ].filter(Boolean),
+    });
+    this._render();
+  }
+
+  _setDialogError(id, message) {
+    const error = this.querySelector(`#${id}`);
+    if (!error) return;
+    error.textContent = message;
+    error.hidden = !message;
+  }
+
+  _setBusy(button, busy) {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.disabled = busy;
+    button.setAttribute("aria-busy", busy ? "true" : "false");
+  }
+
+  _missingConditionMessage(problem, action) {
+    if (!problem.conditionId) {
+      return `This card does not have a problem condition that can be ${action}.`;
+    }
+    return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
+  }
+
+  _requestId(action, problem) {
+    const suffix =
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
+  }
+
+  _done() {
+    const incompleteCount = this._incompletePlaceCount();
+    if (incompleteCount > 0) {
+      this._showDoneIncomplete(incompleteCount);
+      return;
+    }
+    this._finishCheck();
+  }
+
+  async _finishCheck() {
+    const check = getCurrentCheck();
+    const expectedArtifacts = expectedArtifactCountForCheck(check);
+    this._finishing = true;
+    this._deletionUnsub?.();
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    this._doneIncompleteDialog?.close();
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
+      );
+      window.setTimeout(() => {
+        markCaptureComplete({
+          checkId: check?.id,
+          submissionKind: "check",
+          expectedArtifacts,
+        });
+        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+      }, 0);
+      return;
+    }
+    markCaptureComplete({
+      checkId: check?.id,
+      submissionKind: "check",
+      expectedArtifacts,
+    });
+    finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+    navigate("/today");
+  }
+
+  _exitCapture() {
+    this._finishing = true;
+    this._deletionUnsub?.();
+    this._unsubscribe?.();
+    this._unsubscribe = null;
+    if (this._embedded) {
+      this.dispatchEvent(
+        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
+      );
+      return;
+    }
+    navigate("/today");
+  }
+
+  _incompletePlaceCount() {
+    const check = getCurrentCheck();
+    if (!check) return 0;
+    return (check.placeOrder || []).filter((placeId) => {
+      const place = check.places[placeId];
+      if (!place) return false;
+      return !this._placeHasPhotoOrDescription(place);
+    }).length;
+  }
+
+  _placeHasPhotoOrDescription(place) {
+    return Boolean(
+      place.items?.some(
+        (item) => item.kind === "photo" || item.kind === "text",
+      ) ||
+        place.description?.validated ||
+        place.draftText?.trim(),
+    );
+  }
+
+  _showDoneIncomplete(incompleteCount) {
+    const copy = this.querySelector("#done-incomplete-copy");
+    const noun = incompleteCount === 1 ? "place does" : "places do";
+    copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
+    this._doneIncompleteDialog?.showModal();
+  }
+
+  _activatePlace(placeId) {
+    const index = this._places.indexOf(placeId);
+    if (index === -1) return;
+    if (this._placeIndex === index) {
+      this._placeIndex = null;
+      setActivePlaceIndex(null);
+      this._photoMenuAnchor = null;
+      setOpenPhotoMenuItemId(null);
+      this._render();
+      return;
+    }
+    this._placeIndex = index;
+    setActivePlaceIndex(index);
+    this._photoMenuAnchor = null;
+    setOpenPhotoMenuItemId(null);
+    this._render();
+  }
+
+  _advanceOrSkip(placeId) {
+    const place = getPlace(placeId);
+    if (!place) return;
+    if (!place.items.length) skipPlace(placeId);
+    const index = this._places.indexOf(placeId);
+    this._placeIndex = Math.min(index + 1, this._places.length - 1);
+    setActivePlaceIndex(this._placeIndex);
+    this._photoMenuAnchor = null;
+    setOpenPhotoMenuItemId(null);
+    this._render();
+  }
+
   _openCamera() {
-    this._fileInput.value = ""; // allow re-picking the same file
+    this._fileInput.value = "";
     this._fileInput.click();
   }
 
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
+    const originCheckId = this._checkId;
+    const originPlaceId = this._pendingPhotoPlaceId || this._placeId;
     const reader = new FileReader();
+    this._fileReader = reader;
     reader.onload = () => {
-      addItem(this._side, { kind: "photo", dataUrl: reader.result });
-      this._renderSegments();
-      this._renderShots();
-      this._syncControls();
+      if (!this.isConnected || !isCurrentSession(originCheckId, "perimeter")) {
+        this._fileReader = null;
+        return;
+      }
+      this._fileReader = null;
+      if (typeof reader.result === "string") {
+        this._addPhoto(originPlaceId, reader.result);
+      }
+    };
+    reader.onerror = () => {
+      this._fileReader = null;
+    };
+    reader.onabort = () => {
+      this._fileReader = null;
     };
     reader.readAsDataURL(file);
   }
 
-  /* ---- grid interactions (add + delete, delegated) ---- */
-  _onGridClick(e) {
-    if (e.target.closest("#add-photo")) {
-      this._openCamera();
+  _addPhoto(placeId, dataUrl) {
+    const record = addItem(placeId, { kind: "photo", dataUrl });
+    if (record) {
+      setAnalyzingOpen(true);
+      analyzeEvidenceItem(record.placeId, record.id);
+    }
+    this._render();
+  }
+
+  _submitText(placeId) {
+    const input = [...this.querySelectorAll("[data-text-input]")].find(
+      (candidate) => candidate.getAttribute("data-text-input") === placeId,
+    );
+    const text = input?.value?.trim();
+    if (!canSubmitTextDescription(text)) return;
+    const record = addItem(placeId, { kind: "text", text });
+    setPlaceDraftText(placeId, "");
+    setAnalyzingOpen(true);
+    analyzeEvidenceItem(record.placeId, record.id);
+    this._advanceOrSkip(placeId);
+  }
+
+  _syncAddPlaceDialog() {
+    const input = this._addPlaceInput;
+    const button = this.querySelector("#add-place-submit");
+    const error = this.querySelector("#add-place-error");
+    const value = input.value.trim();
+    const duplicate = this._places.some((placeId) => {
+      const place = getPlace(placeId);
+      return place?.name.trim().toLowerCase() === value.toLowerCase();
+    });
+    input.classList.toggle("is-invalid", Boolean(value && duplicate));
+    button.disabled = !value;
+    error.textContent =
+      value && duplicate ? "This place is already in the check." : "";
+  }
+
+  _anchorForPhotoMenu(button) {
+    const expanded = button.closest(".place-row__expanded");
+    if (!expanded) return null;
+    const buttonRect = button.getBoundingClientRect();
+    const expandedRect = expanded.getBoundingClientRect();
+    return {
+      top: Math.max(0, buttonRect.bottom - expandedRect.top + 12),
+      right: Math.max(0, expandedRect.right - buttonRect.right),
+    };
+  }
+
+  _addPlace() {
+    const value = this._addPlaceInput.value.trim();
+    const result = addPlaceToCheck(value);
+    if (!result || result.duplicate) {
+      this._syncAddPlaceDialog();
       return;
     }
-    const del = e.target.closest("[data-del]");
-    if (del) {
-      removeItem(this._side, del.getAttribute("data-del"));
-      this._renderSegments();
-      this._renderShots();
-      this._syncControls();
+    this._placeIndex = getActivePlaceIndex();
+    this._addPlaceDialog.close();
+    this._showToast(`${result.name} was added to this check.`);
+    this._render();
+  }
+
+  _showToast(message) {
+    let toast = this.querySelector(".check-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.className = "check-toast";
+      toast.setAttribute("role", "status");
+      this.appendChild(toast);
     }
+    toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
+    toast.querySelector("span").textContent = message;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => toast.remove(), 3500);
   }
 
-  /* ---- navigation ---- */
-  _skip() {
-    skipSide(this._side);
-    this._afterSide();
-  }
+  _render() {
+    if (isDeletingAnalysisCard(this)) return;
+    const check = getCurrentCheck();
+    if (!check) return;
+    const timeline = this.querySelector("#place-timeline");
+    const openMenuItemId = getOpenPhotoMenuItemId();
+    timeline.innerHTML =
+      this._places
+        .map((placeId, index) =>
+          placeRow({
+            place: check.places[placeId],
+            index,
+            expanded: index === this._placeIndex,
+            isLast: index === this._places.length - 1,
+            openMenuItemId,
+            photoMenuAnchor: this._photoMenuAnchor,
+          }),
+        )
+        .join("") + addPlaceButton();
 
-  _forward() {
-    // Enabled only once the side has a photo (Skip covers the no-photo path).
-    this._afterSide();
-  }
-
-  // Advance to the next side, or submit after the last.
-  _afterSide() {
-    if (this._isLast) {
-      this._submit();
-      return;
-    }
-    this._sideIndex += 1;
-    this._renderSide();
-    window.scrollTo?.({ top: 0 });
-  }
-
-  async _submit() {
-    const overlay = this.querySelector("#summarising");
-    overlay.hidden = false;
-    try {
-      await submitCheck();
-      navigate("/results");
-    } catch (err) {
-      // Online-only: on any backend/network failure hide the summarising overlay
-      // and surface a retryable error (no local queue — offline is post-MVP).
-      console.error("submitCheck failed", err);
-      overlay.hidden = true;
-      this._showSubmitError();
-    }
-  }
-
-  _showSubmitError() {
-    let el = this.querySelector(".check__error");
-    if (!el) {
-      el = document.createElement("p");
-      el.className = "check__error flow-error";
-      el.setAttribute("role", "alert");
-      this.querySelector(".check__actions")?.insertAdjacentElement(
+    const evidence = this._allEvidence();
+    this.querySelector("#check-footer").innerHTML = footer({
+      items: evidence,
+      analyzingOpen: getAnalyzingOpen(),
+    });
+    const existingTray = this.querySelector("#analysis-tray");
+    existingTray?.remove();
+    if (getAnalyzingOpen() && evidence.length) {
+      this.querySelector("#check-footer").insertAdjacentHTML(
         "afterend",
-        el,
+        analyzingSection(evidence, check.id),
       );
     }
-    el.textContent =
-      "Couldn’t file this check — the server didn’t respond. Try again.";
+    this.querySelector("#add-place-open")?.addEventListener("click", () =>
+      this._addPlaceDialog.showModal(),
+    );
   }
 
-  _cancel() {
-    // Draft is already persisted — leaving keeps it for resume from home.
-    navigate("/today");
-  }
-
-  /* ---- render ---- */
-  _renderSide() {
-    this.querySelector("#side-progress").textContent =
-      `Side ${this._sideIndex + 1} of ${SIDES.length}`;
-    this._renderSegments();
-    this._renderShots();
-    this._syncControls();
-  }
-
-  _renderSegments() {
+  _allEvidence() {
     const check = getCurrentCheck();
-    this.querySelector("#segbar").innerHTML = SIDES.map((side, index) => {
-      const s = check.sides[side];
-      let state;
-      if (index === this._sideIndex) state = "current";
-      else if (s.items.length) state = "captured";
-      else if (s.skipped) state = "skipped";
-      else state = "pending";
-      return segment({ index, state });
-    }).join("");
+    if (!check) return [];
+    return (check.placeOrder || []).flatMap(
+      (placeId) => check.places[placeId]?.items || [],
+    );
   }
 
-  // This side's shots as an inline grid, followed by the ＋ "Add photo" tile.
-  // Empty side → the tile stands alone (larger, with a hint).
-  _renderShots() {
-    const items = this._sideState().items;
-    const grid = this.querySelector("#shotgrid");
-    grid.classList.toggle("shotgrid--empty", items.length === 0);
-    grid.innerHTML = items.map(shotTile).join("") + addTile(items.length === 0);
-  }
-
-  _syncControls() {
-    const hasPhoto = this._sideState().items.length > 0;
-    const next = this.querySelector("#next-side");
-    next.disabled = !hasPhoto;
-    next.textContent = this._isLast ? "Submit check" : "Next side ›";
+  disconnectedCallback() {
+    if (this._fileReader?.readyState === FileReader.LOADING) {
+      this._fileReader.abort();
+    }
+    document.removeEventListener("click", this._documentClick);
+    this._deletionUnsub?.();
+    this._unsubscribe?.();
+    clearTimeout(this._toastTimer);
   }
 }
 
 customElements.define("perimeter-check", PerimeterCheck);
+
+export function shouldResumeEvidenceItem(item) {
+  const analysisStatus = item?.analysis?.status;
+  const hasArtifact = Boolean(
+    item?.analysis?.artifactId || item?.upload?.artifactId,
+  );
+  const hasUploadedArtifact = Boolean(
+    item?.upload?.status === "uploaded" && hasArtifact,
+  );
+  const isRetryableTextRegistration = Boolean(
+    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
+  );
+  return Boolean(
+    ["queued", "analyzing"].includes(analysisStatus) ||
+      (analysisStatus === "failed" &&
+        (hasUploadedArtifact || isRetryableTextRegistration)),
+  );
+}
+
+export function findReviewTextButton(root, placeId) {
+  return (
+    [...root.querySelectorAll("[data-review-text]")].find(
+      (candidate) => candidate.getAttribute("data-review-text") === placeId,
+    ) || null
+  );
+}

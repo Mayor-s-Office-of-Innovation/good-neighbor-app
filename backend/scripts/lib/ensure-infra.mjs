@@ -12,8 +12,9 @@ import {
   CreateTableCommand,
   DescribeTableCommand,
   DynamoDBClient,
+  UpdateTableCommand,
 } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
   CreateQueueCommand,
   ListQueuesCommand,
@@ -24,6 +25,7 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { seedSiteCodes } from "./site-code-seeds.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,6 +73,14 @@ const TABLE_SCHEMA = {
     { AttributeName: "gsi1sk", AttributeType: "S" },
     { AttributeName: "gsi2pk", AttributeType: "S" },
     { AttributeName: "gsi2sk", AttributeType: "S" },
+    { AttributeName: "gsi4pk", AttributeType: "S" },
+    { AttributeName: "gsi4sk", AttributeType: "S" },
+    { AttributeName: "gsi5pk", AttributeType: "S" },
+    { AttributeName: "gsi5sk", AttributeType: "S" },
+    { AttributeName: "gsi6pk", AttributeType: "S" },
+    { AttributeName: "gsi6sk", AttributeType: "S" },
+    { AttributeName: "gsi7pk", AttributeType: "S" },
+    { AttributeName: "gsi7sk", AttributeType: "S" },
   ],
   KeySchema: [
     { AttributeName: "pk", KeyType: "HASH" },
@@ -90,6 +100,38 @@ const TABLE_SCHEMA = {
       KeySchema: [
         { AttributeName: "gsi2pk", KeyType: "HASH" },
         { AttributeName: "gsi2sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "GSI4",
+      KeySchema: [
+        { AttributeName: "gsi4pk", KeyType: "HASH" },
+        { AttributeName: "gsi4sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "GSI5",
+      KeySchema: [
+        { AttributeName: "gsi5pk", KeyType: "HASH" },
+        { AttributeName: "gsi5sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "GSI6",
+      KeySchema: [
+        { AttributeName: "gsi6pk", KeyType: "HASH" },
+        { AttributeName: "gsi6sk", KeyType: "RANGE" },
+      ],
+      Projection: { ProjectionType: "ALL" },
+    },
+    {
+      IndexName: "GSI7",
+      KeySchema: [
+        { AttributeName: "gsi7pk", KeyType: "HASH" },
+        { AttributeName: "gsi7sk", KeyType: "RANGE" },
       ],
       Projection: { ProjectionType: "ALL" },
     },
@@ -137,6 +179,7 @@ export async function ensureLocalInfra() {
     }
   }
 
+  await ensureLocalTableIndexes(ddb, tableName);
   await seedLocalSiteCodes(docDdb, tableName);
 
   // SQS: derive the queue name from the configured URL's last path segment.
@@ -210,47 +253,83 @@ export async function ensureLocalInfra() {
  * @param {string} tableName
  */
 async function seedLocalSiteCodes(docDdb, tableName) {
-  const now = new Date().toISOString();
-  const items = [
-    {
-      pk: "SITE_CODE#123456",
-      sk: "#META",
-      type: "providerSiteCode",
-      code: "123456",
-      active: true,
-      providerSiteId: "provider-site-health-center-mission",
-      siteId: "site-health-center-mission",
-      siteName: "Health Center Mission",
-      seededAt: now,
-    },
-    {
-      pk: "SITE_CODE#000000",
-      sk: "#META",
-      type: "providerSiteCode",
-      code: "000000",
-      active: false,
-      providerSiteId: "provider-site-inactive",
-      siteId: "site-inactive",
-      siteName: "Inactive Test Site",
-      seededAt: now,
-    },
-  ];
+  await seedSiteCodes(docDdb, tableName, {
+    includeInactive: true,
+    includeLegacyLocalCode: true,
+  });
+}
 
-  for (const Item of items) {
-    await docDdb
-      .send(
-        new PutCommand({
-          TableName: tableName,
-          Item,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      )
-      .catch((err) => {
-        if (
-          /** @type {Error} */ (err).name !== "ConditionalCheckFailedException"
-        ) {
-          throw err;
-        }
-      });
+/**
+ * DynamoDB Local keeps persisted tables between runs, so create-table changes
+ * need a small reconciliation path for indexes added after a developer's first
+ * bootstrap.
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @returns {Promise<void>}
+ */
+async function ensureLocalTableIndexes(ddb, tableName) {
+  const description = await describeTable(ddb, tableName);
+  const existing = new Set(
+    description.Table?.GlobalSecondaryIndexes?.map((index) => index.IndexName),
+  );
+  const missing = (TABLE_SCHEMA.GlobalSecondaryIndexes ?? []).filter(
+    (index) => !existing.has(index.IndexName),
+  );
+
+  for (const index of missing) {
+    console.log(
+      `[bootstrap] adding DynamoDB local index "${index.IndexName}" to "${tableName}"`,
+    );
+    await ddb.send(
+      new UpdateTableCommand({
+        TableName: tableName,
+        AttributeDefinitions: attributeDefinitionsForIndex(index),
+        GlobalSecondaryIndexUpdates: [{ Create: index }],
+      }),
+    );
+    await waitForIndex(ddb, tableName, index.IndexName);
   }
+}
+
+/**
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @returns {Promise<import("@aws-sdk/client-dynamodb").DescribeTableCommandOutput>}
+ */
+async function describeTable(ddb, tableName) {
+  return ddb.send(new DescribeTableCommand({ TableName: tableName }));
+}
+
+/**
+ * @param {import("@aws-sdk/client-dynamodb").GlobalSecondaryIndex} index
+ * @returns {import("@aws-sdk/client-dynamodb").AttributeDefinition[]}
+ */
+function attributeDefinitionsForIndex(index) {
+  const attributeNames = new Set(
+    index.KeySchema?.map((key) => key.AttributeName).filter(Boolean),
+  );
+  return TABLE_SCHEMA.AttributeDefinitions.filter((attribute) =>
+    attributeNames.has(attribute.AttributeName),
+  );
+}
+
+/**
+ * @param {DynamoDBClient} ddb
+ * @param {string} tableName
+ * @param {string | undefined} indexName
+ * @returns {Promise<void>}
+ */
+async function waitForIndex(ddb, tableName, indexName) {
+  const attempts = 80;
+  for (let i = 1; i <= attempts; i += 1) {
+    const description = await describeTable(ddb, tableName);
+    const index = description.Table?.GlobalSecondaryIndexes?.find(
+      (candidate) => candidate.IndexName === indexName,
+    );
+    if (index?.IndexStatus === "ACTIVE") return;
+    await sleep(250);
+  }
+  throw new Error(
+    `DynamoDB local index "${indexName}" on "${tableName}" was not active after ${attempts} attempts`,
+  );
 }

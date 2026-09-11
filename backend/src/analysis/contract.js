@@ -27,6 +27,7 @@
 
 /**
  * @typedef {object} IdentifiedCondition
+ * @property {string} [condition_id]
  * @property {string} category
  * @property {string} definition
  * @property {number} severity

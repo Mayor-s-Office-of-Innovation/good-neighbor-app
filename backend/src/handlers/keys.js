@@ -17,7 +17,45 @@
 export const sitePk = (siteId) => `SITE#${siteId}`;
 
 /**
- * CHECK header — one item per full perimeter run (all sides).
+ * Device identity item — one per registered tablet (AP4 / identity model).
+ * @param {string} siteId
+ * @param {string} deviceId
+ * @returns {PrimaryKey}
+ */
+export const deviceKey = (siteId, deviceId) => ({
+  pk: sitePk(siteId),
+  sk: `DEVICE#${deviceId}`,
+});
+
+/**
+ * Sort-key prefix that lists a site's devices (AP4).
+ * @param {string} siteId
+ * @returns {string}
+ */
+export const devicePrefix = (siteId) => sitePk(siteId);
+
+/**
+ * Site config record.
+ * @param {string} siteId
+ * @returns {PrimaryKey}
+ */
+export const siteMetaKey = (siteId) => ({
+  pk: sitePk(siteId),
+  sk: "#META",
+});
+
+/**
+ * Provider config record.
+ * @param {string} providerId
+ * @returns {PrimaryKey}
+ */
+export const providerMetaKey = (providerId) => ({
+  pk: `PROVIDER#${providerId}`,
+  sk: "#META",
+});
+
+/**
+ * CHECK header — one item per full perimeter run (all places).
  * @param {string} siteId
  * @param {string} checkId
  * @returns {PrimaryKey}
@@ -28,16 +66,16 @@ export const checkHeaderKey = (siteId, checkId) => ({
 });
 
 /**
- * Artifact (one per captured photo/audio/text, grouped by side).
+ * Artifact (one per captured photo/audio/text, grouped by place).
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} side
+ * @param {string} placeId
  * @param {string} artifactId
  * @returns {PrimaryKey}
  */
-export const artifactKey = (siteId, checkId, side, artifactId) => ({
+export const artifactKey = (siteId, checkId, placeId, artifactId) => ({
   pk: sitePk(siteId),
-  sk: `CHECK#${checkId}#ART#${side}#${artifactId}`,
+  sk: `CHECK#${checkId}#ART#${placeId}#${artifactId}`,
 });
 
 /**
@@ -64,6 +102,16 @@ export const taskKey = (siteId, taskId) => ({
 });
 
 /**
+ * Site-scoped monotonic counter for human-facing task short IDs.
+ * @param {string} siteId
+ * @returns {PrimaryKey}
+ */
+export const taskDisplayCounterKey = (siteId) => ({
+  pk: sitePk(siteId),
+  sk: "COUNTER#task-display-id",
+});
+
+/**
  * Sort-key prefix that gathers a check's header + all its artifacts + analyses
  * for the single-query detail read (AP7): `begins_with(sk, checkChildrenPrefix)`.
  * @param {string} checkId
@@ -81,7 +129,7 @@ export const checkAnalysisPrefix = (checkId) => `CHECK#${checkId}#ANALYSIS#`;
 
 /**
  * Sort-key prefix that gathers only a check's ART# items (one per captured
- * photo, across all sides): `begins_with(sk, …)`.
+ * photo, across all places): `begins_with(sk, …)`.
  * @param {string} checkId
  * @returns {string}
  */
@@ -90,12 +138,18 @@ export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 // GSI names — must match the index names the table is created with: Terraform
 // (infra/modules/app/main.tf) and the local harness (scripts/lib/ensure-infra.mjs)
 // both create them uppercase, and DynamoDB index names are case-sensitive, so
-// these constants must be uppercase too. GSI1 backs the newest-first checks list
-// (AP6); GSI2 backs the per-status staff worklist (AP10).
+// these constants must be uppercase too. GSI1 backs timelines, GSI2 backs the
+// per-status staff worklist, and GSI4/GSI5 back condition review queues.
 export const GSI1_NAME = "GSI1";
 
-/** The per-status worklist index (AP10); see taskWorklistGsi. */
+/** The per-status worklist index (AP10); see taskWorklistDateGsi. */
 export const GSI2_NAME = "GSI2";
+
+/** Conditions by site/date/severity. */
+export const GSI4_NAME = "GSI4";
+
+/** Sparse index for conditions not yet fully translated into tasks. */
+export const GSI5_NAME = "GSI5";
 
 /**
  * GSI1 (checks timeline) attributes for a check header. Sparse — only headers
@@ -120,15 +174,106 @@ export const taskWorklistPk = (siteId, status) =>
   `SITE#${siteId}#TASK#${status}`;
 
 /**
- * GSI2 (site worklist) attributes for a task. Partitioned by status so the
- * staff worklist (AP10) reads one status at a time, sorted by severity#createdAt.
+ * Assessment report item.
+ * @param {string} siteId
+ * @param {string} assessmentId
+ * @returns {PrimaryKey}
+ */
+export const assessmentKey = (siteId, assessmentId) => ({
+  pk: sitePk(siteId),
+  sk: `ASSESSMENT#${assessmentId}`,
+});
+
+/**
+ * Condition item under one assessment.
+ * @param {string} siteId
+ * @param {string} assessmentId
+ * @param {string} conditionId
+ * @returns {PrimaryKey}
+ */
+export const conditionKey = (siteId, assessmentId, conditionId) => ({
+  pk: sitePk(siteId),
+  sk: `ASSESSMENT#${assessmentId}#COND#${conditionId}`,
+});
+
+/**
+ * Sort-key prefix that gathers conditions for one assessment.
+ * @param {string} assessmentId
+ * @returns {string}
+ */
+export const assessmentConditionPrefix = (assessmentId) =>
+  `ASSESSMENT#${assessmentId}#COND#`;
+
+/**
+ * GSI1 attributes for assessment report timeline reads.
+ * @param {string} siteId
+ * @param {string} reportedAt ISO-8601 timestamp
+ * @param {string} assessmentId
+ * @returns {{ gsi1pk: string, gsi1sk: string }}
+ */
+export const assessmentTimelineGsi = (siteId, reportedAt, assessmentId) => ({
+  gsi1pk: `SITE#${siteId}#ASSESSMENT`,
+  gsi1sk: `${reportedAt}#${assessmentId}`,
+});
+
+/**
+ * GSI2 attributes for date-first task worklist reads.
  * @param {string} siteId
  * @param {string} status
+ * @param {string} kind
  * @param {number} severity
  * @param {string} createdAt ISO-8601 timestamp
+ * @param {string} taskId
  * @returns {{ gsi2pk: string, gsi2sk: string }}
  */
-export const taskWorklistGsi = (siteId, status, severity, createdAt) => ({
+export const taskWorklistDateGsi = (
+  siteId,
+  status,
+  kind,
+  severity,
+  createdAt,
+  taskId,
+) => ({
   gsi2pk: taskWorklistPk(siteId, status),
-  gsi2sk: `${severity}#${createdAt}`,
+  gsi2sk: `${createdAt}#${kind}#${severity}#${taskId}`,
+});
+
+/**
+ * GSI4 attributes for condition timeline reads by severity.
+ * @param {string} siteId
+ * @param {number} severity
+ * @param {string} reportedAt ISO-8601 timestamp
+ * @param {string} assessmentId
+ * @param {string} conditionId
+ * @returns {{ gsi4pk: string, gsi4sk: string }}
+ */
+export const conditionTimelineGsi = (
+  siteId,
+  severity,
+  reportedAt,
+  assessmentId,
+  conditionId,
+) => ({
+  gsi4pk: `SITE#${siteId}#CONDITION#SEV#${severity}`,
+  gsi4sk: `${reportedAt}#${assessmentId}#${conditionId}`,
+});
+
+/**
+ * GSI5 attributes for unresolved condition reads.
+ * @param {string} siteId
+ * @param {number} severity
+ * @param {string} reportedAt ISO-8601 timestamp
+ * @param {string} assessmentId
+ * @param {string} conditionId
+ * @returns {{ gsi5pk: string, gsi5sk: string }}
+ */
+export const unresolvedConditionGsi = (
+  siteId,
+  severity,
+  reportedAt,
+  assessmentId,
+  conditionId,
+) => ({
+  gsi5pk: `SITE#${siteId}#CONDITION#UNRESOLVED`,
+  gsi5sk: `${reportedAt}#SEV#${severity}#${assessmentId}#${conditionId}`,
 });
