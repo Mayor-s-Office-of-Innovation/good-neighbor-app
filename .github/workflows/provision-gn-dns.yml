@@ -9,6 +9,9 @@ permissions:
 
 jobs:
   provision:
+    # The prod Environment also restricts refs; branch-local workflow edits
+    # must not be able to bypass that external enforcement boundary.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: prod
     concurrency:
@@ -19,6 +22,9 @@ jobs:
         working-directory: infra/environments/prod
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Use the exact dispatched main commit, even if main advances.
+          ref: ${{ github.sha }}
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -32,14 +38,27 @@ jobs:
         run: terraform init
       # Targeting is intentional for this bootstrap: production application
       # resources must not be deployed merely to obtain delegation name servers.
-      - name: Plan only the new hosted zone
-        run: terraform plan -target=aws_route53_zone.gn -out=tfplan
+      - name: Plan the hosted zone and its DNS controls
+        run: >-
+          terraform plan
+          -target=aws_route53_hosted_zone_dnssec.gn
+          -target=aws_route53_query_log.gn
+          -out=tfplan
       - name: Reject unrelated changes or replacement
         run: |
           set -euo pipefail
           terraform show -json tfplan | jq -e '
             [.resource_changes[]? | select(.mode == "managed")]
-            | all(.address == "aws_route53_zone.gn" and
+            | all((.address as $address | [
+                "aws_route53_zone.gn",
+                "aws_kms_key.gn_dnssec",
+                "aws_route53_key_signing_key.gn",
+                "aws_route53_hosted_zone_dnssec.gn",
+                "aws_kms_key.gn_dns_logs",
+                "aws_cloudwatch_log_group.gn_dns",
+                "aws_cloudwatch_log_resource_policy.gn_dns",
+                "aws_route53_query_log.gn"
+              ] | index($address) != null) and
                 (.change.actions == ["create"] or .change.actions == ["no-op"]))
           '
       - name: Apply saved DNS-only plan
@@ -52,6 +71,11 @@ jobs:
             echo 'Ask DT to add an NS record for gn.sf.gov with all four servers below.'
             echo '```text'
             terraform output -json gn_dns_name_servers | jq -r '.[]'
+            echo '```'
+            echo 'DNSSEC DS record (coordinate publication with DT after delegation):'
+            echo '```text'
+            terraform output -raw gn_dnssec_ds_record
+            echo
             echo '```'
             echo "Hosted zone ID: $(terraform output -raw gn_dns_zone_id)"
           } >> "$GITHUB_STEP_SUMMARY"
