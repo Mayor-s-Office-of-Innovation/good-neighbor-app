@@ -3,7 +3,28 @@
 **Status:** Approved for execution — decisions recorded in § 2
 **Date:** 2026-09-10
 **Related:** [perimeter-check-photo-analysis-plan.md](./perimeter-check-photo-analysis-plan.md) (the live flow's plan) ·
-[perimeter-check-data-flow.md](./perimeter-check-data-flow.md) (needs a § 2–3 rewrite, § 7)
+[perimeter-check-data-flow.md](./perimeter-check-data-flow.md) (needs a § 2–3 rewrite, § 7) ·
+[admin-interface-simplification-plan.md](./admin-interface-simplification-plan.md) (companion; extends PR-B/C/D)
+
+## 0. Session context (regain context fast)
+
+- **Branch:** all of this work lives on `docs/dataflow` (branch tip: the dev-merge
+  `5a95342` + `c294310` "docs for data flow" carrying both docs and the data-flow doc's
+  § 2–3 still describing the legacy flow until PR-D).
+- **Origin:** the retirement plan came out of writing
+  [perimeter-check-data-flow.md](./perimeter-check-data-flow.md) — mapping the flow
+  surfaced the two-pipelines finding. The dead-code verdicts were then exhaustively
+  verified (grep sweeps over all of `frontend/src`, `backend/src`, `infra`, dev scripts).
+- **Product decisions were given by the plan owner** (disputes gone, max deletion, no
+  IndexedDB transition window, delete description-validation incl. Terraform, dev
+  DynamoDB data disposable). They are recorded in § 2 — do not re-litigate.
+- **Cross-references:** the data-flow doc's dispute section (§ 3 "dispute branch") and
+  the Continue-minting narrative become wrong the moment PR-B/A execute — PR-D fixes
+  them. The #192 review notes in `~/dev/notes/good-neighbor/`
+  (`pr-review-192-home-screen-updates.md`) independently confirmed the dead-path
+  finding and contain the per-item live-flow trace.
+- **Known stale doc references to this plan:** none yet in repo docs; the
+  `perimeter-check-data-flow.md` correction is PR-D's first item.
 
 ## 1. Context — two pipelines shipped, one is live
 
