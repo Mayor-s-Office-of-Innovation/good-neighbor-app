@@ -545,6 +545,8 @@ resource "aws_cognito_user_pool" "users" {
   admin_create_user_config {
     allow_admin_create_user_only = true
 
+    # AWS provider 5.x sends omitted invitation fields as empty strings on
+    # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
     invite_message_template {
       email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor admin invitation"
       email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."

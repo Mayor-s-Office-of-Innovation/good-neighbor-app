@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { normalizeExplicitShortCode } from "../../src/lib/short-codes.js";
 
 const nowIso = () => new Date().toISOString();
 
@@ -14,8 +15,10 @@ export const devSiteCodeSeeds = [
     code: "MOICHL",
     providerId: "moi",
     providerName: "MOI",
+    providerShortCode: "MOI",
     siteId: "city-hall",
     siteName: "City Hall",
+    siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
     contactEmail: "cityhall@example.org",
     places: [],
@@ -24,8 +27,10 @@ export const devSiteCodeSeeds = [
     code: "GUBSJE",
     providerId: "the-gubbio-project",
     providerName: "The Gubbio Project",
+    providerShortCode: "GUB",
     siteId: "st-john-the-evangelist",
     siteName: "St. John the Evangelist",
+    siteShortCode: "STJ",
     providerSiteId: "provider-site-st-john-the-evangelist",
     contactEmail: "stjohn@example.org",
     location: {
@@ -38,8 +43,10 @@ export const devSiteCodeSeeds = [
     code: "CHC730",
     providerId: "chc",
     providerName: "CHC",
+    providerShortCode: "CHC",
     siteId: "chc-730-polk",
     siteName: "730 Polk",
+    siteShortCode: "730",
     providerSiteId: "provider-site-chc-730-polk",
     contactEmail: "chc730@example.org",
     places: [],
@@ -48,8 +55,10 @@ export const devSiteCodeSeeds = [
     code: "SFA940",
     providerId: "sfaf",
     providerName: "SFAF",
+    providerShortCode: "SFA",
     siteId: "sfaf-940-howard",
     siteName: "940 Howard",
+    siteShortCode: "940",
     providerSiteId: "provider-site-sfaf-940-howard",
     contactEmail: "sfaf940@example.org",
     places: [],
@@ -58,8 +67,10 @@ export const devSiteCodeSeeds = [
     code: "THC440",
     providerId: "thc",
     providerName: "THC",
+    providerShortCode: "THC",
     siteId: "thc-440-eddy",
     siteName: "440 Eddy",
+    siteShortCode: "440",
     providerSiteId: "provider-site-thc-440-eddy",
     contactEmail: "thc440@example.org",
     places: [],
@@ -88,6 +99,7 @@ export async function seedSiteCodes(docDdb, tableName, options = {}) {
   const seededCodes = [];
 
   for (const seed of devSiteCodeSeeds) {
+    validateSeedShortCodes(seed);
     await putProvider(docDdb, tableName, seed, now);
     await putProviderSearch(docDdb, tableName, seed, now);
     await upsertSite(docDdb, tableName, seed, now);
@@ -126,6 +138,19 @@ export async function seedSiteCodes(docDdb, tableName, options = {}) {
   }
 
   return { seededCodes };
+}
+
+/**
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ */
+function validateSeedShortCodes(seed) {
+  if (
+    normalizeExplicitShortCode(seed.providerShortCode) !==
+      seed.providerShortCode ||
+    normalizeExplicitShortCode(seed.siteShortCode) !== seed.siteShortCode
+  ) {
+    throw new Error(`Invalid short code seed for site ${seed.siteId}`);
+  }
 }
 
 /**
@@ -169,6 +194,7 @@ async function putProvider(docDdb, tableName, seed, now) {
         entityType: "PROVIDER",
         providerId: seed.providerId,
         name: seed.providerName,
+        providerShortCode: seed.providerShortCode,
         status: "active",
         seededAt: now,
         updatedAt: now,
@@ -189,7 +215,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
       TableName: tableName,
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
-        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, #name = :name, #status = :status, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
@@ -206,6 +232,8 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":providerId": seed.providerId,
         ":providerName": seed.providerName,
         ":providerSiteId": seed.providerSiteId,
+        ":providerShortCode": seed.providerShortCode,
+        ":siteShortCode": seed.siteShortCode,
         ":name": seed.siteName,
         ":status": "active",
         ":places": seed.places,
@@ -392,9 +420,11 @@ async function putSiteCode(docDdb, tableName, seed, now) {
         active: true,
         providerId: seed.providerId,
         providerName: seed.providerName,
+        providerShortCode: seed.providerShortCode,
         providerSiteId: seed.providerSiteId,
         siteId: seed.siteId,
         siteName: seed.siteName,
+        siteShortCode: seed.siteShortCode,
         seededAt: now,
         updatedAt: now,
       },
