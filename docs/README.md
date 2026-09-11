@@ -30,6 +30,9 @@
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
 
+- **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
+  and deployment troubleshooting.
+
 ## Domain & policy reference
 
 - **[guidance-policy-changelog.md](./guidance-policy-changelog.md)** — policy operations log

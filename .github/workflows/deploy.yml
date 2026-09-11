@@ -71,6 +71,7 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Init
         run: terraform init
@@ -86,16 +87,25 @@ jobs:
       - name: Capture Terraform outputs
         id: tf
         run: |
-          {
-            echo "api_url=$(terraform output -raw api_url)"
-            echo "bucket=$(terraform output -raw frontend_bucket_name)"
-            echo "dist_id=$(terraform output -raw cloudfront_distribution_id)"
-            echo "admin_bucket=$(terraform output -raw admin_frontend_bucket_name)"
-            echo "admin_dist_id=$(terraform output -raw admin_cloudfront_distribution_id)"
-            echo "admin_cognito_client_id=$(terraform output -raw admin_cognito_client_id)"
-            echo "cognito_managed_login_domain=$(terraform output -raw cognito_managed_login_domain)"
-            echo "dynamo_table=$(terraform output -raw dynamodb_table_name)"
-          } >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          terraform output -json > "$RUNNER_TEMP/good-neighbor-tf-outputs.json"
+          jq -er '
+            {
+              api_url: .api_url.value,
+              bucket: .frontend_bucket_name.value,
+              dist_id: .cloudfront_distribution_id.value,
+              admin_bucket: .admin_frontend_bucket_name.value,
+              admin_dist_id: .admin_cloudfront_distribution_id.value,
+              admin_cognito_client_id: .admin_cognito_client_id.value,
+              cognito_managed_login_domain: .cognito_managed_login_domain.value,
+              dynamo_table: .dynamodb_table_name.value
+            }
+            | to_entries[]
+            | if (.value | type) == "string" and (.value | length) > 0
+              then "\(.key)=\(.value)"
+              else error("Missing Terraform output: " + .key)
+              end
+          ' "$RUNNER_TEMP/good-neighbor-tf-outputs.json" >> "$GITHUB_OUTPUT"
 
       - name: Seed dev site codes
         if: ${{ inputs.environment == 'dev' }}
