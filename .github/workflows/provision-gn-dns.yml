@@ -1,0 +1,57 @@
+name: Provision gn.sf.gov DNS zone
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: prod
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra/environments/prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "701893741736"
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+      - name: Initialize production remote state
+        run: terraform init
+      # Targeting is intentional for this bootstrap: production application
+      # resources must not be deployed merely to obtain delegation name servers.
+      - name: Plan only the new hosted zone
+        run: terraform plan -target=aws_route53_zone.gn -out=tfplan
+      - name: Reject unrelated changes or replacement
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan | jq -e '
+            [.resource_changes[]? | select(.mode == "managed")]
+            | all(.address == "aws_route53_zone.gn" and
+                (.change.actions == ["create"] or .change.actions == ["no-op"]))
+          '
+      - name: Apply saved DNS-only plan
+        run: terraform apply -auto-approve tfplan
+      - name: Report delegation name servers
+        run: |
+          set -euo pipefail
+          {
+            echo '## gn.sf.gov delegation'
+            echo 'Ask DT to add an NS record for gn.sf.gov with all four servers below.'
+            echo '```text'
+            terraform output -json gn_dns_name_servers | jq -r '.[]'
+            echo '```'
+            echo "Hosted zone ID: $(terraform output -raw gn_dns_zone_id)"
+          } >> "$GITHUB_STEP_SUMMARY"
