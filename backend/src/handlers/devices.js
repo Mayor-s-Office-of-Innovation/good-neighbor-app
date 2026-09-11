@@ -14,12 +14,19 @@
 // with the same token cannot both rotate — exactly one wins.
 
 import { randomUUID } from "node:crypto";
-import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { normalizeSiteCode } from "./site-code.js";
 import { deviceKey } from "./keys.js";
+import {
+  consumeSetupCodeTransactItem,
+  validateSetupCode,
+} from "./setup-codes.js";
 import {
   DeviceTokenError,
   mintAccessToken,
@@ -64,43 +71,44 @@ export const registerDevice = async (event) => {
     /** @type {{ code?: unknown, deviceId?: unknown, label?: unknown }} */ (
       body ?? {}
     );
-  const code = normalizeSiteCode(typeof raw.code === "string" ? raw.code : "");
-  if (!code) {
+  const code = typeof raw.code === "string" ? raw.code : "";
+  if (!code.trim()) {
     return jsonResponse(400, { error: "missing_site_code" });
   }
 
   const dynamoTable = getDynamoTableName();
   const now = new Date().toISOString();
 
-  // Same lookup + shape as the /site-code handler — the code is the
-  // registration credential this phase (docs/adr/0010).
-  const siteRes = await ddb.send(
-    new GetCommand({
-      TableName: dynamoTable,
-      Key: { pk: `SITE_CODE#${code}`, sk: "#META" },
-    }),
-  );
-  const site =
-    /** @type {{ siteId?: string, siteName?: string, active?: boolean } | undefined} */ (
-      siteRes.Item
-    );
-  if (!site?.active || !site.siteId || !site.siteName) {
+  const validCode = await validateSetupCode(code);
+  if (!validCode) {
     return jsonResponse(401, { error: "invalid_site_code" });
   }
 
   // Known device re-registering (idempotent path) — else a fresh opaque id.
   // The item is keyed DEVICE#<providedId>, so item.deviceId === providedId by
   // construction; getDevice only confirms an existing row for that exact key.
-  const existing = await getDevice(site.siteId, raw.deviceId);
+  const existing = await getDevice(validCode.siteId, raw.deviceId);
   const deviceId = existing ? existing.deviceId : newDeviceId(raw.deviceId);
   const generation = (existing?.tokenGeneration ?? 0) + 1;
+  const [access, refresh] = await Promise.all([
+    mintAccessToken({
+      siteId: validCode.siteId,
+      deviceId,
+      tokenGeneration: generation,
+    }),
+    mintRefreshToken({
+      siteId: validCode.siteId,
+      deviceId,
+      tokenGeneration: generation,
+    }),
+  ]);
 
   const Item = /** @type {DeviceItem} */ ({
-    ...deviceKey(site.siteId, deviceId),
+    ...deviceKey(validCode.siteId, deviceId),
     type: "device",
     deviceId,
-    siteId: site.siteId,
-    siteName: site.siteName,
+    siteId: validCode.siteId,
+    siteName: validCode.siteName,
     label:
       typeof raw.label === "string" && raw.label.trim()
         ? raw.label.trim().slice(0, 100)
@@ -108,25 +116,43 @@ export const registerDevice = async (event) => {
     registeredAt: existing?.registeredAt ?? now,
     lastSeenAt: now,
     tokenGeneration: generation,
-    // refreshJti is stamped by mintSession below; PutItem first so a fresh
-    // device row exists even if the client dies before receiving its tokens.
-    refreshJti: "",
+    refreshJti: refresh.jti,
   });
 
-  await ddb.send(new PutCommand({ TableName: dynamoTable, Item }));
-
-  const session = await mintSession({
-    siteId: site.siteId,
-    deviceId,
-    generation,
-    dynamoTable,
-    now,
-  });
+  const consume = consumeSetupCodeTransactItem(validCode, now);
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: dynamoTable,
+              Item,
+            },
+          },
+          ...(consume ? [consume] : []),
+        ],
+      }),
+    );
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.name === "TransactionCanceledException" &&
+      isSetupCodeConditionFailure(err, consume ? 1 : -1)
+    ) {
+      return jsonResponse(401, { error: "invalid_site_code" });
+    }
+    throw err;
+  }
 
   return jsonResponse(201, {
     deviceId,
-    site: { siteId: site.siteId, name: site.siteName },
-    ...session,
+    site: { siteId: validCode.siteId, name: validCode.siteName },
+    token: access.token,
+    refreshToken: refresh.token,
+    expiresIn: access.expiresIn,
+    refreshExpiresIn: refresh.expiresIn,
+    tokenGeneration: generation,
   });
 };
 
@@ -311,6 +337,18 @@ async function getDevice(siteId, deviceId) {
   );
   const item = /** @type {DeviceItem | undefined} */ (res.Item);
   return item?.deviceId === deviceId ? item : undefined;
+}
+
+/**
+ * @param {Error & { CancellationReasons?: Array<{ Code?: string }> }} err
+ * @param {number} consumeIndex
+ * @returns {boolean}
+ */
+function isSetupCodeConditionFailure(err, consumeIndex) {
+  return (
+    consumeIndex >= 0 &&
+    err.CancellationReasons?.[consumeIndex]?.Code === "ConditionalCheckFailed"
+  );
 }
 
 /**

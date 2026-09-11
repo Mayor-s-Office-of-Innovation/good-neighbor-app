@@ -72,6 +72,17 @@ export const handler = async (event) => {
     return DENY({ reason: "revoked" });
   }
 
+  const siteRes = await ddb.send(
+    new GetCommand({
+      TableName: process.env.DYNAMO_TABLE,
+      Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
+    }),
+  );
+  const site = /** @type {{ status?: string } | undefined} */ (siteRes.Item);
+  if (!site || site.status === "inactive") {
+    return DENY({ reason: "site_inactive" });
+  }
+
   return {
     ...ALLOW,
     // REQUEST-authorizer context: keys flatten to $context.authorizer.<key>

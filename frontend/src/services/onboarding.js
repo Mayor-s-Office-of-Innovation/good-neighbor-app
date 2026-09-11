@@ -61,6 +61,74 @@ export async function validateSetupCode(code) {
 }
 
 /**
+ * @typedef {object} SiteSearchResult
+ * @property {string} siteId
+ * @property {string} [providerSiteId]
+ * @property {string} name
+ * @property {string} [providerName]
+ * @property {string} [label]
+ */
+
+/**
+ * Search public-safe site names for the code request flow.
+ * @param {string} query
+ * @returns {Promise<{ok:true, sites:SiteSearchResult[]} | {ok:false, reason:'empty'|'network'}>}
+ */
+export async function searchSites(query) {
+  const q = String(query || "").trim();
+  if (q.length < 2) return { ok: false, reason: "empty" };
+
+  let response;
+  try {
+    response = await fetch(
+      `${BASE}/v1/sites:search?q=${encodeURIComponent(q)}`,
+    );
+  } catch {
+    return { ok: false, reason: "network" };
+  }
+
+  if (!response.ok) return { ok: false, reason: "network" };
+  const data = await response.json().catch(() => null);
+  return {
+    ok: true,
+    sites: Array.isArray(data?.sites) ? data.sites : [],
+  };
+}
+
+/**
+ * Request a setup code email for an approved site contact.
+ * @param {{ siteId: string, email: string }} request
+ * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'}>}
+ */
+export async function requestSetupCode({ siteId, email }) {
+  if (!siteId || !isPlausibleEmail(email)) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  let response;
+  try {
+    response = await fetch(`${BASE}/v1/setup-codes:request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ siteId, email }),
+    });
+  } catch {
+    return { ok: false, reason: "network" };
+  }
+
+  if (response.status === 400) return { ok: false, reason: "invalid" };
+  if (!response.ok) return { ok: false, reason: "network" };
+  const data = await response.json().catch(() => null);
+  return {
+    ok: true,
+    message:
+      typeof data?.message === "string"
+        ? data.message
+        : "If that email is authorized for this site, we will send a new setup code.",
+  };
+}
+
+/**
  * @param {string} code
  * @returns {string}
  */
@@ -70,4 +138,12 @@ export function formatSiteCode(code) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+/**
+ * @param {string} email
+ * @returns {boolean}
+ */
+function isPlausibleEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
 }
