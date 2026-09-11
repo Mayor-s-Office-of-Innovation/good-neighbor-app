@@ -13,6 +13,13 @@
 - **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the authoritative item shapes,
   keys, GSIs, access patterns, identity model, and metric definitions for the single-table
   store.
+- **[perimeter-check-data-flow.md](./perimeter-check-data-flow.md)** — a worked end-to-end
+  walkthrough of one perimeter check: user actions, the analyzer call and what we do with
+  its response, the DynamoDB record at each write point (with realistic sample data), the
+  UI gates, and the final records.
+- **[legacy-submit-path-retirement-plan.md](./legacy-submit-path-retirement-plan.md)** —
+  approved plan to delete the unreachable pre-#192 batch submit + dispute pipeline
+  (verified dead code, deletion batches, terraform inventory, verification gates).
 - **[ADR directory](./adr/)** — every significant decision and its "why" (numbered,
   immutable; superseded ADRs point forward). Start with
   [ADR 0001](./adr/0001-architecture-stack.md) → [ADR 0002](./adr/0002-datastore-dynamodb.md)
