@@ -1,3 +1,4 @@
+import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
 /**
@@ -614,6 +615,10 @@ export function problemSummaryLabel({ visible, hidden }) {
 function hiddenConditionIdSet(item) {
   return new Set(
     [
+      ...pendingDeletedConditionIds({
+        checkId: item.analysis?.checkId || item.checkId,
+        artifactId: item.analysis?.artifactId || item.upload?.artifactId,
+      }),
       ...(item.analysis?.resolvedConditionIds || []),
       ...(item.analysis?.rejectedConditionIds || []),
     ].filter(Boolean),

@@ -169,8 +169,13 @@ Re-POSTing with the same `idempotency-key` flips the stored item's status to `du
 
 ### Fake SF311 server
 
-To test 311 filing locally without calling HUB, start the fake endpoint in a
-separate terminal:
+`npm run dev -w backend` starts the fake server alongside the API and worker.
+The root `.env.example` enables filing against this fake; copy its `GNP_311_*`
+and `SF311_*` settings into an older `.env.local` and restart the API and worker
+if filing reports `feature_disabled`. A missing enable flag disables filing
+before any network call; this is not a browser localhost restriction.
+
+To run the fake endpoint separately:
 
 ```bash
 npm run local:sf311 -w backend
@@ -211,6 +216,10 @@ curl -X DELETE http://127.0.0.1:3999/requests
 > **Seed data note.** A fresh `npm run dev` seeds only provider/site login
 > codes and site metadata. It does not seed checks, artifacts, analyses, tasks,
 > or submission receipts; those appear after you submit through the local loop.
+
+Local DynamoDB records persist in `backend/.local/dynamodb-data/` across stack
+restarts (alongside the existing persistent MinIO files). Restart only
+`local:api` / `local:worker` when changing their environment configuration.
 
 **Teardown:** `Ctrl-C` in the `npm run dev` terminal stops all services cleanly (no orphaned
 JVM/MinIO/node processes).
