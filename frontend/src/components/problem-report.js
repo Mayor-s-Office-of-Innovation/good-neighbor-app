@@ -521,8 +521,9 @@ class ProblemReport extends HTMLElement {
               },
             ).catch((error) => {
               console.error("refresh after saved deletion failed", error);
-              if (getCurrentCheck()?.id === problem.checkId)
-                this._deleteProblemLocally(problem);
+              this._showToast(
+                "Deletion saved. Could not refresh the cards; please reload.",
+              );
             });
           }
         },
@@ -604,7 +605,20 @@ class ProblemReport extends HTMLElement {
             caller: { request_id: this._requestId("edit", problem) },
           },
         );
-        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+        try {
+          await refreshEvidenceAnalysis(
+            problem.placeId,
+            problem.itemId,
+            result,
+          );
+        } catch (error) {
+          console.error("refresh after saved edit failed", error);
+          this._setDialogError(
+            "analysis-edit-error",
+            "Edit saved. Could not refresh the cards; please reload.",
+          );
+          return;
+        }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;

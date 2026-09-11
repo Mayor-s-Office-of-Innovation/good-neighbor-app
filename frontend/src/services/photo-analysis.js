@@ -11,6 +11,7 @@
 import {
   createCheck,
   evaluateAssessment,
+  getAssessmentGuidance,
   getCheck,
   submitConditionAnswers,
   uploadArtifact,
@@ -130,9 +131,7 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
 
 async function guidanceFromAnalysis(checkId, artifactId, analysis) {
   const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
-  const guidance = assessment.conditions.length
-    ? await evaluateAssessment(assessment)
-    : { assessment, conditions: [], tasks: [] };
+  const guidance = await evaluateAssessment(assessment);
   return { analysis, assessment, guidance };
 }
 
@@ -259,9 +258,51 @@ export async function refreshEvidenceAnalysis(
     analysisId,
     assessment: response.assessment,
   });
-  const guidance = refreshed.conditions.length
-    ? await evaluateAssessment(refreshed)
-    : { assessment: refreshed, conditions: [], tasks: [] };
+  let guidance;
+  let reconciled = false;
+  const previousAssessmentId = item.analysis?.assessment?.assessmentId;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      guidance = await evaluateAssessment({
+        ...refreshed,
+        previousAssessmentId,
+      });
+      break;
+    } catch (err) {
+      if (
+        err?.status !== 409 ||
+        err?.body?.code !== "AssessmentRevisionConflict" ||
+        !previousAssessmentId
+      )
+        throw err;
+      const latest = await getAssessmentGuidance(previousAssessmentId);
+      if (getCurrentCheck()?.id !== check.id) return;
+      if (latest.assessment?.assessmentId !== previousAssessmentId) {
+        // Another refresh won. Use its persisted analysis as well as guidance;
+        // never replay this older analyzer payload against the new predecessor.
+        guidance = latest;
+        reconciled = true;
+        break;
+      }
+      if (attempt === 2) throw err;
+      // Same predecessor: an answer changed. The backend reloads those answers
+      // on the next evaluation; the analyzer amendment is not repeated.
+    }
+  }
+  reconciled ||= Boolean(
+    guidance.assessment?.assessmentId &&
+      guidance.assessment.assessmentId !== refreshed.assessmentId,
+  );
+  const publishedRaw = reconciled ? guidance.assessment.rawAssessment : null;
+  const currentItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
+    (candidate) => candidate.id === itemId,
+  );
+  const currentAssessmentId = currentItem?.analysis?.assessment?.assessmentId;
+  if (
+    currentAssessmentId !== previousAssessmentId &&
+    currentAssessmentId !== guidance.assessment?.assessmentId
+  )
+    return;
 
   if (getCurrentCheck()?.id !== check.id) return;
   updateItemAnalysis(placeId, itemId, {
@@ -271,9 +312,12 @@ export async function refreshEvidenceAnalysis(
     sourceAnalysis: {
       ...(item.analysis?.sourceAnalysis || {}),
       analysisId,
-      grade: response.assessment.general_conditions?.label,
-      gradeDescription: response.assessment.general_conditions?.description,
-      concerns,
+      grade:
+        publishedRaw?.grade ?? response.assessment.general_conditions?.label,
+      gradeDescription:
+        publishedRaw?.summary ??
+        response.assessment.general_conditions?.description,
+      concerns: publishedRaw?.concerns ?? concerns,
     },
     assessment: guidance.assessment,
     conditions: guidance.conditions || refreshed.conditions,
@@ -281,7 +325,7 @@ export async function refreshEvidenceAnalysis(
     ...(opts.rejectedConditionId
       ? {
           rejectedConditionIds: [
-            ...(item.analysis?.rejectedConditionIds || []),
+            ...(currentItem?.analysis?.rejectedConditionIds || []),
             opts.rejectedConditionId,
           ],
         }
@@ -383,12 +427,40 @@ export async function answerAnalysisQuestion(
     });
   }
 
-  const result = await submitConditionAnswers(assessmentId, conditionId, {
-    answers: { [answerKey]: answerValue },
-  });
+  let result;
+  try {
+    result = await submitConditionAnswers(assessmentId, conditionId, {
+      answers: { [answerKey]: answerValue },
+    });
+  } catch (err) {
+    if (err?.body?.code === "AssessmentRevisionConflict") {
+      const latest = await getAssessmentGuidance(assessmentId);
+      const current = getCurrentCheck();
+      const currentId = current?.places?.[placeId]?.items?.find(
+        (candidate) => candidate.id === itemId,
+      )?.analysis?.assessment?.assessmentId;
+      if (current?.id === check.id && currentId === assessmentId)
+        updateItemAnalysis(placeId, itemId, latest);
+    }
+    throw err;
+  }
+  if (getCurrentCheck()?.id !== check.id) return result;
+  const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
+    (candidate) => candidate.id === itemId,
+  );
+  if (
+    !latestItem ||
+    latestItem.analysis?.assessment?.assessmentId !== assessmentId
+  )
+    return result;
+  if (
+    (result?.assessmentItem?.assessmentRevision ?? 0) <
+    (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
+  )
+    return result;
   const condition = result?.conditionItem;
   const task = result?.taskItem;
-  const existingConditions = item.analysis?.conditions || [];
+  const existingConditions = latestItem.analysis?.conditions || [];
   const nextConditions = existingConditions.map((candidate) =>
     candidate.conditionId === conditionId ? condition || candidate : candidate,
   );
@@ -399,7 +471,7 @@ export async function answerAnalysisQuestion(
     nextConditions.push(condition);
   }
 
-  const nextTasks = (item.analysis?.tasks || []).filter(
+  const nextTasks = (latestItem.analysis?.tasks || []).filter(
     (candidate) => candidate.conditionId !== conditionId,
   );
   if (task) nextTasks.push(task);
@@ -407,7 +479,7 @@ export async function answerAnalysisQuestion(
   updateItemAnalysis(placeId, itemId, {
     conditions: nextConditions,
     tasks: nextTasks,
-    assessment: result?.assessmentItem || item.analysis?.assessment,
+    assessment: result?.assessmentItem || latestItem.analysis?.assessment,
   });
   return result;
 }

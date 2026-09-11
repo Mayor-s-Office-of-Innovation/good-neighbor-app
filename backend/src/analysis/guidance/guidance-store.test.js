@@ -105,7 +105,7 @@ describe("storeEvaluatedAssessment", () => {
     const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
     const writes = /** @type {any[]} */ (command.input.TransactItems);
-    expect(writes).toHaveLength(4);
+    expect(writes).toHaveLength(5);
 
     const assessment = writes[0].Put.Item;
     expect(assessment).toMatchObject({
@@ -405,7 +405,7 @@ describe("answerCondition", () => {
     expect(finalTx).toBeInstanceOf(TransactWriteCommand);
     expect(finalTx.input.TransactItems[0].Put).toMatchObject({
       ConditionExpression:
-        "attribute_exists(sk) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
+        "attribute_exists(sk) AND attribute_not_exists(supersededByAssessmentId) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
       ExpressionAttributeValues: { ":priorRevision": 1 },
     });
     expect(finalTx.input.TransactItems[0].Put.Item).toMatchObject({
@@ -1342,5 +1342,338 @@ describe("getAssessmentGuidance", () => {
     ]);
     expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
     expect(send.mock.calls[1][0].input.ConsistentRead).toBe(true);
+  });
+});
+
+describe("assessment refresh preserves unchanged conditions", () => {
+  const previousCondition = {
+    pk: "SITE#site-1",
+    sk: "ASSESSMENT#original#COND#couch",
+    assessmentId: "original",
+    checkId: "check-1",
+    conditionId: "couch",
+    policyVersion: "actions-escalations-v2",
+    analyzerCategory: "Bulky Items",
+    severity: 3,
+    description: "Couch on sidewalk",
+    source: { artifactIds: ["photo-1"] },
+    answers: { belongs_to_client: true },
+    status: "tasks_created",
+    resolvedToTasks: true,
+    taskIds: ["existing-task"],
+    needsAnswer: null,
+  };
+  const input = {
+    siteId: "site-1",
+    checkId: "check-1",
+    assessmentId: "refreshed",
+    previousAssessmentId: "original",
+    reportedAt: "2026-09-11T12:00:00Z",
+    rawAssessment: {},
+    // The litter condition has been removed; the answered couch remains.
+    conditions: [
+      {
+        conditionId: "couch",
+        category: "Bulky Items",
+        severity: 3,
+        description: "Couch on sidewalk",
+        sourceArtifactIds: ["photo-1"],
+      },
+    ],
+  };
+  beforeEach(() => send.mockReset());
+
+  /** @param {{taskStatus?: string, checkId?: string}} [options] */
+  function mockPrevious({ taskStatus = "open", checkId = "check-1" } = {}) {
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return { Item: { checkId, assessmentRevision: 1 } };
+      if (command instanceof QueryCommand)
+        return { Items: [previousCondition] };
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: {
+            table: [
+              {
+                pk: "SITE#site-1",
+                sk: "TASK#existing-task",
+                taskId: "existing-task",
+                conditionId: "couch",
+                assessmentId: "original",
+                kind: "action",
+                status: taskStatus,
+              },
+            ],
+          },
+        };
+      if (command instanceof UpdateCommand)
+        return { Attributes: { nextTaskDisplayNumber: 2 } };
+      return {};
+    });
+  }
+
+  it.each(["open", "completed", "completing"])(
+    "retains answers and the same %s task after deleting a sibling",
+    async (taskStatus) => {
+      mockPrevious({ taskStatus });
+      const idFactory = vi.fn();
+      const result = await storeEvaluatedAssessment(input, {
+        tableName: "table",
+        idFactory,
+      });
+      expect(result.conditionItems[0]).toMatchObject({
+        assessmentId: "refreshed",
+        answers: { belongs_to_client: true },
+        status: "tasks_created",
+        taskIds: ["existing-task"],
+        needsAnswer: null,
+      });
+      expect(result.taskItems).toHaveLength(1);
+      expect(result.taskItems[0]).toMatchObject({
+        taskId: "existing-task",
+        status: taskStatus,
+      });
+      expect(idFactory).not.toHaveBeenCalled();
+      const transaction =
+        send.mock.calls.find(
+          ([command]) => command instanceof TransactWriteCommand,
+        )?.[0].input.TransactItems ?? [];
+      expect(
+        transaction.filter((/** @type {any} */ entry) => entry.Put),
+      ).toHaveLength(3);
+      expect(transaction.at(-1)).toMatchObject({
+        Update: {
+          Key: { pk: "SITE#site-1", sk: "ASSESSMENT#original" },
+          ConditionExpression:
+            "attribute_not_exists(supersededByAssessmentId) AND (assessmentRevision = :revision OR attribute_not_exists(assessmentRevision))",
+          ExpressionAttributeValues: {
+            ":revision": 1,
+            ":next": "refreshed",
+            ":lineage": "original",
+          },
+        },
+      });
+      // A subsequent read uses the retained task IDs, rather than creating tasks again.
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return { Item: result.assessmentItem };
+        if (command instanceof QueryCommand)
+          return { Items: result.conditionItems };
+        if (command instanceof BatchGetCommand)
+          return { Responses: { table: result.taskItems } };
+        return {};
+      });
+      const reloaded = await getAssessmentGuidance({
+        tableName: "table",
+        siteId: "site-1",
+        assessmentId: "refreshed",
+      });
+      expect(reloaded.conditions[0].answers).toEqual(previousCondition.answers);
+      expect(reloaded.tasks[0].taskId).toBe("existing-task");
+    },
+  );
+
+  it("reevaluates changed conditions rather than carrying stale answers", async () => {
+    mockPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], description: "Different object" },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].answers).toEqual({});
+    expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
+  });
+
+  it("does not reuse answers from different evidence", async () => {
+    mockPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], sourceArtifactIds: ["different-photo"] },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].answers).toEqual({});
+  });
+
+  it("rejects a predecessor from another check", async () => {
+    mockPrevious({ checkId: "other-check" });
+    await expect(
+      storeEvaluatedAssessment(input, { tableName: "table" }),
+    ).rejects.toMatchObject({ name: "InvalidAssessmentRevision" });
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
+  it("rejects a refresh from an already replaced predecessor before writing", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) =>
+      command instanceof GetCommand
+        ? {
+            Item: {
+              checkId: "check-1",
+              assessmentRevision: 1,
+              supersededByAssessmentId: "newer",
+            },
+          }
+        : original?.(command),
+    );
+    await expect(
+      storeEvaluatedAssessment(input, { tableName: "table" }),
+    ).rejects.toMatchObject({ name: "AssessmentRevisionConflict" });
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects answers to a replaced assessment without minting a task", async () => {
+    send.mockResolvedValueOnce({ Item: { supersededByAssessmentId: "newer" } });
+    send.mockResolvedValueOnce({ Item: { status: "needs_answer" } });
+    await expect(
+      answerCondition({
+        tableName: "table",
+        siteId: "site-1",
+        assessmentId: "original",
+        conditionId: "couch",
+        answers: { belongs_to_client: true },
+      }),
+    ).rejects.toMatchObject({ name: "AssessmentRevisionConflict" });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])(
+    "retires changed or removed sibling tasks atomically (removed: %s)",
+    async (removed) => {
+      mockPrevious();
+      await storeEvaluatedAssessment(
+        {
+          ...input,
+          conditions: removed
+            ? []
+            : [{ ...input.conditions[0], description: "A different couch" }],
+        },
+        { tableName: "table" },
+      );
+      const tx = send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0].input.TransactItems;
+      expect(tx).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            Put: expect.objectContaining({
+              Item: expect.objectContaining({
+                entityType: "ASSESSMENT",
+                assessmentId: "refreshed",
+              }),
+            }),
+          }),
+          expect.objectContaining({
+            Put: expect.objectContaining({
+              Item: expect.objectContaining({
+                taskId: "existing-task",
+                status: "superseded",
+                gsi2pk: "SITE#site-1#TASK#superseded",
+              }),
+              ConditionExpression:
+                "#status = :open AND attribute_not_exists(updatedAt)",
+            }),
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("preserves completed history and refuses to replace a completing task", async () => {
+    mockPrevious({ taskStatus: "completed" });
+    await storeEvaluatedAssessment(
+      { ...input, conditions: [] },
+      { tableName: "table" },
+    );
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(
+      tx.some(
+        (/** @type {any} */ entry) =>
+          entry.Put?.Item.taskId === "existing-task",
+      ),
+    ).toBe(false);
+    send.mockReset();
+    mockPrevious({ taskStatus: "completing" });
+    await expect(
+      storeEvaluatedAssessment(
+        { ...input, conditions: [] },
+        { tableName: "table" },
+      ),
+    ).rejects.toMatchObject({ name: "TaskTransitionConflict" });
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([true, false])(
+    "requires explicit stable identity to retain artifact-less answers (%s)",
+    async (explicitConditionId) => {
+      mockPrevious();
+      const original = send.getMockImplementation();
+      send.mockImplementation(async (command) =>
+        command instanceof QueryCommand
+          ? {
+              Items: [
+                { ...previousCondition, source: {}, explicitConditionId },
+              ],
+            }
+          : original?.(command),
+      );
+      const result = await storeEvaluatedAssessment(
+        {
+          ...input,
+          conditions: [
+            { ...input.conditions[0], sourceArtifactIds: undefined },
+          ],
+        },
+        { tableName: "table" },
+      );
+      expect(result.conditionItems[0].answers).toEqual(
+        explicitConditionId ? previousCondition.answers : {},
+      );
+      expect(
+        result.taskItems.some((task) => task.taskId === "existing-task"),
+      ).toBe(explicitConditionId);
+    },
+  );
+
+  it("classifies a failed conditional publication as retryable without running task actions", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand)
+        throw Object.assign(new Error("race"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+        });
+      return original?.(command);
+    });
+    await expect(
+      storeEvaluatedAssessment(input, { tableName: "table" }),
+    ).rejects.toMatchObject({ name: "AssessmentRevisionConflict" });
+    expect(
+      send.mock.calls.filter(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toHaveLength(1);
   });
 });
