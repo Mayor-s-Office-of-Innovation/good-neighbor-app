@@ -44,6 +44,19 @@ resource "aws_iam_role" "api" {
 
 data "aws_iam_policy_document" "api" {
   statement {
+    sid       = "SendSetupCodeEmails"
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = [var.setup_code_email_identity_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = [var.setup_code_email_from]
+    }
+  }
+
+  statement {
     sid       = "Dynamo"
     effect    = "Allow"
     actions   = local.dynamo_actions

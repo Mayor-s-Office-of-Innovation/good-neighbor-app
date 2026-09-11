@@ -38,9 +38,19 @@ output "admin_cloudfront_distribution_id" {
   value       = module.app.admin_cloudfront_distribution_id
 }
 
+output "admin_cloudfront_domain_name" {
+  description = "CloudFront domain name serving the admin frontend."
+  value       = module.app.admin_cloudfront_domain_name
+}
+
 output "admin_cognito_client_id" {
   description = "Cognito app client id for the central admin console."
   value       = module.app.admin_cognito_client_id
+}
+
+output "cognito_user_pool_id" {
+  description = "Cognito user pool id for admin account management."
+  value       = module.app.cognito_user_pool_id
 }
 
 output "cognito_managed_login_domain" {
