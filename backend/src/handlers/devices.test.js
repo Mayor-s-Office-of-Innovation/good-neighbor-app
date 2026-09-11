@@ -1,4 +1,4 @@
-import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handlers' writes hit a spy, not AWS.
@@ -14,6 +14,22 @@ const SITE_CODE_ITEM = {
   providerSiteId: "provider-1",
   siteId: "site-1",
   siteName: "City Hall",
+};
+
+const SETUP_CODE_ITEM = {
+  pk: "SETUP_CODE#abc",
+  sk: "#META",
+  type: "setupCode",
+  codeId: "code-1",
+  codeVerifier: "abc",
+  status: "pending",
+  expiresAt: "2999-01-01T00:00:00.000Z",
+  maxUses: 3,
+  uses: 0,
+  providerSiteId: "provider-1",
+  siteId: "site-1",
+  siteName: "City Hall",
+  issuedTo: "lead@example.org",
 };
 
 /** @param {string} secret */
@@ -69,12 +85,29 @@ const callRefresh = (body) =>
  * @returns {any} the DEVICE# item, or undefined
  */
 function putItem() {
-  const put = send.mock.calls
+  const transact = send.mock.calls
     .map(([cmd]) => cmd)
-    .find(
-      (cmd) => cmd instanceof PutCommand && cmd.input.Item?.type === "device",
-    );
-  return /** @type {any} */ (put)?.input.Item;
+    .find((cmd) => cmd instanceof TransactWriteCommand);
+  return /** @type {any} */ (transact)?.input.TransactItems.find(isDevicePut)
+    ?.Put.Item;
+}
+
+/**
+ * @param {any} item
+ * @returns {boolean}
+ */
+function isDevicePut(item) {
+  return item.Put?.Item?.type === "device";
+}
+
+/**
+ * @param {Array<{ Code: string }>} reasons
+ * @returns {Error & { CancellationReasons: Array<{ Code: string }> }}
+ */
+function transactionCanceled(reasons) {
+  const err = new Error("transaction canceled");
+  err.name = "TransactionCanceledException";
+  return Object.assign(err, { CancellationReasons: reasons });
 }
 
 beforeEach(() => {
@@ -90,7 +123,9 @@ describe("registerDevice", () => {
   });
 
   it("401s an inactive/unknown code", async () => {
-    send.mockResolvedValueOnce({ Item: { active: false } });
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: { active: false } });
     const res = await callRegister({ code: "000000" });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.body).error).toBe("invalid_site_code");
@@ -98,10 +133,11 @@ describe("registerDevice", () => {
 
   it("creates the DEVICE# item keyed to the site from the code, mints a session", async () => {
     send
-      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // site-code lookup
+      .mockResolvedValueOnce({}) // dynamic setup-code lookup
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // legacy site-code lookup
+      .mockResolvedValueOnce({ Item: { status: "active" } }) // site status lookup
       .mockResolvedValueOnce({}) // GetCommand (known-device check) → none
-      .mockResolvedValueOnce({}) // PutItem DEVICE#
-      .mockResolvedValueOnce({}) // UpdateItem (session stamp)
+      .mockResolvedValueOnce({}) // TransactWrite DEVICE#
       // lib/principal.js contract: claims resolve to SITE#site-1 keys
       .mockResolvedValue({});
 
@@ -129,21 +165,17 @@ describe("registerDevice", () => {
     expect(claims.ver).toBe(1);
     expect(claims.typ).toBe("access");
 
-    // The refresh jti persisted matches the minted refresh token.
     const refreshClaims = JSON.parse(
       Buffer.from(body.refreshToken.split(".")[1], "base64").toString("utf8"),
     );
-    const update = send.mock.calls
-      .map(([cmd]) => cmd)
-      .find((cmd) => cmd instanceof UpdateCommand);
-    expect(
-      /** @type {any} */ (update)?.input.ExpressionAttributeValues[":jti"],
-    ).toBe(refreshClaims.jti);
+    expect(item.refreshJti).toBe(refreshClaims.jti);
   });
 
   it("is idempotent for a known deviceId: bumps generation, keeps registration", async () => {
     send
-      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // site-code lookup
+      .mockResolvedValueOnce({}) // dynamic setup-code lookup
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM }) // legacy site-code lookup
+      .mockResolvedValueOnce({ Item: { status: "active" } }) // site status lookup
       .mockResolvedValueOnce({
         Item: {
           deviceId: "dev-x",
@@ -153,8 +185,7 @@ describe("registerDevice", () => {
           tokenGeneration: 4,
         },
       }) // GetCommand known-device
-      .mockResolvedValueOnce({}) // PutItem
-      .mockResolvedValueOnce({}); // UpdateItem
+      .mockResolvedValueOnce({}); // TransactWrite
 
     const res = await callRegister({ code: "123456", deviceId: "dev-x" });
 
@@ -166,6 +197,41 @@ describe("registerDevice", () => {
     // …and advances the session generation (old tokens die).
     expect(item.tokenGeneration).toBe(5);
     expect(JSON.parse(res.body).tokenGeneration).toBe(5);
+  });
+
+  it("401s when dynamic setup-code consumption fails its condition", async () => {
+    send
+      .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Item: { currentCodePk: SETUP_CODE_ITEM.pk } })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ]),
+      );
+
+    const res = await callRegister({ code: "ABC123" });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe("invalid_site_code");
+  });
+
+  it("does not report unrelated transaction cancellations as invalid codes", async () => {
+    send
+      .mockResolvedValueOnce({ Item: SETUP_CODE_ITEM })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Item: { currentCodePk: SETUP_CODE_ITEM.pk } })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "TransactionConflict" },
+          { Code: "None" },
+        ]),
+      );
+
+    await expect(callRegister({ code: "ABC123" })).rejects.toMatchObject({
+      name: "TransactionCanceledException",
+    });
   });
 });
 

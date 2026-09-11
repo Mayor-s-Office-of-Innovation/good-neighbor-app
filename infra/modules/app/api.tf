@@ -10,6 +10,8 @@ locals {
     # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
+    "GET /v1/sites:search",
+    "POST /v1/setup-codes:request",
     # Site config (feature/142 onboard locations)
     "GET /v1/site",
     "PUT /v1/site/places",
@@ -33,6 +35,24 @@ locals {
     "POST /submissions",
     "POST /v1/client-errors",
     "POST /v1/feedback",
+    "GET /admin/v1/providers",
+    "POST /admin/v1/providers",
+    "GET /admin/v1/providers/{providerId}",
+    "PATCH /admin/v1/providers/{providerId}",
+    "DELETE /admin/v1/providers/{providerId}",
+    "POST /admin/v1/providers/{providerId}/sites",
+    "GET /admin/v1/sites/{siteId}",
+    "PATCH /admin/v1/sites/{siteId}",
+    "DELETE /admin/v1/sites/{siteId}",
+    "GET /admin/v1/sites/{siteId}/master-contacts",
+    "POST /admin/v1/sites/{siteId}/master-contacts",
+    "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}",
+    "GET /admin/v1/sites/{siteId}/code-contacts",
+    "POST /admin/v1/sites/{siteId}/code-contacts",
+    "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}",
+    "POST /admin/v1/sites/{siteId}/setup-codes",
+    "GET /admin/v1/sites/{siteId}/devices",
+    "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
     "GET /health",
   ]
 
@@ -43,10 +63,24 @@ locals {
     "POST /site-code"                = true
     "POST /v1/devices"               = true
     "POST /v1/devices/token:refresh" = true
+    "GET /v1/sites:search"           = true
+    "POST /v1/setup-codes:request"   = true
     "GET /health"                    = true
     "POST /v1/client-errors"         = true
     "POST /v1/feedback"              = true
     "POST /submissions"              = true
+  }
+}
+
+resource "aws_apigatewayv2_authorizer" "admin_jwt" {
+  api_id           = aws_apigatewayv2_api.http.id
+  name             = "${local.name_prefix}-admin-jwt"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.authorization"]
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.admin.id]
+    issuer   = "https://${aws_cognito_user_pool.users.endpoint}"
   }
 }
 
@@ -102,8 +136,8 @@ resource "aws_apigatewayv2_route" "routes" {
   # unlisted route as protected — a bare map lookup on an absent key is a hard
   # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
-  authorization_type = try(local.route_is_open[each.value], false) ? null : "CUSTOM"
-  authorizer_id      = try(local.route_is_open[each.value], false) ? null : aws_apigatewayv2_authorizer.device_token.id
+  authorization_type = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? "JWT" : "CUSTOM"
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

@@ -1,9 +1,10 @@
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import { normalizeExplicitShortCode } from "../lib/short-codes.js";
 import { siteMetaKey } from "./keys.js";
+import { validateSetupCode } from "./setup-codes.js";
 
 /**
  * @typedef {object} ProviderSiteCodeItem
@@ -31,26 +32,24 @@ export const handler = async (event) => {
     return jsonResponse(400, { error: "missing_site_code" });
   }
 
-  const res = await ddb.send(
-    new GetCommand({
-      TableName: getDynamoTableName(),
-      Key: { pk: `SITE_CODE#${code}`, sk: "#META" },
-    }),
-  );
-
-  const item = /** @type {ProviderSiteCodeItem | undefined} */ (res.Item);
-  if (!item?.active || !item.siteId || !item.siteName) {
+  const valid = await validateSetupCode(code);
+  if (!valid) {
     return jsonResponse(401, { error: "invalid_site_code" });
   }
 
-  await backfillSiteMetadata(getDynamoTableName(), item);
+  if (valid.kind === "legacy") {
+    await backfillSiteMetadata(
+      getDynamoTableName(),
+      /** @type {ProviderSiteCodeItem} */ (valid.item),
+    );
+  }
 
   return jsonResponse(200, {
     code,
     providerSite: {
-      id: item.providerSiteId,
-      siteId: item.siteId,
-      name: item.siteName,
+      id: valid.providerSiteId,
+      siteId: valid.siteId,
+      name: valid.siteName,
     },
   });
 };
