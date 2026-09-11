@@ -562,10 +562,16 @@ class TodayView extends HTMLElement {
       this._captureFlow = captureSession.flowType || "perimeter";
       if (this._viewPhase === "home") this._viewPhase = "capture";
     }
-    const pendingSession =
+    let pendingSession =
       active && active.status === "capture-complete"
         ? active
         : await loadSubmitted();
+    // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
+    // clear them instead of letting them linger in the review store forever.
+    if (pendingSession && pendingSession.status !== "capture-complete") {
+      await clearSubmittedSession();
+      pendingSession = null;
+    }
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
