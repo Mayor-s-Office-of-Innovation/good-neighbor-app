@@ -6,7 +6,6 @@ import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
-import { supersedeOpenTasksForCondition } from "../analysis/guidance/guidance-store.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { analysisKey } from "./keys.js";
@@ -120,35 +119,6 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
 }
 
 /**
- * @param {object} opts
- * @param {string} opts.tableName
- * @param {string} opts.siteId
- * @param {string} opts.analysisId
- * @param {string} opts.conditionId
- * @param {string} opts.reason
- * @param {{ checkId: string, artifactId: string }} opts.context
- * @returns {Promise<void>}
- */
-async function supersedeAmendedConditionTasks({
-  tableName,
-  siteId,
-  analysisId,
-  conditionId,
-  reason,
-  context,
-}) {
-  await supersedeOpenTasksForCondition({
-    tableName,
-    siteId,
-    conditionId,
-    checkId: context.checkId,
-    assessmentIdPrefix: `${context.checkId}-${context.artifactId}`,
-    analysisId,
-    reason,
-  });
-}
-
-/**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
@@ -199,14 +169,6 @@ export async function editAnalysisCondition(event) {
       description: description.trim(),
       appId: APP_ID,
       requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
-    });
-    await supersedeAmendedConditionTasks({
-      tableName: dynamoTable,
-      siteId,
-      analysisId: context.analysisId,
-      conditionId,
-      reason: "analysis_condition_edited",
-      context,
     });
     return jsonResponse(200, result);
   } catch (err) {
@@ -288,14 +250,6 @@ export async function rejectAnalysisCondition(event) {
         ),
       },
     );
-    await supersedeAmendedConditionTasks({
-      tableName: dynamoTable,
-      siteId,
-      analysisId: context.analysisId,
-      conditionId,
-      reason: "analysis_condition_rejected",
-      context,
-    });
     return jsonResponse(200, result);
   } catch (err) {
     return errorResponse(err);
