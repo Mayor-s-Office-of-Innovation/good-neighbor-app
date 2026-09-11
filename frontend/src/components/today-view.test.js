@@ -15,36 +15,6 @@ beforeAll(() => {
 });
 
 describe("isStalePendingSession", () => {
-  it("keeps a ready review session when the newest backend check is the same UI id", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
-
-    expect(
-      isStalePendingSession({ id: "chk_1", status: "submitted" }, [
-        { id: "chk_1", status: "submitted" },
-      ]),
-    ).toBe(false);
-  });
-
-  it("clears a ready review session when a newer backend check has replaced it", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
-
-    expect(
-      isStalePendingSession({ id: "chk_1", status: "submitted" }, [
-        { id: "chk_2", status: "submitted" },
-      ]),
-    ).toBe(true);
-  });
-
-  it("keeps an analyzing session once the same backend check is completed", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
-
-    expect(
-      isStalePendingSession({ id: "chk_1", status: "analyzing" }, [
-        { id: "chk_1", status: "submitted" },
-      ]),
-    ).toBe(false);
-  });
-
   it("clears a capture-complete session once the same backend check is completed", async () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
@@ -61,6 +31,17 @@ describe("isStalePendingSession", () => {
     expect(
       isStalePendingSession({ id: "chk_1", status: "capture-complete" }, [
         { id: "chk_2", status: "submitted" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("keeps a capture-complete session while a different check landed", async () => {
+    const { isStalePendingSession } = await import("./today-view.js");
+
+    expect(
+      isStalePendingSession({ id: "chk_1", status: "capture-complete" }, [
+        { id: "chk_2", status: "submitted" },
+        { id: "chk_3", status: "submitted" },
       ]),
     ).toBe(false);
   });

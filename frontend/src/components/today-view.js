@@ -33,10 +33,7 @@ import {
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
 } from "../services/photo-analysis.js";
-import {
-  adaptCheckHeader,
-  cityCategoriesByCheck,
-} from "../domain/check-adapter.js";
+import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
   appActionFailureMessage,
   isFiled311Completion,
@@ -52,18 +49,13 @@ import {
   updateItemAnalysis,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
-import { mark } from "../services/instrument.js";
 import {
   analysisResultsTray,
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
-import {
-  finalizeCaptureScorecardInBackground,
-  resumeSubmittedCheckInBackground,
-  resumeUploadingCheckInBackground,
-} from "../services/submit-check.js";
+import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 
 const HOME_FILTERS = [
   { id: "needs_action", label: "Needs Action" },
@@ -85,9 +77,6 @@ const MEDIA_URL_CACHE = new Map();
  */
 export function isStalePendingSession(session, submitted) {
   if (!session) return false;
-  if (session.status === "submitted") {
-    return submitted.length > 0 && submitted[0].id !== session.id;
-  }
   if (session.status === "capture-complete") {
     // The background scorecard has no terminal transition, so a completed
     // backend check with the same id is the only signal the run has landed —
@@ -574,14 +563,7 @@ class TodayView extends HTMLElement {
       if (this._viewPhase === "home") this._viewPhase = "capture";
     }
     const pendingSession =
-      active &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(active.status)
+      active && active.status === "capture-complete"
         ? active
         : await loadSubmitted();
 
@@ -609,9 +591,8 @@ class TodayView extends HTMLElement {
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
       ]);
-      const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
-        .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
+        .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
         .sort((a, b) =>
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
@@ -624,14 +605,7 @@ class TodayView extends HTMLElement {
 
     const last = submitted[0];
     let effectivePendingSession =
-      pendingSession &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(pendingSession.status)
+      pendingSession && pendingSession.status === "capture-complete"
         ? pendingSession
         : null;
 
@@ -640,15 +614,6 @@ class TodayView extends HTMLElement {
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "capture-complete") {
       finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
-        expectedArtifacts: effectivePendingSession.expectedArtifacts,
-      });
-    } else if (effectivePendingSession?.status === "uploading") {
-      resumeUploadingCheckInBackground(effectivePendingSession.id, {
-        flowType: effectivePendingSession.flowType,
-        submissionKind: effectivePendingSession.submissionKind,
-      });
-    } else if (effectivePendingSession?.status === "analyzing") {
-      resumeSubmittedCheckInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
     }
@@ -724,18 +689,6 @@ class TodayView extends HTMLElement {
         }
       });
     });
-    const review = this.querySelector("#review-assessment");
-    if (review) {
-      review.addEventListener("click", () => {
-        // Brackets human think-time: submit:done → review:open is the user
-        // deciding to review; review:open → review:rendered is the screen load.
-        mark("review:open");
-        navigate("/results");
-      });
-    }
-    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#cancel-assessment-dialog")
-    );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
@@ -750,25 +703,6 @@ class TodayView extends HTMLElement {
         ":scope > .home > #analysis-edit-dialog #analysis-edit-description",
       )
     );
-    this.querySelector("#cancel-assessment-open")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.showModal(),
-    );
-    this.querySelector("#cancel-assessment-keep")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.close(),
-    );
-    this.querySelector("#cancel-assessment-confirm")?.addEventListener(
-      "click",
-      async () => {
-        await clearSubmittedSession();
-        this._cancelDialog?.close();
-        this.connectedCallback();
-      },
-    );
-    this._cancelDialog?.addEventListener("click", (e) => {
-      if (e.target === this._cancelDialog) this._cancelDialog.close();
-    });
     this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     )?.addEventListener("click", () => this._confirmDeleteProblem());
@@ -913,7 +847,6 @@ class TodayView extends HTMLElement {
               `
             : ""}
         </section>
-        ${pendingSession ? this._cancelAssessmentDialog() : ""}
         ${showWorklist ? analysisDialogs() : ""}
       </div>
     `;
@@ -945,11 +878,6 @@ class TodayView extends HTMLElement {
       hasNewResults && !hasActiveNewAnalysis ? this._wrapSection() : "";
     return html`
       <div class="home-results">
-        ${pendingSession &&
-        pendingSession.status !== "capture-complete" &&
-        !recentItems.length
-          ? this._assessmentTile(pendingSession)
-          : ""}
         ${recentItems.length
           ? analysisResultsTray(recentItems, pendingSession.id, {
               id: "home-analysis-results",
@@ -1140,169 +1068,6 @@ class TodayView extends HTMLElement {
     return isStalePendingSession(session, submitted);
   }
 
-  _assessmentTile(session) {
-    if (session.status === "submitted") {
-      return html`
-        <section
-          class="assessment-tile assessment-tile--ready"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">
-                <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-                AI analysis complete
-              </p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              Report ready to review and confirm.
-            </p>
-            <div class="assessment-tile__actions">
-              <wa-button
-                id="review-assessment"
-                type="button"
-                appearance="outlined"
-                size="small"
-              >
-                Review assessment
-              </wa-button>
-            </div>
-          </div>
-        </section>
-      `;
-    }
-
-    if (session.status === "analysis_failed") {
-      const pausedLabel =
-        session.pendingStage === "upload"
-          ? "Upload paused"
-          : "AI analysis paused";
-      return html`
-        <section
-          class="assessment-tile assessment-tile--error"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">${escapeHtml(pausedLabel)}</p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              ${escapeHtml(
-                session.analysisError ||
-                  "Couldn’t finish analyzing this submission.",
-              )}
-            </p>
-          </div>
-        </section>
-      `;
-    }
-
-    const label =
-      session.submissionKind === "problem_report" ? "problem report" : "check";
-    const time = session.submittedAt ? timeOf(session.submittedAt) : "";
-    const isUploading = session.status === "uploading";
-    const eyebrow = isUploading
-      ? time
-        ? `Uploading your ${time} ${label}`
-        : `Uploading your latest ${label}`
-      : time
-        ? `AI is analyzing the ${time} ${label}`
-        : `AI is analyzing the latest ${label}`;
-    const headline = isUploading
-      ? "Uploading your report..."
-      : session.submissionKind === "problem_report"
-        ? "Problem report received and being analyzed..."
-        : "Report received and being analyzed for problems...";
-
-    return html`
-      <section class="assessment-tile" aria-live="polite">
-        <div class="assessment-tile__card">
-          <div class="assessment-tile__top">
-            <p class="assessment-tile__eyebrow">
-              <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-              ${escapeHtml(eyebrow)}
-            </p>
-            <wa-button
-              id="cancel-assessment-open"
-              class="assessment-tile__dismiss"
-              type="button"
-              appearance="plain"
-              size="small"
-              aria-label="Cancel existing submission"
-            >
-              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-            </wa-button>
-          </div>
-          <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
-          <div
-            class="assessment-tile__progress"
-            role="img"
-            aria-label="${isUploading
-              ? "Upload in progress"
-              : "Analysis in progress"}"
-          >
-            <span class="assessment-tile__bar"></span>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  _cancelAssessmentDialog() {
-    return html`
-      <dialog
-        class="sheet"
-        id="cancel-assessment-dialog"
-        aria-label="Cancel existing submission?"
-      >
-        <div class="sheet__panel">
-          <div class="sheet__actions">
-            <wa-button
-              class="sheet__cancel"
-              type="button"
-              id="cancel-assessment-keep"
-              appearance="outlined"
-            >
-              Keep it
-            </wa-button>
-          </div>
-          <ul class="sheet__opts">
-            <li>
-              <wa-button
-                class="sheet__opt sheet__opt--danger"
-                id="cancel-assessment-confirm"
-                type="button"
-                appearance="filled"
-                variant="danger"
-              >
-                Cancel analysis
-              </wa-button>
-            </li>
-          </ul>
-        </div>
-      </dialog>
-    `;
-  }
   _firstRunBlock() {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">
