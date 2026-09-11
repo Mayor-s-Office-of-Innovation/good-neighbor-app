@@ -536,6 +536,18 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+
+    # AWS provider 5.x sends omitted invitation fields as empty strings on
+    # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
+    invite_message_template {
+      email_subject = "[${var.environment}] Your Good Neighbor admin invitation"
+      email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."
+      sms_message   = "Your Good Neighbor username is {username} and temporary password is {####}."
+    }
+  }
+
   # Per-tenant site binding for the deferred JWT authorizer. Schema attributes
   # are add-only on a live pool, so we declare it now (harmless while unused) to
   # avoid a painful migration once token issuance + the authorizer land.
