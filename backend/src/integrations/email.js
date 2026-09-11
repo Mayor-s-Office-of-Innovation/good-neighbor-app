@@ -95,7 +95,12 @@ export async function sendSetupCodeEmail(email) {
   } catch {
     // SDK error messages may contain recipient addresses or request content.
     console.error(
-      JSON.stringify({ ...metadata, provider: "ses", status: "failed" }),
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
     );
     throw new Error("Setup-code email delivery failed");
   }
