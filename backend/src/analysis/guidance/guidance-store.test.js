@@ -3,6 +3,7 @@ import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -28,6 +29,25 @@ function batchKeys(command) {
   ).table.Keys;
 }
 
+/**
+ * @param {object} [opts]
+ * @param {string} [opts.providerShortCode]
+ * @param {string} [opts.siteShortCode]
+ * @param {number} [opts.nextTaskDisplayNumber]
+ */
+function mockTaskShortIdAllocation({
+  providerShortCode = "MOI",
+  siteShortCode = "CIT",
+  nextTaskDisplayNumber = 1,
+} = {}) {
+  send.mockResolvedValueOnce({
+    Item: { providerShortCode, siteShortCode },
+  });
+  send.mockResolvedValueOnce({
+    Attributes: { nextTaskDisplayNumber },
+  });
+}
+
 describe("storeEvaluatedAssessment", () => {
   beforeEach(() => {
     send.mockReset();
@@ -35,6 +55,8 @@ describe("storeEvaluatedAssessment", () => {
   });
 
   it("stores the assessment, conditions, and immediately resolvable tasks", async () => {
+    mockTaskShortIdAllocation();
+
     const result = await storeEvaluatedAssessment(
       {
         siteId: "site-1",
@@ -66,8 +88,21 @@ describe("storeEvaluatedAssessment", () => {
       },
     );
 
-    expect(send).toHaveBeenCalledTimes(1);
-    const command = send.mock.calls[0][0];
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[0][0].input).toMatchObject({
+      TableName: "table",
+      Key: { pk: "SITE#site-1", sk: "#META" },
+      ConsistentRead: true,
+    });
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[1][0].input).toMatchObject({
+      TableName: "table",
+      Key: { pk: "SITE#site-1", sk: "COUNTER#task-display-id" },
+      ExpressionAttributeValues: expect.objectContaining({ ":count": 1 }),
+      ReturnValues: "UPDATED_NEW",
+    });
+    const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
     const writes = /** @type {any[]} */ (command.input.TransactItems);
     expect(writes).toHaveLength(4);
@@ -125,6 +160,7 @@ describe("storeEvaluatedAssessment", () => {
       pk: "SITE#site-1",
       sk: "TASK#task-1",
       entityType: "TASK",
+      shortId: "MOI-CIT-001",
       assessmentId: "asm-1",
       checkId: "chk-1",
       conditionId: "001-litter",
@@ -144,7 +180,53 @@ describe("storeEvaluatedAssessment", () => {
     expect(result.conditionItems).toHaveLength(2);
   });
 
+  it("allocates one contiguous short-id block for multi-task assessments", async () => {
+    mockTaskShortIdAllocation({
+      providerShortCode: "GUB",
+      siteShortCode: "STJ",
+      nextTaskDisplayNumber: 12,
+    });
+
+    const result = await storeEvaluatedAssessment(
+      {
+        siteId: "site-1",
+        assessmentId: "asm-many",
+        reportedAt: "2026-08-18T12:00:00.000Z",
+        rawAssessment: {},
+        conditions: [
+          { category: "Litter", severity: 3, description: "north trash" },
+          { category: "Litter", severity: 3, description: "south trash" },
+        ],
+      },
+      {
+        tableName: "table",
+        now: new Date("2026-08-18T12:01:00.000Z"),
+        idFactory: vi
+          .fn()
+          .mockReturnValueOnce("task-11")
+          .mockReturnValueOnce("task-12"),
+      },
+    );
+
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[1][0].input.ExpressionAttributeValues).toMatchObject(
+      { ":count": 2 },
+    );
+    expect(result.taskItems.map((task) => task.shortId)).toEqual([
+      "GUB-STJ-011",
+      "GUB-STJ-012",
+    ]);
+    expect(result.conditionItems.map((condition) => condition.taskIds)).toEqual(
+      [["task-11"], ["task-12"]],
+    );
+  });
+
   it("runs task-created 311 actions silently after minting an action task", async () => {
+    mockTaskShortIdAllocation({
+      providerShortCode: "GUB",
+      siteShortCode: "STJ",
+    });
+
     const result = await storeEvaluatedAssessment(
       {
         siteId: "site-1",
@@ -168,10 +250,11 @@ describe("storeEvaluatedAssessment", () => {
       },
     );
 
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(4);
     const task = result.taskItems[0];
     expect(task).toMatchObject({
       taskId: "task-silent",
+      shortId: "GUB-STJ-001",
       kind: "action",
       appActionStatus: "failed",
       appActionResults: [
@@ -187,7 +270,7 @@ describe("storeEvaluatedAssessment", () => {
       ],
     });
 
-    const updateTx = send.mock.calls[1][0];
+    const updateTx = send.mock.calls[3][0];
     expect(updateTx).toBeInstanceOf(TransactWriteCommand);
     expect(updateTx.input.TransactItems[0].Put).toMatchObject({
       ConditionExpression: "#status = :open",
@@ -435,6 +518,11 @@ describe("answerCondition", () => {
       Item: { ...assessmentBase, assessmentRevision: 0 },
     });
     send.mockResolvedValueOnce({ Item: condition });
+    mockTaskShortIdAllocation({
+      providerShortCode: "MOI",
+      siteShortCode: "CIT",
+      nextTaskDisplayNumber: 41,
+    });
     send.mockRejectedValueOnce(
       Object.assign(new Error("revision conflict"), {
         name: "TransactionCanceledException",
@@ -454,6 +542,11 @@ describe("answerCondition", () => {
       },
     });
     send.mockResolvedValueOnce({ Item: condition });
+    mockTaskShortIdAllocation({
+      providerShortCode: "MOI",
+      siteShortCode: "CIT",
+      nextTaskDisplayNumber: 42,
+    });
     send.mockResolvedValueOnce({});
 
     const idFactory = vi
@@ -471,8 +564,8 @@ describe("answerCondition", () => {
       now: new Date("2026-08-18T12:02:00.000Z"),
     });
 
-    expect(send).toHaveBeenCalledTimes(6);
-    const finalTx = send.mock.calls[5][0];
+    expect(send).toHaveBeenCalledTimes(10);
+    const finalTx = send.mock.calls[9][0];
     expect(finalTx).toBeInstanceOf(TransactWriteCommand);
     expect(finalTx.input.TransactItems[0].Put).toMatchObject({
       ConditionExpression:
@@ -489,7 +582,10 @@ describe("answerCondition", () => {
         escalationCount: 2,
       },
     });
-    expect(result.taskItem).toMatchObject({ taskId: "task-2" });
+    expect(result.taskItem).toMatchObject({
+      taskId: "task-2",
+      shortId: "MOI-CIT-042",
+    });
   });
 });
 

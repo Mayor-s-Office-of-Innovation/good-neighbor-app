@@ -1,5 +1,25 @@
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { getDynamoTableName } from "../config.js";
+import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
+import { normalizeExplicitShortCode } from "../lib/short-codes.js";
+import { siteMetaKey } from "./keys.js";
 import { validateSetupCode } from "./setup-codes.js";
+
+/**
+ * @typedef {object} ProviderSiteCodeItem
+ * @property {string} pk
+ * @property {string} sk
+ * @property {"providerSiteCode"} type
+ * @property {string} code
+ * @property {boolean} active
+ * @property {string} [providerId]
+ * @property {string} [providerShortCode]
+ * @property {string} providerSiteId
+ * @property {string} siteId
+ * @property {string} siteName
+ * @property {string} [siteShortCode]
+ */
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const handler = async (event) => {
@@ -17,6 +37,13 @@ export const handler = async (event) => {
     return jsonResponse(401, { error: "invalid_site_code" });
   }
 
+  if (valid.kind === "legacy") {
+    await backfillSiteMetadata(
+      getDynamoTableName(),
+      /** @type {ProviderSiteCodeItem} */ (valid.item),
+    );
+  }
+
   return jsonResponse(200, {
     code,
     providerSite: {
@@ -26,6 +53,44 @@ export const handler = async (event) => {
     },
   });
 };
+
+/**
+ * @param {string} tableName
+ * @param {ProviderSiteCodeItem} item
+ * @returns {Promise<void>}
+ */
+async function backfillSiteMetadata(tableName, item) {
+  const providerShortCode = normalizeExplicitShortCode(item.providerShortCode);
+  const siteShortCode = normalizeExplicitShortCode(item.siteShortCode);
+  if (!providerShortCode || !siteShortCode) return;
+
+  await ddb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: siteMetaKey(item.siteId),
+      UpdateExpression:
+        "SET #type = if_not_exists(#type, :type), entityType = if_not_exists(entityType, :entityType), siteId = if_not_exists(siteId, :siteId), providerSiteId = if_not_exists(providerSiteId, :providerSiteId), providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = if_not_exists(#name, :name), updatedAt = :now" +
+        (item.providerId
+          ? ", providerId = if_not_exists(providerId, :providerId)"
+          : ""),
+      ExpressionAttributeNames: {
+        "#type": "type",
+        "#name": "name",
+      },
+      ExpressionAttributeValues: {
+        ":type": "site",
+        ":entityType": "SITE",
+        ":siteId": item.siteId,
+        ":providerSiteId": item.providerSiteId,
+        ":providerShortCode": providerShortCode,
+        ":siteShortCode": siteShortCode,
+        ":name": item.siteName,
+        ":now": new Date().toISOString(),
+        ...(item.providerId ? { ":providerId": item.providerId } : {}),
+      },
+    }),
+  );
+}
 
 /**
  * @param {string | undefined} body
