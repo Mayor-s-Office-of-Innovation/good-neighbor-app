@@ -2950,6 +2950,27 @@ theme-toggle {
   background: var(--surface);
 }
 
+/* Keep the top edge fixed while the card and its list spacing collapse. */
+.analysis-card--deleting {
+  overflow: clip;
+  min-height: 0;
+  flex-shrink: 0;
+  pointer-events: none;
+  animation: analysis-card-collapse 220ms ease-out forwards;
+}
+
+@keyframes analysis-card-collapse {
+  from {
+    height: var(--deletion-height);
+    margin-bottom: 0;
+  }
+  to {
+    height: 0;
+    padding-block: 0;
+    margin-bottom: calc(-1 * var(--deletion-gap));
+  }
+}
+
 .analysis-card--pending {
   align-items: flex-start;
 }
