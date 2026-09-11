@@ -18,8 +18,6 @@ const waitForAnalyses = vi.fn(async () => ({
   analyses: [{ artifactId: "artifact-uploaded" }],
 }));
 const completeCheck = vi.fn(async () => ({
-  assessmentReady: true,
-  assessment: { id: "assessment-1" },
   grade: "A",
   issueCount: 0,
 }));

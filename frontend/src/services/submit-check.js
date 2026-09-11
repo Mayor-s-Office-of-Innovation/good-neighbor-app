@@ -67,7 +67,7 @@ const pendingSubmissions = new Map();
  * that already tagged keeps its own, more specific, leg), which matters for the
  * parallel uploads: `Promise.all`'s first rejection carries the real cause.
  * @template T
- * @param {"start"|"upload"|"analyze"|"complete"|"assessment"} leg
+ * @param {"start"|"upload"|"analyze"|"complete"} leg
  * @param {() => Promise<T>} work
  * @returns {Promise<T>}
  */
@@ -138,10 +138,6 @@ const SUBMIT_MESSAGES = {
     default:
       "Something went wrong finishing this check. Please try again soon.",
   },
-  assessment: {
-    default:
-      "This check finished, but its results couldn’t be read. Please try again.",
-  },
 };
 
 /**
@@ -177,17 +173,16 @@ async function finalizeSubmittedCheck(checkId, { expectedArtifacts } = {}) {
   const endComplete = span("completeCheck");
   const completion = await withLeg("complete", () => completeCheck(checkId));
   endComplete({ grade: completion?.grade, issues: completion?.issueCount });
-  if (!completion.assessmentReady || !completion.assessment) {
-    const err = new Error("Check completed without an assessment to evaluate.");
-    err.leg = "assessment";
-    throw err;
-  }
 
   // Adapt analyses → findings and stash the assessment on the session (fast, local).
   const endAdapt = span("adaptFindings");
-  markSubmitted(analysesToFindings(last.analyses), completion.assessment, {
-    checkId,
-  });
+  markSubmitted(
+    analysesToFindings(last.analyses),
+    /** @type {any} */ (completion).assessment,
+    {
+      checkId,
+    },
+  );
   endAdapt({ findings: (last.analyses || []).length });
   // Assessment is ready in memory + mirrored to the review store; home re-renders
   // its "Review assessment" tile off this. The `+Nms` offset here is the whole

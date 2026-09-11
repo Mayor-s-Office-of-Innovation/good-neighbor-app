@@ -38,7 +38,6 @@ import {
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
 import { getSite, putSitePlaces } from "../src/handlers/site.js";
-import { handler as descriptionValidationHandler } from "../src/handlers/description-validation.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
@@ -146,11 +145,6 @@ const routes = [
   // Site config (feature/142 onboard locations)
   route("GET", "/v1/site", getSite),
   route("PUT", "/v1/site/places", putSitePlaces),
-  route(
-    "POST",
-    "/v1/checks/{checkId}/places/{placeId}/description:validate",
-    descriptionValidationHandler,
-  ),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
