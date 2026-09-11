@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const send = vi.fn();
 
@@ -50,6 +51,37 @@ describe("site-code handler", () => {
         siteId: "site-1",
         name: "City Hall",
       },
+    });
+  });
+
+  it("backfills explicit task short-code metadata from an active site code", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    send.mockResolvedValueOnce({
+      Item: {
+        active: true,
+        providerId: "the-gubbio-project",
+        providerShortCode: "GUB",
+        providerSiteId: "provider-site-1",
+        siteId: "site-1",
+        siteName: "St. John",
+        siteShortCode: "STJ",
+      },
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await callHandler({ code: "GUB-SJE" });
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    const command = send.mock.calls[1][0];
+    expect(command).toBeInstanceOf(UpdateCommand);
+    expect(command.input).toMatchObject({
+      TableName: "gnp-test-app",
+      Key: { pk: "SITE#site-1", sk: "#META" },
+      ExpressionAttributeValues: expect.objectContaining({
+        ":providerShortCode": "GUB",
+        ":siteShortCode": "STJ",
+      }),
     });
   });
 

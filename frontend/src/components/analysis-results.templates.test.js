@@ -46,6 +46,40 @@ describe("analysis result summaries", () => {
     expect(cards[0]).not.toContain("long-assessment-id");
   });
 
+  it("falls back to assessment ids for legacy task cards without display ids", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              assessmentId: "legacy-assessment-id",
+              conditionId: "condition_litter",
+              category: "Litter",
+              guidance: "File a 311 ticket.",
+              kind: "escalation",
+            },
+          ],
+          conditions: [
+            {
+              conditionId: "condition_litter",
+              category: "Litter",
+              description: "Trash is visible.",
+            },
+          ],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toContain("NEW • legacy-assessment-id");
+  });
+
   it("does not show raw assessment ids on condition cards awaiting answers", () => {
     const cards = analysisCards(
       {
