@@ -1,3 +1,6 @@
+import { stageDeletion } from "../state/pending-deletions.js";
+import { showToast } from "../state/toasts.js";
+
 /** Hosts whose card DOM must survive session notifications during deletion. */
 const deletingHosts = new Set();
 
@@ -10,13 +13,20 @@ export function isDeletingAnalysisCard(host) {
 }
 
 /**
- * Keep the existing card until the accepted deletion has visibly collapsed.
+ * Hide the card while an app-lifetime toast offers a cancellable deletion.
  * @param {HTMLElement} host
- * @param {{conditionId: string, artifactId: string}} problem
+ * @param {import("../state/pending-deletions.js").DeletedProblem} problem
  * @param {() => Promise<unknown> | void} commit
  * @param {() => Promise<unknown> | void} render
+ * @param {{focusUndo?: boolean}} [options]
  */
-export async function deleteAnalysisCard(host, problem, commit, render) {
+export async function deleteAnalysisCard(
+  host,
+  problem,
+  commit,
+  render,
+  { focusUndo = false } = {},
+) {
   const cards = [...host.querySelectorAll(".analysis-card")];
   const index = cards.findIndex(
     (card) =>
@@ -25,10 +35,17 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
   );
   const card = /** @type {HTMLElement | undefined} */ (cards[index]);
   deletingHosts.add(host);
-  let accepted = false;
+  let pending;
+  let reference = problem.reference;
   try {
-    await commit();
-    accepted = true;
+    reference =
+      problem.reference ||
+      card
+        ?.querySelector(".analysis-card__meta")
+        ?.textContent?.trim()
+        .replace(/^(NEW|NEEDS ACTION)\s*•?\s*/, "");
+    pending = stageDeletion({ ...problem, reference }, commit);
+    if (!pending) return;
     const dialog = /** @type {HTMLDialogElement | null} */ (
       host.querySelector("#analysis-delete-dialog")
     );
@@ -36,7 +53,7 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
     if (card?.isConnected) await collapseCard(card);
   } finally {
     deletingHosts.delete(host);
-    if (host.isConnected && accepted) {
+    if (host.isConnected && pending) {
       try {
         await render();
       } catch (error) {
@@ -57,6 +74,18 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
           target.focus({ preventScroll: true });
         }
       }
+    }
+    if (pending) {
+      showToast({
+        title: "Item deleted",
+        message: `${reference ? `${reference} (“${problem.title || "Item"}”)` : `“${problem.title || "Item"}”`} has been successfully deleted.`,
+        icon: "trash",
+        focusAction: focusUndo,
+        action: { label: "Undo", run: () => pending.undo() },
+        onDismiss: () => {
+          void pending.save();
+        },
+      });
     }
   }
 }

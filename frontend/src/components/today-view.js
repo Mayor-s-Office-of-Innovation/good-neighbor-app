@@ -11,6 +11,11 @@
   tasks are created. Markup is inline via the `html` tag; split into a
   .templates.js file if it grows (see CLAUDE.md convention).
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import {
+  onDeletionsChange,
+  isTaskPendingDeletion,
+} from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
@@ -33,10 +38,7 @@ import {
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
 } from "../services/photo-analysis.js";
-import {
-  adaptCheckHeader,
-  cityCategoriesByCheck,
-} from "../domain/check-adapter.js";
+import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
   appActionFailureMessage,
   isFiled311Completion,
@@ -52,18 +54,13 @@ import {
   updateItemAnalysis,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
-import { mark } from "../services/instrument.js";
 import {
   analysisResultsTray,
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
-import {
-  finalizeCaptureScorecardInBackground,
-  resumeSubmittedCheckInBackground,
-  resumeUploadingCheckInBackground,
-} from "../services/submit-check.js";
+import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 
 const HOME_FILTERS = [
   { id: "needs_action", label: "Needs Action" },
@@ -85,9 +82,6 @@ const MEDIA_URL_CACHE = new Map();
  */
 export function isStalePendingSession(session, submitted) {
   if (!session) return false;
-  if (session.status === "submitted") {
-    return submitted.length > 0 && submitted[0].id !== session.id;
-  }
   if (session.status === "capture-complete") {
     // The background scorecard has no terminal transition, so a completed
     // backend check with the same id is the only signal the run has landed —
@@ -533,6 +527,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._deletionUnsub?.();
+    this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
@@ -545,6 +541,13 @@ class TodayView extends HTMLElement {
     if (isDeletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
+    }
+    if (!this._deletionUnsub) {
+      this._deletionUnsub = onDeletionsChange((status) => {
+        if (!this.isConnected) return;
+        if (status === "saved") void this.connectedCallback();
+        else if (this._homeModel) this._renderHome(this._homeModel);
+      });
     }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
@@ -568,22 +571,33 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
     const active = getCurrentCheck();
-    const captureSession = active?.status === "in-progress" ? active : null;
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
+    const recognizedFilter = HOME_FILTERS.some(
+      ({ id }) => id === requestedFilter,
+    );
+    // Explicit worklist links retain the resumable draft without reopening it.
+    const showRequestedWorklist =
+      recognizedFilter && this._viewPhase === "home";
+    const captureSession =
+      active?.status === "in-progress" && !showRequestedWorklist
+        ? active
+        : null;
     if (captureSession) {
       this._captureFlow = captureSession.flowType || "perimeter";
       if (this._viewPhase === "home") this._viewPhase = "capture";
     }
-    const pendingSession =
-      active &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(active.status)
+    let pendingSession =
+      active && active.status === "capture-complete"
         ? active
         : await loadSubmitted();
+    // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
+    // clear them instead of letting them linger in the review store forever.
+    if (pendingSession && pendingSession.status !== "capture-complete") {
+      await clearSubmittedSession();
+      pendingSession = null;
+    }
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
@@ -609,9 +623,8 @@ class TodayView extends HTMLElement {
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
       ]);
-      const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
-        .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
+        .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
         .sort((a, b) =>
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
@@ -624,14 +637,7 @@ class TodayView extends HTMLElement {
 
     const last = submitted[0];
     let effectivePendingSession =
-      pendingSession &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(pendingSession.status)
+      pendingSession && pendingSession.status === "capture-complete"
         ? pendingSession
         : null;
 
@@ -642,21 +648,13 @@ class TodayView extends HTMLElement {
       finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
-    } else if (effectivePendingSession?.status === "uploading") {
-      resumeUploadingCheckInBackground(effectivePendingSession.id, {
-        flowType: effectivePendingSession.flowType,
-        submissionKind: effectivePendingSession.submissionKind,
-      });
-    } else if (effectivePendingSession?.status === "analyzing") {
-      resumeSubmittedCheckInBackground(effectivePendingSession.id, {
-        expectedArtifacts: effectivePendingSession.expectedArtifacts,
-      });
     }
 
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
-    this._homeFilter = this._homeFilter || "needs_action";
+    this._homeFilter =
+      this._homeFilter || (recognizedFilter ? requestedFilter : "needs_action");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
@@ -716,6 +714,9 @@ class TodayView extends HTMLElement {
       button.addEventListener("click", () => {
         this._homeFilter =
           button.getAttribute("data-home-filter") || "needs_action";
+        const url = new URL(window.location.href);
+        url.searchParams.set("filter", this._homeFilter);
+        window.history.replaceState(window.history.state, "", url);
         this._filterOpen = false;
         this._focusAfterRender = "task-filter-button";
         if (this._homeModel) {
@@ -724,18 +725,6 @@ class TodayView extends HTMLElement {
         }
       });
     });
-    const review = this.querySelector("#review-assessment");
-    if (review) {
-      review.addEventListener("click", () => {
-        // Brackets human think-time: submit:done → review:open is the user
-        // deciding to review; review:open → review:rendered is the screen load.
-        mark("review:open");
-        navigate("/results");
-      });
-    }
-    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#cancel-assessment-dialog")
-    );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
@@ -750,25 +739,6 @@ class TodayView extends HTMLElement {
         ":scope > .home > #analysis-edit-dialog #analysis-edit-description",
       )
     );
-    this.querySelector("#cancel-assessment-open")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.showModal(),
-    );
-    this.querySelector("#cancel-assessment-keep")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.close(),
-    );
-    this.querySelector("#cancel-assessment-confirm")?.addEventListener(
-      "click",
-      async () => {
-        await clearSubmittedSession();
-        this._cancelDialog?.close();
-        this.connectedCallback();
-      },
-    );
-    this._cancelDialog?.addEventListener("click", (e) => {
-      if (e.target === this._cancelDialog) this._cancelDialog.close();
-    });
     this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     )?.addEventListener("click", () => this._confirmDeleteProblem());
@@ -913,7 +883,6 @@ class TodayView extends HTMLElement {
               `
             : ""}
         </section>
-        ${pendingSession ? this._cancelAssessmentDialog() : ""}
         ${showWorklist ? analysisDialogs() : ""}
       </div>
     `;
@@ -945,11 +914,6 @@ class TodayView extends HTMLElement {
       hasNewResults && !hasActiveNewAnalysis ? this._wrapSection() : "";
     return html`
       <div class="home-results">
-        ${pendingSession &&
-        pendingSession.status !== "capture-complete" &&
-        !recentItems.length
-          ? this._assessmentTile(pendingSession)
-          : ""}
         ${recentItems.length
           ? analysisResultsTray(recentItems, pendingSession.id, {
               id: "home-analysis-results",
@@ -1140,169 +1104,6 @@ class TodayView extends HTMLElement {
     return isStalePendingSession(session, submitted);
   }
 
-  _assessmentTile(session) {
-    if (session.status === "submitted") {
-      return html`
-        <section
-          class="assessment-tile assessment-tile--ready"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">
-                <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-                AI analysis complete
-              </p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              Report ready to review and confirm.
-            </p>
-            <div class="assessment-tile__actions">
-              <wa-button
-                id="review-assessment"
-                type="button"
-                appearance="outlined"
-                size="small"
-              >
-                Review assessment
-              </wa-button>
-            </div>
-          </div>
-        </section>
-      `;
-    }
-
-    if (session.status === "analysis_failed") {
-      const pausedLabel =
-        session.pendingStage === "upload"
-          ? "Upload paused"
-          : "AI analysis paused";
-      return html`
-        <section
-          class="assessment-tile assessment-tile--error"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">${escapeHtml(pausedLabel)}</p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              ${escapeHtml(
-                session.analysisError ||
-                  "Couldn’t finish analyzing this submission.",
-              )}
-            </p>
-          </div>
-        </section>
-      `;
-    }
-
-    const label =
-      session.submissionKind === "problem_report" ? "problem report" : "check";
-    const time = session.submittedAt ? timeOf(session.submittedAt) : "";
-    const isUploading = session.status === "uploading";
-    const eyebrow = isUploading
-      ? time
-        ? `Uploading your ${time} ${label}`
-        : `Uploading your latest ${label}`
-      : time
-        ? `AI is analyzing the ${time} ${label}`
-        : `AI is analyzing the latest ${label}`;
-    const headline = isUploading
-      ? "Uploading your report..."
-      : session.submissionKind === "problem_report"
-        ? "Problem report received and being analyzed..."
-        : "Report received and being analyzed for problems...";
-
-    return html`
-      <section class="assessment-tile" aria-live="polite">
-        <div class="assessment-tile__card">
-          <div class="assessment-tile__top">
-            <p class="assessment-tile__eyebrow">
-              <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-              ${escapeHtml(eyebrow)}
-            </p>
-            <wa-button
-              id="cancel-assessment-open"
-              class="assessment-tile__dismiss"
-              type="button"
-              appearance="plain"
-              size="small"
-              aria-label="Cancel existing submission"
-            >
-              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-            </wa-button>
-          </div>
-          <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
-          <div
-            class="assessment-tile__progress"
-            role="img"
-            aria-label="${isUploading
-              ? "Upload in progress"
-              : "Analysis in progress"}"
-          >
-            <span class="assessment-tile__bar"></span>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  _cancelAssessmentDialog() {
-    return html`
-      <dialog
-        class="sheet"
-        id="cancel-assessment-dialog"
-        aria-label="Cancel existing submission?"
-      >
-        <div class="sheet__panel">
-          <div class="sheet__actions">
-            <wa-button
-              class="sheet__cancel"
-              type="button"
-              id="cancel-assessment-keep"
-              appearance="outlined"
-            >
-              Keep it
-            </wa-button>
-          </div>
-          <ul class="sheet__opts">
-            <li>
-              <wa-button
-                class="sheet__opt sheet__opt--danger"
-                id="cancel-assessment-confirm"
-                type="button"
-                appearance="filled"
-                variant="danger"
-              >
-                Cancel analysis
-              </wa-button>
-            </li>
-          </ul>
-        </div>
-      </dialog>
-    `;
-  }
   _firstRunBlock() {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">
@@ -1401,12 +1202,18 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks.map((task) => ({
-      task,
-      createdAt: taskCreatedAt(task),
-      homeStatus: homeTaskStatus(task, this._taskOverrides?.[task.taskId], now),
-      isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
-    }));
+    return tasks
+      .filter((task) => !isTaskPendingDeletion(task))
+      .map((task) => ({
+        task,
+        createdAt: taskCreatedAt(task),
+        homeStatus: homeTaskStatus(
+          task,
+          this._taskOverrides?.[task.taskId],
+          now,
+        ),
+        isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
+      }));
   }
 
   _statusCounts(entries) {
@@ -1753,6 +1560,7 @@ class TodayView extends HTMLElement {
     const button = this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     );
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
@@ -1773,10 +1581,15 @@ class TodayView extends HTMLElement {
             );
           } catch (err) {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            this._deleteProblemLocally(problem);
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
             return;
           }
-          if (problem.placeId && problem.itemId) {
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
             await refreshEvidenceAnalysis(
               problem.placeId,
               problem.itemId,
@@ -1784,10 +1597,17 @@ class TodayView extends HTMLElement {
               {
                 rejectedConditionId: problem.conditionId,
               },
-            );
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
           }
         },
-        () => this.connectedCallback(),
+        () => {
+          if (this._homeModel) this._renderHome(this._homeModel);
+        },
+        { focusUndo },
       );
       this._activeProblem = null;
     } catch (err) {
@@ -1920,14 +1740,10 @@ class TodayView extends HTMLElement {
         return null;
       });
       if (!isFiled311Completion(result?.task)) {
-        this._setInlineProblemError(
-          problem,
-          appActionFailureMessage(result?.task, {
-            includeUnsubmitted311: true,
-          }) || "Could not file the 311 ticket. Please try again.",
-        );
+        show311ErrorToast();
         return;
       }
+      show311SuccessToast();
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
@@ -2069,6 +1885,7 @@ class TodayView extends HTMLElement {
         { requireSubmitted311: true },
       ).then((ok) => {
         if (ok) {
+          show311SuccessToast();
           this.connectedCallback();
         }
       });
@@ -2147,9 +1964,9 @@ class TodayView extends HTMLElement {
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable and show an inline, non-destructive error on the card. A 200 that
-  // still carries a failed app action (task held open) surfaces its specific
-  // reason instead of silently doing nothing.
+  // re-enable the card. Explicit 311 failures use the app error toast; other
+  // actions keep their inline error. A 200 with a failed app action still
+  // counts as a failure and leaves the task available to retry.
   async _run(card, fn, { requireSubmitted311 = false } = {}) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
@@ -2168,7 +1985,8 @@ class TodayView extends HTMLElement {
           : appActionFailureMessage(task);
       if (failure) {
         buttons.forEach((b) => (b.disabled = false));
-        if (err) {
+        if (requireSubmitted311) show311ErrorToast();
+        else if (err) {
           err.hidden = false;
           err.textContent = failure;
         }
@@ -2178,7 +1996,8 @@ class TodayView extends HTMLElement {
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
-      if (err) {
+      if (requireSubmitted311) show311ErrorToast();
+      else if (err) {
         err.hidden = false;
         err.textContent = "Couldn’t save that — please try again.";
       }

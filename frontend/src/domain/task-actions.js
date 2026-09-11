@@ -45,11 +45,11 @@ export function appActionFailureMessage(
   if (result.status === "submitted") return null;
   const messages = {
     missing_location:
-      "We couldn't file this ticket - the site has no location set. Ask an admin to add the site location, or use \"Can't\" to dismiss this card.",
+      "We couldn't file this ticket - the site has no location set. Ask an admin to add the site location, then try again.",
     missing_service_code:
-      "We couldn't file this ticket - it has no 311 service code. Use \"Can't\" to dismiss this card.",
+      "We couldn't file this ticket - it has no 311 service code. Please try again.",
     feature_disabled:
-      "311 filing isn't enabled yet. Use \"Can't\" to dismiss this card.",
+      "We couldn't complete the 311 submission. Please try again.",
     sf311_timeout:
       "The 311 system didn't respond in time. Please try again in a moment.",
   };

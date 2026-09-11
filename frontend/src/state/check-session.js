@@ -165,7 +165,7 @@ function rehydrateDerivedFields(check) {
   return check;
 }
 
-/** @type {null | {id,siteId,window,startedAt,activePlaceIndex:number,placeOrder:string[],places:Record<string,{id:string,name:string,items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number,pendingStage?:string,flowType?:string,submissionKind?:string,findings?:any[],assessment?:any}} */
+/** @type {null | {id,siteId,window,startedAt,activePlaceIndex:number,placeOrder:string[],places:Record<string,{id:string,name:string,items:any[],skipped:boolean,description:any}>,status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any}} */
 let current = null;
 let postDescribeAction = null;
 const listeners = new Set();
@@ -297,11 +297,10 @@ export function ensureProblemReport(siteId) {
 }
 
 /**
- * Hydrate the in-memory check from the persisted review store (after a reload of the
- * results screen). Unlike loadDraft this restores a SUBMITTED session — the one that
- * carries the assessment envelope + findings + photos the review screen needs to
- * dispute and mint tasks on Continue. An in-memory check wins (no clobbering). Returns
- * the active check or null.
+ * Hydrate the in-memory check from the persisted review store (after a reload —
+ * home re-kicks the background scorecard finalization for a capture-complete
+ * session). Unlike loadDraft this restores a non-in-progress session. An
+ * in-memory check wins (no clobbering). Returns the active check or null.
  */
 export async function loadSubmitted() {
   if (current) return current.status === "in-progress" ? null : current;
@@ -532,47 +531,6 @@ export function updateItemAnalysis(placeId, itemId, analysisPatch) {
   return item;
 }
 
-/**
- * Record a photo's eager upload (services/artifact-uploader.js): its bytes are in
- * S3, so stash the artifact coordinates submit needs to register cheaply, and swap
- * the full-res base64 for a thumbnail to bound the draft's size on many-photo walks.
- * No-op if the item was deleted mid-upload.
- * @param {string} placeId
- * @param {string} itemId
- * @param {{ artifactId: string, s3Key: string, contentType: string, thumbUrl: string }} coords
- */
-export function markItemUploaded(
-  placeId,
-  itemId,
-  { artifactId, s3Key, contentType, thumbUrl },
-) {
-  const item = findSessionItem(placeId, itemId);
-  if (!item) return null;
-  item.upload = { status: "uploaded", artifactId, s3Key, contentType };
-  if (thumbUrl) item.dataUrl = thumbUrl;
-  persist();
-  emit();
-  return item;
-}
-
-/**
- * Track the in-flight/terminal state of a photo's eager upload without touching its
- * bytes: "uploading" while a presign+PUT attempt runs, "failed" once retries are
- * exhausted. Failed/uploading items keep their full-res dataUrl so submit can still
- * fall back to a full upload. No-op if the item was deleted mid-upload.
- * @param {string} placeId
- * @param {string} itemId
- * @param {"uploading"|"failed"} status
- */
-export function setItemUploadStatus(placeId, itemId, status) {
-  const item = findSessionItem(placeId, itemId);
-  if (!item) return null;
-  item.upload = { ...(item.upload || {}), status };
-  persist();
-  emit();
-  return item;
-}
-
 /** Mark a place skipped. */
 export function skipPlace(placeId) {
   if (!current) return;
@@ -596,90 +554,6 @@ export function coveredCount() {
   return getPlaceOrder().filter(isPlaceCovered).length;
 }
 
-/** Flat list of all capture items across places, in place order. */
-export function allItems() {
-  if (!current) return [];
-  return getPlaceOrder().flatMap((placeId) => current.places[placeId].items);
-}
-
-/**
- * Flip the walk to "uploading" once the user submits, before network work begins.
- * Draft persistence stays intact until the upload is durably registered so a failed
- * submission can still be resumed after the pending tile is cleared.
- * @param {{ submissionKind?: "check" | "problem_report", checkId?: string }} [opts]
- */
-export function markUploading({ submissionKind = "check", checkId } = {}) {
-  if (!current || !canMutateCurrentSession(checkId)) return null;
-  current.status = "uploading";
-  current.submittedAt = current.submittedAt || new Date().toISOString();
-  current.submissionKind = submissionKind;
-  current.pendingStage = "upload";
-  delete current.analysisError;
-  persistReview();
-  emit();
-  return current;
-}
-
-/**
- * Flip the walk to "analyzing" once the submission is safely registered server-side.
- * The review store keeps this pending state off the draft/resume path while allowing
- * home to show progress and survive a reload.
- * @param {{ submissionKind?: "check" | "problem_report", expectedArtifacts?: number, checkId?: string }} [opts]
- */
-export function markAnalyzing({
-  submissionKind = "check",
-  expectedArtifacts,
-  checkId,
-} = {}) {
-  if (!current || !canMutateCurrentSession(checkId)) return null;
-  current.status = "analyzing";
-  current.submittedAt = current.submittedAt || new Date().toISOString();
-  current.submissionKind = submissionKind;
-  current.pendingStage = "analyze";
-  if (Number.isFinite(expectedArtifacts)) {
-    current.expectedArtifacts = expectedArtifacts;
-  }
-  delete current.analysisError;
-  persistReview();
-  emit();
-  return current;
-}
-
-/**
- * Flip the walk to "submitted" and stash what the results screen needs. The
- * `assessment` envelope (from completeCheck) rides along so the review screen can
- * defer task minting to Continue — sending it to evaluate then, with any disputes.
- */
-export function markSubmitted(findings, assessment, { checkId } = {}) {
-  if (!current || !canMutateCurrentSession(checkId)) return null;
-  current.status = "submitted";
-  current.submittedAt = current.submittedAt || new Date().toISOString();
-  current.findings = findings;
-  current.assessment = assessment;
-  delete current.pendingStage;
-  delete current.analysisError;
-  // Mirror the submitted session to the `review` store so a reload of the results
-  // screen can rehydrate the envelope + findings + photos (loadSubmitted) instead of
-  // dropping to the read-only history path where tasks can never mint.
-  persistReview();
-  emit();
-  return current;
-}
-
-/**
- * Surface a background analysis failure on the same review-backed session so home
- * can explain why the pending tile did not resolve.
- * @param {string} message
- */
-export function markAnalysisFailed(message, { checkId } = {}) {
-  if (!current || !canMutateCurrentSession(checkId)) return null;
-  current.status = "analysis_failed";
-  current.analysisError = message;
-  persistReview();
-  emit();
-  return current;
-}
-
 /**
  * Capture has ended, but photo/description analysis may still be flowing back
  * into the same session. Keep it review-backed so home can render live results.
@@ -694,11 +568,9 @@ export function markCaptureComplete({
   current.status = "capture-complete";
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.submissionKind = submissionKind;
-  current.pendingStage = "analyze";
   if (typeof expectedArtifacts === "number") {
     current.expectedArtifacts = expectedArtifacts;
   }
-  delete current.analysisError;
   persistReview();
   void clearDraft(current.flowType);
   emit();
@@ -706,8 +578,8 @@ export function markCaptureComplete({
 }
 
 /**
- * Drop only the persisted review-backed submitted/analyzing session. Used when the
- * local pending marker is stale and should no longer override the backend home view.
+ * Drop only the persisted review-backed session. Used when the local pending
+ * marker is stale and should no longer override the backend home view.
  */
 export async function clearSubmittedSession() {
   if (current && current.status !== "in-progress") {

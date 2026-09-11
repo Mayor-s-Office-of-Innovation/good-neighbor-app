@@ -4,10 +4,9 @@
 // docs/dynamodb-data-model.md § synthesis-on-header): one CHECK# = one full run.
 //
 // The service grades each analyzed position; rolling those up into one perimeter
-// grade (worst across places) is GNP synthesis, so it lives here. This is also the
-// seam the escalation classifier (built in handlers/checks.js via task-routing.js,
-// still a placeholder matrix) consumes — per-category max rating + source
-// artifacts, keyed off the category identity the service returns.
+// grade (worst across places) is GNP synthesis, so it lives here. The rollup is
+// per-category max rating + source artifacts, keyed off the category identity the
+// service returns.
 
 /** @typedef {import("./adapt-scorecard.js").AdaptedAssessment} AdaptedAssessment */
 /** @typedef {import("./contract.js").GeneralConditionsLabel} GeneralConditionsLabel */

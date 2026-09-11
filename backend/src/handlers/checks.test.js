@@ -236,7 +236,7 @@ describe("completeCheck", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("synthesizes the worst grade, writes the scorecard, and returns an assessment envelope", async () => {
+  it("synthesizes the worst grade, writes the scorecard, and returns it", async () => {
     send.mockResolvedValueOnce({
       Items: [
         headerItem(),
@@ -284,33 +284,13 @@ describe("completeCheck", () => {
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
 
     // Phase 4: complete only updates the check header. Guidance tasks are
-    // created by POST /v1/assessments:evaluate from the returned envelope.
+    // minted per-item at capture time via POST /v1/assessments:evaluate.
     expect(items).toHaveLength(1);
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
       grade: "Poor",
-      assessmentReady: true,
-      assessment: {
-        assessmentId: "chk_01",
-        checkId: "chk_01",
-        grade: "Poor",
-        conditions: [
-          {
-            conditionId: "001-litter",
-            category: "Litter",
-            severity: 2,
-            sourceArtifactIds: ["art_1"],
-          },
-          {
-            conditionId: "002-hazardous-waste",
-            category: "Hazardous Waste",
-            severity: 4,
-            sourceArtifactIds: ["art_2"],
-          },
-        ],
-      },
     });
   });
 
@@ -384,7 +364,7 @@ describe("completeCheck", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("completes a check with no artifacts (null grade, empty assessment)", async () => {
+  it("completes a check with no artifacts (null grade, empty summary)", async () => {
     send.mockResolvedValueOnce({ Items: [headerItem()] });
     send.mockResolvedValueOnce({});
 
@@ -401,8 +381,6 @@ describe("completeCheck", () => {
     expect(items[0].Update.ExpressionAttributeValues[":summary"]).toBeNull();
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
-      assessmentReady: true,
-      assessment: { conditions: [] },
     });
   });
 
@@ -426,12 +404,6 @@ describe("completeCheck", () => {
     expect(JSON.parse(res.body)).toMatchObject({
       checkId: "chk_01",
       status: "completed",
-      assessmentReady: true,
-      assessment: {
-        assessmentId: "chk_01",
-        checkId: "chk_01",
-        conditions: [],
-      },
     });
   });
 

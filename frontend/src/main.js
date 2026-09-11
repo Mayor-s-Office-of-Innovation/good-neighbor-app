@@ -65,9 +65,8 @@ import "./components/perimeter-check.js";
 import "./components/problem-report.js";
 import "./components/describe-instead.js";
 import "./components/places-setup.js";
-import "./components/check-review.js";
-import "./components/check-results.js";
 import "./components/site-setup.js";
+import "./components/app-toasts.js";
 import "./components/app-root.js";
 
 if (import.meta.env.DEV) {

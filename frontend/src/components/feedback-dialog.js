@@ -3,7 +3,7 @@
 
   The trigger is an icon-only button rendered at the top-right of the home
   header (today-view places it there). A native <dialog> (showModal() gives
-  focus trap + Escape for free, same as the dispute sheet in check-results.js)
+  focus trap + Escape for free)
   with ONE textarea and a submit button (textarea is the WA control per the
   design system; buttons stay native — see docs/frontend-design-system.md,
   which reserves .btn-ink/.btn-outline for primary CTAs). Settled scope:
