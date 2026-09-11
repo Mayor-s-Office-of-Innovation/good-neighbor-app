@@ -106,17 +106,6 @@ describe("analysis card deletion lifecycle", () => {
     expect(focus).not.toHaveBeenCalled();
     expect(isDeletingAnalysisCard(host)).toBe(false);
   });
-
-  it("skips measurements and animation for reduced motion", async () => {
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
-    const card = /** @type {any} */ ({
-      getBoundingClientRect: vi.fn(),
-      remove: vi.fn(),
-    });
-    await collapseCard(card);
-    expect(card.getBoundingClientRect).not.toHaveBeenCalled();
-    expect(card.remove).toHaveBeenCalledOnce();
-  });
 });
 
 describe("accepted deletion refresh recovery", () => {
@@ -155,43 +144,34 @@ describe("accepted deletion refresh recovery", () => {
     expect(focus).not.toHaveBeenCalled();
   });
 
-  it.each(["animationend", "animationcancel", "timeout"])(
-    "removes the animation shell on %s",
+  it.each(["finished", "cancelled", "disabled"])(
+    "cleans up the card when CSS animation is %s",
     async (completion) => {
-      vi.useFakeTimers();
-      vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
-      const listeners = new Map();
+      let finish = () => {};
+      /** @type {(error: Error) => void} */
+      let cancel = () => {};
+      const finished = new Promise((resolve, reject) => {
+        finish = () => resolve(undefined);
+        cancel = reject;
+      });
+      const clip = { append: vi.fn() };
       const shell = {
         append: vi.fn(),
         remove: vi.fn(),
-        style: { setProperty: vi.fn() },
-        classList: { add: vi.fn() },
-        addEventListener: (type, callback) => listeners.set(type, callback),
-        removeEventListener: vi.fn(),
+        getAnimations: () => (completion === "disabled" ? [] : [{ finished }]),
       };
-      vi.stubGlobal("document", { createElement: () => shell, body: {} });
-      vi.stubGlobal(
-        "MutationObserver",
-        class {
-          observe() {}
-          disconnect() {}
-        },
-      );
-      const card = /** @type {any} */ ({
-        getBoundingClientRect: () => ({ height: 100 }),
-        parentElement: null,
-        before: vi.fn(),
-        style: {},
-        isConnected: true,
+      vi.stubGlobal("document", {
+        createElement: vi
+          .fn()
+          .mockReturnValueOnce(shell)
+          .mockReturnValueOnce(clip),
       });
+      const card = /** @type {any} */ ({ before: vi.fn() });
       const collapsed = collapseCard(card);
+      expect(card.inert).toBe(true);
       expect(shell.remove).not.toHaveBeenCalled();
-      if (completion === "timeout") await vi.advanceTimersByTimeAsync(350);
-      else
-        listeners.get(completion)({
-          target: shell,
-          animationName: "analysis-card-collapse",
-        });
+      if (completion === "finished") finish();
+      if (completion === "cancelled") cancel(new Error("View removed"));
       await collapsed;
       expect(shell.remove).toHaveBeenCalledOnce();
     },
