@@ -512,9 +512,10 @@ class TodayView extends HTMLElement {
     this._viewPhase = "home";
     this._captureFlow = null;
     this._captureFinishedHandler = () => this._finishCapture();
-    this._cardDeletedHandler = () => {
+    this._cardDeletedHandler = (event) => {
       if (!this._deferredDeletionRender) return;
       this._deferredDeletionRender = false;
+      if (event.target === this) return;
       this._focusAfterRender = ["capture", "entering-capture"].includes(
         this._viewPhase,
       )
