@@ -683,8 +683,7 @@ class TodayView extends HTMLElement {
     // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
-      this._homeFilter ||
-      (recognizedFilter ? requestedFilter : "needs_action");
+      this._homeFilter || (recognizedFilter ? requestedFilter : "needs_action");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
