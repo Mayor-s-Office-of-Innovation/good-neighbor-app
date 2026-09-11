@@ -281,6 +281,7 @@ function applyAssessmentConditionDelta({
  * @typedef {object} StoreAssessmentInput
  * @property {string} siteId
  * @property {string} assessmentId
+ * @property {string} [previousAssessmentId]
  * @property {string} [checkId]
  * @property {string} reportedAt
  * @property {string} [rubricVersion]
@@ -478,6 +479,26 @@ export async function storeEvaluatedAssessment(input, options) {
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
+  // Read persisted answers, never accept client-supplied task/answer snapshots.
+  const previous = input.previousAssessmentId
+    ? await getAssessmentGuidance({
+        tableName: options.tableName,
+        siteId: input.siteId,
+        assessmentId: input.previousAssessmentId,
+      })
+    : null;
+  if (
+    previous &&
+    (!input.checkId || previous.assessment?.checkId !== input.checkId)
+  ) {
+    throw namedError(
+      "InvalidAssessmentRevision",
+      "Previous assessment must belong to the same check",
+    );
+  }
+  /** @type {Record<string, unknown>[]} */
+  const retainedTasks = [];
+
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
   /** @type {Parameters<typeof buildTaskItem>[0][]} */
@@ -486,6 +507,58 @@ export async function storeEvaluatedAssessment(input, options) {
   for (const [index, condition] of input.conditions.entries()) {
     const conditionId =
       condition.conditionId ?? makeConditionId(condition.category, index);
+    const prior = previous?.conditions.find((item) => {
+      const source = /** @type {{ artifactIds?: string[] }} */ (
+        item.source ?? {}
+      );
+      return (
+        item.conditionId === conditionId &&
+        item.policyVersion === catalog.policyVersion &&
+        item.analyzerCategory === condition.category &&
+        item.severity === condition.severity &&
+        (item.description ?? "") === (condition.description ?? "") &&
+        condition.sourceArtifactIds?.length &&
+        JSON.stringify([...(source.artifactIds ?? [])].sort()) ===
+          JSON.stringify([...condition.sourceArtifactIds].sort())
+      );
+    });
+    const priorTaskIds = /** @type {string[]} */ (prior?.taskIds ?? []);
+    const priorTasks =
+      previous?.tasks.filter((task) =>
+        priorTaskIds.includes(String(task.taskId)),
+      ) ?? [];
+    if (
+      prior &&
+      priorTasks.length === priorTaskIds.length &&
+      priorTasks.every((task) => task.status !== "superseded")
+    ) {
+      const preserved = {
+        ...prior,
+        ...conditionKey(input.siteId, input.assessmentId, conditionId),
+        assessmentId: input.assessmentId,
+        ...conditionTimelineGsi(
+          input.siteId,
+          condition.severity,
+          input.reportedAt,
+          input.assessmentId,
+          conditionId,
+        ),
+      };
+      if (prior.gsi5pk)
+        Object.assign(
+          preserved,
+          unresolvedConditionGsi(
+            input.siteId,
+            condition.severity,
+            input.reportedAt,
+            input.assessmentId,
+            conditionId,
+          ),
+        );
+      conditionItems.push(preserved);
+      retainedTasks.push(...priorTasks);
+      continue;
+    }
     const evaluation = evaluateCondition({
       condition: {
         category: condition.category,
@@ -533,9 +606,10 @@ export async function storeEvaluatedAssessment(input, options) {
     siteId: input.siteId,
     count: pendingTaskInputs.length,
   });
-  const taskItems = pendingTaskInputs.map((taskInput, index) =>
+  const newTaskItems = pendingTaskInputs.map((taskInput, index) =>
     buildTaskItem({ ...taskInput, shortId: shortIds[index] }),
   );
+  const taskItems = [...retainedTasks, ...newTaskItems];
 
   const conditionsNeedAnswer = conditionItems.filter(
     (item) => item.status === "needs_answer",
@@ -583,7 +657,9 @@ export async function storeEvaluatedAssessment(input, options) {
       totalConditions: input.conditions.length,
       conditionsNeedAnswer,
       conditionsResolvedToTasks,
-      openTaskCount: taskItems.length,
+      openTaskCount: taskItems.filter(
+        (task) => task.status === "open" || task.status === "completing",
+      ).length,
       actionCount,
       escalationCount,
       emergencyCount,
@@ -613,8 +689,22 @@ export async function storeEvaluatedAssessment(input, options) {
   const transactItems = [
     put(assessmentItem),
     ...conditionItems.map(put),
-    ...taskItems.map(put),
+    ...newTaskItems.map(put),
   ];
+  if (previous?.assessment) {
+    // If an answer arrives during this refresh, fail rather than publish a stale
+    // copy. The caller can retry against the now-current persisted assessment.
+    transactItems.push({
+      ConditionCheck: {
+        TableName: options.tableName,
+        Key: assessmentKey(input.siteId, String(input.previousAssessmentId)),
+        ConditionExpression: "assessmentRevision = :revision",
+        ExpressionAttributeValues: {
+          ":revision": previous.assessment.assessmentRevision ?? 0,
+        },
+      },
+    });
+  }
   if (transactItems.length > MAX_TRANSACTION_ITEMS) {
     throw namedError(
       "TransactionTooLarge",
@@ -627,12 +717,16 @@ export async function storeEvaluatedAssessment(input, options) {
   const updatedTaskItems = await executeTaskCreatedAppActions({
     tableName: options.tableName,
     siteId: input.siteId,
-    taskItems,
+    taskItems: newTaskItems,
     env: options.env,
     now: options.now,
   });
 
-  return { assessmentItem, conditionItems, taskItems: updatedTaskItems };
+  return {
+    assessmentItem,
+    conditionItems,
+    taskItems: [...retainedTasks, ...updatedTaskItems],
+  };
 }
 
 /**
