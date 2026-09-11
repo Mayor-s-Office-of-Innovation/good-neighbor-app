@@ -585,9 +585,12 @@ class TodayView extends HTMLElement {
     const requestedFilter = new URLSearchParams(window.location.search).get(
       "filter",
     );
-    // The toast's link opens the worklist while retaining the resumable draft.
+    const recognizedFilter = HOME_FILTERS.some(
+      ({ id }) => id === requestedFilter,
+    );
+    // Explicit worklist links retain the resumable draft without reopening it.
     const showRequestedWorklist =
-      requestedFilter === "in_progress" && this._viewPhase === "home";
+      recognizedFilter && this._viewPhase === "home";
     const captureSession =
       active?.status === "in-progress" && !showRequestedWorklist
         ? active
@@ -681,7 +684,7 @@ class TodayView extends HTMLElement {
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter ||
-      (requestedFilter === "in_progress" ? "in_progress" : "needs_action");
+      (recognizedFilter ? requestedFilter : "needs_action");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
@@ -741,6 +744,9 @@ class TodayView extends HTMLElement {
       button.addEventListener("click", () => {
         this._homeFilter =
           button.getAttribute("data-home-filter") || "needs_action";
+        const url = new URL(window.location.href);
+        url.searchParams.set("filter", this._homeFilter);
+        window.history.replaceState(window.history.state, "", url);
         this._filterOpen = false;
         this._focusAfterRender = "task-filter-button";
         if (this._homeModel) {
