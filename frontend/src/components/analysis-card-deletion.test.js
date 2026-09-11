@@ -5,7 +5,11 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 vi.stubGlobal(
   "CustomEvent",
   class {
@@ -105,8 +109,91 @@ describe("analysis card deletion lifecycle", () => {
 
   it("skips measurements and animation for reduced motion", async () => {
     vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
-    const card = /** @type {any} */ ({ getBoundingClientRect: vi.fn() });
+    const card = /** @type {any} */ ({
+      getBoundingClientRect: vi.fn(),
+      remove: vi.fn(),
+    });
     await collapseCard(card);
     expect(card.getBoundingClientRect).not.toHaveBeenCalled();
+    expect(card.remove).toHaveBeenCalledOnce();
   });
+});
+
+describe("accepted deletion refresh recovery", () => {
+  it("preserves success and restores focus when refresh rejects", async () => {
+    const { host, focus } = fixture();
+    const error = new Error("storage unavailable");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      deleteAnalysisCard(
+        host,
+        problem,
+        () => {},
+        () => Promise.reject(error),
+      ),
+    ).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(
+      "refresh after analysis deletion failed",
+      error,
+    );
+    expect(host.dispatchEvent).toHaveBeenCalledOnce();
+    expect(focus).toHaveBeenCalledOnce();
+    expect(isDeletingAnalysisCard(host)).toBe(false);
+  });
+
+  it("does not dispatch or focus after refresh disconnects the host", async () => {
+    const { host, focus } = fixture();
+    await deleteAnalysisCard(
+      host,
+      problem,
+      () => {},
+      () => {
+        host.isConnected = false;
+      },
+    );
+    expect(host.dispatchEvent).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it.each(["animationend", "animationcancel", "timeout"])(
+    "removes the animation shell on %s",
+    async (completion) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+      const listeners = new Map();
+      const shell = {
+        append: vi.fn(),
+        remove: vi.fn(),
+        style: { setProperty: vi.fn() },
+        classList: { add: vi.fn() },
+        addEventListener: (type, callback) => listeners.set(type, callback),
+        removeEventListener: vi.fn(),
+      };
+      vi.stubGlobal("document", { createElement: () => shell, body: {} });
+      vi.stubGlobal(
+        "MutationObserver",
+        class {
+          observe() {}
+          disconnect() {}
+        },
+      );
+      const card = /** @type {any} */ ({
+        getBoundingClientRect: () => ({ height: 100 }),
+        parentElement: null,
+        before: vi.fn(),
+        style: {},
+        isConnected: true,
+      });
+      const collapsed = collapseCard(card);
+      expect(shell.remove).not.toHaveBeenCalled();
+      if (completion === "timeout") await vi.advanceTimersByTimeAsync(350);
+      else
+        listeners.get(completion)({
+          target: shell,
+          animationName: "analysis-card-collapse",
+        });
+      await collapsed;
+      expect(shell.remove).toHaveBeenCalledOnce();
+    },
+  );
 });

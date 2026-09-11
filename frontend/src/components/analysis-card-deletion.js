@@ -37,19 +37,25 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
   } finally {
     deletingHosts.delete(host);
     if (host.isConnected && accepted) {
-      await render();
-      host.dispatchEvent(
-        new CustomEvent("analysiscarddeleted", { bubbles: true }),
-      );
-      const remaining = host.querySelectorAll(".analysis-card");
-      const next =
-        remaining[Math.min(Math.max(index, 0), remaining.length - 1)];
-      const target = /** @type {HTMLElement | null} */ (
-        next?.querySelector("button") || host.querySelector("h2, h1")
-      );
-      if (target) {
-        if (!target.matches("button")) target.setAttribute("tabindex", "-1");
-        target.focus({ preventScroll: true });
+      try {
+        await render();
+      } catch (error) {
+        console.error("refresh after analysis deletion failed", error);
+      }
+      if (host.isConnected) {
+        host.dispatchEvent(
+          new CustomEvent("analysiscarddeleted", { bubbles: true }),
+        );
+        const remaining = host.querySelectorAll(".analysis-card");
+        const next =
+          remaining[Math.min(Math.max(index, 0), remaining.length - 1)];
+        const target = /** @type {HTMLElement | null} */ (
+          next?.querySelector("button") || host.querySelector("h2, h1")
+        );
+        if (target) {
+          if (!target.matches("button")) target.setAttribute("tabindex", "-1");
+          target.focus({ preventScroll: true });
+        }
       }
     }
   }
@@ -58,6 +64,7 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
 /** @param {HTMLElement} card */
 export function collapseCard(card) {
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    card.remove();
     return Promise.resolve();
   }
   const height = card.getBoundingClientRect().height;
@@ -81,6 +88,7 @@ export function collapseCard(card) {
       observer.disconnect();
       shell.removeEventListener("animationend", onEnd);
       shell.removeEventListener("animationcancel", onEnd);
+      shell.remove();
       resolve();
     };
     const onEnd = (event) => {
