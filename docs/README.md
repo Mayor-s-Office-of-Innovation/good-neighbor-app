@@ -27,6 +27,8 @@
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
   folder is plans + history, see AGENTS.md).
+- **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
+  Terraform adoption, and sending-readiness checks.
 
 ## Domain & policy reference
 
