@@ -520,7 +520,8 @@ resource "aws_cognito_user_pool" "users" {
   name = "${local.name_prefix}-users"
 
   deletion_protection = var.environment == "prod" ? "ACTIVE" : "INACTIVE"
-  mfa_configuration   = "OPTIONAL"
+  # "ON" = MFA required for every sign-in; users must enroll TOTP on first login.
+  mfa_configuration = "ON"
 
   software_token_mfa_configuration {
     enabled = true
