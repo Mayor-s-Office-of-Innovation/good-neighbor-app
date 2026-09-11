@@ -130,6 +130,12 @@ describe("sendSetupCodeEmail", () => {
     expect(info).not.toHaveBeenCalled();
     expect(JSON.stringify(error.mock.calls)).not.toContain(EMAIL.code);
     expect(JSON.stringify(error.mock.calls)).not.toContain(EMAIL.to);
-    expect(JSON.parse(String(error.mock.calls[0][0])).status).toBe("failed");
+    expect(JSON.parse(String(error.mock.calls[0][0]))).toMatchObject({
+      marker: "setup_code_email",
+      level: "ERROR",
+      provider: "ses",
+      status: "failed",
+    });
+    expect(JSON.stringify(error.mock.calls)).not.toContain("Rejected");
   });
 });
