@@ -26,7 +26,6 @@
     "dev": "concurrently -k -n svc,sf311,api,worker \"npm:local:services\" \"npm:local:sf311\" \"npm:local:api\" \"npm:local:worker\""
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "3.1106.0",
     "@aws-sdk/client-dynamodb": "3.1106.0",
     "@aws-sdk/client-s3": "3.1106.0",
     "@aws-sdk/client-secrets-manager": "3.1106.0",
