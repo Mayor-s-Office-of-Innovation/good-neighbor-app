@@ -71,7 +71,7 @@ without a separate timestamp in the key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | name, address, timezone, setup state |
+| Site config | `SITE#<siteId>` | `#META` | name, address, timezone, setup state, `providerShortCode`, `siteShortCode` |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, places, issueCount, maxSeverity; **+ synthesized scorecard at `complete`** (see note) |
@@ -79,12 +79,19 @@ without a separate timestamp in the key.
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
-| **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
+| **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
+| Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 
 Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
 item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
 action), and `appActionStatus` (rollup). Result shapes (`code` from
 `backend/src/analysis/guidance/app-actions.js`):
+
+Task `shortId` is the human-facing reference shown on staff cards. New tasks mint it as
+`<providerShortCode>-<siteShortCode>-<nnn>`, where the short-code attributes are explicit
+site metadata and `nnn` is allocated from the site-scoped counter with
+`padStart(3, "0")`. `taskId` remains the canonical API/key identifier; counter gaps are
+allowed if a later task transaction fails after number allocation.
 
 - **`create_311_ticket`** — `payload.tickets[]` with `srNum` and `responsibleAgency`;
   `externalId` joins the SR numbers.

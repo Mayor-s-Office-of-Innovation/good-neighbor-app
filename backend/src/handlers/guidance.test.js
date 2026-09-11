@@ -3,6 +3,7 @@ import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,6 +46,25 @@ const invoke = (handler, ev) =>
  */
 const parse = (res) => JSON.parse(res.body ?? "{}");
 
+/**
+ * @param {object} [opts]
+ * @param {string} [opts.providerShortCode]
+ * @param {string} [opts.siteShortCode]
+ * @param {number} [opts.nextTaskDisplayNumber]
+ */
+function mockTaskShortIdAllocation({
+  providerShortCode = "MOI",
+  siteShortCode = "CIT",
+  nextTaskDisplayNumber = 1,
+} = {}) {
+  send.mockResolvedValueOnce({
+    Item: { providerShortCode, siteShortCode },
+  });
+  send.mockResolvedValueOnce({
+    Attributes: { nextTaskDisplayNumber },
+  });
+}
+
 describe("guidance handlers", () => {
   beforeEach(() => {
     send.mockReset();
@@ -55,6 +75,7 @@ describe("guidance handlers", () => {
   });
 
   it("evaluates an analyzer-style assessment and persists guidance records", async () => {
+    mockTaskShortIdAllocation();
     send.mockResolvedValueOnce({});
 
     const res = await invoke(
@@ -80,7 +101,9 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(201);
-    const command = send.mock.calls[0][0];
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
     const writes = /** @type {any[]} */ (command.input.TransactItems);
     expect(writes[0].Put.Item).toMatchObject({
@@ -98,11 +121,18 @@ describe("guidance handlers", () => {
         positionDescriptor: "front",
       },
     });
-    expect(writes[2].Put.Item.ruleId).toBe("LITTER-2");
+    expect(writes[2].Put.Item).toMatchObject({
+      ruleId: "LITTER-2",
+      shortId: "MOI-CIT-001",
+    });
     expect(parse(res).tasks).toHaveLength(1);
   });
 
   it("preserves top-level grade from explicit check-completion assessments", async () => {
+    mockTaskShortIdAllocation({
+      providerShortCode: "GUB",
+      siteShortCode: "STJ",
+    });
     send.mockResolvedValueOnce({});
 
     const res = await invoke(
@@ -120,7 +150,7 @@ describe("guidance handlers", () => {
 
     expect(res.statusCode).toBe(201);
     const writes = /** @type {any[]} */ (
-      send.mock.calls[0][0].input.TransactItems
+      send.mock.calls[2][0].input.TransactItems
     );
     expect(writes[0].Put.Item).toMatchObject({
       assessmentId: "chk-1",
@@ -130,6 +160,7 @@ describe("guidance handlers", () => {
   });
 
   it("returns existing guidance on idempotent evaluate replay", async () => {
+    mockTaskShortIdAllocation();
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
         name: "TransactionCanceledException",
@@ -150,8 +181,8 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    expect(send.mock.calls[1][0]).toBeInstanceOf(GetCommand);
-    expect(send.mock.calls[2][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[3][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
     expect(parse(res)).toMatchObject({
       assessment: { assessmentId: "asm-1" },
       conditions: [{ conditionId: "c1" }],
@@ -160,6 +191,7 @@ describe("guidance handlers", () => {
   });
 
   it("does not treat a canceled evaluation as idempotent without stored guidance", async () => {
+    mockTaskShortIdAllocation();
     send.mockRejectedValueOnce(
       Object.assign(new Error("cancelled"), {
         name: "TransactionCanceledException",
@@ -270,6 +302,11 @@ describe("guidance handlers", () => {
         gsi5sk: "x",
       },
     });
+    mockTaskShortIdAllocation({
+      providerShortCode: "CHC",
+      siteShortCode: "730",
+      nextTaskDisplayNumber: 7,
+    });
     send.mockResolvedValueOnce({});
 
     const res = await invoke(
@@ -281,7 +318,7 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[2][0];
+    const tx = send.mock.calls[4][0];
     expect(tx).toBeInstanceOf(TransactWriteCommand);
     const assessment = tx.input.TransactItems[0].Put.Item;
     expect(assessment).toMatchObject({
@@ -305,6 +342,7 @@ describe("guidance handlers", () => {
       ruleId: "GRAFFITI-2",
       conditionId: "cond-1",
       kind: "escalation",
+      shortId: "CHC-730-007",
     });
   });
 
