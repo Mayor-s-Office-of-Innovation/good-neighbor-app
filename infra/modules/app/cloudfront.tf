@@ -223,7 +223,7 @@ resource "aws_cloudfront_distribution" "admin" {
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
-    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.admin_security.id
 
     function_association {
       event_type   = "viewer-request"
@@ -240,7 +240,7 @@ resource "aws_cloudfront_distribution" "admin" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
-    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.admin_security.id
   }
 
   restrictions {
