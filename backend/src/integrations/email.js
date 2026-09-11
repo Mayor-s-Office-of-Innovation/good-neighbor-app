@@ -1,3 +1,4 @@
+import { URLSearchParams } from "node:url";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { createHash } from "node:crypto";
 
@@ -127,6 +128,9 @@ function setupCodeUrl(appUrl, code, requireHttps) {
   ) {
     throw new Error("Invalid provider app URL");
   }
-  url.searchParams.set("code", code);
+  url.searchParams.delete("code");
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  fragment.set("code", code);
+  url.hash = fragment.toString();
   return url.toString();
 }

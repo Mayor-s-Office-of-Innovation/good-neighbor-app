@@ -338,16 +338,22 @@ if (import.meta.hot) {
   import.meta.hot.accept(() => location.reload());
 }
 
-function readCodeFromUrl() {
+export function readCodeFromUrl() {
+  const fromFragment = new URLSearchParams(location.hash.slice(1)).get("code");
   const fromSearch = new URLSearchParams(location.search).get("code");
-  return fromSearch ? fromSearch.trim() : "";
+  return (fromFragment ?? fromSearch ?? "").trim();
 }
 
-function stripCodeFromUrl() {
+export function stripCodeFromUrl() {
   try {
     const url = new URL(location.href);
-    if (url.searchParams.has("code")) {
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    if (url.searchParams.has("code") || fragment.has("code")) {
       url.searchParams.delete("code");
+      if (fragment.has("code")) {
+        fragment.delete("code");
+        url.hash = fragment.toString();
+      }
       history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
   } catch {

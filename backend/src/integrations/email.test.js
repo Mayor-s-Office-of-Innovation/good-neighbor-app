@@ -1,3 +1,4 @@
+import { URLSearchParams } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendSetupCodeEmail } from "./email.js";
 
@@ -51,7 +52,7 @@ describe("sendSetupCodeEmail", () => {
     const body = input.Content?.Simple?.Body;
     for (const content of [body?.Text?.Data, body?.Html?.Data]) {
       expect(content).toContain("ABC123");
-      expect(content).toContain("https://goodneighborsf.org/?code=ABC123");
+      expect(content).toContain("https://goodneighborsf.org/#code=ABC123");
       expect(content).toContain("September 12, 2026");
       expect(content).toContain("PDT");
       expect(content).toContain("trusted work device");
@@ -68,6 +69,22 @@ describe("sendSetupCodeEmail", () => {
     });
   });
 
+  it("keeps redeemable codes out of the query even when the app URL has a legacy code", async () => {
+    await sendSetupCodeEmail({
+      ...EMAIL,
+      appUrl:
+        "https://goodneighborsf.org/?code=OLD123&theme=dark#section=setup",
+    });
+    const text = send.mock.calls[0][0].input.Content.Simple.Body.Text.Data;
+    const url = new URL(text.match(/https:\/\/[^\s]+/)[0]);
+    expect(url.searchParams.has("code")).toBe(false);
+    expect(url.search).not.toContain(EMAIL.code);
+    expect(url.searchParams.get("theme")).toBe("dark");
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    expect(fragment.get("code")).toBe(EMAIL.code);
+    expect(fragment.get("section")).toBe("setup");
+  });
+
   it("keeps local preview offline even with a sender configured", async () => {
     vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "");
     vi.stubEnv("LOCAL_API_PORT", "3000");
@@ -77,7 +94,7 @@ describe("sendSetupCodeEmail", () => {
     ).toBe("log");
     expect(send).not.toHaveBeenCalled();
     expect(JSON.parse(String(info.mock.calls[0][0])).localOpenUrl).toBe(
-      "http://localhost:5173/?code=ABC123",
+      "http://localhost:5173/#code=ABC123",
     );
   });
 
