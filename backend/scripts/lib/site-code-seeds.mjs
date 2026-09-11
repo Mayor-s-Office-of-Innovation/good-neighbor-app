@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { normalizeExplicitShortCode } from "../../src/lib/short-codes.js";
 
@@ -19,6 +20,7 @@ export const devSiteCodeSeeds = [
     siteName: "City Hall",
     siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
+    contactEmail: "cityhall@example.org",
     places: [],
   },
   {
@@ -30,6 +32,7 @@ export const devSiteCodeSeeds = [
     siteName: "St. John the Evangelist",
     siteShortCode: "STJ",
     providerSiteId: "provider-site-st-john-the-evangelist",
+    contactEmail: "stjohn@example.org",
     location: {
       latitude: 37.76656393517443,
       longitude: -122.4213267021692,
@@ -45,6 +48,7 @@ export const devSiteCodeSeeds = [
     siteName: "730 Polk",
     siteShortCode: "730",
     providerSiteId: "provider-site-chc-730-polk",
+    contactEmail: "chc730@example.org",
     places: [],
   },
   {
@@ -56,6 +60,7 @@ export const devSiteCodeSeeds = [
     siteName: "940 Howard",
     siteShortCode: "940",
     providerSiteId: "provider-site-sfaf-940-howard",
+    contactEmail: "sfaf940@example.org",
     places: [],
   },
   {
@@ -67,6 +72,7 @@ export const devSiteCodeSeeds = [
     siteName: "440 Eddy",
     siteShortCode: "440",
     providerSiteId: "provider-site-thc-440-eddy",
+    contactEmail: "thc440@example.org",
     places: [],
   },
 ];
@@ -95,7 +101,13 @@ export async function seedSiteCodes(docDdb, tableName, options = {}) {
   for (const seed of devSiteCodeSeeds) {
     validateSeedShortCodes(seed);
     await putProvider(docDdb, tableName, seed, now);
+    await putProviderSearch(docDdb, tableName, seed, now);
     await upsertSite(docDdb, tableName, seed, now);
+    await putProviderSiteMembership(docDdb, tableName, seed, now);
+    await putSiteSearch(docDdb, tableName, seed, now);
+    await putCodeContact(docDdb, tableName, seed, now);
+    await putMasterContact(docDdb, tableName, seed, now);
+    await putDynamicSetupCode(docDdb, tableName, seed, now);
     await putSiteCode(docDdb, tableName, seed, now);
     seededCodes.push(seed.code);
   }
@@ -147,6 +159,31 @@ function validateSeedShortCodes(seed) {
  * @param {typeof devSiteCodeSeeds[number]} seed
  * @param {string} now
  */
+async function putProviderSearch(docDdb, tableName, seed, now) {
+  await docDdb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        pk: "PROVIDER_SEARCH#ACTIVE",
+        sk: seed.providerId,
+        type: "providerSearch",
+        providerId: seed.providerId,
+        name: seed.providerName,
+        searchText: seed.providerName.toLowerCase(),
+        status: "active",
+        seededAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
 async function putProvider(docDdb, tableName, seed, now) {
   await docDdb.send(
     new PutCommand({
@@ -158,6 +195,7 @@ async function putProvider(docDdb, tableName, seed, now) {
         providerId: seed.providerId,
         name: seed.providerName,
         providerShortCode: seed.providerShortCode,
+        status: "active",
         seededAt: now,
         updatedAt: now,
       },
@@ -177,13 +215,14 @@ async function upsertSite(docDdb, tableName, seed, now) {
       TableName: tableName,
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
-        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
       ExpressionAttributeNames: {
         "#type": "type",
         "#name": "name",
+        "#status": "status",
         ...(seed.location ? { "#location": "location" } : {}),
       },
       ExpressionAttributeValues: {
@@ -191,16 +230,176 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":entityType": "SITE",
         ":siteId": seed.siteId,
         ":providerId": seed.providerId,
+        ":providerName": seed.providerName,
         ":providerSiteId": seed.providerSiteId,
         ":providerShortCode": seed.providerShortCode,
         ":siteShortCode": seed.siteShortCode,
         ":name": seed.siteName,
+        ":status": "active",
         ":places": seed.places,
         ":now": now,
         ...(seed.location ? { ":location": seed.location } : {}),
       },
     }),
   );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
+async function putProviderSiteMembership(docDdb, tableName, seed, now) {
+  await docDdb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        pk: `PROVIDER#${seed.providerId}`,
+        sk: `SITE#${seed.siteId}`,
+        type: "providerSiteMembership",
+        providerId: seed.providerId,
+        providerName: seed.providerName,
+        siteId: seed.siteId,
+        siteName: seed.siteName,
+        providerSiteId: seed.providerSiteId,
+        status: "active",
+        seededAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
+async function putSiteSearch(docDdb, tableName, seed, now) {
+  await docDdb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        pk: "SITE_SEARCH#ACTIVE",
+        sk: `${seed.siteName.toLowerCase()}#${seed.siteId}`,
+        type: "siteSearch",
+        siteId: seed.siteId,
+        siteName: seed.siteName,
+        providerId: seed.providerId,
+        providerName: seed.providerName,
+        providerSiteId: seed.providerSiteId,
+        label: `${seed.siteName} (${seed.providerName})`,
+        searchText: `${seed.siteName} ${seed.providerName}`.toLowerCase(),
+        status: "active",
+        seededAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
+async function putCodeContact(docDdb, tableName, seed, now) {
+  const email = seed.contactEmail.toLowerCase();
+  const contactHash = hashEmail(email);
+  await docDdb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        pk: `SITE#${seed.siteId}`,
+        sk: `CODE_CONTACT#${contactHash}`,
+        type: "codeContact",
+        email,
+        emailHash: contactHash,
+        siteId: seed.siteId,
+        siteName: seed.siteName,
+        status: "active",
+        seededAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
+async function putMasterContact(docDdb, tableName, seed, now) {
+  const email = seed.contactEmail.toLowerCase();
+  const contactHash = hashEmail(email);
+  await docDdb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        pk: `SITE#${seed.siteId}`,
+        sk: `MASTER_CONTACT#${contactHash}`,
+        type: "masterContact",
+        email,
+        emailHash: contactHash,
+        siteId: seed.siteId,
+        siteName: seed.siteName,
+        status: "active",
+        seededAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} docDdb
+ * @param {string} tableName
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ * @param {string} now
+ */
+async function putDynamicSetupCode(docDdb, tableName, seed, now) {
+  const verifier = hashCode(seed.code);
+  try {
+    await docDdb.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          pk: `SETUP_CODE#${verifier}`,
+          sk: "#META",
+          type: "setupCode",
+          codeId: `seed-${seed.siteId}`,
+          codeVerifier: verifier,
+          status: "pending",
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          maxUses: 3,
+          uses: 0,
+          siteId: seed.siteId,
+          siteName: seed.siteName,
+          providerId: seed.providerId,
+          providerName: seed.providerName,
+          providerSiteId: seed.providerSiteId,
+          issuedTo: seed.contactEmail.toLowerCase(),
+          issuedBy: "local-seed",
+          createdAt: now,
+          updatedAt: now,
+          gsi6pk: `SETUP_CODE_PENDING#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
+          gsi6sk: now,
+          gsi7pk: `SETUP_CODE_PENDING_SITE#${seed.siteId}`,
+          gsi7sk: now,
+        },
+        ConditionExpression: "attribute_not_exists(pk)",
+      }),
+    );
+  } catch (err) {
+    if (/** @type {Error} */ (err).name !== "ConditionalCheckFailedException") {
+      throw err;
+    }
+  }
 }
 
 /**
@@ -230,5 +429,36 @@ async function putSiteCode(docDdb, tableName, seed, now) {
         updatedAt: now,
       },
     }),
+  );
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function hashCode(value) {
+  return createHmac("sha256", verifierSecret())
+    .update(value.trim().toUpperCase())
+    .digest("hex");
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function hashEmail(value) {
+  return createHmac("sha256", verifierSecret())
+    .update(value.trim().toLowerCase())
+    .digest("hex");
+}
+
+/**
+ * @returns {string}
+ */
+function verifierSecret() {
+  return (
+    process.env.SETUP_CODE_VERIFIER_SECRET ||
+    process.env.DEVICE_TOKEN_SECRET ||
+    "local-dev-setup-code-verifier-secret"
   );
 }

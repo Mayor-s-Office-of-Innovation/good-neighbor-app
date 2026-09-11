@@ -77,6 +77,41 @@ variable "frontend_certificate_arn" {
   }
 }
 
+variable "admin_domain_names" {
+  description = "Custom domain names to attach to the admin CloudFront distribution."
+  type        = list(string)
+  default     = []
+}
+
+variable "admin_certificate_arn" {
+  description = "ACM certificate ARN in us-east-1 for the admin custom domains. Empty uses the default CloudFront certificate."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = length(var.admin_domain_names) == 0 || trimspace(var.admin_certificate_arn) != ""
+    error_message = "admin_certificate_arn must be set when admin_domain_names is non-empty."
+  }
+}
+
+variable "admin_callback_urls" {
+  description = "Additional OAuth callback URLs for the admin Cognito app client."
+  type        = list(string)
+  default     = []
+}
+
+variable "admin_logout_urls" {
+  description = "Additional OAuth logout URLs for the admin Cognito app client."
+  type        = list(string)
+  default     = []
+}
+
+variable "cognito_domain_prefix" {
+  description = "Cognito managed-login domain prefix. Empty defaults to the env name prefix."
+  type        = string
+  default     = ""
+}
+
 variable "bedrock_model_id" {
   description = "Bedrock model or inference profile ID for description validation."
   type        = string

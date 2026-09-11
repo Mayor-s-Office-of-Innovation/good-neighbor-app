@@ -318,6 +318,68 @@ form > wa-button[type="submit"] {
   color: var(--text-faint);
   --track-width: 3px;
 }
+.login__link {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+.login__request {
+  width: min(100%, 360px);
+  display: grid;
+  gap: 16px;
+  text-align: left;
+}
+.login__field {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.429;
+}
+.login__field input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 10px 12px;
+}
+.login__results {
+  display: grid;
+  gap: 8px;
+}
+.login__result {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.login__result--selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--surface-3);
+}
+.login__result small,
+.login__hint {
+  color: var(--text-secondary);
+}
+.login__message {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
 
 @media (max-width: 480px) {
   .login {
