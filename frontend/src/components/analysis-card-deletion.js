@@ -63,49 +63,19 @@ export async function deleteAnalysisCard(host, problem, commit, render) {
 
 /** @param {HTMLElement} card */
 export function collapseCard(card) {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    card.remove();
-    return Promise.resolve();
-  }
-  const height = card.getBoundingClientRect().height;
-  const parent = card.parentElement;
-  const gap =
-    parent && parent.children.length > 1
-      ? parseFloat(getComputedStyle(parent).rowGap) || 0
-      : 0;
-  // Clip a fixed-height card so flex alignment, text, and photos never shift
-  // inside it as the outer footprint shrinks.
+  // CSS owns intrinsic sizing, spacing, timing, and reduced motion. The inner
+  // clip keeps the card's contents stationary as its grid row closes.
   const shell = document.createElement("div");
+  const clip = document.createElement("div");
+  shell.className = "analysis-card--deleting";
+  clip.className = "analysis-card__deletion-clip";
   card.before(shell);
-  shell.append(card);
-  card.style.height = `${height}px`;
-  shell.style.setProperty("--deletion-height", `${height}px`);
-  shell.style.setProperty("--deletion-gap", `${gap}px`);
+  shell.append(clip);
+  clip.append(card);
   card.inert = true;
-  return new Promise((resolve) => {
-    const finish = () => {
-      clearTimeout(timeout);
-      observer.disconnect();
-      shell.removeEventListener("animationend", onEnd);
-      shell.removeEventListener("animationcancel", onEnd);
-      shell.remove();
-      resolve();
-    };
-    const onEnd = (event) => {
-      if (
-        event.target === shell &&
-        event.animationName === "analysis-card-collapse"
-      )
-        finish();
-    };
-    // Navigation or a removed ancestor must not leave deletion waiting on an event.
-    const observer = new MutationObserver(() => {
-      if (!card.isConnected) finish();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    const timeout = setTimeout(finish, 350);
-    shell.addEventListener("animationend", onEnd);
-    shell.addEventListener("animationcancel", onEnd);
-    shell.classList.add("analysis-card--deleting");
-  });
+  // Observe CSS animations only; cancellation (including navigation) also
+  // completes cleanup. With animation disabled, the empty list settles at once.
+  return Promise.allSettled(
+    shell.getAnimations().map((animation) => animation.finished),
+  ).then(() => shell.remove());
 }
