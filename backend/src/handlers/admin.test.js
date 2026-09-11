@@ -31,6 +31,41 @@ beforeEach(() => {
 });
 
 describe("admin authorization", () => {
+  it.each([
+    "central-admin",
+    "[central-admin]",
+    "[support, central-admin]",
+    '["support","central-admin"]',
+    ["support", "central-admin"],
+  ])(
+    "accepts exact membership in supported claim format %j",
+    async (groups) => {
+      send.mockResolvedValue({ Items: [] });
+      const res = await call(listProviders, event(undefined, groups));
+      expect(res.statusCode).toBe(200);
+    },
+  );
+
+  it.each([
+    "",
+    "not-central-admin",
+    "[not-central-admin]",
+    "[central-admin-readonly]",
+    "[support central-admin]",
+    "[central-admin",
+    '["central-admin-readonly"]',
+    { role: "central-admin" },
+    ["not-central-admin"],
+    null,
+  ])(
+    "rejects missing, malformed, or nonmatching membership %j",
+    async (groups) => {
+      const res = await call(listProviders, event(undefined, groups));
+      expect(res.statusCode).toBe(403);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects callers outside the central-admin group", async () => {
     const res = await call(listProviders, event(undefined, ""));
     expect(res.statusCode).toBe(403);
@@ -512,7 +547,7 @@ describe("provider and site management", () => {
 
 /**
  * @param {unknown} [body]
- * @param {string} [groups]
+ * @param {unknown} [groups]
  * @param {Record<string,string>} [pathParameters]
  * @returns {any}
  */

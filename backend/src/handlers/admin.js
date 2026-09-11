@@ -29,7 +29,24 @@ function isCentralAdmin(event) {
     authorizer.jwt?.claims?.["cognito:groups"] ??
     authorizer["claims.cognito:groups"] ??
     "";
-  return String(groups).split(",").includes("central-admin");
+  if (Array.isArray(groups)) return groups.includes("central-admin");
+  if (typeof groups !== "string") return false;
+  const value = groups.trim();
+  if (value.startsWith("[")) {
+    if (!value.endsWith("]")) return false;
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) && parsed.includes("central-admin");
+    } catch {
+      // HTTP API JWT claims can stringify a group list without JSON quotes.
+      // Match whole comma-delimited names, never substrings or words in a name.
+      return value
+        .slice(1, -1)
+        .split(",")
+        .some((group) => group.trim() === "central-admin");
+    }
+  }
+  return value.split(",").some((group) => group.trim() === "central-admin");
 }
 
 /**

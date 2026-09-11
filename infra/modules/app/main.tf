@@ -536,13 +536,19 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  email_configuration {
+    email_sending_account = "DEVELOPER"
+    source_arn            = var.setup_code_email_identity_arn
+    from_email_address    = "Good Neighbor <${var.setup_code_email_from}>"
+  }
+
   admin_create_user_config {
     allow_admin_create_user_only = true
 
     # AWS provider 5.x sends omitted invitation fields as empty strings on
     # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
     invite_message_template {
-      email_subject = "[${var.environment}] Your Good Neighbor admin invitation"
+      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor admin invitation"
       email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."
       sms_message   = "Your Good Neighbor username is {username} and temporary password is {####}."
     }
@@ -640,6 +646,55 @@ resource "aws_cloudfront_response_headers_policy" "security" {
       # edit to it. Regenerate from a fresh build with:
       #   cd frontend && npm run build && node -e 'const fs=require("fs"),c=require("crypto");const h=fs.readFileSync("dist/index.html","utf8");const m=/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i.exec(h);console.log("sha256-"+c.createHash("sha256").update(m[1],"utf8").digest("base64"))'
       content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
+      override                = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = true
+      override                   = true
+    }
+
+    xss_protection {
+      mode_block = true
+      protection = true
+      override   = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      override = true
+      value    = "camera=(), microphone=(), geolocation=()"
+    }
+  }
+}
+
+resource "aws_cloudfront_response_headers_policy" "admin_security" {
+  name = "${local.name_prefix}-admin-security-headers"
+
+  security_headers_config {
+    content_security_policy {
+      # Only the admin app needs cross-origin access to Cognito's token endpoint.
+      # Derive the domain string without a pool dependency (the pool invite
+      # template references this distribution).
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 

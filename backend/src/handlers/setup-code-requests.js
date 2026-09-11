@@ -125,13 +125,19 @@ export const requestSetupCode = async (event) => {
       issuedTo: email,
       issuedBy: "provider-email-request",
     });
-    await sendSetupCodeEmail({
-      to: email,
-      siteName: issued.item.siteName,
-      code: issued.code,
-      expiresAt: issued.item.expiresAt,
-      appUrl: process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
-    });
+    try {
+      await sendSetupCodeEmail({
+        to: email,
+        siteName: issued.item.siteName,
+        code: issued.code,
+        expiresAt: issued.item.expiresAt,
+        appUrl: process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+      });
+    } catch {
+      // The sender records a sanitized failure. Keep the same public response
+      // for authorized and unknown contacts, including when SES is unavailable.
+      // Retain the cooldown to prevent repeated sends after ambiguous timeouts.
+    }
   }
 
   return jsonResponse(202, { message });
