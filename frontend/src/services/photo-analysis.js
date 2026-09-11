@@ -260,7 +260,10 @@ export async function refreshEvidenceAnalysis(
     assessment: response.assessment,
   });
   const guidance = refreshed.conditions.length
-    ? await evaluateAssessment(refreshed)
+    ? await evaluateAssessment({
+        ...refreshed,
+        previousAssessmentId: item.analysis?.assessment?.assessmentId,
+      })
     : { assessment: refreshed, conditions: [], tasks: [] };
 
   if (getCurrentCheck()?.id !== check.id) return;

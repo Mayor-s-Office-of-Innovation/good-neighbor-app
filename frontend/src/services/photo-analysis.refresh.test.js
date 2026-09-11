@@ -31,7 +31,15 @@ describe("refresh after a delayed deletion", () => {
             name: "Sidewalk",
             skipped: false,
             description: null,
-            items: [{ id: "item", analysis: { artifactId: "artifact" } }],
+            items: [
+              {
+                id: "item",
+                analysis: {
+                  artifactId: "artifact",
+                  assessment: { assessmentId: "previous" },
+                },
+              },
+            ],
           },
         },
       };
@@ -56,7 +64,9 @@ describe("refresh after a delayed deletion", () => {
         },
         { rejectedConditionId: "deleted" },
       );
-      expect(evaluateAssessment).toHaveBeenCalledOnce();
+      expect(evaluateAssessment).toHaveBeenCalledWith(
+        expect.objectContaining({ previousAssessmentId: "previous" }),
+      );
       if (navigated)
         vi.mocked(getCurrentCheck).mockReturnValue({
           ...check,
