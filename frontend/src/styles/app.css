@@ -2982,9 +2982,10 @@ theme-toggle {
 }
 
 .analysis-tray__cards {
+  --analysis-card-gap: 0.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--analysis-card-gap);
   padding: 0.75rem;
   border-radius: 1.125rem;
   background: var(--brand-blue-bg);
@@ -3010,6 +3011,37 @@ theme-toggle {
   padding: 1rem;
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+/* Keep the top edge fixed while the card and its list spacing collapse. */
+.analysis-card--deleting {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: clip;
+  min-height: 0;
+  flex-shrink: 0;
+  pointer-events: none;
+  animation: analysis-card-collapse 220ms ease-out forwards;
+}
+
+.analysis-card__deletion-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.analysis-card--deleting:only-child {
+  --analysis-card-gap: 0px;
+}
+
+@keyframes analysis-card-collapse {
+  from {
+    grid-template-rows: 1fr;
+    margin-bottom: 0;
+  }
+  to {
+    grid-template-rows: 0fr;
+    margin-bottom: calc(-1 * var(--analysis-card-gap, 0px));
+  }
 }
 
 .analysis-card--pending {
