@@ -3,8 +3,8 @@
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
   the main view based on the hash route. Everything is scoped to the bound site.
 
-  Routes → views: /today → today-view, /check → perimeter-check, /review →
-  check-review, /results → check-results. Setup (device→site binding) is retained and
+  Routes → views: /today → today-view, /check → perimeter-check, /problem →
+  problem-report. Setup (device→site binding) is retained and
   gates everything (see docs/take5-plan.md).
 */
 import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
@@ -19,8 +19,6 @@ const ROUTE_VIEW = [
   ["/places/setup", "places-setup"],
   ["/places/edit", "places-setup"],
   ["/check", "perimeter-check"],
-  ["/review", "check-review"],
-  ["/results", "check-results"],
   ["/today", "today-view"],
 ];
 
@@ -81,6 +79,7 @@ class AppRoot extends HTMLElement {
 
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
+    this.append(document.createElement("app-toasts"));
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
   }

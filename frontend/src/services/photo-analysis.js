@@ -263,6 +263,7 @@ export async function refreshEvidenceAnalysis(
     ? await evaluateAssessment(refreshed)
     : { assessment: refreshed, conditions: [], tasks: [] };
 
+  if (getCurrentCheck()?.id !== check.id) return;
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
     artifactId,

@@ -1,23 +1,40 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   collapseCard,
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
+import { getToasts } from "../state/toasts.js";
+import {
+  onDeletionsChange,
+  pendingDeletedConditionIds,
+} from "../state/pending-deletions.js";
 
+let sequence = 0;
+let problem;
+beforeEach(() => {
+  vi.useFakeTimers();
+  problem = {
+    checkId: "check",
+    conditionId: `condition-${++sequence}`,
+    artifactId: "artifact",
+    title: "Litter",
+  };
+  vi.stubGlobal(
+    "CustomEvent",
+    class {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+  );
+});
 afterEach(() => {
+  for (const toast of getToasts()) toast.close(true);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-vi.stubGlobal(
-  "CustomEvent",
-  class {
-    constructor(type) {
-      this.type = type;
-    }
-  },
-);
 
 function fixture() {
   const close = vi.fn();
@@ -33,117 +50,88 @@ function fixture() {
   });
   return { host, close, focus };
 }
-const problem = { conditionId: "condition", artifactId: "artifact" };
 
-describe("analysis card deletion lifecycle", () => {
-  it("defers session renders until the accepted deletion commits, then restores focus", async () => {
+describe("undoable analysis card deletion", () => {
+  it("hides immediately, protects enclosing renders, restores focus, and saves after ten seconds", async () => {
     const { host, close, focus } = fixture();
+    const home = /** @type {any} */ ({ contains: (node) => node === host });
+    const unsubscribe = onDeletionsChange((status) => {
+      if (status === "pending") expect(isDeletingAnalysisCard(home)).toBe(true);
+    });
+    const commit = vi.fn();
     const render = vi.fn(() =>
       expect(isDeletingAnalysisCard(host)).toBe(false),
     );
-    await deleteAnalysisCard(
-      host,
-      problem,
-      async () => {
-        expect(isDeletingAnalysisCard(host)).toBe(true);
-        expect(close).not.toHaveBeenCalled();
-      },
-      render,
-    );
+    await deleteAnalysisCard(host, problem, commit, render);
+    unsubscribe();
     expect(close).toHaveBeenCalledOnce();
     expect(render).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(pendingDeletedConditionIds(problem)).toContain(problem.conditionId);
+    expect(commit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(commit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(commit).toHaveBeenCalledOnce();
   });
 
-  it("protects the enclosing home view while an embedded capture deletion commits", async () => {
+  it("Undo restores the card without calling the server, including after navigation", async () => {
     const { host } = fixture();
-    const home = /** @type {any} */ ({ contains: (node) => node === host });
-    const otherView = /** @type {any} */ ({ contains: () => false });
+    const commit = vi.fn();
+    await deleteAnalysisCard(host, problem, commit, () => {});
+    host.isConnected = false;
+    getToasts()[0].close(true);
+    expect(pendingDeletedConditionIds(problem)).not.toContain(
+      problem.conditionId,
+    );
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("dismiss commits once even after the originating view disconnects", async () => {
+    const { host } = fixture();
+    const commit = vi.fn();
+    await deleteAnalysisCard(host, problem, commit, () => {
+      host.isConnected = false;
+    });
+    const toast = getToasts()[0];
+    toast.close();
+    toast.close(true);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(host.dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it("restores failed deletions and reports an error outside the old dialog", async () => {
+    const { host } = fixture();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     await deleteAnalysisCard(
       host,
       problem,
-      async () => {
-        expect(isDeletingAnalysisCard(home)).toBe(true);
-        expect(isDeletingAnalysisCard(otherView)).toBe(false);
-      },
+      () => Promise.reject(new Error("offline")),
       () => {},
     );
-    expect(isDeletingAnalysisCard(home)).toBe(false);
-    expect(host.dispatchEvent).toHaveBeenCalledOnce();
-  });
-
-  it("leaves the dialog and card intact if the state update fails", async () => {
-    const { host, close, focus } = fixture();
-    const render = vi.fn();
-    await expect(
-      deleteAnalysisCard(
-        host,
-        problem,
-        () => {
-          throw new Error("refresh failed");
-        },
-        render,
-      ),
-    ).rejects.toThrow("refresh failed");
-    expect(isDeletingAnalysisCard(host)).toBe(false);
-    expect(close).not.toHaveBeenCalled();
-    expect(render).not.toHaveBeenCalled();
-    expect(focus).not.toHaveBeenCalled();
-  });
-
-  it("does not render or focus a view removed during deletion", async () => {
-    const { host, focus } = fixture();
-    const render = vi.fn();
-    await deleteAnalysisCard(
-      host,
-      problem,
-      () => {
-        host.isConnected = false;
-      },
-      render,
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(pendingDeletedConditionIds(problem)).not.toContain(
+      problem.conditionId,
     );
-    expect(render).not.toHaveBeenCalled();
-    expect(focus).not.toHaveBeenCalled();
-    expect(isDeletingAnalysisCard(host)).toBe(false);
+    expect(getToasts()[0].title).toBe("Couldn't delete item");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(getToasts()).toHaveLength(1);
+  });
+
+  it("still offers Undo when the post-collapse view refresh fails", async () => {
+    const { host, focus } = fixture();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await deleteAnalysisCard(host, problem, vi.fn(), () =>
+      Promise.reject(new Error("refresh failed")),
+    );
+    expect(getToasts()[0].action.label).toBe("Undo");
+    expect(focus).toHaveBeenCalledOnce();
   });
 });
 
-describe("accepted deletion refresh recovery", () => {
-  it("preserves success and restores focus when refresh rejects", async () => {
-    const { host, focus } = fixture();
-    const error = new Error("storage unavailable");
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(
-      deleteAnalysisCard(
-        host,
-        problem,
-        () => {},
-        () => Promise.reject(error),
-      ),
-    ).resolves.toBeUndefined();
-    expect(log).toHaveBeenCalledWith(
-      "refresh after analysis deletion failed",
-      error,
-    );
-    expect(host.dispatchEvent).toHaveBeenCalledOnce();
-    expect(focus).toHaveBeenCalledOnce();
-    expect(isDeletingAnalysisCard(host)).toBe(false);
-  });
-
-  it("does not dispatch or focus after refresh disconnects the host", async () => {
-    const { host, focus } = fixture();
-    await deleteAnalysisCard(
-      host,
-      problem,
-      () => {},
-      () => {
-        host.isConnected = false;
-      },
-    );
-    expect(host.dispatchEvent).not.toHaveBeenCalled();
-    expect(focus).not.toHaveBeenCalled();
-  });
-
+describe("deletion animation", () => {
   it.each(["finished", "cancelled", "disabled"])(
     "cleans up the card when CSS animation is %s",
     async (completion) => {
