@@ -6,6 +6,7 @@
   "scripts": {
     "build": "echo 'backend: no build step (JSDoc, deployed as source)'",
     "build:lambdas": "node scripts/build-lambdas.mjs",
+    "backfill:site-short-codes": "node scripts/backfill-site-short-codes.mjs",
     "seed:dev-site-codes": "node scripts/seed-dev-site-codes.mjs",
     "lint": "eslint src",
     "policy:diff": "node scripts/policy-diff.mjs",

@@ -102,6 +102,16 @@ export const taskKey = (siteId, taskId) => ({
 });
 
 /**
+ * Site-scoped monotonic counter for human-facing task short IDs.
+ * @param {string} siteId
+ * @returns {PrimaryKey}
+ */
+export const taskDisplayCounterKey = (siteId) => ({
+  pk: sitePk(siteId),
+  sk: "COUNTER#task-display-id",
+});
+
+/**
  * Sort-key prefix that gathers a check's header + all its artifacts + analyses
  * for the single-query detail read (AP7): `begins_with(sk, checkChildrenPrefix)`.
  * @param {string} checkId

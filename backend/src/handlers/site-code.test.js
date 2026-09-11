@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const send = vi.fn();
 
@@ -57,6 +58,40 @@ describe("site-code handler", () => {
     });
   });
 
+  it("backfills explicit task short-code metadata from an active site code", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send.mockResolvedValueOnce({}); // dynamic setup-code lookup
+    send.mockResolvedValueOnce({
+      Item: {
+        active: true,
+        providerId: "the-gubbio-project",
+        providerShortCode: "GUB",
+        providerSiteId: "provider-site-1",
+        siteId: "site-1",
+        siteName: "St. John",
+        siteShortCode: "STJ",
+      },
+    });
+    send.mockResolvedValueOnce({ Item: { status: "active" } });
+    send.mockResolvedValueOnce({});
+
+    const res = await callHandler({ code: "GUB-SJE" });
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    const command = send.mock.calls[3][0];
+    expect(command).toBeInstanceOf(UpdateCommand);
+    expect(command.input).toMatchObject({
+      TableName: "gnp-test-app",
+      Key: { pk: "SITE#site-1", sk: "#META" },
+      ExpressionAttributeValues: expect.objectContaining({
+        ":providerShortCode": "GUB",
+        ":siteShortCode": "STJ",
+      }),
+    });
+  });
+
   it("rejects inactive or unknown codes with a generic error", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
@@ -68,6 +103,31 @@ describe("site-code handler", () => {
 
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.body)).toEqual({ error: "invalid_site_code" });
+  });
+
+  it("does not backfill short codes for an inactive site", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: {
+          active: true,
+          providerSiteId: "provider-site-1",
+          siteId: "site-1",
+          siteName: "St. John",
+          providerShortCode: "GUB",
+          siteShortCode: "STJ",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { status: "inactive" } });
+
+    const res = await callHandler({ code: "GUB-SJE" });
+
+    expect(res.statusCode).toBe(401);
+    expect(
+      send.mock.calls.every(([command]) => command instanceof GetCommand),
+    ).toBe(true);
   });
 
   it("requires a code", async () => {

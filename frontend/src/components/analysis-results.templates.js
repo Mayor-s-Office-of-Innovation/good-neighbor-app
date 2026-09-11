@@ -13,6 +13,10 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 /**
  * @typedef {object} AnalysisTask
  * @property {string} [taskId]
+ * @property {string} [shortId]
+ * @property {string} [displayId]
+ * @property {string} [display_id]
+ * @property {string} [assessmentId]
  * @property {string} [conditionId]
  * @property {string} [category]
  * @property {string} [analyzerCategory]
@@ -71,6 +75,9 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 /**
  * @typedef {object} HomeTask
  * @property {string} [taskId]
+ * @property {string} [shortId]
+ * @property {string} [displayId]
+ * @property {string} [display_id]
  * @property {string} [conditionId]
  * @property {string} [checkId]
  * @property {string} [assessmentId]
@@ -184,6 +191,7 @@ export function analysisCards(item, sessionCheckId) {
         action: "",
         actionKind: "",
         includeDelete: false,
+        showAssessmentId: false,
       }),
     ];
   }
@@ -211,6 +219,8 @@ export function analysisCards(item, sessionCheckId) {
         actionKind: task.kind || "",
         taskId: task.taskId || "",
         conditionId: task.conditionId || condition.conditionId || "",
+        metaLabel: newTaskMetaLabel(task),
+        showAssessmentId: false,
       });
     });
     return [
@@ -241,6 +251,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
     actionKind: "",
     conditionId: condition.conditionId || "",
     question: condition.needsAnswer,
+    showAssessmentId: false,
   });
 }
 
@@ -297,13 +308,47 @@ export function taskAnalysisCard({
     actionKind: action?.variant === "blue" ? "escalation" : "action",
     taskId: task.taskId || "",
     conditionId: task.conditionId || "",
-    metaLabel: statusLabel || (isNew ? "NEW" : "NEEDS ACTION"),
+    metaLabel: statusLabel || taskMetaLabel(task, isNew),
     actionAttribute: "data-action",
     actionValue: action?.kind || "done",
     includeEditDelete: includeControls,
     isNew,
     showStar: isNew,
   });
+}
+
+/**
+ * @param {AnalysisTask | HomeTask} task
+ * @returns {string}
+ */
+function taskDisplayReference(task) {
+  return String(
+    task.shortId ||
+      task.displayId ||
+      task.display_id ||
+      task.assessmentId ||
+      "",
+  );
+}
+
+/**
+ * @param {AnalysisTask | HomeTask} task
+ * @returns {string}
+ */
+function newTaskMetaLabel(task) {
+  const reference = taskDisplayReference(task);
+  return reference ? `NEW • ${reference}` : "NEW";
+}
+
+/**
+ * @param {HomeTask} task
+ * @param {boolean} isNew
+ * @returns {string}
+ */
+function taskMetaLabel(task, isNew) {
+  if (isNew) return newTaskMetaLabel(task);
+  const reference = taskDisplayReference(task);
+  return reference ? `NEEDS ACTION • ${reference}` : "NEEDS ACTION";
 }
 
 function pendingCard(item) {
@@ -347,6 +392,7 @@ function completedEvidenceCard(
     includeDelete = includeEditDelete,
     isNew = true,
     showStar = true,
+    showAssessmentId = true,
   },
 ) {
   const actionClass =
@@ -382,8 +428,8 @@ function completedEvidenceCard(
                 aria-hidden="true"
               />`
             : ""}
-          <span>${escapeHtml(metaLabel)}</span>${item.analysis?.assessment
-            ?.assessmentId
+          <span>${escapeHtml(metaLabel)}</span>${showAssessmentId &&
+          item.analysis?.assessment?.assessmentId
             ? html`<span>•</span
                 ><span
                   >${escapeHtml(item.analysis.assessment.assessmentId)}</span
