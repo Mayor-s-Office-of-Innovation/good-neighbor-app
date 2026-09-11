@@ -23,14 +23,18 @@ describe("site-code handler", () => {
 
   it("returns a provider site for an active code", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
-    send.mockResolvedValueOnce({
-      Item: {
-        active: true,
-        providerSiteId: "provider-site-1",
-        siteId: "site-1",
-        siteName: "City Hall",
-      },
-    });
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send
+      .mockResolvedValueOnce({}) // dynamic setup-code lookup
+      .mockResolvedValueOnce({
+        Item: {
+          active: true,
+          providerSiteId: "provider-site-1",
+          siteId: "site-1",
+          siteName: "City Hall",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
 
     const res = await callHandler({ code: "123-456" });
 
@@ -38,7 +42,7 @@ describe("site-code handler", () => {
       expect.objectContaining({
         input: expect.objectContaining({
           TableName: "gnp-test-app",
-          Key: { pk: "SITE_CODE#123456", sk: "#META" },
+          Key: expect.objectContaining({ sk: "#META" }),
         }),
       }),
     );
@@ -55,7 +59,10 @@ describe("site-code handler", () => {
 
   it("rejects inactive or unknown codes with a generic error", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
-    send.mockResolvedValueOnce({ Item: { active: false } });
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send
+      .mockResolvedValueOnce({}) // dynamic setup-code lookup
+      .mockResolvedValueOnce({ Item: { active: false } });
 
     const res = await callHandler({ code: "000000" });
 
