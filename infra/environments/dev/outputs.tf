@@ -32,3 +32,23 @@ output "frontend_dns_name_servers" {
   description = "Authoritative name servers for the delegated dev.goodneighborsf.org hosted zone."
   value       = aws_route53_zone.frontend_subdomain.name_servers
 }
+
+output "admin_frontend_bucket_name" {
+  description = "S3 bucket for admin frontend assets."
+  value       = module.app.admin_frontend_bucket_name
+}
+
+output "admin_cloudfront_distribution_id" {
+  description = "CloudFront distribution id for admin frontend cache invalidation."
+  value       = module.app.admin_cloudfront_distribution_id
+}
+
+output "admin_cognito_client_id" {
+  description = "Cognito app client id for the central admin console."
+  value       = module.app.admin_cognito_client_id
+}
+
+output "cognito_managed_login_domain" {
+  description = "Cognito managed-login domain for admin OAuth redirects."
+  value       = module.app.cognito_managed_login_domain
+}

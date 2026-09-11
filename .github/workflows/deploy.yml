@@ -86,15 +86,24 @@ jobs:
       - name: Capture Terraform outputs
         id: tf
         run: |
+          # Standalone assignments preserve failures; echo would mask them.
+          api_url=$(terraform output -raw api_url)
+          bucket=$(terraform output -raw frontend_bucket_name)
+          dist_id=$(terraform output -raw cloudfront_distribution_id)
+          admin_bucket=$(terraform output -raw admin_frontend_bucket_name)
+          admin_dist_id=$(terraform output -raw admin_cloudfront_distribution_id)
+          admin_cognito_client_id=$(terraform output -raw admin_cognito_client_id)
+          cognito_managed_login_domain=$(terraform output -raw cognito_managed_login_domain)
+          dynamo_table=$(terraform output -raw dynamodb_table_name)
           {
-            echo "api_url=$(terraform output -raw api_url)"
-            echo "bucket=$(terraform output -raw frontend_bucket_name)"
-            echo "dist_id=$(terraform output -raw cloudfront_distribution_id)"
-            echo "admin_bucket=$(terraform output -raw admin_frontend_bucket_name)"
-            echo "admin_dist_id=$(terraform output -raw admin_cloudfront_distribution_id)"
-            echo "admin_cognito_client_id=$(terraform output -raw admin_cognito_client_id)"
-            echo "cognito_managed_login_domain=$(terraform output -raw cognito_managed_login_domain)"
-            echo "dynamo_table=$(terraform output -raw dynamodb_table_name)"
+            echo "api_url=${api_url}"
+            echo "bucket=${bucket}"
+            echo "dist_id=${dist_id}"
+            echo "admin_bucket=${admin_bucket}"
+            echo "admin_dist_id=${admin_dist_id}"
+            echo "admin_cognito_client_id=${admin_cognito_client_id}"
+            echo "cognito_managed_login_domain=${cognito_managed_login_domain}"
+            echo "dynamo_table=${dynamo_table}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Seed dev site codes
