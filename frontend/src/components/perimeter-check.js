@@ -5,6 +5,8 @@
   The perimeter check is now a place-by-place capture container. Each photo or
   typed description is analyzed independently as soon as it is submitted.
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
@@ -27,10 +29,7 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import {
-  appActionFailureMessage,
-  isFiled311Completion,
-} from "../domain/task-actions.js";
+import { isFiled311Completion } from "../domain/task-actions.js";
 import {
   ensureCheck,
   startCheck,
@@ -93,6 +92,10 @@ class PerimeterCheck extends HTMLElement {
 
     this._checkId = getCurrentCheck()?.id || "";
     this._placeIndex = getActivePlaceIndex() ?? 0;
+    this._deletionUnsub?.();
+    this._deletionUnsub = onDeletionsChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
     this._unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
@@ -413,6 +416,7 @@ class PerimeterCheck extends HTMLElement {
 
     this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
@@ -433,10 +437,15 @@ class PerimeterCheck extends HTMLElement {
             );
           } catch (err) {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            this._deleteProblemLocally(problem);
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
             return;
           }
-          if (problem.placeId && problem.itemId) {
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
             await refreshEvidenceAnalysis(
               problem.placeId,
               problem.itemId,
@@ -444,10 +453,15 @@ class PerimeterCheck extends HTMLElement {
               {
                 rejectedConditionId: problem.conditionId,
               },
-            );
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
           }
         },
         () => this._render(),
+        { focusUndo },
       );
       this._activeProblem = null;
     } catch (err) {
@@ -478,7 +492,7 @@ class PerimeterCheck extends HTMLElement {
         problem.conditionId,
       ].filter(Boolean),
     });
-    this._render();
+    if (this.isConnected) this._render();
   }
 
   async _saveProblemEdit() {
@@ -571,19 +585,15 @@ class PerimeterCheck extends HTMLElement {
         });
         this._analysisProgressDialog?.close();
         if (!isFiled311Completion(result?.task)) {
-          this._showToast(
-            appActionFailureMessage(result?.task, {
-              includeUnsubmitted311: true,
-            }) || "Could not file the 311 ticket. Please try again.",
-          );
+          show311ErrorToast();
           return;
         }
         this._markProblemResolved(problem);
-        this._showToast("Success! 311 ticket filed.");
+        show311SuccessToast();
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
-        this._showToast("Could not file the 311 ticket. Please try again.");
+        show311ErrorToast();
       }
       return;
     }
@@ -691,6 +701,7 @@ class PerimeterCheck extends HTMLElement {
     const check = getCurrentCheck();
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
     this._doneIncompleteDialog?.close();
@@ -719,6 +730,7 @@ class PerimeterCheck extends HTMLElement {
 
   _exitCapture() {
     this._finishing = true;
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
     if (this._embedded) {
@@ -947,6 +959,7 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     document.removeEventListener("click", this._documentClick);
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     clearTimeout(this._toastTimer);
   }
