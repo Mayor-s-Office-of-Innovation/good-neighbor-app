@@ -124,9 +124,8 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       sk: "CHECK#chk_01#ANALYSIS#art_1",
     });
     expect(get.input.ConsistentRead).toBe(true);
-    // One GetItem + the supersede's GSI2 open-task query; a partition scan
-    // would page the whole site here — that's the regression this guards.
-    expect(send).toHaveBeenCalledTimes(2);
+    // Task retirement waits for successful guidance publication.
+    expect(send).toHaveBeenCalledTimes(1);
     expect(analyzeEdit).toHaveBeenCalledWith(
       "ana_20260907_ab12cd34",
       "chk_01-art_1-001-litter",
@@ -134,11 +133,6 @@ describe("analysis amendments (check/artifact-addressed)", () => {
         description: "Actually paint spilled here",
         appId: "good-neighbor-app",
       }),
-    );
-    // Supersede ran with the resolved context (assessmentIdPrefix).
-    const supersedeQuery = send.mock.calls[1][0];
-    expect(supersedeQuery.input.ExpressionAttributeValues[":worklist"]).toBe(
-      "SITE#site-1#TASK#open",
     );
   });
 
@@ -222,26 +216,19 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("keys the supersede off the RESOLVED check/artifact, not client input", async () => {
-    // A malicious/mistyped checkId just 404s — the item's own checkId/artifactId
-    // drive the analyzer call and the supersede scope.
-    send.mockResolvedValueOnce({
-      Item: analysisItem({ checkId: "chk_REAL", artifactId: "art_REAL" }),
-    });
-    send.mockResolvedValueOnce({ Items: [] });
-
+  it("does not retire tasks before replacement guidance has been published", async () => {
+    send.mockResolvedValueOnce({ Item: analysisItem() });
     await invoke(
       amendEvent({ body: { reason: { key: "not_a_problem" } } }),
       rejectAnalysisCondition,
     );
-
-    const supersedeQuery = send.mock.calls[1][0];
-    expect(supersedeQuery).not.toBeInstanceOf(TransactWriteCommand);
-    // The supersede's GSI2 query is scoped to the resolved site — the
-    // assessmentIdPrefix filter (chk_REAL-art_REAL) applies to its results.
-    expect(supersedeQuery.input.ExpressionAttributeValues[":worklist"]).toBe(
-      "SITE#site-1#TASK#open",
-    );
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
   });
 
   it("client-supplied analysisId is ignored — server-stored one wins", async () => {
