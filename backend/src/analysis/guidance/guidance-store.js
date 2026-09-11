@@ -31,6 +31,7 @@ import {
 } from "./app-actions.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 import { logServerError } from "../../lib/log-server-error.js";
+import { shortCodePart } from "../../lib/short-codes.js";
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -40,8 +41,6 @@ import { logServerError } from "../../lib/log-server-error.js";
 const MAX_TRANSACTION_ITEMS = 100;
 const BATCH_GET_LIMIT = 100;
 const TASK_COMPLETION_LEASE_MS = 5 * 60 * 1000;
-const SHORT_CODE_LENGTH = 3;
-
 /**
  * @param {number} ms
  * @returns {Promise<void>}
@@ -60,26 +59,6 @@ function namedError(name, message) {
 }
 
 /**
- * @param {unknown} value
- * @param {string} fallback
- * @returns {string}
- */
-function normalizeShortCode(value, fallback) {
-  const normalized = String(value ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-  if (normalized) return normalized;
-  return (
-    String(fallback)
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .slice(0, SHORT_CODE_LENGTH) || "GNP"
-  );
-}
-
-/**
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId
@@ -95,11 +74,11 @@ async function getTaskShortCodeParts({ tableName, siteId }) {
   );
   const site = result.Item ?? {};
   return {
-    providerShortCode: normalizeShortCode(
+    providerShortCode: shortCodePart(
       site.providerShortCode,
       String(site.providerId ?? siteId),
     ),
-    siteShortCode: normalizeShortCode(
+    siteShortCode: shortCodePart(
       site.siteShortCode,
       String(site.name ?? siteId),
     ),

@@ -1,4 +1,5 @@
 import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { normalizeExplicitShortCode } from "../../src/lib/short-codes.js";
 
 const nowIso = () => new Date().toISOString();
 
@@ -92,6 +93,7 @@ export async function seedSiteCodes(docDdb, tableName, options = {}) {
   const seededCodes = [];
 
   for (const seed of devSiteCodeSeeds) {
+    validateSeedShortCodes(seed);
     await putProvider(docDdb, tableName, seed, now);
     await upsertSite(docDdb, tableName, seed, now);
     await putSiteCode(docDdb, tableName, seed, now);
@@ -124,6 +126,19 @@ export async function seedSiteCodes(docDdb, tableName, options = {}) {
   }
 
   return { seededCodes };
+}
+
+/**
+ * @param {typeof devSiteCodeSeeds[number]} seed
+ */
+function validateSeedShortCodes(seed) {
+  if (
+    normalizeExplicitShortCode(seed.providerShortCode) !==
+      seed.providerShortCode ||
+    normalizeExplicitShortCode(seed.siteShortCode) !== seed.siteShortCode
+  ) {
+    throw new Error(`Invalid short code seed for site ${seed.siteId}`);
+  }
 }
 
 /**

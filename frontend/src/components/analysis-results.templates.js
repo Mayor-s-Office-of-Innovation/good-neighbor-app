@@ -322,7 +322,13 @@ export function taskAnalysisCard({
  * @returns {string}
  */
 function taskDisplayReference(task) {
-  return String(task.shortId || task.displayId || task.display_id || "");
+  return String(
+    task.shortId ||
+      task.displayId ||
+      task.display_id ||
+      task.assessmentId ||
+      "",
+  );
 }
 
 /**
