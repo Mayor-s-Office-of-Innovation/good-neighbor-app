@@ -90,6 +90,7 @@ function createPlaceState(place) {
     name: place.name,
     items: [],
     skipped: false,
+    reviewed: false,
     inputMode: "photo",
     draftText: "",
     conditionLabels: [],
@@ -103,6 +104,7 @@ function normalizePlaceState(place, placeState = {}) {
     name: place.name,
     items: Array.isArray(placeState.items) ? placeState.items : [],
     skipped: Boolean(placeState.skipped),
+    reviewed: Boolean(placeState.reviewed),
     inputMode: placeState.inputMode === "text" ? "text" : "photo",
     draftText:
       typeof placeState.draftText === "string" ? placeState.draftText : "",
@@ -405,6 +407,7 @@ export function setPlaceInputMode(placeId, inputMode) {
   const place = current.places[placeId];
   if (!place) return null;
   place.inputMode = inputMode === "text" ? "text" : "photo";
+  place.reviewed = false;
   persist();
   emit();
   return place;
@@ -448,6 +451,7 @@ export function addItem(placeId, item) {
   };
   placeState.items.push(record);
   placeState.skipped = false;
+  placeState.reviewed = false;
   persist();
   emit();
   return record;
@@ -483,6 +487,7 @@ export function removeItem(placeId, itemId) {
   const place = current.places[placeId];
   if (!place) return;
   place.items = place.items.filter((i) => i.id !== itemId);
+  place.reviewed = false;
   persist();
   emit();
 }
@@ -535,6 +540,18 @@ export function updateItemAnalysis(placeId, itemId, analysisPatch) {
 export function skipPlace(placeId) {
   if (!current) return;
   current.places[placeId].skipped = true;
+  current.places[placeId].reviewed = false;
+  persist();
+  emit();
+}
+
+/** Mark a place reviewed after the user continues past submitted evidence. */
+export function reviewPlace(placeId) {
+  if (!current) return;
+  const place = current.places[placeId];
+  if (!place) return;
+  place.reviewed = true;
+  place.skipped = false;
   persist();
   emit();
 }

@@ -84,7 +84,7 @@ export const shell = ({ embedded = false } = {}) => html`
       >
         <div class="places-modal__copy">
           <h2 class="places-modal__title" id="done-incomplete-title">
-            Finish now?
+            Finish check?
           </h2>
           <p class="places-modal__text" id="done-incomplete-copy"></p>
         </div>
@@ -94,14 +94,14 @@ export const shell = ({ embedded = false } = {}) => html`
             id="done-incomplete-keep"
             type="submit"
           >
-            Keep checking
+            Keep editing
           </button>
           <button
             class="places-modal__danger"
             id="done-incomplete-finish"
             type="button"
           >
-            Finish anyway
+            Finish check
           </button>
         </div>
       </form>
@@ -297,10 +297,11 @@ function placeSummary(place) {
 
 /**
  * @param {object} props
- * @param {{ id: string, name: string, items: any[], skipped?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[] }} props.place
+ * @param {{ id: string, name: string, items: any[], skipped?: boolean, reviewed?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[] }} props.place
  * @param {number} props.index
  * @param {boolean} props.expanded
  * @param {boolean} props.isLast
+ * @param {string} [props.nextPlaceName]
  * @param {string | null} props.openMenuItemId
  * @param {{ top: number, right: number } | null} props.photoMenuAnchor
  * @returns {string}
@@ -310,20 +311,31 @@ export function placeRow({
   index,
   expanded,
   isLast,
+  nextPlaceName,
   openMenuItemId,
   photoMenuAnchor,
 }) {
   const summary = placeSummary(place);
-  const complete = place.items.length > 0 || place.skipped;
+  const reviewed = place.items.length > 0 && place.reviewed;
+  const skipped = Boolean(place.skipped);
+  const complete = reviewed || skipped;
   return html`
-    <section class="place-row ${expanded ? "place-row--expanded" : ""}">
+    <section
+      class="place-row ${expanded ? "place-row--expanded" : ""} ${skipped
+        ? "place-row--skipped"
+        : ""}"
+    >
       <div class="place-row__rail" aria-hidden="true">
         <span
-          class="place-row__step ${complete ? "place-row__step--done" : ""}"
+          class="place-row__step ${reviewed
+            ? "place-row__step--done"
+            : ""} ${skipped ? "place-row__step--skipped" : ""}"
         >
-          ${complete
+          ${reviewed
             ? html`<span class="place-row__check" aria-hidden="true"></span>`
-            : index + 1}
+            : skipped
+              ? html`<span class="place-row__minus" aria-hidden="true"></span>`
+              : index + 1}
         </span>
         <span
           class="place-row__line ${complete
@@ -348,25 +360,34 @@ export function placeRow({
           ? html`<p class="place-row__summary">${escapeHtml(summary)}</p>`
           : ""}
         ${conditionList(place.conditionLabels || [])}
-        ${expanded ? expandedPlace(place, openMenuItemId, photoMenuAnchor) : ""}
+        ${pendingIssueLabel(place, expanded)}
+        ${expanded
+          ? expandedPlace(place, openMenuItemId, photoMenuAnchor, nextPlaceName)
+          : ""}
       </div>
     </section>
   `;
 }
 
-function expandedPlace(place, openMenuItemId, photoMenuAnchor) {
+function expandedPlace(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
   return html`
     <div class="place-row__expanded">
       ${place.inputMode === "text"
         ? textMode(place)
-        : photoMode(place, openMenuItemId, photoMenuAnchor)}
+        : photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName)}
     </div>
   `;
 }
 
-function photoMode(place, openMenuItemId, photoMenuAnchor) {
+function photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
   const photos = orderedPhotoItems(place.items);
   const openMenuItem = photos.find((item) => item.id === openMenuItemId);
+  const continueLabel =
+    place.items.length && nextPlaceName
+      ? `Continue to ${nextPlaceName}`
+      : place.items.length
+        ? "Continue"
+        : "Skip for now";
   return html`
     ${photos.length === 0
       ? html`<p class="place-row__prompt">
@@ -391,11 +412,13 @@ function photoMode(place, openMenuItemId, photoMenuAnchor) {
     ${inlineAnalyzing(place)}
     <div class="place-row__actions">
       <button
-        class="btn-pill btn-pill--filled"
+        class="btn-pill ${place.items.length
+          ? "btn-pill--continue"
+          : "btn-pill--filled"}"
         type="button"
         data-next-place="${escapeAttr(place.id)}"
       >
-        ${place.items.length ? "Next place" : "Skip for now"}
+        ${escapeHtml(continueLabel)}
       </button>
       <button
         class="btn-pill btn-pill--outline"
@@ -436,12 +459,12 @@ ${escapeHtml(place.draftText || "")}</textarea
     </label>
     <div class="place-row__actions">
       <button
-        class="btn-pill btn-pill--filled"
+        class="btn-pill btn-pill--save-note"
         type="button"
         data-review-text="${escapeAttr(place.id)}"
         ${canSaveText ? "" : "disabled"}
       >
-        Save changes
+        Save note
       </button>
       <button
         class="btn-pill btn-pill--outline"
@@ -575,7 +598,7 @@ function conditionList(labels) {
         .map(
           (label) => html`
             <li>
-              <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
+              <wa-icon name="flag" aria-hidden="true"></wa-icon>
               <span>${escapeHtml(label)}</span>
             </li>
           `,
@@ -585,11 +608,27 @@ function conditionList(labels) {
   `;
 }
 
+function pendingIssueLabel(place, expanded) {
+  if (expanded || !hasPendingAnalysis(place)) return "";
+  return html`
+    <div class="place-row__pending-issue" aria-label="Analyzing issue label">
+      <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
+      <span aria-hidden="true"></span>
+    </div>
+  `;
+}
+
+function hasPendingAnalysis(place) {
+  return place.items?.some((item) =>
+    ["queued", "analyzing"].includes(item.analysis?.status),
+  );
+}
+
 export function addPlaceButton() {
   return html`
     <button class="place-timeline__add" id="add-place-open" type="button">
       <span class="place-timeline__add-icon" aria-hidden="true"></span>
-      <span class="visually-hidden">Add a place</span>
+      <span>Add place</span>
     </button>
   `;
 }
@@ -602,7 +641,7 @@ export function footer({ items, analyzingOpen }) {
   const problemLabel = active ? "Analyzing..." : problemSummaryLabel(problems);
   return html`
     <button class="check-timeline__done" id="done-check" type="button">
-      Done
+      Finish check
     </button>
     ${items.length
       ? html`

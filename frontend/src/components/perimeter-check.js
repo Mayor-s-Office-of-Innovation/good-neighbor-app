@@ -45,6 +45,7 @@ import {
   skipPlace,
   isCurrentSession,
   setPlaceInputMode,
+  reviewPlace,
   addPlaceToCheck,
   getAnalyzingOpen,
   setAnalyzingOpen,
@@ -689,6 +690,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _done() {
+    if (this._hasUnsavedNote()) {
+      this._showDoneIncomplete(0, { unsavedNote: true });
+      return;
+    }
     const incompleteCount = this._incompletePlaceCount();
     if (incompleteCount > 0) {
       this._showDoneIncomplete(incompleteCount);
@@ -699,6 +704,7 @@ class PerimeterCheck extends HTMLElement {
 
   async _finishCheck() {
     const check = getCurrentCheck();
+    this._discardUnsavedNotes(check);
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._deletionUnsub?.();
@@ -756,16 +762,43 @@ class PerimeterCheck extends HTMLElement {
     return Boolean(
       place.items?.some(
         (item) => item.kind === "photo" || item.kind === "text",
-      ) ||
-        place.description?.validated ||
-        place.draftText?.trim(),
+      ) || place.description?.validated,
     );
   }
 
-  _showDoneIncomplete(incompleteCount) {
+  _hasUnsavedNote() {
+    const check = getCurrentCheck();
+    if (!check) return false;
+    return (check.placeOrder || []).some((placeId) =>
+      Boolean(check.places[placeId]?.draftText?.trim()),
+    );
+  }
+
+  _discardUnsavedNotes(check) {
+    for (const placeId of check?.placeOrder || []) {
+      if (check.places[placeId]?.draftText?.trim()) {
+        setPlaceDraftText(placeId, "");
+      }
+    }
+  }
+
+  _showDoneIncomplete(incompleteCount, { unsavedNote = false } = {}) {
+    const title = this.querySelector("#done-incomplete-title");
     const copy = this.querySelector("#done-incomplete-copy");
-    const noun = incompleteCount === 1 ? "place does" : "places do";
-    copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
+    const finish = this.querySelector("#done-incomplete-finish");
+    const keep = this.querySelector("#done-incomplete-keep");
+    if (unsavedNote) {
+      title.textContent = "Finish check?";
+      copy.textContent = "You have an unsaved note";
+      keep.textContent = "Keep editing";
+      finish.textContent = "Discard and finish";
+    } else {
+      title.textContent = "Finish check?";
+      const noun = incompleteCount === 1 ? "place does" : "places do";
+      copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
+      keep.textContent = "Keep editing";
+      finish.textContent = "Finish check";
+    }
     this._doneIncompleteDialog?.showModal();
   }
 
@@ -790,7 +823,11 @@ class PerimeterCheck extends HTMLElement {
   _advanceOrSkip(placeId) {
     const place = getPlace(placeId);
     if (!place) return;
-    if (!place.items.length) skipPlace(placeId);
+    if (!place.items.length) {
+      skipPlace(placeId);
+    } else {
+      reviewPlace(placeId);
+    }
     const index = this._places.indexOf(placeId);
     this._placeIndex = Math.min(index + 1, this._places.length - 1);
     setActivePlaceIndex(this._placeIndex);
@@ -922,6 +959,7 @@ class PerimeterCheck extends HTMLElement {
             index,
             expanded: index === this._placeIndex,
             isLast: index === this._places.length - 1,
+            nextPlaceName: check.places[this._places[index + 1]]?.name,
             openMenuItemId,
             photoMenuAnchor: this._photoMenuAnchor,
           }),
