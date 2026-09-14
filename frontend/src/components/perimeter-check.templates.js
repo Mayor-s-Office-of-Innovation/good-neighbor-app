@@ -298,7 +298,7 @@ function placeSummary(place) {
 
 /**
  * @param {object} props
- * @param {{ id: string, name: string, items: any[], skipped?: boolean, reviewed?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[] }} props.place
+ * @param {{ id: string, name: string, items: any[], skipped?: boolean, reviewed?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[], description?: { validated?: boolean } }} props.place
  * @param {number} props.index
  * @param {boolean} props.expanded
  * @param {boolean} props.isLast
