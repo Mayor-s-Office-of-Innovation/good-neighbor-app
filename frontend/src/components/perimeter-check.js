@@ -30,6 +30,7 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
 import { isFiled311Completion } from "../domain/task-actions.js";
+import { hasPlaceEvidence } from "../domain/place-evidence.js";
 import {
   ensureCheck,
   startCheck,
@@ -759,11 +760,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _placeHasPhotoOrDescription(place) {
-    return Boolean(
-      place.items?.some(
-        (item) => item.kind === "photo" || item.kind === "text",
-      ) || place.description?.validated,
-    );
+    return hasPlaceEvidence(place);
   }
 
   _hasUnsavedNote() {
@@ -823,7 +820,7 @@ class PerimeterCheck extends HTMLElement {
   _advanceOrSkip(placeId) {
     const place = getPlace(placeId);
     if (!place) return;
-    if (!place.items.length) {
+    if (!shouldReviewPlace(place)) {
       skipPlace(placeId);
     } else {
       reviewPlace(placeId);
@@ -1021,6 +1018,10 @@ export function shouldResumeEvidenceItem(item) {
       (analysisStatus === "failed" &&
         (hasUploadedArtifact || isRetryableTextRegistration)),
   );
+}
+
+export function shouldReviewPlace(place) {
+  return hasPlaceEvidence(place);
 }
 
 export function findReviewTextButton(root, placeId) {

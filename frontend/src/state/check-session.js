@@ -22,6 +22,7 @@ import {
   getReview,
   clearReview,
 } from "../db.js";
+import { hasPlaceEvidence } from "../domain/place-evidence.js";
 
 export const SINGLE_PROBLEM_PLACE = { id: "problem", name: "Problem" };
 
@@ -560,11 +561,7 @@ export function reviewPlace(placeId) {
 export function isPlaceCovered(placeId) {
   if (!current) return false;
   const place = current.places[placeId];
-  return (
-    place.skipped ||
-    place.items.length > 0 ||
-    Boolean(place.description?.validated)
-  );
+  return place.skipped || hasPlaceEvidence(place);
 }
 
 export function coveredCount() {
