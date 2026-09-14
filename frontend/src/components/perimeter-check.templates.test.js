@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addPlaceButton,
   canSubmitTextDescription,
   orderedPhotoItems,
   placeRow,
@@ -40,7 +41,7 @@ describe("placeRow", () => {
     expect(markup).not.toContain(
       'data-review-text="place-1"\n        disabled',
     );
-    expect(markup.indexOf("Save changes")).toBeLessThan(
+    expect(markup.indexOf("Save note")).toBeLessThan(
       markup.indexOf("Take a photo instead"),
     );
   });
@@ -61,8 +62,158 @@ describe("placeRow", () => {
       photoMenuAnchor: null,
     });
 
-    expect(markup).toContain("Save changes");
+    expect(markup).toContain("Save note");
     expect(markup).toContain("disabled");
+  });
+
+  it("labels submitted-photo advance with the next place name", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [{ id: "photo-1", kind: "photo" }],
+        inputMode: "photo",
+      },
+      index: 0,
+      expanded: true,
+      isLast: false,
+      nextPlaceName: "Side alley",
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain("Continue to Side alley");
+    expect(markup).not.toContain("Next place");
+  });
+
+  it("waits to show the check mark until a place has been continued", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [{ id: "photo-1", kind: "photo" }],
+        reviewed: false,
+      },
+      index: 0,
+      expanded: false,
+      isLast: false,
+      nextPlaceName: "Side alley",
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).not.toContain("place-row__check");
+    expect(markup).not.toContain("place-row__step--done");
+  });
+
+  it("shows a check mark after submitted evidence is continued", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [{ id: "photo-1", kind: "photo" }],
+        reviewed: true,
+      },
+      index: 0,
+      expanded: false,
+      isLast: false,
+      nextPlaceName: "Side alley",
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain("place-row__step--done");
+    expect(markup).toContain("place-row__check");
+    expect(markup).toContain("place-row__line--done");
+  });
+
+  it("renders condition labels with flag icons", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [{ id: "photo-1", kind: "photo" }],
+        conditionLabels: ["Waste & Small Debris"],
+      },
+      index: 0,
+      expanded: false,
+      isLast: false,
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain('name="flag"');
+    expect(markup).toContain("Waste &amp; Small Debris");
+    expect(markup).not.toContain('name="sparkles"');
+  });
+
+  it("renders a pending issue skeleton for collapsed places still analyzing", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [
+          {
+            id: "photo-1",
+            kind: "photo",
+            analysis: { status: "analyzing" },
+          },
+        ],
+      },
+      index: 0,
+      expanded: false,
+      isLast: false,
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain("place-row__pending-issue");
+    expect(markup).toContain('name="sparkles"');
+    expect(markup).toContain("Analyzing issue label");
+  });
+
+  it("keeps pending issue skeleton out of the expanded capture controls", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [
+          {
+            id: "photo-1",
+            kind: "photo",
+            analysis: { status: "queued" },
+          },
+        ],
+      },
+      index: 0,
+      expanded: true,
+      isLast: false,
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).not.toContain("place-row__pending-issue");
+  });
+
+  it("shows a minus for skipped places", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [],
+        skipped: true,
+      },
+      index: 0,
+      expanded: false,
+      isLast: false,
+      nextPlaceName: "Side alley",
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain("place-row__step--skipped");
+    expect(markup).toContain("place-row__minus");
+    expect(markup).toContain("place-row__line--done");
   });
 
   it("requires at least five trimmed characters before text can submit", () => {
@@ -70,5 +221,15 @@ describe("placeRow", () => {
     expect(canSubmitTextDescription(" abc ")).toBe(false);
     expect(canSubmitTextDescription("abcde")).toBe(true);
     expect(canSubmitTextDescription("  abcde  ")).toBe(true);
+  });
+});
+
+describe("addPlaceButton", () => {
+  it("renders the visible add-place label", () => {
+    const markup = addPlaceButton();
+
+    expect(markup).toContain('id="add-place-open"');
+    expect(markup).toContain("Add place");
+    expect(markup).not.toContain("visually-hidden");
   });
 });
