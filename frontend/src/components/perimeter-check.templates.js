@@ -5,6 +5,7 @@
   photo or typed description analyzes independently.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { hasPlaceEvidence } from "../domain/place-evidence.js";
 import {
   analysisResultsTray,
   problemSummary,
@@ -316,9 +317,14 @@ export function placeRow({
   photoMenuAnchor,
 }) {
   const summary = placeSummary(place);
-  const reviewed = place.items.length > 0 && place.reviewed;
+  const reviewed = hasPlaceEvidence(place) && place.reviewed;
   const skipped = Boolean(place.skipped);
   const complete = reviewed || skipped;
+  const accessibleStatus = reviewed
+    ? "Reviewed"
+    : skipped
+      ? "Skipped for now"
+      : "";
   return html`
     <section
       class="place-row ${expanded ? "place-row--expanded" : ""} ${skipped
@@ -351,6 +357,9 @@ export function placeRow({
           aria-expanded="${expanded ? "true" : "false"}"
         >
           <span>${escapeHtml(place.name)}</span>
+          ${accessibleStatus
+            ? html`<span class="visually-hidden">, ${accessibleStatus}</span>`
+            : ""}
           <span
             class="place-row__caret ${expanded ? "place-row__caret--up" : ""}"
             aria-hidden="true"
@@ -382,10 +391,11 @@ function expandedPlace(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
 function photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
   const photos = orderedPhotoItems(place.items);
   const openMenuItem = photos.find((item) => item.id === openMenuItemId);
+  const hasEvidence = hasPlaceEvidence(place);
   const continueLabel =
-    place.items.length && nextPlaceName
+    hasEvidence && nextPlaceName
       ? `Continue to ${nextPlaceName}`
-      : place.items.length
+      : hasEvidence
         ? "Continue"
         : "Skip for now";
   return html`
@@ -412,7 +422,7 @@ function photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
     ${inlineAnalyzing(place)}
     <div class="place-row__actions">
       <button
-        class="btn-pill ${place.items.length
+        class="btn-pill ${hasEvidence
           ? "btn-pill--continue"
           : "btn-pill--filled"}"
         type="button"
@@ -611,9 +621,15 @@ function conditionList(labels) {
 function pendingIssueLabel(place, expanded) {
   if (expanded || !hasPendingAnalysis(place)) return "";
   return html`
-    <div class="place-row__pending-issue" aria-label="Analyzing issue label">
+    <div
+      class="place-row__pending-issue"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
       <span aria-hidden="true"></span>
+      <span class="visually-hidden">Issue-label analysis in progress</span>
     </div>
   `;
 }

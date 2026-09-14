@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,6 +19,14 @@ describe("orderedPhotoItems", () => {
         { id: "newest", kind: "photo" },
       ]).map((item) => item.id),
     ).toEqual(["newest", "middle", "oldest"]);
+  });
+});
+
+describe("self-hosted icons", () => {
+  it("includes the sparkle asset used by pending-analysis placeholders", () => {
+    expect(
+      existsSync(new URL("../../public/icons/sparkles.svg", import.meta.url)),
+    ).toBe(true);
   });
 });
 
@@ -104,6 +114,7 @@ describe("placeRow", () => {
 
     expect(markup).not.toContain("place-row__check");
     expect(markup).not.toContain("place-row__step--done");
+    expect(markup).not.toContain('class="visually-hidden"');
   });
 
   it("shows a check mark after submitted evidence is continued", () => {
@@ -125,6 +136,29 @@ describe("placeRow", () => {
     expect(markup).toContain("place-row__step--done");
     expect(markup).toContain("place-row__check");
     expect(markup).toContain("place-row__line--done");
+    expect(markup).toContain('<span class="visually-hidden">, Reviewed</span>');
+  });
+
+  it("continues a reviewed place with a validated description and no items", () => {
+    const markup = placeRow({
+      place: {
+        id: "place-1",
+        name: "Front entrance",
+        items: [],
+        description: { validated: true },
+        reviewed: true,
+      },
+      index: 0,
+      expanded: true,
+      isLast: false,
+      nextPlaceName: "Side alley",
+      openMenuItemId: null,
+      photoMenuAnchor: null,
+    });
+
+    expect(markup).toContain("place-row__step--done");
+    expect(markup).toContain("Continue to Side alley");
+    expect(markup).toContain("btn-pill--continue");
   });
 
   it("renders condition labels with flag icons", () => {
@@ -169,7 +203,9 @@ describe("placeRow", () => {
 
     expect(markup).toContain("place-row__pending-issue");
     expect(markup).toContain('name="sparkles"');
-    expect(markup).toContain("Analyzing issue label");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain("Issue-label analysis in progress");
   });
 
   it("keeps pending issue skeleton out of the expanded capture controls", () => {
@@ -214,6 +250,9 @@ describe("placeRow", () => {
     expect(markup).toContain("place-row__step--skipped");
     expect(markup).toContain("place-row__minus");
     expect(markup).toContain("place-row__line--done");
+    expect(markup).toContain(
+      '<span class="visually-hidden">, Skipped for now</span>',
+    );
   });
 
   it("requires at least five trimmed characters before text can submit", () => {

@@ -60,3 +60,16 @@ describe("findReviewTextButton", () => {
     expect(findReviewTextButton(root, 'place["north"]')).toBe(matching);
   });
 });
+
+describe("shouldReviewPlace", () => {
+  it("continues after a validated description without photo or text items", async () => {
+    const { shouldReviewPlace } = await import("./perimeter-check.js");
+
+    expect(
+      shouldReviewPlace({
+        items: [],
+        description: { validated: true },
+      }),
+    ).toBe(true);
+  });
+});
