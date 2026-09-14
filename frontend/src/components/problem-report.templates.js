@@ -58,26 +58,19 @@ export const shell = ({
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
-          <wa-button
-            class="sheet__cancel"
-            type="button"
-            id="cancel-report-save"
-            appearance="outlined"
-          >
+          <button class="sheet__cancel" type="button" id="cancel-report-save">
             Save draft and exit
-          </wa-button>
+          </button>
         </div>
         <ul class="sheet__opts">
           <li>
-            <wa-button
+            <button
               class="sheet__opt sheet__opt--danger"
               id="cancel-report-discard"
               type="button"
-              appearance="filled"
-              variant="danger"
             >
               Discard draft and exit
-            </wa-button>
+            </button>
           </li>
         </ul>
       </div>

@@ -6,6 +6,12 @@ import {
 } from "../services/api.js";
 import { guidanceFixtures } from "../dev/guidance-fixtures.js";
 
+// Dev-harness-only WA form controls: imported here, not in main.js, so the
+// select/option graph (which drags the wa-button chunk with it) never ships to
+// production. This module itself is DEV-gated in main.js.
+import "@awesome.me/webawesome/dist/components/select/select.js";
+import "@awesome.me/webawesome/dist/components/option/option.js";
+
 const DEFAULT_FIXTURE = guidanceFixtures[0];
 
 /**
@@ -148,14 +154,9 @@ class GuidanceHarness extends HTMLElement {
                   )
                   .join("")}
               </wa-select>
-              <wa-button
-                type="button"
-                id="freshen"
-                appearance="outlined"
-                size="small"
-              >
+              <button class="btn-outline--sm" type="button" id="freshen">
                 Fresh IDs
-              </wa-button>
+              </button>
             </div>
 
             <wa-checkbox
@@ -195,16 +196,12 @@ class GuidanceHarness extends HTMLElement {
             ></wa-textarea>
 
             <div class="guidance-harness__actions">
-              <wa-button
-                type="submit"
-                appearance="accent"
-                ${this._busy ? "disabled" : ""}
-              >
+              <button class="btn-ink" type="submit" ${this._busy ? "disabled" : ""}>
                 Evaluate
-              </wa-button>
-              <wa-button type="button" id="refresh" appearance="outlined">
+              </button>
+              <button class="btn-outline" type="button" id="refresh">
                 Refresh
-              </wa-button>
+              </button>
             </div>
             ${this._error
               ? html`<p class="guidance-harness__error" role="alert">
@@ -503,28 +500,26 @@ class GuidanceHarness extends HTMLElement {
               <div class="guidance-question">
                 <p>${escapeHtml(displayValue(question.prompt))}</p>
                 <div class="guidance-question__actions">
-                  <wa-button
+                  <button
+                    class="btn-outline--sm"
                     type="button"
-                    appearance="outlined"
-                    size="small"
                     data-answer="true"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
                     data-condition-id="${escapeAttr(condition.conditionId)}"
                     data-answer-key="${escapeAttr(question.key)}"
                   >
                     Yes
-                  </wa-button>
-                  <wa-button
+                  </button>
+                  <button
+                    class="btn-outline--sm"
                     type="button"
-                    appearance="outlined"
-                    size="small"
                     data-answer="false"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
                     data-condition-id="${escapeAttr(condition.conditionId)}"
                     data-answer-key="${escapeAttr(question.key)}"
                   >
                     No
-                  </wa-button>
+                  </button>
                 </div>
               </div>
             `
