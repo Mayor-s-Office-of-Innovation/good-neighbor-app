@@ -22,6 +22,7 @@ import {
   getReview,
   clearReview,
 } from "../db.js";
+import { hasPlaceEvidence } from "../domain/place-evidence.js";
 
 export const SINGLE_PROBLEM_PLACE = { id: "problem", name: "Problem" };
 
@@ -90,6 +91,7 @@ function createPlaceState(place) {
     name: place.name,
     items: [],
     skipped: false,
+    reviewed: false,
     inputMode: "photo",
     draftText: "",
     conditionLabels: [],
@@ -103,6 +105,7 @@ function normalizePlaceState(place, placeState = {}) {
     name: place.name,
     items: Array.isArray(placeState.items) ? placeState.items : [],
     skipped: Boolean(placeState.skipped),
+    reviewed: Boolean(placeState.reviewed),
     inputMode: placeState.inputMode === "text" ? "text" : "photo",
     draftText:
       typeof placeState.draftText === "string" ? placeState.draftText : "",
@@ -405,6 +408,7 @@ export function setPlaceInputMode(placeId, inputMode) {
   const place = current.places[placeId];
   if (!place) return null;
   place.inputMode = inputMode === "text" ? "text" : "photo";
+  place.reviewed = false;
   persist();
   emit();
   return place;
@@ -448,6 +452,7 @@ export function addItem(placeId, item) {
   };
   placeState.items.push(record);
   placeState.skipped = false;
+  placeState.reviewed = false;
   persist();
   emit();
   return record;
@@ -483,6 +488,7 @@ export function removeItem(placeId, itemId) {
   const place = current.places[placeId];
   if (!place) return;
   place.items = place.items.filter((i) => i.id !== itemId);
+  place.reviewed = false;
   persist();
   emit();
 }
@@ -535,6 +541,18 @@ export function updateItemAnalysis(placeId, itemId, analysisPatch) {
 export function skipPlace(placeId) {
   if (!current) return;
   current.places[placeId].skipped = true;
+  current.places[placeId].reviewed = false;
+  persist();
+  emit();
+}
+
+/** Mark a place reviewed after the user continues past submitted evidence. */
+export function reviewPlace(placeId) {
+  if (!current) return;
+  const place = current.places[placeId];
+  if (!place) return;
+  place.reviewed = true;
+  place.skipped = false;
   persist();
   emit();
 }
@@ -543,11 +561,7 @@ export function skipPlace(placeId) {
 export function isPlaceCovered(placeId) {
   if (!current) return false;
   const place = current.places[placeId];
-  return (
-    place.skipped ||
-    place.items.length > 0 ||
-    Boolean(place.description?.validated)
-  );
+  return place.skipped || hasPlaceEvidence(place);
 }
 
 export function coveredCount() {
