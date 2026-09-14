@@ -37,6 +37,10 @@ New here? Get your bearings in this order:
   in CI) is the type gate; source runs unmodified in the browser and on Lambda. See
   [ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md).
 - Use native web components for UI and Web Awesome for shared UI primitives.
+- Buttons are always native `<button>` + a token-built `.btn-*` class — never
+  `<wa-button>`. Form controls (wa-input, wa-select, wa-textarea, wa-checkbox,
+  wa-otp-input), icons, spinners, badges, callouts, and alerts stay Web Awesome.
+  See [ADR 0011](./docs/adr/0011-native-buttons.md).
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and DynamoDB.
 - Use a single-table DynamoDB design accessed through the AWS SDK (`@aws-sdk/lib-dynamodb`

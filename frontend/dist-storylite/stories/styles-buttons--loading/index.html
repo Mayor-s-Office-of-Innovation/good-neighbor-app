@@ -1,3 +1,127 @@
+<!doctype html>
+<html lang="en" class="storylite-preview">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Foundations/Buttons - Loading</title>
+    
+    <style>
+      :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { min-block-size: 100dvh; margin: 0; }
+#ss-canvas { min-block-size: 100dvh; padding: 16px; }
+.sl-static-back { position: fixed; inset-block-end: 1rem; inset-inline-end: 1rem; margin: 0; }
+.sl-static-back a { color: inherit; }
+      /*
+  Design tokens — Take 5 "Neutral system": greyscale surfaces + text, with BLUE
+  reserved for status/interactive (links, the one status accent, active states).
+  Severity is never carried by color alone — grouping + labels do that (WCAG 1.4.1);
+  color only reinforces.
+
+  Light values live in :root; dark overrides live in html.wa-dark and redefine ONLY
+  the semantic tokens that change. Web Awesome components re-theme off the same
+  .wa-dark / .wa-light class, so one class toggle re-themes our UI and WA together.
+
+  Accessibility: the greyscale values below are AA-checked against the worst-case
+  background each sits on (see docs/take5-plan.md "Accessible palette").
+    - --text-secondary #666666 : >=5.0:1 on #fff / #fafafa / #f5f5f5 / #f0f0f0
+    - --brand-blue    #155fce  : 5.90:1 on white, 5.15:1 on the pale-blue pill
+    - --text-faint    #767676  : 4.54:1 on white; used only where shape/text also
+                                  conveys the state (donut segments, legend dots) — never sole carrier
+*/
+:root {
+  color-scheme: light;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+
+  /* Interactive / status accent — the ONLY chromatic color in the neutral system */
+  --brand-blue: #155fce;
+  --brand-blue-bg: #e8f0fe; /* pale pill behind brand-blue text/badges */
+
+  /* Severity reinforcement (never the sole carrier — grouping + labels lead) */
+  --c-hazard: #b42318; /* 5.9:1 on white; pairs with the "Hazard" label + icon */
+  --c-hazard-bg: #fdecea;
+
+  /* "You changed this" accent — amber, distinct from both blue (interactive) and
+     red (hazard). Used for the dispute status line, always paired with the "You
+     marked this as ..." text so color isn't the sole carrier. ~5:1 on white. */
+  --c-flag: #b45309;
+
+  /* Neutral surfaces */
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f5f5f5;
+  --surface-3: #f0f0f0; /* grey pill */
+  --c-line: #e5e5e5;
+
+  /* Ink pill — the design's primary CTA. Measured from the wireframe: #262626
+     charcoal (deliberately lighter than --text), white label (15:1, AA). Dark
+     mode inverts to a light pill. Reused by the check-flow CTAs (screens 14–16). */
+  --ink: #262626;
+  --on-ink: #ffffff;
+
+  /* Text */
+  --text: #171717; /* ~16:1 on --surface */
+  --text-secondary: #666666; /* >=5:1 on every surface above */
+  --text-faint: #767676; /* decorative/reinforcing only */
+
+  /* ---- Back-compat aliases (existing components reference these names) ---- */
+  --c-blue: var(--brand-blue);
+  --muted: var(--text-secondary);
+  --c-red: var(--c-hazard);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+  --shadow-lift: 0 4px 10px rgba(16, 24, 40, 0.1),
+    0 12px 24px rgba(16, 24, 40, 0.1);
+
+  /* Figma notification status and soft elevation (independent of WA's hard shadows). */
+  --toast-success: #00883c;
+  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.12);
+
+  --timeline-done-fill: #000000;
+  --timeline-done-mark: #ffffff;
+}
+
+html.wa-dark {
+  color-scheme: dark;
+
+  --brand-blue: #6ba7f0; /* brightened for dark surfaces, keeps hue */
+  --brand-blue-bg: #17273d;
+
+  --c-hazard: #f2938a;
+  --c-hazard-bg: #2a1614;
+
+  --c-flag: #e8a54d; /* brightened amber for dark surfaces */
+
+  --bg: #0f0f0f;
+  --surface: #1a1a1a;
+  --surface-2: #242424;
+  --surface-3: #2a2a2a;
+  --c-line: #333333;
+
+  /* Ink pill inverts on dark: light pill, dark label (16:1, AA). */
+  --ink: #ededed;
+  --on-ink: #131313;
+
+  --text: #ededed; /* ~14:1 on --surface */
+  --text-secondary: #a8a8a8; /* ~6:1 on --surface */
+  --text-faint: #8f8f8f;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.5);
+
+  --toast-success: #6bdc94;
+  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.4);
+
+  --timeline-done-fill: #ffffff;
+  --timeline-done-mark: #000000;
+}
+
+
 /* App layout + component styles. Everything consumes the tokens in tokens.css. */
 
 *,
@@ -803,8 +927,8 @@ form > wa-button[type="submit"] {
   height: 1.25rem;
   display: block;
   background: currentColor;
-  -webkit-mask: url("/icons/gear.svg") center / contain no-repeat;
-  mask: url("/icons/gear.svg") center / contain no-repeat;
+  -webkit-mask: url("../../icons/gear.svg") center / contain no-repeat;
+  mask: url("../../icons/gear.svg") center / contain no-repeat;
 }
 
 @media (max-width: 540px) {
@@ -2490,8 +2614,8 @@ button[data-loading] [data-loading-label] {
   width: 1rem;
   height: 1rem;
   background-color: var(--ink);
-  -webkit-mask-image: url(/icons/xmark.svg);
-  mask-image: url(/icons/xmark.svg);
+  -webkit-mask-image: url(../../icons/xmark.svg);
+  mask-image: url(../../icons/xmark.svg);
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
@@ -3727,14 +3851,14 @@ button[data-loading] [data-loading-label] {
 
 .describe__close-icon--back {
   transform: translateX(-0.015625rem);
-  -webkit-mask-image: url(/icons/chevron-left.svg);
-  mask-image: url(/icons/chevron-left.svg);
+  -webkit-mask-image: url(../../icons/chevron-left.svg);
+  mask-image: url(../../icons/chevron-left.svg);
 }
 
 .describe__close-icon--dismiss {
   transform: scale(1.02);
-  -webkit-mask-image: url(/icons/xmark.svg);
-  mask-image: url(/icons/xmark.svg);
+  -webkit-mask-image: url(../../icons/xmark.svg);
+  mask-image: url(../../icons/xmark.svg);
 }
 
 .describe__title {
@@ -4836,3 +4960,117 @@ app-toasts {
     font-size: 1rem;
   }
 }
+
+
+/*
+  StoryLite preview-only CSS. Injected into the iframe AFTER tokens.css and
+  app.css (see .storylite/config.ts css list). Story workbench chrome only —
+  nothing here belongs in the app itself.
+*/
+
+/* Story canvas defaults: center content on the theme background so isolated
+   pieces read like they do in the app's centered columns. */
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+/* Demo scaffolding: label + example row wrappers used by stories. */
+.story-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.story-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+.story-label {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Dark-mode stories render an element inside a .wa-dark wrapper (the toolbar
+   toggle flips the whole preview body instead). Neutralize StoryLite's flex
+   centering inside wrapper-style demos so wrappers control their own layout. */
+.story-theme-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  border-radius: 14px;
+  border: 1px solid var(--c-line);
+}
+
+/* A11y outlines toggle (toolbar): make every focusable element's focus ring
+   impossible to miss while doing the keyboard-only pass. */
+.show-a11y-outlines :is(button, a, input, textarea, select, [tabindex]):focus {
+  outline: 3px solid var(--brand-blue) !important;
+  outline-offset: 3px !important;
+}
+      
+      
+      .sl-static-warning {
+        margin: 0 0 1rem;
+        padding: .75rem 1rem;
+        border: 1px solid #f59e0b;
+        border-radius: .5rem;
+        color: #92400e;
+        background: #fffbeb;
+      }
+    </style>
+    <script type="module">
+      import { setupPreview } from "../../project.js";
+      setupPreview?.(window);
+      
+    </script>
+  </head>
+  <body>
+    
+    <main id="ss-canvas">
+      
+      
+  <div class="story-stack">
+    <button class="btn-ink" id="sl-load-demo" type="button">
+      <span data-loading-label>Save my place</span>
+      <wa-spinner style="display:none" id="sl-load-spinner"></wa-spinner>
+    </button>
+    <small style="color:var(--text-secondary)">Click to see the busy state — width must not change.</small>
+  </div>
+  <script type="module">
+    const btn = document.getElementById("sl-load-demo");
+    const spinner = document.getElementById("sl-load-spinner");
+    btn?.addEventListener("click", () => {
+      btn.style.setProperty("--btn-loading-min-width", btn.offsetWidth + "px");
+      btn.setAttribute("data-loading", "");
+      btn.setAttribute("aria-busy", "true");
+      btn.disabled = true;
+      spinner.style.display = "inline-block";
+      setTimeout(() => {
+        btn.removeAttribute("data-loading");
+        btn.removeAttribute("aria-busy");
+        btn.disabled = false;
+        spinner.style.display = "none";
+      }, 1800);
+    }, { once: false });
+  </script>
+    </main>
+    
+    <p class="sl-static-back"><a href="../../index.html">Back to StoryLite</a></p>
+  </body>
+</html>
