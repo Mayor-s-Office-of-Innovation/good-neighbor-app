@@ -52,6 +52,12 @@ class AppRoot extends HTMLElement {
     };
     window.addEventListener("siteplacesupdated", this._onSitePlacesUpdated);
     this._onAuthSignout = () => {
+      // Recovery is IN PROGRESS: the user chose sign-out, so the health
+      // state must leave `auth` now — a freshly mounted connection-status on
+      // the setup screen would otherwise re-open its modal over the site
+      // form and make recovery unreachable. (sitebound's clearAuthState
+      // below stays as belt-and-braces for AUTH states detected later.)
+      clearAuthState();
       // The site binding is gone; re-render the first-run setup screen.
       this._site = null;
       if (this._unsub) this._unsub();

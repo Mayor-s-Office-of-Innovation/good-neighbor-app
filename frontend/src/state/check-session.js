@@ -617,6 +617,18 @@ export function clearCheck() {
   emit();
 }
 
+/**
+ * Drop the in-memory session without touching persisted stores (db.js does
+ * the store clears). Used on sign-out recovery, where clearSiteSession()
+ * clears draft+review wholesale and any in-memory `current` would otherwise
+ * survive as a stale singleton from the previous site.
+ */
+export function discardInMemorySession() {
+  current = null;
+  postDescribeAction = null;
+  emit();
+}
+
 export async function pauseCheck() {
   if (current?.status === "in-progress") {
     await saveDraft(current);

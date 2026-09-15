@@ -67,21 +67,23 @@ export function classifyApiFailure(err) {
   }
   if (!(err instanceof Error) || err.name !== "ApiError") return state;
   const status = /** @type {any} */ (err).status;
+  // Non-JSON responses mean the pipe is broken REGARDLESS of status — an
+  // HTML 403 from an intermediary is a transport failure, not an auth
+  // verdict. Check before status-based classification so a rewritten
+  // response can never trigger the destructive AUTH recovery.
+  if (/** @type {any} */ (err).body?.code === "non_json_response") {
+    setState("outage");
+    void probe();
+    return state;
+  }
   if (status === 403) {
-    // 401s already route to the refresh flow; a bare 403 means the authorizer
-    // denied a well-formed token (revoked device / inactive site).
+    // 401s already route to the refresh flow; a bare JSON 403 means the
+    // authorizer denied a well-formed token (revoked device / inactive site).
     setState("auth");
     return state;
   }
   if (status === 0) {
     setState("outage");
-    return state;
-  }
-  // Non-JSON responses (any status) mean the pipe is broken — outage, and
-  // verify with a probe right away.
-  if (/** @type {any} */ (err).body?.code === "non_json_response") {
-    setState("outage");
-    void probe();
     return state;
   }
   return state;
