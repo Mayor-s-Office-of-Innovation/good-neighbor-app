@@ -130,11 +130,71 @@ export async function setSite(name, meta = {}) {
   await tx("site", "readwrite", (os) => os.put(record));
   return record;
 }
+/**
+ * Fields owned by the device binding (setSite at registration) and the session
+ * (updateSiteSession). Site *settings* — the GET /v1/site response callers
+ * spread in — describe the site's configuration, never its identity, so these
+ * keys are dropped from `settings` whenever the stored record already has
+ * them. Without this guard a server response resolved for the wrong tenant
+ * (e.g. the demo fallback) rewrote `siteId` and orphaned the device.
+ */
+const SITE_BINDING_FIELDS = [
+  "id",
+  "siteId",
+  "providerSiteId",
+  "code",
+  "deviceId",
+  "token",
+  "refreshToken",
+  "tokenExpiresAt",
+  "tokenGeneration",
+  "boundAt",
+];
+
+/**
+ * Read the `custom:siteId` claim out of a stored device access token. No
+ * signature check — the server verified it when it was minted, and the client
+ * only uses the value to sanity-check what the server reports back.
+ * @param {unknown} token
+ * @returns {string} the claim, or "" when the token is absent or unreadable
+ */
+export function siteIdFromToken(token) {
+  if (typeof token !== "string") return "";
+  const payload = token.split(".")[1];
+  if (!payload) return "";
+  try {
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claim = JSON.parse(json)?.["custom:siteId"];
+    return typeof claim === "string" ? claim : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * @param {Record<string, any>} [settings] site settings to merge (typically the
+ *   GET /v1/site response); binding/session keys are ignored, see above
+ */
 export async function saveSiteSettings(settings = {}) {
   const current = (await getSite()) || { id: "current", name: "Your site" };
+  const incoming = { ...settings };
+  for (const key of SITE_BINDING_FIELDS) {
+    const bound = /** @type {Record<string, unknown>} */ (current)[key];
+    if (bound !== undefined && bound !== null && bound !== "") {
+      delete incoming[key];
+    }
+  }
+  // Self-heal: the access token's `custom:siteId` claim is the binding the
+  // server actually enforces. A server-reported siteId that matches it may
+  // replace a stale local value (devices whose record was rewritten to the
+  // demo partition before the backend failed closed recover on next load).
+  const claimed = siteIdFromToken(current.token);
+  if (claimed && settings.siteId === claimed) {
+    incoming.siteId = claimed;
+  }
   const record = {
     ...current,
-    ...settings,
+    ...incoming,
     id: "current",
     name: String(settings.name || current.name || "Your site").trim(),
   };
