@@ -28,6 +28,17 @@ describe("self-hosted icons", () => {
       existsSync(new URL("../../public/icons/sparkles.svg", import.meta.url)),
     ).toBe(true);
   });
+
+  it("includes the logout asset used by the settings menu", () => {
+    expect(
+      existsSync(
+        new URL(
+          "../../public/icons/arrow-right-from-bracket.svg",
+          import.meta.url,
+        ),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("placeRow", () => {
