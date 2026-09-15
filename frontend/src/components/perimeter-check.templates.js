@@ -117,25 +117,19 @@ export const shell = ({ embedded = false } = {}) => html`
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
-          <wa-button
-            class="sheet__cancel"
-            type="button"
-            id="cancel-check-save"
-            appearance="filled"
-          >
+          <button class="sheet__cancel" type="button" id="cancel-check-save">
             Save my place to resume later
-          </wa-button>
+          </button>
         </div>
         <ul class="sheet__opts">
           <li>
-            <wa-button
+            <button
               class="sheet__opt sheet__opt--danger"
               id="cancel-check-discard"
               type="button"
-              appearance="plain"
             >
               End the check and exit
-            </wa-button>
+            </button>
           </li>
         </ul>
       </div>

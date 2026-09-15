@@ -42,6 +42,14 @@
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for
   building a screen to spec from the token/class system (`tokens.css` / `app.css` are the
   source of truth).
+- **[design-tokens.md](./design-tokens.md)** — the token values (light/dark) as a
+  Figma ↔ code mapping: theme stack, swatches, button metrics, and the WCAG rules
+  the palette encodes.
+- **[design-system.html](../frontend/design-system.html)** — self-demonstrating visual
+  reference (dev-only: `npm run dev:frontend` → http://127.0.0.1:5173/design-system.html).
+  Renders every button state, all tokens with live values (light + dark), and the
+  deliberate divergences from off-the-shelf Web Awesome — using the real `tokens.css` /
+  `app.css`, so it can't drift from the app.
 
 ## Process & security
 
@@ -50,9 +58,15 @@
 - **[security-review.md](./security-review.md)** — the written security review: threat model,
   auth postures (demo deterrence-grade vs Option 3 real), hardening checklist, and the
   pre-launch TODOs.
-- **[site-code-lifecycle-plan.md](./site-code-lifecycle-plan.md)** — planned replacement for
-  fixed public site codes: request-by-email setup codes, revocation, and a separate central
-  support admin console.
+
+## Where plans live
+
+Implementation plans are **working documents, not living references** — they are not
+tracked in this folder. A plan lives on the **GitHub issue tracker** (or an external
+notes dir) while the work is underway; once the work is fully built and reviewed, the
+plan is **deleted**: decisions get an ADR, durable facts are folded into the reference
+docs above, and the rest is dropped. Historical plans are not kept up to date and don't
+earn a place in the repo.
 
 ## ADRs — `adr/`
 

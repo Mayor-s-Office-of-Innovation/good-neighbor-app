@@ -9,7 +9,6 @@
 /* Avoid a flash / layout shift (CLS) before Web Awesome elements upgrade: keep
    them out of view until their definition registers, then reveal. */
 :where(
-    wa-button,
     wa-input,
     wa-textarea,
     wa-select,
@@ -318,14 +317,48 @@ form > wa-button[type="submit"] {
   color: var(--text-faint);
   --track-width: 3px;
 }
-.login__link {
+/* Link-styled button — a real <button> that renders as a plain text link
+   (in-page state switches that don't navigate; "links navigate, buttons act").
+   Fully resets WA's native-button skin: app.css sets --wa-form-control-height:
+   62px (line ~544), which native.css applies to EVERY bare <button>, plus the
+   awesome theme's offset shadow, hard-coded height, and active "punch-in"
+   repaint. Without these resets a bare styled button renders as a stretched
+   pill with an underline.
+   Color is contextual — default quiet text; a call site can override `color`
+   in its own scope (e.g. the amber status-line Undo uses its own color). */
+.btn-link {
+  appearance: none;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 0.2em;
   cursor: pointer;
+  height: auto;
+  min-height: 44px; /* keep the touch target without the WA pill height */
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  vertical-align: baseline;
+  transition: color 150ms ease;
+}
+.btn-link:hover {
+  color: var(--text);
+}
+.btn-link:active {
+  color: var(--text-secondary); /* no awesome-theme punch-in repaint */
+}
+.btn-link:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.btn-link:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 .login__request {
   width: min(100%, 360px);
@@ -750,11 +783,6 @@ form > wa-button[type="submit"] {
   width: 100%;
   min-height: 54px;
 }
-
-.places-modal__primary::part(button),
-.places-modal__primary::part(base) {
-  width: 100%;
-}
 .places-modal__danger {
   appearance: none;
   -webkit-appearance: none;
@@ -1175,6 +1203,22 @@ theme-toggle {
   outline-offset: 3px;
 }
 
+/* Async-submit (loading) pattern — the width-pinned busy state for any .btn-*
+   button. JS sets --btn-loading-min-width to the button's offsetWidth before
+   toggling data-loading (so the spinner can't shrink the pill), plus
+   aria-busy="true" and disabled. First instance: the login continue button. */
+button[data-loading] {
+  min-width: var(--btn-loading-min-width, auto);
+  cursor: progress;
+}
+button[data-loading] wa-spinner {
+  display: inline-block;
+  vertical-align: -0.25em;
+}
+button[data-loading] [data-loading-label] {
+  visibility: hidden; /* keep the label's width, hide its paint */
+}
+
 /* "Start over" — a faint secondary link under the Resume button (draft present). */
 .home-cta__link {
   display: block;
@@ -1470,10 +1514,6 @@ theme-toggle {
   top: 0.35rem;
   right: 0.45rem;
 }
-.assessment-tile__dismiss::part(button) {
-  min-height: 2rem;
-  padding-inline: 0.45rem;
-}
 .assessment-tile__headline {
   margin: 0;
   color: var(--brand-blue);
@@ -1508,13 +1548,6 @@ theme-toggle {
   display: flex;
   justify-content: flex-start;
   margin-top: 0.15rem;
-}
-.assessment-tile__actions wa-button {
-  min-height: 34px;
-  font-size: 0.82rem;
-}
-.assessment-tile__actions wa-button::part(button) {
-  padding-inline: 0.95rem;
 }
 
 @keyframes assessment-slide {
@@ -4469,26 +4502,6 @@ theme-toggle {
     --c-flag
   ); /* amber "you changed this" — paired with the text label */
 }
-/* "Undo" reads as a link inside the amber status line. */
-.issue__undo {
-  appearance: none;
-  background: none;
-  border: 0;
-  padding: 0;
-  margin: 0;
-  box-shadow: none;
-  height: auto;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--brand-blue);
-  text-decoration: underline;
-}
-.issue__undo:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
 
 /* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
 /* Native <dialog>: showModal() gives focus trap + Escape for free. The element
@@ -4586,12 +4599,10 @@ theme-toggle {
   padding: 0;
 }
 .sheet__opt {
+  /* Native <button> (was wa-button; the ::part(button) declarations moved here
+     when the wa-buttons migrated to native buttons — ADR 0011). */
   width: 100%;
   margin: 0;
-  height: auto;
-}
-.sheet__opt::part(button) {
-  width: 100%;
   min-height: 46px;
   border: 0;
   border-radius: 999px;
@@ -4599,14 +4610,13 @@ theme-toggle {
   color: var(--c-hazard);
   font: inherit;
   font-weight: 800;
+  cursor: pointer;
 }
 .sheet__cancel {
+  /* Native <button> — the ink-pill cancel action of a sheet. */
   display: block;
   width: 100%;
   margin: 0;
-}
-.sheet__cancel::part(button) {
-  width: 100%;
   min-height: 46px;
   border: 0;
   border-radius: 999px;
@@ -4614,11 +4624,10 @@ theme-toggle {
   color: var(--on-ink);
   font: inherit;
   font-weight: 800;
+  cursor: pointer;
 }
 .sheet__opt:focus-visible,
-.sheet__cancel:focus-visible,
-.sheet__opt::part(button):focus-visible,
-.sheet__cancel::part(button):focus-visible {
+.sheet__cancel:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
 }
