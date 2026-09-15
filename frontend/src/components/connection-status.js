@@ -8,19 +8,18 @@
 
   AUTH → a non-dismissable dialog: the device session is expired/revoked and
   the only recovery is site re-entry. "Sign out and re-enter site code"
-  clears the site binding (drafts survive) and lets app-root render
-  <site-setup>. After re-binding, app-root calls clearAuthState().
+  clears the site binding AND site-scoped local data (drafts/review are keyed
+  per-site-only-in-memory — they must not leak into a different site's
+  binding), then app-root re-renders <site-setup> and resets the health
+  state so this dialog cannot re-open over the setup form.
 
   Rendered by app-root alongside app-toasts.
 */
 
-import {
-  getHealthState,
-  onHealthChange,
-  clearAuthState,
-} from "../services/backend-health.js";
-import { clearSite } from "../db.js";
-import { html, escapeHtml } from "../lib/html.js";
+import { getHealthState, onHealthChange } from "../services/backend-health.js";
+import { clearSiteSession } from "../db.js";
+import { discardInMemorySession } from "../state/check-session.js";
+import { html } from "../lib/html.js";
 
 class ConnectionStatus extends HTMLElement {
   connectedCallback() {
@@ -36,8 +35,9 @@ class ConnectionStatus extends HTMLElement {
             This device's sign-in has expired or been revoked.
           </h2>
           <p class="places-modal__text">
-            Sign out and re-enter your site's code to keep this device working.
-            Any saved photos and drafts stay on this device.
+            Sign out and re-enter your site's code to keep this device
+            working. Signing out removes this site's saved photos and drafts
+            from the device.
           </p>
         </div>
         <div class="places-modal__actions">
@@ -54,8 +54,12 @@ class ConnectionStatus extends HTMLElement {
     this.querySelector("#conn-auth-signout")?.addEventListener(
       "click",
       async () => {
-        await clearSite();
-        // The device re-bind will call clearAuthState() after sitebound.
+        // Full site-scoped clear: binding + drafts + review + in-memory walk
+        // (drafts/review are keyed by flow type, not site — letting them
+        // survive would leak a previous site's photos into a different
+        // site's binding after re-entry).
+        discardInMemorySession();
+        await clearSiteSession();
         window.dispatchEvent(new CustomEvent("authsignout"));
       },
     );
@@ -130,3 +134,5 @@ const isCustomElementsAvailable = () => {
 if (isCustomElementsAvailable() && !customElements.get("connection-status")) {
   customElements.define("connection-status", ConnectionStatus);
 }
+
+export default ConnectionStatus;

@@ -48,10 +48,6 @@ function load() {
   return import("./backend-health.js");
 }
 
-/** A healthy /health response. */
-const healthOk = () =>
-  Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("{}") });
-
 describe("probe + state machine", () => {
   it("stays healthy when the probe succeeds", async () => {
     const mod = await load();
@@ -172,6 +168,19 @@ describe("classifyApiFailure", () => {
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/health", expect.anything()),
     );
+  });
+
+  it("maps a non-JSON 403 (intermediary rewrite) → OUTAGE, never AUTH", async () => {
+    // An HTML 403 from a CDN is a transport failure, not an auth verdict —
+    // it must never trigger the destructive sign-out recovery.
+    const mod = await load();
+    const err = Object.assign(new Error("html 403"), {
+      name: "ApiError",
+      status: 403,
+      body: { code: "non_json_response" },
+    });
+    expect(mod.classifyApiFailure(err)).toBe("outage");
+    expect(mod.getHealthState()).toBe("outage");
   });
 
   it("ignores ordinary 4xx/5xx (not connection-wide)", async () => {

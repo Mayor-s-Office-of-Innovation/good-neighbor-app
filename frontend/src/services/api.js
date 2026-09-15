@@ -176,7 +176,8 @@ async function request(
 
   if (!res.ok) {
     // Expired/revoked access token → ONE silent refresh, then retry. A second
-    // 401 (or a rejected refresh) is fatal: ReauthRequiredError.
+    // 401 (or a rejected refresh) is fatal UNLESS the stored session was
+    // superseded mid-flight (see the retry leg below).
     if (res.status === 401 && allowAuthRetry) {
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
@@ -190,7 +191,13 @@ async function request(
         throw err;
       }
       // The refreshed session is already persisted; retry with it. A second
-      // 401 on this leg means the fresh token was rejected too — fatal.
+      // 401 on this leg is fatal ONLY if the stored session is still the one
+      // we just used. A concurrent late 401 may have rotated AGAIN after our
+      // refresh completed (each rotation bumps tokenGeneration, instantly
+      // invalidating our in-flight retry's token — devices.js CAS) — that's
+      // a lost race, not a dead session: surface a plain 401 (this call
+      // fails, the app stays healthy) instead of the global ReauthRequiredError.
+      const retryToken = (await getSite().catch(() => null))?.token;
       try {
         return await request(method, path, {
           headers,
@@ -200,6 +207,13 @@ async function request(
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
+          const nowToken = (await getSite().catch(() => null))?.token;
+          if (nowToken && nowToken !== retryToken) {
+            // Superseded mid-flight: the LATEST persisted session is newer
+            // than the token we rode. Throwing a plain ApiError keeps the
+            // session alive (a later request rides the newer token).
+            throw err;
+          }
           const reauth = new ReauthRequiredError();
           classifyApiFailure(reauth);
           throw reauth;
