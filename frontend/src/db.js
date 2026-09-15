@@ -152,6 +152,21 @@ export async function clearSite() {
 }
 
 /**
+ * Sign-out recovery (site switch): clear the site binding AND every
+ * site-scoped local artifact — drafts, review, and the in-memory walk state
+ * are all keyed by flow type only, with the owning `siteId` stored inside the
+ * check record. If they survived a re-bind to a DIFFERENT site, the next
+ * session would resume/submit the previous site's photos under the new
+ * binding (loadDraft/hasDraft compare no siteId). Site data is not portable
+ * across sites, so sign-out clears it all; nothing here is recoverable once
+ * the binding is replaced.
+ * @returns {Promise<void>}
+ */
+export async function clearSiteSession() {
+  await resetLocalAppState();
+}
+
+/**
  * Persist a refreshed device session onto the existing site record (Option 4
  * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
  * only the token fields are replaced. Returns the updated record.

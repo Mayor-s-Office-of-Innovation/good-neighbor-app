@@ -144,6 +144,7 @@ export async function forwardClientError(report, ctx, deps = {}) {
       $exception_list: [exception],
       ...(report.release ? { release: report.release } : {}),
       ...(report.source ? { app_source: report.source } : {}),
+      ...(report.status ? { app_status: report.status } : {}),
       ...(ctx.userAgent ? { user_agent: ctx.userAgent } : {}),
       $process_person_profile: false,
     },
