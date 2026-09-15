@@ -317,14 +317,41 @@ form > wa-button[type="submit"] {
   color: var(--text-faint);
   --track-width: 3px;
 }
+/* "Need a new code?" / "Enter a code instead" — renders as a plain text link,
+   not a button. Fully resets WA's native-button skin (app.css:544 sets
+   --wa-form-control-height: 62px, which native.css applies to EVERY bare
+   <button>, plus the awesome theme's offset shadow, hard-coded height, and
+   active "punch-in" repaint): without these resets this renders as a stretched
+   pill with an underline. The :active override kills the punch-in repaint. */
 .login__link {
+  appearance: none;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 0.2em;
   cursor: pointer;
+  height: auto;
+  min-height: 44px; /* keep the touch target without the WA pill height */
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+  vertical-align: baseline;
+  transition: color 150ms ease;
+}
+.login__link:hover {
+  color: var(--text);
+}
+.login__link:active {
+  color: var(--text-secondary); /* no awesome-theme punch-in repaint */
+}
+.login__link:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 .login__request {
   width: min(100%, 360px);
