@@ -5,8 +5,14 @@
 
 - [frontend/src/styles/tokens.css](../frontend/src/styles/tokens.css) — every color, radius,
   and shadow, plus the light/dark values. **Never hard-code a hex; always use a token.**
+  The full value table (light/dark, plus the WA-layer values) is in
+  [design-tokens.md](./design-tokens.md) — the Figma ↔ code mapping.
 - [frontend/src/styles/app.css](../frontend/src/styles/app.css) — the component classes below,
   grouped by screen with comments.
+- [frontend/design-system.html](../frontend/design-system.html) — the visual reference:
+  every button state, live token swatches (light/dark), and our WA divergences, rendered
+  with the real styles. Dev-only — run `npm run dev:frontend` and open
+  http://127.0.0.1:5173/design-system.html.
 - Worked example: [site-setup.templates.js](../frontend/src/components/site-setup.templates.js)
   (onboarding) and [today-view.js](../frontend/src/components/today-view.js) (home hub).
 
