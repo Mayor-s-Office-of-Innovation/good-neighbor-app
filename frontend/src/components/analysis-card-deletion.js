@@ -80,6 +80,7 @@ export async function deleteAnalysisCard(
         title: "Item deleted",
         message: `${reference ? `${reference} (“${problem.title || "Item"}”)` : `“${problem.title || "Item"}”`} has been successfully deleted.`,
         icon: "trash",
+        duration: 5000,
         focusAction: focusUndo,
         action: { label: "Undo", run: () => pending.undo() },
         onDismiss: () => {

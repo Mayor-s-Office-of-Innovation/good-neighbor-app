@@ -507,6 +507,10 @@ class ProblemReport extends HTMLElement {
               this._deleteProblemLocally(problem);
             return;
           }
+          if (!result?.assessment) {
+            this._deleteProblemLocally(problem);
+            return;
+          }
           if (
             getCurrentCheck()?.id === problem.checkId &&
             problem.placeId &&
