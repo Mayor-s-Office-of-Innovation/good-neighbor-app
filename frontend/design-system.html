@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en" class="wa-light wa-theme-awesome wa-palette-bright wa-brand-blue">
+<html
+  lang="en"
+  class="wa-light wa-theme-awesome wa-palette-bright wa-brand-blue"
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -160,12 +163,16 @@
       <h1>Good Neighbor — design system reference</h1>
       <p class="ds-lede">
         Self-demonstrating: every example on this page renders with the real
-        <code>tokens.css</code> + <code>app.css</code> + Web Awesome styles — it can't
-        drift from the app. Dev-only (Vite serves it, <code>vite build</code> doesn't
-        ship it).
+        <code>tokens.css</code> + <code>app.css</code> + Web Awesome styles — it
+        can't drift from the app. Dev-only (Vite serves it,
+        <code>vite build</code> doesn't ship it).
       </p>
       <div class="ds-toolbar">
-        <button class="btn-outline btn-outline--sm" id="ds-theme-toggle" type="button">
+        <button
+          class="btn-outline btn-outline--sm"
+          id="ds-theme-toggle"
+          type="button"
+        >
           Toggle dark mode
         </button>
         <span class="ds-chip" id="ds-theme-label">light</span>
@@ -178,10 +185,12 @@
       <section class="ds-section">
         <h2>1 · Buttons — all states</h2>
         <p class="ds-intro">
-          Always native <code>&lt;button&gt;</code> + a <code>.btn-*</code> class — never
-          <code>&lt;wa-button&gt;</code> (ADR 0011). Hover/active: subtle surface change,
-          <em>no transform</em>. Focus: 2px <code>--brand-blue</code> ring, offset 2–3px
-          (tab or shift+tab to see focus states — focus-visible only shows via keyboard).
+          Always native <code>&lt;button&gt;</code> + a
+          <code>.btn-*</code> class — never <code>&lt;wa-button&gt;</code> (ADR
+          0011). Hover/active: subtle surface change, <em>no transform</em>.
+          Focus: 2px <code>--brand-blue</code> ring, offset 2–3px (tab or
+          shift+tab to see focus states — focus-visible only shows via
+          keyboard).
         </p>
 
         <p class="ds-label">Primary pills</p>
@@ -195,7 +204,13 @@
             <small>:disabled — 0.4 opacity (per-class)</small>
           </div>
           <div class="ds-cell">
-            <button class="btn-ink" type="button" data-loading aria-busy="true" style="--btn-loading-min-width: 168px">
+            <button
+              class="btn-ink"
+              type="button"
+              data-loading
+              aria-busy="true"
+              style="--btn-loading-min-width: 168px"
+            >
               <span data-loading-label>Save my place</span>
               <wa-spinner></wa-spinner>
             </button>
@@ -219,13 +234,18 @@
         <div class="ds-grid">
           <div class="ds-cell">
             <button class="btn-link" type="button">Need a new code?</button>
-            <small>.btn-link — real &lt;button&gt; that reads as a text link. For
-            in-page state switches only ("links navigate, buttons act") — if it
-            navigates, use a real &lt;a&gt;. Default color is quiet text; override
-            color in the call site's scope when it sits on a colored line.</small>
+            <small
+              >.btn-link — real &lt;button&gt; that reads as a text link. For
+              in-page state switches only ("links navigate, buttons act") — if
+              it navigates, use a real &lt;a&gt;. Default color is quiet text;
+              override color in the call site's scope when it sits on a colored
+              line.</small
+            >
           </div>
           <div class="ds-cell">
-            <button class="btn-link" type="button" disabled>Disabled link</button>
+            <button class="btn-link" type="button" disabled>
+              Disabled link
+            </button>
             <small>.btn-link:disabled — faint, not-allowed cursor</small>
           </div>
         </div>
@@ -235,8 +255,12 @@
           <div class="ds-cell">
             <div class="ds-row">
               <button class="btn-ink btn-ink--sm" type="button">Primary</button>
-              <button class="btn-outline btn-outline--sm" type="button">Secondary</button>
-              <button class="btn-blue btn-blue--sm" type="button">Escalation</button>
+              <button class="btn-outline btn-outline--sm" type="button">
+                Secondary
+              </button>
+              <button class="btn-blue btn-blue--sm" type="button">
+                Escalation
+              </button>
             </div>
             <small>.btn-*-sm — 38px min-height, 0.9rem, nowrap</small>
           </div>
@@ -245,24 +269,32 @@
         <p class="ds-label">Dark mode</p>
         <div class="ds-theme-wrap">
           <small style="color: var(--text-faint)">
-            Dark mode is a <strong>root-level</strong> token swap (<code>html.wa-dark</code> in
-            tokens.css — light/dark are page states, not subtree states). Use the
-            <strong>Toggle dark mode</strong> button in the toolbar above to flip this whole page
-            and inspect every example in both themes — the token table in section 3 also shows
-            the light and dark hexes side by side.
+            Dark mode is a <strong>root-level</strong> token swap (<code
+              >html.wa-dark</code
+            >
+            in tokens.css — light/dark are page states, not subtree states). Use
+            the <strong>Toggle dark mode</strong> button in the toolbar above to
+            flip this whole page and inspect every example in both themes — the
+            token table in section 3 also shows the light and dark hexes side by
+            side.
           </small>
           <small style="color: var(--text-faint); margin-top: 0.5rem">
-            The pill inversion to check for: <code>--ink</code> becomes light (#ededed) with a
-            dark label (--on-ink #131313) — light-on-light or dark-on-dark pills are Figma
-            errors, not theme quirks.
+            The pill inversion to check for: <code>--ink</code> becomes light
+            (#ededed) with a dark label (--on-ink #131313) — light-on-light or
+            dark-on-dark pills are Figma errors, not theme quirks.
           </small>
         </div>
 
-        <p class="ds-label">Full-width (per-screen choice, e.g. setup scopes it)</p>
+        <p class="ds-label">
+          Full-width (per-screen choice, e.g. setup scopes it)
+        </p>
         <div class="ds-theme-wrap" style="max-width: 380px">
-          <button class="btn-ink" type="button" style="width: 100%">Full-width primary</button>
+          <button class="btn-ink" type="button" style="width: 100%">
+            Full-width primary
+          </button>
           <small style="color: var(--text-faint)">
-            Width is a per-screen choice (e.g. <code>.setup .btn-ink { width: 100% }</code>) — never global.
+            Width is a per-screen choice (e.g.
+            <code>.setup .btn-ink { width: 100% }</code>) — never global.
           </small>
         </div>
       </section>
@@ -273,9 +305,10 @@
       <section class="ds-section">
         <h2>2 · Where we differ from off-the-shelf Web Awesome</h2>
         <p class="ds-intro">
-          We adopt WA for form controls, icons, spinners, badges, callouts — but with
-          deliberate divergences. Theme base: <code>wa-theme-awesome</code> +
-          <code>wa-palette-bright</code> + <code>wa-brand-blue</code>, vendored as
+          We adopt WA for form controls, icons, spinners, badges, callouts — but
+          with deliberate divergences. Theme base:
+          <code>wa-theme-awesome</code> + <code>wa-palette-bright</code> +
+          <code>wa-brand-blue</code>, vendored as
           <code>wa-awesome.css</code> (drift-guarded in lint).
         </p>
         <table class="ds-table">
@@ -290,33 +323,58 @@
           <tbody>
             <tr>
               <td>Fonts</td>
-              <td>Quicksand (body) + Crimson Pro (longform), loaded from bunny.net</td>
+              <td>
+                Quicksand (body) + Crimson Pro (longform), loaded from bunny.net
+              </td>
               <td><strong>System sans stack</strong>, no webfont at all</td>
-              <td>CDN-free requirement; system fonts match platform UI, zero network cost, no FOUT</td>
+              <td>
+                CDN-free requirement; system fonts match platform UI, zero
+                network cost, no FOUT
+              </td>
             </tr>
             <tr>
               <td>Buttons</td>
               <td><code>&lt;wa-button&gt;</code> component</td>
-              <td>Native <code>&lt;button&gt;</code> + <code>.btn-*</code> classes</td>
-              <td>One vocabulary; wa-button's stateful features (loading/variants) were unused; ::part() override tax (ADR 0011)</td>
+              <td>
+                Native <code>&lt;button&gt;</code> + <code>.btn-*</code> classes
+              </td>
+              <td>
+                One vocabulary; wa-button's stateful features (loading/variants)
+                were unused; ::part() override tax (ADR 0011)
+              </td>
             </tr>
             <tr>
               <td>Primary color</td>
               <td>Bright palette brand blue <code>#235a96</code> (brand-40)</td>
               <td>App accent <code>--brand-blue: #155fce</code></td>
-              <td>Deliberately distinct — WA controls keep their tint; our UI uses ours. Don't average them.</td>
+              <td>
+                Deliberately distinct — WA controls keep their tint; our UI uses
+                ours. Don't average them.
+              </td>
             </tr>
             <tr>
               <td>Primary CTA look</td>
               <td>Variants × appearances (accent/filled/outlined…)</td>
-              <td>Charcoal ink pill (<code>--ink</code>/<code>--on-ink</code>)</td>
-              <td>The design's CTA; inverts light↔dark. Blue is reserved for the 311 lane only.</td>
+              <td>
+                Charcoal ink pill (<code>--ink</code>/<code>--on-ink</code>)
+              </td>
+              <td>
+                The design's CTA; inverts light↔dark. Blue is reserved for the
+                311 lane only.
+              </td>
             </tr>
             <tr>
               <td>Hover behavior</td>
-              <td>Awesome theme: bouncy transform + hard offset shadow press</td>
-              <td><code>--wa-button-transform-hover: none</code>; our buttons: subtle bg change only</td>
-              <td>Calm municipal tone; the vendored theme suppresses the transform</td>
+              <td>
+                Awesome theme: bouncy transform + hard offset shadow press
+              </td>
+              <td>
+                <code>--wa-button-transform-hover: none</code>; our buttons:
+                subtle bg change only
+              </td>
+              <td>
+                Calm municipal tone; the vendored theme suppresses the transform
+              </td>
             </tr>
             <tr>
               <td>Button radius</td>
@@ -327,20 +385,42 @@
             <tr>
               <td>Focus ring</td>
               <td>brand-60 ring, 0.1875rem wide, offset ~1px</td>
-              <td>2px <code>--brand-blue</code>, offset 2–3px, <code>:focus-visible</code> only</td>
-              <td>Matches the app's own interactive color; keyboard-only (never on mouse click)</td>
+              <td>
+                2px <code>--brand-blue</code>, offset 2–3px,
+                <code>:focus-visible</code> only
+              </td>
+              <td>
+                Matches the app's own interactive color; keyboard-only (never on
+                mouse click)
+              </td>
             </tr>
             <tr>
               <td>Loading state</td>
-              <td><code>&lt;wa-button loading&gt;</code> (spinner + width pin)</td>
-              <td><code>button[data-loading]</code> pattern: inline <code>wa-spinner</code>, JS pins <code>--btn-loading-min-width</code>, sets <code>aria-busy</code> + <code>disabled</code></td>
-              <td>We own it now that wa-button is gone — see the demo in section 1</td>
+              <td>
+                <code>&lt;wa-button loading&gt;</code> (spinner + width pin)
+              </td>
+              <td>
+                <code>button[data-loading]</code> pattern: inline
+                <code>wa-spinner</code>, JS pins
+                <code>--btn-loading-min-width</code>, sets
+                <code>aria-busy</code> + <code>disabled</code>
+              </td>
+              <td>
+                We own it now that wa-button is gone — see the demo in section 1
+              </td>
             </tr>
             <tr>
               <td>Native control skinning</td>
               <td>native.css skins every bare input/button/textarea</td>
-              <td>We style bare controls ourselves (<code>.login__field input</code>, <code>.typed-evidence textarea</code>, …)</td>
-              <td>Kept native.css (audited 2026-09-14); removal queued with a replacement checklist</td>
+              <td>
+                We style bare controls ourselves (<code
+                  >.login__field input</code
+                >, <code>.typed-evidence textarea</code>, …)
+              </td>
+              <td>
+                Kept native.css (audited 2026-09-14); removal queued with a
+                replacement checklist
+              </td>
             </tr>
           </tbody>
         </table>
@@ -352,10 +432,10 @@
       <section class="ds-section">
         <h2>3 · Design tokens</h2>
         <p class="ds-intro">
-          Live values from <code>tokens.css</code> — the swatches below read the actual
-          CSS custom properties, so this table can't go stale. Dark column: use the
-          toggle above, or read the hexes from the table (Figma mapping in
-          <code>docs/design-tokens.md</code>).
+          Live values from <code>tokens.css</code> — the swatches below read the
+          actual CSS custom properties, so this table can't go stale. Dark
+          column: use the toggle above, or read the hexes from the table (Figma
+          mapping in <code>docs/design-tokens.md</code>).
         </p>
         <table class="ds-table" id="ds-token-table">
           <thead>
@@ -367,29 +447,70 @@
               <th>Dark value</th>
             </tr>
           </thead>
-          <tbody><!-- filled by JS from the live stylesheets --></tbody>
+          <tbody>
+            <!-- filled by JS from the live stylesheets -->
+          </tbody>
         </table>
 
         <p class="ds-label">Shape + elevation</p>
         <div class="ds-grid">
           <div class="ds-cell">
-            <span style="width: 100%; height: 44px; background: var(--surface); border: 1px solid var(--c-line); border-radius: var(--radius)"></span>
+            <span
+              style="
+                width: 100%;
+                height: 44px;
+                background: var(--surface);
+                border: 1px solid var(--c-line);
+                border-radius: var(--radius);
+              "
+            ></span>
             <small>--radius: 12px (cards, panels)</small>
           </div>
           <div class="ds-cell">
-            <span style="width: 100%; height: 44px; background: var(--surface); border: 1px solid var(--c-line); border-radius: var(--radius-sm)"></span>
+            <span
+              style="
+                width: 100%;
+                height: 44px;
+                background: var(--surface);
+                border: 1px solid var(--c-line);
+                border-radius: var(--radius-sm);
+              "
+            ></span>
             <small>--radius-sm: 8px (inputs, small surfaces)</small>
           </div>
           <div class="ds-cell">
-            <span style="width: 100%; height: 44px; background: var(--ink); border-radius: var(--radius-pill)"></span>
+            <span
+              style="
+                width: 100%;
+                height: 44px;
+                background: var(--ink);
+                border-radius: var(--radius-pill);
+              "
+            ></span>
             <small>--radius-pill: 999px (buttons)</small>
           </div>
           <div class="ds-cell">
-            <span style="width: 100%; height: 44px; background: var(--surface); box-shadow: var(--shadow); border-radius: var(--radius-sm)"></span>
+            <span
+              style="
+                width: 100%;
+                height: 44px;
+                background: var(--surface);
+                box-shadow: var(--shadow);
+                border-radius: var(--radius-sm);
+              "
+            ></span>
             <small>--shadow (resting)</small>
           </div>
           <div class="ds-cell">
-            <span style="width: 100%; height: 44px; background: var(--surface); box-shadow: var(--shadow-lift); border-radius: var(--radius-sm)"></span>
+            <span
+              style="
+                width: 100%;
+                height: 44px;
+                background: var(--surface);
+                box-shadow: var(--shadow-lift);
+                border-radius: var(--radius-sm);
+              "
+            ></span>
             <small>--shadow-lift (sheets, modals)</small>
           </div>
         </div>
@@ -402,25 +523,65 @@
         <h2>4 · Non-negotiable rules</h2>
         <table class="ds-table">
           <tbody>
-            <tr><td><strong>Tokens only</strong></td><td>No raw hex/rgb in component CSS — dark mode stays correct by construction.</td></tr>
-            <tr><td><strong>Color never carries meaning alone</strong></td><td>Severity/status always pairs with a text label + icon (WCAG 1.4.1). Hazard red ships with "Hazard"; amber ships with "You marked this as…".</td></tr>
-            <tr><td><strong>44px minimum touch targets</strong></td><td>All interactive elements (WCAG 2.2 AA, 2.5.8). Compact buttons are 38px visual but sit in 44px rows or get padded wrappers.</td></tr>
-            <tr><td><strong>Focus is keyboard-only</strong></td><td><code>:focus-visible</code> with 2px brand-blue ring, 2–3px offset. Never remove outlines without a replacement.</td></tr>
-            <tr><td><strong>CSS over JS</strong></td><td>Never do in JavaScript what CSS can do — especially animation. CSS animations/transitions are less code, GPU-composited, respect <code>prefers-reduced-motion</code> in one media query, and can't leak timers. Established patterns: <code>@starting-style</code> + <code>transition-behavior: allow-discrete</code> for dialog open/close (the sheets), <code>@keyframes</code> (the assessment progress bar), state classes toggled by JS but <em>animated</em> by CSS.</td></tr>
+            <tr>
+              <td><strong>Tokens only</strong></td>
+              <td>
+                No raw hex/rgb in component CSS — dark mode stays correct by
+                construction.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Color never carries meaning alone</strong></td>
+              <td>
+                Severity/status always pairs with a text label + icon (WCAG
+                1.4.1). Hazard red ships with "Hazard"; amber ships with "You
+                marked this as…".
+              </td>
+            </tr>
+            <tr>
+              <td><strong>44px minimum touch targets</strong></td>
+              <td>
+                All interactive elements (WCAG 2.2 AA, 2.5.8). Compact buttons
+                are 38px visual but sit in 44px rows or get padded wrappers.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Focus is keyboard-only</strong></td>
+              <td>
+                <code>:focus-visible</code> with 2px brand-blue ring, 2–3px
+                offset. Never remove outlines without a replacement.
+              </td>
+            </tr>
+            <tr>
+              <td><strong>CSS over JS</strong></td>
+              <td>
+                Never do in JavaScript what CSS can do — especially animation.
+                CSS animations/transitions are less code, GPU-composited,
+                respect <code>prefers-reduced-motion</code> in one media query,
+                and can't leak timers. Established patterns:
+                <code>@starting-style</code> +
+                <code>transition-behavior: allow-discrete</code> for dialog
+                open/close (the sheets), <code>@keyframes</code> (the assessment
+                progress bar), state classes toggled by JS but
+                <em>animated</em> by CSS.
+              </td>
+            </tr>
           </tbody>
         </table>
       </section>
 
       <footer class="ds-footer">
         <p>
-          Prose companions: <code>docs/design-tokens.md</code> (Figma ↔ code mapping),
-          <code>docs/frontend-design-system.md</code> (building screens to spec),
-          <code>docs/adr/0011-native-buttons.md</code> (button decision),
+          Prose companions: <code>docs/design-tokens.md</code> (Figma ↔ code
+          mapping), <code>docs/frontend-design-system.md</code> (building
+          screens to spec), <code>docs/adr/0011-native-buttons.md</code> (button
+          decision),
           <code>docs/adr/0004-javascript-with-jsdoc.md</code> (stack).
         </p>
         <p style="margin-top: 0.35rem">
-          This page is generated from the same CSS the app ships — if something here
-          looks wrong, the fix belongs in <code>tokens.css</code>/<code>app.css</code>, not here.
+          This page is generated from the same CSS the app ships — if something
+          here looks wrong, the fix belongs in
+          <code>tokens.css</code>/<code>app.css</code>, not here.
         </p>
       </footer>
     </main>
@@ -439,11 +600,13 @@
 
       // Theme toggle — the app's own mechanism (one class on <html>).
       const root = document.documentElement;
-      document.getElementById("ds-theme-toggle")?.addEventListener("click", () => {
-        const dark = root.classList.toggle("wa-dark");
-        root.classList.toggle("wa-light", !dark);
-        renderTokenValues();
-      });
+      document
+        .getElementById("ds-theme-toggle")
+        ?.addEventListener("click", () => {
+          const dark = root.classList.toggle("wa-dark");
+          root.classList.toggle("wa-light", !dark);
+          renderTokenValues();
+        });
 
       // Font probe — prove which font actually renders (no webfont shipped).
       requestAnimationFrame(() => {
@@ -493,7 +656,9 @@
             if (!scope) continue;
             const text = rule.cssText;
             for (const [name] of TOKENS) {
-              const m = text.match(new RegExp(`${name.replaceAll("-", "\\-")}:\\s*([^;]+);`));
+              const m = text.match(
+                new RegExp(`${name.replaceAll("-", "\\-")}:\\s*([^;]+);`),
+              );
               if (m) out[scope][name] = m[1].trim();
             }
           }
@@ -506,7 +671,9 @@
         const tbody = document.querySelector("#ds-token-table tbody");
         if (!tbody) return;
         tbody.innerHTML = TOKENS.map(([name, role]) => {
-          const current = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+          const current = getComputedStyle(document.documentElement)
+            .getPropertyValue(name)
+            .trim();
           const light = parsed.light[name] ?? "?";
           const dark = parsed.dark[name] ?? "?";
           const swatchStyle = `background:${current}`;
