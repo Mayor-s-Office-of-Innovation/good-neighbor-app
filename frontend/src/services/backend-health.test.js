@@ -245,3 +245,119 @@ describe("subscriber notification", () => {
     expect(seen).toEqual(["outage"]);
   });
 });
+
+describe("retry backoff (fixes 7 + 8)", () => {
+  it("advances the backoff ladder across repeated failures (not stuck at 30s)", async () => {
+    vi.useFakeTimers();
+    const mod = await load();
+    // Every probe fails.
+    fetchMock.mockReturnValue(Promise.reject(new Error("down")));
+
+    await mod.probe();
+    // First failure → first retry scheduled at 30s.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // not yet
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // 30s retry ran
+
+    // Second failure → retry at 60s (the ladder advanced; the pre-fix code
+    // reset backoffIndex inside probe(), polling forever at 30s).
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // 60s retry ran
+
+    mod.stopHealthMonitoring();
+  });
+
+  it("stopHealthMonitoring kills the live retry chain (no post-teardown fetches)", async () => {
+    vi.useFakeTimers();
+    const mod = await load();
+    fetchMock.mockReturnValue(Promise.reject(new Error("x")));
+
+    await mod.probe(); // schedules a 30s retry
+    mod.stopHealthMonitoring();
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // chain dead
+  });
+
+  it("a new schedule replaces a pending retry timer (one live chain)", async () => {
+    vi.useFakeTimers();
+    const mod = await load();
+    fetchMock.mockReturnValue(Promise.reject(new Error("x")));
+
+    await mod.probe(); // schedules retry #1 (30s; index → 1)
+    // A visibility-triggered probe fires before retry #1: it also fails and
+    // REPLACES the pending timer with the next ladder step (60s; index → 2)
+    // — one live chain, not two.
+    await mod.probe();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // replacement not yet (60s)
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // 2 probes + the 60s retry
+    mod.stopHealthMonitoring();
+  });
+});
+
+describe("concurrent probes (fix 9 — generation guard)", () => {
+  it("a stale failed probe cannot clobber a newer healthy result", async () => {
+    const mod = await load();
+    /** @type {Array<(body: string, ok?: boolean) => void>} */
+    const resolvers = [];
+    fetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push((body, ok = true) =>
+            // @ts-ignore test shape
+            resolve({ ok, text: () => Promise.resolve(body) }),
+          );
+        }),
+    );
+
+    // Probe A (slow) starts; probe B (fast) starts and succeeds first.
+    const a = mod.probe();
+    const b = mod.probe();
+    // B completes healthy.
+    await Promise.resolve();
+    resolvers[1]("{}");
+    await b;
+    expect(mod.getHealthState()).toBe("healthy");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // A completes as a failure LATER — it is stale and must not restore
+    // outage (which would re-show the banner and schedule more retries).
+    resolvers[0]("<html></html>");
+    await a;
+    expect(mod.getHealthState()).toBe("healthy");
+  });
+
+  it("a newer failed probe after a stale success still records the outage", async () => {
+    const mod = await load();
+    /** @type {Array<(body: string, ok?: boolean) => void>} */
+    const resolvers = [];
+    fetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push((body, ok = true) =>
+            // @ts-ignore test shape
+            resolve({ ok, text: () => Promise.resolve(body) }),
+          );
+        }),
+    );
+
+    const a = mod.probe();
+    const b = mod.probe();
+    // B fails first (recent): outage.
+    resolvers[1]("<html></html>", false);
+    await b;
+    expect(mod.getHealthState()).toBe("outage");
+
+    // A (stale) completes healthy — it must NOT clear the newer outage.
+    resolvers[0]("{}");
+    await a;
+    expect(mod.getHealthState()).toBe("outage");
+  });
+});

@@ -35,6 +35,13 @@ const listeners = new Set();
 let visibilityHook;
 /** @type {number} */
 let backoffIndex = 0;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let retryTimer;
+/**
+ * Monotonic probe id — a completion may write state only if it is still the
+ * newest probe (guards concurrent boot/visibility/failure probes).
+ */
+let probeSeq = 0;
 
 /** @returns {HealthState} */
 export function getHealthState() {
@@ -93,10 +100,15 @@ export function classifyApiFailure(err) {
  * Probe /health and reconcile the state. Authorizer-free, so a healthy probe
  * cannot "heal" an AUTH state (the token is still dead) — it can only clear
  * OUTAGE. AUTH clears only via clearAuthState().
+ *
+ * Concurrency: probes are unawaited from several trigger sites, so every
+ * probe captures the current sequence number and a completion writes state
+ * only if no newer probe has started — a stale failure can never clobber a
+ * newer healthy result.
  * @returns {Promise<HealthState>}
  */
 export async function probe() {
-  resetBackoff();
+  const seq = ++probeSeq;
   let ok = false;
   try {
     const res = await fetch(PROBE_PATH, { method: "GET" });
@@ -107,8 +119,17 @@ export async function probe() {
     ok = false;
   }
 
+  if (seq !== probeSeq) {
+    // Superseded by a newer probe — its result owns the state.
+    return state;
+  }
+  clearRetryTimer();
+
   if (ok) {
-    // A healthy probe recovers OUTAGE only; AUTH is user-resolved.
+    // A healthy probe recovers OUTAGE only; AUTH is user-resolved. Backoff
+    // resets on success (external triggers restart the ladder too — the
+    // ladder exists only for repeated FAILURE retries).
+    resetBackoff();
     if (state === "outage") setState("healthy");
   } else {
     if (state !== "auth") setState("outage");
@@ -128,12 +149,13 @@ export function startHealthMonitoring() {
   void probe();
 }
 
-/** Stop visibility re-probing (tests / teardown). */
+/** Stop visibility re-probing AND the live retry chain (tests / teardown). */
 export function stopHealthMonitoring() {
   if (visibilityHook) {
     document.removeEventListener("visibilitychange", visibilityHook);
     visibilityHook = undefined;
   }
+  clearRetryTimer();
   resetBackoff();
 }
 
@@ -163,7 +185,19 @@ function setState(next) {
 
 function scheduleProbe(delay = BACKOFF_MS[backoffIndex]) {
   backoffIndex = Math.min(backoffIndex + 1, BACKOFF_MS.length - 1);
-  setTimeout(() => void probe(), delay);
+  // One live retry chain: a new schedule replaces any pending timer.
+  clearRetryTimer();
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    void probe();
+  }, delay);
+}
+
+function clearRetryTimer() {
+  if (retryTimer !== undefined) {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+  }
 }
 
 function resetBackoff() {

@@ -35,9 +35,9 @@ class ConnectionStatus extends HTMLElement {
             This device's sign-in has expired or been revoked.
           </h2>
           <p class="places-modal__text">
-            Sign out and re-enter your site's code to keep this device
-            working. Signing out removes this site's saved photos and drafts
-            from the device.
+            Sign out and re-enter your site's code to keep this device working.
+            Signing out removes this site's saved photos and drafts from the
+            device.
           </p>
         </div>
         <div class="places-modal__actions">
@@ -111,14 +111,20 @@ class ConnectionStatus extends HTMLElement {
       this.querySelector(".conn-banner__close")?.addEventListener(
         "click",
         () => {
-          // Dismiss until the next state change (outage → healthy → outage).
+          // Dismiss until the state leaves outage (outage → healthy →
+          // outage re-arms the banner — see the reset below).
           this.querySelector(".conn-banner")?.remove();
           this._dismissed = true;
         },
       );
-    } else if (state === "healthy" && banner) {
-      banner.remove();
+    } else if (state === "healthy" && this._dismissed) {
+      // Reset the dismissal on ANY transition to healthy — a dismissed
+      // banner may already be gone from the DOM, so keying the reset on the
+      // banner's presence would suppress every later outage forever.
       this._dismissed = false;
+    }
+    if (state !== "outage") {
+      this.querySelector(".conn-banner")?.remove();
     }
   }
 }
