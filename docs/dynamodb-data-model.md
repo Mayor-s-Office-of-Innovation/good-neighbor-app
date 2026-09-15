@@ -76,6 +76,10 @@ without a separate timestamp in the key.
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, places, issueCount, maxSeverity; **+ synthesized scorecard at `complete`** (see note) |
 | **Artifact** (per place) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<placeId>#<artifactId>` | placeId, placeName, S3 keys, text, capturedAt |
+
+The single-issue flow (`/problem`, single-issue capture) reuses the same capture machinery
+with a **synthetic place** — one fixed `placeId` (e.g. `"problem"`) whose only artifact is a
+registered text artifact. Places remain a check-structure concept; no special item shapes.
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
