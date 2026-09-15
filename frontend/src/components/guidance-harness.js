@@ -154,7 +154,11 @@ class GuidanceHarness extends HTMLElement {
                   )
                   .join("")}
               </wa-select>
-              <button class="btn-outline btn-outline--sm" type="button" id="freshen">
+              <button
+                class="btn-outline btn-outline--sm"
+                type="button"
+                id="freshen"
+              >
                 Fresh IDs
               </button>
             </div>
@@ -196,7 +200,11 @@ class GuidanceHarness extends HTMLElement {
             ></wa-textarea>
 
             <div class="guidance-harness__actions">
-              <button class="btn-ink" type="submit" ${this._busy ? "disabled" : ""}>
+              <button
+                class="btn-ink"
+                type="submit"
+                ${this._busy ? "disabled" : ""}
+              >
                 Evaluate
               </button>
               <button class="btn-outline" type="button" id="refresh">
