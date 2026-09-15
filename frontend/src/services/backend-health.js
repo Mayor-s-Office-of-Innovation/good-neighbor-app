@@ -1,0 +1,169 @@
+/*
+  backend-health.js — connection/auth state machine (api-response-integrity
+  plan §3a/3b).
+
+  Probes the authorizer-free `GET /health` route to separate transport/CDN
+  health from token health, and classifies failures into two user-facing
+  states:
+
+    - OUTAGE — the API is unreachable (network failure or a non-JSON/HTML
+      response, e.g. a CDN error page served as 200). Surface: dismissible
+      banner; clears on the first successful probe.
+    - AUTH   — the device session is dead (ReauthRequiredError, or an API 403
+      while the probe is healthy). Surface: sign-out dialog; recovery is site
+      re-entry (clearSite → site-setup).
+
+  Detection hooks: boot probe, visibilitychange re-probe, and a classify()
+  call from api-layer catch sites. Re-probes back off (30s → 60s → …, cap
+  5min) while unhealthy. Pure state + subscribers; UI wiring lives in
+  app-root.js.
+*/
+
+import { reportClientEvent } from "./error-report.js";
+import { mark } from "./instrument.js";
+
+/** @typedef {"healthy" | "outage" | "auth"} HealthState */
+
+const PROBE_PATH = "/health";
+const BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
+
+/** @type {HealthState} */
+let state = "healthy";
+/** @type {Set<(state: HealthState) => void>} */
+const listeners = new Set();
+/** @type {(() => void) | undefined} */
+let visibilityHook;
+/** @type {number} */
+let backoffIndex = 0;
+
+/** @returns {HealthState} */
+export function getHealthState() {
+  return state;
+}
+
+/** @param {(state: HealthState) => void} listener @returns {() => void} */
+export function onHealthChange(listener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function emit() {
+  listeners.forEach((listener) => listener(state));
+}
+
+/**
+ * Classify an API-layer failure into a health state. Called from catch sites
+ * so a failing /v1/* call sets the state immediately, without waiting for the
+ * next probe.
+ * @param {unknown} err
+ * @returns {HealthState} the new state (unchanged when unclassifiable)
+ */
+export function classifyApiFailure(err) {
+  if (err instanceof Error && err.name === "ReauthRequiredError") {
+    setState("auth");
+    return state;
+  }
+  if (!(err instanceof Error) || err.name !== "ApiError") return state;
+  const status = /** @type {any} */ (err).status;
+  if (status === 403) {
+    // 401s already route to the refresh flow; a bare 403 means the authorizer
+    // denied a well-formed token (revoked device / inactive site).
+    setState("auth");
+    return state;
+  }
+  if (status === 0) {
+    setState("outage");
+    return state;
+  }
+  // Non-JSON responses (any status) mean the pipe is broken — outage, and
+  // verify with a probe right away.
+  if (/** @type {any} */ (err).body?.code === "non_json_response") {
+    setState("outage");
+    void probe();
+    return state;
+  }
+  return state;
+}
+
+/**
+ * Probe /health and reconcile the state. Authorizer-free, so a healthy probe
+ * cannot "heal" an AUTH state (the token is still dead) — it can only clear
+ * OUTAGE. AUTH clears only via clearAuthState().
+ * @returns {Promise<HealthState>}
+ */
+export async function probe() {
+  resetBackoff();
+  let ok = false;
+  try {
+    const res = await fetch(PROBE_PATH, { method: "GET" });
+    const text = await res.text();
+    // The health handler speaks JSON; HTML here is the CDN incident shape.
+    ok = res.ok && text.trim().startsWith("{");
+  } catch {
+    ok = false;
+  }
+
+  if (ok) {
+    // A healthy probe recovers OUTAGE only; AUTH is user-resolved.
+    if (state === "outage") setState("healthy");
+  } else {
+    if (state !== "auth") setState("outage");
+    scheduleProbe();
+  }
+  return state;
+}
+
+/** Boot wiring: initial probe + visibility re-probe. Idempotent. */
+export function startHealthMonitoring() {
+  if (!visibilityHook) {
+    visibilityHook = () => {
+      if (!document.hidden) void probe();
+    };
+    document.addEventListener("visibilitychange", visibilityHook);
+  }
+  void probe();
+}
+
+/** Stop visibility re-probing (tests / teardown). */
+export function stopHealthMonitoring() {
+  if (visibilityHook) {
+    document.removeEventListener("visibilitychange", visibilityHook);
+    visibilityHook = undefined;
+  }
+  resetBackoff();
+}
+
+/**
+ * AUTH recovery completed: the device re-registered (sitebound). Everything
+ * clears back to healthy.
+ * @returns {void}
+ */
+export function clearAuthState() {
+  resetBackoff();
+  setState("healthy");
+}
+/* ---- internals ---- */
+
+/** @param {HealthState} next */
+function setState(next) {
+  if (state === next) return;
+  state = next;
+  mark("backend-health", { state: next });
+  if (next === "outage") {
+    reportClientEvent("backend_unreachable", "GET /health probe failed");
+  } else if (next === "auth") {
+    reportClientEvent("auth_reauth_required", "device session rejected");
+  }
+  emit();
+}
+
+function scheduleProbe(delay = BACKOFF_MS[backoffIndex]) {
+  backoffIndex = Math.min(backoffIndex + 1, BACKOFF_MS.length - 1);
+  setTimeout(() => void probe(), delay);
+}
+
+function resetBackoff() {
+  backoffIndex = 0;
+}

@@ -18,6 +18,8 @@ import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession } from "../db.js";
 import { refreshDeviceToken } from "./devices.js";
 import { ApiError, ReauthRequiredError } from "./api-error.js";
+import { reportClientEvent } from "./error-report.js";
+import { classifyApiFailure } from "./backend-health.js";
 
 // Public error surface stays on api.js (existing importers); the classes live
 // in api-error.js because devices.js needs them too and importing api.js from
@@ -137,6 +139,11 @@ async function request(
     });
   } catch (err) {
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
+    classifyApiFailure(
+      new ApiError(`Network error calling ${method} ${path}: ${err}`, {
+        status: 0,
+      }),
+    );
     throw new ApiError(`Network error calling ${method} ${path}: ${err}`, {
       status: 0,
     });
@@ -149,7 +156,21 @@ async function request(
     try {
       parsed = JSON.parse(text);
     } catch {
-      parsed = text; // non-JSON body (shouldn't happen against our API)
+      // Non-JSON from a JSON API means an intermediary rewrote the response
+      // (e.g. a CDN error page served as 200) — a transport-grade failure,
+      // never a usable body. Empty body stays legal (204s exist).
+      const nonJson = new ApiError(
+        `Non-JSON response from ${method} ${path} (status ${res.status})`,
+        { status: res.status, body: { code: "non_json_response" } },
+      );
+      mark("api:non-json", { method, path, status: res.status });
+      reportClientEvent(
+        "non_json_response",
+        `Non-JSON ${res.status} from ${method} ${path}`,
+        { status: res.status },
+      );
+      classifyApiFailure(nonJson);
+      throw nonJson;
     }
   }
 
@@ -162,6 +183,7 @@ async function request(
       try {
         await refreshSession();
       } catch (err) {
+        classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
         // Retryable refresh failure (5xx/transport): surface as-is — the
         // stored session may be perfectly valid.
@@ -178,7 +200,9 @@ async function request(
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
-          throw new ReauthRequiredError();
+          const reauth = new ReauthRequiredError();
+          classifyApiFailure(reauth);
+          throw reauth;
         }
         throw err;
       }
@@ -187,10 +211,18 @@ async function request(
       parsed && typeof parsed === "object" && "error" in parsed
         ? parsed.error
         : res.statusText;
-    throw new ApiError(`${method} ${path} → ${res.status} ${detail}`, {
-      status: res.status,
-      body: parsed,
-    });
+    const apiError = new ApiError(
+      `${method} ${path} → ${res.status} ${detail}`,
+      {
+        status: res.status,
+        body: parsed,
+      },
+    );
+    // Feed the health state machine (backend-health.js): 403 → AUTH, 0 →
+    // OUTAGE, non-JSON already classified above. 401/refresh outcomes are
+    // classified at their throw sites via the same hook.
+    classifyApiFailure(apiError);
+    throw apiError;
   }
   return parsed;
 }

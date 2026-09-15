@@ -9,8 +9,14 @@
 */
 import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
 import { getSiteSettings } from "../services/api.js";
+import {
+  startHealthMonitoring,
+  stopHealthMonitoring,
+  clearAuthState,
+} from "../services/backend-health.js";
 import { currentRoute, onRouteChange, navigate } from "../router.js";
 import { setupView, appShell } from "./app-root.templates.js";
+import "./connection-status.js";
 
 const ROUTE_VIEW = [
   ["/problem/describe", "describe-instead"],
@@ -45,6 +51,16 @@ class AppRoot extends HTMLElement {
       if (event.detail?.site) this._site = event.detail.site;
     };
     window.addEventListener("siteplacesupdated", this._onSitePlacesUpdated);
+    this._onAuthSignout = () => {
+      // The site binding is gone; re-render the first-run setup screen.
+      this._site = null;
+      if (this._unsub) this._unsub();
+      this._renderSetup();
+    };
+    window.addEventListener("authsignout", this._onAuthSignout);
+    // Health monitoring starts regardless of binding state: /health is
+    // authorizer-free, and the AUTH dialog is meaningful before setup too.
+    startHealthMonitoring();
     if (!this._site) {
       this._renderSetup();
       return;
@@ -63,12 +79,16 @@ class AppRoot extends HTMLElement {
         this._onSitePlacesUpdated,
       );
     }
+    stopHealthMonitoring();
+    window.removeEventListener("authsignout", this._onAuthSignout);
   }
 
   _renderSetup() {
     this.innerHTML = setupView();
+    this.append(document.createElement("connection-status"));
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
+      clearAuthState(); // re-bind heals an AUTH state
       await this._refreshSiteSettings();
       this._renderApp();
       this._unsub = onRouteChange(() => this._renderView());
@@ -80,6 +100,7 @@ class AppRoot extends HTMLElement {
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
     this.append(document.createElement("app-toasts"));
+    this.append(document.createElement("connection-status"));
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
   }
