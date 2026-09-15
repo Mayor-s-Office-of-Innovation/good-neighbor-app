@@ -160,6 +160,23 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
 - Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. (A ~7-day media-expiration lifecycle rule is designed but not yet enforced — a pre-launch TODO; see [security-review.md](./security-review.md).)
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
+## Edge routing contract (SPA fallback vs API routes)
+
+The provider frontend's CloudFront distribution has **no error-page mapping**. SPA deep links
+(`/check`, `/today`, …) resolve via a viewer-request function (`aws_cloudfront_function.frontend_spa_rewrite`,
+`infra/modules/app/cloudfront.tf`) that rewrites dot-less, non-API URIs to `/index.html`
+*before* the S3 origin — so missing assets return real 404s and, critically, the API
+origins' own 403/404 JSON responses reach the viewer untouched.
+
+**Never re-add distribution-wide `custom_error_response` blocks** on the frontend (or admin)
+distribution: they apply to *every* origin, so an API 403/404 would be rewritten into
+`index.html` with status 200 — the 2026-09-14 dev incident (device-token authorizer denial
+→ 200/HTML → the client treated the SPA as a successful API response). The client guards
+against this class of failure (non-JSON API body → `ApiError(non_json_response)` in
+`services/api.js`; `services/backend-health.js` probes `/health` and surfaces
+OUTAGE/AUTH states), and CI's deploy smoke check fails if an API error response arrives
+as anything but JSON.
+
 ## Offline capture and sync
 
 Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and

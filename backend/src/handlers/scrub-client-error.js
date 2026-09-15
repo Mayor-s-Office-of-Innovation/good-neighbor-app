@@ -5,7 +5,15 @@
 // this module.
 
 /** Allowed `type` values, mirroring what error-report.js can emit. */
-const TYPES = /** @type {const} */ (["Error", "UnhandledRejection"]);
+const TYPES = /** @type {const} */ ([
+  "Error",
+  "UnhandledRejection",
+  // App-level incident codes (api-response-integrity plan §3c).
+  "non_json_response",
+  "backend_unreachable",
+  "auth_reauth_required",
+  "auth_forbidden",
+]);
 /** Max message length the intake accepts (chars). */
 export const MAX_MESSAGE = 2000;
 /** Max stack length the intake accepts (chars). */
@@ -20,6 +28,7 @@ export const MAX_URL = 500;
  * @property {string} type
  * @property {string} message
  * @property {string} [stack]
+ * @property {string} [status]
  * @property {string} [source]
  * @property {string} [release]
  * @property {string} id
@@ -98,6 +107,10 @@ export function scrubClientErrorReport(body) {
 
     const stack = truncateString(raw.stack, MAX_STACK);
     if (stack) out.stack = stripStackQueryStrings(stack);
+
+    if (typeof raw.status === "string" && raw.status) {
+      out.status = truncateString(raw.status, MAX_SHORT) || "";
+    }
 
     if (typeof raw.source === "string" && raw.source) {
       out.source = stripQueryString(truncateString(raw.source, MAX_URL) || "");

@@ -123,6 +123,64 @@ async function syncBodies() {
   await drainBlobs();
 }
 
+describe("reportClientEvent (app-level incident reporting, plan §3c)", () => {
+  it("sends an allowlisted app event with the shared payload shape", async () => {
+    const mod = await loadEnabled();
+
+    mod.reportClientEvent(
+      "non_json_response",
+      "Non-JSON 200 from GET /v1/checks/x",
+      { status: 200 },
+    );
+
+    await syncBodies();
+    expect(beaconBodies).toHaveLength(1);
+    const payload = await lastPayload();
+    expect(payload).toMatchObject({
+      type: "non_json_response",
+      message: "Non-JSON 200 from GET /v1/checks/x",
+      status: "200",
+      source: "/check",
+      release: "dev",
+      id: "uuid-1",
+    });
+    expect(payload.stack).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain("secret");
+  });
+
+  it("dedupes the same incident code within the window (once per session)", async () => {
+    const mod = await loadEnabled();
+
+    mod.reportClientEvent("backend_unreachable", "probe failed");
+    mod.reportClientEvent("backend_unreachable", "probe failed");
+    mod.reportClientEvent("backend_unreachable", "probe failed");
+
+    await syncBodies();
+    expect(beaconBodies).toHaveLength(1);
+  });
+
+  it("different codes each report (distinct incidents)", async () => {
+    const mod = await loadEnabled();
+
+    mod.reportClientEvent("auth_reauth_required", "session dead");
+    mod.reportClientEvent("auth_forbidden", "403 from GET /v1/checks/x");
+
+    await syncBodies();
+    expect(beaconBodies).toHaveLength(2);
+  });
+
+  it("never throws and sends nothing when disabled", async () => {
+    const mod = await load(); // test mode, no on flag
+
+    expect(() =>
+      mod.reportClientEvent("non_json_response", "boom", { status: 200 }),
+    ).not.toThrow();
+
+    await syncBodies();
+    expect(beaconBodies).toHaveLength(0);
+  });
+});
+
 describe("enablement (instrument.js conventions)", () => {
   it("installs nothing in test mode without the on flag", async () => {
     await load();
