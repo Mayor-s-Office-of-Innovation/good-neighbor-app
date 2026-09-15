@@ -55,13 +55,20 @@ const load = () => import("./connection-status.js");
 function makeElement() {
   const listeners = {};
   const dialogs = [];
+  /** The live banner element (null when none) — `remove()` detaches it. */
+  let banner = /** @type {any} */ (null);
   const el = {
+    /** @returns {any} the current banner, if mounted */
+    get _banner() {
+      return banner;
+    },
     _html: "",
     _children: [],
     /** @param {string} value */
     set innerHTML(value) {
       this._html = value;
       this._children = [];
+      banner = null; // innerHTML resets the element tree
     },
     /** @returns {string} */
     get innerHTML() {
@@ -69,6 +76,8 @@ function makeElement() {
     },
     insertAdjacentHTML(_pos, markup) {
       this._children.push(markup);
+      // Mount a removable banner node, as the real DOM would.
+      banner = { remove: () => (banner = null), bound: false, markup };
     },
     querySelector(/** @type {string} */ selector) {
       if (selector === "#conn-auth-signout") {
@@ -87,13 +96,39 @@ function makeElement() {
         };
         return dialog;
       }
-      if (selector === ".conn-banner") return null;
-      if (selector === ".conn-banner__close") return null;
+      if (selector === ".conn-banner") {
+        return banner ? banner : null;
+      }
+      if (selector === ".conn-banner__close") {
+        return banner && !banner.bound
+          ? ((banner.bound = true),
+            {
+              addEventListener: (t, fn) => (listeners["banner-close"] = fn),
+            })
+          : null;
+      }
       return null;
     },
     _listeners: listeners,
     _dialogs: dialogs,
   };
+  return el;
+}
+
+/**
+ * Mount the real prototype methods onto a fresh element double.
+ * @param {any} ConnectionStatus
+ * @returns {Promise<any>} the wired element
+ */
+async function mount(ConnectionStatus) {
+  const el = makeElement();
+  const proto = ConnectionStatus.prototype;
+  for (const key of Object.getOwnPropertyNames(proto)) {
+    if (key !== "constructor" && key !== "connectedCallback") {
+      el[key] = proto[key];
+    }
+  }
+  await proto.connectedCallback.call(el);
   return el;
 }
 
@@ -149,15 +184,46 @@ describe("sign-out handler (fix 2 + 3)", () => {
   it("opens the modal only in the auth state", async () => {
     const { default: ConnectionStatus } = await load();
     healthModule.state = "auth";
-    const el = makeElement();
-    const proto = ConnectionStatus.prototype;
-    for (const key of Object.getOwnPropertyNames(proto)) {
-      if (key !== "constructor" && key !== "connectedCallback") {
-        el[key] = proto[key];
-      }
-    }
-    await proto.connectedCallback.call(el);
-
+    const el = await mount(ConnectionStatus);
     expect(el._dialogs).toContain("showModal");
+  });
+});
+
+describe("banner dismissal lifecycle (fix 6)", () => {
+  it("re-arms the banner on a later outage after dismissal + healthy transition", async () => {
+    const { default: ConnectionStatus } = await load();
+    const el = await mount(ConnectionStatus);
+
+    // Outage #1: banner mounts.
+    healthModule.state = "outage";
+    el._sync();
+    expect(el._banner).not.toBeNull();
+
+    // User dismisses it.
+    el._listeners["banner-close"]();
+    expect(el._banner).toBeNull();
+
+    // Healthy transition — with the banner already gone from the DOM, the
+    // pre-fix code keyed the _dismissed reset on banner presence and never
+    // re-armed; the reset must happen on the transition itself.
+    healthModule.state = "healthy";
+    el._sync();
+
+    // Outage #2: banner must mount again.
+    healthModule.state = "outage";
+    el._sync();
+    expect(el._banner).not.toBeNull();
+  });
+
+  it("banner stays dismissed within a single outage period", async () => {
+    const { default: ConnectionStatus } = await load();
+    healthModule.state = "outage";
+    const el = await mount(ConnectionStatus);
+    expect(el._banner).not.toBeNull();
+
+    el._listeners["banner-close"]();
+    // Re-sync while still in outage: no re-mount (still dismissed).
+    el._sync();
+    expect(el._banner).toBeNull();
   });
 });
