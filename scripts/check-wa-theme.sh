@@ -32,27 +32,39 @@ if [ -n "$vendored_version" ] && [ "$vendored_version" != "$version" ]; then
   exit 1
 fi
 
-normalize() {
-  # Drop: the vendored header comment block (everything before the last `*/`),
-  # comment tails (anything from `/*` onward on a line), blank lines, the
-  # bunny.net font import, and any @import line.
-  # This removes transformations 1 and 2 wholesale; transformation 3 is covered
-  # by the font-family filter below (it only ever touches --wa-font-family-*).
-  # The VENDORED header lives INSIDE the leading comment block of the vendored
-  # file, so stripping to the last `*/` before the first `{` handles both files'
-  # headers. Simplest robust rule: drop everything up to the first `@layer`.
-  sed -E '0,/@layer wa-theme/s//KEEP@layer wa-theme/' \
-    | sed -n '/KEEP@layer wa-theme/,$p' \
-    | sed -E 's#/\*.*##' \
-    | grep -vE "bunny\.net|@import|^\s*\*|^\s*$" \
-    | grep -v -- "--wa-font-family-"
+normalize_imports() {
+  # Imports live BEFORE the @layer cut, so they must be normalized and compared
+  # separately. Rewrite each known import to a canonical token:
+  #   upstream:   @import url('../layers.css'); etc.
+  #   vendored:   @import '@awesome.me/webawesome/dist/styles/...';
+  # and strip the bunny.net font import (transformation 1). An ADDED, REMOVED,
+  # or re-pointed import then shows as a diff line instead of vanishing.
+  perl -0777 -pe 's#/\*.*?\*/##gs' \
+    | grep -v "fonts\.bunny\.net" \
+    | sed -E "s#@import url\('../layers\.css'\);#@IMPORT-X-LAYERS#; s#@import url\('../color/palettes/bright\.css'\);.*#@IMPORT-X-PALETTE#" \
+    | sed -E "s#@import '@awesome\.me/webawesome/dist/styles/layers\.css';#@IMPORT-X-LAYERS#; s#@import '@awesome\.me/webawesome/dist/styles/color/palettes/bright\.css';#@IMPORT-X-PALETTE#" \
+    | grep -E '^@IMPORT|^@import'
 }
 
-if diff <(normalize < "$UPSTREAM") <(normalize < "$VENDORED") > /tmp/wa-theme-drift.diff; then
+normalize_body() {
+  # The theme body: everything from the first `@layer` onward, with /* */
+  # comments (multi-line aware) removed and ONLY the two swapped font tokens
+  # neutralized (transformation 3 — body/longform). Heading/code font tokens
+  # stay guarded: an upstream change to them shows as drift.
+  # (awk's found-flag is the portable "from first match to EOF" — BSD sed has
+  # no GNU `0,/pat/` address form.)
+  awk '/@layer wa-theme/{found=1} found' \
+    | perl -0777 -pe 's#/\*.*?\*/##gs' \
+    | sed -E 's#--wa-font-family-body: [^;]+;#--wa-font-family-body: NORMALIZED;#; s#--wa-font-family-longform: [^;]+;#--wa-font-family-longform: NORMALIZED;#' \
+    | grep -vE "^\s*$"
+}
+
+if diff <(normalize_imports < "$UPSTREAM") <(normalize_imports < "$VENDORED") > /tmp/wa-theme-drift.diff &&
+   diff <(normalize_body < "$UPSTREAM") <(normalize_body < "$VENDORED") >> /tmp/wa-theme-drift.diff; then
   echo "check-wa-theme: OK (vendored theme matches upstream @$version within the known delta)"
 else
   echo "check-wa-theme: UNEXPECTED DRIFT between vendored wa-awesome.css and upstream @$version" >&2
-  echo "(known transformations — font @import strip, @import rewrites, font tokens — are normalized out; anything below is real)" >&2
+  echo "(imports are compared after canonical path rewrite; body normalizes ONLY the body/longform font tokens; anything below is real)" >&2
   cat /tmp/wa-theme-drift.diff >&2
   exit 1
 fi

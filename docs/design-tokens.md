@@ -88,7 +88,7 @@ mock with Inter/SF, but know the shipped app uses system fonts. WA base size is
 | `.btn-outline` | transparent, 1px `--c-line` border | `--text` | same metrics |
 | `.btn-blue` | `--brand-blue` | `--on-ink` | same metrics |
 | `.btn-*-sm` | same fills | — | padding `0.45rem 1.2rem`, min-height 38px, 0.9rem, nowrap |
-| `.login__link` | none (underline link) | `--text-secondary` | — |
+| `.btn-link` | none (underline link; quiet text, hover → text) | `--text-secondary` | — |
 
 Dark mode: `--ink` inverts to a **light** pill with dark label — mockups must show
 that inversion, not a dark-on-dark pill.

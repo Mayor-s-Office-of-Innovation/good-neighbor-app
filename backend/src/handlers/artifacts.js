@@ -98,7 +98,8 @@ export const presignUpload = async (event) => {
  * the S3 key, never the media bytes.
  *
  * Tenant isolation is the partition key (`SITE#<siteId>`, siteId derived from the
- * JWT and enforced by the IAM LeadingKeys condition) plus the s3Key prefix check
+ * JWT, enforced at the application layer; the IAM LeadingKeys condition is the
+ * target-design backstop, not yet in the deployed role) plus the s3Key prefix check
  * below — NOT a parent-header lookup. We deliberately do not read the CHECK header
  * here. It used to be a ConditionCheck in a TransactWrite, but that routed every
  * one of a submit's parallel registrations through the same header item, and

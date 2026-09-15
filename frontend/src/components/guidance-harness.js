@@ -154,7 +154,7 @@ class GuidanceHarness extends HTMLElement {
                   )
                   .join("")}
               </wa-select>
-              <button class="btn-outline--sm" type="button" id="freshen">
+              <button class="btn-outline btn-outline--sm" type="button" id="freshen">
                 Fresh IDs
               </button>
             </div>
@@ -501,7 +501,7 @@ class GuidanceHarness extends HTMLElement {
                 <p>${escapeHtml(displayValue(question.prompt))}</p>
                 <div class="guidance-question__actions">
                   <button
-                    class="btn-outline--sm"
+                    class="btn-outline btn-outline--sm"
                     type="button"
                     data-answer="true"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
@@ -511,7 +511,7 @@ class GuidanceHarness extends HTMLElement {
                     Yes
                   </button>
                   <button
-                    class="btn-outline--sm"
+                    class="btn-outline btn-outline--sm"
                     type="button"
                     data-answer="false"
                     data-assessment-id="${escapeAttr(condition.assessmentId)}"
