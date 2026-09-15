@@ -1,8 +1,10 @@
 // Who is this request, and which tenant partition may it touch? The answer is
 // the `custom:siteId` claim carried by the request's authorizer (set by the
 // device-token REQUEST authorizer today, Cognito later — ADR 0010), enforced at
-// the platform layer by the IAM `dynamodb:LeadingKeys = SITE#<custom:siteId>`
-// condition (docs/dynamodb-data-model.md § Identity model). It is derived
+// the APPLICATION layer (every handler partitions on this value). The
+// platform-layer backstop — the IAM `dynamodb:LeadingKeys = SITE#<custom:siteId>`
+// condition (docs/dynamodb-data-model.md § Identity model) — is the target
+// design, not yet in the deployed role. It is derived
 // server-side and NEVER read from the request body: a client cannot name the
 // site it writes to.
 

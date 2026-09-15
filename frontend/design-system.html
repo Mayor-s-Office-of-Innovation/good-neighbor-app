@@ -140,9 +140,6 @@
         padding: 1.25rem;
         background: var(--bg);
       }
-      .ds-theme-wrap.wa-dark {
-        background: var(--bg);
-      }
       .ds-footer {
         border-top: 1px solid var(--c-line);
         padding-top: 1.25rem;
@@ -216,9 +213,20 @@
             <button class="btn-blue" type="button">Filed 311 ticket</button>
             <small>.btn-blue — the city-lane action</small>
           </div>
+        </div>
+
+        <p class="ds-label">Link-styled button</p>
+        <div class="ds-grid">
           <div class="ds-cell">
-            <button class="login__link" type="button">Link-styled button</button>
-            <small>.login__link — text + underline, no box</small>
+            <button class="btn-link" type="button">Need a new code?</button>
+            <small>.btn-link — real &lt;button&gt; that reads as a text link. For
+            in-page state switches only ("links navigate, buttons act") — if it
+            navigates, use a real &lt;a&gt;. Default color is quiet text; override
+            color in the call site's scope when it sits on a colored line.</small>
+          </div>
+          <div class="ds-cell">
+            <button class="btn-link" type="button" disabled>Disabled link</button>
+            <small>.btn-link:disabled — faint, not-allowed cursor</small>
           </div>
         </div>
 
@@ -234,17 +242,19 @@
           </div>
         </div>
 
-        <p class="ds-label">Dark mode (real .wa-dark subtree, not a mock)</p>
-        <div class="ds-theme-wrap wa-dark">
-          <div class="ds-row">
-            <button class="btn-ink" type="button">Primary (inverts to light pill)</button>
-            <button class="btn-outline" type="button">Secondary</button>
-            <button class="btn-blue" type="button">Filed 311 ticket</button>
-            <button class="btn-ink" type="button" disabled>Disabled</button>
-          </div>
+        <p class="ds-label">Dark mode</p>
+        <div class="ds-theme-wrap">
           <small style="color: var(--text-faint)">
-            Note the ink pill INVERTS on dark: --ink becomes light, --on-ink dark.
-            Mockups must show this — not dark-on-dark.
+            Dark mode is a <strong>root-level</strong> token swap (<code>html.wa-dark</code> in
+            tokens.css — light/dark are page states, not subtree states). Use the
+            <strong>Toggle dark mode</strong> button in the toolbar above to flip this whole page
+            and inspect every example in both themes — the token table in section 3 also shows
+            the light and dark hexes side by side.
+          </small>
+          <small style="color: var(--text-faint); margin-top: 0.5rem">
+            The pill inversion to check for: <code>--ink</code> becomes light (#ededed) with a
+            dark label (--on-ink #131313) — light-on-light or dark-on-dark pills are Figma
+            errors, not theme quirks.
           </small>
         </div>
 

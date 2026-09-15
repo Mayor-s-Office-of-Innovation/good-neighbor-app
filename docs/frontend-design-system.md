@@ -83,7 +83,13 @@ dashboards (today-view, onboarding).
 - **`.btn-outline`** — the secondary sibling (hairline border, transparent).
 - **`.btn-blue`** — the escalation pill (the "Filed 311 ticket" blue lane).
 - **`.btn-ink--sm` / `.btn-outline--sm` / `.btn-blue--sm`** — compact, for in-card action rows.
-- **`.login__link`** — a link-styled `<button>` (text + underline, no box).
+- **`.btn-link`** — a link-styled `<button>` (text + underline, no box). For
+  in-page state switches only — "links navigate, buttons act": if the control
+  navigates, use a real `<a>`. Default color is quiet text (`--text-secondary`,
+  hover → `--text`); override `color` in the call site's scope when it sits on a
+  colored line. Already resets WA's native-button skin (the 62px form-control
+  height + offset shadow that `native.css` applies to every bare `<button>`) —
+  don't re-add those resets per call site.
 
 ```html
 <button class="btn-ink" type="button">Primary action</button>
