@@ -58,9 +58,15 @@
 - **[security-review.md](./security-review.md)** — the written security review: threat model,
   auth postures (demo deterrence-grade vs Option 3 real), hardening checklist, and the
   pre-launch TODOs.
-- **[site-code-lifecycle-plan.md](./site-code-lifecycle-plan.md)** — planned replacement for
-  fixed public site codes: request-by-email setup codes, revocation, and a separate central
-  support admin console.
+
+## Where plans live
+
+Implementation plans are **working documents, not living references** — they are not
+tracked in this folder. A plan lives on the **GitHub issue tracker** (or an external
+notes dir) while the work is underway; once the work is fully built and reviewed, the
+plan is **deleted**: decisions get an ADR, durable facts are folded into the reference
+docs above, and the rest is dropped. Historical plans are not kept up to date and don't
+earn a place in the repo.
 
 ## ADRs — `adr/`
 
