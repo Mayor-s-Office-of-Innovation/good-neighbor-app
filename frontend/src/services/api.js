@@ -362,7 +362,7 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, caller?: { request_id?: string } }} [body]
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, caller?: { request_id?: string } }} [body]
  * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
  */
 export function rejectAnalysisCondition(

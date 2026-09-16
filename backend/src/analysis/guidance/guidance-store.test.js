@@ -1285,6 +1285,98 @@ describe("supersedeOpenTasksForCondition", () => {
       gsi2pk: "SITE#site-1#TASK#superseded",
     });
   });
+
+  it("accepts a concurrent terminal transition after strongly reconciling it", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "open",
+      kind: "action",
+      severity: 2,
+      conditionId: "cond-litter",
+    };
+    const conflict = Object.assign(new Error("conditional conflict"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+    });
+    send
+      .mockResolvedValueOnce({ Items: [task] })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Responses: { table: [{ ...task, status: "completed" }] },
+      });
+
+    await expect(
+      supersedeOpenTasksForCondition({
+        tableName: "table",
+        siteId: "site-1",
+        conditionId: "cond-litter",
+      }),
+    ).resolves.toEqual({ supersededTaskIds: ["task-1"] });
+
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[2][0]).toBeInstanceOf(BatchGetCommand);
+  });
+
+  it("retries only tasks that are still open after a conditional conflict", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "open",
+      kind: "action",
+      severity: 2,
+      conditionId: "cond-litter",
+    };
+    const conflict = Object.assign(new Error("conditional conflict"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+    });
+    send
+      .mockResolvedValueOnce({ Items: [task] })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ Responses: { table: [task] } })
+      .mockResolvedValueOnce({});
+
+    await expect(
+      supersedeOpenTasksForCondition({
+        tableName: "table",
+        siteId: "site-1",
+        conditionId: "cond-litter",
+      }),
+    ).resolves.toEqual({ supersededTaskIds: ["task-1"] });
+
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls[3][0]).toBeInstanceOf(TransactWriteCommand);
+  });
+
+  it("propagates non-conditional transaction failures", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "open",
+      kind: "action",
+      severity: 2,
+      conditionId: "cond-litter",
+    };
+    const capacityError = Object.assign(new Error("capacity"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [{ Code: "ProvisionedThroughputExceeded" }],
+    });
+    send
+      .mockResolvedValueOnce({ Items: [task] })
+      .mockRejectedValueOnce(capacityError);
+
+    await expect(
+      supersedeOpenTasksForCondition({
+        tableName: "table",
+        siteId: "site-1",
+        conditionId: "cond-litter",
+      }),
+    ).rejects.toBe(capacityError);
+  });
 });
 
 describe("getAssessmentGuidance", () => {
