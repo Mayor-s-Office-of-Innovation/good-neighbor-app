@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { downscaleImage } from "./downscale.js";
+import { downscaleImage, DownscaleError } from "./downscale.js";
 
 /** Make a real JPEG of the given dimensions so sharp has real pixels to work. */
 const jpegOf = (/** @type {number} */ width, /** @type {number} */ height) =>
@@ -91,6 +91,41 @@ describe("downscaleImage", () => {
     const meta = await sharp(result.bytes).metadata();
     expect(meta.format).toBe("jpeg");
     expect(Math.max(meta.width, meta.height)).toBe(1568);
+  });
+
+  it("composites alpha onto white, not the JPEG encoder's black", async () => {
+    // Fully-transparent red PNG: the naive jpeg() encode emits RGB(0,0,0)
+    // (encoder zero-fill), which would materially change what the analyzer
+    // sees. flatten() first → white matte.
+    const bytes = await sharp({
+      create: {
+        width: 50,
+        height: 50,
+        channels: 4,
+        background: { r: 255, g: 0, b: 0, alpha: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const result = await downscaleImage(bytes, "image/png");
+    const stats = await sharp(result.bytes).stats();
+    expect(stats.channels.map((c) => Math.round(c.mean))).toEqual([
+      255, 255, 255,
+    ]);
+  });
+
+  it("throws DownscaleError (permanent) for non-image bytes", async () => {
+    await expect(
+      downscaleImage(Buffer.from("definitely not an image"), "image/jpeg"),
+    ).rejects.toThrow(DownscaleError);
+  });
+
+  it("throws DownscaleError for a truncated image", async () => {
+    const buffer = await jpegOf(100, 100);
+    const truncated = buffer.subarray(0, Math.floor(buffer.length * 0.3));
+    await expect(
+      downscaleImage(truncated, "image/jpeg"),
+    ).rejects.toThrow(DownscaleError);
   });
 
   it("bounds the output payload well under the analyzer's tolerance", async () => {
