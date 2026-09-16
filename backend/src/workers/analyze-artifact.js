@@ -17,7 +17,7 @@ import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { getObjectBytes } from "../s3.js";
-import { downscaleImage } from "../media/downscale.js";
+import { downscaleImage, DownscaleError } from "../media/downscale.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
@@ -187,10 +187,25 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
       bucket: uploadBucket,
       key: msg.s3Key,
     });
-    const { bytes, contentType } = await downscaleImage(
-      object.bytes,
-      object.contentType ?? "application/octet-stream",
-    );
+    let downscaled;
+    try {
+      downscaled = await downscaleImage(
+        object.bytes,
+        object.contentType ?? "application/octet-stream",
+      );
+    } catch (err) {
+      // Not a decodable image (corrupt/truncated/non-image bytes behind an
+      // image content-type). Permanent — retrying can never succeed, so mark
+      // the artifact failed rather than redelivering to the DLQ.
+      if (!(err instanceof DownscaleError)) throw err;
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: new AnalyzerError(err.message, { code: "undecodable_input" }),
+      });
+      return;
+    }
+    const { bytes, contentType } = downscaled;
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —
