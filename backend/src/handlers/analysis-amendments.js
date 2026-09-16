@@ -200,9 +200,10 @@ export async function rejectAnalysisCondition(event) {
       return jsonResponse(400, { error: "Invalid JSON body" });
     }
   }
-  const input = /** @type {{ reason?: { key?: unknown, note?: unknown } }} */ (
-    body
-  );
+  const input =
+    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown }} */ (
+      body
+    );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
   let reason;
   if (input.reason !== undefined) {
@@ -276,6 +277,9 @@ export async function rejectAnalysisCondition(event) {
       conditionId,
       assessmentIdPrefix: `${context.checkId}-${context.artifactId}`,
       analysisId: context.analysisId,
+      ...(typeof input.taskId === "string" && input.taskId
+        ? { taskId: input.taskId }
+        : {}),
       reason: "analysis_condition_rejected",
     });
     return jsonResponse(200, result);

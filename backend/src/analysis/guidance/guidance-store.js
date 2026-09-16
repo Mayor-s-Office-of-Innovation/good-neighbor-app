@@ -1583,12 +1583,185 @@ export async function completeTaskWithAppActions(opts) {
  * @param {string} [opts.checkId]
  * @param {string} [opts.assessmentIdPrefix]
  * @param {string} [opts.analysisId]
+ * @param {string} [opts.taskId] A task ID supplied by a current task card.
  * @param {string} [opts.reason]
  * @param {Date} [opts.now]
  * @returns {Promise<{ supersededTaskIds: string[] }>}
  */
 export async function supersedeOpenTasksForCondition(opts) {
   const now = (opts.now ?? new Date()).toISOString();
+  const taskIds = opts.taskId ? await taskIdsForCurrentCondition(opts) : null;
+  const matches = taskIds
+    ? await batchGetAll({
+        tableName: opts.tableName,
+        keys: taskIds.map((taskId) => taskKey(opts.siteId, taskId)),
+      })
+    : await findOpenConditionTasks(opts);
+
+  const tasks = matches.filter((task) => {
+    if (task.status !== "open") return false;
+    if (opts.checkId && task.checkId !== opts.checkId) return false;
+    if (
+      opts.assessmentIdPrefix &&
+      !String(task.assessmentId ?? "").startsWith(opts.assessmentIdPrefix)
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  /** @type {string[]} */
+  const supersededTaskIds = tasks
+    .map((task) => task.taskId)
+    .filter((taskId) => typeof taskId === "string" && taskId)
+    .map((taskId) => String(taskId));
+
+  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
+    let pending = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
+    for (let attempt = 0; pending.length > 0; attempt += 1) {
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: supersedeTaskWrites(pending, opts, now),
+          }),
+        );
+        break;
+      } catch (err) {
+        if (!isSupersessionConflict(err)) throw err;
+
+        // The analyzer has already accepted the amendment. A task transitioned
+        // by another request is therefore a successful retirement outcome, not
+        // a reason to report this deletion as failed. Re-read strongly and only
+        // retry tasks that are still open.
+        const current = await batchGetAll({
+          tableName: opts.tableName,
+          keys: pending.map((task) =>
+            taskKey(opts.siteId, String(task.taskId)),
+          ),
+        });
+        pending = current.filter((task) => task.status === "open");
+        if (pending.length === 0) break;
+        if (attempt >= 2) throw err;
+      }
+    }
+  }
+
+  return { supersededTaskIds };
+}
+
+/**
+ * @param {Record<string, unknown>[]} tasks
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @param {string} now
+ * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>}
+ */
+function supersedeTaskWrites(tasks, opts, now) {
+  return tasks.map((task) => {
+    const taskId = String(task.taskId);
+    const updated = {
+      ...task,
+      status: "superseded",
+      supersededAt: now,
+      supersessionReason: opts.reason ?? "analysis_condition_amended",
+      ...(opts.analysisId ? { supersededByAnalysisId: opts.analysisId } : {}),
+      updatedAt: now,
+      ...taskWorklistDateGsi(
+        opts.siteId,
+        "superseded",
+        String(task.kind),
+        Number(task.severity ?? 0),
+        now,
+        taskId,
+      ),
+    };
+    return {
+      Put: {
+        TableName: opts.tableName,
+        Item: updated,
+        ConditionExpression: "#status = :open",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":open": "open" },
+      },
+    };
+  });
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isSupersessionConflict(err) {
+  if (!(err instanceof Error) || err.name !== "TransactionCanceledException") {
+    return false;
+  }
+  const reasons = /** @type {{ CancellationReasons?: { Code?: string }[] }} */ (
+    err
+  ).CancellationReasons;
+  return Boolean(
+    reasons?.some(
+      (reason) =>
+        reason.Code === "ConditionalCheckFailed" ||
+        reason.Code === "TransactionConflict",
+    ),
+  );
+}
+
+/**
+ * Resolve task IDs from strongly consistent primary-key records. A current card
+ * carries its task ID, which leads to the owning condition record and its full
+ * taskIds list without relying on eventual GSI propagation.
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @returns {Promise<string[] | null>} Null preserves the legacy GSI fallback.
+ */
+async function taskIdsForCurrentCondition(opts) {
+  const taskResult = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: taskKey(opts.siteId, String(opts.taskId)),
+      ConsistentRead: true,
+    }),
+  );
+  const task = taskResult.Item;
+  if (
+    !task ||
+    task.conditionId !== opts.conditionId ||
+    (opts.checkId && task.checkId !== opts.checkId) ||
+    typeof task.assessmentId !== "string" ||
+    !task.assessmentId
+  ) {
+    return null;
+  }
+
+  const conditionResult = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: conditionKey(opts.siteId, task.assessmentId, opts.conditionId),
+      ConsistentRead: true,
+    }),
+  );
+  const condition = conditionResult.Item;
+  if (
+    condition?.conditionId !== opts.conditionId ||
+    (opts.checkId && condition.checkId !== opts.checkId)
+  ) {
+    // The task itself was strongly read and is still the safest known work to
+    // retire if a legacy condition record has been removed or is malformed.
+    return [String(opts.taskId)];
+  }
+
+  const conditionTaskIds = Array.isArray(condition.taskIds)
+    ? condition.taskIds.filter((taskId) => typeof taskId === "string" && taskId)
+    : [];
+  return [...new Set([String(opts.taskId), ...conditionTaskIds])];
+}
+
+/**
+ * Legacy recovery path for cards without a task ID. GSI2 is eventually
+ * consistent, so current task cards must use taskIdsForCurrentCondition.
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function findOpenConditionTasks(opts) {
   /** @type {Record<string, unknown>[]} */
   const matches = [];
   /** @type {Record<string, unknown> | undefined} */
@@ -1615,63 +1788,7 @@ export async function supersedeOpenTasksForCondition(opts) {
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (exclusiveStartKey);
 
-  const tasks = matches.filter((task) => {
-    if (task.status !== "open") return false;
-    if (opts.checkId && task.checkId !== opts.checkId) return false;
-    if (
-      opts.assessmentIdPrefix &&
-      !String(task.assessmentId ?? "").startsWith(opts.assessmentIdPrefix)
-    ) {
-      return false;
-    }
-    return true;
-  });
-
-  /** @type {string[]} */
-  const supersededTaskIds = tasks
-    .map((task) => task.taskId)
-    .filter((taskId) => typeof taskId === "string" && taskId)
-    .map((taskId) => String(taskId));
-
-  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
-    const chunk = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: chunk.map((task) => {
-          const taskId = String(task.taskId);
-          const updated = {
-            ...task,
-            status: "superseded",
-            supersededAt: now,
-            supersessionReason: opts.reason ?? "analysis_condition_amended",
-            ...(opts.analysisId
-              ? { supersededByAnalysisId: opts.analysisId }
-              : {}),
-            updatedAt: now,
-            ...taskWorklistDateGsi(
-              opts.siteId,
-              "superseded",
-              String(task.kind),
-              Number(task.severity ?? 0),
-              now,
-              taskId,
-            ),
-          };
-          return {
-            Put: {
-              TableName: opts.tableName,
-              Item: updated,
-              ConditionExpression: "#status = :open",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: { ":open": "open" },
-            },
-          };
-        }),
-      }),
-    );
-  }
-
-  return { supersededTaskIds };
+  return matches;
 }
 
 /**
