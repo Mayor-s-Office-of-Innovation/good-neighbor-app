@@ -20,6 +20,8 @@
 - **[ADR 0010](./adr/0010-device-token-auth.md)** — the device-token auth
   decision now wired into the API (amends the identity decision in
   [security-review.md](./security-review.md)).
+- **[ADR 0012](./adr/0012-sharp-downscale.md)** — sharp downscale in the analyze
+  worker (the 413 `input_too_large` fix) and its Lambda packaging choice.
 
 ## Operations
 
