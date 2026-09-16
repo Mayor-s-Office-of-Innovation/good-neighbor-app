@@ -3,12 +3,14 @@ import sharp from "sharp";
 import { downscaleImage } from "./downscale.js";
 
 /** Make a real JPEG of the given dimensions so sharp has real pixels to work. */
-const jpegOf = (
-  /** @type {number} */ width,
-  /** @type {number} */ height,
-) =>
+const jpegOf = (/** @type {number} */ width, /** @type {number} */ height) =>
   sharp({
-    create: { width, height, channels: 3, background: { r: 120, g: 60, b: 30 } },
+    create: {
+      width,
+      height,
+      channels: 3,
+      background: { r: 120, g: 60, b: 30 },
+    },
   })
     .jpeg()
     .toBuffer();
