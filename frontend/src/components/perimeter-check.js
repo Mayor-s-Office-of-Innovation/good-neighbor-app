@@ -13,10 +13,12 @@ import {
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
+import { mark } from "../services/instrument.js";
 import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
+  retryEvidenceItem,
   refreshEvidenceAnalysis,
 } from "../services/photo-analysis.js";
 import {
@@ -44,6 +46,7 @@ import {
   setActivePlaceIndex,
   addItem,
   skipPlace,
+  removeItem,
   isCurrentSession,
   setPlaceInputMode,
   reviewPlace,
@@ -356,10 +359,25 @@ class PerimeterCheck extends HTMLElement {
     if (!(target instanceof Element)) return;
     const button = target.closest("[data-analysis-action]");
     if (!button) return;
+    const action = button.getAttribute("data-analysis-action");
+
+    if (action === "retry") {
+      const card = button.closest(".analysis-card");
+      const placeId = card?.getAttribute("data-place-id") || "";
+      const itemId = card?.getAttribute("data-item-id") || "";
+      if (placeId && itemId) retryEvidenceItem(placeId, itemId);
+      return;
+    }
+    if (action === "remove-item") {
+      const card = button.closest(".analysis-card");
+      const placeId = card?.getAttribute("data-place-id") || "";
+      const itemId = card?.getAttribute("data-item-id") || "";
+      if (placeId && itemId) this._removeFailedItem(placeId, itemId);
+      return;
+    }
+
     const card = button.closest(".analysis-card");
     if (!card) return;
-
-    const action = button.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card);
     if (action === "delete") {
       this._openDeleteProblem(problem);
@@ -668,6 +686,48 @@ class PerimeterCheck extends HTMLElement {
     this._render();
   }
 
+  /** Drop a failed, never-uploaded photo from the session entirely. */
+  _removeFailedItem(placeId, itemId) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[placeId]?.items?.find(
+      (candidate) => candidate.id === itemId,
+    );
+    if (!item) return;
+    if (item.upload?.status === "uploaded") return;
+    removeItem(placeId, itemId);
+  }
+
+  /**
+   * Keep the pending card's elapsed timer live between renders. The card
+   * carries `data-elapsed-since` (the stage timestamp); this ticker rewrites
+   * the text in place every second — no re-render, no state churn.
+   */
+  _startElapsedTicker() {
+    this._stopElapsedTicker();
+    const tick = () => {
+      for (const el of this.querySelectorAll("[data-elapsed-since]")) {
+        const since = el.getAttribute("data-elapsed-since");
+        const start = since ? Date.parse(since) : NaN;
+        if (Number.isFinite(start)) {
+          const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
+          const minutes = Math.floor(seconds / 60);
+          const rest = seconds % 60;
+          el.textContent =
+            minutes > 0 ? ` ${minutes}m ${rest}s` : ` ${seconds}s`;
+        }
+      }
+    };
+    tick();
+    this._elapsedTicker = window.setInterval(tick, 1000);
+  }
+
+  _stopElapsedTicker() {
+    if (this._elapsedTicker) {
+      window.clearInterval(this._elapsedTicker);
+      this._elapsedTicker = null;
+    }
+  }
+
   _setDialogError(id, message) {
     const error = this.querySelector(`#${id}`);
     if (!error) return;
@@ -839,6 +899,12 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _openCamera() {
+    // Trace the tap → file-picker handoff: if the picker never opens (in-app
+    // webview, OS restriction), the logs show the tap with no "picked" line
+    // after it — the field demo "photo button did nothing" signature.
+    mark("camera:open", {
+      placeId: this._pendingPhotoPlaceId || this._placeId,
+    });
     this._fileInput.value = "";
     this._fileInput.click();
   }
@@ -846,6 +912,7 @@ class PerimeterCheck extends HTMLElement {
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    mark("camera:picked", { bytes: file.size, type: file.type });
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
@@ -984,6 +1051,7 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#add-place-open")?.addEventListener("click", () =>
       this._addPlaceDialog.showModal(),
     );
+    this._startElapsedTicker();
   }
 
   _allEvidence() {
@@ -998,6 +1066,7 @@ class PerimeterCheck extends HTMLElement {
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
+    this._stopElapsedTicker();
     document.removeEventListener("click", this._documentClick);
     this._deletionUnsub?.();
     this._unsubscribe?.();

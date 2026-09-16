@@ -17,6 +17,11 @@ import {
 import { currentRoute, onRouteChange, navigate } from "../router.js";
 import { setupView, appShell } from "./app-root.templates.js";
 import "./connection-status.js";
+import {
+  isInAppBrowser,
+  escapeUrlForPlatform,
+} from "../services/browser-context.js";
+import { reportClientEvent } from "../services/error-report.js";
 
 const ROUTE_VIEW = [
   ["/problem/describe", "describe-instead"],
@@ -92,6 +97,7 @@ class AppRoot extends HTMLElement {
   _renderSetup() {
     this.innerHTML = setupView();
     this.append(document.createElement("connection-status"));
+    this._maybeWarnInAppBrowser();
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state
@@ -107,8 +113,47 @@ class AppRoot extends HTMLElement {
     this.innerHTML = appShell({ siteName: this._site.name });
     this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
+    this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
+  }
+
+  /**
+   * In-app-webview heads-up: known webviews silently break the camera intent,
+   * so warn once per load and offer the escape hatch (Safari / default
+   * browser). Dismissible; nothing about the app is blocked.
+   */
+  _maybeWarnInAppBrowser() {
+    if (!isInAppBrowser()) return;
+    reportClientEvent("in_app_browser", "in-app webview detected at boot", {});
+    const host = this.querySelector(".app__main") || this;
+    host.insertAdjacentHTML(
+      "afterbegin",
+      `<div class="webview-banner" role="status">
+        <p>
+          <strong>Camera may not open here.</strong> You're inside another app's
+          browser. Open in your browser instead for the camera to work.
+        </p>
+        <button class="webview-banner__open" type="button">Open in browser</button>
+        <button class="webview-banner__close" type="button" aria-label="Dismiss">
+          ✕
+        </button>
+      </div>`,
+    );
+    this.querySelector(".webview-banner__open")?.addEventListener(
+      "click",
+      () => {
+        const url = escapeUrlForPlatform();
+        if (!url) return;
+        // Both the iOS handoff (target=_blank → Safari) and the Android
+        // intent URL must be triggered from a user gesture.
+        window.open(url, "_blank", "noopener");
+      },
+    );
+    this.querySelector(".webview-banner__close")?.addEventListener(
+      "click",
+      () => this.querySelector(".webview-banner")?.remove(),
+    );
   }
 
   _renderView() {

@@ -15,6 +15,7 @@ import {
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import {
   ApiError,
@@ -432,6 +433,15 @@ class ProblemReport extends HTMLElement {
           this._resolveProblem(problem);
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
+        } else if (action === "retry") {
+          if (problem.placeId && problem.itemId)
+            retryEvidenceItem(problem.placeId, problem.itemId);
+        } else if (action === "remove-item") {
+          const item = getCurrentCheck()?.places?.[
+            problem.placeId
+          ]?.items?.find((candidate) => candidate.id === problem.itemId);
+          if (item && item.upload?.status !== "uploaded")
+            removeItem(problem.placeId, problem.itemId);
         }
       });
     });

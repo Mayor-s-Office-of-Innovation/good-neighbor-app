@@ -98,9 +98,17 @@ describe("analyze-artifact worker", () => {
     expect(call.media[1]).toEqual({ type: "text", text: "north gate clear" });
 
     // ANALYSIS# written conditionally with the adapted per-artifact scorecard.
+    // The write lands on a fresh slot OR replaces a failed marker (retry
+    // recovery) — never an existing success.
     const put = ddbSend.mock.calls[0][0];
     expect(put).toBeInstanceOf(PutCommand);
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+    expect(put.input.ConditionExpression).toBe(
+      "attribute_not_exists(sk) OR #st = :failed",
+    );
+    expect(put.input.ExpressionAttributeNames).toEqual({ "#st": "status" });
+    expect(put.input.ExpressionAttributeValues).toEqual({
+      ":failed": "failed",
+    });
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
@@ -227,6 +235,34 @@ describe("analyze-artifact worker", () => {
       placeName: "North",
       error: { code: "invalid_request", status: 400, message: "bad request" },
     });
+  });
+
+  it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    // First delivery: the slot holds a stale FAILED marker (from an earlier
+    // permanent failure) → the conditional write SUCCEEDS (overwrite).
+    ddbSend.mockResolvedValueOnce({});
+
+    await invoke(baseMsg);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.ConditionExpression).toBe(
+      "attribute_not_exists(sk) OR #st = :failed",
+    );
+
+    // Second delivery against an already-analyzed slot → conditional reject →
+    // the message is consumed as a redelivery, not re-analyzed.
+    ddbSend.mockReset();
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    const res = await invoke(baseMsg);
+    expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
   });
 
   it("marks an unsupported media type as failed without calling the analyzer", async () => {

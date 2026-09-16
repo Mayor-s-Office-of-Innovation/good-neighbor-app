@@ -13,10 +13,12 @@ import {
   evaluateAssessment,
   getAssessmentGuidance,
   getCheck,
+  registerArtifact,
   submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
   ApiError,
+  LEG,
 } from "./api.js";
 import {
   addItem,
@@ -28,6 +30,16 @@ import {
 
 const POLL_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 2000;
+
+/**
+ * One human-readable progress stage the card shows as it happens:
+ *   uploaded — media bytes reached S3 (or text registered)
+ *   sent     — the artifact is registered and the analyzer is working on it
+ *   waiting  — polling for the result (shown with a live elapsed timer)
+ * Stamps persist per stage (ISO timestamps) so a card can show how long each
+ * step took and, after a failure, how long we waited overall.
+ * @typedef {{ uploaded?: string, sent?: string, waiting?: string }} AnalysisStages
+ */
 
 const active = new Set();
 
@@ -48,6 +60,53 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Reduce a pipeline failure to what the card should say: which step broke, what
+ * had already succeeded, and how long we waited before giving up.
+ * @param {unknown} err
+ * @returns {{ leg: "start" | "upload" | "analyze" | "evaluate" | string, uploaded: boolean, enqueued: boolean, waitedMs?: number }}
+ */
+function describeFailure(err) {
+  const body = /** @type {any} */ (err)?.body ?? {};
+  // The analyzer poll timed out: upload + enqueue both succeeded, and the
+  // deadline tells the user exactly how long we waited.
+  if (body?.code === "analyses_pending") {
+    return {
+      leg: "analyze",
+      uploaded: true,
+      enqueued: true,
+      waitedMs: POLL_TIMEOUT_MS,
+    };
+  }
+  const leg = /** @type {any} */ (err)?.leg;
+  // Analyzer/guidance legs imply upload + enqueue already succeeded.
+  if (leg === "analyze" || leg === "evaluate") {
+    return { leg, uploaded: true, enqueued: true };
+  }
+  if (leg) return { leg, uploaded: false, enqueued: false };
+  return { leg: "start", uploaded: false, enqueued: false };
+}
+
+/**
+ * Stamp `err.leg` (first leg wins — a nested call's more specific tag keeps
+ * its own) so failure records name the step that broke. Same convention as
+ * services/submit-check.js `withLeg`.
+ * @template T
+ * @param {string} leg
+ * @param {() => Promise<T>} work
+ * @returns {Promise<T>}
+ */
+async function withLeg(leg, work) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err && typeof err === "object" && err.leg === undefined) {
+      err.leg = leg;
+    }
+    throw err;
+  }
 }
 
 function placesPayload(check) {
@@ -196,21 +255,35 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
   updateItemAnalysis(placeId, itemId, {
     status: "analyzing",
     artifactId,
+    // Merge onto the existing stages — a full object here would discard the
+    // earlier `uploaded` stamp (updateItemAnalysis merges shallowly).
+    stages: {
+      ...(getCurrentCheck()?.places?.[placeId]?.items?.find(
+        (candidate) => candidate.id === itemId,
+      )?.analysis?.stages || {}),
+      sent: new Date().toISOString(),
+    },
   });
-  const analysis = await waitForArtifactAnalysis(checkId, artifactId);
+  const analysis = await withLeg("analyze", () =>
+    waitForArtifactAnalysis(checkId, artifactId),
+  );
   if (analysis.status && analysis.status !== "analyzed") {
     updateItemAnalysis(placeId, itemId, {
       status: "failed",
       artifactId,
       error: analysis.error?.message || "Analysis failed.",
+      failure: {
+        leg: "analyze",
+        uploaded: true,
+        enqueued: true,
+        backendError: true,
+      },
     });
     return;
   }
 
-  const { assessment, guidance } = await guidanceFromAnalysis(
-    checkId,
-    artifactId,
-    analysis,
+  const { assessment, guidance } = await withLeg("evaluate", () =>
+    guidanceFromAnalysis(checkId, artifactId, analysis),
   );
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
@@ -224,7 +297,10 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
 }
 
 /**
- * Start upload/register/analyze/evaluate for one session evidence item.
+ * Kick off (or re-run) the capture pipeline for one item. Idempotent per item —
+ * an already-active run is not restarted — so a manual "Retry" tap and the
+ * auto-resume share one entry point. Called by capture, describe-instead, and
+ * the perimeter check's resume path.
  * @param {string} placeId
  * @param {string} itemId
  */
@@ -233,6 +309,97 @@ export function analyzeEvidenceItem(placeId, itemId) {
   if (active.has(key)) return;
   active.add(key);
   void run(placeId, itemId).finally(() => active.delete(key));
+}
+
+/**
+ * Manual retry from a failed card.
+ *
+ * - A failed ANALYZE leg (timeout or backend error): the artifact is already
+ *   registered, so we re-drive via `registerArtifact` with the SAME artifactId
+ *   (+ s3Key) — the backend re-enqueues on that path by design, so the worker
+ *   makes a fresh analyzer call instead of the client re-polling a dead
+ *   message or an old failure marker.
+ * - A failed UPLOAD leg (or any missing artifact): replay the whole pipeline.
+ * - An upload-only state (interrupt between PUT and analysis-start): seed the
+ *   persisted `upload.artifactId`/`s3Key` into `analysis` so the poll path can
+ *   see it (run() reads only `analysis.artifactId`).
+ *
+ * All paths reuse `analyzeEvidenceItem`'s idempotent-run guard.
+ * @param {string} placeId
+ * @param {string} itemId
+ */
+export function retryEvidenceItem(placeId, itemId) {
+  const check = getCurrentCheck();
+  const item = check?.places?.[placeId]?.items?.find(
+    (candidate) => candidate.id === itemId,
+  );
+  if (!item) return;
+
+  const analysisArtifactId = item.analysis?.artifactId;
+  const uploadArtifactId = item.upload?.artifactId;
+  const artifactId = analysisArtifactId || uploadArtifactId;
+  const isUploadLeg = item.analysis?.failure?.leg === "upload";
+  const analyzeLegFailure = Boolean(
+    !isUploadLeg &&
+      artifactId &&
+      (item.analysis?.failure || item.analysis?.status === "failed"),
+  );
+
+  if (analyzeLegFailure) {
+    // Seed the artifact coordinates so run() and the poll both see them.
+    if (uploadArtifactId && !analysisArtifactId) {
+      updateItemAnalysis(placeId, itemId, {
+        artifactId: uploadArtifactId,
+        ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
+      });
+    }
+    updateItemAnalysis(placeId, itemId, {
+      status: "analyzing",
+      error: undefined,
+      failure: undefined,
+    });
+    // Re-register the same artifact: conditional write + always-enqueue on
+    // the backend means a fresh analyze message with zero new upload. Then
+    // run the pipeline again — run() adopts the coordinates and polls.
+    void withLeg("start", () =>
+      registerArtifact(check.id, {
+        artifactId: analysisArtifactId || uploadArtifactId,
+        placeId,
+        placeName: item.placeName || check.places?.[placeId]?.name || "",
+        s3Key: item.analysis?.s3Key || item.upload?.s3Key,
+        capturedAt: item.uploadedAt,
+        ...(item.kind === "text" ? { text: item.text } : {}),
+        ...(item.note ? { text: item.note } : {}),
+      }),
+    )
+      .then(() => {
+        analyzeEvidenceItem(placeId, itemId);
+      })
+      .catch((err) => {
+        // 409 = already registered — the backend enqueued on that path too,
+        // so a poll is still the right next step.
+        if (/** @type {any} */ (err)?.status === 409) {
+          analyzeEvidenceItem(placeId, itemId);
+          return;
+        }
+        console.error("retryEvidenceItem re-register failed", err);
+        updateItemAnalysis(placeId, itemId, {
+          status: "failed",
+          error: "Could not restart the analysis. Please try again.",
+          failure: { leg: "start", uploaded: true, enqueued: false },
+        });
+      });
+    return;
+  }
+
+  // Upload-leg failure (or never got far enough): replay the pipeline.
+  updateItem(placeId, itemId, { upload: { status: "failed" } });
+  updateItemAnalysis(placeId, itemId, {
+    status: "queued",
+    error: undefined,
+    failure: undefined,
+  });
+  analyzeEvidenceItem(placeId, itemId);
 }
 
 export async function refreshEvidenceAnalysis(
@@ -490,40 +657,70 @@ async function run(placeId, itemId) {
   const item = place?.items?.find((candidate) => candidate.id === itemId);
   if (!check || !place || !item) return;
 
+  const startedAt = Date.now();
   try {
     updateItemAnalysis(placeId, itemId, { status: "queued" });
-    await ensureRemoteCheck(check);
-    let artifactId = item.analysis?.artifactId;
+    await withLeg("start", () => ensureRemoteCheck(check));
+    // An interrupted run may have completed the upload before analysis started:
+    // the artifact coordinates then live only under `upload`. Adopt them here
+    // so run() and the poll both see them instead of re-uploading.
+    let artifactId = item.analysis?.artifactId || item.upload?.artifactId;
+    if (artifactId && !item.analysis?.artifactId) {
+      updateItemAnalysis(placeId, itemId, {
+        artifactId,
+        ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
+      });
+    }
     if (!artifactId) {
       if (item.kind === "text") {
         updateItem(placeId, itemId, { upload: { status: "uploading" } });
-        artifactId = await registerTextArtifact(check.id, {
-          placeId,
-          placeName: place.name,
-          text: item.text,
-          capturedAt: item.uploadedAt,
-        });
+        artifactId = await withLeg("upload", () =>
+          registerTextArtifact(check.id, {
+            placeId,
+            placeName: place.name,
+            text: item.text,
+            capturedAt: item.uploadedAt,
+          }),
+        );
         updateItem(placeId, itemId, {
           upload: { status: "uploaded", artifactId },
         });
       } else {
         updateItem(placeId, itemId, { upload: { status: "uploading" } });
-        artifactId = await uploadArtifact(check.id, {
-          placeId,
-          placeName: place.name,
-          dataUrl: item.dataUrl,
-          capturedAt: item.uploadedAt,
-          ...(item.note ? { text: item.note } : {}),
-          tag: `${place.name}:${item.id}`,
-        });
+        const { artifactId: uploadedId, s3Key } = await withLeg("upload", () =>
+          uploadArtifact(check.id, {
+            placeId,
+            placeName: place.name,
+            dataUrl: item.dataUrl,
+            capturedAt: item.uploadedAt,
+            ...(item.note ? { text: item.note } : {}),
+            tag: `${place.name}:${item.id}`,
+            onLeg: (leg) => {
+              if (leg === LEG.PUT) {
+                // Bytes reached S3 — the card's "Photo uploaded" check.
+                updateItemAnalysis(placeId, itemId, {
+                  stages: { uploaded: new Date().toISOString() },
+                });
+              }
+              // presign/register are sub-second steps; the "sent to analyzer"
+              // stamp lands when evaluateArtifact takes over, which is the
+              // point the user cares about.
+            },
+          }),
+        );
+        artifactId = uploadedId;
+        // Persist the s3Key with the artifact: retry re-registers the SAME
+        // artifact from these coordinates (no new upload, no new object).
         updateItem(placeId, itemId, {
-          upload: { status: "uploaded", artifactId },
+          upload: { status: "uploaded", artifactId, s3Key },
         });
+        updateItemAnalysis(placeId, itemId, { s3Key });
       }
     }
     await evaluateArtifact(check.id, placeId, itemId, artifactId);
   } catch (err) {
     console.error("analyzeEvidenceItem failed", err);
+    const failure = describeFailure(err);
     const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
       (candidate) => candidate.id === itemId,
     );
@@ -543,6 +740,14 @@ async function run(placeId, itemId) {
         err?.body?.code === "analyses_pending"
           ? "Analysis is taking longer than expected."
           : "Could not analyze this item.",
+      failure: {
+        // What the card reports: which step broke, what had succeeded, and
+        // how long we waited before giving up.
+        leg: failure.leg,
+        uploaded: hasUploadedArtifact || failure.uploaded,
+        enqueued: failure.enqueued,
+        waitedMs: Date.now() - startedAt,
+      },
     });
   }
 }
