@@ -14,12 +14,19 @@
 // is self-contained. Only the worker imports it — api/authorizer bundles are
 // unchanged. On the deploy runner, `npm ci` resolves the linux-x64 binaries via
 // sharp's optionalDependencies.
+//
+// `@duckdb/node-api` (analytics convert + report lambdas) gets the same
+// treatment: native `.node` binding + platform-specific `libduckdb.dylib` in
+// `@duckdb/node-bindings-<platform>`, kept external and copied into
+// dist/analytics-convert/ and dist/analytics-report/. On the deploy runner
+// `npm ci` resolves the linux binaries via the platform packages'
+// optionalDependencies (same mechanism as @img/*).
 
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve, join } from "node:path";
-import { rm, cp } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve, join, basename } from "node:path";
+import { rm, cp, mkdir } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = resolve(backendRoot, "dist");
@@ -59,6 +66,21 @@ const entries = [
     // Native addons can't be bundled — keep the import as a runtime require
     // resolved against the copied node_modules (see copy step below).
     external: ["sharp"],
+  },
+  {
+    name: "analytics-export",
+    entry: resolve(backendRoot, "src/lambda/analytics-export.js"),
+  },
+  {
+    name: "analytics-convert",
+    entry: resolve(backendRoot, "src/lambda/analytics-convert.js"),
+    // DuckDB native binding + platform dylib (see copy step below).
+    external: ["@duckdb/node-api", "@duckdb/node-bindings"],
+  },
+  {
+    name: "analytics-report",
+    entry: resolve(backendRoot, "src/lambda/analytics-report.js"),
+    external: ["@duckdb/node-api", "@duckdb/node-bindings"],
   },
 ];
 
@@ -125,4 +147,62 @@ if (!sharpSrc) {
   console.log(
     `[build-lambdas] copied sharp + [${runDeps.join(", ")}] + @img/* into dist/worker/node_modules/`,
   );
+}
+
+// Copy @duckdb/node-api + its native bindings into the two analytics dists.
+// Same resolution logic as sharp: workspace-root node_modules first. The
+// bindings package (@duckdb/node-bindings) loads its platform binary
+// (@duckdb/node-bindings-<os>-<cpu>) via os/cpu-gated optionalDependencies —
+// copy ALL of them; on the deploy runner npm ci resolves the linux one, and
+// extras are inert (each platform package self-describes its os/cpu).
+const duckTargets = ["analytics-convert", "analytics-report"];
+const duckApiSrc = findPkg("@duckdb/node-api");
+if (!duckApiSrc) {
+  console.warn(
+    "[build-lambdas] @duckdb/node-api not present in node_modules — skipping",
+  );
+} else {
+  const bindingsPkgSrc = findPkg("@duckdb/node-bindings");
+  if (!bindingsPkgSrc) {
+    throw new Error(
+      "[build-lambdas] @duckdb/node-bindings not found in node_modules — the analytics zips would crash on cold start",
+    );
+  }
+  for (const target of duckTargets) {
+    const dist = resolve(distDir, target);
+    await mkdir(dist, { recursive: true });
+    await cp(duckApiSrc, join(dist, "node_modules", "@duckdb/node-api"), {
+      recursive: true,
+    });
+    await cp(
+      bindingsPkgSrc,
+      join(dist, "node_modules", "@duckdb/node-bindings"),
+      { recursive: true },
+    );
+    // The platform binary package: findPkg-style resolution under @duckdb/.
+    const scopeDir = resolve(duckApiSrc, ".."); // …/node_modules/@duckdb
+    const platformPkgs = existsSync(scopeDir)
+      ? readdirSync(scopeDir)
+          .filter((d) => d.startsWith("node-bindings-"))
+          .map((d) => resolve(scopeDir, d))
+      : [];
+    if (platformPkgs.length === 0) {
+      throw new Error(
+        "[build-lambdas] no @duckdb/node-bindings-* platform package in node_modules — the analytics zips would crash on cold start",
+      );
+    }
+    for (const src of platformPkgs) {
+      const name = `@duckdb/${basename(src)}`;
+      await cp(src, join(dist, "node_modules", name), { recursive: true });
+    }
+    // The report bundle reads backend/src/analytics/reports/*.sql — copy them
+    // next to index.mjs so the repo-tracked SQL ships in the zip.
+    const reportsSrc = resolve(backendRoot, "src/analytics/reports");
+    if (existsSync(reportsSrc)) {
+      await cp(reportsSrc, join(dist, "reports"), { recursive: true });
+    }
+    console.log(
+      `[build-lambdas] copied @duckdb/node-api + node-bindings (+ ${platformPkgs.length} platform pkg(s))${target === "analytics-report" ? " + reports/*.sql" : ""} into dist/${target}/node_modules/`,
+    );
+  }
 }

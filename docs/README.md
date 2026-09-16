@@ -22,6 +22,9 @@
   [security-review.md](./security-review.md)).
 - **[ADR 0012](./adr/0012-sharp-downscale.md)** — sharp downscale in the analyze
   worker (the 413 `input_too_large` fix) and its Lambda packaging choice.
+- **[ADR 0013](./adr/0013-analytics-read-plane.md)** — the analytics read plane: scheduled
+  DynamoDB PITR exports → entity-split Parquet in S3 → DuckDB (supersedes the Glue/Athena
+  sketch in the data-model doc; Athena remains a future add-on over the same Parquet).
 
 ## Operations
 
