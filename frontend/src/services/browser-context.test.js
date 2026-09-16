@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  isInAppBrowser,
-  escapeUrlForPlatform,
-} from "./browser-context.js";
+import { isInAppBrowser, escapeUrlForPlatform } from "./browser-context.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -17,7 +14,10 @@ const IOS_GMAIL = `${IOS_SAFARI.replace("Safari/604.1", "")} GmailApp`;
 const IOS_OUTLOOK = `${IOS_SAFARI.replace("Safari/604.1", "")} Outlook-iOS/9400.0`;
 const ANDROID_CHROME =
   "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
-const ANDROID_WEBVIEW = ANDROID_CHROME.replace("Chrome/126.0.0.0 Mobile", "; wv) Chrome/126.0.0.0 Mobile");
+const ANDROID_WEBVIEW = ANDROID_CHROME.replace(
+  "Chrome/126.0.0.0 Mobile",
+  "; wv) Chrome/126.0.0.0 Mobile",
+);
 const ANDROID_FACEBOOK = `${ANDROID_CHROME.replace("Mobile Safari/537.36", "")} [FB_IAB/FB4A;FBAV/470.0.0.40.88;]`;
 
 describe("isInAppBrowser", () => {
@@ -48,15 +48,21 @@ describe("isInAppBrowser", () => {
 
 describe("escapeUrlForPlatform", () => {
   it("hands iOS a plain https URL (target=_blank → Safari)", () => {
-    vi.stubGlobal("location", { href: "https://gnp.example.org/check?code=ABC123" });
+    vi.stubGlobal("location", {
+      href: "https://gnp.example.org/check?code=ABC123",
+    });
     const url = escapeUrlForPlatform(IOS_FACEBOOK);
     expect(url).toMatch(/^https:/);
   });
 
   it("wraps Android in an intent URL with an https fallback", () => {
-    vi.stubGlobal("location", { href: "https://gnp.example.org/check?code=ABC123" });
+    vi.stubGlobal("location", {
+      href: "https://gnp.example.org/check?code=ABC123",
+    });
     const url = escapeUrlForPlatform(ANDROID_WEBVIEW);
-    expect(url).toMatch(/^intent:.*#Intent;scheme=https;S\.browser_fallback_url=/);
+    expect(url).toMatch(
+      /^intent:.*#Intent;scheme=https;S\.browser_fallback_url=/,
+    );
     expect(url).toMatch(/end$/);
   });
 });
