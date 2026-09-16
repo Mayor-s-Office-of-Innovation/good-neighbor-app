@@ -1,4 +1,8 @@
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchGetCommand,
+  GetCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -231,6 +235,64 @@ describe("analysis amendments (check/artifact-addressed)", () => {
         status: "superseded",
         supersessionReason: "analysis_condition_rejected",
       },
+    );
+  });
+
+  it("retires a just-published task through strongly consistent primary-key reads", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-fresh",
+      taskId: "task-fresh",
+      status: "open",
+      kind: "escalation",
+      severity: 3,
+      conditionId: "chk_01-art_1-001-litter",
+      checkId: "chk_01",
+      assessmentId: "chk_01-art_1",
+    };
+    send
+      .mockResolvedValueOnce({ Item: analysisItem() })
+      .mockResolvedValueOnce({ Item: task })
+      .mockResolvedValueOnce({
+        Item: {
+          conditionId: "chk_01-art_1-001-litter",
+          checkId: "chk_01",
+          taskIds: ["task-fresh"],
+        },
+      })
+      .mockResolvedValueOnce({ Responses: { "gnp-test-app": [task] } })
+      .mockResolvedValueOnce({});
+
+    const res = await invoke(
+      amendEvent({
+        body: {
+          reason: { key: "not_a_problem" },
+          taskId: "task-fresh",
+        },
+      }),
+      rejectAnalysisCondition,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toMatchObject({
+      input: {
+        Key: { pk: "SITE#site-1", sk: "TASK#task-fresh" },
+        ConsistentRead: true,
+      },
+    });
+    expect(send.mock.calls[2][0]).toMatchObject({
+      input: {
+        Key: {
+          pk: "SITE#site-1",
+          sk: "ASSESSMENT#chk_01-art_1#COND#chk_01-art_1-001-litter",
+        },
+        ConsistentRead: true,
+      },
+    });
+    expect(send.mock.calls[3][0]).toBeInstanceOf(BatchGetCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
+      { taskId: "task-fresh", status: "superseded" },
     );
   });
 

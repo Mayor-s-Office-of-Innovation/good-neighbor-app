@@ -498,6 +498,7 @@ class ProblemReport extends HTMLElement {
               problem.conditionId,
               {
                 reason: { key: "not_a_problem" },
+                ...(problem.taskId ? { taskId: problem.taskId } : {}),
                 caller: { request_id: this._requestId("delete", problem) },
               },
             );
