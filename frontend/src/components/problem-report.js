@@ -498,6 +498,7 @@ class ProblemReport extends HTMLElement {
               problem.conditionId,
               {
                 reason: { key: "not_a_problem" },
+                ...(problem.taskId ? { taskId: problem.taskId } : {}),
                 caller: { request_id: this._requestId("delete", problem) },
               },
             );
@@ -505,6 +506,10 @@ class ProblemReport extends HTMLElement {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
             if (getCurrentCheck()?.id === problem.checkId)
               this._deleteProblemLocally(problem);
+            return;
+          }
+          if (!result?.assessment) {
+            this._deleteProblemLocally(problem);
             return;
           }
           if (
