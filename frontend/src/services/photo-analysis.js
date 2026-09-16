@@ -17,6 +17,7 @@ import {
   uploadArtifact,
   registerTextArtifact,
   ApiError,
+  LEG,
 } from "./api.js";
 import {
   addItem,
@@ -28,6 +29,16 @@ import {
 
 const POLL_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 2000;
+
+/**
+ * One human-readable progress stage the card shows as it happens:
+ *   uploaded — media bytes reached S3 (or text registered)
+ *   sent     — the artifact is registered and the analyzer is working on it
+ *   waiting  — polling for the result (shown with a live elapsed timer)
+ * Stamps persist per stage (ISO timestamps) so a card can show how long each
+ * step took and, after a failure, how long we waited overall.
+ * @typedef {{ uploaded?: string, sent?: string, waiting?: string }} AnalysisStages
+ */
 
 const active = new Set();
 
@@ -48,6 +59,53 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Reduce a pipeline failure to what the card should say: which step broke, what
+ * had already succeeded, and how long we waited before giving up.
+ * @param {unknown} err
+ * @returns {{ leg: "start" | "upload" | "analyze" | "evaluate" | string, uploaded: boolean, enqueued: boolean, waitedMs?: number }}
+ */
+function describeFailure(err) {
+  const body = /** @type {any} */ (err)?.body ?? {};
+  // The analyzer poll timed out: upload + enqueue both succeeded, and the
+  // deadline tells the user exactly how long we waited.
+  if (body?.code === "analyses_pending") {
+    return {
+      leg: "analyze",
+      uploaded: true,
+      enqueued: true,
+      waitedMs: POLL_TIMEOUT_MS,
+    };
+  }
+  const leg = /** @type {any} */ (err)?.leg;
+  // Analyzer/guidance legs imply upload + enqueue already succeeded.
+  if (leg === "analyze" || leg === "evaluate") {
+    return { leg, uploaded: true, enqueued: true };
+  }
+  if (leg) return { leg, uploaded: false, enqueued: false };
+  return { leg: "start", uploaded: false, enqueued: false };
+}
+
+/**
+ * Stamp `err.leg` (first leg wins — a nested call's more specific tag keeps
+ * its own) so failure records name the step that broke. Same convention as
+ * services/submit-check.js `withLeg`.
+ * @template T
+ * @param {string} leg
+ * @param {() => Promise<T>} work
+ * @returns {Promise<T>}
+ */
+async function withLeg(leg, work) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err && typeof err === "object" && err.leg === undefined) {
+      err.leg = leg;
+    }
+    throw err;
+  }
 }
 
 function placesPayload(check) {
@@ -196,21 +254,28 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
   updateItemAnalysis(placeId, itemId, {
     status: "analyzing",
     artifactId,
+    stages: { sent: new Date().toISOString() },
   });
-  const analysis = await waitForArtifactAnalysis(checkId, artifactId);
+  const analysis = await withLeg("analyze", () =>
+    waitForArtifactAnalysis(checkId, artifactId),
+  );
   if (analysis.status && analysis.status !== "analyzed") {
     updateItemAnalysis(placeId, itemId, {
       status: "failed",
       artifactId,
       error: analysis.error?.message || "Analysis failed.",
+      failure: {
+        leg: "analyze",
+        uploaded: true,
+        enqueued: true,
+        backendError: true,
+      },
     });
     return;
   }
 
-  const { assessment, guidance } = await guidanceFromAnalysis(
-    checkId,
-    artifactId,
-    analysis,
+  const { assessment, guidance } = await withLeg("evaluate", () =>
+    guidanceFromAnalysis(checkId, artifactId, analysis),
   );
   updateItemAnalysis(placeId, itemId, {
     status: "analyzed",
@@ -224,7 +289,10 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
 }
 
 /**
- * Start upload/register/analyze/evaluate for one session evidence item.
+ * Kick off (or re-run) the capture pipeline for one item. Idempotent per item —
+ * an already-active run is not restarted — so a manual "Retry" tap and the
+ * auto-resume share one entry point. Called by capture, describe-instead, and
+ * the perimeter check's resume path.
  * @param {string} placeId
  * @param {string} itemId
  */
@@ -233,6 +301,44 @@ export function analyzeEvidenceItem(placeId, itemId) {
   if (active.has(key)) return;
   active.add(key);
   void run(placeId, itemId).finally(() => active.delete(key));
+}
+
+/**
+ * Manual retry from a failed card. A `failed` item with a persisted artifactId
+ * can go straight back to polling (upload/enqueue already succeeded, so the
+ * backend may have already analyzed it — the poll simply looks). Anything else
+ * replays the whole pipeline; both paths reuse `analyzeEvidenceItem`'s
+ * idempotent-run guard.
+ * @param {string} placeId
+ * @param {string} itemId
+ */
+export function retryEvidenceItem(placeId, itemId) {
+  const check = getCurrentCheck();
+  const item = check?.places?.[placeId]?.items?.find(
+    (candidate) => candidate.id === itemId,
+  );
+  if (!item) return;
+  const hasArtifact = Boolean(
+    item.analysis?.artifactId || item.upload?.artifactId,
+  );
+  const canPollDirect = Boolean(
+    hasArtifact && item.upload?.status !== "uploading",
+  );
+  if (canPollDirect) {
+    updateItemAnalysis(placeId, itemId, {
+      status: "analyzing",
+      error: undefined,
+      failure: undefined,
+    });
+  } else {
+    updateItem(placeId, itemId, { upload: { status: "failed" } });
+    updateItemAnalysis(placeId, itemId, {
+      status: "queued",
+      error: undefined,
+      failure: undefined,
+    });
+  }
+  analyzeEvidenceItem(placeId, itemId);
 }
 
 export async function refreshEvidenceAnalysis(
@@ -490,32 +596,48 @@ async function run(placeId, itemId) {
   const item = place?.items?.find((candidate) => candidate.id === itemId);
   if (!check || !place || !item) return;
 
+  const startedAt = Date.now();
   try {
     updateItemAnalysis(placeId, itemId, { status: "queued" });
-    await ensureRemoteCheck(check);
+    await withLeg("start", () => ensureRemoteCheck(check));
     let artifactId = item.analysis?.artifactId;
     if (!artifactId) {
       if (item.kind === "text") {
         updateItem(placeId, itemId, { upload: { status: "uploading" } });
-        artifactId = await registerTextArtifact(check.id, {
-          placeId,
-          placeName: place.name,
-          text: item.text,
-          capturedAt: item.uploadedAt,
-        });
+        artifactId = await withLeg("upload", () =>
+          registerTextArtifact(check.id, {
+            placeId,
+            placeName: place.name,
+            text: item.text,
+            capturedAt: item.uploadedAt,
+          }),
+        );
         updateItem(placeId, itemId, {
           upload: { status: "uploaded", artifactId },
         });
       } else {
         updateItem(placeId, itemId, { upload: { status: "uploading" } });
-        artifactId = await uploadArtifact(check.id, {
-          placeId,
-          placeName: place.name,
-          dataUrl: item.dataUrl,
-          capturedAt: item.uploadedAt,
-          ...(item.note ? { text: item.note } : {}),
-          tag: `${place.name}:${item.id}`,
-        });
+        artifactId = await withLeg("upload", () =>
+          uploadArtifact(check.id, {
+            placeId,
+            placeName: place.name,
+            dataUrl: item.dataUrl,
+            capturedAt: item.uploadedAt,
+            ...(item.note ? { text: item.note } : {}),
+            tag: `${place.name}:${item.id}`,
+            onLeg: (leg) => {
+              if (leg === LEG.PUT) {
+                // Bytes reached S3 — the card's "Photo uploaded" check.
+                updateItemAnalysis(placeId, itemId, {
+                  stages: { uploaded: new Date().toISOString() },
+                });
+              }
+              // presign/register are sub-second steps; the "sent to analyzer"
+              // stamp lands when evaluateArtifact takes over, which is the
+              // point the user cares about.
+            },
+          }),
+        );
         updateItem(placeId, itemId, {
           upload: { status: "uploaded", artifactId },
         });
@@ -524,6 +646,7 @@ async function run(placeId, itemId) {
     await evaluateArtifact(check.id, placeId, itemId, artifactId);
   } catch (err) {
     console.error("analyzeEvidenceItem failed", err);
+    const failure = describeFailure(err);
     const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
       (candidate) => candidate.id === itemId,
     );
@@ -543,6 +666,14 @@ async function run(placeId, itemId) {
         err?.body?.code === "analyses_pending"
           ? "Analysis is taking longer than expected."
           : "Could not analyze this item.",
+      failure: {
+        // What the card reports: which step broke, what had succeeded, and
+        // how long we waited before giving up.
+        leg: failure.leg,
+        uploaded: hasUploadedArtifact || failure.uploaded,
+        enqueued: failure.enqueued,
+        waitedMs: Date.now() - startedAt,
+      },
     });
   }
 }
