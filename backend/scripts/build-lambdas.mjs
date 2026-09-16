@@ -90,9 +90,13 @@ for (const pkg of ["sharp", "@img"]) {
     .map((root) => resolve(root, "node_modules", pkg))
     .find((p) => existsSync(p));
   if (!src) {
-    console.warn(`[build-lambdas] ${pkg} not present in node_modules — skipping`);
+    console.warn(
+      `[build-lambdas] ${pkg} not present in node_modules — skipping`,
+    );
     continue;
   }
   await cp(src, join(sharpDist, "node_modules", pkg), { recursive: true });
 }
-console.log("[build-lambdas] copied sharp + @img/* into dist/worker/node_modules/");
+console.log(
+  "[build-lambdas] copied sharp + @img/* into dist/worker/node_modules/",
+);
