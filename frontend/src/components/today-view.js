@@ -528,6 +528,9 @@ class TodayView extends HTMLElement {
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
     this._logoutDialog = null;
+    this._logoutDialogOpen = false;
+    this._logoutPending = false;
+    this._logoutError = "";
   }
 
   disconnectedCallback() {
@@ -720,8 +723,8 @@ class TodayView extends HTMLElement {
     );
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
+      this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
-      this._logoutDialog?.showModal();
     });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
@@ -729,6 +732,10 @@ class TodayView extends HTMLElement {
     this._logoutDialog?.addEventListener("click", (event) => {
       if (event.target === this._logoutDialog) this._logoutDialog.close();
     });
+    this._logoutDialog?.addEventListener("close", () => {
+      this._logoutDialogOpen = false;
+    });
+    this._restoreLogoutDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -965,14 +972,20 @@ class TodayView extends HTMLElement {
                 This will log you out and unlink this device: you'll need to
                 request a new code to access the app
               </p>
+              ${this._logoutError
+                ? html`<p class="logout-dialog__error" role="alert">
+                    ${this._logoutError}
+                  </p>`
+                : ""}
             </div>
             <div class="places-modal__actions logout-dialog__actions">
               <button
                 class="places-modal__primary logout-dialog__confirm"
                 id="logout-confirm"
                 type="button"
+                ${this._logoutPending ? "disabled" : ""}
               >
-                Log me out
+                ${this._logoutPending ? "Logging out..." : "Log me out"}
               </button>
               <button class="logout-dialog__cancel" type="submit">
                 Return to app
@@ -995,10 +1008,26 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
+  _restoreLogoutDialog() {
+    if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
+    this._logoutDialog?.showModal();
+  }
+
   async _logout() {
-    discardInMemorySession();
-    await clearSiteSession();
-    window.dispatchEvent(new CustomEvent("authsignout"));
+    if (this._logoutPending) return;
+    this._logoutPending = true;
+    this._logoutError = "";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      await clearSiteSession();
+      discardInMemorySession();
+      this._logoutDialogOpen = false;
+      window.dispatchEvent(new CustomEvent("authsignout"));
+    } catch {
+      this._logoutPending = false;
+      this._logoutError = "We couldn't log you out. Please try again.";
+      if (this._homeModel) this._renderHome(this._homeModel);
+    }
   }
 
   _captureRegion() {
