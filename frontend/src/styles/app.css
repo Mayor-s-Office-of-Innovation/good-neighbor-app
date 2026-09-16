@@ -648,6 +648,8 @@ form > wa-button[type="submit"] {
   list-style: none;
 }
 .places-row {
+  width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: 43px minmax(0, 1fr) 62px;
   gap: 8px;
@@ -672,7 +674,9 @@ form > wa-button[type="submit"] {
 .places-row__input {
   display: block;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
+  justify-self: stretch;
   --wa-form-control-height: 62px;
   --wa-form-control-border-radius: 8px;
   --wa-form-control-padding-block: 0;
