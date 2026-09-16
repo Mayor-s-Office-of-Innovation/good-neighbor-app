@@ -52,6 +52,16 @@ beyond that are pure upload cost.
   `.github/workflows/deploy.yml`), so the runner resolves `@img/sharp-linux-*`;
   the copied zip self-contains whatever binaries npm installed, with
   `@img/sharp-wasm32` riding along as fallback insurance.
+- The copy includes sharp's **JS runtime dependencies** (`detect-libc`,
+  `semver`) — sharp imports them at module load and the zip has no parent
+  node_modules to fall back to; the build script reads them from sharp's
+  `package.json` and fails the build if any is missing (cold-start crash
+  prevention, not a warning).
+- A non-decodable upload (corrupt/truncated bytes behind an image
+  content-type) is a **permanent failure**: `downscaleImage` throws
+  `DownscaleError`, which the worker maps to an `undecodable_input` ANALYSIS#
+  failed marker rather than redelivering to the DLQ. Alpha channels composite
+  onto white before the JPEG encode (a naive encode turns transparency black).
 - First deploy must be watched: if Lambda logs a bindings error, the fix is in
   the copy step, not the app code.
 - Local dev uses the same code path (darwin binaries via npm) — no harness

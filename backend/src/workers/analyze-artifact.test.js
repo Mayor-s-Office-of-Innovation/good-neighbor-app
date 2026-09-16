@@ -16,10 +16,13 @@ const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
 vi.mock("../media/downscale.js", () => ({
-  downscaleImage: async (
-    /** @type {Buffer} */ bytes,
-    /** @type {string} */ contentType,
-  ) => ({ bytes, contentType }),
+  downscaleImage: vi.fn(
+    async (
+      /** @type {Buffer} */ bytes,
+      /** @type {string} */ contentType,
+    ) => ({ bytes, contentType }),
+  ),
+  DownscaleError: class DownscaleError extends Error {},
 }));
 vi.mock("../analysis/analyzer-client.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
@@ -287,6 +290,33 @@ describe("analyze-artifact worker", () => {
       placeId: "place-north",
       placeName: "North",
       error: { code: "unsupported_input_type" },
+    });
+  });
+
+  it("marks undecodable image bytes as failed instead of redelivering", async () => {
+    // The downscale seam mock passes bytes through by default; have it reject
+    // with DownscaleError (corrupt bytes) to drive the permanent path.
+    const downscaleModule = await import("../media/downscale.js");
+    vi.mocked(downscaleModule.downscaleImage).mockRejectedValueOnce(
+      new downscaleModule.DownscaleError(
+        "Undecodable image input (image/jpeg): corrupt",
+      ),
+    );
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("corrupt"),
+      contentType: "image/jpeg",
+    });
+    ddbSend.mockResolvedValue({});
+
+    const res = await invoke(baseMsg);
+
+    // Consumed (no redelivery) + terminal failed marker, like input_too_large.
+    expect(res).toEqual({ batchItemFailures: [] });
+    expect(analyze).not.toHaveBeenCalled();
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item).toMatchObject({
+      status: "failed",
+      error: { code: "undecodable_input" },
     });
   });
 
