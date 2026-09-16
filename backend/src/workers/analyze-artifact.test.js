@@ -106,7 +106,9 @@ describe("analyze-artifact worker", () => {
       "attribute_not_exists(sk) OR #st = :failed",
     );
     expect(put.input.ExpressionAttributeNames).toEqual({ "#st": "status" });
-    expect(put.input.ExpressionAttributeValues).toEqual({ ":failed": "failed" });
+    expect(put.input.ExpressionAttributeValues).toEqual({
+      ":failed": "failed",
+    });
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",

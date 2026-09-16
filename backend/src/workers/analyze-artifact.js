@@ -282,8 +282,7 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
         // Fresh slot, OR the slot holds a failed marker (retry recovery).
         // NOT an existing success: a redelivered message must never double-
         // write (it would re-stamp analyzedAt and re-run the counters).
-        ConditionExpression:
-          "attribute_not_exists(sk) OR #st = :failed",
+        ConditionExpression: "attribute_not_exists(sk) OR #st = :failed",
         ExpressionAttributeNames: { "#st": "status" },
         ExpressionAttributeValues: { ":failed": "failed" },
       }),
