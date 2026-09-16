@@ -400,6 +400,37 @@ async function putDynamicSetupCode(docDdb, tableName, seed, now) {
       throw err;
     }
   }
+
+  // The current-code reference validateSetupCode requires (setup-codes.js
+  // isCurrentSetupCode): without it the seed's SETUP_CODE# item exists but
+  // fails the "is this the contact's current code" gate and every login with
+  // the seed code 401s. Write it only when ABSENT — a real issued code owns
+  // the reference once it exists, and re-seeding must never supersede it
+  // (same invariant as f0d0c58: restarting/re-seeding must not reactivate
+  // consumed codes).
+  try {
+    await docDdb.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          pk: `SETUP_CODE_CURRENT#${seed.siteId}#${hashEmail(seed.contactEmail)}`,
+          sk: "#META",
+          type: "setupCodeCurrent",
+          siteId: seed.siteId,
+          contactHash: hashEmail(seed.contactEmail),
+          issuedTo: seed.contactEmail.toLowerCase(),
+          currentCodePk: `SETUP_CODE#${verifier}`,
+          currentCodeId: `seed-${seed.siteId}`,
+          updatedAt: now,
+        },
+        ConditionExpression: "attribute_not_exists(pk)",
+      }),
+    );
+  } catch (err) {
+    if (/** @type {Error} */ (err).name !== "ConditionalCheckFailedException") {
+      throw err;
+    }
+  }
 }
 
 /**

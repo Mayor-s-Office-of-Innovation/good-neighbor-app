@@ -558,16 +558,19 @@ export async function dataUrlToBlob(dataUrl) {
 
 /**
  * Upload one captured photo end-to-end: presign → PUT bytes to S3 → register
- * (which enqueues the async analysis). Returns the registered artifactId so the
- * caller can wait for exactly these analyses to land.
+ * (which enqueues the async analysis). Returns the registered artifactId + the
+ * pinned S3 key, so callers can persist enough state to re-drive the analysis
+ * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string }} item
+ * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
- * @returns {Promise<string>} the artifactId
+ *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
+ *   show live progress and, on failure, know which leg broke.
+ * @returns {Promise<{ artifactId: string, s3Key: string }>}
  */
 export async function uploadArtifact(
   checkId,
-  { placeId, placeName, dataUrl, capturedAt, text, tag },
+  { placeId, placeName, dataUrl, capturedAt, text, tag, onLeg },
 ) {
   const art = tag ?? placeName;
   const done = span("upload", { art });
@@ -580,11 +583,13 @@ export async function uploadArtifact(
     contentType,
   });
   endPresign({ artifactId });
+  onLeg?.("presign");
 
   const blob = await dataUrlToBlob(dataUrl);
   const endPut = span("upload.put", { art, bytes: blob.size });
   await putMedia(uploadUrl, blob, contentType);
   endPut();
+  onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
@@ -597,9 +602,10 @@ export async function uploadArtifact(
     ...(text ? { text } : {}),
   });
   endRegister();
+  onLeg?.("register");
 
   done({ artifactId });
-  return artifactId;
+  return { artifactId, s3Key };
 }
 
 /**
@@ -622,6 +628,15 @@ export async function registerTextArtifact(
   });
   return artifactId;
 }
+
+/**
+ * Which leg of `uploadArtifact` a progress callback or failure refers to:
+ *   presign — minted artifactId + presigned S3 PUT URL (network to the API)
+ *   put     — media bytes PUT to S3 (the big, bandwidth-bound leg)
+ *   register — artifact recorded + analysis enqueued (the analyzer is now working)
+ * @typedef {"presign" | "put" | "register"} UploadLeg
+ */
+export const LEG = { PRESIGN: "presign", PUT: "put", REGISTER: "register" };
 
 /**
  * Short poll (scoped to the submit flow, not a sync engine) that waits for the
