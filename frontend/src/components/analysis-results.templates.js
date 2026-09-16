@@ -413,7 +413,9 @@ function pendingCard(item) {
 }
 
 /**
- * One progress row: a check when done, a dim bullet while pending.
+ * One progress row. The state is IN THE TEXT ("Done"/"In progress") so screen
+ * readers hear it — the ✓/• glyph is decoration (aria-hidden) and never the
+ * sole carrier.
  * @param {string} label
  * @param {string | undefined} stamp stage timestamp (set = done)
  * @param {boolean} reached has the pipeline reached this stage (vs skipped by an early failure)
@@ -431,6 +433,7 @@ function stageRow(label, stamp, reached) {
       <span class="analysis-card__stage-mark" aria-hidden="true"
         >${stamp ? "✓" : "•"}</span
       >
+      <span class="visually-hidden">${stamp ? "Done. " : "In progress. "}</span>
       <span>${escapeHtml(label)}</span>
     </li>
   `;

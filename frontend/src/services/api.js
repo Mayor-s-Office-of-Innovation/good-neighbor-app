@@ -558,14 +558,15 @@ export async function dataUrlToBlob(dataUrl) {
 
 /**
  * Upload one captured photo end-to-end: presign → PUT bytes to S3 → register
- * (which enqueues the async analysis). Returns the registered artifactId so the
- * caller can wait for exactly these analyses to land.
+ * (which enqueues the async analysis). Returns the registered artifactId + the
+ * pinned S3 key, so callers can persist enough state to re-drive the analysis
+ * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
  * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
- * @returns {Promise<string>} the artifactId
+ * @returns {Promise<{ artifactId: string, s3Key: string }>}
  */
 export async function uploadArtifact(
   checkId,
@@ -604,7 +605,7 @@ export async function uploadArtifact(
   onLeg?.("register");
 
   done({ artifactId });
-  return artifactId;
+  return { artifactId, s3Key };
 }
 
 /**

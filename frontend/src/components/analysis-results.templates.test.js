@@ -322,6 +322,7 @@ describe("pending progress cards", () => {
     expect(card).not.toContain("Waiting for results");
     // Upload stage not reached yet, analyzer stage dimmed.
     expect(card).toContain('class="analysis-card__stage ');
+    expect(card).toContain('class="visually-hidden">In progress. </span>');
   });
 
   it("shows the uploaded + sent checkpoints and an elapsed timer once polling", () => {
@@ -345,6 +346,10 @@ describe("pending progress cards", () => {
     expect(card).toContain("Sent to analyzer");
     expect(card).toContain("Waiting for results");
     expect(card).toContain('data-elapsed-since="2026-09-15T10:00:02Z"');
+    // Stage state is in text for screen readers, not only the glyph — both
+    // stages have stamps here, so both read "Done."
+    expect(card).toContain('class="visually-hidden">Done. </span>');
+    expect(card).not.toContain("In progress. </span>");
     expect(card).not.toContain("skeleton-line");
   });
 

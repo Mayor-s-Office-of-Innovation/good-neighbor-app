@@ -37,6 +37,7 @@ import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
@@ -51,6 +52,7 @@ import {
   clearSubmittedSession,
   resumeOrStartCheck,
   resumeOrStartProblemReport,
+  removeItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
@@ -1499,7 +1501,22 @@ class TodayView extends HTMLElement {
       this._resolveAnalysisProblem(problem);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
+    } else if (action === "retry") {
+      if (problem.placeId && problem.itemId)
+        retryEvidenceItem(problem.placeId, problem.itemId);
+    } else if (action === "remove-item") {
+      if (problem.placeId && problem.itemId) this._removeFailedItem(problem);
     }
+  }
+
+  /** Drop a failed, never-uploaded item from the pending session. */
+  _removeFailedItem(problem) {
+    const session = getCurrentCheck();
+    const item = session?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item || item.upload?.status === "uploaded") return;
+    removeItem(problem.placeId, problem.itemId);
   }
 
   _problemFromCard(card, task = null) {
