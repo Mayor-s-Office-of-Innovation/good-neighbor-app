@@ -251,8 +251,12 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
   const adapted = adaptAssessment(response);
 
   // 3. Persist the per-artifact analysis. The conditional write is the
-  //    idempotency gate: a redelivery finds the item already there and stops
-  //    before touching the counters.
+  //    idempotency gate for redelivery — EXCEPT that a re-driven artifact (a
+  //    client retry re-registers the same artifactId, which re-enqueues) must
+  //    be able to replace an earlier `status:"failed"` marker: otherwise the
+  //    failed marker would permanently occupy the ANALYSIS# slot and every
+  //    retry would re-read the old failure. Success overwrites failure only;
+  //    a redelivery of an already-analyzed artifact still stops here.
   const item = {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
@@ -275,7 +279,13 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
       new PutCommand({
         TableName: dynamoTable,
         Item: item,
-        ConditionExpression: "attribute_not_exists(sk)",
+        // Fresh slot, OR the slot holds a failed marker (retry recovery).
+        // NOT an existing success: a redelivered message must never double-
+        // write (it would re-stamp analyzedAt and re-run the counters).
+        ConditionExpression:
+          "attribute_not_exists(sk) OR #st = :failed",
+        ExpressionAttributeNames: { "#st": "status" },
+        ExpressionAttributeValues: { ":failed": "failed" },
       }),
     );
   } catch (err) {

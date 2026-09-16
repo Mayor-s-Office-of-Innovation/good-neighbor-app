@@ -59,6 +59,13 @@ export function handoffUrl() {
  * Escape URL for the current context: plain https on iOS, an intent:// URL on
  * Android. The caller must invoke from a user gesture (a tap) for popups to
  * be allowed.
+ *
+ * Android intent URIs are authority-form (`intent://<host>/<path>#Intent;...`),
+ * not `intent:<full-url>` — an inline `://` after `intent:` would itself be
+ * parsed as the URI's authority/delimiter territory, and any `#` in the page
+ * URL would terminate the target URI before the metadata block. So the page
+ * URL rides ONLY in `S.browser_fallback_url` (fully percent-encoded, `#`
+ * included), with a bare host/path target declared via `scheme=https`.
  * @param {string} ua
  * @returns {string}
  */
@@ -68,8 +75,15 @@ export function escapeUrlForPlatform(
   const target = handoffUrl();
   if (!target) return target;
   if (/Android/.test(ua)) {
+    let parsed;
+    try {
+      parsed = new URL(target);
+    } catch {
+      return target;
+    }
+    const hostPath = `${parsed.host}${parsed.pathname}${parsed.search}`;
     const fallback = encodeURIComponent(target);
-    return `intent:${target}#Intent;scheme=https;S.browser_fallback_url=${fallback};end`;
+    return `intent://${hostPath}#Intent;scheme=${parsed.protocol.replace(":", "")};S.browser_fallback_url=${fallback};end`;
   }
   return target;
 }
