@@ -123,9 +123,9 @@ describe("downscaleImage", () => {
   it("throws DownscaleError for a truncated image", async () => {
     const buffer = await jpegOf(100, 100);
     const truncated = buffer.subarray(0, Math.floor(buffer.length * 0.3));
-    await expect(
-      downscaleImage(truncated, "image/jpeg"),
-    ).rejects.toThrow(DownscaleError);
+    await expect(downscaleImage(truncated, "image/jpeg")).rejects.toThrow(
+      DownscaleError,
+    );
   });
 
   it("bounds the output payload well under the analyzer's tolerance", async () => {

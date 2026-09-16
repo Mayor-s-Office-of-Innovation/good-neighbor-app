@@ -17,10 +17,10 @@ vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
 vi.mock("../media/downscale.js", () => ({
   downscaleImage: vi.fn(
-    async (
-      /** @type {Buffer} */ bytes,
-      /** @type {string} */ contentType,
-    ) => ({ bytes, contentType }),
+    async (/** @type {Buffer} */ bytes, /** @type {string} */ contentType) => ({
+      bytes,
+      contentType,
+    }),
   ),
   DownscaleError: class DownscaleError extends Error {},
 }));
