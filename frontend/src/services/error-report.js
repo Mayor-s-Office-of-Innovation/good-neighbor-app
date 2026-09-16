@@ -100,7 +100,7 @@ function onUnhandledRejection(e) {
  * explicitly. Rides the same dedupe → rate-cap → scrub → beacon pipeline as
  * the global capture, so an incident reports once per dedupe window, not per
  * occurrence. Never throws; dropped silently when disabled.
- * @param {"non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden"} type
+ * @param {"non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden" | "in_app_browser"} type
  * @param {string} message
  * @param {{ status?: number }} [detail] allowlisted extras (status only —
  *   scrub conventions keep payloads lean)
@@ -120,7 +120,7 @@ export function reportClientEvent(type, message, detail = {}) {
  * Build the report payload and send it best-effort. Dedupes identical
  * type+message within the window and rate-caps sends; every failure is
  * dropped silently — reporting must never disturb the app.
- * @param {"Error" | "UnhandledRejection" | "non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden"} type
+ * @param {"Error" | "UnhandledRejection" | "non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden" | "in_app_browser"} type
  * @param {string} message
  * @param {string | undefined} stack
  * @param {number | undefined} [status] optional HTTP status (app events)
