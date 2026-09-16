@@ -7,12 +7,13 @@ flowchart LR
   user["Field device (browser)"] --> cloudfront["CloudFront + WAF"]
   cloudfront --> frontend["S3 static frontend"]
   cloudfront --> api["API Gateway (device-token authorizer, ADR 0010)"]
-  api --> checks["Lambda: checks + artifacts handlers"]
+  api --> authorizer["Lambda: device-token authorizer"]
+  api --> checks["Lambda: api (all route handlers)"]
   checks --> dynamodb["DynamoDB (single table + GSIs)"]
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
-  sqs --> worker["Lambda: analyze-artifact worker"]
+  sqs --> worker["Lambda: worker (analyze-artifact + process-submission)"]
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
@@ -22,6 +23,29 @@ The media bytes reach the analyzer only from the worker (base64, `store_input:fa
 they never travel through the SQS queue and are never logged. The perimeter-check
 handlers never see the bytes either — the device PUTs straight to S3 against a
 presigned URL, and the handler stores only the S3 key.
+
+## Compute topology (Lambdas)
+
+Three functions (`infra/modules/app/lambda.tf`), split by invocation style; bundles
+are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
+
+| Function | Trigger | Memory | Timeout | Role |
+|---|---|---|---|---|
+| `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; reserved concurrency 10 |
+| `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 (20× the api cap — every gated request passes through it) |
+| `-worker` | SQS, async | 1024 MB | 300 s | Both async jobs in one function: `process-submission` (demo flow) and `analyze-artifact` (per-photo), picked per message by shape (`backend/src/lambda/worker.js`); one queue, partial-batch failure reporting |
+
+Worker tuning, all sized in `lambda.tf` comments: batch size 10 with a
+**0-second batching window** (photos register staggered as each S3 PUT lands, so a
+window would quantize them into waves) and `scaling_config.maximum_concurrency = 20`
+— worst-case peak 10 × 20 = **200 concurrent analyzer (Bedrock Sonnet 4) calls**,
+which is the quota-sizing number. The analyzer leg's per-call budget: the worker
+reads the photo from S3, **downscales it (sharp: EXIF-orient, fit 1568 px long
+edge, JPEG q80)** — bounding the base64 payload so the analyzer never sees raw
+camera-resolution bytes (full-size input was rejected 413 `input_too_large` before
+the downscale existed) — then calls the analyzer and writes the `ANALYSIS#` item.
+sharp is esbuild-`external` and copied from node_modules into the worker bundle
+only (api/authorizer never import it).
 
 ## Async analyze flow
 

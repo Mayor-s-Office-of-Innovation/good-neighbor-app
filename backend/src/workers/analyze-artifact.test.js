@@ -15,6 +15,12 @@ const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
 );
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
+vi.mock("../media/downscale.js", () => ({
+  downscaleImage: async (
+    /** @type {Buffer} */ bytes,
+    /** @type {string} */ contentType,
+  ) => ({ bytes, contentType }),
+}));
 vi.mock("../analysis/analyzer-client.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return { ...actual, createAnalyzerClient };
