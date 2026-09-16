@@ -21,7 +21,7 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { getSite } from "../db.js";
+import { clearSiteSession, getSite } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -49,6 +49,7 @@ import {
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
+  discardInMemorySession,
   resumeOrStartCheck,
   resumeOrStartProblemReport,
   updateItemAnalysis,
@@ -524,6 +525,12 @@ class TodayView extends HTMLElement {
     this._homeModel = null;
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
+    this._settingsMenuOpen = false;
+    this._settingsDocumentClick = null;
+    this._logoutDialog = null;
+    this._logoutDialogOpen = false;
+    this._logoutPending = false;
+    this._logoutError = "";
   }
 
   disconnectedCallback() {
@@ -533,6 +540,8 @@ class TodayView extends HTMLElement {
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
+    document.removeEventListener("click", this._settingsDocumentClick);
+    this._settingsDocumentClick = null;
     this._captureFinishedListening = false;
     window.clearTimeout(this._capturePhaseTimer);
   }
@@ -564,6 +573,18 @@ class TodayView extends HTMLElement {
       this.addEventListener("capturefinished", this._captureFinishedHandler);
       this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
       this._captureFinishedListening = true;
+    }
+    if (!this._settingsDocumentClick) {
+      this._settingsDocumentClick = (event) => {
+        if (!this._settingsMenuOpen) return;
+        const path = event.composedPath?.() || [];
+        const withinSettings = path.some(
+          (node) =>
+            node instanceof Element && node.matches(".home-settings-wrap"),
+        );
+        if (!withinSettings) this._closeSettingsMenu();
+      };
+      document.addEventListener("click", this._settingsDocumentClick);
     }
 
     this._site = await getSite();
@@ -690,8 +711,33 @@ class TodayView extends HTMLElement {
         this._startCapture("perimeter", event.currentTarget),
       );
     }
-    this.querySelector("#edit-places")?.addEventListener("click", () =>
-      navigate("/places/edit"),
+    this.querySelector("#home-settings")?.addEventListener("click", () =>
+      this._toggleSettingsMenu(),
+    );
+    this.querySelector("#settings-edit-places")?.addEventListener(
+      "click",
+      () => {
+        this._settingsMenuOpen = false;
+        navigate("/places/edit");
+      },
+    );
+    this.querySelector("#settings-logout")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this._logoutDialogOpen = true;
+      this._renderHome(this._homeModel);
+    });
+    this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #logout-dialog")
+    );
+    this._logoutDialog?.addEventListener("click", (event) => {
+      if (event.target === this._logoutDialog) this._logoutDialog.close();
+    });
+    this._logoutDialog?.addEventListener("close", () => {
+      this._logoutDialogOpen = false;
+    });
+    this._restoreLogoutDialog();
+    this.querySelector("#logout-confirm")?.addEventListener("click", () =>
+      this._logout(),
     );
     const report = this.querySelector("#report-problem");
     if (report) {
@@ -833,14 +879,41 @@ class TodayView extends HTMLElement {
       >
         <section class="home-region home-region--header">
           <div class="home-top-actions">
-            <button
-              class="home-settings"
-              id="edit-places"
-              type="button"
-              aria-label="Edit places"
-            >
-              <span class="home-settings__icon" aria-hidden="true"></span>
-            </button>
+            <div class="home-settings-wrap">
+              <button
+                class="home-settings"
+                id="home-settings"
+                type="button"
+                aria-label="Settings"
+                aria-haspopup="menu"
+                aria-expanded="${this._settingsMenuOpen ? "true" : "false"}"
+              >
+                <span class="home-settings__icon" aria-hidden="true"></span>
+              </button>
+              ${this._settingsMenuOpen
+                ? html`<div
+                    class="home-settings-menu"
+                    role="menu"
+                    aria-label="Settings"
+                  >
+                    <button id="settings-logout" type="button" role="menuitem">
+                      <wa-icon
+                        name="arrow-right-from-bracket"
+                        aria-hidden="true"
+                      ></wa-icon>
+                      Logout
+                    </button>
+                    <button
+                      id="settings-edit-places"
+                      type="button"
+                      role="menuitem"
+                    >
+                      <wa-icon name="pen" aria-hidden="true"></wa-icon>
+                      Edit places
+                    </button>
+                  </div>`
+                : ""}
+            </div>
             <feedback-dialog class="feedback-dialog"></feedback-dialog>
           </div>
           <div
@@ -884,8 +957,77 @@ class TodayView extends HTMLElement {
             : ""}
         </section>
         ${showWorklist ? analysisDialogs() : ""}
+        <dialog
+          class="places-modal logout-dialog"
+          id="logout-dialog"
+          aria-labelledby="logout-title"
+          aria-describedby="logout-copy"
+        >
+          <form class="places-modal__card" method="dialog">
+            <div class="places-modal__copy">
+              <h2 class="places-modal__title" id="logout-title">
+                Confirm you'd like to logout
+              </h2>
+              <p class="places-modal__text" id="logout-copy">
+                This will log you out and unlink this device: you'll need to
+                request a new code to access the app
+              </p>
+              ${this._logoutError
+                ? html`<p class="logout-dialog__error" role="alert">
+                    ${this._logoutError}
+                  </p>`
+                : ""}
+            </div>
+            <div class="places-modal__actions logout-dialog__actions">
+              <button
+                class="places-modal__primary logout-dialog__confirm"
+                id="logout-confirm"
+                type="button"
+                ${this._logoutPending ? "disabled" : ""}
+              >
+                ${this._logoutPending ? "Logging out..." : "Log me out"}
+              </button>
+              <button class="logout-dialog__cancel" type="submit">
+                Return to app
+              </button>
+            </div>
+          </form>
+        </dialog>
       </div>
     `;
+  }
+
+  _toggleSettingsMenu() {
+    this._settingsMenuOpen = !this._settingsMenuOpen;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _closeSettingsMenu() {
+    if (!this._settingsMenuOpen) return;
+    this._settingsMenuOpen = false;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _restoreLogoutDialog() {
+    if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
+    this._logoutDialog?.showModal();
+  }
+
+  async _logout() {
+    if (this._logoutPending) return;
+    this._logoutPending = true;
+    this._logoutError = "";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      await clearSiteSession();
+      discardInMemorySession();
+      this._logoutDialogOpen = false;
+      window.dispatchEvent(new CustomEvent("authsignout"));
+    } catch {
+      this._logoutPending = false;
+      this._logoutError = "We couldn't log you out. Please try again.";
+      if (this._homeModel) this._renderHome(this._homeModel);
+    }
   }
 
   _captureRegion() {

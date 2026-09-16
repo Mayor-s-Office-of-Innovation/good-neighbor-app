@@ -1,7 +1,14 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const session = vi.hoisted(() => ({ current: null }));
-vi.mock("../db.js", () => ({ getSite: async () => ({ siteId: "site-1" }) }));
+const logout = vi.hoisted(() => ({
+  clearSiteSession: vi.fn(async () => {}),
+  discardInMemorySession: vi.fn(),
+}));
+vi.mock("../db.js", () => ({
+  getSite: async () => ({ siteId: "site-1" }),
+  clearSiteSession: logout.clearSiteSession,
+}));
 vi.mock("../services/api.js", () => ({
   listChecks: async () => ({ checks: [] }),
   listTasks: async () => ({ tasks: [] }),
@@ -11,6 +18,7 @@ vi.mock("../state/check-session.js", () => ({
   hasDraft: async () => Boolean(session.current),
   loadSubmitted: async () => null,
   onCheckSessionChange: () => () => {},
+  discardInMemorySession: logout.discardInMemorySession,
 }));
 
 let TodayView;
@@ -26,8 +34,20 @@ beforeAll(async () => {
     addEventListener() {},
     clearTimeout() {},
     location: {},
+    dispatchEvent: vi.fn(),
   });
-  vi.stubGlobal("document", { addEventListener() {} });
+  vi.stubGlobal(
+    "CustomEvent",
+    class {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+  );
+  vi.stubGlobal("document", {
+    addEventListener() {},
+    removeEventListener() {},
+  });
   vi.stubGlobal("customElements", {
     define: (name, component) => {
       if (name === "today-view") TodayView = component;
@@ -37,6 +57,9 @@ beforeAll(async () => {
 });
 afterEach(() => {
   session.current = null;
+  logout.clearSiteSession.mockClear();
+  logout.discardInMemorySession.mockClear();
+  /** @type {any} */ (window.dispatchEvent).mockClear();
 });
 
 async function mount(search) {
@@ -84,5 +107,55 @@ describe("worklist URL initialization", () => {
     const view = await mount("?filter=unknown");
     expect(view._viewPhase).toBe("capture");
     view.disconnectedCallback();
+  });
+});
+
+describe("logout", () => {
+  it("restores the confirmation dialog after a home refresh", () => {
+    const view = new TodayView();
+    const dialog = {
+      open: false,
+      showModal: vi.fn(function () {
+        this.open = true;
+      }),
+    };
+    view._logoutDialogOpen = true;
+    view._logoutDialog = dialog;
+
+    view._restoreLogoutDialog();
+
+    expect(dialog.showModal).toHaveBeenCalledOnce();
+    expect(dialog.open).toBe(true);
+  });
+
+  it("clears the device binding and asks app-root to show setup", async () => {
+    const view = new TodayView();
+
+    await view._logout();
+
+    expect(logout.discardInMemorySession).toHaveBeenCalledOnce();
+    expect(logout.clearSiteSession).toHaveBeenCalledOnce();
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "authsignout" }),
+    );
+  });
+
+  it("keeps the session active and shows a retryable error when cleanup fails", async () => {
+    const view = new TodayView();
+    view._homeModel = { tasks: [] };
+    view._renderHome = vi.fn();
+    logout.clearSiteSession.mockRejectedValueOnce(
+      new Error("IndexedDB failed"),
+    );
+
+    await view._logout();
+
+    expect(logout.discardInMemorySession).not.toHaveBeenCalled();
+    expect(window.dispatchEvent).not.toHaveBeenCalled();
+    expect(view._logoutPending).toBe(false);
+    expect(view._logoutError).toBe(
+      "We couldn't log you out. Please try again.",
+    );
+    expect(view._renderHome).toHaveBeenCalledTimes(2);
   });
 });
