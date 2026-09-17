@@ -32,7 +32,7 @@
  * @property {string} definition
  * @property {number} severity
  * @property {string} [severity_label]
- * @property {string} [user_friendly_label]
+ * @property {string} user_friendly_label
  * @property {string} description
  * @property {number[]} evidence_indices
  * @property {number} [confidence]

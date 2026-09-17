@@ -30,6 +30,7 @@ export const singleLowConcernResponse = {
           "Scattered small refuse or litter that does not obstruct movement.",
         severity: 2,
         severity_label: "Minor: Increasing quantity, size, or spatial impact",
+        user_friendly_label: "Trash scattered along curb",
         description:
           "Several wrappers and a plastic bag scattered along the curb.",
         evidence_indices: [0],
