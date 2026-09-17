@@ -60,7 +60,13 @@ it("stores capture location on a generated text report", async () => {
           artifactId: "artifact",
           status: "analyzed",
           analyzedAt: "2026-09-15T10:00:00Z",
-          concerns: [{ category: "Litter", rating: 1 }],
+          concerns: [
+            {
+              category: "Litter",
+              rating: 1,
+              userFriendlyLabel: "Trash scattered by doorway",
+            },
+          ],
         },
       ],
     }),
@@ -86,6 +92,16 @@ it("stores capture location on a generated text report", async () => {
       kind: "text",
       text: "Litter by the door",
       location,
+    }),
+  );
+  expect(evaluateAssessment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      conditions: [
+        expect.objectContaining({
+          category: "Litter",
+          userFriendlyLabel: "Trash scattered by doorway",
+        }),
+      ],
     }),
   );
   expect(updateItem).toHaveBeenCalledWith(

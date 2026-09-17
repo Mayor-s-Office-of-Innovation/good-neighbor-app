@@ -7,6 +7,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [category]
  * @property {string} [analyzerCategory]
  * @property {string} [canonicalCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [description]
  * @property {{ key?: string, prompt?: string, options?: { label?: string, value?: boolean }[] } | null} [needsAnswer]
  */
@@ -21,6 +23,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [conditionId]
  * @property {string} [category]
  * @property {string} [analyzerCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
  * @property {string} [guidance]
@@ -91,6 +95,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [assessmentId]
  * @property {string} [category]
  * @property {string} [analyzerCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
  * @property {string} [guidance]
@@ -663,6 +669,8 @@ function completedEvidenceCard(
 
 function displayCategory(record) {
   return (
+    record?.userFriendlyLabel ||
+    record?.user_friendly_label ||
     record?.category ||
     record?.analyzerCategory ||
     record?.canonicalCategory ||
