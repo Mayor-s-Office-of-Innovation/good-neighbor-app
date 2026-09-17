@@ -176,6 +176,24 @@ describe("provider and site management", () => {
     });
   });
 
+  it("rejects unknown providers before geocoding the site address", async () => {
+    send.mockResolvedValueOnce({});
+
+    const res = await call(
+      createSite,
+      event(
+        { name: "Main Site", address: "1 Dr Carlton B Goodlett Pl" },
+        "central-admin",
+        { providerId: "missing-provider" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "provider_not_found" });
+    expect(geocodeAddress).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("does not write site companion records outside the create transaction", async () => {
     const conflict = new Error("duplicate");
     conflict.name = "TransactionCanceledException";

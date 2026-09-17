@@ -20,7 +20,7 @@ import {
   ApiError,
   LEG,
 } from "./api.js";
-import { getDeviceLocation } from "./device-location.js";
+import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   getCurrentCheck,
@@ -245,6 +245,14 @@ function assessmentFromRefreshedAnalysis({
   const analyzedAt = new Date().toISOString();
   const concerns = concernsFromAssessment(assessment);
   const revision = analyzedAt.replace(/[^0-9]/g, "");
+  const resolvedLocation = hasCoordinates(location)
+    ? location
+    : hasCoordinates(assessment?.metadata)
+      ? {
+          latitude: assessment.metadata.latitude,
+          longitude: assessment.metadata.longitude,
+        }
+      : null;
   return {
     assessmentId: `${checkId}-${artifactId}-${revision}`,
     checkId,
@@ -252,13 +260,13 @@ function assessmentFromRefreshedAnalysis({
       assessment?.metadata?.reported_at || assessment?.created_at || analyzedAt,
     rubricVersion: undefined,
     grade: assessment?.general_conditions?.label || null,
-    ...(hasCoordinates(location)
+    ...(hasCoordinates(resolvedLocation)
       ? {
           assessment: {
             metadata: {
               ...assessment?.metadata,
-              latitude: location.latitude,
-              longitude: location.longitude,
+              latitude: resolvedLocation.latitude,
+              longitude: resolvedLocation.longitude,
             },
           },
         }
@@ -546,7 +554,7 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
 
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
-  const location = await getDeviceLocation();
+  const location = await getCaptureDeviceLocation();
   const artifactId = await registerTextArtifact(check.id, {
     placeId,
     placeName: place.name,
@@ -583,6 +591,7 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     kind: "text",
     text,
     uploadedAt: capturedAt,
+    ...(location ? { location } : {}),
   });
   if (!textItem) return { status: "problems", artifactId };
   updateItem(placeId, textItem.id, {
@@ -701,7 +710,7 @@ async function run(placeId, itemId) {
   try {
     const locationPromise = hasCoordinates(item.location)
       ? Promise.resolve(item.location)
-      : getDeviceLocation();
+      : getCaptureDeviceLocation();
     updateItemAnalysis(placeId, itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
     const location = await locationPromise;

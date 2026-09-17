@@ -195,6 +195,37 @@ describe("refresh conflict reconciliation", () => {
     expect(getAssessmentGuidance).not.toHaveBeenCalled();
     expect(updateItemAnalysis).not.toHaveBeenCalled();
   });
+
+  it("retains backend assessment coordinates when the local item has none", async () => {
+    vi.mocked(evaluateAssessment).mockResolvedValue({
+      assessment: { assessmentId: "next" },
+      conditions: [],
+      tasks: [],
+    });
+    const responseWithLocation = {
+      assessment: {
+        metadata: {
+          reported_at: "2026-09-15T10:00:00Z",
+          latitude: 37.7793,
+          longitude: -122.4192,
+        },
+        identified_conditions_of_concern: [],
+      },
+    };
+
+    await refreshEvidenceAnalysis("sidewalk", "item", responseWithLocation);
+
+    expect(evaluateAssessment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assessment: {
+          metadata: expect.objectContaining({
+            latitude: 37.7793,
+            longitude: -122.4192,
+          }),
+        },
+      }),
+    );
+  });
 });
 
 it("does not let a delayed answer restore a replaced assessment", async () => {
