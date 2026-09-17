@@ -27,7 +27,7 @@ or configuration; do not recreate the shared bucket in an application root.
 
 ## Production DNS bootstrap
 
-The **Provision gn.sf.gov DNS zone** workflow must be dispatched from `main`.
+The **Provision goodneighbor.sf.gov DNS zone** workflow must be dispatched from `main`.
 It checks out the immutable commit recorded by that dispatch. The `prod`
 GitHub Environment is the external enforcement boundary: its selected-ref
 policy allows the `main` branch and the existing `v*` release tags, with required
@@ -41,10 +41,15 @@ with 365-day retention. The workflow allowlist permits only those eight resource
 and only create/no-op actions; changes to existing resources require a normal
 reviewed infrastructure deployment.
 
-After applying, provide DT all four `gn_dns_name_servers`. Once delegation and
-zone signing are confirmed, coordinate publication of `gn_dnssec_ds_record` in
-`sf.gov` to establish the DNSSEC chain of trust. Signing alone does not establish
-that parent trust. The workflow summary reports both outputs.
+After applying, provide DT all four `goodneighbor_dns_name_servers`. Once
+delegation and zone signing are confirmed, coordinate publication of
+`goodneighbor_dnssec_ds_record` in `sf.gov` to establish the DNSSEC chain of
+trust. Signing alone does not establish that parent trust. The workflow summary
+reports both outputs.
+
+The earlier `gn.sf.gov` hosted zone is retained as protected infrastructure until
+its retirement is separately reviewed. Its nameservers are not valid for
+`goodneighbor.sf.gov`.
 
 The DNSSEC key uses `ECC_NIST_P256` / `SIGN_VERIFY`, as required by Route 53.
 KMS automatic rotation is unsupported for this asymmetric key (the resource's
