@@ -38,6 +38,28 @@ describe("adaptAssessment", () => {
     expect(adapted.maxSeverity).toBe(2);
   });
 
+  it("projects the analyzer's user-friendly condition label", () => {
+    const response = {
+      ...singleLowConcernResponse,
+      assessment: {
+        ...singleLowConcernResponse.assessment,
+        identified_conditions_of_concern: [
+          {
+            ...singleLowConcernResponse.assessment
+              .identified_conditions_of_concern[0],
+            user_friendly_label: "Trash scattered along curb",
+          },
+        ],
+      },
+    };
+
+    const adapted = adaptAssessment(response);
+
+    expect(adapted.concerns[0].userFriendlyLabel).toBe(
+      "Trash scattered along curb",
+    );
+  });
+
   it("drops confidence/definition and does not compute a total_score", () => {
     const adapted = adaptAssessment(multiHighConcernResponse);
     expect(adapted).not.toHaveProperty("totalScore");

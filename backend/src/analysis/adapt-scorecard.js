@@ -20,6 +20,7 @@
  * @property {string} category
  * @property {number} rating
  * @property {string} [ratingLabel]
+ * @property {string} [userFriendlyLabel]
  * @property {string} explanation
  * @property {number[]} evidenceIndices
  */
@@ -53,6 +54,9 @@ export function adaptAssessment(response) {
     };
     if (c.condition_id !== undefined) concern.conditionId = c.condition_id;
     if (c.severity_label !== undefined) concern.ratingLabel = c.severity_label;
+    if (c.user_friendly_label !== undefined) {
+      concern.userFriendlyLabel = c.user_friendly_label;
+    }
     return concern;
   });
 
