@@ -2,7 +2,7 @@
 
 The Good Neighbor App web frontend — vanilla **web components** + **Web Awesome**, built with
 **Vite**, hosted on S3/CloudFront. Ported from the `gnp` prototype (Step 2 of the migration).
-Type safety is JSDoc + `tsc --checkJs` (lenient baseline; see the migration plan).
+Type safety is JSDoc + `tsc --checkJs`.
 
 ## Run it
 
@@ -10,29 +10,10 @@ Type safety is JSDoc + `tsc --checkJs` (lenient baseline; see the migration plan
 npm run dev -w frontend       # dev server
 npm run build -w frontend     # production build → dist/
 npm run typecheck -w frontend # tsc --checkJs
+npm run dev:lan -w frontend # launches vite with external friendly config
 ```
 
-First run shows the site-setup screen. To get it back after binding a site, clear the local
-binding — see [Clearing the local site binding](../docs/dev-commands.md#clearing-the-local-site-binding)
-in the developer command reference.
-
-## Demo mode (screen states without a backend)
-
-The app has no backend dependency — onboarding and the analyzer are mocked, and every screen
-renders off IndexedDB. A `?demo=` query param (read once at boot, see
-[src/demo/seed.js](./src/demo/seed.js)) seeds representative data straight into IndexedDB so any
-screen state is reachable without completing real checks. It's a no-op unless the param is
-present, and the param is stripped from the URL after seeding so a refresh won't re-seed.
-
-| URL | Lands on |
-| --- | --- |
-| `/?demo=uptodate` | Home **"Up to date"** (5b) — populated donut and both worklist groups (city actions + you-can-handle) |
-| `/?demo=due` | Home **"Check due"** (5a) — the last-log summary (worst finding of the most recent check) + the Start button |
-| `/results?demo=due` | **Results** (5e) directly — hazard / you-can-handle / noted buckets, no walk needed |
-| `/?demo=reset` | Wipes the site + checks → back to the first-run setup / enter-code screen |
-
-From any seeded state you can click the live flow (**Start check** → capture → review → results,
-since the analyzer is mocked) or type routes directly: `/today`, `/check`, `/review`, `/results`.
+First run shows the site-setup screen. To get it back after binding a site you can logout.
 
 ## Layout
 
