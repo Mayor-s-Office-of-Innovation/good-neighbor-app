@@ -76,6 +76,12 @@ function normalizeAssessmentBody(body) {
           : typeof item.severityLabel === "string"
             ? item.severityLabel
             : undefined,
+      userFriendlyLabel:
+        typeof item.user_friendly_label === "string"
+          ? item.user_friendly_label
+          : typeof item.userFriendlyLabel === "string"
+            ? item.userFriendlyLabel
+            : undefined,
       description:
         typeof item.description === "string"
           ? item.description

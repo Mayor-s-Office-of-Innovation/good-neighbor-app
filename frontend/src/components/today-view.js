@@ -1480,7 +1480,12 @@ class TodayView extends HTMLElement {
     const when = task.createdAt
       ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
       : "";
-    const title = task.label || task.category || "Finding";
+    const title =
+      task.userFriendlyLabel ||
+      task.user_friendly_label ||
+      task.label ||
+      task.category ||
+      "Finding";
     const detail = task.guidance || task.category || "";
     const category = task.category || "";
     const actions = this._cardActions(task);

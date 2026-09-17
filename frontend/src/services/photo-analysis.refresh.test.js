@@ -209,7 +209,13 @@ describe("refresh conflict reconciliation", () => {
           latitude: 37.7793,
           longitude: -122.4192,
         },
-        identified_conditions_of_concern: [],
+        identified_conditions_of_concern: [
+          {
+            category: "Litter",
+            severity: 3,
+            user_friendly_label: "Lots of trash in tree well",
+          },
+        ],
       },
     };
 
@@ -223,6 +229,12 @@ describe("refresh conflict reconciliation", () => {
             longitude: -122.4192,
           }),
         },
+        conditions: [
+          expect.objectContaining({
+            category: "Litter",
+            userFriendlyLabel: "Lots of trash in tree well",
+          }),
+        ],
       }),
     );
   });
