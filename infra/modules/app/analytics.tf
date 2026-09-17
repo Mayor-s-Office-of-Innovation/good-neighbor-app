@@ -157,6 +157,9 @@ resource "aws_lambda_function" "analytics_export" {
   memory_size      = 256
   timeout          = 120 # export start is one API call; 15-min lag is normal (IncrementalExportSpecification)
   kms_key_arn      = aws_kms_key.app.arn
+  # One scheduled invocation per 6 hours; a 1-slot reservation is the concurrency
+  # cap with zero starvation risk (no other invoker exists).
+  reserved_concurrent_executions = 1
 
   tracing_config {
     mode = "Active"
@@ -274,6 +277,11 @@ resource "aws_lambda_function" "analytics_convert" {
   # libduckdb.dylib (~100 MB unzipped, ~55 MB compressed) makes zip packaging
   # the right call; revisit only if the 250 MB unzipped budget is ever hit.
   kms_key_arn = aws_kms_key.app.arn
+  # S3-invoked (one manifest-summary.json per completed export → typically 1
+  # concurrent conversion per 6h). 5 slots = small manual-backfill headroom over
+  # the steady-state cadence; a pathological S3 event burst throttles instead of
+  # stampeding DuckDB conversions.
+  reserved_concurrent_executions = 5
   # Async S3-invoked safety net (the twin of the worker's): failed conversions
   # land here instead of vanishing after the retry budget.
   dead_letter_config {
@@ -389,6 +397,9 @@ resource "aws_lambda_function" "analytics_report" {
   memory_size      = 2048
   timeout          = 300
   kms_key_arn      = aws_kms_key.app.arn
+  # One scheduled run every 24h; reserving a single slot caps cost/abuse and
+  # can't starve anything (there is no other invoker).
+  reserved_concurrent_executions = 1
 
   tracing_config {
     mode = "Active"
