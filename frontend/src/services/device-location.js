@@ -27,6 +27,9 @@ export function getDeviceLocation({
     return Promise.resolve(null);
   }
 
+  void logLocationPermissionState();
+  console.info("[location] Position request started.");
+
   return new Promise((resolve) => {
     let settled = false;
     const finish = (location) => {
@@ -38,7 +41,12 @@ export function getDeviceLocation({
     // Some mobile browsers fail to invoke either geolocation callback after
     // returning from the camera. Keep location best-effort so that platform
     // behavior cannot strand the upload pipeline indefinitely.
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    const timer = setTimeout(() => {
+      console.warn(
+        `[location] Position request produced no callback within ${timeoutMs}ms.`,
+      );
+      finish(null);
+    }, timeoutMs);
 
     try {
       navigator.geolocation.getCurrentPosition(
@@ -52,18 +60,26 @@ export function getDeviceLocation({
             longitude >= -180 &&
             longitude <= 180
           ) {
+            console.info("[location] Position acquired.");
             finish({ latitude, longitude });
             return;
           }
+          console.warn("[location] Position contained invalid coordinates.");
           finish(null);
         },
         (error) => {
+          if (error) {
+            console.warn(
+              `[location] Position request failed (code ${error.code}): ${error.message}`,
+            );
+          }
           onError?.(error);
           finish(null);
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
       );
-    } catch {
+    } catch (error) {
+      console.warn("[location] Position request threw an exception.", error);
       finish(null);
     }
   });
