@@ -30,6 +30,7 @@ describe("adaptAssessment", () => {
       category: "Litter",
       rating: 2,
       ratingLabel: "Minor: Increasing quantity, size, or spatial impact",
+      userFriendlyLabel: "Trash scattered along curb",
       explanation:
         "Several wrappers and a plastic bag scattered along the curb.",
       evidenceIndices: [0],
