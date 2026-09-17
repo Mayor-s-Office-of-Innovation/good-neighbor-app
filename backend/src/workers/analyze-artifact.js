@@ -17,7 +17,7 @@ import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { getObjectBytes } from "../s3.js";
-import { downscaleImage } from "../media/downscale.js";
+import { downscaleImage, DownscaleError } from "../media/downscale.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
@@ -39,6 +39,8 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @property {string} [placeName]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
+ * @property {number} [latitude] device latitude at capture
+ * @property {number} [longitude] device longitude at capture
  */
 
 /**
@@ -49,16 +51,16 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @returns {import("../analysis/analyzer-client.js").AnalyzeMetadata}
  */
 function buildMetadata(msg) {
+  const hasCoordinates =
+    Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude);
   return {
     position_descriptor: msg.placeName ?? "perimeter",
     reported_at: msg.capturedAt ?? new Date().toISOString(),
-    // TODO(product): real per-photo GPS. Read device coordinates AT THE MOMENT
-    // EACH PHOTO IS CAPTURED (not at check start or batch submit) and stamp
-    // them on the artifact so these are the true location of this photo.
-    // Pending the v1 capture-flow UI (per-photo GPS is a deferred follow-up);
-    // 0,0 placeholder until then.
-    latitude: 0,
-    longitude: 0,
+    // The analyzer contract requires numbers. Missing/declined device location
+    // remains a deliberate 0,0 transport placeholder and is never copied into
+    // task source data; 311 then falls back to the site's geocoded location.
+    latitude: hasCoordinates ? Number(msg.latitude) : 0,
+    longitude: hasCoordinates ? Number(msg.longitude) : 0,
   };
 }
 
@@ -139,6 +141,9 @@ async function markFailed({ dynamoTable, msg, err }) {
     artifactId: msg.artifactId,
     ...(msg.placeId ? { placeId: msg.placeId } : {}),
     ...(msg.placeName ? { placeName: msg.placeName } : {}),
+    ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
+      ? { latitude: msg.latitude, longitude: msg.longitude }
+      : {}),
     status: "failed",
     error: {
       ...(err.code ? { code: err.code } : {}),
@@ -187,10 +192,25 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
       bucket: uploadBucket,
       key: msg.s3Key,
     });
-    const { bytes, contentType } = await downscaleImage(
-      object.bytes,
-      object.contentType ?? "application/octet-stream",
-    );
+    let downscaled;
+    try {
+      downscaled = await downscaleImage(
+        object.bytes,
+        object.contentType ?? "application/octet-stream",
+      );
+    } catch (err) {
+      // Not a decodable image (corrupt/truncated/non-image bytes behind an
+      // image content-type). Permanent — retrying can never succeed, so mark
+      // the artifact failed rather than redelivering to the DLQ.
+      if (!(err instanceof DownscaleError)) throw err;
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: new AnalyzerError(err.message, { code: "undecodable_input" }),
+      });
+      return;
+    }
+    const { bytes, contentType } = downscaled;
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —
@@ -251,14 +271,22 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
   const adapted = adaptAssessment(response);
 
   // 3. Persist the per-artifact analysis. The conditional write is the
-  //    idempotency gate: a redelivery finds the item already there and stops
-  //    before touching the counters.
+  //    idempotency gate for redelivery — EXCEPT that a re-driven artifact (a
+  //    client retry re-registers the same artifactId, which re-enqueues) must
+  //    be able to replace an earlier `status:"failed"` marker: otherwise the
+  //    failed marker would permanently occupy the ANALYSIS# slot and every
+  //    retry would re-read the old failure. Success overwrites failure only;
+  //    a redelivery of an already-analyzed artifact still stops here.
   const item = {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
     ...(msg.placeId ? { placeId: msg.placeId } : {}),
     ...(msg.placeName ? { placeName: msg.placeName } : {}),
+    ...(msg.capturedAt ? { capturedAt: msg.capturedAt } : {}),
+    ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
+      ? { latitude: msg.latitude, longitude: msg.longitude }
+      : {}),
     status: "analyzed",
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,
@@ -275,7 +303,12 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
       new PutCommand({
         TableName: dynamoTable,
         Item: item,
-        ConditionExpression: "attribute_not_exists(sk)",
+        // Fresh slot, OR the slot holds a failed marker (retry recovery).
+        // NOT an existing success: a redelivered message must never double-
+        // write (it would re-stamp analyzedAt and re-run the counters).
+        ConditionExpression: "attribute_not_exists(sk) OR #st = :failed",
+        ExpressionAttributeNames: { "#st": "status" },
+        ExpressionAttributeValues: { ":failed": "failed" },
       }),
     );
   } catch (err) {

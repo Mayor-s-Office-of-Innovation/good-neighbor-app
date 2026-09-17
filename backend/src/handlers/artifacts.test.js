@@ -189,6 +189,45 @@ describe("registerArtifact", () => {
     expect(msg.input.MessageBody).not.toMatch(/base64/i);
   });
 
+  it("persists and enqueues valid coordinates captured with an artifact", async () => {
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { ...validBody, latitude: 37.7793, longitude: -122.4192 },
+      }),
+    );
+
+    expect(res.statusCode).toBe(202);
+    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+    });
+    expect(
+      JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody),
+    ).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+    });
+  });
+
+  it("rejects partial or out-of-range coordinates", async () => {
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { ...validBody, latitude: 91 },
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "invalid_location" });
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+
   it("rejects an s3Key that does not belong to this check (no writes)", async () => {
     const res = await callRegister(
       artifactEvent({

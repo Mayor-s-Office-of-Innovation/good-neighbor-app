@@ -16,6 +16,14 @@ First run shows the site-setup screen. To get it back after binding a site, clea
 binding — see [Clearing the local site binding](../docs/dev-commands.md#clearing-the-local-site-binding)
 in the developer command reference.
 
+## Design system reference (dev-only)
+
+`npm run dev -w frontend`, then open **http://127.0.0.1:5173/design-system.html** — a
+self-demonstrating page rendering every button state, the tokens (live values, light +
+dark), and where we deliberately diverge from off-the-shelf Web Awesome. It imports the
+real `tokens.css`/`app.css`, so it can't drift. Dev-only: `vite build` ships only the app's
+`index.html`.
+
 ## Routes
 
 - `/today` — the home hub (worklist, last log, Start/Flag CTAs)

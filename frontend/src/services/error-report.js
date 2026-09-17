@@ -94,15 +94,39 @@ function onUnhandledRejection(e) {
 }
 
 /**
+ * App-level incident reporting (api-response-integrity plan §3c): the global
+ * listeners above only catch uncaught errors — deliberate detections (non-JSON
+ * API responses, health-probe failures, auth death) must be reported
+ * explicitly. Rides the same dedupe → rate-cap → scrub → beacon pipeline as
+ * the global capture, so an incident reports once per dedupe window, not per
+ * occurrence. Never throws; dropped silently when disabled.
+ * @param {"non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden" | "in_app_browser"} type
+ * @param {string} message
+ * @param {{ status?: number }} [detail] allowlisted extras (status only —
+ *   scrub conventions keep payloads lean)
+ * @returns {void}
+ */
+export function reportClientEvent(type, message, detail = {}) {
+  // Same enablement gate as the global listeners (gnp:errors kill switch,
+  // off under the test runner by default) — app incidents are never sent
+  // when capture is disabled.
+  if (!enabledFor()) return;
+  // Status rides in the message-bearing payload as an allowlisted field;
+  // capped like every other field by scrub().
+  report(type, message, undefined, detail.status);
+}
+
+/**
  * Build the report payload and send it best-effort. Dedupes identical
  * type+message within the window and rate-caps sends; every failure is
  * dropped silently — reporting must never disturb the app.
- * @param {"Error" | "UnhandledRejection"} type
+ * @param {"Error" | "UnhandledRejection" | "non_json_response" | "backend_unreachable" | "auth_reauth_required" | "auth_forbidden" | "in_app_browser"} type
  * @param {string} message
  * @param {string | undefined} stack
+ * @param {number | undefined} [status] optional HTTP status (app events)
  * @returns {void}
  */
-function report(type, message, stack) {
+function report(type, message, stack, status) {
   try {
     // Per-message dedupe first (identical type+message once per window —
     // duplicates never consume rate budget), then sliding-window cap. A Map
@@ -131,6 +155,7 @@ function report(type, message, stack) {
         type,
         message,
         ...(stack ? { stack } : {}),
+        ...(typeof status === "number" ? { status: String(status) } : {}),
         source: safePathname(),
         release: release(),
         id: distinctId(),
@@ -146,8 +171,8 @@ function report(type, message, stack) {
  * Scrub before send (first of the two scrubs; the Lambda re-scrubs): send
  * only allowlisted fields, cap sizes, strip query strings from URL-ish
  * content (source is already a bare pathname; stacks may embed script URLs).
- * @param {{ type: string, message: string, stack?: string, source: string,
- *   release: string, id: string, ts: string }} raw
+ * @param {{ type: string, message: string, stack?: string, status?: string,
+ *   source: string, release: string, id: string, ts: string }} raw
  * @returns {Record<string, string>} scrubbed payload
  */
 function scrub(raw) {
@@ -157,6 +182,7 @@ function scrub(raw) {
     ...(raw.stack
       ? { stack: cap(stripStackQueryStrings(raw.stack), MAX_STACK) }
       : {}),
+    ...(raw.status ? { status: raw.status } : {}),
     ...(raw.source ? { source: raw.source } : {}),
     release: raw.release,
     id: raw.id,
