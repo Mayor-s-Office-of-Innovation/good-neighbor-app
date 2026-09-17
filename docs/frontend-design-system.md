@@ -5,8 +5,14 @@
 
 - [frontend/src/styles/tokens.css](../frontend/src/styles/tokens.css) — every color, radius,
   and shadow, plus the light/dark values. **Never hard-code a hex; always use a token.**
+  The full value table (light/dark, plus the WA-layer values) is in
+  [design-tokens.md](./design-tokens.md) — the Figma ↔ code mapping.
 - [frontend/src/styles/app.css](../frontend/src/styles/app.css) — the component classes below,
   grouped by screen with comments.
+- [frontend/design-system.html](../frontend/design-system.html) — the visual reference:
+  every button state, live token swatches (light/dark), and our WA divergences, rendered
+  with the real styles. Dev-only — run `npm run dev:frontend` and open
+  http://127.0.0.1:5173/design-system.html.
 - Worked example: [site-setup.templates.js](../frontend/src/components/site-setup.templates.js)
   (onboarding) and [today-view.js](../frontend/src/components/today-view.js) (home hub).
 
@@ -18,9 +24,8 @@
 links, status, and active states. **Severity/status is never carried by color alone** — grouping
 and a text label lead, color only reinforces (WCAG 1.4.1). **Dark mode** is a token swap: light
 values live in `:root`, dark overrides in `html.wa-dark`. Web Awesome (WA) components re-theme
-off the same `.wa-dark`/`.wa-light` class, so one toggle re-themes our CSS and WA together.
-Because `app.css` is **unlayered** it beats WA's `@layer` styles — that's why our `.btn-ink`
-can fully own a native `<button>`'s box (see the comment above `.btn-ink`).
+off the same `.wa-dark`/`.wa-light` class, so one toggle re-themes our CSS and WA together
+(`app.css` is unlayered and WA's styles are `@layer`-ed, so our rules win the cascade).
 
 ## Tokens you'll use most (from tokens.css)
 
@@ -72,11 +77,19 @@ dashboards (today-view, onboarding).
 - **`.flow-hero`** — the flow-column equivalent (eyebrow / headline / body).
 - **`.topbar`** — back button + titles + right-aligned meta, for flow screens.
 
-## Buttons — always native `<button>` + a class, never `wa-button` for a primary CTA
+## Buttons — always native `<button>` + a class, never `<wa-button>` (ADR 0011)
 
 - **`.btn-ink`** — the primary action pill (charcoal `--ink`, white label; inverts in dark).
 - **`.btn-outline`** — the secondary sibling (hairline border, transparent).
-- **`.btn-ink--sm` / `.btn-outline--sm`** — compact, for in-card action rows.
+- **`.btn-blue`** — the escalation pill (the "Filed 311 ticket" blue lane).
+- **`.btn-ink--sm` / `.btn-outline--sm` / `.btn-blue--sm`** — compact, for in-card action rows.
+- **`.btn-link`** — a link-styled `<button>` (text + underline, no box). For
+  in-page state switches only — "links navigate, buttons act": if the control
+  navigates, use a real `<a>`. Default color is quiet text (`--text-secondary`,
+  hover → `--text`); override `color` in the call site's scope when it sits on a
+  colored line. Already resets WA's native-button skin (the 62px form-control
+  height + offset shadow that `native.css` applies to every bare `<button>`) —
+  don't re-add those resets per call site.
 
 ```html
 <button class="btn-ink" type="button">Primary action</button>
@@ -85,6 +98,13 @@ dashboards (today-view, onboarding).
 
 Buttons are inline pills by default. Full-width is a per-screen choice (e.g. setup scopes
 `.setup .btn-ink { width: 100% }`) — don't make it global.
+
+**Async submit (loading) pattern:** on a submit button, before the await set
+`data-loading` + `aria-busy="true"` + `disabled`, and snapshot the button's
+`offsetWidth` into an inline `--btn-loading-min-width` custom property; show a
+`<wa-spinner>` inside the label while loading; remove the attributes after. The
+`button[data-loading]` rule in `app.css` pins the width so the button never shifts.
+(First instance: the login continue button.)
 
 ## Surfaces, text, status
 
@@ -99,8 +119,10 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 Form controls are **Web Awesome** components (`wa-input`, `wa-select`, `wa-textarea`,
 `wa-checkbox`, `wa-spinner`). They theme off the `--wa-*` tokens and the
 `.wa-dark`/`.wa-light` class, so there's little to style yourself — drop them into a
-`.screen__sec` (often a `.stack`) and let them theme. Use a native `<button class="btn-ink">`
-for the submit, not a WA button.
+`.screen__sec` (often a `.stack`) and let them theme. The submit is a native
+`<button class="btn-ink">` (never `<wa-button>`; ADR 0011). Import any WA component
+in the module that actually renders it — blanket imports in `main.js` ship the whole
+component graph to production even when only a dev screen uses it.
 
 ## Non-negotiable rules
 

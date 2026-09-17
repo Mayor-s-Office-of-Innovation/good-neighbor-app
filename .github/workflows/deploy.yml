@@ -210,3 +210,29 @@ jobs:
 
       - name: Smoke test /health
         run: curl -fsS "${{ steps.tf.outputs.api_url }}/health"
+
+      # API-response-integrity tripwire (plan §4): the API's JSON error
+      # responses must reach the viewer un-rewritten through the CloudFront
+      # edge (api_url IS the distribution domain — outputs.tf). If this ever
+      # returns HTML (e.g. a distribution-wide SPA error page again), the
+      # frontend's non-JSON guard degrades to silent breakage — fail the
+      # deploy here. No -f: the expected response IS an error (401), and -f
+      # would exit 22 before we can assert the content type. Bounded retries
+      # absorb the seconds of error-page/behavior propagation after the
+      # invalidation above.
+      - name: Smoke test API error shape
+        run: |
+          set -euo pipefail
+          url="${{ steps.tf.outputs.api_url }}/v1/checks/00000000-0000-0000-0000-000000000000"
+          content_type=""
+          for _ in 1 2 3 4 5; do
+            content_type="$(
+              curl -sS -o /dev/null -w '%{content_type}' "$url"
+            )"
+            case "$content_type" in
+              application/json*) exit 0 ;; # authorizer 401 JSON — expected
+              *) sleep 10 ;;               # propagation — retry
+            esac
+          done
+          echo "API error responses must be JSON, got: $content_type" >&2
+          exit 1

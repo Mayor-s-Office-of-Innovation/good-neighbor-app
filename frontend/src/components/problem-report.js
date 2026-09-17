@@ -15,6 +15,7 @@ import {
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import {
   ApiError,
@@ -432,6 +433,15 @@ class ProblemReport extends HTMLElement {
           this._resolveProblem(problem);
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
+        } else if (action === "retry") {
+          if (problem.placeId && problem.itemId)
+            retryEvidenceItem(problem.placeId, problem.itemId);
+        } else if (action === "remove-item") {
+          const item = getCurrentCheck()?.places?.[
+            problem.placeId
+          ]?.items?.find((candidate) => candidate.id === problem.itemId);
+          if (item && item.upload?.status !== "uploaded")
+            removeItem(problem.placeId, problem.itemId);
         }
       });
     });
@@ -498,6 +508,7 @@ class ProblemReport extends HTMLElement {
               problem.conditionId,
               {
                 reason: { key: "not_a_problem" },
+                ...(problem.taskId ? { taskId: problem.taskId } : {}),
                 caller: { request_id: this._requestId("delete", problem) },
               },
             );
@@ -505,6 +516,10 @@ class ProblemReport extends HTMLElement {
             if (!(err instanceof ApiError) || err.status !== 404) throw err;
             if (getCurrentCheck()?.id === problem.checkId)
               this._deleteProblemLocally(problem);
+            return;
+          }
+          if (!result?.assessment) {
+            this._deleteProblemLocally(problem);
             return;
           }
           if (
@@ -521,8 +536,9 @@ class ProblemReport extends HTMLElement {
               },
             ).catch((error) => {
               console.error("refresh after saved deletion failed", error);
-              if (getCurrentCheck()?.id === problem.checkId)
-                this._deleteProblemLocally(problem);
+              this._showToast(
+                "Deletion saved. Could not refresh the cards; please reload.",
+              );
             });
           }
         },
@@ -604,7 +620,20 @@ class ProblemReport extends HTMLElement {
             caller: { request_id: this._requestId("edit", problem) },
           },
         );
-        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+        try {
+          await refreshEvidenceAnalysis(
+            problem.placeId,
+            problem.itemId,
+            result,
+          );
+        } catch (error) {
+          console.error("refresh after saved edit failed", error);
+          this._setDialogError(
+            "analysis-edit-error",
+            "Edit saved. Could not refresh the cards; please reload.",
+          );
+          return;
+        }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;

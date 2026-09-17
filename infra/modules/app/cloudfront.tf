@@ -56,6 +56,36 @@ function handler(event) {
 EOT
 }
 
+resource "aws_cloudfront_function" "frontend_spa_rewrite" {
+  name    = "${local.name_prefix}-frontend-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite provider SPA navigation requests to index.html while leaving API routes untouched."
+  publish = true
+  code    = <<-EOT
+  function handler(event) {
+    var request = event.request;
+    var uri = request.uri;
+
+    // API routes pass through untouched — the API's own 403/404 JSON must
+    // never be rewritten into the SPA by the distribution-wide error pages.
+    // Keep this list in lockstep with the API cache behaviors below and
+    // local.api_routes in api.tf.
+    if (uri.indexOf("/v1/") === 0 ||
+        uri.indexOf("/site-code") === 0 ||
+        uri.indexOf("/submissions") === 0 ||
+        uri.indexOf("/health") === 0) {
+      return request;
+    }
+
+    if (uri === "/" || uri.slice(-1) === "/" || uri.indexOf(".") === -1) {
+      request.uri = "/index.html";
+    }
+
+    return request;
+  }
+  EOT
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
@@ -95,6 +125,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.frontend_spa_rewrite.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -145,22 +180,13 @@ resource "aws_cloudfront_distribution" "frontend" {
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
   }
 
-  # SPA fallback: the bucket has no ListBucket grant, so a missing key returns
-  # 403 (and a truly absent object, 404). Both map to index.html/200 so the
-  # client-side router owns the route.
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
-  }
+  # SPA fallback is viewer-side only (aws_cloudfront_function.frontend_spa_rewrite):
+  # navigation URIs are rewritten to /index.html BEFORE the S3 origin, so deep
+  # links resolve without error pages. Error-page mapping must stay OFF for
+  # this distribution — a distribution-wide custom_error_response would also
+  # rewrite API 403/404 JSON from the api-gateway origin into index.html with
+  # status 200 (the 2026-09-14 dev incident: see
+  # ../notes/good-neighbor/api-response-integrity-plan.md).
 
   restrictions {
     geo_restriction {

@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 const releaseSha =
   /** @type {{ process?: { env?: { RELEASE_SHA?: string } } }} */ (globalThis)
@@ -22,36 +22,58 @@ const releaseSha =
     theme/background "#0f172a", icons icon-192.png / icon-512.png (+ maskable),
     workbox precache of the built js, css, html, woff2, png, and svg assets.
 */
-export default defineConfig({
-  base: "/",
-  plugins: [],
-  define: {
-    // Release stamp for error reports (services/error-report.js reads
-    // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
-    // (deploy.yml); local builds get "dev". Guarded for non-Node contexts.
-    __RELEASE__: JSON.stringify(releaseSha),
-  },
-  build: {
-    // Source maps for the error tracker's symbolication (Phase 3 of the
-    // error-tracking plan). deploy.yml uploads them to PostHog and EXCLUDES
-    // them from the public S3 sync — public maps would leak full source.
-    sourcemap: true,
-  },
-  server: {
-    // Dev-only: proxy the backend API to the local harness (npm run dev -w
-    // backend, :3001) so the app calls same-origin paths — no CORS, and the
-    // router needs no CORS headers. Because the proxy runs on the dev machine
-    // and forwards to 127.0.0.1, this also works when the app is opened from a
-    // phone on the LAN (e.g. `npm run dev:lan`): the browser only ever talks to
-    // this origin. Keep this route list in step with the local-api.mjs routes.
-    // In production the SPA and API share one CloudFront distribution, so the
-    // app uses a same-origin base and calls these same relative paths (see
-    // services/api.js + services/onboarding.js); presigned S3 PUTs go straight
-    // to their own origin and never touch this proxy.
-    proxy: {
-      "/v1": "http://localhost:3001",
-      "/site-code": "http://localhost:3001",
-      "/health": "http://localhost:3001",
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const localMinioApiPort = env.LOCAL_MINIO_API_PORT || "9000";
+
+  return {
+    base: "/",
+    plugins: [],
+    define: {
+      // Release stamp for error reports (services/error-report.js reads
+      // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
+      // (deploy.yml); local builds get "dev". Guarded for non-Node contexts.
+      __RELEASE__: JSON.stringify(releaseSha),
     },
-  },
+    build: {
+      // Source maps for the error tracker's symbolication (Phase 3 of the
+      // error-tracking plan). deploy.yml uploads them to PostHog and EXCLUDES
+      // them from the public S3 sync — public maps would leak full source.
+      sourcemap: true,
+    },
+    server: {
+      // HTTPS tunnel used for camera/location testing on physical devices. The
+      // leading dot permits generated ngrok subdomains without allowing arbitrary
+      // Host headers through Vite's DNS-rebinding protection.
+      allowedHosts: [
+        ".ngrok-free.dev",
+        "randi-nonstereotypical-alfredo.ngrok-free.dev",
+      ],
+      // Dev-only: proxy the backend API to the local harness (npm run dev -w
+      // backend, :3001) so the app calls same-origin paths — no CORS, and the
+      // router needs no CORS headers. Because the proxy runs on the dev machine
+      // and forwards to 127.0.0.1, this also works when the app is opened from a
+      // phone on the LAN (e.g. `npm run dev:lan`): the browser only ever talks to
+      // this origin. Keep this route list in step with the local-api.mjs routes.
+      // In production the SPA and API share one CloudFront distribution, so the
+      // app uses a same-origin base and calls these same relative paths (see
+      // services/api.js + services/onboarding.js); presigned S3 PUTs go straight
+      // to their own origin and never touch this proxy.
+      proxy: {
+        "/v1": "http://localhost:3001",
+        "/site-code": "http://localhost:3001",
+        "/health": "http://localhost:3001",
+        // DynamoDB/SQS stay behind the API, but presigned media uploads go
+        // directly to S3. Proxy the local bucket path so a phone using the HTTPS
+        // ngrok origin can reach MinIO without receiving an unusable localhost
+        // upload URL. Set S3_PUBLIC_PRESIGN_ENDPOINT to the tunnel origin when
+        // exercising this path; private storage operations continue using the
+        // local AWS_ENDPOINT_URL_S3 value.
+        "/gnp-local-uploads": {
+          target: `http://localhost:${localMinioApiPort}`,
+          changeOrigin: false,
+        },
+      },
+    },
+  };
 });

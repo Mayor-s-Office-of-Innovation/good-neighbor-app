@@ -67,7 +67,9 @@ import {
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
-const DEFAULT_SITE = process.env.DEBUG_SITE ?? "";
+// Stub-only requests (no Bearer token) always carry a site claim: the
+// principal fails closed when an authorizer is present without one.
+const DEFAULT_SITE = process.env.DEBUG_SITE || "demo-site";
 const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
@@ -91,7 +93,8 @@ async function resolveClaims(flatHeaders) {
       if (claims.typ !== "access") throw new Error("not an access token");
       return {
         sub: claims.sub,
-        siteId: claims["custom:siteId"],
+        siteId: claims.siteId,
+        ver: claims.ver,
       };
     } catch (err) {
       return { error: /** @type {Error} */ (err).message };
@@ -308,8 +311,11 @@ const server = createServer(async (req, res) => {
       path,
       headers: req.headers,
       body,
-      defaultSub: claims?.sub ?? DEFAULT_SUB,
-      defaultSite: claims?.siteId ?? DEFAULT_SITE,
+      defaultSub: DEFAULT_SUB,
+      defaultSite: DEFAULT_SITE,
+      // A verified device token reproduces the deployed authorizer shape
+      // (authorizer.lambda); without one the X-Debug stubs apply.
+      deviceClaims: claims && !claims.error ? claims : undefined,
       pathParameters: matched.route.names.length
         ? matched.pathParameters
         : undefined,

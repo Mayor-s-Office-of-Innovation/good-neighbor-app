@@ -52,7 +52,7 @@ function fixture() {
 }
 
 describe("undoable analysis card deletion", () => {
-  it("hides immediately, protects enclosing renders, restores focus, and saves after ten seconds", async () => {
+  it("hides immediately, protects enclosing renders, restores focus, and saves after five seconds", async () => {
     const { host, close, focus } = fixture();
     const home = /** @type {any} */ ({ contains: (node) => node === host });
     const unsubscribe = onDeletionsChange((status) => {
@@ -69,7 +69,7 @@ describe("undoable analysis card deletion", () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(pendingDeletedConditionIds(problem)).toContain(problem.conditionId);
     expect(commit).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(9999);
+    await vi.advanceTimersByTimeAsync(4999);
     expect(commit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(commit).toHaveBeenCalledOnce();
