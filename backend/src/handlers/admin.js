@@ -11,6 +11,10 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import {
+  GeocodingError,
+  geocodeAddress,
+} from "../integrations/census-geocoder.js";
+import {
   emailHash,
   issueSetupCode,
   normalizeEmail,
@@ -226,6 +230,12 @@ export const createSite = (event) =>
     const providerId = event.pathParameters?.providerId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
+    const address = normalizeAddress(body.address);
+    if (!address) return jsonResponse(400, { error: "address_required" });
+    const geocoded = await geocodeSiteAddress(address);
+    if (geocoded instanceof GeocodingError) {
+      return jsonResponse(422, { error: geocoded.code });
+    }
     const provider = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -247,6 +257,12 @@ export const createSite = (event) =>
       entityType: "SITE",
       siteId,
       name,
+      address,
+      location: {
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+      },
+      geocodedAddress: geocoded.matchedAddress,
       providerId,
       providerName: provider.Item.name,
       providerSiteId,
@@ -347,9 +363,26 @@ export const updateSite = (event) =>
     const site = /** @type {any} */ (siteRes.Item);
     if (!site?.siteId) return jsonResponse(404, { error: "not_found" });
 
+    const address = normalizeAddress(body.address ?? site.address);
+    if (!address) return jsonResponse(400, { error: "address_required" });
+    const existingLocation = locationFromSite(site);
+    const geocoded =
+      address !== site.address || existingLocation instanceof GeocodingError
+        ? await geocodeSiteAddress(address)
+        : existingLocation;
+    if (geocoded instanceof GeocodingError) {
+      return jsonResponse(422, { error: geocoded.code });
+    }
+
     const nextSite = {
       ...site,
       name,
+      address,
+      location: {
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+      },
+      geocodedAddress: geocoded.matchedAddress,
       updatedAt: now,
     };
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
@@ -358,10 +391,23 @@ export const updateSite = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression: "SET #name = :name, updatedAt = :now",
+          UpdateExpression:
+            "SET #name = :name, address = :address, #location = :location, geocodedAddress = :geocodedAddress, updatedAt = :now",
           ConditionExpression: "attribute_exists(pk)",
-          ExpressionAttributeNames: { "#name": "name" },
-          ExpressionAttributeValues: { ":name": name, ":now": now },
+          ExpressionAttributeNames: {
+            "#name": "name",
+            "#location": "location",
+          },
+          ExpressionAttributeValues: {
+            ":name": name,
+            ":address": address,
+            ":location": {
+              latitude: geocoded.latitude,
+              longitude: geocoded.longitude,
+            },
+            ":geocodedAddress": geocoded.matchedAddress,
+            ":now": now,
+          },
         },
       },
     ];
@@ -583,6 +629,60 @@ function contactLister(prefix) {
         return jsonResponse(200, { contacts: res.Items ?? [] });
       })
   );
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeAddress(value) {
+  const address =
+    typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  return address.length >= 3 && address.length <= 240 ? address : "";
+}
+
+/**
+ * @param {string} address
+ * @returns {Promise<{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError>}
+ */
+async function geocodeSiteAddress(address) {
+  try {
+    return await geocodeAddress(address);
+  } catch (error) {
+    return error instanceof GeocodingError
+      ? error
+      : new GeocodingError("geocoding_unavailable");
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} site
+ * @returns {{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError}
+ */
+function locationFromSite(site) {
+  const location =
+    site.location && typeof site.location === "object"
+      ? /** @type {Record<string, unknown>} */ (site.location)
+      : {};
+  const latitude = location.latitude;
+  const longitude = location.longitude;
+  if (
+    typeof latitude === "number" &&
+    typeof longitude === "number" &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  ) {
+    return {
+      latitude,
+      longitude,
+      matchedAddress: String(site.geocodedAddress ?? site.address ?? ""),
+    };
+  }
+  return new GeocodingError("address_not_found");
 }
 
 /**

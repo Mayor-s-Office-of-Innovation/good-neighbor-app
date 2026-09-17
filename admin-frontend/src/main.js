@@ -11,7 +11,7 @@ import { getAdminConfig } from "./config.js";
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, siteName?: string, name?: string, sk?: string, providerId?: string, providerName?: string, status?: string }} AdminSite
+ * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ email: string, emailHash: string, name?: string, status?: string }} AdminContact
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
@@ -23,6 +23,9 @@ import { getAdminConfig } from "./config.js";
  * @property {AdminContact[]} contacts
  * @property {AdminDevice[]} devices
  * @property {AdminIssuedCode | null} issuedCode
+ * @property {string} siteSaveMessage
+ * @property {string} siteSaveError
+ * @property {boolean} siteSaving
  * @property {string} error
  * @property {boolean} hasToken
  * @property {AdminConfig} authConfig
@@ -40,6 +43,9 @@ class AdminApp extends HTMLElement {
       contacts: [],
       devices: [],
       issuedCode: null,
+      siteSaveMessage: "",
+      siteSaveError: "",
+      siteSaving: false,
       error: "",
       hasToken: false,
       authConfig: getAdminConfig(),
@@ -59,6 +65,9 @@ class AdminApp extends HTMLElement {
       contacts: [],
       devices: [],
       issuedCode: null,
+      siteSaveMessage: "",
+      siteSaveError: "",
+      siteSaving: false,
       error: "",
       hasToken: hasAdminSession(),
       authConfig: getAdminConfig(),
@@ -114,6 +123,8 @@ class AdminApp extends HTMLElement {
     this.state.provider = data.provider;
     this.state.site = null;
     this.state.contacts = [];
+    this.state.siteSaveMessage = "";
+    this.state.siteSaveError = "";
     this.state.provider.sites = data.sites || [];
     this.render();
   }
@@ -136,11 +147,61 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async createSite(form) {
-    const name = new FormData(form).get("site-name");
-    if (!name || !this.state.provider) return;
-    await adminApi.createSite(this.state.provider.providerId, String(name));
+    const data = new FormData(form);
+    const name = data.get("site-name");
+    const address = data.get("site-address");
+    if (!name || !address || !this.state.provider) return;
+    await adminApi.createSite(this.state.provider.providerId, {
+      name: String(name),
+      address: String(address),
+    });
     form.reset();
     await this.openProvider(this.state.provider.providerId);
+  }
+
+  /** @param {HTMLFormElement} form */
+  async updateSite(form) {
+    if (!this.state.site) return;
+    const data = new FormData(form);
+    const name = String(data.get("site-name") || "");
+    const address = String(data.get("site-address") || "");
+    this.state.siteSaving = true;
+    this.state.siteSaveMessage = "";
+    this.state.siteSaveError = "";
+    this.state.error = "";
+    this.render();
+    try {
+      const result = await adminApi.updateSite(this.state.site.siteId, {
+        name,
+        address,
+      });
+      const location = result.site?.location;
+      this.state.site = {
+        ...this.state.site,
+        ...result.site,
+        name,
+        address,
+        location,
+      };
+      if (!hasSiteCoordinates(location)) {
+        this.state.siteSaveError =
+          "The address was saved, but geocoding did not return coordinates. Try saving it again.";
+        return;
+      }
+      this.state.siteSaveMessage = "Site saved successfully.";
+    } catch (error) {
+      this.state.site = {
+        ...this.state.site,
+        name,
+        address,
+        location: undefined,
+        geocodedAddress: undefined,
+      };
+      this.state.siteSaveError = siteSaveErrorMessage(error);
+    } finally {
+      this.state.siteSaving = false;
+      this.render();
+    }
   }
 
   /**
@@ -158,6 +219,8 @@ class AdminApp extends HTMLElement {
     this.state.contacts = contacts.contacts || [];
     this.state.devices = devices.devices || [];
     this.state.issuedCode = null;
+    this.state.siteSaveMessage = "";
+    this.state.siteSaveError = "";
     this.render();
   }
 
@@ -266,7 +329,26 @@ class AdminApp extends HTMLElement {
     });
     this.querySelector("#site-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createSite(asForm(e.currentTarget));
+      this.createSite(asForm(e.currentTarget)).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
+    this.querySelector("#site-details-form")?.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        this.updateSite(asForm(e.currentTarget)).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelector("#site-details-form")?.addEventListener("input", () => {
+      this.state.siteSaveMessage = "";
+      this.state.siteSaveError = "";
+      this.querySelector("#site-save-status")?.remove();
+      this.querySelector("#site-save-error")?.remove();
     });
     this.querySelector("#contact-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -397,6 +479,10 @@ class AdminApp extends HTMLElement {
                     <span>Site name</span>
                     <input name="site-name" required />
                   </label>
+                  <label>
+                    <span>Site address</span>
+                    <input name="site-address" autocomplete="street-address" required />
+                  </label>
                   <button type="submit">Add site</button>
                 </form>
                 <div class="list">
@@ -424,11 +510,33 @@ class AdminApp extends HTMLElement {
             ? `
               <section class="panel">
                 <div class="panel__head">
-                  <h2>${escapeHtml(site.name)}</h2>
+                  <div class="site-title">
+                    <h2>${escapeHtml(site.name)}</h2>
+                    <p class="muted site-title__updated">
+                      Last updated ${escapeHtml(formatTimestamp(site.updatedAt))}
+                    </p>
+                  </div>
                   <button type="button" data-deactivate-site="${escapeHtml(site.siteId)}">
                     Deactivate site
                   </button>
                 </div>
+                <form id="site-details-form" class="site-details-form">
+                  <label>
+                    <span>Site name</span>
+                    <input name="site-name" value="${escapeHtml(site.name)}" required />
+                  </label>
+                  <label>
+                    <span>Site address</span>
+                    <input name="site-address" autocomplete="street-address" value="${escapeHtml(site.address || "")}" required />
+                  </label>
+                  ${formatSiteCoordinates(site.location)}
+                  ${this.state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(this.state.siteSaveError)}</p>` : ""}
+                  <button type="submit" ${this.state.siteSaving ? "disabled" : ""}>
+                    ${this.state.siteSaving ? "Saving..." : "Save site"}
+                  </button>
+                </form>
+                ${this.state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(this.state.siteSaveMessage)}</p>` : ""}
+                ${site.geocodedAddress ? `<p class="muted">Mapped to ${escapeHtml(site.geocodedAddress)}</p>` : ""}
                 <form id="contact-form" class="inline-form">
                   <label>
                     <span>Contact name</span>
@@ -535,4 +643,56 @@ function escapeHtml(value) {
         return ch;
     }
   });
+}
+
+/**
+ * @param {string | undefined} value
+ * @returns {string}
+ */
+function formatTimestamp(value) {
+  if (!value) return "not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "not available";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+/**
+ * @param {{ latitude?: number, longitude?: number } | undefined} location
+ * @returns {string}
+ */
+function formatSiteCoordinates(location) {
+  if (!hasSiteCoordinates(location)) return "";
+  return `<p class="muted site-details-form__coordinates">Lat ${escapeHtml(location.latitude)}, Long ${escapeHtml(location.longitude)}</p>`;
+}
+
+/**
+ * @param {{ latitude?: number, longitude?: number } | undefined} location
+ * @returns {location is { latitude: number, longitude: number }}
+ */
+function hasSiteCoordinates(location) {
+  return (
+    typeof location?.latitude === "number" &&
+    typeof location.longitude === "number"
+  );
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function siteSaveErrorMessage(error) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "address_not_found") {
+    return "We couldn't geocode this address. Check it and try again.";
+  }
+  if (code === "geocoding_unavailable") {
+    return "The geocoding service is unavailable. Try again shortly.";
+  }
+  if (code === "address_required") {
+    return "Enter an address before saving the site.";
+  }
+  return "The site couldn't be saved. Try again.";
 }

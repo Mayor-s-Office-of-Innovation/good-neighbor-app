@@ -130,9 +130,11 @@ export const registerArtifact = async (event) => {
     s3Key,
     contentType,
     capturedAt,
+    latitude,
+    longitude,
     text,
   } =
-    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, text?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
       body ?? {}
     );
 
@@ -158,6 +160,22 @@ export const registerArtifact = async (event) => {
       error: `text must be ${MAX_ARTIFACT_TEXT_LENGTH} characters or fewer`,
     });
   }
+  const hasLatitude = latitude !== undefined;
+  const hasLongitude = longitude !== undefined;
+  const hasCoordinates =
+    hasLatitude &&
+    hasLongitude &&
+    typeof latitude === "number" &&
+    typeof longitude === "number" &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180;
+  if ((hasLatitude || hasLongitude) && !hasCoordinates) {
+    return jsonResponse(400, { error: "invalid_location" });
+  }
   // No-graft: the key the client hands back must live under this site + check.
   if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
@@ -175,6 +193,7 @@ export const registerArtifact = async (event) => {
     placeName: normalizedPlaceName,
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
+    ...(hasCoordinates ? { latitude, longitude } : {}),
     ...(typeof contentType === "string" ? { contentType } : {}),
     ...(hasText ? { text: normalizedText } : {}),
   };
@@ -223,6 +242,7 @@ export const registerArtifact = async (event) => {
         placeId,
         placeName: normalizedPlaceName,
         capturedAt: capturedAtValue,
+        ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),
         ...(hasText ? { text: normalizedText } : {}),
       }),

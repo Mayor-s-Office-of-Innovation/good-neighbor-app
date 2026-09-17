@@ -42,13 +42,18 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
-  createSite: (providerId, name) =>
+  createSite: (providerId, { name, address }) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/sites`, {
       method: "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, address }),
     }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
+  updateSite: (siteId, { name, address }) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name, address }),
+    }),
   deactivateSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "DELETE",

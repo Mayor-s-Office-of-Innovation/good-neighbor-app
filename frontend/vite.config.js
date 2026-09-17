@@ -38,6 +38,13 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
+    // HTTPS tunnel used for camera/location testing on physical devices. The
+    // leading dot permits generated ngrok subdomains without allowing arbitrary
+    // Host headers through Vite's DNS-rebinding protection.
+    allowedHosts: [
+      ".ngrok-free.dev",
+      "randi-nonstereotypical-alfredo.ngrok-free.dev",
+    ],
     // Dev-only: proxy the backend API to the local harness (npm run dev -w
     // backend, :3001) so the app calls same-origin paths — no CORS, and the
     // router needs no CORS headers. Because the proxy runs on the dev machine
@@ -52,6 +59,15 @@ export default defineConfig({
       "/v1": "http://localhost:3001",
       "/site-code": "http://localhost:3001",
       "/health": "http://localhost:3001",
+      // DynamoDB/SQS stay behind the API, but presigned media uploads go
+      // directly to S3. Proxy the local bucket path so a phone using the HTTPS
+      // ngrok origin can reach MinIO without receiving an unusable localhost
+      // upload URL. The API must be started with AWS_ENDPOINT_URL_S3 set to the
+      // same public origin when exercising this path.
+      "/gnp-local-uploads": {
+        target: "http://localhost:9100",
+        changeOrigin: false,
+      },
     },
   },
 });

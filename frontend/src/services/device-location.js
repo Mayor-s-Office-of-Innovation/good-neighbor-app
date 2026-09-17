@@ -1,0 +1,109 @@
+/*
+  device-location - one small boundary around the browser Geolocation API.
+  Capture continues when a device declines or cannot provide location; 311
+  filing then uses the site's geocoded default location.
+*/
+
+const LOCATION_TIMEOUT_MS = 10_000;
+
+/**
+ * @typedef {{ latitude: number, longitude: number }} DeviceLocation
+ */
+
+/**
+ * Request a fresh device position. `maximumAge: 0` prevents a previous place's
+ * cached position from being attached to a newly captured item.
+ * @param {{
+ *   timeoutMs?: number,
+ *   onError?: (error: GeolocationPositionError) => void,
+ * }} [opts]
+ * @returns {Promise<DeviceLocation | null>}
+ */
+export function getDeviceLocation({
+  timeoutMs = LOCATION_TIMEOUT_MS,
+  onError,
+} = {}) {
+  if (typeof navigator === "undefined" || !navigator.geolocation) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (location) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(location);
+    };
+    // Some mobile browsers fail to invoke either geolocation callback after
+    // returning from the camera. Keep location best-effort so that platform
+    // behavior cannot strand the upload pipeline indefinitely.
+    const timer = setTimeout(() => finish(null), timeoutMs);
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          if (
+            Number.isFinite(latitude) &&
+            Number.isFinite(longitude) &&
+            latitude >= -90 &&
+            latitude <= 90 &&
+            longitude >= -180 &&
+            longitude <= 180
+          ) {
+            finish({ latitude, longitude });
+            return;
+          }
+          finish(null);
+        },
+        (error) => {
+          onError?.(error);
+          finish(null);
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
+      );
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function logLocationPermissionState() {
+  if (!navigator.permissions?.query) {
+    console.info("[location] Permissions API unavailable.");
+    return;
+  }
+
+  try {
+    const permission = await navigator.permissions.query({
+      name: "geolocation",
+    });
+    console.info(`[location] Permission state: ${permission.state}`);
+  } catch (error) {
+    console.info("[location] Permission state unavailable.", error);
+  }
+}
+
+/**
+ * Start the permission request as soon as a device is bound. This is best
+ * effort: the capture flow makes its own fresh request for every artifact.
+ * @returns {void}
+ */
+export function requestLocationPermissionEarly() {
+  if (typeof navigator === "undefined" || !navigator.geolocation) {
+    console.warn("[location] Geolocation API unavailable.");
+    return;
+  }
+
+  void logLocationPermissionState();
+  void getDeviceLocation({
+    onError: (error) => {
+      console.warn(
+        `[location] Position request failed (code ${error.code}): ${error.message}`,
+      );
+    },
+  }).then((location) => {
+    if (location) console.info("[location] Position acquired.");
+  });
+}

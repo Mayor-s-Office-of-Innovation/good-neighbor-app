@@ -419,7 +419,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
+ * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -562,7 +562,7 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
@@ -570,7 +570,17 @@ export async function dataUrlToBlob(dataUrl) {
  */
 export async function uploadArtifact(
   checkId,
-  { placeId, placeName, dataUrl, capturedAt, text, tag, onLeg },
+  {
+    placeId,
+    placeName,
+    dataUrl,
+    capturedAt,
+    latitude,
+    longitude,
+    text,
+    tag,
+    onLeg,
+  },
 ) {
   const art = tag ?? placeName;
   const done = span("upload", { art });
@@ -599,6 +609,9 @@ export async function uploadArtifact(
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? { latitude, longitude }
+      : {}),
     ...(text ? { text } : {}),
   });
   endRegister();
@@ -611,12 +624,12 @@ export async function uploadArtifact(
 /**
  * Register validated text evidence for a place without uploading media bytes.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string }} item
+ * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { placeId, placeName, text, capturedAt },
+  { placeId, placeName, text, capturedAt, latitude, longitude },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
@@ -624,6 +637,9 @@ export async function registerTextArtifact(
     placeId,
     placeName,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? { latitude, longitude }
+      : {}),
     text,
   });
   return artifactId;

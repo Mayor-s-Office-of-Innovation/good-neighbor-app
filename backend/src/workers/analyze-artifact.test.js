@@ -146,6 +146,27 @@ describe("analyze-artifact worker", () => {
     expect(ddbSend).toHaveBeenCalledTimes(3);
   });
 
+  it("uses captured coordinates in analyzer metadata and the stored analysis", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke({ ...baseMsg, latitude: 37.7793, longitude: -122.4192 });
+
+    expect(analyze.mock.calls[0][0].metadata).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+    });
+    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      capturedAt: "2026-08-14T12:00:00.000Z",
+    });
+  });
+
   it("is idempotent: a redelivered message writes no second analysis or counter", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img"),
