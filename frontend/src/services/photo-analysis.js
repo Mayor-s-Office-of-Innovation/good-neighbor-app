@@ -20,6 +20,7 @@ import {
   ApiError,
   LEG,
 } from "./api.js";
+import { getDeviceLocation } from "./device-location.js";
 import {
   addItem,
   getCurrentCheck,
@@ -176,6 +177,18 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
         sourceArtifactIds: [artifactId],
         evidenceIndices: concern.evidenceIndices || [],
       })),
+    ...(hasCoordinates(analysis)
+      ? {
+          assessment: {
+            metadata: {
+              position_descriptor: analysis.placeName || "perimeter",
+              reported_at: analysis.capturedAt || analyzedAt,
+              latitude: analysis.latitude,
+              longitude: analysis.longitude,
+            },
+          },
+        }
+      : {}),
     rawAssessment: {
       checkId,
       artifactId,
@@ -186,6 +199,17 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
       concerns,
     },
   };
+}
+
+function hasCoordinates(value) {
+  return (
+    Number.isFinite(value?.latitude) &&
+    Number.isFinite(value?.longitude) &&
+    value.latitude >= -90 &&
+    value.latitude <= 90 &&
+    value.longitude >= -180 &&
+    value.longitude <= 180
+  );
 }
 
 async function guidanceFromAnalysis(checkId, artifactId, analysis) {
@@ -216,6 +240,7 @@ function assessmentFromRefreshedAnalysis({
   artifactId,
   analysisId,
   assessment,
+  location,
 }) {
   const analyzedAt = new Date().toISOString();
   const concerns = concernsFromAssessment(assessment);
@@ -227,6 +252,17 @@ function assessmentFromRefreshedAnalysis({
       assessment?.metadata?.reported_at || assessment?.created_at || analyzedAt,
     rubricVersion: undefined,
     grade: assessment?.general_conditions?.label || null,
+    ...(hasCoordinates(location)
+      ? {
+          assessment: {
+            metadata: {
+              ...assessment?.metadata,
+              latitude: location.latitude,
+              longitude: location.longitude,
+            },
+          },
+        }
+      : {}),
     conditions: concerns
       .filter((concern) => (concern.rating || 0) > 0)
       .map((concern, index) => ({
@@ -368,6 +404,7 @@ export function retryEvidenceItem(placeId, itemId) {
         placeName: item.placeName || check.places?.[placeId]?.name || "",
         s3Key: item.analysis?.s3Key || item.upload?.s3Key,
         capturedAt: item.uploadedAt,
+        ...(hasCoordinates(item.location) ? item.location : {}),
         ...(item.kind === "text" ? { text: item.text } : {}),
         ...(item.note ? { text: item.note } : {}),
       }),
@@ -424,6 +461,7 @@ export async function refreshEvidenceAnalysis(
     artifactId,
     analysisId,
     assessment: response.assessment,
+    location: item.location,
   });
   let guidance;
   let reconciled = false;
@@ -508,11 +546,13 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
 
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
+  const location = await getDeviceLocation();
   const artifactId = await registerTextArtifact(check.id, {
     placeId,
     placeName: place.name,
     text,
     capturedAt,
+    ...(location ?? {}),
   });
   const analysis = await waitForArtifactAnalysis(check.id, artifactId);
   if (analysis.status && analysis.status !== "analyzed") {
@@ -659,8 +699,15 @@ async function run(placeId, itemId) {
 
   const startedAt = Date.now();
   try {
+    const locationPromise = hasCoordinates(item.location)
+      ? Promise.resolve(item.location)
+      : getDeviceLocation();
     updateItemAnalysis(placeId, itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
+    const location = await locationPromise;
+    if (location && !hasCoordinates(item.location)) {
+      updateItem(placeId, itemId, { location });
+    }
     // An interrupted run may have completed the upload before analysis started:
     // the artifact coordinates then live only under `upload`. Adopt them here
     // so run() and the poll both see them instead of re-uploading.
@@ -680,6 +727,7 @@ async function run(placeId, itemId) {
             placeName: place.name,
             text: item.text,
             capturedAt: item.uploadedAt,
+            ...(location ?? {}),
           }),
         );
         updateItem(placeId, itemId, {
@@ -693,6 +741,7 @@ async function run(placeId, itemId) {
             placeName: place.name,
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
+            ...(location ?? {}),
             ...(item.note ? { text: item.note } : {}),
             tag: `${place.name}:${item.id}`,
             onLeg: (leg) => {

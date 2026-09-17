@@ -39,6 +39,8 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @property {string} [placeName]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
+ * @property {number} [latitude] device latitude at capture
+ * @property {number} [longitude] device longitude at capture
  */
 
 /**
@@ -49,16 +51,16 @@ const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
  * @returns {import("../analysis/analyzer-client.js").AnalyzeMetadata}
  */
 function buildMetadata(msg) {
+  const hasCoordinates =
+    Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude);
   return {
     position_descriptor: msg.placeName ?? "perimeter",
     reported_at: msg.capturedAt ?? new Date().toISOString(),
-    // TODO(product): real per-photo GPS. Read device coordinates AT THE MOMENT
-    // EACH PHOTO IS CAPTURED (not at check start or batch submit) and stamp
-    // them on the artifact so these are the true location of this photo.
-    // Pending the v1 capture-flow UI (per-photo GPS is a deferred follow-up);
-    // 0,0 placeholder until then.
-    latitude: 0,
-    longitude: 0,
+    // The analyzer contract requires numbers. Missing/declined device location
+    // remains a deliberate 0,0 transport placeholder and is never copied into
+    // task source data; 311 then falls back to the site's geocoded location.
+    latitude: hasCoordinates ? Number(msg.latitude) : 0,
+    longitude: hasCoordinates ? Number(msg.longitude) : 0,
   };
 }
 
@@ -139,6 +141,9 @@ async function markFailed({ dynamoTable, msg, err }) {
     artifactId: msg.artifactId,
     ...(msg.placeId ? { placeId: msg.placeId } : {}),
     ...(msg.placeName ? { placeName: msg.placeName } : {}),
+    ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
+      ? { latitude: msg.latitude, longitude: msg.longitude }
+      : {}),
     status: "failed",
     error: {
       ...(err.code ? { code: err.code } : {}),
@@ -278,6 +283,10 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     artifactId: msg.artifactId,
     ...(msg.placeId ? { placeId: msg.placeId } : {}),
     ...(msg.placeName ? { placeName: msg.placeName } : {}),
+    ...(msg.capturedAt ? { capturedAt: msg.capturedAt } : {}),
+    ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
+      ? { latitude: msg.latitude, longitude: msg.longitude }
+      : {}),
     status: "analyzed",
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,

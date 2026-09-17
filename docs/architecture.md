@@ -133,9 +133,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   [guidance-policy-changelog.md](./guidance-policy-changelog.md).
 - **Category resolution:** analyzer category labels → canonical rule categories via aliases;
   unresolved categories become `manual_review`, never a guess (safety-critical rules).
-- **Ticket location resolution:** 311 filing uses the condition/task's own location first, then
-  the site's default location from `SITE#<siteId> / #META`; with neither it fails the app action
-  with a retryable `missing_location` result rather than guessing.
+- **Ticket location resolution:** capture requests a fresh device location for each photo or
+  text report and carries it through the condition/task; 311 filing uses that location first,
+  then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
+  the app action with a retryable `missing_location` result rather than guessing.
 - **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the

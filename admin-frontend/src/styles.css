@@ -77,11 +77,43 @@ h3 {
   gap: 12px;
 }
 
+.site-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.site-title__updated {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
   gap: 12px;
   align-items: end;
+}
+
+.site-details-form {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+}
+
+.site-details-form button {
+  justify-self: start;
+}
+
+.site-details-form__coordinates {
+  margin: -6px 0 0;
+  font-size: 0.8125rem;
+}
+
+.site-details-form__message {
+  margin: -6px 0 0;
+  font-size: 0.875rem;
 }
 
 label {
@@ -138,5 +170,9 @@ button[type="submit"] {
 @media (max-width: 640px) {
   .inline-form {
     grid-template-columns: 1fr;
+  }
+
+  .panel__head {
+    align-items: flex-start;
   }
 }
