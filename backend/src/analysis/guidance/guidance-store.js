@@ -271,6 +271,7 @@ function applyAssessmentConditionDelta({
  * @property {string} category
  * @property {number} severity
  * @property {string} [severityLabel]
+ * @property {string} [userFriendlyLabel]
  * @property {string} [description]
  * @property {string[]} [sourceArtifactIds]
  * @property {number[]} [evidenceIndices]
@@ -358,6 +359,7 @@ function buildConditionItem({
         : (evaluation.category ?? condition.category),
     severity: condition.severity,
     severityLabel: condition.severityLabel,
+    userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
     answers: {},
     status:
@@ -443,6 +445,7 @@ function buildTaskItem({
     category: rule.category,
     analyzerCategory: condition.category,
     severity: condition.severity,
+    userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
     guidance: rule.outcome.guidance,
@@ -561,6 +564,8 @@ export async function storeEvaluatedAssessment(input, options) {
         item.policyVersion === catalog.policyVersion &&
         item.analyzerCategory === condition.category &&
         item.severity === condition.severity &&
+        (item.userFriendlyLabel ?? "") ===
+          (condition.userFriendlyLabel ?? "") &&
         (item.description ?? "") === (condition.description ?? "") &&
         (Boolean(condition.sourceArtifactIds?.length) ||
           Boolean(condition.conditionId && item.explicitConditionId)) &&
@@ -1134,6 +1139,10 @@ export async function answerCondition(opts) {
         condition: {
           category: String(conditionItem.analyzerCategory),
           severity: Number(conditionItem.severity),
+          userFriendlyLabel:
+            typeof conditionItem.userFriendlyLabel === "string"
+              ? conditionItem.userFriendlyLabel
+              : undefined,
           sourceArtifactIds:
             /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
               ?.artifactIds ?? [],

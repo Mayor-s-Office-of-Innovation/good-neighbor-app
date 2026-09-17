@@ -11,6 +11,45 @@ import {
 const item = (fields) => /** @type {any} */ (fields);
 
 describe("analysis result summaries", () => {
+  it("uses the user-friendly condition label as the card title", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              conditionId: "condition_litter",
+              category: "Litter",
+              label: "File a 311 ticket",
+              userFriendlyLabel: "Lots of trash in tree well",
+              guidance: "Use the app to file a 311 ticket.",
+              kind: "escalation",
+            },
+          ],
+          conditions: [],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards[0]).toContain("Lots of trash in tree well");
+    expect(cards[0]).not.toContain(">Litter</h3>");
+  });
+
+  it("keeps category titles as a fallback for legacy cards", () => {
+    const card = taskAnalysisCard({
+      task: { taskId: "task_1", category: "Litter" },
+      action: null,
+      statusLabel: "Existing",
+    });
+
+    expect(card).toContain(">Litter</h3>");
+  });
+
   it("shows task short ids instead of raw assessment ids on task cards", () => {
     const cards = analysisCards(
       {
