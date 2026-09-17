@@ -94,7 +94,12 @@ resource "aws_s3_bucket_policy" "analytics_lake_export" {
         Sid       = "AllowDynamoDbExportWrite"
         Effect    = "Allow"
         Principal = { Service = "export.dynamodb.amazonaws.com" }
-        Action    = ["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucketMultipartUploads"]
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:AbortMultipartUpload",
+          "s3:ListBucketMultipartUploads",
+        ]
         Resource = [
           aws_s3_bucket.analytics_lake.arn,
           "${aws_s3_bucket.analytics_lake.arn}/raw/*",
@@ -145,10 +150,11 @@ resource "aws_lambda_function" "analytics_export" {
 
   environment {
     variables = {
-      DYNAMO_TABLE    = aws_dynamodb_table.app.name
-      LAKE_BUCKET     = aws_s3_bucket.analytics_lake.bucket
-      WATERMARK_TABLE = aws_dynamodb_table.app.name
-      EXPORT_PREFIX   = "raw"
+      DYNAMO_TABLE     = aws_dynamodb_table.app.name
+      DYNAMO_TABLE_ARN = aws_dynamodb_table.app.arn
+      LAKE_BUCKET      = aws_s3_bucket.analytics_lake.bucket
+      WATERMARK_TABLE  = aws_dynamodb_table.app.name
+      EXPORT_PREFIX    = "raw"
     }
   }
 

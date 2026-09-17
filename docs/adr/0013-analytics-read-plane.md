@@ -33,7 +33,7 @@ Facts that shaped the choice:
    lifecycle). The watermark is the previous run's `ExportToTime`, persisted — never
    clock-derived. `ExportToTime` trails current time by ≥ 15 min (DynamoDB limit) plus margin.
 2. **Convert:** S3-event-triggered Lambda (`manifest-summary.json` under `raw/`) unmarshals
-   DynamoDB JSON (`@aws-sdk/util-dynamodb`) and writes **entity-split, Hive-partitioned
+   DynamoDB JSON and writes **entity-split, Hive-partitioned
    Parquet** (`checks/date=…/`, `tasks/date=…/`, `conditions/date=…/`, …; ZSTD). The
    partition column is the item's own event date (`startedAt` / `createdAt` /
    `reportedAt`), so late-arriving exports land in the correct partition. Every row carries
@@ -54,6 +54,12 @@ Facts that shaped the choice:
    later without reworking this pipeline.
 6. **`grade_score`:** Excellent=5, Good=4, Fair=3, Poor=2, Very Poor=1; null when absent
    (never 0). SQL mirrors the scoring convention rather than storing a baked score.
+7. **`@aws-sdk/util-dynamodb` for unmarshalling (native JS insufficient).** The export's
+   DynamoDB-JSON encoding is a typed-attribute format (`{"S": …}`, `{"N": "72"}`, `{"M": …}`,
+   `{"L": [… ]}`, `{"NULL": true}`) with edge cases that are easy to get subtly wrong in
+   hand-rolled parsing — big-number precision, set types, binary base64. It is already in the
+   dependency tree (transitive via `@aws-sdk/lib-dynamodb`) and is the SDK's canonical decoder,
+   so a hand-written recursive parser would add maintenance risk for zero dependency savings.
 
 ## Alternatives weighed
 
