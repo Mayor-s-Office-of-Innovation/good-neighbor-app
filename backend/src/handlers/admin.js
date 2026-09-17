@@ -232,10 +232,6 @@ export const createSite = (event) =>
     if (!name) return jsonResponse(400, { error: "name_required" });
     const address = normalizeAddress(body.address);
     if (!address) return jsonResponse(400, { error: "address_required" });
-    const geocoded = await geocodeSiteAddress(address);
-    if (geocoded instanceof GeocodingError) {
-      return jsonResponse(422, { error: geocoded.code });
-    }
     const provider = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -244,6 +240,10 @@ export const createSite = (event) =>
     );
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
+    }
+    const geocoded = await geocodeSiteAddress(address);
+    if (geocoded instanceof GeocodingError) {
+      return jsonResponse(422, { error: geocoded.code });
     }
     const siteId = slug(body.siteId, `${providerId}-${name}`);
     const providerSiteId = String(

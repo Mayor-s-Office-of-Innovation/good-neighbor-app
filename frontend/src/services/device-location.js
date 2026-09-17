@@ -5,6 +5,7 @@
 */
 
 const LOCATION_TIMEOUT_MS = 10_000;
+const CAPTURE_LOCATION_TIMEOUT_MS = 2_000;
 
 /**
  * @typedef {{ latitude: number, longitude: number }} DeviceLocation
@@ -83,6 +84,16 @@ export function getDeviceLocation({
       finish(null);
     }
   });
+}
+
+/**
+ * Bound the capture path's wait for best-effort coordinates. The longer
+ * default guard remains useful for the early permission request, but an
+ * unresponsive browser must not hold up artifact registration or upload.
+ * @returns {Promise<DeviceLocation | null>}
+ */
+export function getCaptureDeviceLocation() {
+  return getDeviceLocation({ timeoutMs: CAPTURE_LOCATION_TIMEOUT_MS });
 }
 
 async function logLocationPermissionState() {

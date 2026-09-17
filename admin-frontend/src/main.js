@@ -190,13 +190,6 @@ class AdminApp extends HTMLElement {
       }
       this.state.siteSaveMessage = "Site saved successfully.";
     } catch (error) {
-      this.state.site = {
-        ...this.state.site,
-        name,
-        address,
-        location: undefined,
-        geocodedAddress: undefined,
-      };
       this.state.siteSaveError = siteSaveErrorMessage(error);
     } finally {
       this.state.siteSaving = false;

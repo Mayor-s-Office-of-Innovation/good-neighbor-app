@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getCaptureDeviceLocation,
   getDeviceLocation,
   requestLocationPermissionEarly,
 } from "./device-location.js";
@@ -45,6 +46,25 @@ describe("getDeviceLocation", () => {
     const location = getDeviceLocation({ timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(100);
 
+    await expect(location).resolves.toBeNull();
+  });
+
+  it("uses a short deadline for capture-specific requests", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("navigator", {
+      geolocation: { getCurrentPosition: vi.fn() },
+    });
+
+    const location = getCaptureDeviceLocation();
+    await vi.advanceTimersByTimeAsync(1_999);
+    let settled = false;
+    void location.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
     await expect(location).resolves.toBeNull();
   });
 });
