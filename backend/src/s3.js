@@ -16,6 +16,16 @@ const client = new S3Client(
   process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
 );
 
+// A tunneled mobile browser cannot use a presigned localhost URL. Local dev may
+// provide a public endpoint that routes the bucket path back through Vite to
+// MinIO; storage reads and bucket administration continue using the private
+// AWS_ENDPOINT_URL_S3 client above. Production leaves this unset and signs with
+// the ordinary AWS client.
+const publicEndpoint = process.env.S3_PUBLIC_PRESIGN_ENDPOINT;
+const presignClient = publicEndpoint
+  ? new S3Client({ endpoint: publicEndpoint, forcePathStyle: true })
+  : client;
+
 // Fail loud on a credential mismatch against the local MinIO. A stale MinIO
 // from an earlier stack (different .env.local creds) can still answer health
 // checks — so the reuse lane parks on it and every app S3 operation then fails
@@ -64,7 +74,7 @@ export function presignPut({ bucket, key, contentType, expiresIn = 300 }) {
     Key: key,
     ContentType: contentType,
   });
-  return getSignedUrl(client, command, { expiresIn });
+  return getSignedUrl(presignClient, command, { expiresIn });
 }
 
 /**
