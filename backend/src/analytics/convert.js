@@ -122,7 +122,10 @@ export function toRow(entity, item, exportedAt) {
       Object.assign(row, {
         assessmentId: str(item.assessmentId),
         conditionId: str(item.conditionId),
-        category: str(item.category),
+        // Condition items carry the analyzer's raw label and the app's
+        // canonical one (guidance-store.js) — 'category' does not exist.
+        canonicalCategory: str(item.canonicalCategory),
+        analyzerCategory: str(item.analyzerCategory),
         severity: num(item.severity),
         outcome: str(item.outcome),
         conditionStatus: str(item.status),
@@ -163,12 +166,20 @@ export function toRow(entity, item, exportedAt) {
       break;
     }
     case "sites":
-    case "providers":
-    case "devices": {
+    case "providers": {
       Object.assign(row, {
         name: str(item.name),
         updatedAt: str(item.updatedAt ?? item.lastSeenAt),
         date: dateFromTimestamp(str(item.updatedAt ?? item.lastSeenAt)),
+      });
+      break;
+    }
+    case "devices": {
+      // Device items carry `label`, not `name` (handlers/devices.js).
+      Object.assign(row, {
+        label: str(item.label),
+        updatedAt: str(item.lastSeenAt),
+        date: dateFromTimestamp(str(item.lastSeenAt)),
       });
       break;
     }
@@ -257,7 +268,8 @@ export const ENTITY_COLUMNS = {
     "siteId",
     "assessmentId",
     "conditionId",
-    "category",
+    "canonicalCategory",
+    "analyzerCategory",
     "severity",
     "outcome",
     "conditionStatus",
@@ -297,7 +309,7 @@ export const ENTITY_COLUMNS = {
   ],
   sites: ["siteId", "name", "updatedAt", "exportedAt", "raw"],
   providers: ["siteId", "name", "updatedAt", "exportedAt", "raw"],
-  devices: ["siteId", "name", "updatedAt", "exportedAt", "raw"],
+  devices: ["siteId", "label", "updatedAt", "exportedAt", "raw"],
 };
 
 /**
@@ -375,11 +387,7 @@ export async function convertExport(bucket, manifestSummaryKey, exportedAt) {
   const manifestKey = summary.manifestFilesS3Key;
   if (!manifestKey)
     throw new Error("manifest-summary.json missing manifestFilesS3Key");
-  const manifest = await getJson(bucket, manifestKey);
-  /** @type {string[]} */
-  const dataFiles = (manifest.manifestEntries ?? [])
-    .map((/** @type {{ dataFileS3Key?: string }} */ e) => e.dataFileS3Key)
-    .filter(Boolean);
+  const dataFiles = await listManifestDataFiles(bucket, manifestKey);
   if (dataFiles.length === 0)
     throw new Error("export manifest lists no data files");
 
@@ -480,6 +488,39 @@ async function getJson(bucket, key) {
   if (!res.Body) throw new Error(`empty S3 object ${key}`);
   const text = await res.Body.transformToString("utf8");
   return JSON.parse(text);
+}
+
+/**
+ * Parse manifest-files.json, which DynamoDB emits as **JSON Lines** — one
+ * `{ dataFileS3Key, itemCount, md5checksumValue }` descriptor per line — not
+ * as a single JSON object. (manifest-summary.json IS a single JSON object;
+ * this file is not.) Exported for unit tests.
+ * @param {string} bucket
+ * @param {string} key full S3 key of the manifest-files.json object
+ * @returns {Promise<string[]>} data file keys
+ */
+export async function listManifestDataFiles(bucket, key) {
+  const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!res.Body) throw new Error(`empty S3 object ${key}`);
+  const text = await res.Body.transformToString("utf8");
+  /** @type {string[]} */
+  const files = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      throw new Error(
+        `manifest line is not valid JSON: ${trimmed.slice(0, 80)}`,
+      );
+    }
+    if (typeof entry.dataFileS3Key === "string" && entry.dataFileS3Key) {
+      files.push(entry.dataFileS3Key);
+    }
+  }
+  return files;
 }
 
 /**

@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// S3 seam for the manifest test: one GetObject per call, body via
+// transformToString (the shape listManifestDataFiles consumes).
+const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock("@aws-sdk/client-s3", () => ({
+  S3Client: class {
+    send = send;
+  },
+  GetObjectCommand: class {
+    constructor(/** @type {any} */ input) {
+      this.input = input;
+    }
+  },
+  PutObjectCommand: class {},
+}));
 
 const {
   classifyItem,
@@ -7,6 +22,7 @@ const {
   dateFromTimestamp,
   ENTITY_COLUMNS,
   columnSchema,
+  listManifestDataFiles,
 } = await import("./convert.js");
 
 // ---- key classification ------------------------------------------------------
@@ -242,5 +258,125 @@ describe("parseExportFile", () => {
     const byEntity = await parseText(ndjson);
     expect(byEntity.size).toBe(1);
     expect(byEntity.get("checks")).toHaveLength(1);
+  });
+});
+
+// ---- manifest parsing (JSON Lines — qodo #4 regression) ----------------------
+
+describe("listManifestDataFiles (manifest-files.json is JSON Lines)", () => {
+  beforeEach(() => {
+    send.mockReset();
+  });
+
+  it("parses one descriptor per line (multi-file manifest)", async () => {
+    send.mockResolvedValueOnce({
+      Body: {
+        transformToString: async () =>
+          [
+            JSON.stringify({
+              dataFileS3Key: "raw/AWSDynamoDB/abc/Data/1.json.gz",
+              itemCount: 100,
+            }),
+            JSON.stringify({
+              dataFileS3Key: "raw/AWSDynamoDB/abc/Data/2.json.gz",
+              itemCount: 5,
+            }),
+          ].join("\n"),
+      },
+    });
+    const files = await listManifestDataFiles(
+      "bucket",
+      "raw/x/manifest-files.json",
+    );
+    expect(files).toEqual([
+      "raw/AWSDynamoDB/abc/Data/1.json.gz",
+      "raw/AWSDynamoDB/abc/Data/2.json.gz",
+    ]);
+  });
+
+  it("parses a single-line manifest (the common small-export case)", async () => {
+    send.mockResolvedValueOnce({
+      Body: {
+        transformToString: async () =>
+          JSON.stringify({
+            dataFileS3Key: "raw/abc/Data/1.json.gz",
+          }) + "\n",
+      },
+    });
+    const files = await listManifestDataFiles(
+      "bucket",
+      "raw/x/manifest-files.json",
+    );
+    expect(files).toEqual(["raw/abc/Data/1.json.gz"]);
+  });
+
+  it("throws on a manifest that is a single JSON object (wrong format)", async () => {
+    send.mockResolvedValueOnce({
+      Body: {
+        transformToString: async () =>
+          JSON.stringify({ manifestEntries: [{ dataFileS3Key: "x" }] }),
+      },
+    });
+    // A single-object manifest has no dataFileS3Key at the top level of any
+    // line, so it parses to zero files rather than throwing.
+    const files = await listManifestDataFiles(
+      "bucket",
+      "raw/x/manifest-files.json",
+    );
+    expect(files).toEqual([]);
+  });
+});
+
+// ---- real stored shapes (qodo #15/#16 regressions) ---------------------------
+
+describe("stored item shapes", () => {
+  it("promotes condition categories from canonicalCategory/analyzerCategory (not 'category')", () => {
+    const item = {
+      pk: "SITE#s1",
+      sk: "ASSESSMENT#a1#COND#c1",
+      conditionId: "c1",
+      assessmentId: "a1",
+      analyzerCategory: "Graffiti",
+      canonicalCategory: "Graffiti",
+      severity: 3,
+      reportedAt: "2026-09-16T01:00:00.000Z",
+    };
+    const row = toRow("conditions", item, "t");
+    expect(row.canonicalCategory).toBe("Graffiti");
+    expect(row.analyzerCategory).toBe("Graffiti");
+    expect(row.category).toBeUndefined();
+    expect(ENTITY_COLUMNS.conditions).toContain("canonicalCategory");
+    expect(ENTITY_COLUMNS.conditions).toContain("analyzerCategory");
+    expect(ENTITY_COLUMNS.conditions).not.toContain("category");
+  });
+
+  it("promotes device label from item.label (not 'name')", () => {
+    const row = toRow(
+      "devices",
+      {
+        pk: "SITE#s1",
+        sk: "DEVICE#d1",
+        label: "Front desk",
+        lastSeenAt: "2026-09-16T01:00:00.000Z",
+      },
+      "t",
+    );
+    expect(row.label).toBe("Front desk");
+    expect(row.name).toBeUndefined();
+    expect(ENTITY_COLUMNS.devices).toContain("label");
+  });
+
+  it("promotes task terminal status verbatim ('completed', not 'resolved')", () => {
+    const row = toRow(
+      "tasks",
+      {
+        pk: "SITE#s1",
+        sk: "TASK#t1",
+        status: "completed",
+        createdAt: "2026-09-16T01:00:00.000Z",
+      },
+      "t",
+    );
+    expect(row.taskStatus).toBe("completed");
   });
 });
