@@ -96,6 +96,24 @@ resource "aws_s3_bucket_lifecycle_configuration" "analytics_lake" {
       days_after_initiation = 7
     }
   }
+
+  # Bucket-wide catch-all abort rule. CKV_AWS_300 only passes when a rule with
+  # an empty filter (whole-bucket scope) carries abort_incomplete_multipart_upload
+  # — prefix-scoped rules don't satisfy it, even with the same abort setting. The
+  # two prefix rules above keep their own aborts; this one adds no deletions, so
+  # anything outside raw/ and reports/ is unaffected.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 # The export service writes raw export files into raw/AWSDynamoDB/<id>/...
