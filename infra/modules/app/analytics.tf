@@ -36,6 +36,20 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "analytics_lake" {
   }
 }
 
+resource "aws_s3_bucket_versioning" "analytics_lake" {
+  #checkov:skip=CKV_AWS_21:ADR 0013 — the lake is regenerable by design. Parquet
+  # is re-derivable from re-running the converter over retained raw exports, and
+  # raw/ itself is an ephemeral 30-day buffer for a write-once export feed (the
+  # export service overwrites by export ID; stale versions would double-count in
+  # reads since globs match every object). Versioning adds cost/ops with no
+  # recovery benefit here; the app-data buckets (frontend/uploads) keep it on.
+  bucket = aws_s3_bucket.analytics_lake.id
+
+  versioning_configuration {
+    status = "Disabled"
+  }
+}
+
 resource "aws_s3_bucket_logging" "analytics_lake" {
   bucket = aws_s3_bucket.analytics_lake.id
 
