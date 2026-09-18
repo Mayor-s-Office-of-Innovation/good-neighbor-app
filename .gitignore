@@ -35,3 +35,7 @@ override.tf.json
 # Local agent workspace artifacts
 .agents/
 skills-lock.json
+
+# Playwright e2e artifacts
+e2e/test-results/
+e2e/playwright-report/
