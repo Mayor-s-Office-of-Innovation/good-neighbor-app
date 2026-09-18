@@ -68,6 +68,16 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      # The harness self-downloads ~250 MB of emulator binaries (MinIO
+      # ~103 MB, ElasticMQ jar, DynamoDB Local) into backend/.local/ on first
+      # run. Cache across runs — especially the MinIO binary, which is fetched
+      # from a pinned GitHub release asset (dl.min.io went 410 in 2026).
+      - name: Cache local harness binaries
+        uses: actions/cache@v4
+        with:
+          path: backend/.local
+          key: local-harness-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
+
       - name: Copy env example
         run: cp .env.example .env.local
 

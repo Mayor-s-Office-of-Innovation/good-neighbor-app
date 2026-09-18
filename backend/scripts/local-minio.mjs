@@ -12,9 +12,10 @@
 // env values must satisfy that (see .env.example).
 
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
@@ -40,7 +41,7 @@ async function installedBinary() {
 }
 
 /**
- * Map Node's platform/arch to MinIO's release path segment (`<os>-<arch>`).
+ * Map Node's platform/arch to MinIO's release asset segment (`<os>-<arch>`).
  * MinIO uses `amd64` where Node reports `x64`.
  * @returns {string}
  */
@@ -55,6 +56,50 @@ function releaseTarget() {
   return `${os}-${arch}`;
 }
 
+// MinIO's community binaries were pulled from dl.min.io in 2026 (redirects
+// hardened into 410 Gone) — but their canonical copies remain live on the
+// GitHub release for the last community tag. dl.min.io itself redirected there
+// before it went dark, so this is the same binary the harness has always
+// fetched, just at its permanent home. Dev-only emulator (ADR 0003/0006), so a
+// frozen snapshot is fine; bump MINIO_RELEASE deliberately if ever needed.
+const MINIO_RELEASE = "RELEASE.2025-09-07T16-13-09Z";
+
+/**
+ * GitHub release asset URL for this platform's MinIO server binary.
+ * @returns {string}
+ */
+function minioDownloadUrl() {
+  return `https://github.com/minio/minio/releases/download/${MINIO_RELEASE}/minio.${releaseTarget()}.${MINIO_RELEASE}`;
+}
+
+/** GitHub release asset URL for the matching sha256sum file. */
+function minioShasumUrl() {
+  return `https://github.com/minio/minio/releases/download/${MINIO_RELEASE}/minio.${releaseTarget()}.${MINIO_RELEASE}.sha256sum`;
+}
+
+/**
+ * Verify the downloaded binary against the release's published sha256sum
+ * (sha256sum format: `<hex>  <filename>`).
+ * @param {string} filePath
+ * @returns {Promise<void>}
+ */
+async function verifyShasum(filePath) {
+  const res = await fetch(minioShasumUrl());
+  if (!res.ok) {
+    throw new Error(`shasum fetch failed: ${res.status} ${res.statusText}`);
+  }
+  const expected = (await res.text()).trim().split(/\s+/)[0].toLowerCase();
+  const actual = createHash("sha256")
+    .update(await readFile(filePath))
+    .digest("hex");
+  if (actual !== expected) {
+    throw new Error(
+      `MinIO binary failed sha256 verification (expected ${expected}, got ${actual})`,
+    );
+  }
+  console.log(`[minio] sha256 verified (${expected.slice(0, 16)}…)`);
+}
+
 async function ensureBinary() {
   try {
     await stat(binPath);
@@ -63,10 +108,10 @@ async function ensureBinary() {
     // fall through to download
   }
   await mkdir(localDir, { recursive: true });
-  // Latest stable server binary for this OS/arch. MinIO's S3 API is stable, so
-  // the harness tracks latest rather than pinning a RELEASE.<ts> archive URL.
-  const url = `https://dl.min.io/server/minio/release/${releaseTarget()}/minio`;
-  console.log(`[minio] downloading MinIO (${releaseTarget()})…`);
+  const url = minioDownloadUrl();
+  console.log(
+    `[minio] downloading MinIO ${MINIO_RELEASE} (${releaseTarget()})…`,
+  );
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok || !res.body) {
     throw new Error(`download failed: ${res.status} ${res.statusText}`);
@@ -76,6 +121,7 @@ async function ensureBinary() {
     createWriteStream(binPath),
   );
   await chmod(binPath, 0o755);
+  await verifyShasum(binPath);
   console.log(`[minio] saved ${binPath}`);
 }
 
