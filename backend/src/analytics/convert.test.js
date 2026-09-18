@@ -377,6 +377,29 @@ describe("stored item shapes", () => {
     expect(row.date).toBe("2026-09-16");
   });
 
+  it("falls back to createdAt when source.reportedAt is present but not a usable date", () => {
+    // reportedAt is client-supplied and unvalidated (guidance.js); an empty,
+    // free-text, or impossible value must not bypass the fallback.
+    for (const bad of ["", "yesterday", "2026-99-99T00:00:00Z"]) {
+      const row = toRow(
+        "conditions",
+        { ...storedCondition, source: { reportedAt: bad } },
+        "t",
+      );
+      expect(row.reportedAt, bad).toBe("2026-09-16T01:05:00.000Z");
+      expect(row.date, bad).toBe("2026-09-16");
+    }
+  });
+
+  it("lands in date=unknown only when no candidate is a usable date", () => {
+    const row = toRow(
+      "conditions",
+      { ...storedCondition, source: { reportedAt: "nope" }, createdAt: "" },
+      "t",
+    );
+    expect(row.date).toBeNull();
+  });
+
   it("promotes the outcome kind (outcome is an object, null when unresolved)", () => {
     expect(toRow("conditions", storedCondition, "t").outcome).toBe("action");
     expect(
@@ -412,5 +435,24 @@ describe("stored item shapes", () => {
       "t",
     );
     expect(row.taskStatus).toBe("completed");
+  });
+});
+
+describe("dateFromTimestamp calendar validity", () => {
+  it("accepts real dates from ISO timestamps", () => {
+    expect(dateFromTimestamp("2026-09-16T01:00:00.000Z")).toBe("2026-09-16");
+    expect(dateFromTimestamp("2024-02-29")).toBe("2024-02-29");
+  });
+
+  it("rejects shape-valid but impossible dates (would become bogus partitions)", () => {
+    expect(dateFromTimestamp("2026-99-99T00:00:00Z")).toBeNull();
+    expect(dateFromTimestamp("2026-02-30T00:00:00Z")).toBeNull();
+    expect(dateFromTimestamp("2026-00-01")).toBeNull();
+  });
+
+  it("rejects empty and free-text values", () => {
+    expect(dateFromTimestamp("")).toBeNull();
+    expect(dateFromTimestamp("yesterday")).toBeNull();
+    expect(dateFromTimestamp(null)).toBeNull();
   });
 });
