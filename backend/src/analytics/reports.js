@@ -121,8 +121,12 @@ async function hasParquetFiles(bucket, entity) {
 
 // Where DuckDB may write: extension downloads land under <home>/.duckdb. The
 // Lambda filesystem is read-only outside /tmp and sets no HOME, so DuckDB's
-// default fails with "Can't find the home directory". Override for a laptop
-// run that wants its usual ~/.duckdb cache.
+// default fails with "Can't find the home directory". Verified against
+// @duckdb/node-api 1.5.5 with HOME unset: SET home_directory to an existing
+// directory installs extensions under it; SET extension_directory alone still
+// raises the home-directory error. The directory must already exist (/tmp
+// always does on Lambda). Override for a laptop run that wants its usual
+// ~/.duckdb cache.
 const DUCKDB_HOME = process.env.DUCKDB_HOME_DIRECTORY || "/tmp";
 
 /**

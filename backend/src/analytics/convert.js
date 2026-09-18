@@ -128,7 +128,12 @@ export function toRow(entity, item, exportedAt) {
           ? item.source
           : undefined
       );
-      const reportedAt = str(source?.reportedAt) ?? str(item.createdAt);
+      // source.reportedAt is client-supplied and unvalidated (guidance.js),
+      // so prefer the first candidate that yields a real partition date
+      // rather than the first string present.
+      const candidates = [str(source?.reportedAt), str(item.createdAt)];
+      const reportedAt =
+        candidates.find((c) => dateFromTimestamp(c) !== null) ?? candidates[0];
       // outcome is the matched rule's outcome object; its `kind` is the
       // scalar worth a column. The full object stays in raw.
       const outcome = /** @type {Record<string, unknown> | undefined} */ (
@@ -238,7 +243,12 @@ function gradeScore(v) {
 export function dateFromTimestamp(iso) {
   if (!iso) return null;
   const date = iso.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  // Shape alone lets "2026-99-99" or "2026-02-30" through as a partition;
+  // require a real calendar date (round-trip, since V8 rolls Feb 30 over).
+  const ms = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toISOString().slice(0, 10) === date ? date : null;
 }
 
 /**
