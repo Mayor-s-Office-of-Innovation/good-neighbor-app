@@ -104,6 +104,31 @@ describe("searchSites", () => {
 });
 
 describe("requestSetupCode", () => {
+  it("keeps the generic response when SES fails, without releasing the cooldown", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", name: "City Hall", status: "active" },
+      })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+    sendSetupCodeEmail.mockRejectedValueOnce(
+      new Error("Setup-code email delivery failed"),
+    );
+
+    const res = await callRequest({
+      siteId: "site-1",
+      email: "lead@example.org",
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.body).message).toContain("If that email");
+    expect(sendSetupCodeEmail).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledTimes(6);
+  });
+
   it("returns the generic response and emails authorized contacts", async () => {
     send
       .mockResolvedValueOnce({

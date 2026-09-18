@@ -1,17 +1,18 @@
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchGetCommand,
+  GetCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, analyzeEdit, analyzeReject, createAnalyzerClient } = vi.hoisted(
-  () => ({
-    send: vi.fn(),
-    analyzeEdit: vi.fn(),
-    analyzeReject: vi.fn(),
-    createAnalyzerClient: vi.fn(),
-  }),
-);
-vi.mock("../db.js", () => ({ ddb: { send } }));
-vi.mock("../analysis/analyzer-client.js", () => ({
-  AnalyzerError: class AnalyzerError extends Error {
+const {
+  send,
+  analyzeEdit,
+  analyzeReject,
+  createAnalyzerClient,
+  AnalyzerError,
+} = vi.hoisted(() => {
+  class AnalyzerError extends Error {
     /**
      * @param {string} message
      * @param {{ code?: string, status?: number, details?: unknown }} [opts]
@@ -22,7 +23,18 @@ vi.mock("../analysis/analyzer-client.js", () => ({
       this.status = opts.status;
       this.details = opts.details;
     }
-  },
+  }
+  return {
+    send: vi.fn(),
+    analyzeEdit: vi.fn(),
+    analyzeReject: vi.fn(),
+    createAnalyzerClient: vi.fn(),
+    AnalyzerError,
+  };
+});
+vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../analysis/analyzer-client.js", () => ({
+  AnalyzerError,
   createAnalyzerClient,
 }));
 
@@ -124,9 +136,8 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       sk: "CHECK#chk_01#ANALYSIS#art_1",
     });
     expect(get.input.ConsistentRead).toBe(true);
-    // One GetItem + the supersede's GSI2 open-task query; a partition scan
-    // would page the whole site here — that's the regression this guards.
-    expect(send).toHaveBeenCalledTimes(2);
+    // Task retirement waits for successful guidance publication.
+    expect(send).toHaveBeenCalledTimes(1);
     expect(analyzeEdit).toHaveBeenCalledWith(
       "ana_20260907_ab12cd34",
       "chk_01-art_1-001-litter",
@@ -135,16 +146,26 @@ describe("analysis amendments (check/artifact-addressed)", () => {
         appId: "good-neighbor-app",
       }),
     );
-    // Supersede ran with the resolved context (assessmentIdPrefix).
-    const supersedeQuery = send.mock.calls[1][0];
-    expect(supersedeQuery.input.ExpressionAttributeValues[":worklist"]).toBe(
-      "SITE#site-1#TASK#open",
-    );
   });
 
-  it("reject resolves by key and passes the reason through", async () => {
+  it("reject resolves by key, passes the reason through, and retires its open task", async () => {
     send.mockResolvedValueOnce({ Item: analysisItem() });
-    send.mockResolvedValueOnce({ Items: [] });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "escalation",
+          severity: 3,
+          conditionId: "chk_01-art_1-001-litter",
+          checkId: "chk_01",
+          assessmentId: "chk_01-art_1",
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({});
 
     const res = await invoke(
       amendEvent({
@@ -158,6 +179,120 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       "ana_20260907_ab12cd34",
       "chk_01-art_1-001-litter",
       expect.objectContaining({ reason: { key: "not_a_problem" } }),
+    );
+    const query = send.mock.calls[1][0];
+    expect(query.input.ExpressionAttributeValues).toMatchObject({
+      ":worklist": "SITE#site-1#TASK#open",
+      ":conditionId": "chk_01-art_1-001-litter",
+    });
+    const transaction = send.mock.calls[2][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
+      taskId: "task-1",
+      status: "superseded",
+      supersededByAnalysisId: "ana_20260907_ab12cd34",
+      supersessionReason: "analysis_condition_rejected",
+      gsi2pk: "SITE#site-1#TASK#superseded",
+    });
+  });
+
+  it("retires the task when the analyzer reports the condition was already removed", async () => {
+    analyzeReject.mockRejectedValueOnce(
+      new AnalyzerError("Unknown condition", {
+        code: "unknown_condition",
+        status: 404,
+      }),
+    );
+    send.mockResolvedValueOnce({ Item: analysisItem() });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "escalation",
+          severity: 3,
+          conditionId: "chk_01-art_1-001-litter",
+          checkId: "chk_01",
+          assessmentId: "chk_01-art_1",
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(amendEvent({}), rejectAnalysisCondition);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({
+      already_rejected: true,
+      rejected_condition_id: "chk_01-art_1-001-litter",
+    });
+    expect(send.mock.calls[2][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send.mock.calls[2][0].input.TransactItems[0].Put.Item).toMatchObject(
+      {
+        taskId: "task-1",
+        status: "superseded",
+        supersessionReason: "analysis_condition_rejected",
+      },
+    );
+  });
+
+  it("retires a just-published task through strongly consistent primary-key reads", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-fresh",
+      taskId: "task-fresh",
+      status: "open",
+      kind: "escalation",
+      severity: 3,
+      conditionId: "chk_01-art_1-001-litter",
+      checkId: "chk_01",
+      assessmentId: "chk_01-art_1",
+    };
+    send
+      .mockResolvedValueOnce({ Item: analysisItem() })
+      .mockResolvedValueOnce({ Item: task })
+      .mockResolvedValueOnce({
+        Item: {
+          conditionId: "chk_01-art_1-001-litter",
+          checkId: "chk_01",
+          taskIds: ["task-fresh"],
+        },
+      })
+      .mockResolvedValueOnce({ Responses: { "gnp-test-app": [task] } })
+      .mockResolvedValueOnce({});
+
+    const res = await invoke(
+      amendEvent({
+        body: {
+          reason: { key: "not_a_problem" },
+          taskId: "task-fresh",
+        },
+      }),
+      rejectAnalysisCondition,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toMatchObject({
+      input: {
+        Key: { pk: "SITE#site-1", sk: "TASK#task-fresh" },
+        ConsistentRead: true,
+      },
+    });
+    expect(send.mock.calls[2][0]).toMatchObject({
+      input: {
+        Key: {
+          pk: "SITE#site-1",
+          sk: "ASSESSMENT#chk_01-art_1#COND#chk_01-art_1-001-litter",
+        },
+        ConsistentRead: true,
+      },
+    });
+    expect(send.mock.calls[3][0]).toBeInstanceOf(BatchGetCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
+      { taskId: "task-fresh", status: "superseded" },
     );
   });
 
@@ -220,28 +355,6 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     );
     expect(res.statusCode).toBe(400);
     expect(send).not.toHaveBeenCalled();
-  });
-
-  it("keys the supersede off the RESOLVED check/artifact, not client input", async () => {
-    // A malicious/mistyped checkId just 404s — the item's own checkId/artifactId
-    // drive the analyzer call and the supersede scope.
-    send.mockResolvedValueOnce({
-      Item: analysisItem({ checkId: "chk_REAL", artifactId: "art_REAL" }),
-    });
-    send.mockResolvedValueOnce({ Items: [] });
-
-    await invoke(
-      amendEvent({ body: { reason: { key: "not_a_problem" } } }),
-      rejectAnalysisCondition,
-    );
-
-    const supersedeQuery = send.mock.calls[1][0];
-    expect(supersedeQuery).not.toBeInstanceOf(TransactWriteCommand);
-    // The supersede's GSI2 query is scoped to the resolved site — the
-    // assessmentIdPrefix filter (chk_REAL-art_REAL) applies to its results.
-    expect(supersedeQuery.input.ExpressionAttributeValues[":worklist"]).toBe(
-      "SITE#site-1#TASK#open",
-    );
   });
 
   it("client-supplied analysisId is ignored — server-stored one wins", async () => {

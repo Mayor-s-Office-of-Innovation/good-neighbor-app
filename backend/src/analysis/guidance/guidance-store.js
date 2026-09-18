@@ -271,6 +271,7 @@ function applyAssessmentConditionDelta({
  * @property {string} category
  * @property {number} severity
  * @property {string} [severityLabel]
+ * @property {string} [userFriendlyLabel]
  * @property {string} [description]
  * @property {string[]} [sourceArtifactIds]
  * @property {number[]} [evidenceIndices]
@@ -281,20 +282,13 @@ function applyAssessmentConditionDelta({
  * @typedef {object} StoreAssessmentInput
  * @property {string} siteId
  * @property {string} assessmentId
+ * @property {string} [previousAssessmentId]
  * @property {string} [checkId]
  * @property {string} reportedAt
  * @property {string} [rubricVersion]
  * @property {string | null} [grade]
  * @property {Record<string, unknown>} rawAssessment
  * @property {AssessmentConditionInput[]} conditions
- * @property {Record<string, string>} [dispositions] reviewer clarifications keyed
- *   by the condition's stable conditionId ("not_present" | "better" | "worse" |
- *   "other"). All are recorded for false-positive analysis; only "not_present"
- *   suppresses task minting. Keying by conditionId (not category) means disputing
- *   one condition never affects a sibling that happens to share a category.
- * @property {string[]} [disputedCategories] legacy: analyzer category names the
- *   reviewer marked "I don't see this problem". Folded in as "not_present" for any
- *   condition of that category that has no explicit conditionId disposition.
  */
 
 /**
@@ -326,12 +320,7 @@ export function makeConditionId(category, index) {
  * @param {string} opts.conditionId
  * @param {string | undefined} opts.checkId
  * @param {string} opts.reportedAt
- * @param {EvaluationResult | null} opts.evaluation null when the condition was
- *   disputed (no rule evaluation runs).
- * @param {boolean} [opts.disputed] the reviewer marked this "I don't see this
- *   problem": persist the condition as a terminal record, mint no task.
- * @param {string | null} [opts.disputeDisposition] the reviewer's clarification
- *   ("not_present" | "better" | "worse" | "other"), or null if left alone.
+ * @param {EvaluationResult} opts.evaluation the rule evaluation for this condition.
  * @param {string} opts.policyVersion
  * @param {string[]} opts.taskIds
  * @param {string} opts.now
@@ -345,15 +334,11 @@ function buildConditionItem({
   checkId,
   reportedAt,
   evaluation,
-  disputed = false,
-  disputeDisposition = null,
   policyVersion,
   taskIds,
   now,
 }) {
-  // A disputed condition is terminal: it never mints a task and never enters the
-  // needs-answer / manual-review queue, but the record is kept for analysis.
-  const unresolved = !disputed && evaluation?.kind !== "outcome";
+  const unresolved = evaluation.kind !== "outcome";
   const base = {
     ...conditionKey(siteId, assessmentId, conditionId),
     entityType: "CONDITION",
@@ -368,37 +353,30 @@ function buildConditionItem({
       ...condition.source,
     },
     analyzerCategory: condition.category,
-    canonicalCategory: disputed
-      ? condition.category
-      : evaluation?.kind === "manual_review"
+    canonicalCategory:
+      evaluation.kind === "manual_review"
         ? (evaluation.category ?? condition.category)
-        : (evaluation?.category ?? condition.category),
+        : (evaluation.category ?? condition.category),
     severity: condition.severity,
     severityLabel: condition.severityLabel,
+    userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
     answers: {},
-    status: disputed
-      ? "disputed"
-      : evaluation?.kind === "needs_answer"
+    status:
+      evaluation.kind === "needs_answer"
         ? "needs_answer"
-        : evaluation?.kind === "outcome"
+        : evaluation.kind === "outcome"
           ? "tasks_created"
-          : evaluation?.kind === "manual_review"
+          : evaluation.kind === "manual_review"
             ? "manual_review"
             : "completed",
-    // Reviewer feedback kept for false-positive analysis. `disputeDisposition` is
-    // the reviewer's clarification ("not_present" | "better" | "worse" | "other")
-    // or null if they left the condition alone. Only "not_present" sets `disputed`
-    // and suppresses task creation (see storeEvaluatedAssessment).
-    disputed,
-    disputeDisposition,
     selectedRuleId:
-      evaluation?.kind === "outcome" ? evaluation.rule.ruleId : null,
-    outcome: evaluation?.kind === "outcome" ? evaluation.outcome : null,
+      evaluation.kind === "outcome" ? evaluation.rule.ruleId : null,
+    outcome: evaluation.kind === "outcome" ? evaluation.outcome : null,
     taskIds,
-    resolvedToTasks: evaluation?.kind === "outcome",
+    resolvedToTasks: evaluation.kind === "outcome",
     needsAnswer:
-      evaluation?.kind === "needs_answer" ? evaluation.question : null,
+      evaluation.kind === "needs_answer" ? evaluation.question : null,
     cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
@@ -467,6 +445,7 @@ function buildTaskItem({
     category: rule.category,
     analyzerCategory: condition.category,
     severity: condition.severity,
+    userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
     guidance: rule.outcome.guidance,
@@ -492,6 +471,19 @@ function buildTaskItem({
 }
 
 /**
+ * @param {string} siteId
+ * @param {string} checkId
+ * @param {string} lineageId
+ * @returns {{pk: string, sk: string}}
+ */
+function currentAssessmentKey(siteId, checkId, lineageId) {
+  return {
+    pk: `SITE#${siteId}`,
+    sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, lineageId])}`,
+  };
+}
+
+/**
  * Store one assessment report, condition items, and immediately resolvable task
  * items in one transaction.
  * @param {StoreAssessmentInput} input
@@ -503,15 +495,57 @@ export async function storeEvaluatedAssessment(input, options) {
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
-  // Reviewer clarifications keyed by the condition's stable conditionId
-  // ("not_present" | "better" | "worse" | "other"). All are persisted (for
-  // false-positive analysis), but only "not_present" ("I don't see this problem")
-  // suppresses rule evaluation and task minting. Keying by conditionId (not
-  // category) means disputing one condition never suppresses a sibling that shares
-  // its category. `disputedCategories` (legacy, by category) is folded in below as
-  // "not_present" for any condition lacking an explicit conditionId disposition.
-  const dispositions = new Map(Object.entries(input.dispositions ?? {}));
-  const disputedCategories = new Set(input.disputedCategories ?? []);
+  // Read persisted answers, never accept client-supplied task/answer snapshots.
+  const previous = input.previousAssessmentId
+    ? await getAssessmentGuidance({
+        tableName: options.tableName,
+        siteId: input.siteId,
+        assessmentId: input.previousAssessmentId,
+      })
+    : null;
+  if (
+    previous &&
+    (!previous.assessment ||
+      !input.checkId ||
+      previous.assessment.checkId !== input.checkId)
+  ) {
+    throw namedError(
+      "InvalidAssessmentRevision",
+      "Previous assessment must belong to the same check",
+    );
+  }
+  if (previous?.assessment?.supersededByAssessmentId) {
+    throw namedError(
+      "AssessmentRevisionConflict",
+      "Assessment has been replaced",
+    );
+  }
+  const artifactId =
+    typeof input.rawAssessment.artifactId === "string"
+      ? input.rawAssessment.artifactId
+      : undefined;
+  const priorArtifactId =
+    previous?.assessment?.rawAssessment &&
+    /** @type {Record<string, unknown>} */ (previous.assessment.rawAssessment)
+      .artifactId;
+  if (previous && artifactId !== priorArtifactId) {
+    throw namedError(
+      "InvalidAssessmentRevision",
+      "Previous assessment must belong to the same artifact",
+    );
+  }
+  // Artifact-less API assessments use their original assessment as the lineage.
+  // Never infer identity from a category/index-generated condition ID alone.
+  const lineageId = String(
+    previous?.assessment?.lineageId ??
+      priorArtifactId ??
+      artifactId ??
+      input.previousAssessmentId ??
+      input.assessmentId,
+  );
+  const retainedConditionIds = new Set();
+  /** @type {Record<string, unknown>[]} */
+  const retainedTasks = [];
 
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
@@ -521,29 +555,73 @@ export async function storeEvaluatedAssessment(input, options) {
   for (const [index, condition] of input.conditions.entries()) {
     const conditionId =
       condition.conditionId ?? makeConditionId(condition.category, index);
-    // Prefer the per-conditionId disposition; fall back to the legacy by-category
-    // disputedCategories (folded in as "not_present").
-    const disposition =
-      dispositions.get(conditionId) ??
-      (disputedCategories.has(condition.category) ? "not_present" : null);
-    // Only "not_present" is a true dispute that suppresses tasks; better/worse/other
-    // are recorded as feedback but still evaluate into tasks normally.
-    const disputed = disposition === "not_present";
-
-    // Disputed conditions skip rule evaluation and task minting entirely.
-    const evaluation = disputed
-      ? null
-      : evaluateCondition({
-          condition: {
-            category: condition.category,
-            severity: condition.severity,
-          },
-          catalog,
-        });
+    const prior = previous?.conditions.find((item) => {
+      const source = /** @type {{ artifactIds?: string[] }} */ (
+        item.source ?? {}
+      );
+      return (
+        item.conditionId === conditionId &&
+        item.policyVersion === catalog.policyVersion &&
+        item.analyzerCategory === condition.category &&
+        item.severity === condition.severity &&
+        (item.userFriendlyLabel ?? "") ===
+          (condition.userFriendlyLabel ?? "") &&
+        (item.description ?? "") === (condition.description ?? "") &&
+        (Boolean(condition.sourceArtifactIds?.length) ||
+          Boolean(condition.conditionId && item.explicitConditionId)) &&
+        JSON.stringify([...(source.artifactIds ?? [])].sort()) ===
+          JSON.stringify([...(condition.sourceArtifactIds ?? [])].sort())
+      );
+    });
+    const priorTaskIds = /** @type {string[]} */ (prior?.taskIds ?? []);
+    const priorTasks =
+      previous?.tasks.filter((task) =>
+        priorTaskIds.includes(String(task.taskId)),
+      ) ?? [];
+    if (
+      prior &&
+      priorTasks.length === priorTaskIds.length &&
+      priorTasks.every((task) => task.status !== "superseded")
+    ) {
+      const preserved = {
+        ...prior,
+        ...conditionKey(input.siteId, input.assessmentId, conditionId),
+        assessmentId: input.assessmentId,
+        ...conditionTimelineGsi(
+          input.siteId,
+          condition.severity,
+          input.reportedAt,
+          input.assessmentId,
+          conditionId,
+        ),
+      };
+      if (prior.gsi5pk)
+        Object.assign(
+          preserved,
+          unresolvedConditionGsi(
+            input.siteId,
+            condition.severity,
+            input.reportedAt,
+            input.assessmentId,
+            conditionId,
+          ),
+        );
+      retainedConditionIds.add(conditionId);
+      conditionItems.push(preserved);
+      retainedTasks.push(...priorTasks);
+      continue;
+    }
+    const evaluation = evaluateCondition({
+      condition: {
+        category: condition.category,
+        severity: condition.severity,
+      },
+      catalog,
+    });
 
     /** @type {string[]} */
     const taskIds = [];
-    if (evaluation && evaluation.kind === "outcome") {
+    if (evaluation.kind === "outcome") {
       const taskId = idFactory();
       taskIds.push(taskId);
       pendingTaskInputs.push({
@@ -568,8 +646,6 @@ export async function storeEvaluatedAssessment(input, options) {
         checkId: input.checkId,
         reportedAt: input.reportedAt,
         evaluation,
-        disputed,
-        disputeDisposition: disposition,
         policyVersion: catalog.policyVersion,
         taskIds,
         now,
@@ -577,14 +653,36 @@ export async function storeEvaluatedAssessment(input, options) {
     );
   }
 
+  for (const [index, item] of conditionItems.entries()) {
+    item.explicitConditionId = Boolean(input.conditions[index].conditionId);
+  }
+  const retiredIds = new Set(
+    (previous?.conditions ?? [])
+      .filter((condition) => !retainedConditionIds.has(condition.conditionId))
+      .flatMap(
+        (condition) => /** @type {string[]} */ (condition.taskIds ?? []),
+      ),
+  );
+  const retiredTasks = (previous?.tasks ?? []).filter((task) =>
+    retiredIds.has(String(task.taskId)),
+  );
+  // A completing task may already have external effects. Reconcile after it
+  // settles instead of replacing it or undoing its in-flight transition.
+  if (retiredTasks.some((task) => task.status === "completing")) {
+    throw namedError(
+      "TaskTransitionConflict",
+      "A task is currently completing",
+    );
+  }
   const shortIds = await allocateTaskShortIds({
     tableName: options.tableName,
     siteId: input.siteId,
     count: pendingTaskInputs.length,
   });
-  const taskItems = pendingTaskInputs.map((taskInput, index) =>
+  const newTaskItems = pendingTaskInputs.map((taskInput, index) =>
     buildTaskItem({ ...taskInput, shortId: shortIds[index] }),
   );
+  const taskItems = [...retainedTasks, ...newTaskItems];
 
   const conditionsNeedAnswer = conditionItems.filter(
     (item) => item.status === "needs_answer",
@@ -594,9 +692,6 @@ export async function storeEvaluatedAssessment(input, options) {
   ).length;
   const conditionsResolvedToTasks = conditionItems.filter(
     (item) => item.resolvedToTasks,
-  ).length;
-  const disputedCount = conditionItems.filter(
-    (item) => item.disputed === true,
   ).length;
   const actionCount = taskItems.filter((item) => item.kind === "action").length;
   const escalationCount = taskItems.filter(
@@ -608,9 +703,8 @@ export async function storeEvaluatedAssessment(input, options) {
   ).length;
 
   // "tasks_created" must mean tasks were actually minted. An assessment whose
-  // conditions were all disputed (or that produced none) creates zero tasks, so it
-  // reports "no_tasks" rather than contradicting a disputedCount>0 / openTaskCount:0
-  // summary.
+  // conditions produced no rule outcome creates zero tasks, so it reports
+  // "no_tasks" rather than contradicting an openTaskCount:0 summary.
   const assessmentStatus =
     manualReviewCount > 0
       ? "manual_review"
@@ -630,14 +724,16 @@ export async function storeEvaluatedAssessment(input, options) {
     rubricVersion: input.rubricVersion,
     grade: input.grade,
     assessmentRevision: 0,
+    lineageId,
     reportedAt: input.reportedAt,
     rawAssessment: input.rawAssessment,
     summary: {
       totalConditions: input.conditions.length,
       conditionsNeedAnswer,
       conditionsResolvedToTasks,
-      disputedCount,
-      openTaskCount: taskItems.length,
+      openTaskCount: taskItems.filter(
+        (task) => task.status === "open" || task.status === "completing",
+      ).length,
       actionCount,
       escalationCount,
       emergencyCount,
@@ -667,8 +763,81 @@ export async function storeEvaluatedAssessment(input, options) {
   const transactItems = [
     put(assessmentItem),
     ...conditionItems.map(put),
-    ...taskItems.map(put),
+    ...newTaskItems.map(put),
   ];
+  // Publish the pointer and successor together. The predecessor marker also
+  // closes the race with answers and safely adopts pre-pointer assessments.
+  if (input.checkId) {
+    transactItems.push({
+      Put: {
+        TableName: options.tableName,
+        Item: {
+          ...currentAssessmentKey(input.siteId, input.checkId, lineageId),
+          entityType: "GUIDANCE_CURRENT",
+          assessmentId: input.assessmentId,
+        },
+        ConditionExpression: previous
+          ? "attribute_not_exists(sk) OR assessmentId = :previous"
+          : "attribute_not_exists(sk)",
+        ...(previous
+          ? {
+              ExpressionAttributeValues: {
+                ":previous": input.previousAssessmentId,
+              },
+            }
+          : {}),
+      },
+    });
+  }
+  if (previous?.assessment) {
+    transactItems.push({
+      Update: {
+        TableName: options.tableName,
+        Key: assessmentKey(input.siteId, String(input.previousAssessmentId)),
+        UpdateExpression:
+          "SET supersededByAssessmentId = :next, lineageId = :lineage",
+        ConditionExpression:
+          "attribute_not_exists(supersededByAssessmentId) AND (assessmentRevision = :revision OR attribute_not_exists(assessmentRevision))",
+        ExpressionAttributeValues: {
+          ":next": input.assessmentId,
+          ":lineage": lineageId,
+          ":revision": previous.assessment.assessmentRevision ?? 0,
+        },
+      },
+    });
+  }
+  for (const task of retiredTasks.filter((task) => task.status === "open")) {
+    transactItems.push({
+      Put: {
+        TableName: options.tableName,
+        Item: {
+          ...task,
+          status: "superseded",
+          supersededAt: now,
+          supersessionReason: "assessment_refreshed",
+          updatedAt: now,
+          ...taskWorklistDateGsi(
+            input.siteId,
+            "superseded",
+            String(task.kind),
+            Number(task.severity ?? 0),
+            now,
+            String(task.taskId),
+          ),
+        },
+        ConditionExpression:
+          "#status = :open AND " +
+          (task.updatedAt
+            ? "updatedAt = :updatedAt"
+            : "attribute_not_exists(updatedAt)"),
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":open": "open",
+          ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
+        },
+      },
+    });
+  }
   if (transactItems.length > MAX_TRANSACTION_ITEMS) {
     throw namedError(
       "TransactionTooLarge",
@@ -676,17 +845,42 @@ export async function storeEvaluatedAssessment(input, options) {
     );
   }
 
-  await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
+  try {
+    await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
+  } catch (err) {
+    // Only conditional conflicts are safe to reconcile; capacity/validation
+    // failures must not masquerade as an answer race.
+    if (
+      previous &&
+      err instanceof Error &&
+      err.name === "TransactionCanceledException" &&
+      /** @type {{ CancellationReasons?: {Code?: string}[] }} */ (
+        err
+      ).CancellationReasons?.some(
+        (reason) => reason.Code === "ConditionalCheckFailed",
+      )
+    ) {
+      throw namedError(
+        "AssessmentRevisionConflict",
+        "Assessment changed during refresh",
+      );
+    }
+    throw err;
+  }
 
   const updatedTaskItems = await executeTaskCreatedAppActions({
     tableName: options.tableName,
     siteId: input.siteId,
-    taskItems,
+    taskItems: newTaskItems,
     env: options.env,
     now: options.now,
   });
 
-  return { assessmentItem, conditionItems, taskItems: updatedTaskItems };
+  return {
+    assessmentItem,
+    conditionItems,
+    taskItems: [...retainedTasks, ...updatedTaskItems],
+  };
 }
 
 /**
@@ -770,26 +964,26 @@ export async function getAssessmentGuidance({
   siteId,
   assessmentId,
 }) {
-  const [assessmentResult, conditionsResult] = await Promise.all([
-    ddb.send(
-      new GetCommand({
-        TableName: tableName,
-        Key: assessmentKey(siteId, assessmentId),
-        ConsistentRead: true,
-      }),
-    ),
-    ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ConsistentRead: true,
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": assessmentConditionPrefix(assessmentId),
-        },
-      }),
-    ),
-  ]);
+  // Read the revision before the conditions. Parallel reads can pair a newer
+  // revision with older answers, defeating the publication revision check.
+  const assessmentResult = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: assessmentKey(siteId, assessmentId),
+      ConsistentRead: true,
+    }),
+  );
+  const conditionsResult = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ConsistentRead: true,
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": assessmentConditionPrefix(assessmentId),
+      },
+    }),
+  );
 
   const conditions = conditionsResult.Items ?? [];
   const taskKeys = conditions.flatMap((condition) =>
@@ -808,6 +1002,45 @@ export async function getAssessmentGuidance({
     conditions,
     tasks,
   };
+}
+
+/**
+ * Resolve historical URLs/idempotent retries to the current published guidance.
+ * @param {{tableName: string, siteId: string, assessmentId: string}} opts
+ * @returns {ReturnType<typeof getAssessmentGuidance>}
+ */
+export async function getPublishedAssessmentGuidance(opts) {
+  let result = await getAssessmentGuidance(opts);
+  for (
+    let attempt = 0;
+    result.assessment?.supersededByAssessmentId;
+    attempt += 1
+  ) {
+    if (attempt >= 3)
+      throw namedError(
+        "AssessmentRevisionConflict",
+        "Guidance is changing; retry its read",
+      );
+    const assessment = result.assessment;
+    const pointer = await ddb.send(
+      new GetCommand({
+        TableName: opts.tableName,
+        Key: currentAssessmentKey(
+          opts.siteId,
+          String(assessment.checkId),
+          String(assessment.lineageId),
+        ),
+        ConsistentRead: true,
+      }),
+    );
+    result = await getAssessmentGuidance({
+      ...opts,
+      assessmentId: String(
+        pointer.Item?.assessmentId ?? assessment.supersededByAssessmentId,
+      ),
+    });
+  }
+  return result;
 }
 
 /**
@@ -851,6 +1084,12 @@ export async function answerCondition(opts) {
 
     const assessmentItem = assessmentResult.Item;
     const conditionItem = conditionResult.Item;
+    if (assessmentItem.supersededByAssessmentId) {
+      throw namedError(
+        "AssessmentRevisionConflict",
+        "Assessment has been replaced; reload its guidance",
+      );
+    }
     if (conditionItem.status !== "needs_answer") {
       const err = namedError(
         "TransactionCanceledException",
@@ -900,6 +1139,10 @@ export async function answerCondition(opts) {
         condition: {
           category: String(conditionItem.analyzerCategory),
           severity: Number(conditionItem.severity),
+          userFriendlyLabel:
+            typeof conditionItem.userFriendlyLabel === "string"
+              ? conditionItem.userFriendlyLabel
+              : undefined,
           sourceArtifactIds:
             /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
               ?.artifactIds ?? [],
@@ -963,7 +1206,7 @@ export async function answerCondition(opts) {
           TableName: opts.tableName,
           Item: updatedAssessment,
           ConditionExpression:
-            "attribute_exists(sk) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
+            "attribute_exists(sk) AND attribute_not_exists(supersededByAssessmentId) AND (attribute_not_exists(#revision) OR #revision = :priorRevision)",
           ExpressionAttributeNames: { "#revision": "assessmentRevision" },
           ExpressionAttributeValues: { ":priorRevision": priorRevision },
         },
@@ -1349,12 +1592,185 @@ export async function completeTaskWithAppActions(opts) {
  * @param {string} [opts.checkId]
  * @param {string} [opts.assessmentIdPrefix]
  * @param {string} [opts.analysisId]
+ * @param {string} [opts.taskId] A task ID supplied by a current task card.
  * @param {string} [opts.reason]
  * @param {Date} [opts.now]
  * @returns {Promise<{ supersededTaskIds: string[] }>}
  */
 export async function supersedeOpenTasksForCondition(opts) {
   const now = (opts.now ?? new Date()).toISOString();
+  const taskIds = opts.taskId ? await taskIdsForCurrentCondition(opts) : null;
+  const matches = taskIds
+    ? await batchGetAll({
+        tableName: opts.tableName,
+        keys: taskIds.map((taskId) => taskKey(opts.siteId, taskId)),
+      })
+    : await findOpenConditionTasks(opts);
+
+  const tasks = matches.filter((task) => {
+    if (task.status !== "open") return false;
+    if (opts.checkId && task.checkId !== opts.checkId) return false;
+    if (
+      opts.assessmentIdPrefix &&
+      !String(task.assessmentId ?? "").startsWith(opts.assessmentIdPrefix)
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  /** @type {string[]} */
+  const supersededTaskIds = tasks
+    .map((task) => task.taskId)
+    .filter((taskId) => typeof taskId === "string" && taskId)
+    .map((taskId) => String(taskId));
+
+  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
+    let pending = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
+    for (let attempt = 0; pending.length > 0; attempt += 1) {
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: supersedeTaskWrites(pending, opts, now),
+          }),
+        );
+        break;
+      } catch (err) {
+        if (!isSupersessionConflict(err)) throw err;
+
+        // The analyzer has already accepted the amendment. A task transitioned
+        // by another request is therefore a successful retirement outcome, not
+        // a reason to report this deletion as failed. Re-read strongly and only
+        // retry tasks that are still open.
+        const current = await batchGetAll({
+          tableName: opts.tableName,
+          keys: pending.map((task) =>
+            taskKey(opts.siteId, String(task.taskId)),
+          ),
+        });
+        pending = current.filter((task) => task.status === "open");
+        if (pending.length === 0) break;
+        if (attempt >= 2) throw err;
+      }
+    }
+  }
+
+  return { supersededTaskIds };
+}
+
+/**
+ * @param {Record<string, unknown>[]} tasks
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @param {string} now
+ * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>}
+ */
+function supersedeTaskWrites(tasks, opts, now) {
+  return tasks.map((task) => {
+    const taskId = String(task.taskId);
+    const updated = {
+      ...task,
+      status: "superseded",
+      supersededAt: now,
+      supersessionReason: opts.reason ?? "analysis_condition_amended",
+      ...(opts.analysisId ? { supersededByAnalysisId: opts.analysisId } : {}),
+      updatedAt: now,
+      ...taskWorklistDateGsi(
+        opts.siteId,
+        "superseded",
+        String(task.kind),
+        Number(task.severity ?? 0),
+        now,
+        taskId,
+      ),
+    };
+    return {
+      Put: {
+        TableName: opts.tableName,
+        Item: updated,
+        ConditionExpression: "#status = :open",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":open": "open" },
+      },
+    };
+  });
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isSupersessionConflict(err) {
+  if (!(err instanceof Error) || err.name !== "TransactionCanceledException") {
+    return false;
+  }
+  const reasons = /** @type {{ CancellationReasons?: { Code?: string }[] }} */ (
+    err
+  ).CancellationReasons;
+  return Boolean(
+    reasons?.some(
+      (reason) =>
+        reason.Code === "ConditionalCheckFailed" ||
+        reason.Code === "TransactionConflict",
+    ),
+  );
+}
+
+/**
+ * Resolve task IDs from strongly consistent primary-key records. A current card
+ * carries its task ID, which leads to the owning condition record and its full
+ * taskIds list without relying on eventual GSI propagation.
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @returns {Promise<string[] | null>} Null preserves the legacy GSI fallback.
+ */
+async function taskIdsForCurrentCondition(opts) {
+  const taskResult = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: taskKey(opts.siteId, String(opts.taskId)),
+      ConsistentRead: true,
+    }),
+  );
+  const task = taskResult.Item;
+  if (
+    !task ||
+    task.conditionId !== opts.conditionId ||
+    (opts.checkId && task.checkId !== opts.checkId) ||
+    typeof task.assessmentId !== "string" ||
+    !task.assessmentId
+  ) {
+    return null;
+  }
+
+  const conditionResult = await ddb.send(
+    new GetCommand({
+      TableName: opts.tableName,
+      Key: conditionKey(opts.siteId, task.assessmentId, opts.conditionId),
+      ConsistentRead: true,
+    }),
+  );
+  const condition = conditionResult.Item;
+  if (
+    condition?.conditionId !== opts.conditionId ||
+    (opts.checkId && condition.checkId !== opts.checkId)
+  ) {
+    // The task itself was strongly read and is still the safest known work to
+    // retire if a legacy condition record has been removed or is malformed.
+    return [String(opts.taskId)];
+  }
+
+  const conditionTaskIds = Array.isArray(condition.taskIds)
+    ? condition.taskIds.filter((taskId) => typeof taskId === "string" && taskId)
+    : [];
+  return [...new Set([String(opts.taskId), ...conditionTaskIds])];
+}
+
+/**
+ * Legacy recovery path for cards without a task ID. GSI2 is eventually
+ * consistent, so current task cards must use taskIdsForCurrentCondition.
+ * @param {Parameters<typeof supersedeOpenTasksForCondition>[0]} opts
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function findOpenConditionTasks(opts) {
   /** @type {Record<string, unknown>[]} */
   const matches = [];
   /** @type {Record<string, unknown> | undefined} */
@@ -1381,63 +1797,7 @@ export async function supersedeOpenTasksForCondition(opts) {
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (exclusiveStartKey);
 
-  const tasks = matches.filter((task) => {
-    if (task.status !== "open") return false;
-    if (opts.checkId && task.checkId !== opts.checkId) return false;
-    if (
-      opts.assessmentIdPrefix &&
-      !String(task.assessmentId ?? "").startsWith(opts.assessmentIdPrefix)
-    ) {
-      return false;
-    }
-    return true;
-  });
-
-  /** @type {string[]} */
-  const supersededTaskIds = tasks
-    .map((task) => task.taskId)
-    .filter((taskId) => typeof taskId === "string" && taskId)
-    .map((taskId) => String(taskId));
-
-  for (let start = 0; start < tasks.length; start += MAX_TRANSACTION_ITEMS) {
-    const chunk = tasks.slice(start, start + MAX_TRANSACTION_ITEMS);
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: chunk.map((task) => {
-          const taskId = String(task.taskId);
-          const updated = {
-            ...task,
-            status: "superseded",
-            supersededAt: now,
-            supersessionReason: opts.reason ?? "analysis_condition_amended",
-            ...(opts.analysisId
-              ? { supersededByAnalysisId: opts.analysisId }
-              : {}),
-            updatedAt: now,
-            ...taskWorklistDateGsi(
-              opts.siteId,
-              "superseded",
-              String(task.kind),
-              Number(task.severity ?? 0),
-              now,
-              taskId,
-            ),
-          };
-          return {
-            Put: {
-              TableName: opts.tableName,
-              Item: updated,
-              ConditionExpression: "#status = :open",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: { ":open": "open" },
-            },
-          };
-        }),
-      }),
-    );
-  }
-
-  return { supersededTaskIds };
+  return matches;
 }
 
 /**

@@ -120,8 +120,9 @@ export const createCheck = async (event) => {
 /**
  * POST /v1/checks/{checkId}/complete — close out a perimeter run: fold every
  * analyzed artifact into one scorecard (worst grade across places, per-category
- * max rating), persist the header scorecard, and return an assessment envelope
- * that can be sent to the guidance evaluator.
+ * max rating) and persist the header scorecard. Guidance minting is per-item at
+ * capture time (photo-analysis.js → assessments:evaluate), so this response is
+ * the scorecard only.
  *
  * Coverage gate: analysis is asynchronous (register → SQS → worker), so a caller
  * that completes too early would fold only the analyses that happened to land —
@@ -201,12 +202,6 @@ export const completeCheck = async (event) => {
   const scorecard = synthesizeCheck(analyzed);
 
   const now = new Date().toISOString();
-  const assessment = buildGuidanceAssessment({
-    checkId,
-    completedAt: now,
-    scorecard,
-    analyzed,
-  });
 
   /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>[number]} */
   const headerUpdate = {
@@ -248,8 +243,6 @@ export const completeCheck = async (event) => {
         summary: scorecard.summary,
         issueCount: scorecard.issueCount,
         maxSeverity: scorecard.maxSeverity,
-        assessmentReady: true,
-        assessment,
       });
     }
     throw err;
@@ -261,66 +254,8 @@ export const completeCheck = async (event) => {
     grade: scorecard.grade,
     issueCount: scorecard.issueCount,
     maxSeverity: scorecard.maxSeverity,
-    assessmentReady: true,
-    assessment,
   });
 };
-
-/**
- * @param {object} opts
- * @param {string} opts.checkId
- * @param {string} opts.completedAt
- * @param {import("../analysis/synthesize-check.js").CheckScorecard} opts.scorecard
- * @param {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} opts.analyzed
- * @returns {{ assessmentId: string, checkId: string, reportedAt: string, rubricVersion: string | null, grade: import("../analysis/contract.js").GeneralConditionsLabel | null, conditions: { conditionId: string, category: string, severity: number, description?: string, sourceArtifactIds: string[] }[], rawAssessment: Record<string, unknown> }}
- */
-function buildGuidanceAssessment({
-  checkId,
-  completedAt,
-  scorecard,
-  analyzed,
-}) {
-  return {
-    assessmentId: checkId,
-    checkId,
-    reportedAt: completedAt,
-    rubricVersion: scorecard.rubricVersion,
-    grade: scorecard.grade,
-    conditions: scorecard.categories.map((category, index) => ({
-      conditionId: `${String(index + 1).padStart(3, "0")}-${category.category
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")}`,
-      category: category.category,
-      severity: category.maxRating,
-      description: firstConcernExplanation(analyzed, category.category),
-      sourceArtifactIds: category.sourceArtifactIds,
-    })),
-    rawAssessment: {
-      checkId,
-      completedAt,
-      grade: scorecard.grade,
-      summary: scorecard.summary,
-      rubricVersion: scorecard.rubricVersion,
-      categories: scorecard.categories,
-    },
-  };
-}
-
-/**
- * @param {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} analyzed
- * @param {string} category
- * @returns {string | undefined}
- */
-function firstConcernExplanation(analyzed, category) {
-  for (const artifact of analyzed) {
-    const concern = artifact.adapted.concerns.find(
-      (item) => item.category === category,
-    );
-    if (concern?.explanation) return concern.explanation;
-  }
-  return undefined;
-}
 
 // Opaque pagination cursor: the DynamoDB LastEvaluatedKey round-tripped as
 // base64 JSON so clients pass it back verbatim without seeing key internals.

@@ -3,6 +3,7 @@ import {
   ApiError,
   dataUrlToBlob,
   editAnalysisCondition,
+  getSiteSettings,
   rejectAnalysisCondition,
   waitForAnalyses,
 } from "./api.js";
@@ -146,6 +147,64 @@ describe("analysis amendments", () => {
     expect(url).toBe(
       "/v1/checks/ch%20k/artifacts/art%2F1/conditions/cond%231/reject",
     );
+  });
+});
+
+describe("non-JSON response handling (api-response-integrity plan §2a)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Raw-body fetch stub: `body` is returned verbatim (no JSON shaping). */
+  const rawResponse = (status, body, ok = status >= 200 && status < 300) =>
+    Promise.resolve({
+      ok,
+      status,
+      statusText: "Status",
+      text: () => Promise.resolve(body),
+    });
+
+  it("throws ApiError (never a value) when a 2xx carries an HTML body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => rawResponse(200, "<!doctype html><html></html>")),
+    );
+
+    const err = await getSiteSettings().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(200);
+    expect(err.body).toMatchObject({ code: "non_json_response" });
+    expect(err.message).toContain("Non-JSON");
+  });
+
+  it("preserves the origin status when a 403 carries an HTML body", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => rawResponse(403, "<html>denied</html>", false)),
+    );
+
+    const err = await getSiteSettings().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(403);
+    expect(err.body).toMatchObject({ code: "non_json_response" });
+  });
+
+  it("treats an empty 204 body as legal (resolves null)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => rawResponse(204, "")),
+    );
+
+    await expect(getSiteSettings()).resolves.toBeNull();
+  });
+
+  it("still parses a normal JSON 200 (control)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => rawResponse(200, JSON.stringify({ site: {} }))),
+    );
+
+    await expect(getSiteSettings()).resolves.toMatchObject({ site: {} });
   });
 });
 

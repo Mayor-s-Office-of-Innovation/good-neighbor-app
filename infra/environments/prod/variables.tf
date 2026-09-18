@@ -56,9 +56,14 @@ variable "asset_criticality" {
 }
 
 variable "compliance" {
-  description = "Required CCSF Compliance tag. Empty string means no current regulated regime."
+  description = "Required CCSF Compliance tag. None means no current regulated regime."
   type        = string
-  default     = ""
+  default     = "None"
+
+  validation {
+    condition     = length(trimspace(var.compliance)) > 0
+    error_message = "Compliance must be non-empty; use None when no regulated regime applies."
+  }
 }
 
 variable "bedrock_model_id" {

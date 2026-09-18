@@ -1,7 +1,12 @@
-// Builds a faithful-enough APIGatewayProxyEventV2 (with a JWT authorizer) from a
-// Node http request, so the local router can invoke the *real* Lambda handlers
-// unchanged. Kept in its own module (no server side effects) so it can be unit
-// tested without booting the HTTP server or any JVM emulator.
+// Builds a faithful-enough APIGatewayProxyEventV2 from a Node http request, so
+// the local router can invoke the *real* Lambda handlers unchanged. Two
+// authorizer postures are reproduced: a verified device token yields the
+// deployed REQUEST-authorizer shape (payload format 2.0 nests the authorizer's
+// context under `authorizer.lambda`, keys verbatim — see lambda/authorizer.js
+// and lib/principal.js); otherwise the X-Debug headers feed a stub JWT
+// (Cognito-shaped) authorizer. Kept in its own module (no server side
+// effects) so it can be unit tested without booting the HTTP server or any
+// JVM emulator.
 //
 // Only the fields the handlers actually read need to be correct; the rest are
 // present for realism. The one field with behavioral impact is the authorizer
@@ -16,6 +21,8 @@ import { randomUUID } from "node:crypto";
  * @param {Record<string, string | string[] | undefined>} args.headers  Node req.headers (already lowercased)
  * @param {string} [args.body]    Raw request body
  * @param {string} args.defaultSub  Fallback `sub` when no X-Debug-Sub header is present
+ * @param {string} [args.defaultSite]  Fallback `custom:siteId` when no X-Debug-Site header is present
+ * @param {{ sub: string, siteId: string, ver: number }} [args.deviceClaims]  Verified device-token claims; when present the event carries the deployed REQUEST-authorizer (`authorizer.lambda`) shape and the X-Debug stubs are ignored
  * @param {Record<string, string>} [args.pathParameters]  Path params extracted by the router (e.g. `{ checkId }`)
  * @param {Record<string, string>} [args.queryStringParameters]  Parsed query string (undefined when empty)
  * @param {string} [args.rawQueryString]  The raw query string (without the leading "?")
@@ -28,6 +35,7 @@ export function buildProxyEvent({
   body,
   defaultSub,
   defaultSite,
+  deviceClaims,
   pathParameters,
   queryStringParameters,
   rawQueryString = "",
@@ -78,18 +86,29 @@ export function buildProxyEvent({
         sourceIp: "127.0.0.1",
         userAgent: flatHeaders["user-agent"] ?? "local-harness",
       },
-      // The stub Cognito authorizer. `sub` (X-Debug-Sub) and `custom:siteId`
-      // (X-Debug-Site) are the only claims the handlers read.
-      authorizer: {
-        jwt: {
-          claims: {
-            sub,
-            ...(siteId ? { "custom:siteId": siteId } : {}),
-            ...(groups ? { "cognito:groups": groups } : {}),
+      authorizer: deviceClaims
+        ? // The deployed device-token REQUEST authorizer, as API Gateway
+          // delivers it to a payload-format-2.0 integration: the flat context
+          // map from lambda/authorizer.js nested under `lambda`.
+          {
+            lambda: {
+              "claims.sub": deviceClaims.sub,
+              "claims.custom:siteId": deviceClaims.siteId,
+              "claims.ver": deviceClaims.ver,
+            },
+          }
+        : // The stub Cognito authorizer. `sub` (X-Debug-Sub) and `custom:siteId`
+          // (X-Debug-Site) are the only claims the handlers read.
+          {
+            jwt: {
+              claims: {
+                sub,
+                ...(siteId ? { "custom:siteId": siteId } : {}),
+                ...(groups ? { "cognito:groups": groups } : {}),
+              },
+              scopes: [],
+            },
           },
-          scopes: [],
-        },
-      },
     },
     body: body && body.length > 0 ? body : undefined,
     isBase64Encoded: false,

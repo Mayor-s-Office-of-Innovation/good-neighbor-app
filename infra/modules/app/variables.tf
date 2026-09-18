@@ -134,3 +134,29 @@ variable "feedback_question_id" {
   type        = string
   default     = ""
 }
+variable "setup_code_email_identity_arn" {
+  description = "SES identity permitted to send setup-code emails."
+  type        = string
+}
+
+variable "setup_code_email_from" {
+  description = "Verified setup-code sender address."
+  type        = string
+  default     = "codes@goodneighborsf.org"
+}
+
+variable "setup_code_email_reply_to" {
+  description = "Optional monitored support reply-to address."
+  type        = string
+  default     = ""
+}
+
+variable "provider_app_url" {
+  description = "Public HTTPS provider app URL used in setup-code emails."
+  type        = string
+
+  validation {
+    condition     = startswith(var.provider_app_url, "https://")
+    error_message = "Provider app URL must use HTTPS."
+  }
+}

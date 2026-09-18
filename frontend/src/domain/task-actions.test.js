@@ -40,8 +40,8 @@ describe("task action helpers", () => {
     };
 
     expect(appActionFailureMessage(task)).toBeNull();
-    expect(
-      appActionFailureMessage(task, { includeUnsubmitted311: true }),
-    ).toContain("311 filing isn't enabled");
+    expect(appActionFailureMessage(task, { includeUnsubmitted311: true })).toBe(
+      "We couldn't complete the 311 submission. Please try again.",
+    );
   });
 });

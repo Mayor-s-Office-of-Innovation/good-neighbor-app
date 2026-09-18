@@ -6,9 +6,9 @@ import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
-import { supersedeOpenTasksForCondition } from "../analysis/guidance/guidance-store.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
+import { supersedeOpenTasksForCondition } from "../analysis/guidance/guidance-store.js";
 import { analysisKey } from "./keys.js";
 
 const APP_ID = "good-neighbor-app";
@@ -120,35 +120,6 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
 }
 
 /**
- * @param {object} opts
- * @param {string} opts.tableName
- * @param {string} opts.siteId
- * @param {string} opts.analysisId
- * @param {string} opts.conditionId
- * @param {string} opts.reason
- * @param {{ checkId: string, artifactId: string }} opts.context
- * @returns {Promise<void>}
- */
-async function supersedeAmendedConditionTasks({
-  tableName,
-  siteId,
-  analysisId,
-  conditionId,
-  reason,
-  context,
-}) {
-  await supersedeOpenTasksForCondition({
-    tableName,
-    siteId,
-    conditionId,
-    checkId: context.checkId,
-    assessmentIdPrefix: `${context.checkId}-${context.artifactId}`,
-    analysisId,
-    reason,
-  });
-}
-
-/**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult>}
@@ -200,14 +171,6 @@ export async function editAnalysisCondition(event) {
       appId: APP_ID,
       requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
     });
-    await supersedeAmendedConditionTasks({
-      tableName: dynamoTable,
-      siteId,
-      analysisId: context.analysisId,
-      conditionId,
-      reason: "analysis_condition_edited",
-      context,
-    });
     return jsonResponse(200, result);
   } catch (err) {
     return errorResponse(err);
@@ -237,9 +200,10 @@ export async function rejectAnalysisCondition(event) {
       return jsonResponse(400, { error: "Invalid JSON body" });
     }
   }
-  const input = /** @type {{ reason?: { key?: unknown, note?: unknown } }} */ (
-    body
-  );
+  const input =
+    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown }} */ (
+      body
+    );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
   let reason;
   if (input.reason !== undefined) {
@@ -276,25 +240,47 @@ export async function rejectAnalysisCondition(event) {
       return jsonResponse(404, { error: "Analysis not found" });
     }
     const client = await analyzerClient();
-    const result = await client.rejectCondition(
-      context.analysisId,
-      conditionId,
-      {
+    let result;
+    try {
+      result = await client.rejectCondition(context.analysisId, conditionId, {
         ...(reason ? { reason } : {}),
         appId: APP_ID,
         requestId: requestId(
           body,
           `${context.analysisId}#${conditionId}#reject`,
         ),
-      },
-    );
-    await supersedeAmendedConditionTasks({
+      });
+    } catch (err) {
+      // A task can outlive an analyzer condition that was already rejected or
+      // removed upstream. The user's delete intent is still valid, so retire
+      // its open worklist task rather than turning this into a local-only hide.
+      if (
+        !(err instanceof AnalyzerError) ||
+        err.status !== 404 ||
+        err.code !== "unknown_condition"
+      ) {
+        throw err;
+      }
+      result = {
+        analysis_id: context.analysisId,
+        rejected_condition_id: conditionId,
+        already_rejected: true,
+      };
+    }
+    // Rejecting an analyzer condition retires its linked open work only after
+    // the analyzer accepted the rejection. This makes deletion durable for
+    // persisted worklist cards that do not have a local capture session.
+    await supersedeOpenTasksForCondition({
       tableName: dynamoTable,
       siteId,
-      analysisId: context.analysisId,
+      checkId: context.checkId,
       conditionId,
+      assessmentIdPrefix: `${context.checkId}-${context.artifactId}`,
+      analysisId: context.analysisId,
+      ...(typeof input.taskId === "string" && input.taskId
+        ? { taskId: input.taskId }
+        : {}),
       reason: "analysis_condition_rejected",
-      context,
     });
     return jsonResponse(200, result);
   } catch (err) {

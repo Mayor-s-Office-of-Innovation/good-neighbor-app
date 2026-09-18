@@ -11,8 +11,17 @@
   tasks are created. Markup is inline via the `html` tag; split into a
   .templates.js file if it grows (see CLAUDE.md convention).
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import {
+  onDeletionsChange,
+  isTaskPendingDeletion,
+} from "../state/pending-deletions.js";
+import {
+  deleteAnalysisCard,
+  isDeletingAnalysisCard,
+} from "./analysis-card-deletion.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { getSite } from "../db.js";
+import { clearSiteSession, getSite } from "../db.js";
 import {
   listChecks,
   listTasks,
@@ -28,11 +37,9 @@ import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  retryEvidenceItem,
 } from "../services/photo-analysis.js";
-import {
-  adaptCheckHeader,
-  cityCategoriesByCheck,
-} from "../domain/check-adapter.js";
+import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
   appActionFailureMessage,
   isFiled311Completion,
@@ -43,23 +50,20 @@ import {
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
+  discardInMemorySession,
   resumeOrStartCheck,
   resumeOrStartProblemReport,
+  removeItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
 import { navigate } from "../router.js";
-import { mark } from "../services/instrument.js";
 import {
   analysisResultsTray,
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
-import {
-  finalizeCaptureScorecardInBackground,
-  resumeSubmittedCheckInBackground,
-  resumeUploadingCheckInBackground,
-} from "../services/submit-check.js";
+import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 
 const HOME_FILTERS = [
   { id: "needs_action", label: "Needs Action" },
@@ -81,9 +85,6 @@ const MEDIA_URL_CACHE = new Map();
  */
 export function isStalePendingSession(session, submitted) {
   if (!session) return false;
-  if (session.status === "submitted") {
-    return submitted.length > 0 && submitted[0].id !== session.id;
-  }
   if (session.status === "capture-complete") {
     // The background scorecard has no terminal transition, so a completed
     // backend check with the same id is the only signal the run has landed —
@@ -508,6 +509,17 @@ class TodayView extends HTMLElement {
     this._viewPhase = "home";
     this._captureFlow = null;
     this._captureFinishedHandler = () => this._finishCapture();
+    this._cardDeletedHandler = (event) => {
+      if (!this._deferredDeletionRender) return;
+      this._deferredDeletionRender = false;
+      if (event.target === this) return;
+      this._focusAfterRender = ["capture", "entering-capture"].includes(
+        this._viewPhase,
+      )
+        ? "capture-heading"
+        : "home-primary-control";
+      void this.connectedCallback();
+    };
     this._captureFinishedListening = false;
     this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
@@ -515,17 +527,39 @@ class TodayView extends HTMLElement {
     this._homeModel = null;
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
+    this._settingsMenuOpen = false;
+    this._settingsDocumentClick = null;
+    this._logoutDialog = null;
+    this._logoutDialogOpen = false;
+    this._logoutPending = false;
+    this._logoutError = "";
   }
 
   disconnectedCallback() {
+    this._deletionUnsub?.();
+    this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
     this.removeEventListener("capturefinished", this._captureFinishedHandler);
+    this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
+    document.removeEventListener("click", this._settingsDocumentClick);
+    this._settingsDocumentClick = null;
     this._captureFinishedListening = false;
     window.clearTimeout(this._capturePhaseTimer);
   }
 
   async connectedCallback() {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
+    if (!this._deletionUnsub) {
+      this._deletionUnsub = onDeletionsChange((status) => {
+        if (!this.isConnected) return;
+        if (status === "saved") void this.connectedCallback();
+        else if (this._homeModel) this._renderHome(this._homeModel);
+      });
+    }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
         if (session?.status === "in-progress") {
@@ -539,7 +573,20 @@ class TodayView extends HTMLElement {
     }
     if (!this._captureFinishedListening) {
       this.addEventListener("capturefinished", this._captureFinishedHandler);
+      this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
       this._captureFinishedListening = true;
+    }
+    if (!this._settingsDocumentClick) {
+      this._settingsDocumentClick = (event) => {
+        if (!this._settingsMenuOpen) return;
+        const path = event.composedPath?.() || [];
+        const withinSettings = path.some(
+          (node) =>
+            node instanceof Element && node.matches(".home-settings-wrap"),
+        );
+        if (!withinSettings) this._closeSettingsMenu();
+      };
+      document.addEventListener("click", this._settingsDocumentClick);
     }
 
     this._site = await getSite();
@@ -547,22 +594,33 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
 
     const active = getCurrentCheck();
-    const captureSession = active?.status === "in-progress" ? active : null;
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
+    const recognizedFilter = HOME_FILTERS.some(
+      ({ id }) => id === requestedFilter,
+    );
+    // Explicit worklist links retain the resumable draft without reopening it.
+    const showRequestedWorklist =
+      recognizedFilter && this._viewPhase === "home";
+    const captureSession =
+      active?.status === "in-progress" && !showRequestedWorklist
+        ? active
+        : null;
     if (captureSession) {
       this._captureFlow = captureSession.flowType || "perimeter";
       if (this._viewPhase === "home") this._viewPhase = "capture";
     }
-    const pendingSession =
-      active &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(active.status)
+    let pendingSession =
+      active && active.status === "capture-complete"
         ? active
         : await loadSubmitted();
+    // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
+    // clear them instead of letting them linger in the review store forever.
+    if (pendingSession && pendingSession.status !== "capture-complete") {
+      await clearSubmittedSession();
+      pendingSession = null;
+    }
 
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
@@ -588,9 +646,8 @@ class TodayView extends HTMLElement {
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
       ]);
-      const cityByCheck = cityCategoriesByCheck(tasks);
       submitted = (checks || [])
-        .map((h) => adaptCheckHeader(h, cityByCheck.get(h.checkId)))
+        .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
         .sort((a, b) =>
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
@@ -603,14 +660,7 @@ class TodayView extends HTMLElement {
 
     const last = submitted[0];
     let effectivePendingSession =
-      pendingSession &&
-      [
-        "capture-complete",
-        "uploading",
-        "analyzing",
-        "analysis_failed",
-        "submitted",
-      ].includes(pendingSession.status)
+      pendingSession && pendingSession.status === "capture-complete"
         ? pendingSession
         : null;
 
@@ -621,21 +671,13 @@ class TodayView extends HTMLElement {
       finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
-    } else if (effectivePendingSession?.status === "uploading") {
-      resumeUploadingCheckInBackground(effectivePendingSession.id, {
-        flowType: effectivePendingSession.flowType,
-        submissionKind: effectivePendingSession.submissionKind,
-      });
-    } else if (effectivePendingSession?.status === "analyzing") {
-      resumeSubmittedCheckInBackground(effectivePendingSession.id, {
-        expectedArtifacts: effectivePendingSession.expectedArtifacts,
-      });
     }
 
     // A resumable in-progress walk (Cancel from /check keeps it) still reopens
     // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
-    this._homeFilter = this._homeFilter || "needs_action";
+    this._homeFilter =
+      this._homeFilter || (recognizedFilter ? requestedFilter : "needs_action");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
@@ -648,6 +690,10 @@ class TodayView extends HTMLElement {
   }
 
   _renderHome(model) {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
     this._homeModel = model;
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
@@ -667,8 +713,33 @@ class TodayView extends HTMLElement {
         this._startCapture("perimeter", event.currentTarget),
       );
     }
-    this.querySelector("#edit-places")?.addEventListener("click", () =>
-      navigate("/places/edit"),
+    this.querySelector("#home-settings")?.addEventListener("click", () =>
+      this._toggleSettingsMenu(),
+    );
+    this.querySelector("#settings-edit-places")?.addEventListener(
+      "click",
+      () => {
+        this._settingsMenuOpen = false;
+        navigate("/places/edit");
+      },
+    );
+    this.querySelector("#settings-logout")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this._logoutDialogOpen = true;
+      this._renderHome(this._homeModel);
+    });
+    this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #logout-dialog")
+    );
+    this._logoutDialog?.addEventListener("click", (event) => {
+      if (event.target === this._logoutDialog) this._logoutDialog.close();
+    });
+    this._logoutDialog?.addEventListener("close", () => {
+      this._logoutDialogOpen = false;
+    });
+    this._restoreLogoutDialog();
+    this.querySelector("#logout-confirm")?.addEventListener("click", () =>
+      this._logout(),
     );
     const report = this.querySelector("#report-problem");
     if (report) {
@@ -691,6 +762,9 @@ class TodayView extends HTMLElement {
       button.addEventListener("click", () => {
         this._homeFilter =
           button.getAttribute("data-home-filter") || "needs_action";
+        const url = new URL(window.location.href);
+        url.searchParams.set("filter", this._homeFilter);
+        window.history.replaceState(window.history.state, "", url);
         this._filterOpen = false;
         this._focusAfterRender = "task-filter-button";
         if (this._homeModel) {
@@ -699,63 +773,35 @@ class TodayView extends HTMLElement {
         }
       });
     });
-    const review = this.querySelector("#review-assessment");
-    if (review) {
-      review.addEventListener("click", () => {
-        // Brackets human think-time: submit:done → review:open is the user
-        // deciding to review; review:open → review:rendered is the screen load.
-        mark("review:open");
-        navigate("/results");
-      });
-    }
-    this._cancelDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#cancel-assessment-dialog")
-    );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-delete-dialog")
+      this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
     this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-success-dialog")
+      this.querySelector(":scope > .home > #analysis-success-dialog")
     );
     this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-edit-dialog")
+      this.querySelector(":scope > .home > #analysis-edit-dialog")
     );
     this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector("#analysis-edit-description")
+      this.querySelector(
+        ":scope > .home > #analysis-edit-dialog #analysis-edit-description",
+      )
     );
-    this.querySelector("#cancel-assessment-open")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.showModal(),
-    );
-    this.querySelector("#cancel-assessment-keep")?.addEventListener(
-      "click",
-      () => this._cancelDialog?.close(),
-    );
-    this.querySelector("#cancel-assessment-confirm")?.addEventListener(
-      "click",
-      async () => {
-        await clearSubmittedSession();
-        this._cancelDialog?.close();
-        this.connectedCallback();
+    this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
+    )?.addEventListener("click", () => this._confirmDeleteProblem());
+    this.querySelector(
+      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+    )?.addEventListener("click", () => this._saveProblemEdit());
+    this.querySelectorAll(":scope > .home > .analysis-dialog").forEach(
+      (dialog) => {
+        dialog.addEventListener("click", (e) => {
+          if (e.target === dialog) {
+            /** @type {HTMLDialogElement} */ (dialog).close();
+          }
+        });
       },
     );
-    this._cancelDialog?.addEventListener("click", (e) => {
-      if (e.target === this._cancelDialog) this._cancelDialog.close();
-    });
-    this.querySelector("#analysis-delete-confirm")?.addEventListener(
-      "click",
-      () => this._confirmDeleteProblem(),
-    );
-    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
-      this._saveProblemEdit(),
-    );
-    this.querySelectorAll(".analysis-dialog").forEach((dialog) => {
-      dialog.addEventListener("click", (e) => {
-        if (e.target === dialog) {
-          /** @type {HTMLDialogElement} */ (dialog).close();
-        }
-      });
-    });
     this._wireCards();
     this._restoreFocusAfterRender();
   }
@@ -835,14 +881,41 @@ class TodayView extends HTMLElement {
       >
         <section class="home-region home-region--header">
           <div class="home-top-actions">
-            <button
-              class="home-settings"
-              id="edit-places"
-              type="button"
-              aria-label="Edit places"
-            >
-              <span class="home-settings__icon" aria-hidden="true"></span>
-            </button>
+            <div class="home-settings-wrap">
+              <button
+                class="home-settings"
+                id="home-settings"
+                type="button"
+                aria-label="Settings"
+                aria-haspopup="menu"
+                aria-expanded="${this._settingsMenuOpen ? "true" : "false"}"
+              >
+                <span class="home-settings__icon" aria-hidden="true"></span>
+              </button>
+              ${this._settingsMenuOpen
+                ? html`<div
+                    class="home-settings-menu"
+                    role="menu"
+                    aria-label="Settings"
+                  >
+                    <button id="settings-logout" type="button" role="menuitem">
+                      <wa-icon
+                        name="arrow-right-from-bracket"
+                        aria-hidden="true"
+                      ></wa-icon>
+                      Logout
+                    </button>
+                    <button
+                      id="settings-edit-places"
+                      type="button"
+                      role="menuitem"
+                    >
+                      <wa-icon name="pen" aria-hidden="true"></wa-icon>
+                      Edit places
+                    </button>
+                  </div>`
+                : ""}
+            </div>
             <feedback-dialog class="feedback-dialog"></feedback-dialog>
           </div>
           <div
@@ -885,10 +958,78 @@ class TodayView extends HTMLElement {
               `
             : ""}
         </section>
-        ${pendingSession ? this._cancelAssessmentDialog() : ""}
         ${showWorklist ? analysisDialogs() : ""}
+        <dialog
+          class="places-modal logout-dialog"
+          id="logout-dialog"
+          aria-labelledby="logout-title"
+          aria-describedby="logout-copy"
+        >
+          <form class="places-modal__card" method="dialog">
+            <div class="places-modal__copy">
+              <h2 class="places-modal__title" id="logout-title">
+                Confirm you'd like to logout
+              </h2>
+              <p class="places-modal__text" id="logout-copy">
+                This will log you out and unlink this device: you'll need to
+                request a new code to access the app
+              </p>
+              ${this._logoutError
+                ? html`<p class="logout-dialog__error" role="alert">
+                    ${this._logoutError}
+                  </p>`
+                : ""}
+            </div>
+            <div class="places-modal__actions logout-dialog__actions">
+              <button
+                class="places-modal__primary logout-dialog__confirm"
+                id="logout-confirm"
+                type="button"
+                ${this._logoutPending ? "disabled" : ""}
+              >
+                ${this._logoutPending ? "Logging out..." : "Log me out"}
+              </button>
+              <button class="logout-dialog__cancel" type="submit">
+                Return to app
+              </button>
+            </div>
+          </form>
+        </dialog>
       </div>
     `;
+  }
+
+  _toggleSettingsMenu() {
+    this._settingsMenuOpen = !this._settingsMenuOpen;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _closeSettingsMenu() {
+    if (!this._settingsMenuOpen) return;
+    this._settingsMenuOpen = false;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _restoreLogoutDialog() {
+    if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
+    this._logoutDialog?.showModal();
+  }
+
+  async _logout() {
+    if (this._logoutPending) return;
+    this._logoutPending = true;
+    this._logoutError = "";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      await clearSiteSession();
+      discardInMemorySession();
+      this._logoutDialogOpen = false;
+      window.dispatchEvent(new CustomEvent("authsignout"));
+    } catch {
+      this._logoutPending = false;
+      this._logoutError = "We couldn't log you out. Please try again.";
+      if (this._homeModel) this._renderHome(this._homeModel);
+    }
   }
 
   _captureRegion() {
@@ -917,11 +1058,6 @@ class TodayView extends HTMLElement {
       hasNewResults && !hasActiveNewAnalysis ? this._wrapSection() : "";
     return html`
       <div class="home-results">
-        ${pendingSession &&
-        pendingSession.status !== "capture-complete" &&
-        !recentItems.length
-          ? this._assessmentTile(pendingSession)
-          : ""}
         ${recentItems.length
           ? analysisResultsTray(recentItems, pendingSession.id, {
               id: "home-analysis-results",
@@ -1112,169 +1248,6 @@ class TodayView extends HTMLElement {
     return isStalePendingSession(session, submitted);
   }
 
-  _assessmentTile(session) {
-    if (session.status === "submitted") {
-      return html`
-        <section
-          class="assessment-tile assessment-tile--ready"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">
-                <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-                AI analysis complete
-              </p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              Report ready to review and confirm.
-            </p>
-            <div class="assessment-tile__actions">
-              <wa-button
-                id="review-assessment"
-                type="button"
-                appearance="outlined"
-                size="small"
-              >
-                Review assessment
-              </wa-button>
-            </div>
-          </div>
-        </section>
-      `;
-    }
-
-    if (session.status === "analysis_failed") {
-      const pausedLabel =
-        session.pendingStage === "upload"
-          ? "Upload paused"
-          : "AI analysis paused";
-      return html`
-        <section
-          class="assessment-tile assessment-tile--error"
-          aria-live="polite"
-        >
-          <div class="assessment-tile__card">
-            <div class="assessment-tile__top">
-              <p class="assessment-tile__eyebrow">${escapeHtml(pausedLabel)}</p>
-              <wa-button
-                id="cancel-assessment-open"
-                class="assessment-tile__dismiss"
-                type="button"
-                appearance="plain"
-                size="small"
-                aria-label="Cancel existing submission"
-              >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-              </wa-button>
-            </div>
-            <p class="assessment-tile__headline">
-              ${escapeHtml(
-                session.analysisError ||
-                  "Couldn’t finish analyzing this submission.",
-              )}
-            </p>
-          </div>
-        </section>
-      `;
-    }
-
-    const label =
-      session.submissionKind === "problem_report" ? "problem report" : "check";
-    const time = session.submittedAt ? timeOf(session.submittedAt) : "";
-    const isUploading = session.status === "uploading";
-    const eyebrow = isUploading
-      ? time
-        ? `Uploading your ${time} ${label}`
-        : `Uploading your latest ${label}`
-      : time
-        ? `AI is analyzing the ${time} ${label}`
-        : `AI is analyzing the latest ${label}`;
-    const headline = isUploading
-      ? "Uploading your report..."
-      : session.submissionKind === "problem_report"
-        ? "Problem report received and being analyzed..."
-        : "Report received and being analyzed for problems...";
-
-    return html`
-      <section class="assessment-tile" aria-live="polite">
-        <div class="assessment-tile__card">
-          <div class="assessment-tile__top">
-            <p class="assessment-tile__eyebrow">
-              <span class="assessment-tile__spark" aria-hidden="true">✦</span>
-              ${escapeHtml(eyebrow)}
-            </p>
-            <wa-button
-              id="cancel-assessment-open"
-              class="assessment-tile__dismiss"
-              type="button"
-              appearance="plain"
-              size="small"
-              aria-label="Cancel existing submission"
-            >
-              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-            </wa-button>
-          </div>
-          <p class="assessment-tile__headline">${escapeHtml(headline)}</p>
-          <div
-            class="assessment-tile__progress"
-            role="img"
-            aria-label="${isUploading
-              ? "Upload in progress"
-              : "Analysis in progress"}"
-          >
-            <span class="assessment-tile__bar"></span>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  _cancelAssessmentDialog() {
-    return html`
-      <dialog
-        class="sheet"
-        id="cancel-assessment-dialog"
-        aria-label="Cancel existing submission?"
-      >
-        <div class="sheet__panel">
-          <div class="sheet__actions">
-            <wa-button
-              class="sheet__cancel"
-              type="button"
-              id="cancel-assessment-keep"
-              appearance="outlined"
-            >
-              Keep it
-            </wa-button>
-          </div>
-          <ul class="sheet__opts">
-            <li>
-              <wa-button
-                class="sheet__opt sheet__opt--danger"
-                id="cancel-assessment-confirm"
-                type="button"
-                appearance="filled"
-                variant="danger"
-              >
-                Cancel analysis
-              </wa-button>
-            </li>
-          </ul>
-        </div>
-      </dialog>
-    `;
-  }
   _firstRunBlock() {
     return html`
       <div class="screen__sec home-lead home-lead--first-run">
@@ -1373,12 +1346,18 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks.map((task) => ({
-      task,
-      createdAt: taskCreatedAt(task),
-      homeStatus: homeTaskStatus(task, this._taskOverrides?.[task.taskId], now),
-      isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
-    }));
+    return tasks
+      .filter((task) => !isTaskPendingDeletion(task))
+      .map((task) => ({
+        task,
+        createdAt: taskCreatedAt(task),
+        homeStatus: homeTaskStatus(
+          task,
+          this._taskOverrides?.[task.taskId],
+          now,
+        ),
+        isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
+      }));
   }
 
   _statusCounts(entries) {
@@ -1501,7 +1480,12 @@ class TodayView extends HTMLElement {
     const when = task.createdAt
       ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
       : "";
-    const title = task.label || task.category || "Finding";
+    const title =
+      task.userFriendlyLabel ||
+      task.user_friendly_label ||
+      task.label ||
+      task.category ||
+      "Finding";
     const detail = task.guidance || task.category || "";
     const category = task.category || "";
     const actions = this._cardActions(task);
@@ -1619,13 +1603,17 @@ class TodayView extends HTMLElement {
   }
 
   _wireCards() {
-    this.querySelectorAll("[data-task-id]").forEach((card) => {
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results [data-task-id]",
+    ).forEach((card) => {
       const taskId = card.getAttribute("data-task-id");
       const task = this._tasksById.get(taskId);
       if (!task) return;
       this._wireCardButtons(card, task);
     });
-    this.querySelectorAll(".analysis-card").forEach((card) => {
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results .analysis-card",
+    ).forEach((card) => {
       if (!card.querySelector("[data-analysis-action]")) return;
       const taskId = card.getAttribute("data-task-id");
       const task = taskId ? this._tasksById.get(taskId) || null : null;
@@ -1660,7 +1648,22 @@ class TodayView extends HTMLElement {
       this._resolveAnalysisProblem(problem);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
+    } else if (action === "retry") {
+      if (problem.placeId && problem.itemId)
+        retryEvidenceItem(problem.placeId, problem.itemId);
+    } else if (action === "remove-item") {
+      if (problem.placeId && problem.itemId) this._removeFailedItem(problem);
     }
+  }
+
+  /** Drop a failed, never-uploaded item from the pending session. */
+  _removeFailedItem(problem) {
+    const session = getCurrentCheck();
+    const item = session?.places?.[problem.placeId]?.items?.find(
+      (candidate) => candidate.id === problem.itemId,
+    );
+    if (!item || item.upload?.status === "uploaded") return;
+    removeItem(problem.placeId, problem.itemId);
   }
 
   _problemFromCard(card, task = null) {
@@ -1687,9 +1690,12 @@ class TodayView extends HTMLElement {
   }
 
   _openDeleteProblem(problem) {
+    if (this._deletingProblem) return;
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
-    const title = this.querySelector("#analysis-delete-title");
+    const title = this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
+    );
     if (title) title.textContent = `Delete "${problem.title}"?`;
     this._analysisDeleteDialog?.showModal();
   }
@@ -1705,7 +1711,7 @@ class TodayView extends HTMLElement {
 
   async _confirmDeleteProblem() {
     const problem = this._activeProblem;
-    if (!problem) return;
+    if (!problem || this._deletingProblem) return;
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
@@ -1714,41 +1720,73 @@ class TodayView extends HTMLElement {
       return;
     }
 
-    const button = this.querySelector("#analysis-delete-confirm");
+    this._deletingProblem = true;
+    const button = this.querySelector(
+      ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
+    );
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
-      const result = await rejectAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          reason: { key: "not_a_problem" },
-          caller: { request_id: this._requestId("delete", problem) },
+      await deleteAnalysisCard(
+        this,
+        problem,
+        async () => {
+          let result;
+          try {
+            result = await rejectAnalysisCondition(
+              problem.checkId,
+              problem.artifactId,
+              problem.conditionId,
+              {
+                reason: { key: "not_a_problem" },
+                ...(problem.taskId ? { taskId: problem.taskId } : {}),
+                caller: { request_id: this._requestId("delete", problem) },
+              },
+            );
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 404) throw err;
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
+            return;
+          }
+          if (!result?.assessment) {
+            this._deleteProblemLocally(problem);
+            return;
+          }
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
+            await refreshEvidenceAnalysis(
+              problem.placeId,
+              problem.itemId,
+              result,
+              {
+                rejectedConditionId: problem.conditionId,
+              },
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
+          }
         },
+        () => {
+          if (this._homeModel) this._renderHome(this._homeModel);
+        },
+        { focusUndo },
       );
-      if (problem.placeId && problem.itemId) {
-        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
-          rejectedConditionId: problem.conditionId,
-        });
-      }
-      this._analysisDeleteDialog?.close();
       this._activeProblem = null;
-      await this.connectedCallback();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        this._deleteProblemLocally(problem);
-        this._analysisDeleteDialog?.close();
-        this._activeProblem = null;
-        await this.connectedCallback();
-        return;
-      }
       console.error("delete analysis condition failed", err);
       this._setDialogError(
         "analysis-delete-error",
         "Could not delete this problem. Please try again.",
       );
     } finally {
+      this._deletingProblem = false;
       this._setBusy(button, false);
     }
   }
@@ -1777,7 +1815,9 @@ class TodayView extends HTMLElement {
         );
         return;
       }
-      const button = this.querySelector("#analysis-edit-save");
+      const button = this.querySelector(
+        ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+      );
       this._setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
@@ -1808,7 +1848,9 @@ class TodayView extends HTMLElement {
       return;
     }
 
-    const button = this.querySelector("#analysis-edit-save");
+    const button = this.querySelector(
+      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
+    );
     this._setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
@@ -1867,14 +1909,10 @@ class TodayView extends HTMLElement {
         return null;
       });
       if (!isFiled311Completion(result?.task)) {
-        this._setInlineProblemError(
-          problem,
-          appActionFailureMessage(result?.task, {
-            includeUnsubmitted311: true,
-          }) || "Could not file the 311 ticket. Please try again.",
-        );
+        show311ErrorToast();
         return;
       }
+      show311SuccessToast();
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
@@ -1960,7 +1998,11 @@ class TodayView extends HTMLElement {
   }
 
   _setInlineProblemError(problem, message) {
-    const card = [...this.querySelectorAll(".analysis-card")].find(
+    const card = [
+      ...this.querySelectorAll(
+        ":scope > .home > .home-region--results .analysis-card",
+      ),
+    ].find(
       (candidate) =>
         candidate.getAttribute("data-task-id") === problem.taskId &&
         (!problem.conditionId ||
@@ -1973,7 +2015,9 @@ class TodayView extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = this.querySelector(`#${id}`);
+    const error = this.querySelector(
+      `:scope > .home > .analysis-dialog #${id}`,
+    );
     if (!(error instanceof HTMLElement)) return;
     error.textContent = message;
     error.hidden = !message;
@@ -2010,6 +2054,7 @@ class TodayView extends HTMLElement {
         { requireSubmitted311: true },
       ).then((ok) => {
         if (ok) {
+          show311SuccessToast();
           this.connectedCallback();
         }
       });
@@ -2088,9 +2133,9 @@ class TodayView extends HTMLElement {
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable and show an inline, non-destructive error on the card. A 200 that
-  // still carries a failed app action (task held open) surfaces its specific
-  // reason instead of silently doing nothing.
+  // re-enable the card. Explicit 311 failures use the app error toast; other
+  // actions keep their inline error. A 200 with a failed app action still
+  // counts as a failure and leaves the task available to retry.
   async _run(card, fn, { requireSubmitted311 = false } = {}) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
@@ -2109,7 +2154,8 @@ class TodayView extends HTMLElement {
           : appActionFailureMessage(task);
       if (failure) {
         buttons.forEach((b) => (b.disabled = false));
-        if (err) {
+        if (requireSubmitted311) show311ErrorToast();
+        else if (err) {
           err.hidden = false;
           err.textContent = failure;
         }
@@ -2119,7 +2165,8 @@ class TodayView extends HTMLElement {
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
-      if (err) {
+      if (requireSubmitted311) show311ErrorToast();
+      else if (err) {
         err.hidden = false;
         err.textContent = "Couldn’t save that — please try again.";
       }
@@ -2130,6 +2177,10 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
+    if (isDeletingAnalysisCard(this)) {
+      this._deferredDeletionRender = true;
+      return;
+    }
     const identity = this._siteIdentity();
     this.innerHTML = html`
       <div class="home">

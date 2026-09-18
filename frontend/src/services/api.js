@@ -18,6 +18,8 @@ import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession } from "../db.js";
 import { refreshDeviceToken } from "./devices.js";
 import { ApiError, ReauthRequiredError } from "./api-error.js";
+import { reportClientEvent } from "./error-report.js";
+import { classifyApiFailure } from "./backend-health.js";
 
 // Public error surface stays on api.js (existing importers); the classes live
 // in api-error.js because devices.js needs them too and importing api.js from
@@ -137,6 +139,11 @@ async function request(
     });
   } catch (err) {
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
+    classifyApiFailure(
+      new ApiError(`Network error calling ${method} ${path}: ${err}`, {
+        status: 0,
+      }),
+    );
     throw new ApiError(`Network error calling ${method} ${path}: ${err}`, {
       status: 0,
     });
@@ -149,26 +156,48 @@ async function request(
     try {
       parsed = JSON.parse(text);
     } catch {
-      parsed = text; // non-JSON body (shouldn't happen against our API)
+      // Non-JSON from a JSON API means an intermediary rewrote the response
+      // (e.g. a CDN error page served as 200) — a transport-grade failure,
+      // never a usable body. Empty body stays legal (204s exist).
+      const nonJson = new ApiError(
+        `Non-JSON response from ${method} ${path} (status ${res.status})`,
+        { status: res.status, body: { code: "non_json_response" } },
+      );
+      mark("api:non-json", { method, path, status: res.status });
+      reportClientEvent(
+        "non_json_response",
+        `Non-JSON ${res.status} from ${method} ${path}`,
+        { status: res.status },
+      );
+      classifyApiFailure(nonJson);
+      throw nonJson;
     }
   }
 
   if (!res.ok) {
     // Expired/revoked access token → ONE silent refresh, then retry. A second
-    // 401 (or a rejected refresh) is fatal: ReauthRequiredError.
+    // 401 (or a rejected refresh) is fatal UNLESS the stored session was
+    // superseded mid-flight (see the retry leg below).
     if (res.status === 401 && allowAuthRetry) {
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
         await refreshSession();
       } catch (err) {
+        classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
         // Retryable refresh failure (5xx/transport): surface as-is — the
         // stored session may be perfectly valid.
         throw err;
       }
       // The refreshed session is already persisted; retry with it. A second
-      // 401 on this leg means the fresh token was rejected too — fatal.
+      // 401 on this leg is fatal ONLY if the stored session is still the one
+      // we just used. A concurrent late 401 may have rotated AGAIN after our
+      // refresh completed (each rotation bumps tokenGeneration, instantly
+      // invalidating our in-flight retry's token — devices.js CAS) — that's
+      // a lost race, not a dead session: surface a plain 401 (this call
+      // fails, the app stays healthy) instead of the global ReauthRequiredError.
+      const retryToken = (await getSite().catch(() => null))?.token;
       try {
         return await request(method, path, {
           headers,
@@ -178,7 +207,16 @@ async function request(
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
-          throw new ReauthRequiredError();
+          const nowToken = (await getSite().catch(() => null))?.token;
+          if (nowToken && nowToken !== retryToken) {
+            // Superseded mid-flight: the LATEST persisted session is newer
+            // than the token we rode. Throwing a plain ApiError keeps the
+            // session alive (a later request rides the newer token).
+            throw err;
+          }
+          const reauth = new ReauthRequiredError();
+          classifyApiFailure(reauth);
+          throw reauth;
         }
         throw err;
       }
@@ -187,10 +225,18 @@ async function request(
       parsed && typeof parsed === "object" && "error" in parsed
         ? parsed.error
         : res.statusText;
-    throw new ApiError(`${method} ${path} → ${res.status} ${detail}`, {
-      status: res.status,
-      body: parsed,
-    });
+    const apiError = new ApiError(
+      `${method} ${path} → ${res.status} ${detail}`,
+      {
+        status: res.status,
+        body: parsed,
+      },
+    );
+    // Feed the health state machine (backend-health.js): 403 → AUTH, 0 →
+    // OUTAGE, non-JSON already classified above. 401/refresh outcomes are
+    // classified at their throw sites via the same hook.
+    classifyApiFailure(apiError);
+    throw apiError;
   }
   return parsed;
 }
@@ -242,9 +288,10 @@ export function createCheck(checkId, body = {}) {
 
 /**
  * POST /v1/checks/{checkId}/complete — close the run: fold analyzed artifacts
- * into one scorecard and return an assessment envelope for guidance evaluation.
+ * into the header scorecard and return it. (Guidance minting is per-item at
+ * capture time; nothing consumes the envelope anymore.)
  * @param {string} checkId
- * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number, assessmentReady?: boolean, assessment?: any }>}
+ * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number }>}
  */
 export function completeCheck(checkId) {
   return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`);
@@ -252,19 +299,13 @@ export function completeCheck(checkId) {
 
 /**
  * POST /v1/assessments:evaluate — store an assessment/report, evaluate
- * conditions, and create any immediately resolvable guidance tasks. `dispositions`
- * maps a condition's stable conditionId -> the reviewer's clarification
- * ("not_present" | "better" | "worse" | "other"). Every disposition is recorded
- * for false-positive analysis, but only "not_present" ("I don't see this problem")
- * suppresses task minting for that condition. Keying by conditionId (not category)
- * means disputing one condition never affects a sibling that shares its category.
+ * conditions, and create any immediately resolvable guidance tasks.
  * @param {any} assessment
- * @param {Record<string, string>} [dispositions]
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment, dispositions = {}) {
+export function evaluateAssessment(assessment) {
   return request("POST", "/v1/assessments:evaluate", {
-    body: { ...assessment, dispositions },
+    body: { ...assessment },
   });
 }
 
@@ -286,7 +327,7 @@ export function getAssessmentGuidance(assessmentId) {
  * @param {string} assessmentId
  * @param {string} conditionId
  * @param {{ answers: Record<string, unknown> }} body
- * @returns {Promise<{ conditionItem: any, taskItem: any, evaluation: any }>}
+ * @returns {Promise<{ assessmentItem?: any, conditionItem: any, taskItem: any, evaluation: any }>}
  */
 export function submitConditionAnswers(assessmentId, conditionId, body) {
   return request(
@@ -321,7 +362,7 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, caller?: { request_id?: string } }} [body]
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, caller?: { request_id?: string } }} [body]
  * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
  */
 export function rejectAnalysisCondition(
@@ -357,21 +398,6 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
-/**
- * POST /v1/checks/{checkId}/places/{placeId}/description:validate
- * @param {string} checkId
- * @param {string} placeId
- * @param {{ text: string, placeName?: string }} body
- * @returns {Promise<{ accepted: boolean, whatYouCanSee: boolean, whereItIs: boolean, message: string }>}
- */
-export function validatePlaceDescription(checkId, placeId, body) {
-  return request(
-    "POST",
-    `/v1/checks/${encodeURIComponent(checkId)}/places/${encodeURIComponent(placeId)}/description:validate`,
-    { body },
-  );
-}
-
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**
@@ -393,7 +419,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, text?: string }} body
+ * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -532,16 +558,29 @@ export async function dataUrlToBlob(dataUrl) {
 
 /**
  * Upload one captured photo end-to-end: presign → PUT bytes to S3 → register
- * (which enqueues the async analysis). Returns the registered artifactId so the
- * caller can wait for exactly these analyses to land.
+ * (which enqueues the async analysis). Returns the registered artifactId + the
+ * pinned S3 key, so callers can persist enough state to re-drive the analysis
+ * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, text?: string, tag?: string }} item
+ * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
- * @returns {Promise<string>} the artifactId
+ *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
+ *   show live progress and, on failure, know which leg broke.
+ * @returns {Promise<{ artifactId: string, s3Key: string }>}
  */
 export async function uploadArtifact(
   checkId,
-  { placeId, placeName, dataUrl, capturedAt, text, tag },
+  {
+    placeId,
+    placeName,
+    dataUrl,
+    capturedAt,
+    latitude,
+    longitude,
+    text,
+    tag,
+    onLeg,
+  },
 ) {
   const art = tag ?? placeName;
   const done = span("upload", { art });
@@ -554,11 +593,13 @@ export async function uploadArtifact(
     contentType,
   });
   endPresign({ artifactId });
+  onLeg?.("presign");
 
   const blob = await dataUrlToBlob(dataUrl);
   const endPut = span("upload.put", { art, bytes: blob.size });
   await putMedia(uploadUrl, blob, contentType);
   endPut();
+  onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
@@ -568,23 +609,27 @@ export async function uploadArtifact(
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? { latitude, longitude }
+      : {}),
     ...(text ? { text } : {}),
   });
   endRegister();
+  onLeg?.("register");
 
   done({ artifactId });
-  return artifactId;
+  return { artifactId, s3Key };
 }
 
 /**
  * Register validated text evidence for a place without uploading media bytes.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string }} item
+ * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { placeId, placeName, text, capturedAt },
+  { placeId, placeName, text, capturedAt, latitude, longitude },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
@@ -592,10 +637,22 @@ export async function registerTextArtifact(
     placeId,
     placeName,
     ...(capturedAt ? { capturedAt } : {}),
+    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? { latitude, longitude }
+      : {}),
     text,
   });
   return artifactId;
 }
+
+/**
+ * Which leg of `uploadArtifact` a progress callback or failure refers to:
+ *   presign — minted artifactId + presigned S3 PUT URL (network to the API)
+ *   put     — media bytes PUT to S3 (the big, bandwidth-bound leg)
+ *   register — artifact recorded + analysis enqueued (the analyzer is now working)
+ * @typedef {"presign" | "put" | "register"} UploadLeg
+ */
+export const LEG = { PRESIGN: "presign", PUT: "put", REGISTER: "register" };
 
 /**
  * Short poll (scoped to the submit flow, not a sync engine) that waits for the

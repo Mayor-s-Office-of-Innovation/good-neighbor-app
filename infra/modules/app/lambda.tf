@@ -77,8 +77,12 @@ resource "aws_lambda_function" "api" {
       # Feedback destination (docs/runbooks/feedback-ops.md): plain
       # identifiers, not secrets. Empty defaults keep the forwarder log-only
       # until the surveys exist in the project (the kill switch too).
-      FEEDBACK_SURVEY_ID   = var.feedback_survey_id
-      FEEDBACK_QUESTION_ID = var.feedback_question_id
+      FEEDBACK_SURVEY_ID              = var.feedback_survey_id
+      FEEDBACK_QUESTION_ID            = var.feedback_question_id
+      SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
+      SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+      PROVIDER_APP_URL                = var.provider_app_url
     }
   }
 

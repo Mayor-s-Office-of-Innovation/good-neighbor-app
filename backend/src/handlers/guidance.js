@@ -6,24 +6,16 @@ import {
   answerCondition,
   completeTaskWithAppActions,
   getAssessmentGuidance,
+  getPublishedAssessmentGuidance,
   markTaskCannotDo,
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
 
 const MAX_ASSESSMENT_CONDITIONS = 49;
 
-// Reviewer clarifications from the "Something not right?" modal. Only "not_present"
-// affects task minting; the rest are recorded as feedback for false-positive analysis.
-const DISPUTE_DISPOSITIONS = new Set([
-  "not_present",
-  "better",
-  "worse",
-  "other",
-]);
-
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[], disputedCategories: string[], dispositions: Record<string, string> }}
+ * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -49,31 +41,6 @@ function normalizeAssessmentBody(body) {
     typeof assessment.general_conditions === "object"
       ? /** @type {Record<string, unknown>} */ (assessment.general_conditions)
       : {};
-
-  const disputedCategories = Array.isArray(input.disputedCategories)
-    ? input.disputedCategories.filter((c) => typeof c === "string")
-    : [];
-
-  // Reviewer clarifications keyed by the condition's stable conditionId. All are
-  // recorded; only "not_present" suppresses task minting (see storeEvaluatedAssessment).
-  /** @type {Record<string, string>} */
-  const dispositions = {};
-  if (
-    input.dispositions &&
-    typeof input.dispositions === "object" &&
-    !Array.isArray(input.dispositions)
-  ) {
-    for (const [conditionId, disposition] of Object.entries(
-      input.dispositions,
-    )) {
-      if (
-        typeof disposition === "string" &&
-        DISPUTE_DISPOSITIONS.has(disposition)
-      ) {
-        dispositions[conditionId] = disposition;
-      }
-    }
-  }
 
   const explicitConditions = Array.isArray(input.conditions)
     ? /** @type {unknown[]} */ (input.conditions)
@@ -108,6 +75,12 @@ function normalizeAssessmentBody(body) {
           ? item.severity_label
           : typeof item.severityLabel === "string"
             ? item.severityLabel
+            : undefined,
+      userFriendlyLabel:
+        typeof item.user_friendly_label === "string"
+          ? item.user_friendly_label
+          : typeof item.userFriendlyLabel === "string"
+            ? item.userFriendlyLabel
             : undefined,
       description:
         typeof item.description === "string"
@@ -148,6 +121,10 @@ function normalizeAssessmentBody(body) {
       typeof input.assessmentId === "string"
         ? input.assessmentId
         : randomUUID(),
+    previousAssessmentId:
+      typeof input.previousAssessmentId === "string"
+        ? input.previousAssessmentId
+        : undefined,
     checkId: typeof input.checkId === "string" ? input.checkId : undefined,
     reportedAt,
     rubricVersion:
@@ -160,8 +137,6 @@ function normalizeAssessmentBody(body) {
           : null,
     rawAssessment,
     conditions,
-    disputedCategories,
-    dispositions,
   };
 }
 
@@ -198,8 +173,22 @@ export const evaluateAssessment = async (event) => {
       tasks: result.taskItems,
     });
   } catch (err) {
+    if (
+      err instanceof Error &&
+      ["AssessmentRevisionConflict", "TaskTransitionConflict"].includes(
+        err.name,
+      )
+    ) {
+      const existing = await getPublishedAssessmentGuidance({
+        tableName: dynamoTable,
+        siteId,
+        assessmentId: input.assessmentId,
+      });
+      if (existing.assessment) return jsonResponse(200, existing);
+      return jsonResponse(409, { code: err.name, error: err.message });
+    }
     if (err instanceof Error && err.name === "TransactionCanceledException") {
-      const existing = await getAssessmentGuidance({
+      const existing = await getPublishedAssessmentGuidance({
         tableName: dynamoTable,
         siteId,
         assessmentId: input.assessmentId,
@@ -209,7 +198,10 @@ export const evaluateAssessment = async (event) => {
         error: "Assessment evaluation was not stored",
       });
     }
-    if (err instanceof Error && err.name === "TransactionTooLarge") {
+    if (
+      err instanceof Error &&
+      ["TransactionTooLarge", "InvalidAssessmentRevision"].includes(err.name)
+    ) {
       return jsonResponse(400, { error: err.message });
     }
     throw err;
@@ -227,11 +219,18 @@ export const getGuidance = async (event) => {
   if (!assessmentId)
     return jsonResponse(400, { error: "Missing assessmentId" });
 
-  const result = await getAssessmentGuidance({
-    tableName: dynamoTable,
-    siteId,
-    assessmentId,
-  });
+  let result;
+  try {
+    result = await getPublishedAssessmentGuidance({
+      tableName: dynamoTable,
+      siteId,
+      assessmentId,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AssessmentRevisionConflict")
+      return jsonResponse(409, { code: err.name, error: err.message });
+    throw err;
+  }
   if (!result.assessment)
     return jsonResponse(404, { error: "Assessment not found" });
   return jsonResponse(200, result);
@@ -343,6 +342,9 @@ export const submitConditionAnswers = async (event) => {
     });
     return jsonResponse(200, result);
   } catch (err) {
+    if (err instanceof Error && err.name === "AssessmentRevisionConflict") {
+      return jsonResponse(409, { code: err.name, error: err.message });
+    }
     if (err instanceof Error && err.name === "NotFound") {
       return jsonResponse(404, { error: "Condition not found" });
     }

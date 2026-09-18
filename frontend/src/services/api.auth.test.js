@@ -256,4 +256,75 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     await expect(listChecks()).resolves.toMatchObject({ checks: [] });
     expect(refreshDeviceToken).toHaveBeenCalledTimes(2);
   });
+
+  it("a second-leg 401 after ANOTHER rotation superseded the token is a lost race, not ReauthRequiredError", async () => {
+    // R1 401s → refresh (rotation 1: access-2 persisted) → retryToken is
+    // captured (access-2) → retry in flight. DURING the retry, R2's late 401
+    // rotates AGAIN (rotation 2: access-3 persisted) — bumping
+    // tokenGeneration and instantly invalidating access-2. R1's retry then
+    // 401s, but the stored session (access-3) is NEWER than the one R1 rode,
+    // so the session is alive: a plain 401, not the global
+    // ReauthRequiredError that would lock the app.
+    /** @type {Array<(value?: unknown) => void>} */
+    const gates = [];
+    let retries = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        retries += 1;
+        if (retries === 1) {
+          // Leg 1: 401 (triggers rotation 1).
+          return {
+            ok: false,
+            status: 401,
+            statusText: "Unauthorized",
+            text: () => Promise.resolve("{}"),
+          };
+        }
+        // Retry leg: hold mid-flight until rotation 2 has landed.
+        await new Promise((resolve) => gates.push(resolve));
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          text: () => Promise.resolve("{}"),
+        };
+      }),
+    );
+
+    /** @type {number} */
+    let rotations = 0;
+    vi.mocked(refreshDeviceToken).mockImplementation(async () => {
+      rotations += 1;
+      if (rotations === 1) {
+        // Rotation 1: R1's refresh → access-2 (persisted by the
+        // updateSiteSession mock). The in-flight slot clears in finally.
+        await new Promise((r) => setTimeout(r, 0));
+        return freshSession;
+      }
+      // Rotation 2 (R2's concurrent late refresh): persist access-3.
+      const newer = {
+        ...freshSession,
+        token: "access-3",
+        refreshToken: "refresh-3",
+      };
+      site = { ...site, ...newer };
+      return newer;
+    });
+
+    const pending = listChecks();
+    // Wait until the retry leg is in flight (retryToken already captured),
+    // then fire R2's late refresh (rotation 2) against the cleared slot.
+    await vi.waitFor(() => expect(retries).toBe(2));
+    await new Promise((r) => setTimeout(r, 0));
+    await refreshDeviceToken("refresh-1"); // R2's late 401 → rotation 2 (access-3)
+    // Now release the retry leg so its 401 lands AFTER rotation 2 persisted.
+    for (const g of gates) g();
+    const err = await pending.catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(401);
+    expect(err).not.toBeInstanceOf(ReauthRequiredError);
+    expect(site.token).toBe("access-3"); // latest session intact
+  });
 });

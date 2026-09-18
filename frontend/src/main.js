@@ -3,8 +3,9 @@
   Bootstrap: register the icon library, load styles + Web Awesome components,
   register our own components, mount the app.
 
-  Web Awesome is adopted in HYBRID fashion: WA supplies form controls, buttons,
-  badges, callouts, spinners and icons; we keep our own shell and bottom nav.
+  Web Awesome is adopted in HYBRID fashion: WA supplies form controls, icons,
+  badges, callouts and spinners; buttons are native `<button>` + `.btn-*` classes
+  (ADR 0011); we keep our own shell and bottom nav.
   APIs were pulled from the shipped agent skill in node_modules (never guessed).
 
   CDN-free note: wa-icon loads from the Font Awesome CDN by default. We self-host a
@@ -12,8 +13,8 @@
   every <wa-icon> resolves locally — no kit fetch (the ka-*.fontawesome.com strings
   left in the WA bundle are its default resolver, never reached once we override it).
   The `awesome` theme is vendored (src/styles/wa-awesome.css) with its remote font
-  @import stripped and Quicksand self-hosted, and imported eagerly below, so the app
-  is fully CDN-free at runtime.
+  @import stripped (Quicksand dropped for the system font stack), and imported eagerly
+  below, so the app is fully CDN-free at runtime.
 
   (No service worker ships in the MVP — real offline/precaching is a later pass; see
   vite.config.js and memory step2-gnp-port-scope.)
@@ -33,22 +34,24 @@ registerIconLibrary("default", {
   mutator: (svg) => svg.setAttribute("fill", "currentColor"),
 });
 
-// Web Awesome base styles + default theme (offline-clean: no external fonts).
-import "@awesome.me/webawesome/dist/styles/webawesome.css";
+// Web Awesome base styles, imported piecewise instead of `webawesome.css` so the
+// unused default theme (themes/default.css — our <html> carries wa-theme-awesome)
+// never ships. Keep this list in sync with webawesome.css's own import list.
+import "@awesome.me/webawesome/dist/styles/layers.css";
+import "@awesome.me/webawesome/dist/styles/native.css";
+import "@awesome.me/webawesome/dist/styles/utilities.css";
 // The "awesome" theme is our locked-in look. Vendored (src/styles/wa-awesome.css)
-// with its remote font @import stripped and Quicksand self-hosted, so it's fully
-// offline + CDN-free.
+// with its remote font @import stripped, so it's fully offline + CDN-free.
 import "./styles/wa-awesome.css";
 
-// Cherry-picked WA components (tree-shaken — only what we use).
-import "@awesome.me/webawesome/dist/components/button/button.js";
+// Cherry-picked WA components (tree-shaken — only what we use). Any component
+// used only by a dev screen is imported in that module instead (see
+// guidance-harness.js), so the prod bundle carries only production components.
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import "@awesome.me/webawesome/dist/components/otp-input/otp-input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
 import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
-import "@awesome.me/webawesome/dist/components/select/select.js";
-import "@awesome.me/webawesome/dist/components/option/option.js";
 import "@awesome.me/webawesome/dist/components/badge/badge.js";
 import "@awesome.me/webawesome/dist/components/callout/callout.js";
 import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
@@ -65,9 +68,8 @@ import "./components/perimeter-check.js";
 import "./components/problem-report.js";
 import "./components/describe-instead.js";
 import "./components/places-setup.js";
-import "./components/check-review.js";
-import "./components/check-results.js";
 import "./components/site-setup.js";
+import "./components/app-toasts.js";
 import "./components/app-root.js";
 
 if (import.meta.env.DEV) {

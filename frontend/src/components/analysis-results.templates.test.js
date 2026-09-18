@@ -7,7 +7,49 @@ import {
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 
+/** Fixture helper — test items only need the fields the templates read. */
+const item = (fields) => /** @type {any} */ (fields);
+
 describe("analysis result summaries", () => {
+  it("uses the user-friendly condition label as the card title", () => {
+    const cards = analysisCards(
+      {
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzed",
+          tasks: [
+            {
+              taskId: "task_1",
+              conditionId: "condition_litter",
+              category: "Litter",
+              label: "File a 311 ticket",
+              userFriendlyLabel: "Lots of trash in tree well",
+              guidance: "Use the app to file a 311 ticket.",
+              kind: "escalation",
+            },
+          ],
+          conditions: [],
+        },
+      },
+      "check_1",
+    );
+
+    expect(cards[0]).toContain("Lots of trash in tree well");
+    expect(cards[0]).not.toContain(">Litter</h3>");
+  });
+
+  it("keeps category titles as a fallback for legacy cards", () => {
+    const card = taskAnalysisCard({
+      task: { taskId: "task_1", category: "Litter" },
+      action: null,
+      statusLabel: "Existing",
+    });
+
+    expect(card).toContain(">Litter</h3>");
+  });
+
   it("shows task short ids instead of raw assessment ids on task cards", () => {
     const cards = analysisCards(
       {
@@ -299,6 +341,157 @@ describe("analysis result summaries", () => {
     expect(cards[0]).toContain("No issues found");
     expect(cards[0]).toContain('data-analysis-action="edit"');
     expect(cards[0]).not.toContain('data-analysis-action="delete"');
+  });
+});
+
+describe("pending progress cards", () => {
+  it("shows upload progress before the analyzer is involved", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        upload: { status: "uploading" },
+        analysis: { status: "queued", stages: {} },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain("Uploading photo...");
+    expect(card).not.toContain("Waiting for results");
+    // Upload stage not reached yet, analyzer stage dimmed.
+    expect(card).toContain('class="analysis-card__stage ');
+    expect(card).toContain('class="visually-hidden">In progress. </span>');
+  });
+
+  it("shows the uploaded + sent checkpoints and an elapsed timer once polling", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "analyzing",
+          stages: {
+            uploaded: "2026-09-15T10:00:00Z",
+            sent: "2026-09-15T10:00:02Z",
+          },
+        },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain("Photo uploaded");
+    expect(card).toContain("Sent to analyzer");
+    expect(card).toContain("Waiting for results");
+    expect(card).toContain('data-elapsed-since="2026-09-15T10:00:02Z"');
+    // Stage state is in text for screen readers, not only the glyph — both
+    // stages have stamps here, so both read "Done."
+    expect(card).toContain('class="visually-hidden">Done. </span>');
+    expect(card).not.toContain("In progress. </span>");
+    expect(card).not.toContain("skeleton-line");
+  });
+
+  it("does not show photo stages on text items", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "text",
+        text: "Litter by the door",
+        analysis: { status: "queued", stages: {} },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain("Analyzing description...");
+    expect(card).not.toContain("Photo uploaded");
+  });
+});
+
+describe("failed cards", () => {
+  it("renders a failed item with a retry button instead of an endless skeleton", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        upload: { status: "uploaded", artifactId: "artifact_1" },
+        analysis: {
+          status: "failed",
+          artifactId: "artifact_1",
+          error: "Analysis is taking longer than expected.",
+          failure: {
+            leg: "analyze",
+            uploaded: true,
+            enqueued: true,
+            waitedMs: 180125,
+          },
+        },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain("Analysis didn't finish");
+    expect(card).toContain("Try again");
+    expect(card).toContain('data-analysis-action="retry"');
+    expect(card).toContain("Waited 3m 0s.");
+    expect(card).not.toContain("skeleton-line");
+  });
+
+  it("names the upload leg and offers remove for a failed, never-uploaded photo", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        upload: { status: "failed" },
+        analysis: {
+          status: "failed",
+          error: "Could not analyze this item.",
+          failure: {
+            leg: "upload",
+            uploaded: false,
+            enqueued: false,
+            waitedMs: 900,
+          },
+        },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain("Upload failed");
+    expect(card).toContain("Check your connection and try again.");
+    expect(card).toContain('data-analysis-action="remove-item"');
+    expect(card).not.toContain("Waited");
+  });
+
+  it("keeps an analyzer-side failure retryable without the remove affordance", () => {
+    const card = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        placeName: "15th St",
+        analysis: {
+          status: "failed",
+          artifactId: "artifact_1",
+          failure: {
+            leg: "analyze",
+            uploaded: true,
+            enqueued: true,
+            backendError: true,
+            waitedMs: 4200,
+          },
+        },
+      }),
+      "check_1",
+    )[0];
+
+    expect(card).toContain(
+      "The analysis service couldn&#39;t process this one.",
+    );
+    expect(card).toContain("Waited 4s.");
+    expect(card).toContain('data-analysis-action="retry"');
+    expect(card).not.toContain('data-analysis-action="remove-item"');
   });
 });
 

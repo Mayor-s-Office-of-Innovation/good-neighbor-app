@@ -1,5 +1,7 @@
 /*
   VENDORED from @awesome.me/webawesome@3.11.0 dist/styles/themes/awesome.css.
+  Guarded against upstream drift by scripts/check-wa-theme.sh (runs in
+  `npm run lint`): it normalizes the known deltas below and fails on any others.
   Changes vs upstream: the remote https://fonts.bunny.net font @import is removed
   and the two sibling @imports are rewritten to package paths. We also drop the
   theme's Quicksand entirely — --wa-font-family-body below points at our system

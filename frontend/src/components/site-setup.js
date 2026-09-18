@@ -12,6 +12,7 @@ import {
   validateSetupCode,
 } from "../services/onboarding.js";
 import { registerDevice } from "../services/devices.js";
+import { requestLocationPermissionEarly } from "../services/device-location.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
@@ -37,6 +38,11 @@ class SiteSetup extends HTMLElement {
     this._siteSearchTimer = null;
     this._siteSearchGeneration = 0;
     this._render();
+
+    // Ask when first-run setup appears. The Continue handler retries from a
+    // direct user gesture for browsers that suppress an initial page request.
+    requestLocationPermissionEarly();
+
     if (this._code.length === CODE_LENGTH) {
       this._validate();
     }
@@ -68,6 +74,12 @@ class SiteSetup extends HTMLElement {
     this._form.addEventListener("submit", (e) => {
       e.preventDefault();
       this._validate();
+    });
+    // Begin the request from the native button click itself. This keeps the
+    // browser's user-activation context intact for browsers that suppress a
+    // permission prompt once form/custom-element handling has begun.
+    this._continue.addEventListener("click", () => {
+      requestLocationPermissionEarly();
     });
 
     // <wa-otp-input> owns per-segment typing, arrow-key nav, backspace, and
@@ -338,16 +350,22 @@ if (import.meta.hot) {
   import.meta.hot.accept(() => location.reload());
 }
 
-function readCodeFromUrl() {
+export function readCodeFromUrl() {
+  const fromFragment = new URLSearchParams(location.hash.slice(1)).get("code");
   const fromSearch = new URLSearchParams(location.search).get("code");
-  return fromSearch ? fromSearch.trim() : "";
+  return (fromFragment ?? fromSearch ?? "").trim();
 }
 
-function stripCodeFromUrl() {
+export function stripCodeFromUrl() {
   try {
     const url = new URL(location.href);
-    if (url.searchParams.has("code")) {
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    if (url.searchParams.has("code") || fragment.has("code")) {
       url.searchParams.delete("code");
+      if (fragment.has("code")) {
+        fragment.delete("code");
+        url.hash = fragment.toString();
+      }
       history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
   } catch {
