@@ -33,6 +33,8 @@
     "@aws-sdk/client-sqs": "3.1106.0",
     "@aws-sdk/lib-dynamodb": "3.1106.0",
     "@aws-sdk/s3-request-presigner": "3.1106.0",
+    "@aws-sdk/util-dynamodb": "^3.996.7",
+    "@duckdb/node-api": "^1.5.5-r.5",
     "sharp": "^0.35.4"
   },
   "devDependencies": {
@@ -47,5 +49,8 @@
     "eslint-plugin-jsdoc": "50.2.2",
     "typescript": "5.5.4",
     "vitest": "4.1.10"
+  },
+  "optionalDependencies": {
+    "@duckdb/node-bindings-linux-x64": "^1.5.5-r.5"
   }
 }
