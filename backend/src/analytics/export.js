@@ -11,8 +11,9 @@
 // can poll it without re-starting the same window.
 //
 // The export service itself writes to s3://<lake>/raw/AWSDynamoDB/<export-id>/
-// (bucket policy in analytics.tf); completion is signalled by
-// manifest-summary.json landing, which triggers the convert Lambda.
+// (authorized by the export role's WriteRawExports grant in analytics.tf);
+// completion is signalled by manifest-summary.json landing, which triggers the
+// convert Lambda.
 //
 // ExportToTime must trail current time by at least 15 minutes (DynamoDB
 // incremental-export constraint) — we use a 30-minute lag for margin.
@@ -35,6 +36,10 @@ const WATERMARK_SK = "#WATERMARK";
 const EXPORT_LAG_MS = 30 * 60 * 1000;
 // One retry round-trip if the watermark read races with the prior run's write.
 const MAX_RETRIES = 3;
+// PITR retains 35 days. A cursor older than this cannot anchor an incremental
+// export (InvalidExportTime, every run, forever), so the handler falls back to
+// a fresh FULL_EXPORT one day early and pages.
+const PITR_FALLBACK_S = 34 * 24 * 3600;
 
 /**
  * @typedef {object} WatermarkItem
@@ -91,6 +96,12 @@ async function startExport(tableArn, from, to) {
       S3Bucket: process.env.LAKE_BUCKET,
       S3Prefix: process.env.EXPORT_PREFIX || "raw",
       ExportFormat: "DYNAMODB_JSON",
+      // Deterministic per window: `to` is fixed for one invocation, so the
+      // in-handler retry loop gets the same export back instead of starting a
+      // second job for the same window (DynamoDB honours the token for 8h).
+      // A retry in a later invocation has a new `to`; any orphan from the
+      // earlier attempt is harmless under the lake's latest-wins dedupe.
+      ClientToken: `${from ?? "full"}-${to}`,
       ...(from === null
         ? { ExportType: "FULL_EXPORT" }
         : {
@@ -147,7 +158,6 @@ export const handler = async () => {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const wm = await readWatermark(table);
-    const from = wm.exportToTime ?? null;
 
     // 1. A pending export from a previous run gates everything: advance only
     // on completion; on failure surface the error WITHOUT advancing (same
@@ -164,20 +174,44 @@ export const handler = async () => {
         );
         return;
       }
-      // completed: advance the cursor to the pending window's endpoint.
-      await writeWatermark(table, {
-        exportToTime: wm.pending.to,
-        lastExportId: wm.pending.exportArn,
-        pending: undefined,
-      });
+      // completed: advance the cursor to the pending window's endpoint. `wm`
+      // is mutated in place so the start-write below carries the committed
+      // cursor forward instead of clobbering it with the pre-commit value.
+      const committed = wm.pending;
+      wm.exportToTime = committed.to;
+      wm.lastExportId = committed.exportArn;
+      delete wm.pending;
+      await writeWatermark(table, wm);
       console.log(
         JSON.stringify({
           marker: "AnalyticsExportCommitted",
-          exportArn: wm.pending.exportArn,
-          to: wm.pending.to,
+          exportArn: committed.exportArn,
+          to: committed.to,
         }),
       );
       // Fall through: with the cursor advanced, a fresh window may be due.
+    }
+
+    // 2. The new window starts at the committed cursor — read AFTER the commit
+    // above, so the run following a full export goes incremental rather than
+    // repeating the full export.
+    let from = wm.exportToTime ?? null;
+
+    // 3. Cursor older than the PITR window: incremental is impossible. Fall
+    // back to a full export (dedupe absorbs the overlap) and page — the
+    // schedule has been silent for over a month.
+    if (from !== null && now - from > PITR_FALLBACK_S) {
+      logServerError(
+        "analytics-export",
+        new Error(
+          `Analytics export watermark ${from} is older than the PITR window; falling back to FULL_EXPORT`,
+        ),
+        { extra: { from, to } },
+      );
+      console.log(
+        JSON.stringify({ marker: "AnalyticsExportWindowExpired", from, to }),
+      );
+      from = null;
     }
 
     if (from !== null && to <= from) {
@@ -195,12 +229,10 @@ export const handler = async () => {
 
     try {
       const exportArn = await startExport(tableArn, from, to);
-      // Record the in-flight window WITHOUT advancing the cursor; a failed
-      // export never skips data and the stall alarm keeps firing.
-      /** @type {import("./export.js").WatermarkItem} */
-      const startedPatch = { pending: { from, to, exportArn } };
-      if (from !== null) startedPatch.exportToTime = from;
-      await writeWatermark(table, startedPatch);
+      // Record the in-flight window on top of the committed state. The cursor
+      // itself only moves when a later run sees COMPLETED, so a failed export
+      // never skips data and the stall alarm keeps firing.
+      await writeWatermark(table, { ...wm, pending: { from, to, exportArn } });
       console.log(
         JSON.stringify({
           marker: "AnalyticsExportStarted",
