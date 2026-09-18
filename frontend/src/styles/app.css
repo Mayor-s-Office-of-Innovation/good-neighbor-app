@@ -193,8 +193,14 @@ app-root {
      and never pushes content under chrome. Extra space when chrome retracts is
      filled by the root bg, so it's seamless. (Contrast: dvh tracks the live
      viewport → jitter; lvh is the tall state → bottom content hides behind
-     chrome.) */
-  min-height: 100svh;
+     chrome.)
+     --app-viewport-height / --app-viewport-top are set by <app-root> only while
+     an on-screen keyboard has shrunk the visual viewport without resizing the
+     layout viewport (iOS Safari; see services/keyboard-viewport.js). They
+     compose the shell into the visible area above the keyboard, following the
+     pan Safari applies to reveal the focused field. */
+  min-height: var(--app-viewport-height, 100svh);
+  margin-top: var(--app-viewport-top, 0px);
   display: flex;
   flex-direction: column;
 }
@@ -1304,6 +1310,13 @@ theme-toggle {
   pointer-events: none;
   transform: translateY(2rem);
   opacity: 0;
+}
+
+/* Once the entry animation settles, take the hidden results out of flow (as
+   the header already is). Faded-but-present results kept the page as tall as
+   the home list, so a short capture screen could scroll into empty space. */
+.home--capture .home-region--results {
+  display: none;
 }
 
 .home--leaving-capture .home-region--header {
