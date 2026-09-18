@@ -1,8 +1,9 @@
-# Provision ahead of DT delegation. This does not change existing app DNS,
-# CloudFront aliases, certificates, or the legacy gn.sf.gov hosted zone.
+# Provisioned ahead of DT delegation. Production application records,
+# certificates, and CloudFront aliases are managed separately in domain.tf.
+# The legacy gn.sf.gov hosted zone remains out of scope here.
 resource "aws_route53_zone" "goodneighbor" {
   name    = "goodneighbor.sf.gov"
-  comment = "Good Neighbor App: awaiting sf.gov delegation from SF Department of Technology."
+  comment = "Delegated production DNS zone for the Good Neighbor App."
 
   lifecycle {
     prevent_destroy = true
