@@ -330,24 +330,58 @@ describe("listManifestDataFiles (manifest-files.json is JSON Lines)", () => {
 // ---- real stored shapes (qodo #15/#16 regressions) ---------------------------
 
 describe("stored item shapes", () => {
-  it("promotes condition categories from canonicalCategory/analyzerCategory (not 'category')", () => {
-    const item = {
-      pk: "SITE#s1",
-      sk: "ASSESSMENT#a1#COND#c1",
-      conditionId: "c1",
-      assessmentId: "a1",
-      analyzerCategory: "Graffiti",
-      canonicalCategory: "Graffiti",
-      severity: 3,
+  // The shape guidance-store.js actually writes: reportedAt lives under
+  // `source`, outcome is the matched rule's object, top level has createdAt.
+  const storedCondition = {
+    pk: "SITE#s1",
+    sk: "ASSESSMENT#a1#COND#c1",
+    entityType: "CONDITION",
+    conditionId: "c1",
+    assessmentId: "a1",
+    checkId: "chk1",
+    source: {
+      artifactIds: ["art1"],
+      evidenceIndices: [0],
       reportedAt: "2026-09-16T01:00:00.000Z",
-    };
-    const row = toRow("conditions", item, "t");
+    },
+    analyzerCategory: "Graffiti",
+    canonicalCategory: "Graffiti",
+    severity: 3,
+    status: "tasks_created",
+    outcome: { kind: "action", label: "Remove graffiti", buttons: [] },
+    createdAt: "2026-09-16T01:05:00.000Z",
+    updatedAt: "2026-09-16T01:05:00.000Z",
+  };
+
+  it("promotes condition categories from canonicalCategory/analyzerCategory (not 'category')", () => {
+    const row = toRow("conditions", storedCondition, "t");
     expect(row.canonicalCategory).toBe("Graffiti");
     expect(row.analyzerCategory).toBe("Graffiti");
     expect(row.category).toBeUndefined();
     expect(ENTITY_COLUMNS.conditions).toContain("canonicalCategory");
     expect(ENTITY_COLUMNS.conditions).toContain("analyzerCategory");
     expect(ENTITY_COLUMNS.conditions).not.toContain("category");
+  });
+
+  it("partitions conditions by source.reportedAt (no top-level reportedAt is stored)", () => {
+    // Regression: reading item.reportedAt put every condition in date=unknown.
+    const row = toRow("conditions", storedCondition, "t");
+    expect(row.reportedAt).toBe("2026-09-16T01:00:00.000Z");
+    expect(row.date).toBe("2026-09-16");
+  });
+
+  it("falls back to createdAt for a condition without source.reportedAt", () => {
+    const withoutSource = { ...storedCondition, source: undefined };
+    const row = toRow("conditions", withoutSource, "t");
+    expect(row.reportedAt).toBe("2026-09-16T01:05:00.000Z");
+    expect(row.date).toBe("2026-09-16");
+  });
+
+  it("promotes the outcome kind (outcome is an object, null when unresolved)", () => {
+    expect(toRow("conditions", storedCondition, "t").outcome).toBe("action");
+    expect(
+      toRow("conditions", { ...storedCondition, outcome: null }, "t").outcome,
+    ).toBeNull();
   });
 
   it("promotes device label from item.label (not 'name')", () => {
