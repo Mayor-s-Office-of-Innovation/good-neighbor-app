@@ -47,6 +47,44 @@ jobs:
       - name: Build
         run: npm run build
 
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # ubuntu-latest ships a JRE (needed by the DynamoDB Local / ElasticMQ jars
+      # the harness launches). Chromium only — the suite targets one engine.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Copy env example
+        run: cp .env.example .env.local
+
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/test-results/
+            e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
   security:
     name: Security scans
     if: github.actor != 'dependabot[bot]'
