@@ -585,8 +585,7 @@ site-setup {
      field has focus, stop centering the full-height composition and compact it
      into the unobscured upper portion instead. */
   .login:has(.login__otp:focus-within) {
-    padding-block:
-      max(1rem, env(safe-area-inset-top))
+    padding-block: max(1rem, env(safe-area-inset-top))
       max(2rem, env(safe-area-inset-bottom));
   }
 
