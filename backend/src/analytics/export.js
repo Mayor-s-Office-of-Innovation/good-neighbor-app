@@ -40,6 +40,11 @@ const MAX_RETRIES = 3;
 // export (InvalidExportTime, every run, forever), so the handler falls back to
 // a fresh FULL_EXPORT one day early and pages.
 const PITR_FALLBACK_S = 34 * 24 * 3600;
+// DynamoDB rejects an incremental window longer than 24 hours. A cursor that
+// far behind (missed schedules, a pending export that sat failed for days) is
+// caught up one capped window per run rather than rejected on every run until
+// the PITR fallback. Five minutes under the cap keeps clock skew out of it.
+const MAX_INCREMENTAL_WINDOW_S = 24 * 3600 - 5 * 60;
 
 /**
  * @typedef {object} WatermarkItem
@@ -154,7 +159,9 @@ export const handler = async () => {
   if (!tableArn) throw new Error("Missing DYNAMO_TABLE_ARN");
 
   const now = Math.floor(Date.now() / 1000);
-  const to = now - Math.floor(EXPORT_LAG_MS / 1000);
+  // The newest endpoint DynamoDB accepts this run; the actual window end is
+  // also capped by MAX_INCREMENTAL_WINDOW_S once the cursor is known.
+  const latestTo = now - Math.floor(EXPORT_LAG_MS / 1000);
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const wm = await readWatermark(table);
@@ -206,12 +213,33 @@ export const handler = async () => {
         new Error(
           `Analytics export watermark ${from} is older than the PITR window; falling back to FULL_EXPORT`,
         ),
-        { extra: { from, to } },
+        { extra: { from, to: latestTo } },
       );
       console.log(
-        JSON.stringify({ marker: "AnalyticsExportWindowExpired", from, to }),
+        JSON.stringify({
+          marker: "AnalyticsExportWindowExpired",
+          from,
+          to: latestTo,
+        }),
       );
       from = null;
+    }
+
+    // 4. Window end: the newest allowed endpoint, capped to 24h past the
+    // cursor so a lagging cursor catches up in chunks instead of failing.
+    const to =
+      from === null
+        ? latestTo
+        : Math.min(latestTo, from + MAX_INCREMENTAL_WINDOW_S);
+    if (to < latestTo) {
+      console.log(
+        JSON.stringify({
+          marker: "AnalyticsExportCatchingUp",
+          from,
+          to,
+          behindBySeconds: latestTo - to,
+        }),
+      );
     }
 
     if (from !== null && to <= from) {
