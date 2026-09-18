@@ -2,7 +2,7 @@
 
 The Good Neighbor App web frontend — vanilla **web components** + **Web Awesome**, built with
 **Vite**, hosted on S3/CloudFront. Ported from the `gnp` prototype (Step 2 of the migration).
-Type safety is JSDoc + `tsc --checkJs` (lenient baseline; see the migration plan).
+Type safety is JSDoc + `tsc --checkJs`.
 
 ## Run it
 
@@ -10,11 +10,10 @@ Type safety is JSDoc + `tsc --checkJs` (lenient baseline; see the migration plan
 npm run dev -w frontend       # dev server
 npm run build -w frontend     # production build → dist/
 npm run typecheck -w frontend # tsc --checkJs
+npm run dev:lan -w frontend # launches vite with external friendly config
 ```
 
-First run shows the site-setup screen. To get it back after binding a site, clear the local
-binding — see [Clearing the local site binding](../docs/dev-commands.md#clearing-the-local-site-binding)
-in the developer command reference.
+First run shows the site-setup screen. To get it back after binding a site you can logout.
 
 ## Design system reference (dev-only)
 
