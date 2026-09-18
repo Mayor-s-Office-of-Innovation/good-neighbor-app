@@ -54,6 +54,43 @@ function loadEnvLocal() {
   }
 }
 
+/**
+ * Scan with a FilterExpression across ALL pages (Scan reads ≤1 MB before
+ * filtering, so one call can miss matching items past the first page).
+ * @param {DynamoDBDocumentClient} doc
+ * @param {string} tableName
+ * @param {string} prefix
+ * @param {"pk" | "sk"} [keyAttribute] Which key to prefix-match on. Tasks key
+ *   on sk (TASK#<taskId>), everything else on pk.
+ * @returns {Promise<Array<{ pk: string, sk: string }>>}
+ */
+async function scanAllByKeyPrefix(doc, tableName, prefix, keyAttribute = "pk") {
+  /** @type {Array<{ pk: string, sk: string }>} */
+  const items = [];
+  let exclusiveStartKey;
+  do {
+    const page = await doc.send(
+      new ScanCommand({
+        TableName: tableName,
+        FilterExpression: "begins_with(#k, :prefix)",
+        ExpressionAttributeNames: { "#k": keyAttribute },
+        ExpressionAttributeValues: { ":prefix": prefix },
+        ProjectionExpression: "pk, sk",
+        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+      }),
+    );
+    items.push(...(page.Items ?? []));
+    exclusiveStartKey = page.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return /** @type {Array<{ pk: string, sk: string }>} */ (items);
+}
+
+const scanAllByPrefix = (doc, tableName, prefix) =>
+  scanAllByKeyPrefix(doc, tableName, prefix, "pk");
+
+const scanAllBySkPrefix = (doc, tableName, prefix) =>
+  scanAllByKeyPrefix(doc, tableName, prefix, "sk");
+
 async function waitAndReset() {
   const client = new DynamoDBClient({
     endpoint: DDB_ENDPOINT,
@@ -66,15 +103,8 @@ async function waitAndReset() {
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
       // 1. Setup codes: reset usage counters.
-      const codes = await doc.send(
-        new ScanCommand({
-          TableName: tableName,
-          FilterExpression: "begins_with(pk, :prefix)",
-          ExpressionAttributeValues: { ":prefix": "SETUP_CODE#" },
-          ProjectionExpression: "pk, sk",
-        }),
-      );
-      for (const item of codes.Items ?? []) {
+      const codes = await scanAllByPrefix(doc, tableName, "SETUP_CODE#");
+      for (const item of codes) {
         await doc.send(
           new UpdateCommand({
             TableName: tableName,
@@ -85,19 +115,13 @@ async function waitAndReset() {
         );
       }
       console.log(
-        `[e2e-global] reset ${codes.Items?.length ?? 0} setup code(s) in "${tableName}"`,
+        `[e2e-global] reset ${codes.length} setup code(s) in "${tableName}"`,
       );
 
-      // 2. Tasks: drop leftovers so the home worklist starts clean.
-      const tasks = await doc.send(
-        new ScanCommand({
-          TableName: tableName,
-          FilterExpression: "begins_with(sk, :prefix)",
-          ExpressionAttributeValues: { ":prefix": "TASK#" },
-          ProjectionExpression: "pk, sk",
-        }),
-      );
-      for (const item of tasks.Items ?? []) {
+      // 2. Tasks: drop leftovers so the home worklist starts clean. Tasks key
+      // on sk = TASK#<taskId> (handlers/keys.js taskKey), so filter on sk.
+      const tasks = await scanAllBySkPrefix(doc, tableName, "TASK#");
+      for (const item of tasks) {
         await doc.send(
           new DeleteCommand({
             TableName: tableName,
@@ -105,9 +129,7 @@ async function waitAndReset() {
           }),
         );
       }
-      console.log(
-        `[e2e-global] cleared ${tasks.Items?.length ?? 0} leftover task(s)`,
-      );
+      console.log(`[e2e-global] cleared ${tasks.length} leftover task(s)`);
       return;
     } catch (err) {
       if (attempt === RETRIES) throw err;
