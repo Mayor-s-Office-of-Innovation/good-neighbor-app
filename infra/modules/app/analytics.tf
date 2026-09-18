@@ -293,7 +293,7 @@ resource "aws_lambda_function" "analytics_convert" {
     aws_cloudwatch_log_group.analytics_convert,
     aws_iam_role_policy.analytics_convert,
   ]
-  tags       = var.tags
+  tags = var.tags
 }
 
 resource "aws_iam_role" "analytics_convert" {
