@@ -107,6 +107,8 @@ class PlacesSetup extends HTMLElement {
     this._savedSignature = "[]";
     /** @type {((event: MouseEvent) => void) | null} */
     this._onDocumentClick = null;
+    /** @type {(() => void) | null} */
+    this._onVisualViewportChange = null;
   }
 
   async connectedCallback() {
@@ -116,6 +118,16 @@ class PlacesSetup extends HTMLElement {
     this._error = "";
     this._onDocumentClick = (event) => this._closeMenuFromOutsideClick(event);
     document.addEventListener("click", this._onDocumentClick);
+    this._onVisualViewportChange = () => this._syncVisualViewport();
+    window.visualViewport?.addEventListener(
+      "resize",
+      this._onVisualViewportChange,
+    );
+    window.visualViewport?.addEventListener(
+      "scroll",
+      this._onVisualViewportChange,
+    );
+    this._syncVisualViewport();
     this._site = await getSite();
     if (!this._site) {
       navigate("/today");
@@ -130,6 +142,27 @@ class PlacesSetup extends HTMLElement {
     if (this._onDocumentClick) {
       document.removeEventListener("click", this._onDocumentClick);
     }
+    if (this._onVisualViewportChange) {
+      window.visualViewport?.removeEventListener(
+        "resize",
+        this._onVisualViewportChange,
+      );
+      window.visualViewport?.removeEventListener(
+        "scroll",
+        this._onVisualViewportChange,
+      );
+    }
+    const main = /** @type {HTMLElement | null} */ (this.closest(".app__main"));
+    main?.style.removeProperty("--places-viewport-height");
+    main?.style.removeProperty("--places-viewport-top");
+  }
+
+  _syncVisualViewport() {
+    const viewport = window.visualViewport;
+    const main = /** @type {HTMLElement | null} */ (this.closest(".app__main"));
+    if (!viewport || !main) return;
+    main.style.setProperty("--places-viewport-height", `${viewport.height}px`);
+    main.style.setProperty("--places-viewport-top", `${viewport.offsetTop}px`);
   }
 
   async _loadSettings() {
