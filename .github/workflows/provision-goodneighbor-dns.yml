@@ -46,7 +46,8 @@ jobs:
           set -euo pipefail
           terraform show -json tfplan | jq -e '
             [.resource_changes[]? | select(.mode == "managed")]
-            | all((.address as $address | [
+            | all(.address as $address
+              | ([
                 "aws_route53_zone.goodneighbor",
                 "aws_kms_key.goodneighbor_dnssec",
                 "aws_route53_key_signing_key.goodneighbor",
@@ -55,8 +56,15 @@ jobs:
                 "aws_cloudwatch_log_group.goodneighbor_dns",
                 "aws_cloudwatch_log_resource_policy.goodneighbor_dns",
                 "aws_route53_query_log.goodneighbor"
-              ] | index($address) != null) and
-                (.change.actions == ["create"] or .change.actions == ["no-op"]))
+                ] | index($address) != null)
+              and (
+                .change.actions == ["create"]
+                or .change.actions == ["no-op"]
+                or (
+                  $address == "aws_route53_hosted_zone_dnssec.goodneighbor"
+                  and .change.actions == ["delete", "create"]
+                )
+              ))
           '
       - name: Apply saved DNS-only plan
         run: terraform apply -auto-approve tfplan
