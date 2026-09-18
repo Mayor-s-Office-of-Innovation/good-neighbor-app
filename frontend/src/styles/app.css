@@ -148,6 +148,16 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* The places flow supplies its own overflow container. Lock the document while
+   it is mounted so mobile browser viewport/toolbar differences cannot create a
+   second scroll surface behind it. */
+html:has(.places-flow),
+body:has(.places-flow),
+html:has(.home),
+body:has(.home) {
+  overflow: hidden;
+}
+
 /* Respect reduced-motion globally: kill non-essential transitions/animation */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -293,6 +303,10 @@ form > wa-button[type="submit"] {
 }
 
 /* ---- Code login ---- */
+site-setup {
+  display: block;
+}
+
 .app__main:has(.login) {
   width: 100%;
   max-width: none;
@@ -517,13 +531,55 @@ form > wa-button[type="submit"] {
   .login {
     padding-inline: 0;
   }
+  .login__panel {
+    transition:
+      transform 260ms ease,
+      gap 260ms ease;
+  }
   .login__mark {
     width: 132px;
     height: 132px;
+    transition:
+      width 260ms ease,
+      height 260ms ease;
   }
   .login__copy h1,
   .login__copy p {
     font-size: 1.65rem;
+    transition:
+      font-size 260ms ease,
+      line-height 260ms ease;
+  }
+
+  /* Mobile keyboards and their password/formatting accessory bars can cover
+     nearly half the screen without changing the layout viewport. Once a login
+     field has focus, stop centering the full-height composition and compact it
+     into the unobscured upper portion instead. */
+  .login:has(.login__otp:focus-within) {
+    /* Alignment changes are discrete and caused the panel to flash between
+       positions. Keep the centered layout and animate the panel itself into
+       the keyboard-safe upper portion of the viewport. */
+    overflow: hidden;
+  }
+
+  .login:has(.login__otp:focus-within) .login__panel {
+    gap: 1rem;
+    transform: translateY(-20svh);
+  }
+
+  .login:has(.login__otp:focus-within) .login__mark {
+    width: 80px;
+    height: 80px;
+  }
+
+  .login:has(.login__otp:focus-within) .login__copy h1,
+  .login:has(.login__otp:focus-within) .login__copy p {
+    font-size: 1.35rem;
+    line-height: 1.4;
+  }
+
+  .login:has(.login__otp:focus-within) .login__otp::part(segments) {
+    padding-block: 0.5rem;
   }
 }
 
@@ -561,20 +617,34 @@ form > wa-button[type="submit"] {
 }
 
 /* ---- Places setup / edit ---- */
+places-setup {
+  /* Custom elements are inline by default. A block child inside the inline host
+     leaves a line box above it, adding phantom height and page scrolling. */
+  display: block;
+  height: 100%;
+}
 .app__main:has(.places-flow) {
+  position: fixed;
+  inset: 0;
   width: 100%;
   max-width: none;
+  height: auto;
   padding: 0;
   background: var(--surface);
+  overflow: hidden;
 }
 .places-flow {
-  min-height: 100svh;
+  height: 100%;
+  min-height: 0;
   display: grid;
-  place-items: center;
+  align-items: start;
+  justify-items: center;
   background: var(--surface);
   color: var(--text);
   padding: 4rem 1.5rem;
   position: relative;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
 }
 .places-flow__back,
 .home-settings {
@@ -600,7 +670,13 @@ form > wa-button[type="submit"] {
   z-index: 2;
 }
 .places-flow__panel {
-  width: min(100%, 480px);
+  /* Keep the percentage and cap as separate constraints. Safari can use the
+     480px branch of min() as this grid item's intrinsic inline size, allowing
+     a wide form control to push the panel past a phone viewport. */
+  width: 100%;
+  max-width: 480px;
+  min-width: 0;
+  margin-block: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -646,6 +722,11 @@ form > wa-button[type="submit"] {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.places-list > .places-row {
+  /* Web Awesome's native element theme gives every <li> a 1.125em inline
+     start margin. These rows own their numbering, so remove that list indent. */
+  margin: 0;
 }
 .places-row {
   width: 100%;
@@ -694,6 +775,15 @@ form > wa-button[type="submit"] {
   white-space: nowrap;
 }
 .places-row__input::part(input-wrapper) {
+  /* App-level box-sizing resets do not cross the component's shadow root.
+     Web Awesome sets this part to width: 100% with inline padding and borders,
+     so Safari otherwise adds those outside the host and overflows the row. */
+  box-sizing: border-box;
+  /* `auto` fills the host while accounting for this part's own padding and
+     border. A percentage width can still participate in Safari's intrinsic
+     sizing before border-box is resolved. */
+  width: auto;
+  max-width: 100%;
   min-height: 62px;
   border-radius: 8px;
   box-shadow: none;
@@ -1079,7 +1169,9 @@ form > wa-button[type="submit"] {
      first-run single row on its one-column layout; otherwise its only child
      is auto-placed into this rule's 32px number track. */
   .places-row:not(.places-row--single) {
-    grid-template-columns: 32px minmax(0, 1fr) 43px;
+    /* The menu control remains a 62px touch target, so its track must not be
+       narrower than the button or it will paint past the viewport edge. */
+    grid-template-columns: 32px minmax(0, 1fr) 62px;
   }
 }
 
@@ -1137,11 +1229,32 @@ theme-toggle {
 .app--chromeless .app__main {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
+.app--chromeless .app__main:has(.places-flow) {
+  /* The places flow owns its full-viewport spacing. The generic chromeless
+     inset would sit outside its 100svh child and create a 16px page overflow. */
+  padding-top: 0;
+}
 
 .home {
   width: min(100%, 550px);
   max-width: 550px;
   margin-inline: auto;
+}
+
+/* Keep the home route on one deliberate scroll surface. Its shell fills the
+   viewport; the main region scrolls only when the rendered home content is
+   genuinely taller than the available space. */
+today-view {
+  display: block;
+  height: 100%;
+}
+
+.app__main:has(.home) {
+  position: fixed;
+  inset: 0;
+  height: auto;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
 }
 
 .home-region {
@@ -1275,7 +1388,7 @@ theme-toggle {
 .home--first-run {
   max-width: none;
   width: 100%;
-  min-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - 1.5rem);
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1304,10 +1417,7 @@ theme-toggle {
 .screen--first-run {
   width: 100%;
   flex: 1;
-  min-height: min(
-    47rem,
-    calc(100dvh - max(1rem, env(safe-area-inset-top)) - 2rem)
-  );
+  min-height: 0;
   display: flex;
 }
 .screen__sec {
