@@ -16,7 +16,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test:e2e": "npm run test -w e2e",
+    "test:e2e": "npm run e2e -w e2e",
     "dev": "npm run dev --workspace backend",
     "dev:frontend": "npm run dev --workspace frontend",
     "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",

@@ -263,7 +263,7 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | Command | Does |
 |---|---|
 | `npm run test:e2e` | Run the suite **headless** (from repo root) |
-| `npm run test -w e2e` | Same, from the `e2e/` workspace |
+| `npm run e2e -w e2e` | Same, from the `e2e/` workspace |
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
 

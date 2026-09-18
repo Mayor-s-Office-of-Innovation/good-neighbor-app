@@ -53,10 +53,17 @@ test.describe("perimeter check", () => {
       place2.locator(".perimeter-photo--captured img").first(),
     ).toBeVisible({ timeout: 30_000 });
 
-    // Clean verdict: no conditions appear for this place.
-    await expect(place2.locator(".place-row__conditions")).toHaveCount(0, {
-      timeout: 90_000,
-    });
+    // Clean verdict: the analyzed-with-zero-concerns terminal card ("No
+    // issues found") renders in the tray once the pipeline lands for this
+    // item. Waiting for THAT card (rather than asserting absence of
+    // conditions) proves the analysis actually completed for photo 2 — a
+    // failed or stalled analysis would never produce it.
+    const newTray = page.locator('section[aria-label="Analyzing evidence"]');
+    await expect(
+      newTray
+        .locator('.analysis-card[data-card-title="No issues found"]')
+        .first(),
+    ).toBeVisible({ timeout: 90_000 });
 
     // Both places reviewed; the footer reflects evidence rather than analysis
     // in progress.
@@ -75,15 +82,18 @@ test.describe("perimeter check", () => {
     // The NEW results tray (aria-label "New analysis results") holds exactly
     // this check's fresh cards — GET /v1/tasks also returns older persisted
     // tasks from previous runs (DDB Local keeps state), which render in a
-    // separate section. Scope all counting/selection to the NEW tray.
-    const newTray = page.locator('section[aria-label="New analysis results"]');
-    const newTrayCards = newTray.locator(".analysis-card");
+    // separate section. The tray can also re-render as evidence hydrates, so
+    // wait for at least one card instead of reading the count once.
+    const resultsTray = page.locator(
+      'section[aria-label="New analysis results"]',
+    );
+    const newTrayCards = resultsTray.locator(".analysis-card");
 
     // The multi fixture's three conditions resolve into guidance: tents
     // (severity 3 → immediate 311 escalation task) and litter + graffiti
     // (severity 2 → rules that may need an answer before tasking). At least
     // one NEW card must appear for the issues photo; the clean photo adds none.
-    await expect(newTray).toBeVisible({ timeout: 30_000 });
+    await expect(newTrayCards.first()).toBeVisible({ timeout: 30_000 });
     const cardCount = await newTrayCards.count();
     expect(cardCount).toBeGreaterThan(0);
 
