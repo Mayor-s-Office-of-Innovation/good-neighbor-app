@@ -116,43 +116,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "analytics_lake" {
   }
 }
 
-# The export service writes raw export files into raw/AWSDynamoDB/<id>/...
-resource "aws_s3_bucket_policy" "analytics_lake_export" {
-  bucket = aws_s3_bucket.analytics_lake.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "AllowDynamoDbExportWrite"
-        Effect    = "Allow"
-        Principal = { Service = "export.dynamodb.amazonaws.com" }
-        Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:AbortMultipartUpload",
-          "s3:ListBucketMultipartUploads",
-        ]
-        Resource = [
-          aws_s3_bucket.analytics_lake.arn,
-          "${aws_s3_bucket.analytics_lake.arn}/raw/*",
-        ]
-      },
-      {
-        Sid       = "AllowDynamoDbKmsUse"
-        Effect    = "Allow"
-        Principal = { Service = "export.dynamodb.amazonaws.com" }
-        Action    = ["kms:Encrypt", "kms:GenerateDataKey"]
-        Resource  = aws_kms_key.app.arn
-        Condition = {
-          StringEquals = {
-            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
-          }
-        }
-      },
-    ]
-  })
-}
-
 # ---- Export Lambda (scheduled incremental export, watermark in the table) ------
 
 resource "aws_cloudwatch_log_group" "analytics_export" {
@@ -220,9 +183,19 @@ data "aws_iam_policy_document" "analytics_export" {
   }
 
   statement {
+    # DynamoDB evaluates these permissions on the principal that requests the
+    # same-account export; there is no DynamoDB export service principal to put
+    # in the destination bucket policy.
+    sid       = "WriteRawExports"
+    effect    = "Allow"
+    actions   = ["s3:AbortMultipartUpload", "s3:PutObject", "s3:PutObjectAcl"]
+    resources = ["${aws_s3_bucket.analytics_lake.arn}/raw/*"]
+  }
+
+  statement {
     sid       = "UseAppKey"
     effect    = "Allow"
-    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
     resources = [aws_kms_key.app.arn]
   }
 
@@ -316,7 +289,10 @@ resource "aws_lambda_function" "analytics_convert" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.analytics_convert]
+  depends_on = [
+    aws_cloudwatch_log_group.analytics_convert,
+    aws_iam_role_policy.analytics_convert,
+  ]
   tags       = var.tags
 }
 
@@ -339,6 +315,13 @@ data "aws_iam_policy_document" "analytics_convert" {
     effect    = "Allow"
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.analytics_lake.arn}/readings/*"]
+  }
+
+  statement {
+    sid       = "SendToDlq"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.submissions_dlq.arn]
   }
 
   statement {
