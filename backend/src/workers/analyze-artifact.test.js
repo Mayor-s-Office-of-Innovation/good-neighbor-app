@@ -15,6 +15,15 @@ const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
 );
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
+vi.mock("../media/downscale.js", () => ({
+  downscaleImage: vi.fn(
+    async (/** @type {Buffer} */ bytes, /** @type {string} */ contentType) => ({
+      bytes,
+      contentType,
+    }),
+  ),
+  DownscaleError: class DownscaleError extends Error {},
+}));
 vi.mock("../analysis/analyzer-client.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return { ...actual, createAnalyzerClient };
@@ -98,9 +107,17 @@ describe("analyze-artifact worker", () => {
     expect(call.media[1]).toEqual({ type: "text", text: "north gate clear" });
 
     // ANALYSIS# written conditionally with the adapted per-artifact scorecard.
+    // The write lands on a fresh slot OR replaces a failed marker (retry
+    // recovery) — never an existing success.
     const put = ddbSend.mock.calls[0][0];
     expect(put).toBeInstanceOf(PutCommand);
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+    expect(put.input.ConditionExpression).toBe(
+      "attribute_not_exists(sk) OR #st = :failed",
+    );
+    expect(put.input.ExpressionAttributeNames).toEqual({ "#st": "status" });
+    expect(put.input.ExpressionAttributeValues).toEqual({
+      ":failed": "failed",
+    });
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
@@ -127,6 +144,27 @@ describe("analyze-artifact worker", () => {
     expect(max.input.ExpressionAttributeValues[":sev"]).toBe(2);
 
     expect(ddbSend).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses captured coordinates in analyzer metadata and the stored analysis", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke({ ...baseMsg, latitude: 37.7793, longitude: -122.4192 });
+
+    expect(analyze.mock.calls[0][0].metadata).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+    });
+    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      capturedAt: "2026-08-14T12:00:00.000Z",
+    });
   });
 
   it("is idempotent: a redelivered message writes no second analysis or counter", async () => {
@@ -229,6 +267,34 @@ describe("analyze-artifact worker", () => {
     });
   });
 
+  it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    // First delivery: the slot holds a stale FAILED marker (from an earlier
+    // permanent failure) → the conditional write SUCCEEDS (overwrite).
+    ddbSend.mockResolvedValueOnce({});
+
+    await invoke(baseMsg);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.ConditionExpression).toBe(
+      "attribute_not_exists(sk) OR #st = :failed",
+    );
+
+    // Second delivery against an already-analyzed slot → conditional reject →
+    // the message is consumed as a redelivery, not re-analyzed.
+    ddbSend.mockReset();
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    const res = await invoke(baseMsg);
+    expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
+  });
+
   it("marks an unsupported media type as failed without calling the analyzer", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("%PDF"),
@@ -245,6 +311,33 @@ describe("analyze-artifact worker", () => {
       placeId: "place-north",
       placeName: "North",
       error: { code: "unsupported_input_type" },
+    });
+  });
+
+  it("marks undecodable image bytes as failed instead of redelivering", async () => {
+    // The downscale seam mock passes bytes through by default; have it reject
+    // with DownscaleError (corrupt bytes) to drive the permanent path.
+    const downscaleModule = await import("../media/downscale.js");
+    vi.mocked(downscaleModule.downscaleImage).mockRejectedValueOnce(
+      new downscaleModule.DownscaleError(
+        "Undecodable image input (image/jpeg): corrupt",
+      ),
+    );
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("corrupt"),
+      contentType: "image/jpeg",
+    });
+    ddbSend.mockResolvedValue({});
+
+    const res = await invoke(baseMsg);
+
+    // Consumed (no redelivery) + terminal failed marker, like input_too_large.
+    expect(res).toEqual({ batchItemFailures: [] });
+    expect(analyze).not.toHaveBeenCalled();
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item).toMatchObject({
+      status: "failed",
+      error: { code: "undecodable_input" },
     });
   });
 

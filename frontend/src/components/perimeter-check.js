@@ -5,12 +5,20 @@
   The perimeter check is now a place-by-place capture container. Each photo or
   typed description is analyzed independently as soon as it is submitted.
 */
+import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { onDeletionsChange } from "../state/pending-deletions.js";
+import {
+  deleteAnalysisCard,
+  isDeletingAnalysisCard,
+} from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate } from "../router.js";
+import { mark } from "../services/instrument.js";
 import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
+  retryEvidenceItem,
   refreshEvidenceAnalysis,
 } from "../services/photo-analysis.js";
 import {
@@ -23,10 +31,8 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import {
-  appActionFailureMessage,
-  isFiled311Completion,
-} from "../domain/task-actions.js";
+import { isFiled311Completion } from "../domain/task-actions.js";
+import { hasPlaceEvidence } from "../domain/place-evidence.js";
 import {
   ensureCheck,
   startCheck,
@@ -40,8 +46,10 @@ import {
   setActivePlaceIndex,
   addItem,
   skipPlace,
+  removeItem,
   isCurrentSession,
   setPlaceInputMode,
+  reviewPlace,
   addPlaceToCheck,
   getAnalyzingOpen,
   setAnalyzingOpen,
@@ -89,6 +97,10 @@ class PerimeterCheck extends HTMLElement {
 
     this._checkId = getCurrentCheck()?.id || "";
     this._placeIndex = getActivePlaceIndex() ?? 0;
+    this._deletionUnsub?.();
+    this._deletionUnsub = onDeletionsChange(() => {
+      if (this.isConnected && !this._finishing) this._render();
+    });
     this._unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
@@ -347,10 +359,25 @@ class PerimeterCheck extends HTMLElement {
     if (!(target instanceof Element)) return;
     const button = target.closest("[data-analysis-action]");
     if (!button) return;
+    const action = button.getAttribute("data-analysis-action");
+
+    if (action === "retry") {
+      const card = button.closest(".analysis-card");
+      const placeId = card?.getAttribute("data-place-id") || "";
+      const itemId = card?.getAttribute("data-item-id") || "";
+      if (placeId && itemId) retryEvidenceItem(placeId, itemId);
+      return;
+    }
+    if (action === "remove-item") {
+      const card = button.closest(".analysis-card");
+      const placeId = card?.getAttribute("data-place-id") || "";
+      const itemId = card?.getAttribute("data-item-id") || "";
+      if (placeId && itemId) this._removeFailedItem(placeId, itemId);
+      return;
+    }
+
     const card = button.closest(".analysis-card");
     if (!card) return;
-
-    const action = button.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card);
     if (action === "delete") {
       this._openDeleteProblem(problem);
@@ -379,6 +406,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _openDeleteProblem(problem) {
+    if (this._deletingProblem) return;
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
@@ -397,7 +425,7 @@ class PerimeterCheck extends HTMLElement {
 
   async _confirmDeleteProblem() {
     const problem = this._activeProblem;
-    if (!problem) return;
+    if (!problem || this._deletingProblem) return;
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
@@ -406,39 +434,69 @@ class PerimeterCheck extends HTMLElement {
       return;
     }
 
+    this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
+    const focusUndo = button?.matches(":focus-visible") || false;
     this._setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
-      const result = await rejectAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          reason: { key: "not_a_problem" },
-          caller: { request_id: this._requestId("delete", problem) },
+      await deleteAnalysisCard(
+        this,
+        problem,
+        async () => {
+          let result;
+          try {
+            result = await rejectAnalysisCondition(
+              problem.checkId,
+              problem.artifactId,
+              problem.conditionId,
+              {
+                reason: { key: "not_a_problem" },
+                ...(problem.taskId ? { taskId: problem.taskId } : {}),
+                caller: { request_id: this._requestId("delete", problem) },
+              },
+            );
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status !== 404) throw err;
+            if (getCurrentCheck()?.id === problem.checkId)
+              this._deleteProblemLocally(problem);
+            return;
+          }
+          if (!result?.assessment) {
+            this._deleteProblemLocally(problem);
+            return;
+          }
+          if (
+            getCurrentCheck()?.id === problem.checkId &&
+            problem.placeId &&
+            problem.itemId
+          ) {
+            await refreshEvidenceAnalysis(
+              problem.placeId,
+              problem.itemId,
+              result,
+              {
+                rejectedConditionId: problem.conditionId,
+              },
+            ).catch((error) => {
+              console.error("refresh after saved deletion failed", error);
+              if (getCurrentCheck()?.id === problem.checkId)
+                this._deleteProblemLocally(problem);
+            });
+          }
         },
+        () => this._render(),
+        { focusUndo },
       );
-      await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result, {
-        rejectedConditionId: problem.conditionId,
-      });
-      this._analysisDeleteDialog?.close();
       this._activeProblem = null;
-      this._render();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        this._deleteProblemLocally(problem);
-        this._analysisDeleteDialog?.close();
-        this._activeProblem = null;
-        this._showToast("Problem deleted.");
-        return;
-      }
       console.error("delete analysis condition failed", err);
       this._setDialogError(
         "analysis-delete-error",
         "Could not delete this problem. Please try again.",
       );
     } finally {
+      this._deletingProblem = false;
       this._setBusy(button, false);
     }
   }
@@ -459,7 +517,7 @@ class PerimeterCheck extends HTMLElement {
         problem.conditionId,
       ].filter(Boolean),
     });
-    this._render();
+    if (this.isConnected) this._render();
   }
 
   async _saveProblemEdit() {
@@ -552,19 +610,15 @@ class PerimeterCheck extends HTMLElement {
         });
         this._analysisProgressDialog?.close();
         if (!isFiled311Completion(result?.task)) {
-          this._showToast(
-            appActionFailureMessage(result?.task, {
-              includeUnsubmitted311: true,
-            }) || "Could not file the 311 ticket. Please try again.",
-          );
+          show311ErrorToast();
           return;
         }
         this._markProblemResolved(problem);
-        this._showToast("Success! 311 ticket filed.");
+        show311SuccessToast();
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
-        this._showToast("Could not file the 311 ticket. Please try again.");
+        show311ErrorToast();
       }
       return;
     }
@@ -632,6 +686,48 @@ class PerimeterCheck extends HTMLElement {
     this._render();
   }
 
+  /** Drop a failed, never-uploaded photo from the session entirely. */
+  _removeFailedItem(placeId, itemId) {
+    const check = getCurrentCheck();
+    const item = check?.places?.[placeId]?.items?.find(
+      (candidate) => candidate.id === itemId,
+    );
+    if (!item) return;
+    if (item.upload?.status === "uploaded") return;
+    removeItem(placeId, itemId);
+  }
+
+  /**
+   * Keep the pending card's elapsed timer live between renders. The card
+   * carries `data-elapsed-since` (the stage timestamp); this ticker rewrites
+   * the text in place every second — no re-render, no state churn.
+   */
+  _startElapsedTicker() {
+    this._stopElapsedTicker();
+    const tick = () => {
+      for (const el of this.querySelectorAll("[data-elapsed-since]")) {
+        const since = el.getAttribute("data-elapsed-since");
+        const start = since ? Date.parse(since) : NaN;
+        if (Number.isFinite(start)) {
+          const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
+          const minutes = Math.floor(seconds / 60);
+          const rest = seconds % 60;
+          el.textContent =
+            minutes > 0 ? ` ${minutes}m ${rest}s` : ` ${seconds}s`;
+        }
+      }
+    };
+    tick();
+    this._elapsedTicker = window.setInterval(tick, 1000);
+  }
+
+  _stopElapsedTicker() {
+    if (this._elapsedTicker) {
+      window.clearInterval(this._elapsedTicker);
+      this._elapsedTicker = null;
+    }
+  }
+
   _setDialogError(id, message) {
     const error = this.querySelector(`#${id}`);
     if (!error) return;
@@ -660,6 +756,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _done() {
+    if (this._hasUnsavedNote()) {
+      this._showDoneIncomplete(0, { unsavedNote: true });
+      return;
+    }
     const incompleteCount = this._incompletePlaceCount();
     if (incompleteCount > 0) {
       this._showDoneIncomplete(incompleteCount);
@@ -670,8 +770,10 @@ class PerimeterCheck extends HTMLElement {
 
   async _finishCheck() {
     const check = getCurrentCheck();
+    this._discardUnsavedNotes(check);
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
     this._doneIncompleteDialog?.close();
@@ -700,6 +802,7 @@ class PerimeterCheck extends HTMLElement {
 
   _exitCapture() {
     this._finishing = true;
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
     if (this._embedded) {
@@ -722,19 +825,42 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _placeHasPhotoOrDescription(place) {
-    return Boolean(
-      place.items?.some(
-        (item) => item.kind === "photo" || item.kind === "text",
-      ) ||
-        place.description?.validated ||
-        place.draftText?.trim(),
+    return hasPlaceEvidence(place);
+  }
+
+  _hasUnsavedNote() {
+    const check = getCurrentCheck();
+    if (!check) return false;
+    return (check.placeOrder || []).some((placeId) =>
+      Boolean(check.places[placeId]?.draftText?.trim()),
     );
   }
 
-  _showDoneIncomplete(incompleteCount) {
+  _discardUnsavedNotes(check) {
+    for (const placeId of check?.placeOrder || []) {
+      if (check.places[placeId]?.draftText?.trim()) {
+        setPlaceDraftText(placeId, "");
+      }
+    }
+  }
+
+  _showDoneIncomplete(incompleteCount, { unsavedNote = false } = {}) {
+    const title = this.querySelector("#done-incomplete-title");
     const copy = this.querySelector("#done-incomplete-copy");
-    const noun = incompleteCount === 1 ? "place does" : "places do";
-    copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
+    const finish = this.querySelector("#done-incomplete-finish");
+    const keep = this.querySelector("#done-incomplete-keep");
+    if (unsavedNote) {
+      title.textContent = "Finish check?";
+      copy.textContent = "You have an unsaved note";
+      keep.textContent = "Keep editing";
+      finish.textContent = "Discard and finish";
+    } else {
+      title.textContent = "Finish check?";
+      const noun = incompleteCount === 1 ? "place does" : "places do";
+      copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
+      keep.textContent = "Keep editing";
+      finish.textContent = "Finish check";
+    }
     this._doneIncompleteDialog?.showModal();
   }
 
@@ -759,7 +885,11 @@ class PerimeterCheck extends HTMLElement {
   _advanceOrSkip(placeId) {
     const place = getPlace(placeId);
     if (!place) return;
-    if (!place.items.length) skipPlace(placeId);
+    if (!shouldReviewPlace(place)) {
+      skipPlace(placeId);
+    } else {
+      reviewPlace(placeId);
+    }
     const index = this._places.indexOf(placeId);
     this._placeIndex = Math.min(index + 1, this._places.length - 1);
     setActivePlaceIndex(this._placeIndex);
@@ -769,6 +899,12 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _openCamera() {
+    // Trace the tap → file-picker handoff: if the picker never opens (in-app
+    // webview, OS restriction), the logs show the tap with no "picked" line
+    // after it — the field demo "photo button did nothing" signature.
+    mark("camera:open", {
+      placeId: this._pendingPhotoPlaceId || this._placeId,
+    });
     this._fileInput.value = "";
     this._fileInput.click();
   }
@@ -776,6 +912,7 @@ class PerimeterCheck extends HTMLElement {
   _onFilePicked() {
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    mark("camera:picked", { bytes: file.size, type: file.type });
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
@@ -878,6 +1015,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _render() {
+    if (isDeletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
     const timeline = this.querySelector("#place-timeline");
@@ -890,6 +1028,7 @@ class PerimeterCheck extends HTMLElement {
             index,
             expanded: index === this._placeIndex,
             isLast: index === this._places.length - 1,
+            nextPlaceName: check.places[this._places[index + 1]]?.name,
             openMenuItemId,
             photoMenuAnchor: this._photoMenuAnchor,
           }),
@@ -912,6 +1051,7 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#add-place-open")?.addEventListener("click", () =>
       this._addPlaceDialog.showModal(),
     );
+    this._startElapsedTicker();
   }
 
   _allEvidence() {
@@ -926,7 +1066,9 @@ class PerimeterCheck extends HTMLElement {
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
+    this._stopElapsedTicker();
     document.removeEventListener("click", this._documentClick);
+    this._deletionUnsub?.();
     this._unsubscribe?.();
     clearTimeout(this._toastTimer);
   }
@@ -950,6 +1092,10 @@ export function shouldResumeEvidenceItem(item) {
       (analysisStatus === "failed" &&
         (hasUploadedArtifact || isRetryableTextRegistration)),
   );
+}
+
+export function shouldReviewPlace(place) {
+  return hasPlaceEvidence(place);
 }
 
 export function findReviewTextButton(root, placeId) {

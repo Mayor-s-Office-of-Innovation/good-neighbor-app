@@ -15,17 +15,33 @@ npm run dev:lan -w frontend # launches vite with external friendly config
 
 First run shows the site-setup screen. To get it back after binding a site you can logout.
 
+## Design system reference (dev-only)
+
+`npm run dev -w frontend`, then open **http://127.0.0.1:5173/design-system.html** — a
+self-demonstrating page rendering every button state, the tokens (live values, light +
+dark), and where we deliberately diverge from off-the-shelf Web Awesome. It imports the
+real `tokens.css`/`app.css`, so it can't drift. Dev-only: `vite build` ships only the app's
+`index.html`.
+
+## Routes
+
+- `/today` — the home hub (worklist, last log, Start/Flag CTAs)
+- `/check` — perimeter check capture
+- `/problem` — single-issue capture (with `/problem/describe` and `/check/describe` variants)
+
+First-run site setup is enforced by `app-root`, not by a route.
+
 ## Layout
 
 ```text
 src/
   components/   web components — one <thing>.js (+ optional <thing>.templates.js for markup)
   styles/       tokens.css (design tokens) · app.css (component classes) · wa-*.css (vendored WA)
-  services/     backend/analyzer/onboarding calls
+  services/     backend API calls (services/api.js is the seam)
   state/        check-session and other app state
-  demo/         demo seed — ?demo= param populates IndexedDB for stakeholder demos
+  domain/       read-model adapters (backend items → UI records)
   lib/          html tag helper, escaping
-  db.js         IndexedDB (site binding + saved checks)
+  db.js         IndexedDB (site binding + resumable draft + review-backed session)
   router.js     tiny History-API router
 ```
 

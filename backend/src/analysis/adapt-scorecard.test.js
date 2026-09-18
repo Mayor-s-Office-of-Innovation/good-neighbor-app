@@ -30,12 +30,35 @@ describe("adaptAssessment", () => {
       category: "Litter",
       rating: 2,
       ratingLabel: "Minor: Increasing quantity, size, or spatial impact",
+      userFriendlyLabel: "Trash scattered along curb",
       explanation:
         "Several wrappers and a plastic bag scattered along the curb.",
       evidenceIndices: [0],
     });
     expect(adapted.issueCount).toBe(1);
     expect(adapted.maxSeverity).toBe(2);
+  });
+
+  it("projects the analyzer's user-friendly condition label", () => {
+    const response = {
+      ...singleLowConcernResponse,
+      assessment: {
+        ...singleLowConcernResponse.assessment,
+        identified_conditions_of_concern: [
+          {
+            ...singleLowConcernResponse.assessment
+              .identified_conditions_of_concern[0],
+            user_friendly_label: "Trash scattered along curb",
+          },
+        ],
+      },
+    };
+
+    const adapted = adaptAssessment(response);
+
+    expect(adapted.concerns[0].userFriendlyLabel).toBe(
+      "Trash scattered along curb",
+    );
   });
 
   it("drops confidence/definition and does not compute a total_score", () => {

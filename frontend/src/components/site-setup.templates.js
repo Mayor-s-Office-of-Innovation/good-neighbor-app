@@ -77,7 +77,7 @@ function enterCodeView({ value, error, checking }) {
           : "Continue"}
       </button>
     </form>
-    <button id="show-request-code" class="login__link" type="button">
+    <button id="show-request-code" class="btn-link" type="button">
       Need a new code?
     </button>
   `;
@@ -158,7 +158,7 @@ function requestCodeView({
           : "Send code"}
       </button>
     </form>
-    <button id="show-code-entry" class="login__link" type="button">
+    <button id="show-code-entry" class="btn-link" type="button">
       Enter a code instead
     </button>
     <p class="login__hint" ${searching ? "" : "hidden"}>Searching...</p>

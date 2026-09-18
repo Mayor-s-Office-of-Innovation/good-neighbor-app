@@ -8,8 +8,21 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, geocodeAddress } = vi.hoisted(() => ({
+  send: vi.fn(),
+  geocodeAddress: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../integrations/census-geocoder.js", () => ({
+  GeocodingError: class GeocodingError extends Error {
+    /** @param {string} code */
+    constructor(code) {
+      super(code);
+      this.code = code;
+    }
+  },
+  geocodeAddress,
+}));
 
 const {
   createMasterContact,
@@ -26,11 +39,52 @@ const {
 
 beforeEach(() => {
   send.mockReset();
+  geocodeAddress.mockReset();
+  geocodeAddress.mockResolvedValue({
+    latitude: 37.7793,
+    longitude: -122.4192,
+    matchedAddress: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+  });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
 
 describe("admin authorization", () => {
+  it.each([
+    "central-admin",
+    "[central-admin]",
+    "[support, central-admin]",
+    '["support","central-admin"]',
+    ["support", "central-admin"],
+  ])(
+    "accepts exact membership in supported claim format %j",
+    async (groups) => {
+      send.mockResolvedValue({ Items: [] });
+      const res = await call(listProviders, event(undefined, groups));
+      expect(res.statusCode).toBe(200);
+    },
+  );
+
+  it.each([
+    "",
+    "not-central-admin",
+    "[not-central-admin]",
+    "[central-admin-readonly]",
+    "[support central-admin]",
+    "[central-admin",
+    '["central-admin-readonly"]',
+    { role: "central-admin" },
+    ["not-central-admin"],
+    null,
+  ])(
+    "rejects missing, malformed, or nonmatching membership %j",
+    async (groups) => {
+      const res = await call(listProviders, event(undefined, groups));
+      expect(res.statusCode).toBe(403);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects callers outside the central-admin group", async () => {
     const res = await call(listProviders, event(undefined, ""));
     expect(res.statusCode).toBe(403);
@@ -66,9 +120,16 @@ describe("provider and site management", () => {
 
     const res = await call(
       createSite,
-      event({ name: "Main Site" }, "central-admin", {
-        providerId: "provider-one",
-      }),
+      event(
+        {
+          name: "Main Site",
+          address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+        },
+        "central-admin",
+        {
+          providerId: "provider-one",
+        },
+      ),
     );
 
     expect(res.statusCode).toBe(201);
@@ -110,7 +171,27 @@ describe("provider and site management", () => {
       siteId: "provider-one-main-site",
       providerId: "provider-one",
       name: "Main Site",
+      address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+      location: { latitude: 37.7793, longitude: -122.4192 },
     });
+  });
+
+  it("rejects unknown providers before geocoding the site address", async () => {
+    send.mockResolvedValueOnce({});
+
+    const res = await call(
+      createSite,
+      event(
+        { name: "Main Site", address: "1 Dr Carlton B Goodlett Pl" },
+        "central-admin",
+        { providerId: "missing-provider" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "provider_not_found" });
+    expect(geocodeAddress).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("does not write site companion records outside the create transaction", async () => {
@@ -129,9 +210,13 @@ describe("provider and site management", () => {
     await expect(
       call(
         createSite,
-        event({ name: "Main Site" }, "central-admin", {
-          providerId: "provider-one",
-        }),
+        event(
+          { name: "Main Site", address: "1 Dr Carlton B Goodlett Pl" },
+          "central-admin",
+          {
+            providerId: "provider-one",
+          },
+        ),
       ),
     ).rejects.toMatchObject({ name: "TransactionCanceledException" });
 
@@ -346,6 +431,8 @@ describe("provider and site management", () => {
           name: "City Hall",
           providerSiteId: "provider-site-1",
           status: "active",
+          address: "1 Dr Carlton B Goodlett Pl",
+          location: { latitude: 37.7793, longitude: -122.4192 },
         },
       })
       .mockResolvedValueOnce({ Items: [] })
@@ -475,7 +562,11 @@ describe("provider and site management", () => {
 
     const res = await call(
       updateSite,
-      event({ name: "Civic Center" }, "central-admin", { siteId: "site-1" }),
+      event(
+        { name: "Civic Center", address: "1 Dr Carlton B Goodlett Pl" },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
     );
 
     expect(res.statusCode).toBe(200);
@@ -506,13 +597,63 @@ describe("provider and site management", () => {
     expect(JSON.parse(res.body).site).toMatchObject({
       siteId: "site-1",
       name: "Civic Center",
+      address: "1 Dr Carlton B Goodlett Pl",
+    });
+  });
+
+  it("requires an address when creating a site", async () => {
+    const res = await call(
+      createSite,
+      event({ name: "Main Site" }, "central-admin", {
+        providerId: "provider-one",
+      }),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "address_required" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("geocodes an address added to an existing site", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerId: "provider-one",
+          providerName: "Provider One",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        { name: "City Hall", address: "1 Dr Carlton B Goodlett Pl" },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(geocodeAddress).toHaveBeenCalledWith("1 Dr Carlton B Goodlett Pl");
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx.input.TransactItems?.[0]).toMatchObject({
+      Update: {
+        ExpressionAttributeValues: {
+          ":address": "1 Dr Carlton B Goodlett Pl",
+          ":location": { latitude: 37.7793, longitude: -122.4192 },
+        },
+      },
     });
   });
 });
 
 /**
  * @param {unknown} [body]
- * @param {string} [groups]
+ * @param {unknown} [groups]
  * @param {Record<string,string>} [pathParameters]
  * @returns {any}
  */

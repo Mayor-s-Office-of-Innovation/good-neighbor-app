@@ -1,3 +1,4 @@
+import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
 /**
@@ -6,6 +7,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [category]
  * @property {string} [analyzerCategory]
  * @property {string} [canonicalCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [description]
  * @property {{ key?: string, prompt?: string, options?: { label?: string, value?: boolean }[] } | null} [needsAnswer]
  */
@@ -20,6 +23,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [conditionId]
  * @property {string} [category]
  * @property {string} [analyzerCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
  * @property {string} [guidance]
@@ -38,6 +43,10 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  */
 
 /**
+ * @typedef {{ uploaded?: string, sent?: string, waiting?: string }} AnalysisStages
+ */
+
+/**
  * @typedef {object} AnalysisState
  * @property {string} [status]
  * @property {string} [artifactId]
@@ -50,6 +59,9 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string[]} [rejectedConditionIds]
  * @property {boolean} [hideNoIssuesCard]
  * @property {string} [noIssuesDescription]
+ * @property {string} [error]
+ * @property {AnalysisStages} [stages] progress checkpoints (uploaded / sent ISO stamps)
+ * @property {{ leg?: string, uploaded?: boolean, enqueued?: boolean, waitedMs?: number, backendError?: boolean }} [failure]
  */
 
 /**
@@ -83,6 +95,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [assessmentId]
  * @property {string} [category]
  * @property {string} [analyzerCategory]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
  * @property {string} [guidance]
@@ -177,6 +191,7 @@ export function analysisResultsTray(
  */
 export function analysisCards(item, sessionCheckId) {
   const status = item.analysis?.status || "idle";
+  if (status === "failed") return [failedCard(item)];
   if (status !== "analyzed") return [pendingCard(item)];
   const { hiddenConditionIds, visibleTasks, visibleConditions } =
     visibleProblemSelection(item);
@@ -352,6 +367,17 @@ function taskMetaLabel(task, isNew) {
 }
 
 function pendingCard(item) {
+  const stages = item.analysis?.stages || {};
+  const uploadFailedEarly =
+    item.kind !== "text" &&
+    !stages.uploaded &&
+    item.upload?.status === "failed";
+  const headline =
+    item.kind === "text"
+      ? "Analyzing description..."
+      : stages.uploaded
+        ? "Photo uploaded"
+        : "Uploading photo...";
   return html`
     <article class="analysis-card analysis-card--pending analysis-card--new">
       <div class="analysis-card__content">
@@ -364,13 +390,172 @@ function pendingCard(item) {
           />
           IN PROGRESS
         </p>
-        <h3>Analyzing ${item.kind === "text" ? "description" : "photo"}...</h3>
-        <span class="skeleton-line skeleton-line--wide"></span>
-        <span class="skeleton-line skeleton-line--mid"></span>
+        <h3>${headline}</h3>
+        ${item.kind === "text"
+          ? ""
+          : html`
+              <ul class="analysis-card__stages">
+                ${stageRow(
+                  "Photo uploaded",
+                  stages.uploaded,
+                  !uploadFailedEarly,
+                )}
+                ${stageRow("Sent to analyzer", stages.sent, stages.uploaded)}
+              </ul>
+            `}
+        ${stages.sent
+          ? html`<p class="analysis-card__waiting">
+              Waiting for results<span
+                class="analysis-card__elapsed"
+                data-elapsed-since="${escapeAttr(stages.sent)}"
+              ></span>
+            </p>`
+          : html`<span class="skeleton-line skeleton-line--wide"></span>
+              <span class="skeleton-line skeleton-line--mid"></span>`}
       </div>
       ${evidencePreview(item)}
     </article>
   `;
+}
+
+/**
+ * One progress row. The state is IN THE TEXT ("Done"/"In progress") so screen
+ * readers hear it — the ✓/• glyph is decoration (aria-hidden) and never the
+ * sole carrier.
+ * @param {string} label
+ * @param {string | undefined} stamp stage timestamp (set = done)
+ * @param {boolean} reached has the pipeline reached this stage (vs skipped by an early failure)
+ * @returns {string}
+ */
+function stageRow(label, stamp, reached) {
+  return html`
+    <li
+      class="analysis-card__stage ${stamp
+        ? "is-done"
+        : reached
+          ? "is-active"
+          : ""}"
+    >
+      <span class="analysis-card__stage-mark" aria-hidden="true"
+        >${stamp ? "✓" : "•"}</span
+      >
+      <span class="visually-hidden">${stamp ? "Done. " : "In progress. "}</span>
+      <span>${escapeHtml(label)}</span>
+    </li>
+  `;
+}
+
+/**
+ * A failed card: what happened, what had already succeeded, how long we
+ * waited, and a Try-again button. Un-uploaded photos also offer Remove.
+ * @param {AnalysisItem} item
+ * @returns {string}
+ */
+function failedCard(item) {
+  const failure = item.analysis?.failure || {};
+  const stages = item.analysis?.stages || {};
+  const uploaded = Boolean(failure.uploaded || stages.uploaded);
+  const waited = formatWaited(failure.waitedMs);
+  const sent = uploaded && failure.leg !== "upload";
+  const reason = failureReasonLine(failure, item);
+  return html`
+    <article
+      class="analysis-card analysis-card--failed analysis-card--new"
+      data-place-id="${escapeAttr(item.placeId || "")}"
+      data-item-id="${escapeAttr(item.id || "")}"
+    >
+      <div class="analysis-card__content">
+        <p class="analysis-card__meta">
+          <img
+            class="analysis-card__star"
+            src="/icons/star.svg"
+            alt=""
+            aria-hidden="true"
+          />
+          COULDN'T FINISH
+        </p>
+        <h3>
+          ${failure.leg === "upload"
+            ? "Upload failed"
+            : "Analysis didn't finish"}
+        </h3>
+        <ul class="analysis-card__stages">
+          ${stageRow(
+            item.kind === "text" ? "Note saved" : "Photo uploaded",
+            uploaded ? new Date().toISOString() : "",
+            true,
+          )}
+          ${stageRow(
+            "Sent to analyzer",
+            sent ? new Date().toISOString() : "",
+            uploaded,
+          )}
+        </ul>
+        <p class="analysis-card__failure-reason">
+          ${escapeHtml(reason)}${waited
+            ? html` Waited ${escapeHtml(waited)}.`
+            : ""}
+        </p>
+        <div class="analysis-card__actions">
+          <button
+            class="analysis-card__primary wa-plain"
+            type="button"
+            data-analysis-action="retry"
+          >
+            <wa-icon name="arrow-rotate-right" aria-hidden="true"></wa-icon>
+            Try again
+          </button>
+          ${item.kind === "photo" && !uploaded
+            ? html`<button
+                class="analysis-card__icon analysis-card__icon--danger wa-plain"
+                type="button"
+                aria-label="Remove photo"
+                data-analysis-action="remove-item"
+              >
+                <wa-icon name="trash" aria-hidden="true"></wa-icon>
+              </button>`
+            : ""}
+        </div>
+      </div>
+      ${evidencePreview(item)}
+    </article>
+  `;
+}
+
+/**
+ * Human line for the failing leg, naming what to do next. Every string names
+ * both the step that failed and what to do — no two failure modes read alike.
+ * @param {{ leg?: string, backendError?: boolean }} failure
+ * @param {AnalysisItem} item
+ * @returns {string}
+ */
+function failureReasonLine(failure, item) {
+  switch (failure.leg) {
+    case "upload":
+      return "We couldn't reach the server to upload. Check your connection and try again.";
+    case "analyze":
+      return failure.backendError
+        ? "The analysis service couldn't process this one."
+        : item.kind === "text"
+          ? "The analysis is taking longer than expected."
+          : "The analysis is taking longer than expected. Your photo is saved — trying again picks up where it left off.";
+    case "evaluate":
+      return "We got the results but couldn't finish the guidance step.";
+    default:
+      return "We couldn't start this one. Check your connection and try again.";
+  }
+}
+
+/**
+ * @param {number | undefined} ms
+ * @returns {string} "" under a second; otherwise e.g. "2m 5s"
+ */
+function formatWaited(ms) {
+  if (typeof ms !== "number" || ms < 1000) return "";
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 function completedEvidenceCard(
@@ -484,6 +669,8 @@ function completedEvidenceCard(
 
 function displayCategory(record) {
   return (
+    record?.userFriendlyLabel ||
+    record?.user_friendly_label ||
     record?.category ||
     record?.analyzerCategory ||
     record?.canonicalCategory ||
@@ -614,6 +801,10 @@ export function problemSummaryLabel({ visible, hidden }) {
 function hiddenConditionIdSet(item) {
   return new Set(
     [
+      ...pendingDeletedConditionIds({
+        checkId: item.analysis?.checkId || item.checkId,
+        artifactId: item.analysis?.artifactId || item.upload?.artifactId,
+      }),
       ...(item.analysis?.resolvedConditionIds || []),
       ...(item.analysis?.rejectedConditionIds || []),
     ].filter(Boolean),

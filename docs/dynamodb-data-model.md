@@ -76,6 +76,10 @@ without a separate timestamp in the key.
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, places, issueCount, maxSeverity; **+ synthesized scorecard at `complete`** (see note) |
 | **Artifact** (per place) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<placeId>#<artifactId>` | placeId, placeName, S3 keys, text, capturedAt |
+
+The single-issue flow (`/problem`, single-issue capture) reuses the same capture machinery
+with a **synthetic place** — one fixed `placeId` (e.g. `"problem"`) whose only artifact is a
+registered text artifact. Places remain a check-structure concept; no special item shapes.
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
@@ -294,3 +298,22 @@ R1 (GSI3) and R2's buildout are post-MVP, tracked on the issue tracker; the rest
 4. **Single table** — confirmed, for the `LeadingKeys` isolation rationale.
 5. **Per-place artifact model** — multiple artifacts per place supported (`SK` includes
    `<artifactId>`); in use.
+
+### Guidance refresh lineage
+
+`GUIDANCE_CURRENT#<JSON [checkId, lineageId]>` items in the site's base partition
+point to the current assessment for an artifact. The lineage is its artifact ID;
+artifact-less API assessments use their original assessment ID. Publishing a
+refresh atomically advances this pointer, marks the predecessor with
+`supersededByAssessmentId` and `lineageId`, writes the new assessment/conditions,
+and supersedes open tasks for changed or removed conditions. Completed tasks
+remain historical records; a completing task blocks replacement until it settles.
+The predecessor revision check also protects concurrent answers. Answer writes
+reject replaced assessments. Historical guidance reads resolve through the pointer.
+
+Existing assessments acquire the pointer and predecessor marker on their first
+refresh, without a data migration. Artifact-less conditions retain answers only
+when both revisions have an explicit condition ID (`explicitConditionId`), the
+same lineage, and matching policy/category/severity/description. Empty evidence
+lists alone do not establish identity. Task retirement is deferred until guidance
+publication succeeds; analyzer amendments alone no longer retire tasks.

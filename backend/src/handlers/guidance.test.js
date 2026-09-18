@@ -93,7 +93,12 @@ describe("guidance handlers", () => {
             },
             general_conditions: { label: "Poor", description: "x" },
             identified_conditions_of_concern: [
-              { category: "Litter", severity: 3, description: "trash" },
+              {
+                category: "Litter",
+                severity: 3,
+                user_friendly_label: "Lots of trash in tree well",
+                description: "trash",
+              },
             ],
           },
         },
@@ -115,6 +120,7 @@ describe("guidance handlers", () => {
     });
     expect(writes[1].Put.Item).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
+      userFriendlyLabel: "Lots of trash in tree well",
       source: {
         latitude: 37.7,
         longitude: -122.4,
@@ -124,6 +130,7 @@ describe("guidance handlers", () => {
     expect(writes[2].Put.Item).toMatchObject({
       ruleId: "LITTER-2",
       shortId: "MOI-CIT-001",
+      userFriendlyLabel: "Lots of trash in tree well",
     });
     expect(parse(res).tasks).toHaveLength(1);
   });
@@ -526,4 +533,33 @@ describe("guidance handlers", () => {
       error: "Task completion already in progress",
     });
   });
+});
+
+it("resolves a replaced assessment through the current pointer", async () => {
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) return { Items: [] };
+    if (command instanceof GetCommand) {
+      const sk = command.input.Key?.sk;
+      if (sk === "ASSESSMENT#old")
+        return {
+          Item: {
+            assessmentId: "old",
+            checkId: "check",
+            lineageId: "artifact",
+            supersededByAssessmentId: "middle",
+          },
+        };
+      if (String(sk).startsWith("GUIDANCE_CURRENT#"))
+        return { Item: { assessmentId: "latest" } };
+      if (sk === "ASSESSMENT#latest")
+        return { Item: { assessmentId: "latest" } };
+    }
+    throw new Error("Unexpected database access");
+  });
+  const response = await invoke(
+    getGuidance,
+    event({ pathParameters: { assessmentId: "old" } }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(parse(response).assessment.assessmentId).toBe("latest");
 });

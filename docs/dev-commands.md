@@ -35,6 +35,18 @@ The dark/light theme toggle is hidden by default. Add the `?themeToggle` URL par
 (e.g. `http://localhost:5173/today?themeToggle`). It's per-load — the toggle shows only while that
 param is in the current URL. OS-following theming still applies regardless of the param.
 
+The toggle cycles **follow-OS → forced-opposite → follow-OS**. A manual choice persists per-device
+in localStorage key `theme-override` — so if the app shows light while your OS is dark (or vice
+versa), a stale override is why. To reset to default OS-following behavior:
+
+```js
+localStorage.removeItem("theme-override"); // or: window.__theme.set("os")
+```
+
+(The page doesn't need a reload — the inline listener re-applies immediately, and it also
+re-applies on live OS changes while no override is set. DevTools alternative: Rendering tab →
+"Emulate CSS media feature prefers-color-scheme" emulates the OS itself.)
+
 ### In-app browser camera (`?webcam`)
 
 Photo capture defaults to the **native camera** handoff (a hidden `<input type="file"
@@ -89,21 +101,30 @@ Evangelist / The Gubbio Project, and `000-000` is seeded inactive.
 
 First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
 binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current` — the
-site name plus the setup code). To get the setup screen back, delete that one record
-(surgical — leaves any saved checks intact):
+site name plus the setup code). To get the setup screen back:
 
-- **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` → right-click
-  the `current` row → Delete, then reload.
-- **Console:**
-  ```js
-  indexedDB.open('conditions-reporter').onsuccess = e =>
-    e.target.result.transaction('site', 'readwrite').objectStore('site').delete('current');
-  ```
-  then reload.
+- **Dev reset route (easiest):** open **`/dev/reset-first-launch`** (dev builds only, e.g.
+  `http://localhost:5173/dev/reset-first-launch`). It clears the site binding **and** any
+  in-progress draft, rewrites the URL to `/today`, and shows the setup screen immediately —
+  no DevTools, no reload. (After re-binding, places-setup shows on its own if the site has no
+  confirmed places; there is no separate reset route for places.)
+- **Surgical (leaves any saved checks intact):**
+  - **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
+    right-click the `current` row → Delete, then reload.
+  - **Console:**
+    ```js
+    indexedDB.open('conditions-reporter').onsuccess = e =>
+      e.target.result.transaction('site', 'readwrite').objectStore('site').delete('current');
+    ```
+    then reload.
 
 To wipe everything (binding **and** saved checks) instead: `indexedDB.deleteDatabase('conditions-reporter')`
 then reload. (The app holds an open connection, so a full delete may block until you reload or
-close the tab — the surgical per-record delete above does not.)
+close the tab — the dev reset route and the surgical per-record delete above do not.)
+
+> Note: `localStorage` holds other dev prefs — the theme override (`theme-override`) and the
+> camera mode (`gnp.captureMode`) — which IndexedDB deletes do **not** touch. See
+> [Theme toggle](#theme-toggle-darklight) and the webcam section above.
 
 ## Backend local harness (Docker-free)
 
@@ -169,8 +190,13 @@ Re-POSTing with the same `idempotency-key` flips the stored item's status to `du
 
 ### Fake SF311 server
 
-To test 311 filing locally without calling HUB, start the fake endpoint in a
-separate terminal:
+`npm run dev -w backend` starts the fake server alongside the API and worker.
+The root `.env.example` enables filing against this fake; copy its `GNP_311_*`
+and `SF311_*` settings into an older `.env.local` and restart the API and worker
+if filing reports `feature_disabled`. A missing enable flag disables filing
+before any network call; this is not a browser localhost restriction.
+
+To run the fake endpoint separately:
 
 ```bash
 npm run local:sf311 -w backend
@@ -211,6 +237,10 @@ curl -X DELETE http://127.0.0.1:3999/requests
 > **Seed data note.** A fresh `npm run dev` seeds only provider/site login
 > codes and site metadata. It does not seed checks, artifacts, analyses, tasks,
 > or submission receipts; those appear after you submit through the local loop.
+
+Local DynamoDB records persist in `backend/.local/dynamodb-data/` across stack
+restarts (alongside the existing persistent MinIO files). Restart only
+`local:api` / `local:worker` when changing their environment configuration.
 
 **Teardown:** `Ctrl-C` in the `npm run dev` terminal stops all services cleanly (no orphaned
 JVM/MinIO/node processes).

@@ -5,7 +5,7 @@
   deep links / refreshes don't 404 (that fallback is provisioned with the deploy
   stage; Vite's dev/preview server already serves the SPA fallback locally).
 
-  Routes: /today (home 5a/5b), /check (capture 5c), /review (5d), /results (5e).
+  Routes: /today (home), /check (capture), /problem (single-issue capture).
   First-run site setup is enforced by app-root, not by a route.
 */
 const listeners = new Set();
