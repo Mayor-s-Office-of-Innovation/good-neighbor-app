@@ -250,3 +250,51 @@ JVM/MinIO/node processes).
 Use ```npm run dev:lan -w frontend```
 
 This will print out IP address you can use from external phone to access the app on the same network as your machine that is running it
+
+## End-to-end tests (Playwright)
+
+Clickable, browser-driven tests that exercise the real field app against the full
+local harness: backend (API + DDB Local + ElasticMQ + MinIO + SF311 fake) behind
+the Vite dev server, plus a **local analyzer stub** that serves canned analyze
+verdicts (no real analyzer key needed — works identically in CI). Playwright
+boots and tears down every process via `webServer`; the only prerequisite is
+`npm install` (plus JRE 17+ for the harness itself).
+
+| Command | Does |
+|---|---|
+| `npm run test:e2e` | Run the suite **headless** (from repo root) |
+| `npm run e2e -w e2e` | Same, from the `e2e/` workspace |
+| `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
+| `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
+
+Notes for debugging:
+
+- **Slow-mo pace:** `test:headed` sets `E2E_SLOW_MS=200` (ms between actions
+  and keystrokes). Dial it from the shell for a custom speed, e.g.
+  `E2E_SLOW_MS=500 npm run test -w e2e` (slower) or `E2E_SLOW_MS=0` (instant).
+  Photo "taps" show as a brief highlight on the tile; the upload then drives
+  the same file input the camera would.
+- **Headed with pauses:** `npx playwright test --headed --debug -w e2e` from the
+  repo root opens the Playwright Inspector; step through or hold on failure.
+- **Failure artifacts** land in `e2e/test-results/` (screenshots + a `trace.zip`
+  per failing test). Open one with
+  `npx playwright show-trace e2e/test-results/<dir>/trace.zip` — shows every
+  click, network call, and DOM snapshot.
+- **The analyzer stub** (`e2e/helpers/analyzer-stub.mjs`, :3101) picks the
+  canned verdict per test: tests POST to `/__control` before uploading a photo
+  (`multi` → several issue cards, `excellent` → clean). If a run behaves oddly,
+  watch its console lines — `[analyzer-stub] /v1/analyses -> …` tells you which
+  verdict was served.
+- **DynamoDB Local persists between runs** (`backend/.local/dynamodb-data/`).
+  A `globalSetup` hook (`e2e/global-setup.mjs`) resets the seeded setup-code
+  usage counters **and clears leftover TASK items** each run, so code entry
+  can't exhaust `maxUses: 3` and the home worklist starts clean (previous
+  runs' cards would otherwise pollute the "New analysis results" tray — home
+  treats any needs-action task younger than 3h as NEW). If site-code login
+  ever 401s with "Invalid site code", nuke `backend/.local/dynamodb-data/`
+  and retry.
+- Tests always get a **fresh browser context** (fresh IndexedDB), so each test
+  re-runs the real site-code → device-registration flow; no shared login state.
+
+CI runs the same suite in its own `e2e` job (Chromium only, one retry, trace
+artifacts uploaded on failure) — see `.github/workflows/ci.yml`.

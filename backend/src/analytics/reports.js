@@ -119,14 +119,28 @@ async function hasParquetFiles(bucket, entity) {
   return (res.KeyCount ?? 0) > 0;
 }
 
+// Where DuckDB may write: extension downloads land under <home>/.duckdb. The
+// Lambda filesystem is read-only outside /tmp and sets no HOME, so DuckDB's
+// default fails with "Can't find the home directory". Verified against
+// @duckdb/node-api 1.5.5 with HOME unset: SET home_directory to an existing
+// directory installs extensions under it; SET extension_directory alone still
+// raises the home-directory error. The directory must already exist (/tmp
+// always does on Lambda). Override for a laptop run that wants its usual
+// ~/.duckdb cache.
+const DUCKDB_HOME = process.env.DUCKDB_HOME_DIRECTORY || "/tmp";
+
 /**
- * Install httpfs + the S3 credential-chain secret. Separated from createViews
- * so tests can build views against local paths without AWS credentials (the
- * secret validates the chain at CREATE time).
+ * Install httpfs + aws and the S3 credential-chain secret. Separated from
+ * createViews so tests can build views against local paths without AWS
+ * credentials (the secret validates the chain at CREATE time).
  * @param {any} conn
  */
 export async function installHttpfs(conn) {
-  await conn.run(`INSTALL httpfs; LOAD httpfs;`);
+  // Must precede any INSTALL/LOAD: the extension directory derives from it.
+  await conn.run(`SET home_directory = '${DUCKDB_HOME}';`);
+  // The CREDENTIAL_CHAIN secret provider lives in the aws extension, not
+  // httpfs; load it explicitly rather than relying on autoload at CREATE time.
+  await conn.run(`INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;`);
   await conn.run(`CREATE SECRET (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`);
 }
 
