@@ -154,7 +154,9 @@ body {
 html:has(.places-flow),
 body:has(.places-flow),
 html:has(.home),
-body:has(.home) {
+body:has(.home),
+html:has(.check-timeline:not(.check-timeline--embedded)),
+body:has(.check-timeline:not(.check-timeline--embedded)) {
   overflow: hidden;
 }
 
@@ -251,6 +253,25 @@ body:has(.home) {
   width: min(72rem, 100%);
   max-width: none;
   padding-inline: clamp(1rem, 4vw, 3rem);
+  /* The timeline owns its bottom spacing. Keeping the shell's generic 2rem
+     bottom pad adds empty scroll range after otherwise fitting content. */
+  padding-bottom: 0;
+}
+
+perimeter-check {
+  display: block;
+}
+
+perimeter-check:not([embedded]) {
+  height: 100%;
+}
+
+.app__main:has(.check-timeline:not(.check-timeline--embedded)) {
+  position: fixed;
+  inset: 0;
+  height: auto;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
 }
 
 /* ---- Cards / surfaces ---- */
@@ -308,15 +329,23 @@ site-setup {
 }
 
 .app__main:has(.login) {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--login-viewport-top, 0px);
+  bottom: auto;
   width: 100%;
   max-width: none;
+  height: var(--login-viewport-height, 100svh);
   padding: 0;
   background: var(--surface);
+  overflow-y: auto;
+  overscroll-behavior-y: none;
 }
 .login {
-  min-height: 100svh;
+  min-height: 100%;
   display: grid;
-  place-items: center;
+  align-items: safe center;
+  justify-items: center;
   background: var(--surface);
   color: var(--text);
   padding: 2rem 1rem;
@@ -556,15 +585,13 @@ site-setup {
      field has focus, stop centering the full-height composition and compact it
      into the unobscured upper portion instead. */
   .login:has(.login__otp:focus-within) {
-    /* Alignment changes are discrete and caused the panel to flash between
-       positions. Keep the centered layout and animate the panel itself into
-       the keyboard-safe upper portion of the viewport. */
-    overflow: hidden;
+    padding-block:
+      max(1rem, env(safe-area-inset-top))
+      max(2rem, env(safe-area-inset-bottom));
   }
 
   .login:has(.login__otp:focus-within) .login__panel {
     gap: 1rem;
-    transform: translateY(-20svh);
   }
 
   .login:has(.login__otp:focus-within) .login__mark {
@@ -625,10 +652,12 @@ places-setup {
 }
 .app__main:has(.places-flow) {
   position: fixed;
-  inset: 0;
+  inset-inline: 0;
+  top: var(--places-viewport-top, 0px);
+  bottom: auto;
   width: 100%;
   max-width: none;
-  height: auto;
+  height: var(--places-viewport-height, 100svh);
   padding: 0;
   background: var(--surface);
   overflow: hidden;
@@ -1323,6 +1352,15 @@ today-view {
 
 .home--leaving-capture .home-region--header {
   animation: home-fade-in 260ms ease both;
+}
+
+/* An empty/discarded capture has no resumable state. Its background header was
+   rendered while the session was active, so keep that stale header hidden
+   until Home rerenders the true first-run state after the exit animation. */
+.home--leaving-capture.home--discarding-capture .home-region--header {
+  animation: none;
+  pointer-events: none;
+  opacity: 0;
 }
 
 .home--leaving-capture .home-region--results {
@@ -2818,11 +2856,23 @@ button[data-loading] [data-loading-label] {
   --check-flow-text: var(--wa-color-text-normal, #1b1d26);
   width: min(100%, 64rem);
   max-width: none;
-  min-height: 100dvh;
+  min-height: 100%;
   margin-inline: auto;
   padding-top: 4rem;
   padding-bottom: 4rem;
   gap: 1.5rem;
+}
+
+/* The older `.view-check.check` rule carries greater specificity and otherwise
+   restores a 100svh minimum. Standalone capture fills its bounded main region;
+   embedded capture sizes to its content inside the Home scroller. */
+.check-timeline.view-check.check {
+  min-height: 100%;
+}
+
+.check-timeline.view-check.check.check-timeline--embedded {
+  min-height: auto;
+  padding-bottom: 0;
 }
 
 .check-timeline button {

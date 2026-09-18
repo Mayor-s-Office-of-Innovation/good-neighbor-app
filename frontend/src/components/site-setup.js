@@ -21,6 +21,16 @@ const SITE_SEARCH_DELAY_MS = 250;
 
 class SiteSetup extends HTMLElement {
   connectedCallback() {
+    this._onVisualViewportChange = () => this._syncVisualViewport();
+    window.visualViewport?.addEventListener(
+      "resize",
+      this._onVisualViewportChange,
+    );
+    window.visualViewport?.addEventListener(
+      "scroll",
+      this._onVisualViewportChange,
+    );
+    this._syncVisualViewport();
     this._code = formatSiteCode(readCodeFromUrl());
     this._checking = false;
     this._error = "";
@@ -46,6 +56,29 @@ class SiteSetup extends HTMLElement {
     if (this._code.length === CODE_LENGTH) {
       this._validate();
     }
+  }
+
+  disconnectedCallback() {
+    this._cancelSiteSearch();
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._onVisualViewportChange,
+    );
+    window.visualViewport?.removeEventListener(
+      "scroll",
+      this._onVisualViewportChange,
+    );
+    const main = this.closest(".app__main");
+    main?.style.removeProperty("--login-viewport-height");
+    main?.style.removeProperty("--login-viewport-top");
+  }
+
+  _syncVisualViewport() {
+    const viewport = window.visualViewport;
+    const main = this.closest(".app__main");
+    if (!viewport || !main) return;
+    main.style.setProperty("--login-viewport-height", `${viewport.height}px`);
+    main.style.setProperty("--login-viewport-top", `${viewport.offsetTop}px`);
   }
 
   _render() {
