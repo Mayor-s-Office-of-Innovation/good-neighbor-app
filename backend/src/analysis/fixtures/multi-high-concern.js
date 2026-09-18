@@ -31,6 +31,7 @@ export const multiHighConcernResponse = {
           "Visible needles or sharp medical objects posing puncture risk.",
         severity: 5,
         severity_label: "Severe: Increasing number or exposure risk",
+        user_friendly_label: "Several exposed needles near dock",
         description:
           "Multiple uncapped syringes on the sidewalk near the dock.",
         evidence_indices: [0, 1],
@@ -42,6 +43,7 @@ export const multiHighConcernResponse = {
           "Visible evidence of people living or sleeping in public spaces without shelter.",
         severity: 3,
         severity_label: "Moderate: Increasing number, density, or permanence",
+        user_friendly_label: "Tent and bedding against wall",
         description:
           "A tent set up against the wall with bedding arranged for living.",
         evidence_indices: [2],
@@ -51,6 +53,7 @@ export const multiHighConcernResponse = {
         definition:
           "Scattered small refuse or litter that does not obstruct movement.",
         severity: 2,
+        user_friendly_label: "Loose trash along gutter",
         description: "Loose trash dispersed along the gutter.",
         evidence_indices: [3],
       },

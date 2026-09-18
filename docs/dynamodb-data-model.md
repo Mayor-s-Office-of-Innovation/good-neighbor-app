@@ -85,6 +85,7 @@ registered text artifact. Places remain a check-structure concept; no special it
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
+| Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
 
 Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
 item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
@@ -229,16 +230,18 @@ components `severitySum`/`hazardCount` from the original design are **retired** 
 grade-based *Metric definitions* below.)
 
 **Tier 2** is a scheduled incremental DynamoDB **S3 export** (every 6 hours, needs PITR) →
-Glue catalog → **Athena** SQL for arbitrary site-sets/grains. A streaming Firehose/Parquet
-build (T2b) was considered and **rejected — near-real-time feeds are overkill** for
-leadership reporting; the 6-hour export is the design.
+entity-split Parquet → **DuckDB** SQL for arbitrary site-sets/grains — see
+[ADR 0013](./adr/0013-analytics-read-plane.md), which supersedes the originally sketched
+Glue/Athena tooling (Athena remains a future add-on over the same Parquet). A streaming
+Firehose/Parquet build (T2b) was considered and **rejected — near-real-time feeds are
+overkill** for leadership reporting; the 6-hour export is the design.
 
 ### Infra this adds (all Terraform, no click-ops)
 
-DynamoDB Streams on the table; an S3 analytics bucket (KMS, lifecycle); a Glue database +
-table schema; an Athena workgroup + results bucket. Buildout is post-MVP, tracked on the
-issue tracker. (No Firehose — see T2b above. Dashboards, if any, are app-rendered or
-QuickSight; decide when building.)
+DynamoDB Streams on the table; an S3 analytics bucket (KMS, lifecycle); convert + report
+Lambdas running DuckDB (see [ADR 0013](./adr/0013-analytics-read-plane.md)). Buildout is
+post-MVP, tracked on the issue tracker. (No Firehose — see T2b above. Dashboards, if any,
+are app-rendered or QuickSight; decide when building.)
 
 Buildout of both tiers is post-MVP, tracked on the issue tracker.
 

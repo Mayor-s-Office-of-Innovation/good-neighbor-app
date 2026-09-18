@@ -70,6 +70,7 @@ describe("storeEvaluatedAssessment", () => {
           {
             category: "Litter",
             severity: 3,
+            userFriendlyLabel: "Lots of trash in tree well",
             description: "trash",
             sourceArtifactIds: ["art-1"],
           },
@@ -136,6 +137,7 @@ describe("storeEvaluatedAssessment", () => {
       policyVersion: "actions-escalations-v2",
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
+      userFriendlyLabel: "Lots of trash in tree well",
       taskIds: ["task-1"],
       resolvedToTasks: true,
       gsi4pk: "SITE#site-1#CONDITION#SEV#3",
@@ -170,6 +172,7 @@ describe("storeEvaluatedAssessment", () => {
       status: "open",
       category: "Litter",
       severity: 3,
+      userFriendlyLabel: "Lots of trash in tree well",
       appActionStatus: "pending",
       appActionResults: [],
       gsi2pk: "SITE#site-1#TASK#open",
@@ -344,6 +347,7 @@ describe("answerCondition", () => {
       analyzerCategory: "Graffiti",
       canonicalCategory: "Graffiti",
       severity: 2,
+      userFriendlyLabel: "Tag covers most of wall",
       answers: {},
       taskIds: [],
       source: { artifactIds: ["art-1"] },
@@ -421,6 +425,7 @@ describe("answerCondition", () => {
     expect(result.taskItem).toMatchObject({
       taskId: "task-2",
       shortId: "MOI-CIT-042",
+      userFriendlyLabel: "Tag covers most of wall",
     });
   });
 });

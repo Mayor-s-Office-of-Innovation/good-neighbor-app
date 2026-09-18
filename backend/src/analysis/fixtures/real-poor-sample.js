@@ -1,10 +1,8 @@
-// Golden fixture: a REAL `good-neighbor-app` v1.0.0 response captured from the
-// deployed analyzer (see docs/analysis.json), verbatim — not hand-authored.
-// Use it as a conformance anchor: our adapter must map real service output, not
-// just our idealized fixtures. Intentionally left unaltered, including the
-// `\nOR\n` template artifact in general_conditions.description (a service-side
-// bug reported upstream) and the non-GNP caller.app_id — a golden sample is
-// whatever the service actually produced.
+// Golden fixture based on a REAL `good-neighbor-app` v1.0.0 response captured
+// from the deployed analyzer (see docs/analysis.json). Condition entries include
+// the user-friendly labels now required by the service contract; the remaining
+// response is preserved, including the `\nOR\n` template artifact and non-GNP
+// caller.app_id.
 
 /** @type {import("../contract.js").AnalysisResponse} */
 export const realPoorSampleResponse = {
@@ -69,6 +67,7 @@ export const realPoorSampleResponse = {
           "Scattered small refuse or litter that does not obstruct movement.",
         severity: 2,
         severity_label: "Minor: Increasing quantity, size, or spatial impact",
+        user_friendly_label: "Cans and paper around tents",
         description:
           "Empty soft drink cans and scattered paper visible around tent area and near furniture",
         evidence_indices: [0, 1, 2],
@@ -80,6 +79,7 @@ export const realPoorSampleResponse = {
         severity: 3,
         severity_label:
           "Moderate: Increasing quantity, size, or spatial impact",
+        user_friendly_label: "Abandoned chair blocks sidewalk",
         description:
           "Large black leather chair abandoned on sidewalk near tree",
         evidence_indices: [2],
@@ -91,6 +91,7 @@ export const realPoorSampleResponse = {
         severity: 3,
         severity_label:
           "Moderate: Increasing amount, spread, or proximity to pedestrians",
+        user_friendly_label: "Feces outside front door",
         description: "Large pile of feces reported outside front door",
         evidence_indices: [0],
       },
@@ -100,6 +101,7 @@ export const realPoorSampleResponse = {
           "Visible evidence of people living or sleeping in public spaces without shelter.",
         severity: 4,
         severity_label: "Elevated: Increasing number, density, or permanence",
+        user_friendly_label: "Several tents along sidewalk",
         description:
           "Multiple tents set up along sidewalk with belongings arranged for living",
         evidence_indices: [1],
@@ -111,6 +113,7 @@ export const realPoorSampleResponse = {
         severity: 1,
         severity_label:
           "Minimal: A single small tag or mark, negligible surface coverage, easily overlooked",
+        user_friendly_label: "Markings on building walls",
         description: "Some markings visible on building walls",
         evidence_indices: [1],
       },
@@ -121,6 +124,7 @@ export const realPoorSampleResponse = {
         severity: 3,
         severity_label:
           "Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path",
+        user_friendly_label: "Tents and furniture block sidewalk",
         description:
           "Multiple tents and large furniture blocking significant portions of sidewalk",
         evidence_indices: [1, 2],
@@ -132,6 +136,7 @@ export const realPoorSampleResponse = {
         severity: 2,
         severity_label:
           "Moderate: Clear safety concern (unleashed near traffic, inadequate shelter)",
+        user_friendly_label: "Off-leash dogs near traffic",
         description: "Multiple dogs off-leash in street area near traffic",
         evidence_indices: [3],
       },
