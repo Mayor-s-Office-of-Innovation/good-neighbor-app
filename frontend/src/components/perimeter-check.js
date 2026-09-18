@@ -137,7 +137,7 @@ class PerimeterCheck extends HTMLElement {
       "click",
       () => {
         this._cancelDialog?.close();
-        this._exitCapture();
+        this._exitCapture({ discarded: true });
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -230,7 +230,7 @@ class PerimeterCheck extends HTMLElement {
 
   _cancel() {
     if (!this._hasCheckContent()) {
-      this._exitCapture();
+      this._exitCapture({ discarded: true });
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
@@ -800,14 +800,18 @@ class PerimeterCheck extends HTMLElement {
     navigate("/today");
   }
 
-  _exitCapture() {
+  _exitCapture({ discarded = false } = {}) {
     this._finishing = true;
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
     if (this._embedded) {
       this.dispatchEvent(
-        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
+        new CustomEvent("capturefinished", {
+          bubbles: true,
+          composed: true,
+          detail: { flowType: "perimeter", discarded },
+        }),
       );
       return;
     }
