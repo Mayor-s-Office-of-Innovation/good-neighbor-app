@@ -41,7 +41,7 @@ jobs:
           -target=aws_route53_hosted_zone_dnssec.goodneighbor
           -target=aws_route53_query_log.goodneighbor
           -out=tfplan
-      - name: Reject unrelated changes or replacement
+      - name: Reject unrelated changes or unsafe replacements
         run: |
           set -euo pipefail
           terraform show -json tfplan | jq -e '
