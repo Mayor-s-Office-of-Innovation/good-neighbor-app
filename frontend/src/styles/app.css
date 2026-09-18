@@ -148,15 +148,9 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* The places flow supplies its own overflow container. Lock the document while
-   it is mounted so mobile browser viewport/toolbar differences cannot create a
-   second scroll surface behind it. */
-html:has(.places-flow),
-body:has(.places-flow),
-html:has(.home),
-body:has(.home),
-html:has(.check-timeline:not(.check-timeline--embedded)),
-body:has(.check-timeline:not(.check-timeline--embedded)) {
+/* Modals are native <dialog>s in the top layer. Hold the page still beneath an
+   open one so scroll gestures on the backdrop do not chain to the document. */
+body:has(dialog:modal) {
   overflow: hidden;
 }
 
@@ -186,15 +180,32 @@ body:has(.check-timeline:not(.check-timeline--embedded)) {
   border: 0;
 }
 
-/* ---- App shell ---- */
-.app {
+/* ---- App shell ----
+   Sizing contract: the document is the only scroll surface. <app-root> holds
+   the single viewport-height reference in the app; everything below it (shell,
+   main, the routed screen host, the screen root) is a flex column that grows to
+   fill. Nothing beneath app-root may use a viewport unit or a percentage
+   height, so no wrapper's padding or stray line box can add phantom scroll
+   range. Content taller than the viewport simply scrolls the document. */
+app-root {
   /* svh (small viewport height) = the viewport WITH mobile chrome showing — its
-     smallest state. Sizing full-screen shells to svh keeps a stable minimum that
-     never reflows as the URL bar animates and never pushes content under chrome.
-     Extra space when chrome retracts is filled by the root bg, so it's seamless.
-     (Contrast: dvh tracks the live viewport → jitter; lvh is the tall state →
-     bottom content hides behind chrome.) */
-  min-height: 100svh;
+     smallest state. A stable minimum that never reflows as the URL bar animates
+     and never pushes content under chrome. Extra space when chrome retracts is
+     filled by the root bg, so it's seamless. (Contrast: dvh tracks the live
+     viewport → jitter; lvh is the tall state → bottom content hides behind
+     chrome.)
+     --app-viewport-height / --app-viewport-top are set by <app-root> only while
+     an on-screen keyboard has shrunk the visual viewport without resizing the
+     layout viewport (iOS Safari; see services/keyboard-viewport.js). They
+     compose the shell into the visible area above the keyboard, following the
+     pan Safari applies to reveal the focused field. */
+  min-height: var(--app-viewport-height, 100svh);
+  margin-top: var(--app-viewport-top, 0px);
+  display: flex;
+  flex-direction: column;
+}
+.app {
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
 }
@@ -238,11 +249,22 @@ body:has(.check-timeline:not(.check-timeline--embedded)) {
 }
 
 .app__main {
-  flex: 1;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
   width: min(720px, 100%);
   margin-inline: auto;
   padding: 1rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+}
+/* Each route mounts one custom element here. Custom elements are inline by
+   default (a block child inside an inline host leaves a stray line box), so
+   every screen host becomes a growing column. A screen root opts in to filling
+   the viewport with `flex: 1 0 auto`. */
+.app__main > :not(.webview-banner) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
 }
 .app__main:has(.guidance-harness) {
   width: 100%;
@@ -253,25 +275,8 @@ body:has(.check-timeline:not(.check-timeline--embedded)) {
   width: min(72rem, 100%);
   max-width: none;
   padding-inline: clamp(1rem, 4vw, 3rem);
-  /* The timeline owns its bottom spacing. Keeping the shell's generic 2rem
-     bottom pad adds empty scroll range after otherwise fitting content. */
+  /* The timeline owns its bottom spacing. */
   padding-bottom: 0;
-}
-
-perimeter-check {
-  display: block;
-}
-
-perimeter-check:not([embedded]) {
-  height: 100%;
-}
-
-.app__main:has(.check-timeline:not(.check-timeline--embedded)) {
-  position: fixed;
-  inset: 0;
-  height: auto;
-  overflow-y: auto;
-  overscroll-behavior-y: none;
 }
 
 /* ---- Cards / surfaces ---- */
@@ -324,25 +329,14 @@ form > wa-button[type="submit"] {
 }
 
 /* ---- Code login ---- */
-site-setup {
-  display: block;
-}
-
 .app__main:has(.login) {
-  position: fixed;
-  inset-inline: 0;
-  top: var(--login-viewport-top, 0px);
-  bottom: auto;
   width: 100%;
   max-width: none;
-  height: var(--login-viewport-height, 100svh);
   padding: 0;
   background: var(--surface);
-  overflow-y: auto;
-  overscroll-behavior-y: none;
 }
 .login {
-  min-height: 100%;
+  flex: 1 0 auto;
   display: grid;
   align-items: safe center;
   justify-items: center;
@@ -643,27 +637,14 @@ site-setup {
 }
 
 /* ---- Places setup / edit ---- */
-places-setup {
-  /* Custom elements are inline by default. A block child inside the inline host
-     leaves a line box above it, adding phantom height and page scrolling. */
-  display: block;
-  height: 100%;
-}
 .app__main:has(.places-flow) {
-  position: fixed;
-  inset-inline: 0;
-  top: var(--places-viewport-top, 0px);
-  bottom: auto;
   width: 100%;
   max-width: none;
-  height: var(--places-viewport-height, 100svh);
   padding: 0;
   background: var(--surface);
-  overflow: hidden;
 }
 .places-flow {
-  height: 100%;
-  min-height: 0;
+  flex: 1 0 auto;
   display: grid;
   align-items: start;
   justify-items: center;
@@ -671,8 +652,6 @@ places-setup {
   color: var(--text);
   padding: 4rem 1.5rem;
   position: relative;
-  overflow-y: auto;
-  overscroll-behavior-y: none;
 }
 .places-flow__back,
 .home-settings {
@@ -1258,8 +1237,8 @@ theme-toggle {
   padding-top: max(1rem, env(safe-area-inset-top));
 }
 .app--chromeless .app__main:has(.places-flow) {
-  /* The places flow owns its full-viewport spacing. The generic chromeless
-     inset would sit outside its 100svh child and create a 16px page overflow. */
+  /* The places flow owns its top spacing (see .places-flow padding); the
+     generic chromeless inset would stack on top of it. */
   padding-top: 0;
 }
 
@@ -1267,22 +1246,6 @@ theme-toggle {
   width: min(100%, 550px);
   max-width: 550px;
   margin-inline: auto;
-}
-
-/* Keep the home route on one deliberate scroll surface. Its shell fills the
-   viewport; the main region scrolls only when the rendered home content is
-   genuinely taller than the available space. */
-today-view {
-  display: block;
-  height: 100%;
-}
-
-.app__main:has(.home) {
-  position: fixed;
-  inset: 0;
-  height: auto;
-  overflow-y: auto;
-  overscroll-behavior-y: none;
 }
 
 .home-region {
@@ -1347,6 +1310,13 @@ today-view {
   pointer-events: none;
   transform: translateY(2rem);
   opacity: 0;
+}
+
+/* Once the entry animation settles, take the hidden results out of flow (as
+   the header already is). Faded-but-present results kept the page as tall as
+   the home list, so a short capture screen could scroll into empty space. */
+.home--capture .home-region--results {
+  display: none;
 }
 
 .home--leaving-capture .home-region--header {
@@ -1425,7 +1395,7 @@ today-view {
 .home--first-run {
   max-width: none;
   width: 100%;
-  height: 100%;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2507,7 +2477,9 @@ button[data-loading] [data-loading-label] {
 .view-check.check {
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
+  /* Fills the routed screen host. No effect when embedded in Home, whose
+     capture region is a plain block. */
+  flex: 1 0 auto;
   padding-bottom: 1rem;
 }
 
@@ -2855,22 +2827,14 @@ button[data-loading] [data-loading-label] {
   --check-flow-text: var(--wa-color-text-normal, #1b1d26);
   width: min(100%, 64rem);
   max-width: none;
-  min-height: 100%;
   margin-inline: auto;
   padding-top: 4rem;
   padding-bottom: 4rem;
   gap: 1.5rem;
 }
 
-/* The older `.view-check.check` rule carries greater specificity and otherwise
-   restores a 100svh minimum. Standalone capture fills its bounded main region;
-   embedded capture sizes to its content inside the Home scroller. */
-.check-timeline.view-check.check {
-  min-height: 100%;
-}
-
-.check-timeline.view-check.check.check-timeline--embedded {
-  min-height: auto;
+/* Embedded capture sizes to its content inside Home. */
+.check-timeline.check-timeline--embedded {
   padding-bottom: 0;
 }
 
@@ -4075,7 +4039,7 @@ button[data-loading] [data-loading-label] {
 .view-describe.describe {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  flex: 1 0 auto;
   gap: 1.75rem;
   padding-top: 1rem;
   padding-bottom: 2rem;
