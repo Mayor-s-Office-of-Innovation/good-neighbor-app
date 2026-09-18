@@ -55,6 +55,13 @@ The earlier `gn.sf.gov` hosted zone is retained as protected infrastructure unti
 its retirement is separately reviewed. Its nameservers are not valid for
 `goodneighbor.sf.gov`.
 
+The production provider app is served canonically from `goodneighbor.sf.gov`.
+During the hostname transition, `goodneighborsf.org` remains a second alias on
+the same production CloudFront distribution. The legacy `goodneighborsf.org`
+hosted zone also continues to own the `dev.goodneighborsf.org` delegation and
+the SES DKIM records for `codes@goodneighborsf.org`; do not remove that zone when
+the legacy production web alias is eventually retired.
+
 The DNSSEC key uses `ECC_NIST_P256` / `SIGN_VERIFY`, as required by Route 53.
 KMS automatic rotation is unsupported for this asymmetric key (the resource's
 single Checkov rotation exception documents this limitation). Rotate using a
