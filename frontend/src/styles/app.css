@@ -1075,7 +1075,10 @@ form > wa-button[type="submit"] {
   .places-flow__subtitle {
     font-size: 1.05rem;
   }
-  .places-row {
+  /* Multi-place rows need narrower number/menu tracks on phones. Keep the
+     first-run single row on its one-column layout; otherwise its only child
+     is auto-placed into this rule's 32px number track. */
+  .places-row:not(.places-row--single) {
     grid-template-columns: 32px minmax(0, 1fr) 43px;
   }
 }
