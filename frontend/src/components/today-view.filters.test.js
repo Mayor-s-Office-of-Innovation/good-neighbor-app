@@ -159,3 +159,20 @@ describe("logout", () => {
     expect(view._renderHome).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("task card labels", () => {
+  it("prefers the user-friendly condition label", () => {
+    const view = new TodayView();
+    view._cardActions = () => [];
+
+    const card = view._actionCard({
+      taskId: "task-1",
+      category: "Litter",
+      label: "File a 311 ticket",
+      userFriendlyLabel: "Lots of trash in tree well",
+    });
+
+    expect(card).toContain("Lots of trash in tree well");
+    expect(card).not.toContain(">File a 311 ticket</h3>");
+  });
+});

@@ -93,7 +93,12 @@ describe("guidance handlers", () => {
             },
             general_conditions: { label: "Poor", description: "x" },
             identified_conditions_of_concern: [
-              { category: "Litter", severity: 3, description: "trash" },
+              {
+                category: "Litter",
+                severity: 3,
+                user_friendly_label: "Lots of trash in tree well",
+                description: "trash",
+              },
             ],
           },
         },
@@ -115,6 +120,7 @@ describe("guidance handlers", () => {
     });
     expect(writes[1].Put.Item).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
+      userFriendlyLabel: "Lots of trash in tree well",
       source: {
         latitude: 37.7,
         longitude: -122.4,
@@ -124,6 +130,7 @@ describe("guidance handlers", () => {
     expect(writes[2].Put.Item).toMatchObject({
       ruleId: "LITTER-2",
       shortId: "MOI-CIT-001",
+      userFriendlyLabel: "Lots of trash in tree well",
     });
     expect(parse(res).tasks).toHaveLength(1);
   });

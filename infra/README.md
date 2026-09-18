@@ -38,8 +38,12 @@ normal production release workflow. Merging to `dev` does not run this workflow.
 The DNS-only plan includes the hosted zone, DNSSEC signing and its asymmetric
 KMS key, plus query logging to an encrypted CloudWatch log group in `us-east-1`
 with 365-day retention. The workflow allowlist permits only those eight resources
-and only create/no-op actions; changes to existing resources require a normal
-reviewed infrastructure deployment.
+and only create/no-op actions, with one recovery exception: Terraform may replace
+`aws_route53_hosted_zone_dnssec.goodneighbor` after a failed initial signing
+attempt leaves that toggle resource tainted and `NOT_SIGNING`. This exception is
+safe only before DT publishes the parent DS record; it does not replace the hosted
+zone, KMS keys, or key-signing key. Other changes to existing resources require a
+normal reviewed infrastructure deployment.
 
 After applying, provide DT all four `goodneighbor_dns_name_servers`. Once
 delegation and zone signing are confirmed, coordinate publication of

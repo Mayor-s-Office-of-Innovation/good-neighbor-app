@@ -20,6 +20,24 @@ data "archive_file" "worker" {
   output_path = "${path.module}/dist/worker.zip"
 }
 
+data "archive_file" "analytics_export" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/analytics-export"
+  output_path = "${path.module}/dist/analytics-export.zip"
+}
+
+data "archive_file" "analytics_convert" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/analytics-convert"
+  output_path = "${path.module}/dist/analytics-convert.zip"
+}
+
+data "archive_file" "analytics_report" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/analytics-report"
+  output_path = "${path.module}/dist/analytics-report.zip"
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${local.name_prefix}-api"
   retention_in_days = 365
