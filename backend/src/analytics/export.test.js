@@ -175,6 +175,32 @@ describe("analytics export handler", () => {
     expect(started.pending.from).toBe(1789576200);
   });
 
+  it("caps the incremental window at 24h when the cursor is more than a day behind", async () => {
+    // DynamoDB rejects windows over 24h; a 3-day-old cursor must be caught up
+    // one capped chunk per run, not sent as a single oversized window.
+    const now = Math.floor(Date.now() / 1000);
+    const from = now - 3 * 24 * 3600;
+    const cappedTo = from + 24 * 3600 - 5 * 60;
+    mockWatermark({ exportToTime: from });
+    rawSend.mockResolvedValue({
+      ExportDescription: { ExportArn: "arn:...:export/chunk1" },
+    });
+
+    await handler();
+
+    const [start] = exportStarts();
+    expect(start.ExportType).toBe("INCREMENTAL_EXPORT");
+    expect(start.IncrementalExportSpecification.ExportFromTime).toEqual(
+      new Date(from * 1000),
+    );
+    expect(start.IncrementalExportSpecification.ExportToTime).toEqual(
+      new Date(cappedTo * 1000),
+    );
+    expect(start.ClientToken).toBe(`${from}-${cappedTo}`);
+    const [started] = watermarkWrites();
+    expect(started.pending.to).toBe(cappedTo);
+  });
+
   it("falls back to FULL_EXPORT when the cursor is older than the PITR window", async () => {
     const now = Math.floor(Date.now() / 1000);
     const stale = now - 40 * 24 * 3600;
