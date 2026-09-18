@@ -1198,10 +1198,7 @@ class TodayView extends HTMLElement {
       "home--leaving-capture",
       this._viewPhase === "leaving-capture",
     );
-    root.classList.toggle(
-      "home--discarding-capture",
-      this._discardingCapture,
-    );
+    root.classList.toggle("home--discarding-capture", this._discardingCapture);
     const results = this.querySelector(".home-region--results");
     if (results) {
       const inactive = shouldInertHomeResults(this._viewPhase);

@@ -152,18 +152,14 @@ class PlacesSetup extends HTMLElement {
         this._onVisualViewportChange,
       );
     }
-    const main = /** @type {HTMLElement | null} */ (
-      this.closest(".app__main")
-    );
+    const main = /** @type {HTMLElement | null} */ (this.closest(".app__main"));
     main?.style.removeProperty("--places-viewport-height");
     main?.style.removeProperty("--places-viewport-top");
   }
 
   _syncVisualViewport() {
     const viewport = window.visualViewport;
-    const main = /** @type {HTMLElement | null} */ (
-      this.closest(".app__main")
-    );
+    const main = /** @type {HTMLElement | null} */ (this.closest(".app__main"));
     if (!viewport || !main) return;
     main.style.setProperty("--places-viewport-height", `${viewport.height}px`);
     main.style.setProperty("--places-viewport-top", `${viewport.offsetTop}px`);
