@@ -9,6 +9,7 @@ const { documentSend, rawSend, describeExport } = vi.hoisted(() => ({
 }));
 
 vi.mock("../db.js", () => ({ ddb: { send: documentSend } }));
+vi.mock("../lib/log-server-error.js", () => ({ logServerError: vi.fn() }));
 vi.mock("@aws-sdk/client-dynamodb", () => ({
   DynamoDBClient: class {
     send = rawSend;
@@ -38,12 +39,33 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
 }));
 
 const { handler } = await import("./export.js");
+const { logServerError } = await import("../lib/log-server-error.js");
 
 /**
  * @param {Record<string, unknown> | undefined} watermarkItem
  */
 function mockWatermark(watermarkItem) {
   documentSend.mockResolvedValue({ Item: watermarkItem });
+}
+
+/**
+ * Every PutCommand item written to the watermark, in order.
+ * @returns {any[]}
+ */
+function watermarkWrites() {
+  return documentSend.mock.calls
+    .filter((c) => c[0].input.Item)
+    .map((c) => c[0].input.Item);
+}
+
+/**
+ * Every ExportTableToPointInTime input, in order.
+ * @returns {any[]}
+ */
+function exportStarts() {
+  return rawSend.mock.calls
+    .filter((c) => c[0].input.ExportType)
+    .map((c) => c[0].input);
 }
 
 beforeEach(() => {
@@ -71,14 +93,51 @@ describe("analytics export handler", () => {
     const cmd = rawSend.mock.calls[0][0];
     expect(cmd.input.ExportType).toBe("FULL_EXPORT");
     expect(cmd.input.TableArn).toBe(process.env.DYNAMO_TABLE_ARN);
+    expect(cmd.input.ClientToken).toBe("full-1789579800");
     // Pending recorded; the completed cursor is NOT written (no exportToTime).
-    const put = documentSend.mock.calls.find((c) => c[0].input.Item)?.[0];
-    expect(put?.input.Item.pending).toEqual({
+    const [put] = watermarkWrites();
+    expect(put.pending).toEqual({
       from: null,
       to: 1789579800, // 2026-09-16T18:00:00Z − 30 min (mock clock is 2026)
       exportArn: "arn:aws:dynamodb:...:export/abc",
     });
-    expect(put.input.Item.exportToTime).toBeUndefined();
+    expect(put.exportToTime).toBeUndefined();
+  });
+
+  it("goes incremental on the run after a completed FULL_EXPORT (cursor advances)", async () => {
+    // Regression: the first-run full export must not repeat every 6h.
+    mockWatermark({
+      pending: { from: null, to: 1789572600, exportArn: "arn:...:export/full" },
+    });
+    rawSend
+      .mockResolvedValueOnce({
+        ExportDescription: { ExportStatus: "COMPLETED" },
+      }) // DescribeExport
+      .mockResolvedValueOnce({
+        ExportDescription: { ExportArn: "arn:...:export/inc1" },
+      }); // startExport
+
+    await handler();
+
+    const [start] = exportStarts();
+    expect(start.ExportType).toBe("INCREMENTAL_EXPORT");
+    expect(start.IncrementalExportSpecification.ExportFromTime).toEqual(
+      new Date(1789572600 * 1000),
+    );
+    expect(start.ClientToken).toBe("1789572600-1789579800");
+
+    // Two writes: the commit, then the start on top of the committed state.
+    const [commit, started] = watermarkWrites();
+    expect(commit.exportToTime).toBe(1789572600);
+    expect(commit.lastExportId).toBe("arn:...:export/full");
+    expect(commit.pending).toBeUndefined();
+    expect(started.exportToTime).toBe(1789572600);
+    expect(started.lastExportId).toBe("arn:...:export/full");
+    expect(started.pending).toEqual({
+      from: 1789572600,
+      to: 1789579800,
+      exportArn: "arn:...:export/inc1",
+    });
   });
 
   it("requests an incremental export with NEW_IMAGE view when a watermark exists", async () => {
@@ -103,9 +162,43 @@ describe("analytics export handler", () => {
     expect(startCmd.input.IncrementalExportSpecification.ExportViewType).toBe(
       "NEW_IMAGE",
     );
+    // The new window starts at the just-committed pending endpoint, not the
+    // pre-commit cursor.
     expect(
       startCmd.input.IncrementalExportSpecification.ExportFromTime,
-    ).toEqual(new Date(1789569000 * 1000));
+    ).toEqual(new Date(1789576200 * 1000));
+    expect(startCmd.input.ClientToken).toBe("1789576200-1789579800");
+
+    const [, started] = watermarkWrites();
+    expect(started.exportToTime).toBe(1789576200);
+    expect(started.lastExportId).toBe("old");
+    expect(started.pending.from).toBe(1789576200);
+  });
+
+  it("falls back to FULL_EXPORT when the cursor is older than the PITR window", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const stale = now - 40 * 24 * 3600;
+    mockWatermark({ exportToTime: stale, lastExportId: "arn:...:export/old" });
+    rawSend.mockResolvedValue({
+      ExportDescription: { ExportArn: "arn:...:export/refull" },
+    });
+
+    await handler();
+
+    const [start] = exportStarts();
+    expect(start.ExportType).toBe("FULL_EXPORT");
+    expect(start.ClientToken).toBe("full-1789579800");
+    expect(logServerError).toHaveBeenCalledTimes(1);
+
+    // The stale cursor stays until the full export commits; pending.from is
+    // null so the next run commits exportToTime = pending.to.
+    const [started] = watermarkWrites();
+    expect(started.exportToTime).toBe(stale);
+    expect(started.pending).toEqual({
+      from: null,
+      to: 1789579800,
+      exportArn: "arn:...:export/refull",
+    });
   });
 
   it("does not advance the watermark when the pending export FAILED (window retried)", async () => {
@@ -122,11 +215,8 @@ describe("analytics export handler", () => {
 
     await expect(handler()).rejects.toThrow(/FAILED/);
     // No advance write and no new export start happened.
-    const writes = documentSend.mock.calls.filter((c) => c[0].input.Item);
-    expect(writes).toHaveLength(0);
-    expect(
-      rawSend.mock.calls.filter((c) => c[0].input.ExportType),
-    ).toHaveLength(0);
+    expect(watermarkWrites()).toHaveLength(0);
+    expect(exportStarts()).toHaveLength(0);
   });
 
   it("waits (no new export) while the pending export is still IN_PROGRESS", async () => {
