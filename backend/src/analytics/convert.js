@@ -119,6 +119,28 @@ export function toRow(entity, item, exportedAt) {
       break;
     }
     case "conditions": {
+      // The stored condition (guidance-store.js) keeps its event time under
+      // source.reportedAt — there is no top-level reportedAt, only
+      // createdAt/updatedAt. Reading the top level put every condition in
+      // date=unknown; fall back to createdAt so none ever does.
+      const source = /** @type {Record<string, unknown> | undefined} */ (
+        typeof item.source === "object" && item.source !== null
+          ? item.source
+          : undefined
+      );
+      // source.reportedAt is client-supplied and unvalidated (guidance.js),
+      // so prefer the first candidate that yields a real partition date
+      // rather than the first string present.
+      const candidates = [str(source?.reportedAt), str(item.createdAt)];
+      const reportedAt =
+        candidates.find((c) => dateFromTimestamp(c) !== null) ?? candidates[0];
+      // outcome is the matched rule's outcome object; its `kind` is the
+      // scalar worth a column. The full object stays in raw.
+      const outcome = /** @type {Record<string, unknown> | undefined} */ (
+        typeof item.outcome === "object" && item.outcome !== null
+          ? item.outcome
+          : undefined
+      );
       Object.assign(row, {
         assessmentId: str(item.assessmentId),
         conditionId: str(item.conditionId),
@@ -127,10 +149,10 @@ export function toRow(entity, item, exportedAt) {
         canonicalCategory: str(item.canonicalCategory),
         analyzerCategory: str(item.analyzerCategory),
         severity: num(item.severity),
-        outcome: str(item.outcome),
+        outcome: str(outcome?.kind),
         conditionStatus: str(item.status),
-        reportedAt: str(item.reportedAt),
-        date: dateFromTimestamp(str(item.reportedAt)),
+        reportedAt,
+        date: dateFromTimestamp(reportedAt),
       });
       break;
     }
@@ -221,7 +243,12 @@ function gradeScore(v) {
 export function dateFromTimestamp(iso) {
   if (!iso) return null;
   const date = iso.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  // Shape alone lets "2026-99-99" or "2026-02-30" through as a partition;
+  // require a real calendar date (round-trip, since V8 rolls Feb 30 over).
+  const ms = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toISOString().slice(0, 10) === date ? date : null;
 }
 
 /**
