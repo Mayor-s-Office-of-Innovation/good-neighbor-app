@@ -32,7 +32,7 @@ import {
   requestSetupCode,
   searchSites,
 } from "../handlers/setup-code-requests.js";
-import { getSite, putSitePlaces } from "../handlers/site.js";
+import { getSite } from "../handlers/site.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
 import {
@@ -73,9 +73,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/devices/token:refresh": refreshDeviceToken,
   "GET /v1/sites:search": searchSites,
   "POST /v1/setup-codes:request": requestSetupCode,
-  // Site config (feature/142 onboard locations)
+  // Site config
   "GET /v1/site": getSite,
-  "PUT /v1/site/places": putSitePlaces,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,

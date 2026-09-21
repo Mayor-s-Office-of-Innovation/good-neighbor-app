@@ -22,9 +22,8 @@ vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   };
 });
 
-const { presignUpload, registerArtifact, presignMedia } = await import(
-  "./artifacts.js"
-);
+const { presignUpload, registerArtifact, presignMedia, DEFAULT_PLACE_ID } =
+  await import("./artifacts.js");
 
 /**
  * @param {object} opts
@@ -121,7 +120,9 @@ describe("presignUpload", () => {
     expect(presignPut).not.toHaveBeenCalled();
   });
 
-  it("requires a place", async () => {
+  it("defaults placeId and omits placeName when neither is sent", async () => {
+    presignPut.mockResolvedValueOnce("https://signed.example/put");
+
     const res = await callPresign(
       artifactEvent({
         checkId: "chk_01",
@@ -129,7 +130,46 @@ describe("presignUpload", () => {
         body: { contentType: "image/jpeg" },
       }),
     );
-    expect(res.statusCode).toBe(400);
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(DEFAULT_PLACE_ID).toBe("perimeter");
+    expect(payload.placeId).toBe(DEFAULT_PLACE_ID);
+    expect(payload).not.toHaveProperty("placeName");
+    // The key layout is unchanged: the default place is the path segment.
+    expect(payload.s3Key).toBe(
+      `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/${payload.artifactId}`,
+    );
+  });
+
+  it("treats a blank placeName as absent", async () => {
+    presignPut.mockResolvedValueOnce("https://signed.example/put");
+
+    const res = await callPresign(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { placeName: "   ", contentType: "image/jpeg" },
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).not.toHaveProperty("placeName");
+  });
+
+  it("rejects a placeId that is present but not a non-empty string", async () => {
+    for (const placeId of ["", 42, null]) {
+      const res = await callPresign(
+        artifactEvent({
+          checkId: "chk_01",
+          siteClaim: "site-1",
+          body: { placeId, contentType: "image/jpeg" },
+        }),
+      );
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
+    }
+    expect(presignPut).not.toHaveBeenCalled();
   });
 });
 
@@ -292,6 +332,60 @@ describe("registerArtifact", () => {
       }),
     );
     expect(res.statusCode).toBe(400);
+  });
+
+  it("registers under the default place and omits placeName when neither is sent", async () => {
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          artifactId: "art_1",
+          s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+          contentType: "image/jpeg",
+          capturedAt: "2026-08-14T12:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(202);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item).toMatchObject({
+      pk: "SITE#site-1",
+      sk: `CHECK#chk_01#ART#${DEFAULT_PLACE_ID}#art_1`,
+      artifactId: "art_1",
+      placeId: DEFAULT_PLACE_ID,
+    });
+    expect(put.input.Item).not.toHaveProperty("placeName");
+
+    // The worker falls back to "perimeter" for position_descriptor when the
+    // message carries no placeName, so it must be absent rather than "".
+    const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
+    expect(msg).toEqual({
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+      placeId: DEFAULT_PLACE_ID,
+      s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+      capturedAt: "2026-08-14T12:00:00.000Z",
+    });
+  });
+
+  it("rejects a placeId that is present but not a non-empty string", async () => {
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { ...validBody, placeId: "" },
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
   });
 
   it("accepts text-only evidence and enqueues it without an s3Key", async () => {

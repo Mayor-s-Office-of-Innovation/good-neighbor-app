@@ -147,6 +147,8 @@ describe("provider and site management", () => {
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
       },
     });
+    // Sites no longer carry a places list (docs/plan-remove-places.md).
+    expect(tx.input.TransactItems?.[0]?.Put?.Item).not.toHaveProperty("places");
     expect(tx.input.TransactItems?.[1]).toMatchObject({
       Put: {
         Item: {

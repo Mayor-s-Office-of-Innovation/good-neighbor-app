@@ -21,6 +21,27 @@ const PRESIGN_EXPIRY_SECONDS = 300;
 const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 
 /**
+ * Place id used when a client registers evidence without one. The perimeter
+ * check is a flat photo roll (docs/plan-remove-places.md), so every artifact of
+ * a run lands under this single synthetic place; the S3 key and the `ART#` sort
+ * key still embed it so existing prefix queries keep working unchanged.
+ */
+export const DEFAULT_PLACE_ID = "perimeter";
+
+/**
+ * Optional `placeName` body field → trimmed string, or `undefined` when absent
+ * or blank. When omitted, the analyze worker falls back to "perimeter" for the
+ * analyzer's `position_descriptor`.
+ * @param {unknown} placeName
+ * @returns {string | undefined}
+ */
+const normalizePlaceName = (placeName) => {
+  if (typeof placeName !== "string") return undefined;
+  const trimmed = placeName.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+/**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
  * presigned PUT can only ever land inside this exact site + check, and
  * `registerArtifact` can reject any key that doesn't.
@@ -38,6 +59,10 @@ const mediaKey = (siteId, checkId, placeId, artifactId) =>
  * and return a presigned PUT so the device uploads media straight to S3 (bytes
  * never transit our API). No DB write happens here; the artifact becomes real
  * at `registerArtifact`. content-type is pinned into the signature.
+ *
+ * Body: `contentType` (required, one of ALLOWED_CONTENT_TYPES); `placeId`
+ * (optional non-empty string, defaults to DEFAULT_PLACE_ID); `placeName`
+ * (optional, echoed back trimmed when present).
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignUpload = async (event) => {
@@ -53,17 +78,24 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { placeId, placeName, contentType } =
-    /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
-      body ?? {}
-    );
+  const {
+    placeId: rawPlaceId,
+    placeName: rawPlaceName,
+    contentType,
+  } = /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
+    body ?? {}
+  );
 
-  if (typeof placeId !== "string" || placeId.length === 0) {
-    return jsonResponse(400, { error: "Missing placeId" });
+  // placeId is optional; when present it must be a non-empty string because
+  // it becomes a path segment of the S3 key.
+  if (
+    rawPlaceId !== undefined &&
+    (typeof rawPlaceId !== "string" || rawPlaceId.length === 0)
+  ) {
+    return jsonResponse(400, { error: "Invalid placeId" });
   }
-  if (typeof placeName !== "string" || placeName.trim().length === 0) {
-    return jsonResponse(400, { error: "Missing placeName" });
-  }
+  const placeId = rawPlaceId ?? DEFAULT_PLACE_ID;
+  const placeName = normalizePlaceName(rawPlaceName);
   if (
     typeof contentType !== "string" ||
     !ALLOWED_CONTENT_TYPES.has(contentType)
@@ -83,7 +115,7 @@ export const presignUpload = async (event) => {
   return jsonResponse(200, {
     artifactId,
     placeId,
-    placeName: placeName.trim(),
+    ...(placeName ? { placeName } : {}),
     s3Key: key,
     contentType,
     uploadUrl,
@@ -108,6 +140,12 @@ export const presignUpload = async (event) => {
  * client always awaits createCheck before uploading, and getCheck/completeCheck
  * key off the header (a would-be orphan is simply never read), so "parent exists"
  * is a client-guaranteed invariant rather than one re-proven on every photo.
+ *
+ * Body: `artifactId` (required); one of `s3Key` (from presign) or `text`;
+ * `placeId` (optional non-empty string, defaults to DEFAULT_PLACE_ID);
+ * `placeName` (optional — omitted from the item and the queue message when
+ * absent, so the worker's `position_descriptor` fallback applies); optional
+ * `contentType`, `capturedAt`, `latitude` + `longitude`.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
@@ -125,30 +163,29 @@ export const registerArtifact = async (event) => {
   }
   const {
     artifactId,
-    placeId,
-    placeName,
+    placeId: rawPlaceId,
+    placeName: rawPlaceName,
     s3Key,
     contentType,
     capturedAt,
     latitude,
     longitude,
     text,
-  } =
-    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
-      body ?? {}
-    );
+  } = /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
+    body ?? {}
+  );
 
   if (typeof artifactId !== "string" || !artifactId) {
     return jsonResponse(400, { error: "Missing artifactId" });
   }
-  if (typeof placeId !== "string" || !placeId) {
-    return jsonResponse(400, { error: "Missing placeId" });
+  if (
+    rawPlaceId !== undefined &&
+    (typeof rawPlaceId !== "string" || rawPlaceId.length === 0)
+  ) {
+    return jsonResponse(400, { error: "Invalid placeId" });
   }
-  const normalizedPlaceName =
-    typeof placeName === "string" ? placeName.trim() : "";
-  if (!normalizedPlaceName) {
-    return jsonResponse(400, { error: "Missing placeName" });
-  }
+  const placeId = rawPlaceId ?? DEFAULT_PLACE_ID;
+  const placeName = normalizePlaceName(rawPlaceName);
   const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
   const normalizedText = typeof text === "string" ? text.trim() : "";
   const hasText = normalizedText.length > 0;
@@ -190,7 +227,7 @@ export const registerArtifact = async (event) => {
     checkId,
     artifactId,
     placeId,
-    placeName: normalizedPlaceName,
+    ...(placeName ? { placeName } : {}),
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(hasCoordinates ? { latitude, longitude } : {}),
@@ -240,7 +277,7 @@ export const registerArtifact = async (event) => {
         checkId,
         artifactId,
         placeId,
-        placeName: normalizedPlaceName,
+        ...(placeName ? { placeName } : {}),
         capturedAt: capturedAtValue,
         ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),

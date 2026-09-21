@@ -9,9 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { createCheck, completeCheck, listChecks, getCheck } = await import(
-  "./checks.js"
-);
+const { createCheck, completeCheck, listChecks, getCheck, evidenceSummary } =
+  await import("./checks.js");
 
 /**
  * @param {object} opts
@@ -55,16 +54,7 @@ describe("createCheck", () => {
     send.mockResolvedValueOnce({});
 
     const res = await invoke(
-      checkEvent({
-        checkId: "chk_01",
-        siteClaim: "site-1",
-        body: {
-          places: [
-            { placeId: "place-north", placeName: "North", skipped: false },
-            { placeId: "place-south", placeName: "South", skipped: false },
-          ],
-        },
-      }),
+      checkEvent({ checkId: "chk_01", siteClaim: "site-1", body: {} }),
     );
 
     expect(res.statusCode).toBe(201);
@@ -82,13 +72,42 @@ describe("createCheck", () => {
       status: "in_progress",
       issueCount: 0,
       maxSeverity: 0,
-      places: [
-        { placeId: "place-north", placeName: "North", skipped: false },
-        { placeId: "place-south", placeName: "South", skipped: false },
-      ],
     });
     // gsi1sk mirrors startedAt so the timeline query sorts chronologically.
     expect(cmd.input.Item.gsi1sk).toBe(cmd.input.Item.startedAt);
+  });
+
+  it("ignores a legacy places list in the body", async () => {
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(
+      checkEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          places: [
+            { placeId: "place-north", placeName: "North", skipped: false },
+          ],
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(201);
+    expect(send.mock.calls[0][0].input.Item).not.toHaveProperty("places");
+  });
+
+  it("400s on a malformed JSON body", async () => {
+    const res = await invoke(
+      /** @type {any} */ ({
+        headers: { "idempotency-key": "chk_01" },
+        requestContext: {
+          authorizer: { jwt: { claims: { "custom:siteId": "site-1" } } },
+        },
+        body: "{not json",
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("never takes siteId from the body", async () => {
@@ -168,7 +187,9 @@ const headerItem = (status = "in_progress") => ({
 
 /**
  * A registered ART# item (one per captured photo). `completeCheck` gates on
- * every one of these having a matching ANALYSIS# item.
+ * every one of these having a matching ANALYSIS# item. Carries an image
+ * contentType + s3Key like a real photo registration so the evidence summary
+ * counts it as a photo.
  * @param {string} artifactId
  * @param {string} placeId
  * @param {string} placeName
@@ -179,6 +200,22 @@ const artifactItem = (artifactId, placeId, placeName = placeId) => ({
   artifactId,
   placeId,
   placeName,
+  contentType: "image/jpeg",
+  s3Key: `checks/site-1/chk_01/${placeId}/${artifactId}`,
+});
+
+/**
+ * A registered text-only ART# item (the "describe instead" path): `text`, no
+ * `s3Key`, no contentType.
+ * @param {string} artifactId
+ * @param {string} placeId
+ * @returns {object}
+ */
+const textArtifactItem = (artifactId, placeId) => ({
+  sk: `CHECK#chk_01#ART#${placeId}#${artifactId}`,
+  artifactId,
+  placeId,
+  text: "The whole block is clear, no litter or encampments.",
 });
 
 /**
@@ -282,6 +319,13 @@ describe("completeCheck", () => {
     );
     expect(header.ExpressionAttributeValues[":issueCount"]).toBe(2);
     expect(header.ExpressionAttributeValues[":maxSeverity"]).toBe(4);
+    // Evidence mix rides along on the same update: two photos, no text.
+    expect(header.UpdateExpression).toContain("photoCount = :photoCount");
+    expect(header.UpdateExpression).toContain("textCount = :textCount");
+    expect(header.UpdateExpression).toContain("evidenceKind = :evidenceKind");
+    expect(header.ExpressionAttributeValues[":photoCount"]).toBe(2);
+    expect(header.ExpressionAttributeValues[":textCount"]).toBe(0);
+    expect(header.ExpressionAttributeValues[":evidenceKind"]).toBe("photos");
 
     // Phase 4: complete only updates the check header. Guidance tasks are
     // minted per-item at capture time via POST /v1/assessments:evaluate.
@@ -291,6 +335,75 @@ describe("completeCheck", () => {
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
       grade: "Poor",
+      photoCount: 2,
+      textCount: 0,
+      evidenceKind: "photos",
+    });
+  });
+
+  it("records mixed photo + description evidence counts on the header", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "perimeter"),
+        textArtifactItem("art_text", "perimeter"),
+        analyzedItem("art_1", "perimeter", "perimeter", "Good", "Litter", 1),
+        analyzedItem(
+          "art_text",
+          "perimeter",
+          "perimeter",
+          "Excellent",
+          "Litter",
+          0,
+        ),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    const header = /** @type {any[]} */ (
+      send.mock.calls[1][0].input.TransactItems
+    )[0].Update;
+    expect(header.ExpressionAttributeValues[":photoCount"]).toBe(1);
+    expect(header.ExpressionAttributeValues[":textCount"]).toBe(1);
+    expect(header.ExpressionAttributeValues[":evidenceKind"]).toBe("mixed");
+    expect(JSON.parse(res.body)).toMatchObject({
+      status: "completed",
+      photoCount: 1,
+      textCount: 1,
+      evidenceKind: "mixed",
+    });
+  });
+
+  it("records a description-only run as evidenceKind description", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        textArtifactItem("art_text", "perimeter"),
+        analyzedItem("art_text", "perimeter", "perimeter", "Fair", "Litter", 2),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    const header = /** @type {any[]} */ (
+      send.mock.calls[1][0].input.TransactItems
+    )[0].Update;
+    expect(header.ExpressionAttributeValues[":photoCount"]).toBe(0);
+    expect(header.ExpressionAttributeValues[":textCount"]).toBe(1);
+    expect(header.ExpressionAttributeValues[":evidenceKind"]).toBe(
+      "description",
+    );
+    expect(JSON.parse(res.body)).toMatchObject({
+      photoCount: 0,
+      textCount: 1,
+      evidenceKind: "description",
     });
   });
 
@@ -379,8 +492,16 @@ describe("completeCheck", () => {
     expect(items).toHaveLength(1);
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBeNull();
     expect(items[0].Update.ExpressionAttributeValues[":summary"]).toBeNull();
+    expect(items[0].Update.ExpressionAttributeValues[":photoCount"]).toBe(0);
+    expect(items[0].Update.ExpressionAttributeValues[":textCount"]).toBe(0);
+    expect(items[0].Update.ExpressionAttributeValues[":evidenceKind"]).toBe(
+      "none",
+    );
     expect(JSON.parse(res.body)).toMatchObject({
       status: "completed",
+      photoCount: 0,
+      textCount: 0,
+      evidenceKind: "none",
     });
   });
 
@@ -401,9 +522,13 @@ describe("completeCheck", () => {
     );
 
     expect(res.statusCode).toBe(200);
+    // The replay response still carries the counts from this read.
     expect(JSON.parse(res.body)).toMatchObject({
       checkId: "chk_01",
       status: "completed",
+      photoCount: 1,
+      textCount: 0,
+      evidenceKind: "photos",
     });
   });
 
@@ -448,6 +573,69 @@ describe("completeCheck", () => {
       issueCount: 2,
       maxSeverity: 4,
     });
+  });
+});
+
+describe("evidenceSummary", () => {
+  /**
+   * @param {string} id
+   * @returns {Record<string, unknown>} a photo ART# item
+   */
+  const photo = (id) => ({
+    artifactId: id,
+    contentType: "image/jpeg",
+    s3Key: `checks/s/c/perimeter/${id}`,
+  });
+  /**
+   * @param {string} id
+   * @returns {Record<string, unknown>} a text-only ART# item
+   */
+  const text = (id) => ({ artifactId: id, text: "description" });
+
+  it("reports none for an empty run", () => {
+    expect(evidenceSummary([])).toEqual({
+      photoCount: 0,
+      textCount: 0,
+      evidenceKind: "none",
+    });
+  });
+
+  it("counts image artifacts as photos", () => {
+    expect(evidenceSummary([photo("a"), photo("b"), photo("c")])).toEqual({
+      photoCount: 3,
+      textCount: 0,
+      evidenceKind: "photos",
+    });
+  });
+
+  it("counts text-without-s3Key artifacts as descriptions", () => {
+    expect(evidenceSummary([text("t")])).toEqual({
+      photoCount: 0,
+      textCount: 1,
+      evidenceKind: "description",
+    });
+  });
+
+  it("reports mixed when both kinds are present", () => {
+    expect(evidenceSummary([photo("a"), text("t"), photo("b")])).toEqual({
+      photoCount: 2,
+      textCount: 1,
+      evidenceKind: "mixed",
+    });
+  });
+
+  it("does not count a photo that also carries a caption as text", () => {
+    // A photo registered with a note has both s3Key and text: one photo, no
+    // standalone description.
+    expect(
+      evidenceSummary([{ ...photo("a"), text: "north gate clear" }]),
+    ).toEqual({ photoCount: 1, textCount: 0, evidenceKind: "photos" });
+  });
+
+  it("ignores artifacts with a non-image contentType and no text", () => {
+    expect(
+      evidenceSummary([{ artifactId: "x", contentType: "audio/webm" }]),
+    ).toEqual({ photoCount: 0, textCount: 0, evidenceKind: "none" });
   });
 });
 
