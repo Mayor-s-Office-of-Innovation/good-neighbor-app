@@ -66,6 +66,12 @@ export async function addPhoto(page, filePath) {
       .evaluate((el) => el.classList.remove("e2e-tap-flash"))
       .catch(() => {});
   }
+  await page
+    .locator("#file-input")
+    .evaluate((el) => {
+      /** @type {HTMLInputElement} */ (el).value = "";
+    })
+    .catch(() => {});
   await page.locator("#file-input").setInputFiles(filePath, { timeout: 5_000 });
 }
 
@@ -98,20 +104,69 @@ export function newResultsTray(page) {
  * rejectAnalysisCondition → the card hides behind a 5s undo toast, and the
  * tray re-renders. Always drive the FIRST remaining card; when the last card's
  * deletion lands, the empty tray renders its "resolved or deleted" placeholder,
- * so expect the section to lose its cards. Waits for at least one card first
- * (the tray can re-render as evidence hydrates) and returns how many it saw.
+ * so expect the section to lose its cards.
+ *
+ * NEW cards hydrate in waves (session items render first, then migrate to
+ * backend task cards as listTasks polls land), so the tray count is only
+ * trusted once it stops changing across a settle window. Returns how many
+ * cards were seen at the settled peak.
  * @param {import("@playwright/test").Page} page
  * @returns {Promise<number>}
  */
 export async function dismissAllNewResults(page) {
-  const cards = newResultsTray(page).locator(".analysis-card");
+  const tray = newResultsTray(page);
+  const cards = tray.locator(".analysis-card");
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
-  const cardCount = await cards.count();
-  for (let remaining = cardCount; remaining > 0; remaining -= 1) {
-    await cards.first().locator('[data-analysis-action="delete"]').click();
+
+  /** Count the tray twice, 400ms apart; settle when the count stops changing. */
+  async function settledCount() {
+    let count = await cards.count();
+    for (;;) {
+      await page.waitForTimeout(400);
+      const next = await cards.count();
+      if (next === count) return count;
+      count = next;
+    }
+  }
+
+  /** The set of card identities currently in the tray. */
+  async function cardKeys() {
+    return (
+      await tray
+        .locator(".analysis-card")
+        .evaluateAll((els) =>
+          els.map((el) =>
+            [
+              el.getAttribute("data-artifact-id"),
+              el.getAttribute("data-condition-id"),
+            ].join("|"),
+          ),
+        )
+    ).sort();
+  }
+
+  let seen = 0;
+  for (;;) {
+    const count = await settledCount();
+    if (count === 0) break;
+    seen = Math.max(seen, count);
+    const first = cards.first();
+    const key = await first.evaluate((el) =>
+      [
+        el.getAttribute("data-artifact-id"),
+        el.getAttribute("data-condition-id"),
+      ].join("|"),
+    );
+    await first.locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();
-    await expect(cards).toHaveCount(remaining - 1, { timeout: 30_000 });
+    // The deletion landed when THIS card leaves the tray (identity, not total:
+    // late-hydrating task cards can raise the count while we're deleting).
+    await expect
+      .poll(async () => !(await cardKeys()).includes(key), {
+        timeout: 30_000,
+      })
+      .toBe(true);
   }
   await expect(cards).toHaveCount(0);
-  return cardCount;
+  return seen;
 }
