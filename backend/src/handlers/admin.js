@@ -267,7 +267,6 @@ export const createSite = (event) =>
       providerName: provider.Item.name,
       providerSiteId,
       status: "active",
-      places: [],
       createdAt: now,
       updatedAt: now,
     };
