@@ -88,9 +88,7 @@ export function hasEvidence(check) {
  * @returns {boolean}
  */
 export function isPerimeterCheckComplete(check) {
-  return (
-    photoCount(check) >= MIN_PERIMETER_PHOTOS || textCount(check) >= 1
-  );
+  return photoCount(check) >= MIN_PERIMETER_PHOTOS || textCount(check) >= 1;
 }
 
 /**

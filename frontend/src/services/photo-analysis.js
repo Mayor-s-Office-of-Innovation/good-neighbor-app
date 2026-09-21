@@ -24,7 +24,6 @@ import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   getCurrentCheck,
-  getPlaceOrder,
   updateItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
@@ -110,17 +109,9 @@ async function withLeg(leg, work) {
   }
 }
 
-function placesPayload(check) {
-  return (check.placeOrder || getPlaceOrder()).map((placeId) => ({
-    placeId,
-    placeName: check.places[placeId].name,
-    skipped: !!check.places[placeId].skipped,
-  }));
-}
-
 async function ensureRemoteCheck(check) {
   if (check.remoteStarted) return;
-  await createCheck(check.id, { places: placesPayload(check) });
+  await createCheck(check.id);
   check.remoteStarted = true;
 }
 

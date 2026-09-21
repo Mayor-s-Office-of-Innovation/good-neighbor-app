@@ -3,102 +3,130 @@ import { html } from "../lib/html.js";
 
 export const DESCRIPTION_MAX_LENGTH = 4000;
 
-export const shell = ({ hasText }) => html`
-  <div class="flow view-describe describe">
-    <div class="describe__bar">
-      <button
-        class="describe__close describe__close--back"
-        id="describe-close"
-        type="button"
-      >
-        <span
-          class="describe__close-icon describe__close-icon--back"
-          aria-hidden="true"
-        ></span>
-        <span class="visually-hidden">Back to photo capture</span>
-      </button>
-      <span aria-hidden="true"></span>
-      <button
-        class="describe__close describe__close--dismiss"
-        id="describe-dismiss"
-        type="button"
-      >
-        <span
-          class="describe__close-icon describe__close-icon--dismiss"
-          aria-hidden="true"
-        ></span>
-        <span class="visually-hidden">Close description screen</span>
-      </button>
-    </div>
+const PERIMETER_COPY = {
+  subtitle: "Describe the whole area, even if there are no problems.",
+  placeholder:
+    "Example: Sidewalks are clear on both sides. There’s trash near the entrance and graffiti on the wall...",
+};
 
-    <div class="describe__main">
-      <div class="describe__heading">
-        <h1 class="describe__title">Describe what you see</h1>
-        <p class="describe__subtitle">
-          Describe the general conditions around the site.
-        </p>
-      </div>
+const PROBLEM_COPY = {
+  subtitle: "Describe the general conditions around the site.",
+  placeholder:
+    "Example: There’s trash near the entrance and graffiti on the wall...",
+};
 
-      <div class="describe__card">
-        <label class="visually-hidden" for="describe-text"
-          >Describe what you see</label
+export const shell = ({
+  flowType = "perimeter",
+  minLength = 1,
+  hasText = false,
+  canContinue = false,
+} = {}) => {
+  const copy = flowType === "perimeter" ? PERIMETER_COPY : PROBLEM_COPY;
+  return html`
+    <div class="flow view-describe describe">
+      <div class="describe__bar">
+        <button
+          class="describe__close describe__close--back"
+          id="describe-close"
+          type="button"
         >
-        <div class="describe__field-wrap">
-          <textarea
-            class="describe__field"
-            id="describe-text"
-            placeholder="Example: There’s trash near the entrance and graffiti on the wall..."
-            rows="5"
-            spellcheck="true"
-            maxlength="${DESCRIPTION_MAX_LENGTH}"
-          ></textarea>
+          <span
+            class="describe__close-icon describe__close-icon--back"
+            aria-hidden="true"
+          ></span>
+          <span class="visually-hidden">Back to photo capture</span>
+        </button>
+        <span aria-hidden="true"></span>
+        <button
+          class="describe__close describe__close--dismiss"
+          id="describe-dismiss"
+          type="button"
+        >
+          <span
+            class="describe__close-icon describe__close-icon--dismiss"
+            aria-hidden="true"
+          ></span>
+          <span class="visually-hidden">Close description screen</span>
+        </button>
+      </div>
+
+      <div class="describe__main">
+        <div class="describe__heading">
+          <h1 class="describe__title">Describe what you see</h1>
+          <p class="describe__subtitle">${copy.subtitle}</p>
         </div>
 
-        <div class="describe__meta">
-          <button
-            class="describe__clear"
-            id="describe-clear"
-            type="button"
-            ${hasText ? "" : "disabled"}
-            aria-label="Clear all text"
+        <div class="describe__card">
+          <label class="visually-hidden" for="describe-text"
+            >Describe what you see</label
           >
-            Clear all
-          </button>
+          <div class="describe__field-wrap">
+            <textarea
+              class="describe__field"
+              id="describe-text"
+              placeholder="${copy.placeholder}"
+              rows="5"
+              spellcheck="true"
+              maxlength="${DESCRIPTION_MAX_LENGTH}"
+              ${minLength > 1 ? 'aria-describedby="describe-hint"' : ""}
+            ></textarea>
+          </div>
+
+          <div class="describe__meta">
+            ${minLength > 1
+              ? html`<span class="describe__hint" id="describe-hint"
+                  >At least ${minLength} characters.</span
+                >`
+              : ""}
+            <button
+              class="describe__clear"
+              id="describe-clear"
+              type="button"
+              ${hasText ? "" : "disabled"}
+              aria-label="Clear all text"
+            >
+              Clear all
+            </button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="describe__actions">
-      <button
-        class="describe__continue"
-        id="describe-continue"
-        type="button"
-        ${hasText ? "" : "disabled"}
-      >
-        Continue
-      </button>
-    </div>
+      <div class="describe__actions">
+        <button
+          class="describe__continue"
+          id="describe-continue"
+          type="button"
+          ${canContinue ? "" : "disabled"}
+        >
+          Continue
+        </button>
+      </div>
 
-    <dialog class="describe-modal" id="describe-exit-modal">
-      <form class="describe-modal__card" method="dialog">
-        <h2 class="describe-modal__title">Discard this description?</h2>
-        <p class="describe-modal__text">
-          Your typed changes for this place have not been saved yet.
-        </p>
-        <div class="describe-modal__actions">
-          <button class="describe-modal__secondary" type="submit" value="stay">
-            Keep editing
-          </button>
-          <button
-            class="describe-modal__primary"
-            id="describe-discard"
-            type="submit"
-            value="discard"
-          >
-            Discard changes
-          </button>
-        </div>
-      </form>
-    </dialog>
-  </div>
-`;
+      <dialog class="describe-modal" id="describe-exit-modal">
+        <form class="describe-modal__card" method="dialog">
+          <h2 class="describe-modal__title">Discard this description?</h2>
+          <p class="describe-modal__text">
+            Your typed changes have not been saved yet.
+          </p>
+          <div class="describe-modal__actions">
+            <button
+              class="describe-modal__secondary"
+              type="submit"
+              value="stay"
+            >
+              Keep editing
+            </button>
+            <button
+              class="describe-modal__primary"
+              id="describe-discard"
+              type="submit"
+              value="discard"
+            >
+              Discard changes
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+  `;
+};
