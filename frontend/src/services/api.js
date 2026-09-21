@@ -424,6 +424,22 @@ export function registerArtifact(checkId, body) {
 }
 
 /**
+ * DELETE /v1/checks/{checkId}/artifacts/{artifactId} — remove a registered
+ * artifact from its check (an edited/deleted description replaces or drops an
+ * already-registered text artifact; leaving it would let the final scorecard
+ * fold the stale text). Idempotent on replay; 404 = already gone.
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @returns {Promise<{ artifactId: string, status: string }>}
+ */
+export function deleteArtifact(checkId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+}
+
+/**
  * Raw presigned PUT of the media bytes straight to S3. NOT joined onto BASE and
  * carries no auth — the signature is the authorization, and the content-type must
  * match what was presigned. Throws `ApiError` on a non-2xx.

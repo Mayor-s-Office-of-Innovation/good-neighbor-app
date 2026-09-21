@@ -223,11 +223,15 @@ export const completeCheck = async (event) => {
   }
 
   // Keep only the artifacts that analyzed cleanly (a "failed" marker has no
-  // concerns to synthesize).
+  // concerns to synthesize), and only those whose ART# row still exists — a
+  // deleted artifact (DELETE /v1/checks/{id}/artifacts/{id}) leaves its
+  // ANALYSIS# item behind, but its stale analysis must not reach the fold.
+  const registeredIds = new Set(artifacts.map((it) => it.artifactId));
   const analyzed =
     /** @type {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} */ (
       analyses
         .filter((it) => it.status === "analyzed")
+        .filter((it) => registeredIds.has(it.artifactId))
         .map((it) => ({
           artifactId: it.artifactId,
           placeId: it.placeId,

@@ -433,6 +433,44 @@ describe("completeCheck", () => {
     expect(items).toHaveLength(1);
   });
 
+  it("excludes a deleted artifact's stale analysis from the fold", async () => {
+    // A description was registered, analyzed, then deleted (the client replaces
+    // it on edit). Its ANALYSIS# item remains, but the ART# row is gone — the
+    // stale analysis must not reach the scorecard.
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        analyzedItem("art_1", "place-north", "North", "Good", "Litter", 1),
+        analyzedItem(
+          "art_deleted",
+          "perimeter",
+          "perimeter",
+          "Very Poor",
+          "Graffiti",
+          5,
+        ),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    const res = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    // The deleted artifact's Very Poor grade must not drive the scorecard.
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({
+      grade: "Good",
+      issueCount: 1,
+      maxSeverity: 1,
+    });
+    const items = /** @type {any[]} */ (
+      send.mock.calls[1][0].input.TransactItems
+    );
+    expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBe("Good");
+  });
+
   it("409s (no write) when a registered artifact has no analysis yet", async () => {
     // Two photos registered, only one analyzed — the classic premature-complete
     // race. Must NOT fold a partial scorecard onto the header.

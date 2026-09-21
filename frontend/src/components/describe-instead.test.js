@@ -7,15 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const addItem = vi.fn(() => ({ id: "item-1" }));
 const updateItem = vi.fn();
-const removeItem = vi.fn();
 const getFlowType = vi.fn(() => "single-problem");
 const analyzeEvidenceItem = vi.fn();
+const removeEvidenceItem = vi.fn(async () => {});
 const navigate = vi.fn();
 
 vi.mock("../state/check-session.js", () => ({
   addItem,
   updateItem,
-  removeItem,
   getFlowType,
   getCurrentCheck: vi.fn(() => null),
   getCapturePlaceId: vi.fn(() => "place-1"),
@@ -24,6 +23,7 @@ vi.mock("../state/check-session.js", () => ({
 
 vi.mock("../services/photo-analysis.js", () => ({
   analyzeEvidenceItem,
+  removeEvidenceItem,
 }));
 
 vi.mock("../router.js", () => ({
@@ -62,7 +62,7 @@ async function buildDescribeInstead({
 } = {}) {
   getFlowType.mockReturnValue(flowType);
   await import("./describe-instead.js");
-  const { MIN_DESCRIPTION_LENGTH } = await import(
+  const { MIN_DESCRIPTION_LENGTH, MIN_TEXT_EVIDENCE_LENGTH } = await import(
     "../domain/check-completion.js"
   );
   const define = /** @type {any} */ (globalThis.customElements).define;
@@ -73,7 +73,10 @@ async function buildDescribeInstead({
   const element = Object.create(DescribeInstead.prototype);
   element._flowType = flowType;
   element._placeId = "place-1";
-  element._minLength = flowType === "perimeter" ? MIN_DESCRIPTION_LENGTH : 1;
+  element._minLength =
+    flowType === "perimeter"
+      ? MIN_DESCRIPTION_LENGTH
+      : MIN_TEXT_EVIDENCE_LENGTH;
   element._existing = existing;
   element._savedText = existing?.text || "";
   element._routeBase = flowType === "single-problem" ? "/problem" : "/check";
@@ -95,13 +98,27 @@ describe("describe-instead (single-problem)", () => {
       upload: { status: "uploaded" },
     });
     expect(analyzeEvidenceItem).toHaveBeenCalledWith("place-1", "item-1");
-    expect(removeItem).not.toHaveBeenCalled();
+    expect(removeEvidenceItem).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/problem");
   });
 
   it("does nothing when the text is blank", async () => {
     const element = await buildDescribeInstead();
     element._text = "   ";
+
+    await element._onContinue();
+
+    expect(addItem).not.toHaveBeenCalled();
+    expect(analyzeEvidenceItem).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a note below the analyzer's 5-character text minimum", async () => {
+    // The backend rejects text artifacts under 5 chars permanently — the
+    // single-problem flow must not file one (perimeter uses its own 20-char
+    // minimum, covered in the describe block below).
+    const element = await buildDescribeInstead();
+    element._text = "hi";
 
     await element._onContinue();
 
@@ -145,12 +162,32 @@ describe("describe-instead (perimeter)", () => {
 
     await element._onContinue();
 
-    expect(removeItem).toHaveBeenCalledWith("place-1", "old-text");
+    // The old text was already a registered artifact: replacement deletes it
+    // server-side via removeEvidenceItem before the new item is filed.
+    expect(removeEvidenceItem).toHaveBeenCalledWith("place-1", "old-text");
     expect(addItem).toHaveBeenCalledWith("place-1", {
       kind: "text",
       text: `${LONG_TEXT} Graffiti on the side wall.`,
     });
     expect(analyzeEvidenceItem).toHaveBeenCalledWith("place-1", "item-1");
+    expect(navigate).toHaveBeenCalledWith("/check");
+  });
+
+  it("does not half-apply a replacement when the server delete fails", async () => {
+    // If the stale artifact survives server-side and the new one is filed
+    // anyway, completeCheck would fold BOTH descriptions into the scorecard.
+    removeEvidenceItem.mockRejectedValueOnce(new Error("delete failed"));
+    const element = await buildDescribeInstead({
+      flowType: "perimeter",
+      existing: { id: "old-text", placeId: "place-1", text: LONG_TEXT },
+    });
+    element._text = `${LONG_TEXT} Graffiti on the side wall.`;
+
+    await element._onContinue();
+
+    expect(addItem).not.toHaveBeenCalled();
+    expect(analyzeEvidenceItem).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("leaves an unchanged description alone and just returns", async () => {
@@ -162,7 +199,7 @@ describe("describe-instead (perimeter)", () => {
 
     await element._onContinue();
 
-    expect(removeItem).not.toHaveBeenCalled();
+    expect(removeEvidenceItem).not.toHaveBeenCalled();
     expect(addItem).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/check");
   });

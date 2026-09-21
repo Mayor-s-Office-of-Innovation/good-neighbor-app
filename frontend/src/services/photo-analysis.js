@@ -10,6 +10,7 @@
 */
 import {
   createCheck,
+  deleteArtifact,
   evaluateAssessment,
   getAssessmentGuidance,
   getCheck,
@@ -24,6 +25,7 @@ import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   getCurrentCheck,
+  removeItem,
   updateItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
@@ -440,6 +442,37 @@ export function retryEvidenceItem(placeId, itemId) {
     failure: undefined,
   });
   analyzeEvidenceItem(placeId, itemId);
+}
+
+/**
+ * Delete an evidence item from the session AND from the backend check.
+ *
+ * Local `removeItem` alone is not enough once capture is incremental: a
+ * registered artifact has an ART# row (and usually an ANALYSIS#), and
+ * completeCheck folds every registered artifact into the final scorecard —
+ * leaving the row would file stale text (e.g. the pre-edit description) into
+ * the run's permanent record.
+ *
+ * The backend delete goes first (it is the side that must not be skipped),
+ * then the local item is removed. 404 = already deleted, which is success for
+ * an idempotent UI. Everything else rethrows so the caller can keep the item
+ * and surface the failure — silently dropping it locally would guarantee the
+ * exact stale-artifact corruption this helper exists to prevent.
+ * @param {string} placeId
+ * @param {string} itemId
+ * @returns {Promise<void>}
+ */
+export async function removeEvidenceItem(placeId, itemId) {
+  const check = getCurrentCheck();
+  const item = check?.places?.[placeId]?.items?.find(
+    (candidate) => candidate.id === itemId,
+  );
+  if (!check || !item) return;
+  const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
+  if (artifactId) {
+    await deleteArtifact(check.id, artifactId);
+  }
+  removeItem(placeId, itemId);
 }
 
 export async function refreshEvidenceAnalysis(
