@@ -35,7 +35,8 @@ import {
   loadDraft,
   clearCheck,
   getCurrentCheck,
-  getPlaceOrder,
+  getItems,
+  findItem,
   addItem,
   removeItem,
   getFlowType,
@@ -52,8 +53,7 @@ import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
- * @typedef {{ kind?: "photo" | "text", id: string, dataUrl?: string, text?: string, placeId?: string, placeName?: string, analysis?: { status?: string } }} PlaceItem
- * @typedef {{ items: PlaceItem[] }} PlaceState
+ * @typedef {{ kind?: "photo" | "text", id: string, dataUrl?: string, text?: string, analysis?: { status?: string } }} EvidenceItem
  */
 
 class ProblemReport extends HTMLElement {
@@ -65,8 +65,6 @@ class ProblemReport extends HTMLElement {
     this._siteId = "";
     /** @type {string} */
     this._checkId = "";
-    /** @type {string} */
-    this._placeId = "";
     /** @type {HTMLInputElement | null} */
     this._fileInput = null;
     /** @type {FileReader | null} */
@@ -106,8 +104,6 @@ class ProblemReport extends HTMLElement {
       startProblemReport(this._siteId);
     }
     this._checkId = getCurrentCheck()?.id || "";
-
-    this._placeId = getPlaceOrder()[0];
 
     const unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
@@ -214,14 +210,6 @@ class ProblemReport extends HTMLElement {
     this._unsubscribe = null;
   }
 
-  /** @returns {PlaceState} */
-  _placeState() {
-    const check = getCurrentCheck();
-    return /** @type {PlaceState} */ (
-      check?.places?.[this._placeId] || { items: [] }
-    );
-  }
-
   /** @returns {void} */
   _openCamera() {
     if (!this._fileInput) return;
@@ -265,10 +253,9 @@ class ProblemReport extends HTMLElement {
   /** @param {string} dataUrl */
   _addPhoto(dataUrl) {
     const record = addItem(
-      this._placeId,
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
-    if (record) analyzeEvidenceItem(record.placeId, record.id);
+    if (record) analyzeEvidenceItem(record.id);
     this._render();
   }
 
@@ -282,7 +269,7 @@ class ProblemReport extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      removeItem(this._placeId, del.getAttribute("data-del"));
+      removeItem(del.getAttribute("data-del"));
       this._render();
     }
   }
@@ -315,18 +302,18 @@ class ProblemReport extends HTMLElement {
       items.map((item, index) => shotTile(item, index)).join("") + tile;
   }
 
-  /** @returns {PlaceItem[]} */
+  /** @returns {EvidenceItem[]} */
   _photoItems() {
-    return this._placeState().items.filter((item) => item.kind !== "text");
+    return getItems().filter((item) => item.kind !== "text");
   }
 
   /** @returns {void} */
   _renderAnalysis() {
     const container = this.querySelector("#single-issue-analysis");
     if (!container) return;
-    const items = this._placeState().items;
+    const items = getItems();
     container.innerHTML = items.length
-      ? analysisSection(items, this._checkId)
+      ? analysisSection(items, this._checkId, this._site?.name || "")
       : "";
     this._wireAnalysisCards();
   }
@@ -348,9 +335,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {string} */
   _titleText() {
-    return this._placeState().items.length
-      ? "Flag another issue"
-      : "Flag a single issue";
+    return getItems().length ? "Flag another issue" : "Flag a single issue";
   }
 
   /** @returns {void} */
@@ -432,14 +417,11 @@ class ProblemReport extends HTMLElement {
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
         } else if (action === "retry") {
-          if (problem.placeId && problem.itemId)
-            retryEvidenceItem(problem.placeId, problem.itemId);
+          if (problem.itemId) retryEvidenceItem(problem.itemId);
         } else if (action === "remove-item") {
-          const item = getCurrentCheck()?.places?.[
-            problem.placeId
-          ]?.items?.find((candidate) => candidate.id === problem.itemId);
+          const item = findItem(problem.itemId);
           if (item && item.upload?.status !== "uploaded")
-            removeItem(problem.placeId, problem.itemId);
+            removeItem(problem.itemId);
         }
       });
     });
@@ -447,7 +429,6 @@ class ProblemReport extends HTMLElement {
 
   _problemFromCard(card) {
     return {
-      placeId: card.getAttribute("data-place-id") || "",
       itemId: card.getAttribute("data-item-id") || "",
       checkId: card.getAttribute("data-check-id") || "",
       artifactId: card.getAttribute("data-artifact-id") || "",
@@ -520,19 +501,10 @@ class ProblemReport extends HTMLElement {
             this._deleteProblemLocally(problem);
             return;
           }
-          if (
-            getCurrentCheck()?.id === problem.checkId &&
-            problem.placeId &&
-            problem.itemId
-          ) {
-            await refreshEvidenceAnalysis(
-              problem.placeId,
-              problem.itemId,
-              result,
-              {
-                rejectedConditionId: problem.conditionId,
-              },
-            ).catch((error) => {
+          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
+            await refreshEvidenceAnalysis(problem.itemId, result, {
+              rejectedConditionId: problem.conditionId,
+            }).catch((error) => {
               console.error("refresh after saved deletion failed", error);
               this._showToast(
                 "Deletion saved. Could not refresh the cards; please reload.",
@@ -557,12 +529,9 @@ class ProblemReport extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    const check = getCurrentCheck();
-    const item = check?.places?.[problem.placeId]?.items?.find(
-      (candidate) => candidate.id === problem.itemId,
-    );
+    const item = findItem(problem.itemId);
     if (!item) return;
-    updateItemAnalysis(problem.placeId, problem.itemId, {
+    updateItemAnalysis(problem.itemId, {
       tasks: (item.analysis?.tasks || []).filter(
         (task) => task.taskId !== problem.taskId,
       ),
@@ -596,11 +565,7 @@ class ProblemReport extends HTMLElement {
     this._setDialogError("analysis-edit-error", "");
     try {
       if (!problem.conditionId) {
-        await analyzeNoIssueDescriptionEdit(
-          problem.placeId,
-          problem.itemId,
-          description,
-        );
+        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
       } else {
         if (!problem.checkId || !problem.artifactId) {
           this._setDialogError(
@@ -619,11 +584,7 @@ class ProblemReport extends HTMLElement {
           },
         );
         try {
-          await refreshEvidenceAnalysis(
-            problem.placeId,
-            problem.itemId,
-            result,
-          );
+          await refreshEvidenceAnalysis(problem.itemId, result);
         } catch (error) {
           console.error("refresh after saved edit failed", error);
           this._setDialogError(
@@ -689,12 +650,7 @@ class ProblemReport extends HTMLElement {
     if (!(button instanceof HTMLButtonElement)) return;
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (
-      !problem.placeId ||
-      !problem.itemId ||
-      !problem.conditionId ||
-      !answerKey
-    ) {
+    if (!problem.itemId || !problem.conditionId || !answerKey) {
       this._showToast("Could not save that answer. Please try again.");
       return;
     }
@@ -704,7 +660,6 @@ class ProblemReport extends HTMLElement {
     setQuestionAnswerBusy(this, problem.conditionId, true);
     try {
       await answerAnalysisQuestion(
-        problem.placeId,
         problem.itemId,
         problem.conditionId,
         answerKey,
@@ -721,12 +676,9 @@ class ProblemReport extends HTMLElement {
   }
 
   _markProblemResolved(problem) {
-    const check = getCurrentCheck();
-    const item = check?.places?.[problem.placeId]?.items?.find(
-      (candidate) => candidate.id === problem.itemId,
-    );
+    const item = findItem(problem.itemId);
     if (!item) return;
-    updateItemAnalysis(problem.placeId, problem.itemId, {
+    updateItemAnalysis(problem.itemId, {
       tasks: (item.analysis?.tasks || []).filter(
         (task) => task.taskId !== problem.taskId,
       ),

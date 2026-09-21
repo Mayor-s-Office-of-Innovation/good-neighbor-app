@@ -234,8 +234,6 @@ export const completeCheck = async (event) => {
         .filter((it) => registeredIds.has(it.artifactId))
         .map((it) => ({
           artifactId: it.artifactId,
-          placeId: it.placeId,
-          placeName: it.placeName,
           adapted: it,
         }))
     );

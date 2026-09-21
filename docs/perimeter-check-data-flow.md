@@ -72,10 +72,10 @@ sequenceDiagram
   Note over UI: item added to session → its own pipeline starts immediately<br/>(device location is fetched best-effort, 2s cap, and rides along)
   UI->>API: POST /v1/checks (checkId as idempotency-key)<br/>once per run, lazily on the first item
   API->>DB: Put CHECK# header {status:"in_progress"}
-  UI->>API: POST .../artifacts:presign {contentType, placeId:"perimeter", placeName:siteName}
+  UI->>API: POST .../artifacts:presign {contentType}
   API-->>UI: artifactId + presigned PUT
   UI->>S3: PUT photo bytes
-  UI->>API: POST .../artifacts {artifactId, placeId, placeName, s3Key, capturedAt, latitude, longitude}
+  UI->>API: POST .../artifacts {artifactId, s3Key, capturedAt, latitude, longitude}
   API->>DB: Put ART# (conditional)
   API->>Q: SendMessage {s3Key…} (never bytes)
   Q->>W: deliver
@@ -109,11 +109,9 @@ Reading notes:
 - Steps 3–15 repeat **per evidence item**. The check header is created once (step 3),
   lazily inside the first item's analysis run; every item then runs its own
   upload→analyze→evaluate loop concurrently.
-- `placeId` / `placeName` on presign and register are optional. The client sends the
-  synthetic id `"perimeter"` plus the site name (check-session.js `perimeterPlace`); the
-  backend defaults a missing `placeId` to the same constant (artifacts.js
-  `DEFAULT_PLACE_ID`), and the worker's `position_descriptor` falls back to the literal
-  `"perimeter"` when `placeName` is absent.
+- Nothing on the wire names a place. The worker sends the analyzer the fixed
+  `position_descriptor` `"perimeter"` (analyze-artifact.js `POSITION_DESCRIPTOR`); legacy
+  `placeId` / `placeName` fields from a pre-Phase-2 client are accepted and ignored.
 - The worker→analyzer call is the only place media leaves our stack.
 - Steps 18–20 are **client-driven and background**: the backend never calls the client,
   and the scorecard fold neither mints tasks nor blocks the user — the user is working
@@ -194,8 +192,8 @@ walk the perimeter and take **five photos** into the photo roll; four analyze "G
 no concerns, and the third — the loading-dock roll-up door — comes back with graffiti.
 ULID checkId minted client-side: `01JABCDEF…`; that photo's artifact uuid below is
 abbreviated `<uuid>`. Analyzer returns for it: `{grade:"Poor", concerns:[{category:"Graffiti", severity:2, description:"Spray paint on the roll-up door", …}]}`.
-Every artifact of the run lands under the one synthetic place `placeId:"perimeter"` with
-`placeName:"Civic Center Annex"` (check-session.js `perimeterPlace`).
+Every artifact of the run is one entry in the session's flat `items[]`
+(check-session.js `addItem`), keyed by its item id alone.
 
 ### Per-item capture & analyze (all during the walk)
 
@@ -215,12 +213,12 @@ and saving a change replaces the session item.
 | API call | DB write | Record (abbreviated) |
 |---|---|---|
 | `POST /v1/checks` (once; idempotency-key = ULID) | Put CHECK# | `pk SITE#site-civic-01` · `sk CHECK#01JABC…` · `{status:"in_progress", startedAt, issueCount:0, maxSeverity:0}` (the body carries nothing the header stores; a legacy `places` list is ignored) |
-| `POST .../artifacts:presign` | — (no write; mints artifactId + S3 key `checks/site-civic-01/01JABC…/perimeter/<uuid>`; a missing `placeId` defaults to `"perimeter"`) | — |
+| `POST .../artifacts:presign` | — (no write; mints artifactId + S3 key `checks/site-civic-01/01JABC…/<uuid>`) | — |
 | (device PUTs bytes straight to S3) | — | — |
-| `POST .../artifacts` (register) | Put ART# (conditional) | `sk CHECK#01JABC…#ART#perimeter#<uuid>` · `{placeId:"perimeter", placeName:"Civic Center Annex", s3Key, capturedAt, latitude, longitude, contentType:"image/jpeg"}` → then SQS send `{siteId, checkId, artifactId, placeId, placeName, s3Key…}` (never bytes) |
+| `POST .../artifacts` (register) | Put ART# (conditional) | `sk CHECK#01JABC…#ART#<uuid>` · `{s3Key, capturedAt, latitude, longitude, contentType:"image/jpeg"}` → then SQS send `{siteId, checkId, artifactId, s3Key, capturedAt…}` (never bytes) |
 | *(SQS → worker → analyzer)* | Put ANALYSIS# (conditional) | `sk CHECK#01JABC…#ANALYSIS#<uuid>` · `{status:"analyzed", grade:"Poor", gradeDescription:"…", concerns:[{category:"Graffiti", rating:2, explanation:"Spray paint…", userFriendlyLabel:"Graffiti", evidenceIndices:[0]}], issueCount:1, maxSeverity:2, analysisId, rubricVersion, model, latitude, longitude}` + best-effort header counter bump |
 | *(the other four photos)* same three calls each | Put ART# + ANALYSIS# ×4 | same shapes; each analyzed "Good" with `concerns:[]`, `issueCount:0` |
-| *(alternative: Describe instead)* `POST .../artifacts` (text: no s3Key, carries `text`) | Put ART# + ANALYSIS# | `sk CHECK#01JABC…#ART#perimeter#<uuid>` · `{placeId:"perimeter", placeName:"Civic Center Annex", text:"Sidewalk and loading dock are clear, no dumping or graffiti today.", capturedAt, latitude, longitude}`; the worker sends it as `{type:"text"}` media with the same `position_descriptor`. One description satisfies the completion rule on its own |
+| *(alternative: Describe instead)* `POST .../artifacts` (text: no s3Key, carries `text`) | Put ART# + ANALYSIS# | `sk CHECK#01JABC…#ART#<uuid>` · `{text:"Sidewalk and loading dock are clear, no dumping or graffiti today.", capturedAt, latitude, longitude}`; the worker sends it as `{type:"text"}` media with the same `position_descriptor`. One description satisfies the completion rule on its own |
 
 While that runs, the card shows staged progress — "Photo uploaded" → "Sent to analyzer"
 with an elapsed timer (analysis-results.templates.js `pendingCard`) — and flips to
@@ -388,7 +386,7 @@ card instead of silently doing nothing. How statuses map to home buckets is §4d
 | `SITE#site-civic-01` | `#META` | site config incl. `providerShortCode:"MOI"`, `siteShortCode:"CCA"`, and the admin-geocoded `location` (Census geocoder; 311's fallback when a photo carried no GPS) |
 | `SITE#site-civic-01` | `COUNTER#task-display-id` | `nextTaskDisplayNumber:2` (one number allocated per minted task; gaps allowed) |
 | `SITE#site-civic-01` | `CHECK#01JABC…` | status `completed`, grade `Poor`, summary + categories rollup, issueCount 1, maxSeverity 2, photoCount 5, textCount 0, evidenceKind `photos` |
-| `SITE#site-civic-01` | `CHECK#01JABC…#ART#perimeter#<uuid>` ×5 | placeId `perimeter`, placeName `Civic Center Annex`, s3Key, capturedAt, latitude/longitude (photo metadata; bytes in S3). A Describe-instead run holds one such row carrying `text` and no s3Key |
+| `SITE#site-civic-01` | `CHECK#01JABC…#ART#<uuid>` ×5 | s3Key, capturedAt, latitude/longitude, contentType (photo metadata; bytes in S3). A Describe-instead run holds one such row carrying `text` and no s3Key |
 | `SITE#site-civic-01` | `CHECK#01JABC…#ANALYSIS#<uuid>` ×5 | raw adapted analyzer output: grade + concerns[] per artifact |
 | `SITE#site-civic-01` | `GUIDANCE_CURRENT#<JSON [01JABC…, <uuid>]>` | pointer to the current assessment for the artifact's lineage (`assessmentId`) |
 | `SITE#site-civic-01` | `ASSESSMENT#01JABC…-<uuid>` | status `tasks_created`, summary counts, rawAssessment (per analyzed artifact that had concerns) |
@@ -491,7 +489,7 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 | Create check (lazy, per run) | backend/src/handlers/checks.js `createCheck` (empty body; no places) | frontend/src/services/photo-analysis.js `ensureRemoteCheck` |
 | Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (5 photos or 1 description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
 | Describe instead (one text item per check) | backend/src/handlers/artifacts.js `registerArtifact` (text, no s3Key) | frontend/src/components/describe-instead.js `_onContinue` → photo-analysis.js `analyzeEvidenceItem` |
-| Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (`placeId` optional → `DEFAULT_PLACE_ID` `"perimeter"`; `placeName` = site name) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
+| Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (S3 key `checks/<siteId>/<checkId>/<artifactId>`; legacy place fields ignored) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
 | Device location (per item) | — | frontend/src/services/device-location.js `getCaptureDeviceLocation` (2s best-effort; 311 falls back to the site's geocoded `#META` location) |
 | Per-item analysis | backend/src/workers/analyze-artifact.js (+ media/downscale.js) | frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `waitForArtifactAnalysis` |
 | Failed-card retry | — | photo-analysis.js `retryEvidenceItem` (re-register same artifactId → fresh analyze) |

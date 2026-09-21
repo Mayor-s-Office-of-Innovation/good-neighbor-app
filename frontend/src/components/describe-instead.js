@@ -14,7 +14,6 @@ import {
   addItem,
   getFlowType,
   getCurrentCheck,
-  getCapturePlaceId,
   loadDraft,
   updateItem,
 } from "../state/check-session.js";
@@ -46,7 +45,6 @@ class DescribeInstead extends HTMLElement {
     this._flowType = getFlowType();
     this._routeBase =
       this._flowType === "single-problem" ? "/problem" : "/check";
-    this._placeId = getCapturePlaceId();
     // The perimeter description must describe the whole area, so it carries a
     // minimum length; a single-issue note only has to clear the backend's
     // text-artifact minimum (the analyzer rejects shorter text permanently).
@@ -167,10 +165,7 @@ class DescribeInstead extends HTMLElement {
       // delete must not half-apply the edit (that would file BOTH texts), so
       // stay on the screen and let the user retry.
       try {
-        await removeEvidenceItem(
-          this._existing.placeId || this._placeId,
-          this._existing.id,
-        );
+        await removeEvidenceItem(this._existing.id);
       } catch (err) {
         console.error("Could not replace the saved description", err);
         return;
@@ -179,11 +174,9 @@ class DescribeInstead extends HTMLElement {
     // Typed text is real evidence: file it as a text item through the same
     // incremental pipeline as photos, so Done's capture-complete path counts
     // it and the backend never misses a text-only check.
-    const record = addItem(this._placeId, { kind: "text", text });
-    updateItem(this._placeId, record.id, {
-      upload: { status: "uploaded" },
-    });
-    analyzeEvidenceItem(this._placeId, record.id);
+    const record = addItem({ kind: "text", text });
+    updateItem(record.id, { upload: { status: "uploaded" } });
+    analyzeEvidenceItem(record.id);
     navigate(this._routeBase);
   }
 }

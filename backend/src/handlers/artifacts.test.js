@@ -22,13 +22,8 @@ vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   };
 });
 
-const {
-  presignUpload,
-  registerArtifact,
-  deleteArtifact,
-  presignMedia,
-  DEFAULT_PLACE_ID,
-} = await import("./artifacts.js");
+const { presignUpload, registerArtifact, deleteArtifact, presignMedia } =
+  await import("./artifacts.js");
 
 /**
  * @param {object} opts
@@ -81,11 +76,7 @@ describe("presignUpload", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: {
-          placeId: "place-north",
-          placeName: "North",
-          contentType: "image/jpeg",
-        },
+        body: { contentType: "image/jpeg" },
       }),
     );
 
@@ -94,11 +85,9 @@ describe("presignUpload", () => {
     expect(payload.uploadUrl).toBe("https://signed.example/put");
     expect(payload.expiresIn).toBe(300);
     expect(typeof payload.artifactId).toBe("string");
-    expect(payload.placeId).toBe("place-north");
-    expect(payload.placeName).toBe("North");
-    expect(payload.s3Key).toBe(
-      `checks/site-1/chk_01/place-north/${payload.artifactId}`,
-    );
+    expect(payload.s3Key).toBe(`checks/site-1/chk_01/${payload.artifactId}`);
+    expect(payload).not.toHaveProperty("placeId");
+    expect(payload).not.toHaveProperty("placeName");
 
     // content-type is pinned into the signature.
     expect(presignPut).toHaveBeenCalledWith({
@@ -114,76 +103,42 @@ describe("presignUpload", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: {
-          placeId: "place-north",
-          placeName: "North",
-          contentType: "application/pdf",
-        },
+        body: { contentType: "application/pdf" },
       }),
     );
     expect(res.statusCode).toBe(400);
     expect(presignPut).not.toHaveBeenCalled();
   });
 
-  it("defaults placeId and omits placeName when neither is sent", async () => {
+  it("ignores legacy placeId / placeName fields from pre-Phase-2 clients", async () => {
+    // A device that has not yet picked up the flat-key client still sends the
+    // retired place fields; they must not 400 and must not reach the key.
     presignPut.mockResolvedValueOnce("https://signed.example/put");
 
     const res = await callPresign(
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { contentType: "image/jpeg" },
+        body: {
+          placeId: "perimeter",
+          placeName: "Civic Center Annex",
+          contentType: "image/jpeg",
+        },
       }),
     );
 
     expect(res.statusCode).toBe(200);
     const payload = JSON.parse(res.body);
-    expect(DEFAULT_PLACE_ID).toBe("perimeter");
-    expect(payload.placeId).toBe(DEFAULT_PLACE_ID);
+    expect(payload.s3Key).toBe(`checks/site-1/chk_01/${payload.artifactId}`);
+    expect(payload).not.toHaveProperty("placeId");
     expect(payload).not.toHaveProperty("placeName");
-    // The key layout is unchanged: the default place is the path segment.
-    expect(payload.s3Key).toBe(
-      `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/${payload.artifactId}`,
-    );
-  });
-
-  it("treats a blank placeName as absent", async () => {
-    presignPut.mockResolvedValueOnce("https://signed.example/put");
-
-    const res = await callPresign(
-      artifactEvent({
-        checkId: "chk_01",
-        siteClaim: "site-1",
-        body: { placeName: "   ", contentType: "image/jpeg" },
-      }),
-    );
-
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).not.toHaveProperty("placeName");
-  });
-
-  it("rejects a placeId that is present but not a non-empty string", async () => {
-    for (const placeId of ["", 42, null]) {
-      const res = await callPresign(
-        artifactEvent({
-          checkId: "chk_01",
-          siteClaim: "site-1",
-          body: { placeId, contentType: "image/jpeg" },
-        }),
-      );
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
-    }
-    expect(presignPut).not.toHaveBeenCalled();
   });
 });
 
 describe("registerArtifact", () => {
   const validBody = {
     artifactId: "art_1",
-    placeId: "place-north",
-    placeName: "North",
-    s3Key: "checks/site-1/chk_01/place-north/art_1",
+    s3Key: "checks/site-1/chk_01/art_1",
     contentType: "image/jpeg",
     capturedAt: "2026-08-14T12:00:00.000Z",
     text: "north gate clear",
@@ -210,12 +165,12 @@ describe("registerArtifact", () => {
     expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
-      sk: "CHECK#chk_01#ART#place-north#art_1",
+      sk: "CHECK#chk_01#ART#art_1",
       artifactId: "art_1",
-      placeId: "place-north",
-      placeName: "North",
-      s3Key: "checks/site-1/chk_01/place-north/art_1",
+      s3Key: "checks/site-1/chk_01/art_1",
     });
+    expect(put.input.Item).not.toHaveProperty("placeId");
+    expect(put.input.Item).not.toHaveProperty("placeName");
 
     const msg = sqsSend.mock.calls[0][0];
     expect(msg).toBeInstanceOf(SendMessageCommand);
@@ -224,9 +179,7 @@ describe("registerArtifact", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_1",
-      s3Key: "checks/site-1/chk_01/place-north/art_1",
-      placeId: "place-north",
-      placeName: "North",
+      s3Key: "checks/site-1/chk_01/art_1",
       capturedAt: "2026-08-14T12:00:00.000Z",
       text: "north gate clear",
     });
@@ -280,7 +233,7 @@ describe("registerArtifact", () => {
         siteClaim: "site-1",
         body: {
           ...validBody,
-          s3Key: "checks/other-site/chk_99/place-north/art_1",
+          s3Key: "checks/other-site/chk_99/art_1",
         },
       }),
     );
@@ -319,8 +272,7 @@ describe("registerArtifact", () => {
     expect(JSON.parse(msg.input.MessageBody)).toMatchObject({
       artifactId: "art_1",
       checkId: "chk_01",
-      placeId: "place-north",
-      placeName: "North",
+      s3Key: "checks/site-1/chk_01/art_1",
     });
   });
 
@@ -329,17 +281,17 @@ describe("registerArtifact", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: {
-          placeId: "place-north",
-          placeName: "North",
-          s3Key: "checks/site-1/chk_01/place-north/x",
-        },
+        body: { s3Key: "checks/site-1/chk_01/x" },
       }),
     );
     expect(res.statusCode).toBe(400);
   });
 
-  it("registers under the default place and omits placeName when neither is sent", async () => {
+  it("ignores legacy placeId / placeName fields and a pre-Phase-2 s3Key layout", async () => {
+    // A stale client may still send the retired place fields and hand back a
+    // key presigned under the old `<placeId>` segment. Neither reaches the
+    // item or the message, and the key is accepted (it is still under this
+    // site + check).
     ddbSend.mockResolvedValueOnce({});
     sqsSend.mockResolvedValueOnce({});
 
@@ -349,7 +301,9 @@ describe("registerArtifact", () => {
         siteClaim: "site-1",
         body: {
           artifactId: "art_1",
-          s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+          placeId: "perimeter",
+          placeName: "Civic Center Annex",
+          s3Key: "checks/site-1/chk_01/perimeter/art_1",
           contentType: "image/jpeg",
           capturedAt: "2026-08-14T12:00:00.000Z",
         },
@@ -360,37 +314,21 @@ describe("registerArtifact", () => {
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.Item).toMatchObject({
       pk: "SITE#site-1",
-      sk: `CHECK#chk_01#ART#${DEFAULT_PLACE_ID}#art_1`,
+      sk: "CHECK#chk_01#ART#art_1",
       artifactId: "art_1",
-      placeId: DEFAULT_PLACE_ID,
+      s3Key: "checks/site-1/chk_01/perimeter/art_1",
     });
+    expect(put.input.Item).not.toHaveProperty("placeId");
     expect(put.input.Item).not.toHaveProperty("placeName");
 
-    // The worker falls back to "perimeter" for position_descriptor when the
-    // message carries no placeName, so it must be absent rather than "".
     const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
     expect(msg).toEqual({
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_1",
-      placeId: DEFAULT_PLACE_ID,
-      s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+      s3Key: "checks/site-1/chk_01/perimeter/art_1",
       capturedAt: "2026-08-14T12:00:00.000Z",
     });
-  });
-
-  it("rejects a placeId that is present but not a non-empty string", async () => {
-    const res = await callRegister(
-      artifactEvent({
-        checkId: "chk_01",
-        siteClaim: "site-1",
-        body: { ...validBody, placeId: "" },
-      }),
-    );
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
-    expect(ddbSend).not.toHaveBeenCalled();
-    expect(sqsSend).not.toHaveBeenCalled();
   });
 
   it("accepts text-only evidence and enqueues it without an s3Key", async () => {
@@ -403,8 +341,6 @@ describe("registerArtifact", () => {
         siteClaim: "site-1",
         body: {
           artifactId: "art_text_1",
-          placeId: "place-west",
-          placeName: "West",
           capturedAt: "2026-08-21T15:00:00.000Z",
           text: "Graffiti is on the west wall by the entrance.",
         },
@@ -414,9 +350,7 @@ describe("registerArtifact", () => {
     expect(res.statusCode).toBe(202);
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.Item).toMatchObject({
-      sk: "CHECK#chk_01#ART#place-west#art_text_1",
-      placeId: "place-west",
-      placeName: "West",
+      sk: "CHECK#chk_01#ART#art_text_1",
       text: "Graffiti is on the west wall by the entrance.",
     });
     expect(put.input.Item).not.toHaveProperty("s3Key");
@@ -426,8 +360,6 @@ describe("registerArtifact", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_text_1",
-      placeId: "place-west",
-      placeName: "West",
       capturedAt: "2026-08-21T15:00:00.000Z",
       text: "Graffiti is on the west wall by the entrance.",
     });
@@ -438,12 +370,7 @@ describe("registerArtifact", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: {
-          artifactId: "art_text_2",
-          placeId: "place-west",
-          placeName: "West",
-          text: "x".repeat(4001),
-        },
+        body: { artifactId: "art_text_2", text: "x".repeat(4001) },
       }),
     );
 
@@ -464,12 +391,7 @@ describe("registerArtifact", () => {
         artifactEvent({
           checkId: "chk_01",
           siteClaim: "site-1",
-          body: {
-            artifactId: "art_text_short",
-            placeId: "place-west",
-            placeName: "West",
-            text,
-          },
+          body: { artifactId: "art_text_short", text },
         }),
       );
 
@@ -649,7 +571,7 @@ describe("deleteArtifact", () => {
 });
 
 describe("presignMedia", () => {
-  it("finds the artifact by id (place is in its key) and presigns a GET", async () => {
+  it("finds a pre-Phase-2 artifact by id (retired place segment in its key) and presigns a GET", async () => {
     ddbSend.mockResolvedValueOnce({
       Items: [
         {

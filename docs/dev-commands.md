@@ -106,8 +106,7 @@ site name plus the setup code). To get the setup screen back:
 - **Dev reset route (easiest):** open **`/dev/reset-first-launch`** (dev builds only, e.g.
   `http://localhost:5173/dev/reset-first-launch`). It clears the site binding **and** any
   in-progress draft, rewrites the URL to `/today`, and shows the setup screen immediately —
-  no DevTools, no reload. (After re-binding, places-setup shows on its own if the site has no
-  confirmed places; there is no separate reset route for places.)
+  no DevTools, no reload. After re-binding, the device lands straight on `/today`.
 - **Surgical (leaves any saved checks intact):**
   - **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
     right-click the `current` row → Delete, then reload.

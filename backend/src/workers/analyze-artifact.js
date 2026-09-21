@@ -29,14 +29,18 @@ import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
+// The analyzer requires a `position_descriptor` ("where was this taken"). The
+// perimeter check has no per-photo position (ADR 0014), and nothing downstream
+// decides on the value — it is echoed back and lands on tasks as
+// `source.positionDescriptor` — so every artifact sends this fixed literal.
+export const POSITION_DESCRIPTOR = "perimeter";
+
 /**
  * @typedef {object} AnalyzeMessage
  * @property {string} siteId
  * @property {string} checkId
  * @property {string} artifactId
  * @property {string} [s3Key]
- * @property {string} [placeId]
- * @property {string} [placeName]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
  * @property {number} [latitude] device latitude at capture
@@ -54,7 +58,7 @@ function buildMetadata(msg) {
   const hasCoordinates =
     Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude);
   return {
-    position_descriptor: msg.placeName ?? "perimeter",
+    position_descriptor: POSITION_DESCRIPTOR,
     reported_at: msg.capturedAt ?? new Date().toISOString(),
     // The analyzer contract requires numbers. Missing/declined device location
     // remains a deliberate 0,0 transport placeholder and is never copied into
@@ -139,8 +143,6 @@ async function markFailed({ dynamoTable, msg, err }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.placeId ? { placeId: msg.placeId } : {}),
-    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
       ? { latitude: msg.latitude, longitude: msg.longitude }
       : {}),
@@ -281,8 +283,6 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
     artifactId: msg.artifactId,
-    ...(msg.placeId ? { placeId: msg.placeId } : {}),
-    ...(msg.placeName ? { placeName: msg.placeName } : {}),
     ...(msg.capturedAt ? { capturedAt: msg.capturedAt } : {}),
     ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
       ? { latitude: msg.latitude, longitude: msg.longitude }

@@ -271,7 +271,7 @@ export function descriptionCard(item) {
 
 /**
  * The photo roll: captured tiles in capture order, the add tile last.
- * @param {Array<{ id: string, dataUrl?: string, placeName?: string }>} photos
+ * @param {Array<{ id: string, dataUrl?: string }>} photos
  * @returns {string}
  */
 export function photoGrid(photos) {
@@ -321,10 +321,11 @@ export function footer({ items, analyzingOpen, complete }) {
   `;
 }
 
-export function analyzingSection(items, sessionCheckId) {
+export function analyzingSection(items, sessionCheckId, siteName = "") {
   return analysisResultsTray(items, sessionCheckId, {
     ariaLabel: "Analyzing evidence",
     emptyText: "All problems were resolved or deleted.",
+    siteName,
   });
 }
 
@@ -334,9 +335,7 @@ export const shotTile = (item, index) => html`
     <img
       class="shot__img"
       src="${escapeAttr(item.dataUrl)}"
-      alt="Captured photo ${index + 1}${item.placeName
-        ? ` for ${escapeAttr(item.placeName)}`
-        : ""}"
+      alt="Captured photo ${index + 1}"
     />
     <button
       class="shot__del"

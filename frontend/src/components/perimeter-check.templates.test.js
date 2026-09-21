@@ -87,8 +87,8 @@ describe("descriptionCard", () => {
 describe("photoGrid", () => {
   it("renders tiles in capture order with the add tile last", () => {
     const markup = photoGrid([
-      { id: "first", dataUrl: "data:first", placeName: "Site" },
-      { id: "second", dataUrl: "data:second", placeName: "Site" },
+      { id: "first", dataUrl: "data:first" },
+      { id: "second", dataUrl: "data:second" },
     ]);
 
     expect(markup.indexOf('data-del="first"')).toBeLessThan(

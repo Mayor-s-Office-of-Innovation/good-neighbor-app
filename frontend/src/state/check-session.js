@@ -8,13 +8,11 @@
   backend (services/submit-check.js); history + the last-log summary read it back
   from there (services/api.js), not from any local `checks` store.
 
-  Phase 1 of docs/plan-remove-places.md: a perimeter check no longer walks a
-  list of configured places. Every capture lands under ONE synthetic place
-  (named after the site) so the per-item pipeline, result cards, and backend
-  keys keep working unchanged. The single-issue flow already worked this way
-  (SINGLE_PROBLEM_PLACE). Phase 2 flattens the place layer away entirely; until
-  then `check.places[placeId].items` is the storage shape and
-  domain/check-completion.js reads across it.
+  A check is a flat list of evidence items (ADR 0014): every photo or typed
+  description lands in `check.items[]` in capture order, and every mutation is
+  keyed by the item id alone. Records persisted before Phase 2 of the places
+  removal kept items under `places[placeId].items`; `normalizeCheck` flattens
+  those on load so a mid-walk device resumes cleanly.
 
   The item API stays kind-agnostic on purpose ({kind:'photo', dataUrl} /
   {kind:'text', text}) so post-MVP capture kinds don't require a reshaping.
@@ -29,103 +27,53 @@ import {
   clearReview,
 } from "../db.js";
 
-export const PERIMETER_PLACE_ID = "perimeter";
-export const SINGLE_PROBLEM_PLACE = { id: "problem", name: "Problem" };
-
-/**
- * The one synthetic place a perimeter check captures into. Its name is the
- * site name: it rides along as `placeName` on every artifact and becomes the
- * analyzer's position descriptor + the evidence label on result cards.
- * @param {string | null | undefined} siteName
- */
-export function perimeterPlace(siteName) {
-  const name = String(siteName || "").trim();
-  return { id: PERIMETER_PLACE_ID, name: name || "Perimeter" };
-}
-
-function normalizePlacesList(places) {
-  const source = Array.isArray(places) ? places : [];
-  const normalized = [];
-  const seen = new Set();
-  for (const raw of source) {
-    const id =
-      raw && typeof raw === "object"
-        ? String(raw.id || "").trim()
-        : String(raw || "").trim();
-    const name =
-      raw && typeof raw === "object"
-        ? String(raw.name || "").trim()
-        : String(raw || "").trim();
-    if (!id || !name || seen.has(id)) continue;
-    seen.add(id);
-    normalized.push({ id, name, order: normalized.length });
-  }
-  return normalized;
-}
-
-function normalizePlaceOrder(placeOrder, places) {
-  const byId = new Set((places || []).map((place) => place.id));
-  const order = Array.isArray(placeOrder)
-    ? placeOrder
-        .map((placeId) => String(placeId || "").trim())
-        .filter((placeId) => byId.has(placeId))
-    : [];
-  return order.length ? [...new Set(order)] : (places || []).map((p) => p.id);
-}
-
 function normalizeFlowType(flowType) {
   return flowType === "single-problem" ? "single-problem" : "perimeter";
 }
 
-function createPlaceState(place) {
-  return { id: place.id, name: place.name, items: [] };
-}
-
-function normalizePlaceState(place, placeState = {}) {
-  return {
-    id: place.id,
-    name: place.name,
-    items: Array.isArray(placeState.items) ? placeState.items : [],
-  };
+/**
+ * Evidence items of a persisted record, in capture order. A current-shape
+ * record carries `items[]`; a pre-Phase-2 record carries `places` +
+ * `placeOrder`, whose items are concatenated in place order (then any place
+ * missing from the order, so nothing is dropped). Items keep the fields they
+ * were written with — an old item's `placeName` still labels its card.
+ */
+function normalizeItems(check) {
+  if (Array.isArray(check.items)) return check.items.filter(Boolean);
+  const places =
+    check.places && typeof check.places === "object" ? check.places : null;
+  if (!places) return [];
+  const ordered = Array.isArray(check.placeOrder)
+    ? check.placeOrder.map((id) => String(id || "").trim())
+    : [];
+  const placeIds = [...new Set([...ordered, ...Object.keys(places)])];
+  const items = [];
+  for (const placeId of placeIds) {
+    const placeItems = places[placeId]?.items;
+    if (!Array.isArray(placeItems)) continue;
+    for (const item of placeItems) if (item) items.push(item);
+  }
+  return items;
 }
 
 /**
- * Coerce a persisted draft/review record to the current shape. Drafts written
- * before the places removal may carry several named places plus per-place
- * text-mode fields; the places (and their items) survive so a mid-walk device
- * resumes cleanly, and the retired fields are simply dropped.
+ * Coerce a persisted draft/review record to the current shape: flatten a
+ * pre-Phase-2 `places` map into `items[]` and drop the retired container
+ * fields. Idempotent on a current-shape record.
  */
 function normalizeCheck(check) {
   if (!check) return null;
-  const placesList = normalizePlacesList(
-    check.placeList ||
-      check.placesList ||
-      (check.places && typeof check.places === "object"
-        ? Object.values(check.places)
-        : []),
-  );
-  const placeOrder = normalizePlaceOrder(
-    check.placeOrder || check.places?.order,
-    placesList,
-  );
-  const places = {};
-  for (const placeId of placeOrder) {
-    const place = placesList.find((p) => p.id === placeId) || {
-      id: placeId,
-      name: placeId,
-    };
-    places[placeId] = normalizePlaceState(place, check.places?.[placeId]);
-  }
+  // eslint-disable-next-line no-unused-vars -- retired fields, dropped on purpose
+  const { places, placeOrder, activePlaceIndex, ...rest } = check;
   return {
-    ...check,
+    ...rest,
     flowType: normalizeFlowType(check.flowType),
-    placeOrder,
-    places,
+    items: normalizeItems(check),
     analyzingOpen: Boolean(check.analyzingOpen),
   };
 }
 
-/** @type {null | {id,siteId,window,startedAt,placeOrder:string[],places:Record<string,{id:string,name:string,items:any[]}>,status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any}} */
+/** @type {null | {id,siteId,window,startedAt,items:any[],status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any}} */
 let current = null;
 const listeners = new Set();
 
@@ -161,37 +109,25 @@ function currentWindow() {
 }
 
 /**
- * Start a perimeter check. Captures land under the one synthetic place.
+ * Start a perimeter check.
  * @param {string} siteId
- * @param {string} [siteName]
  */
-export function startCheck(siteId, siteName) {
-  return startFlow(siteId, {
-    flowType: "perimeter",
-    places: [perimeterPlace(siteName)],
-  });
+export function startCheck(siteId) {
+  return startFlow(siteId, "perimeter");
 }
 
 export function startProblemReport(siteId) {
-  return startFlow(siteId, {
-    flowType: "single-problem",
-    places: [SINGLE_PROBLEM_PLACE],
-  });
+  return startFlow(siteId, "single-problem");
 }
 
-function startFlow(siteId, { flowType, places: configuredPlaces }) {
-  const placeList = normalizePlacesList(configuredPlaces);
-  const placeOrder = placeList.map((place) => place.id);
-  const places = {};
-  for (const place of placeList) places[place.id] = createPlaceState(place);
+function startFlow(siteId, flowType) {
   current = {
     id: newId(),
     siteId,
     flowType,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
-    placeOrder,
-    places,
+    items: [],
     status: "in-progress",
   };
   persist();
@@ -238,18 +174,18 @@ export async function hasDraft(flowType) {
   return Boolean(await getDraft(requestedFlow));
 }
 
-export async function resumeOrStartCheck(siteId, siteName) {
-  return (await loadDraft("perimeter")) || startCheck(siteId, siteName);
+export async function resumeOrStartCheck(siteId) {
+  return (await loadDraft("perimeter")) || startCheck(siteId);
 }
 
 export async function resumeOrStartProblemReport(siteId) {
   return (await loadDraft("single-problem")) || startProblemReport(siteId);
 }
 
-export function ensureCheck(siteId, siteName) {
+export function ensureCheck(siteId) {
   return current?.status === "in-progress" && current.flowType === "perimeter"
     ? current
-    : startCheck(siteId, siteName);
+    : startCheck(siteId);
 }
 
 export function ensureProblemReport(siteId) {
@@ -268,32 +204,18 @@ export function ensureProblemReport(siteId) {
 export async function loadSubmitted() {
   if (current) return current.status === "in-progress" ? null : current;
   const saved = await getReview();
-  if (saved) current = saved;
+  if (saved) current = normalizeCheck(saved);
   return current;
-}
-
-export function getPlaceOrder() {
-  return current?.placeOrder || [];
-}
-
-export function getPlace(placeId) {
-  return current?.places?.[placeId] || null;
-}
-
-/**
- * The place new captures go to. One synthetic place for new checks; the first
- * place of a pre-removal draft that is still being walked.
- */
-export function getCapturePlaceId() {
-  return getPlaceOrder()[0] || null;
 }
 
 /** Every evidence item in the check, in capture order. */
 export function getItems() {
-  if (!current) return [];
-  return getPlaceOrder().flatMap(
-    (placeId) => current.places?.[placeId]?.items || [],
-  );
+  return current?.items || [];
+}
+
+/** One evidence item by id, or null. */
+export function findItem(itemId) {
+  return getItems().find((item) => item.id === itemId) || null;
 }
 
 export function getFlowType() {
@@ -320,42 +242,30 @@ export function setAnalyzingOpen(open) {
 }
 
 /** Add a capture item. `item` = {kind:'photo', dataUrl} or {kind:'text', text}. */
-export function addItem(placeId, item) {
+export function addItem(item) {
   if (!current) return null;
-  const placeState = current.places[placeId];
-  if (!placeState) return null;
   const record = {
     id: newId(),
     checkId: current.id,
-    placeId,
-    placeName: placeState.name,
     uploadedAt: new Date().toISOString(),
     analysis: { status: "idle" },
     ...item,
   };
-  placeState.items.push(record);
+  current.items.push(record);
   persist();
   emit();
   return record;
 }
 
-export function removeItem(placeId, itemId) {
+export function removeItem(itemId) {
   if (!current) return;
-  const place = current.places[placeId];
-  if (!place) return;
-  place.items = place.items.filter((i) => i.id !== itemId);
+  current.items = current.items.filter((i) => i.id !== itemId);
   persist();
   emit();
 }
 
-function findSessionItem(placeId, itemId) {
-  const place = current?.places?.[placeId];
-  if (!place) return null;
-  return place.items.find((i) => i.id === itemId) || null;
-}
-
-export function updateItem(placeId, itemId, patch) {
-  const item = findSessionItem(placeId, itemId);
+export function updateItem(itemId, patch) {
+  const item = findItem(itemId);
   if (!item) return null;
   Object.assign(item, patch);
   persist();
@@ -363,8 +273,8 @@ export function updateItem(placeId, itemId, patch) {
   return item;
 }
 
-export function updateItemAnalysis(placeId, itemId, analysisPatch) {
-  const item = findSessionItem(placeId, itemId);
+export function updateItemAnalysis(itemId, analysisPatch) {
+  const item = findItem(itemId);
   if (!item) return null;
   item.analysis = { ...(item.analysis || {}), ...analysisPatch };
   persist();

@@ -395,8 +395,8 @@ export function getCheck(checkId) {
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, contentType: string }} body
- * @returns {Promise<{ artifactId: string, placeId: string, placeName: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
+ * @param {{ contentType: string }} body
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body) {
   return request(
@@ -410,7 +410,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -569,34 +569,22 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
- *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
+ * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
  * @returns {Promise<{ artifactId: string, s3Key: string }>}
  */
 export async function uploadArtifact(
   checkId,
-  {
-    placeId,
-    placeName,
-    dataUrl,
-    capturedAt,
-    latitude,
-    longitude,
-    text,
-    tag,
-    onLeg,
-  },
+  { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
 ) {
-  const art = tag ?? placeName;
+  const art = tag ?? "photo";
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    placeId,
-    placeName,
     contentType,
   });
   endPresign({ artifactId });
@@ -611,8 +599,6 @@ export async function uploadArtifact(
   const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
     artifactId,
-    placeId,
-    placeName,
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
@@ -629,20 +615,18 @@ export async function uploadArtifact(
 }
 
 /**
- * Register validated text evidence for a place without uploading media bytes.
+ * Register validated text evidence without uploading media bytes.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
+ * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { placeId, placeName, text, capturedAt, latitude, longitude },
+  { text, capturedAt, latitude, longitude },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,
-    placeId,
-    placeName,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
       ? { latitude, longitude }
