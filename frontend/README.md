@@ -26,10 +26,15 @@ real `tokens.css`/`app.css`, so it can't drift. Dev-only: `vite build` ships onl
 ## Routes
 
 - `/today` — the home hub (worklist, last log, Start/Flag CTAs)
-- `/check` — perimeter check capture
-- `/problem` — single-issue capture (with `/problem/describe` and `/check/describe` variants)
+- `/check` — perimeter check capture: one flat photo roll for the whole perimeter. Finish
+  unlocks at five photos or one saved description (`src/domain/check-completion.js`).
+- `/check/describe` — the description alternative to photos (one per check; reopening
+  edits it)
+- `/problem` — single-issue capture (with a `/problem/describe` variant)
 
-First-run site setup is enforced by `app-root`, not by a route.
+First-run site setup is enforced by `app-root`, not by a route. There is no per-site
+places setup: a bound device lands straight on `/today`
+([ADR 0014](../docs/adr/0014-remove-places-photo-roll.md)).
 
 ## Layout
 
@@ -39,7 +44,7 @@ src/
   styles/       tokens.css (design tokens) · app.css (component classes) · wa-*.css (vendored WA)
   services/     backend API calls (services/api.js is the seam)
   state/        check-session and other app state
-  domain/       read-model adapters (backend items → UI records)
+  domain/       read-model adapters (backend items → UI records) · check-completion.js (the perimeter completion rule)
   lib/          html tag helper, escaping
   db.js         IndexedDB (site binding + resumable draft + review-backed session)
   router.js     tiny History-API router
