@@ -255,20 +255,11 @@ function qs(params) {
 // ── Checks ────────────────────────────────────────────────────────────────
 
 /**
- * GET /v1/site — the bound site's settings, including ordered places.
+ * GET /v1/site — the bound site's settings (name, provider).
  * @returns {Promise<{ site: any }>}
  */
 export function getSiteSettings() {
   return request("GET", "/v1/site");
-}
-
-/**
- * PUT /v1/site/places — replace the site's ordered places.
- * @param {{ id: string, name: string }[]} places
- * @returns {Promise<{ site: any }>}
- */
-export function putSitePlaces(places) {
-  return request("PUT", "/v1/site/places", { body: { places } });
 }
 
 /**

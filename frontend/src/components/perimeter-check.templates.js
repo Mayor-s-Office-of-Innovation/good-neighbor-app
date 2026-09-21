@@ -1,11 +1,14 @@
 /*
   Presentational templates for <perimeter-check>.
 
-  The new perimeter flow renders every place in a vertical timeline while each
-  photo or typed description analyzes independently.
+  The perimeter check is a flat photo roll (docs/plan-remove-places.md): one
+  grid of photos for the whole perimeter, an optional single description as the
+  alternative to photos, and a Finish button that unlocks once the completion
+  rule in domain/check-completion.js is met. Every photo or description is
+  analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { hasPlaceEvidence } from "../domain/place-evidence.js";
+import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   analysisResultsTray,
   problemSummary,
@@ -14,7 +17,7 @@ import {
 
 export const shell = ({ embedded = false } = {}) => html`
   <div
-    class="flow view-check check check-timeline ${embedded
+    class="flow view-check check check-timeline check-roll ${embedded
       ? "check-timeline--embedded"
       : ""}"
   >
@@ -27,86 +30,33 @@ export const shell = ({ embedded = false } = {}) => html`
     </div>
 
     <h1 class="check-timeline__title" tabindex="-1">
-      Take photos at each place.
+      Take photos around your building.
     </h1>
 
-    <div class="place-timeline" id="place-timeline"></div>
+    <p
+      class="check-roll__progress"
+      id="check-progress"
+      role="status"
+      aria-live="polite"
+    ></p>
+
+    <div class="check-roll__description" id="check-description"></div>
+
+    <div
+      class="shotgrid check-roll__grid"
+      id="shotgrid"
+      aria-label="Perimeter photos"
+    ></div>
+
+    <button
+      class="check__describe check-roll__describe"
+      id="describe-instead"
+      type="button"
+    >
+      Describe instead
+    </button>
 
     <div class="check-timeline__footer" id="check-footer"></div>
-
-    <dialog class="places-modal add-place-dialog" id="add-place-dialog">
-      <form class="places-modal__card add-place-dialog__panel" method="dialog">
-        <div class="places-modal__copy">
-          <h2 class="places-modal__title">Add a place</h2>
-          <p class="places-modal__text">
-            Add a place that isn't already in the list. It will be added to this
-            check only.
-          </p>
-        </div>
-        <label class="add-place-dialog__field">
-          <span>Place name</span>
-          <input
-            id="add-place-name"
-            type="text"
-            autocomplete="off"
-            placeholder="Example: Main entrance"
-          />
-          <small id="add-place-error" role="alert"></small>
-        </label>
-        <div class="places-modal__actions add-place-dialog__actions">
-          <button
-            class="btn-ink places-modal__primary"
-            id="add-place-submit"
-            type="button"
-            disabled
-          >
-            Add place
-          </button>
-          <button
-            class="places-modal__danger add-place-dialog__cancel"
-            type="submit"
-            value="cancel"
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog
-      class="places-modal done-incomplete-dialog"
-      id="done-incomplete-dialog"
-      aria-labelledby="done-incomplete-title"
-      aria-describedby="done-incomplete-copy"
-    >
-      <form
-        class="places-modal__card done-incomplete-dialog__panel"
-        method="dialog"
-      >
-        <div class="places-modal__copy">
-          <h2 class="places-modal__title" id="done-incomplete-title">
-            Finish check?
-          </h2>
-          <p class="places-modal__text" id="done-incomplete-copy"></p>
-        </div>
-        <div class="places-modal__actions done-incomplete-dialog__actions">
-          <button
-            class="btn-ink places-modal__primary"
-            id="done-incomplete-keep"
-            type="submit"
-          >
-            Keep editing
-          </button>
-          <button
-            class="places-modal__danger"
-            id="done-incomplete-finish"
-            type="button"
-          >
-            Finish check
-          </button>
-        </div>
-      </form>
-    </dialog>
 
     ${analysisDialogs()}
 
@@ -269,388 +219,85 @@ export const analysisDialogs = () => html`
 `;
 
 /**
- * @param {{ items: Array<{ kind?: string, analysis?: { status?: string } }>, skipped?: boolean }} place
+ * The one-line status under the title. Reads the completion rule so the copy
+ * and the Finish button can never disagree.
+ * @param {{ photos: number, texts: number, complete: boolean }} status
  * @returns {string}
  */
-function placeSummary(place) {
-  const photoCount = place.items.filter((item) => item.kind === "photo").length;
-  const textCount = place.items.filter((item) => item.kind === "text").length;
-  const analyzing = place.items.some((item) =>
-    ["queued", "analyzing"].includes(item.analysis?.status),
+export function progressLine({ photos, texts, complete }) {
+  if (texts > 0) {
+    return "<strong>Description saved.</strong> Ready to finish. Photos are optional.";
+  }
+  if (complete) {
+    return `<strong>${photos} photos.</strong> Ready to finish.`;
+  }
+  return (
+    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos.</strong> ` +
+    `Take ${MIN_PERIMETER_PHOTOS} photos, or describe the area instead.`
   );
-  if (place.skipped) return "Skipped for now";
-  const pieces = [];
-  if (photoCount) {
-    pieces.push(`${photoCount} ${photoCount === 1 ? "photo" : "photos"}`);
-  }
-  if (textCount) {
-    pieces.push(`${textCount} typed note${textCount === 1 ? "" : "s"}`);
-  }
-  if (analyzing) pieces.push("Analyzing...");
-  return pieces.join(" · ");
 }
 
 /**
- * @param {object} props
- * @param {{ id: string, name: string, items: any[], skipped?: boolean, reviewed?: boolean, inputMode?: string, draftText?: string, conditionLabels?: string[], description?: { validated?: boolean } }} props.place
- * @param {number} props.index
- * @param {boolean} props.expanded
- * @param {boolean} props.isLast
- * @param {string} [props.nextPlaceName]
- * @param {string | null} props.openMenuItemId
- * @param {{ top: number, right: number } | null} props.photoMenuAnchor
+ * The saved description (one per check) with edit / remove.
+ * @param {{ id: string, text?: string } | null | undefined} item
  * @returns {string}
  */
-export function placeRow({
-  place,
-  index,
-  expanded,
-  isLast,
-  nextPlaceName,
-  openMenuItemId,
-  photoMenuAnchor,
-}) {
-  const summary = placeSummary(place);
-  const reviewed = hasPlaceEvidence(place) && place.reviewed;
-  const skipped = Boolean(place.skipped);
-  const complete = reviewed || skipped;
-  const accessibleStatus = reviewed
-    ? "Reviewed"
-    : skipped
-      ? "Skipped for now"
-      : "";
+export function descriptionCard(item) {
+  if (!item) return "";
   return html`
-    <section
-      class="place-row ${expanded ? "place-row--expanded" : ""} ${skipped
-        ? "place-row--skipped"
-        : ""}"
-    >
-      <div class="place-row__rail" aria-hidden="true">
-        <span
-          class="place-row__step ${reviewed
-            ? "place-row__step--done"
-            : ""} ${skipped ? "place-row__step--skipped" : ""}"
-        >
-          ${reviewed
-            ? html`<span class="place-row__check" aria-hidden="true"></span>`
-            : skipped
-              ? html`<span class="place-row__minus" aria-hidden="true"></span>`
-              : index + 1}
-        </span>
-        <span
-          class="place-row__line ${complete
-            ? "place-row__line--done"
-            : ""} ${isLast ? "place-row__line--short" : ""}"
-        ></span>
-      </div>
-      <div class="place-row__body">
+    <section class="check-description" aria-label="Your description">
+      <p class="check-description__text">${escapeHtml(item.text || "")}</p>
+      <div class="check-description__actions">
         <button
-          class="place-row__header"
+          class="check-description__button"
           type="button"
-          data-toggle-place="${escapeAttr(place.id)}"
-          aria-expanded="${expanded ? "true" : "false"}"
+          data-edit-description="${escapeAttr(item.id)}"
         >
-          <span>${escapeHtml(place.name)}</span>
-          ${accessibleStatus
-            ? html`<span class="visually-hidden">, ${accessibleStatus}</span>`
-            : ""}
-          <span
-            class="place-row__caret ${expanded ? "place-row__caret--up" : ""}"
-            aria-hidden="true"
-          ></span>
+          <wa-icon name="pen" aria-hidden="true"></wa-icon>
+          Edit
         </button>
-        ${summary
-          ? html`<p class="place-row__summary">${escapeHtml(summary)}</p>`
-          : ""}
-        ${conditionList(place.conditionLabels || [])}
-        ${pendingIssueLabel(place, expanded)}
-        ${expanded
-          ? expandedPlace(place, openMenuItemId, photoMenuAnchor, nextPlaceName)
-          : ""}
+        <button
+          class="check-description__button check-description__button--danger"
+          type="button"
+          data-remove-description="${escapeAttr(item.id)}"
+        >
+          <wa-icon name="trash" aria-hidden="true"></wa-icon>
+          Remove
+        </button>
       </div>
     </section>
   `;
 }
 
-function expandedPlace(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
-  return html`
-    <div class="place-row__expanded">
-      ${place.inputMode === "text"
-        ? textMode(place)
-        : photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName)}
-    </div>
-  `;
-}
-
-function photoMode(place, openMenuItemId, photoMenuAnchor, nextPlaceName) {
-  const photos = orderedPhotoItems(place.items);
-  const openMenuItem = photos.find((item) => item.id === openMenuItemId);
-  const hasEvidence = hasPlaceEvidence(place);
-  const continueLabel =
-    hasEvidence && nextPlaceName
-      ? `Continue to ${nextPlaceName}`
-      : hasEvidence
-        ? "Continue"
-        : "Skip for now";
-  return html`
-    ${photos.length === 0
-      ? html`<p class="place-row__prompt">
-          Start with a photo of the whole area.
-        </p>`
-      : ""}
-    <div
-      class="perimeter-photos"
-      aria-label="Photos for ${escapeAttr(place.name)}"
-    >
-      ${addPhotoTile(
-        photos.length === 0 ? "Take photo" : "Add detail photo",
-        place.id,
-      )}
-      ${photos
-        .map((item, index) =>
-          photoTile(item, index, openMenuItemId === item.id),
-        )
-        .join("")}
-    </div>
-    ${openMenuItem ? photoMenu(openMenuItem, photoMenuAnchor) : ""}
-    ${inlineAnalyzing(place)}
-    <div class="place-row__actions">
-      <button
-        class="btn-pill ${hasEvidence
-          ? "btn-pill--continue"
-          : "btn-pill--filled"}"
-        type="button"
-        data-next-place="${escapeAttr(place.id)}"
-      >
-        ${escapeHtml(continueLabel)}
-      </button>
-      <button
-        class="btn-pill btn-pill--outline"
-        type="button"
-        data-type-place="${escapeAttr(place.id)}"
-      >
-        Type instead
-      </button>
-    </div>
-  `;
-}
-
 /**
- * @param {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>} items
- * @returns {Array<{ id?: string, kind?: string, dataUrl?: string, placeName?: string }>}
+ * The photo roll: captured tiles in capture order, the add tile last.
+ * @param {Array<{ id: string, dataUrl?: string, placeName?: string }>} photos
+ * @returns {string}
  */
-export function orderedPhotoItems(items) {
-  return items.filter((item) => item.kind === "photo").reverse();
-}
-
-function textMode(place) {
-  const canSaveText = canSubmitTextDescription(place.draftText);
-  return html`
-    <p class="place-row__prompt">
-      Describe the whole area, even if there are no problems.
-    </p>
-    <label class="typed-evidence">
-      <span class="visually-hidden"
-        >Description for ${escapeHtml(place.name)}</span
-      >
-      <textarea
-        data-text-input="${escapeAttr(place.id)}"
-        rows="5"
-        placeholder="At ${escapeAttr(place.name)}, ..."
-      >
-${escapeHtml(place.draftText || "")}</textarea
-      >
-    </label>
-    <div class="place-row__actions">
-      <button
-        class="btn-pill btn-pill--save-note"
-        type="button"
-        data-review-text="${escapeAttr(place.id)}"
-        ${canSaveText ? "" : "disabled"}
-      >
-        Save note
-      </button>
-      <button
-        class="btn-pill btn-pill--outline"
-        type="button"
-        data-photo-place="${escapeAttr(place.id)}"
-      >
-        Take a photo instead
-      </button>
-    </div>
-  `;
-}
-
-/**
- * @param {string | undefined | null} text
- * @returns {boolean}
- */
-export function canSubmitTextDescription(text) {
-  return String(text || "").trim().length >= 5;
-}
-
-function addPhotoTile(label, placeId) {
-  return html`
-    <button
-      class="perimeter-photo perimeter-photo--add"
-      type="button"
-      data-add-photo="${escapeAttr(placeId)}"
-    >
-      <span class="perimeter-photo__camera" aria-hidden="true">
-        <wa-icon name="camera"></wa-icon>
-      </span>
-      <span>${escapeHtml(label)}</span>
-    </button>
-  `;
-}
-
-function photoTile(item, index, menuOpen) {
-  return html`
-    <div class="perimeter-photo perimeter-photo--captured">
-      <img
-        src="${escapeAttr(item.dataUrl)}"
-        alt="Captured photo ${index + 1} for ${escapeAttr(
-          item.placeName || "this place",
-        )}"
-      />
-      <button
-        class="perimeter-photo__menu-button wa-plain"
-        type="button"
-        data-photo-menu="${escapeAttr(item.id)}"
-        aria-label="Photo options"
-        aria-expanded="${menuOpen ? "true" : "false"}"
-      >
-        <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
-      </button>
-    </div>
-  `;
-}
-
-function photoMenu(item, anchor) {
-  const style = anchor
-    ? `--photo-menu-top:${anchor.top}px;--photo-menu-right:${anchor.right}px;`
-    : "";
-  return html`
-    <div
-      class="photo-menu"
-      role="menu"
-      aria-label="Photo options"
-      style="${escapeAttr(style)}"
-    >
-      <button
-        type="button"
-        role="menuitem"
-        data-photo-action="note"
-        data-item-id="${escapeAttr(item.id)}"
-      >
-        <wa-icon name="pen-clip" aria-hidden="true"></wa-icon>
-        Add note
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        data-photo-action="replace"
-        data-item-id="${escapeAttr(item.id)}"
-      >
-        <wa-icon name="repeat" aria-hidden="true"></wa-icon>
-        Replace photo
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        data-photo-action="move"
-        data-item-id="${escapeAttr(item.id)}"
-      >
-        <wa-icon name="arrow-down" aria-hidden="true"></wa-icon>
-        Move to another place
-      </button>
-      <button
-        class="photo-menu__danger"
-        type="button"
-        role="menuitem"
-        data-photo-action="remove"
-        data-item-id="${escapeAttr(item.id)}"
-      >
-        <wa-icon name="trash" aria-hidden="true"></wa-icon>
-        Remove photo
-      </button>
-    </div>
-  `;
-}
-
-function inlineAnalyzing(place) {
-  if (
-    !place.items.some((item) =>
-      ["queued", "analyzing"].includes(item.analysis?.status),
-    )
-  ) {
-    return "";
-  }
-  return html`
-    <div class="place-row__inline-ai" aria-live="polite">
-      <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
-      <span></span>
-    </div>
-  `;
-}
-
-function conditionList(labels) {
-  if (!labels.length) return "";
-  return html`
-    <ul class="place-row__conditions">
-      ${labels
-        .map(
-          (label) => html`
-            <li>
-              <wa-icon name="flag" aria-hidden="true"></wa-icon>
-              <span>${escapeHtml(label)}</span>
-            </li>
-          `,
-        )
-        .join("")}
-    </ul>
-  `;
-}
-
-function pendingIssueLabel(place, expanded) {
-  if (expanded || !hasPendingAnalysis(place)) return "";
-  return html`
-    <div
-      class="place-row__pending-issue"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
-      <span aria-hidden="true"></span>
-      <span class="visually-hidden">Issue-label analysis in progress</span>
-    </div>
-  `;
-}
-
-function hasPendingAnalysis(place) {
-  return place.items?.some((item) =>
-    ["queued", "analyzing"].includes(item.analysis?.status),
+export function photoGrid(photos) {
+  return (
+    photos.map((item, index) => shotTile(item, index)).join("") +
+    addTile(photos.length === 0)
   );
 }
 
-export function addPlaceButton() {
-  return html`
-    <button class="place-timeline__add" id="add-place-open" type="button">
-      <span class="place-timeline__add-icon" aria-hidden="true"></span>
-      <span>Add place</span>
-    </button>
-  `;
-}
-
-export function footer({ items, analyzingOpen }) {
+/**
+ * @param {{ items: any[], analyzingOpen: boolean, complete: boolean }} props
+ * @returns {string}
+ */
+export function footer({ items, analyzingOpen, complete }) {
   const active = items.some((item) =>
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
   const problems = problemSummary(items);
   const problemLabel = active ? "Analyzing..." : problemSummaryLabel(problems);
   return html`
-    <button class="check-timeline__done" id="done-check" type="button">
+    <button
+      class="check-timeline__done"
+      id="done-check"
+      type="button"
+      ${complete ? "" : "disabled"}
+    >
       Finish check
     </button>
     ${items.length
@@ -681,7 +328,7 @@ export function analyzingSection(items, sessionCheckId) {
   });
 }
 
-// Compatibility exports for <problem-report>, which still uses the older grid.
+// Shared with <problem-report>, which renders the same grid.
 export const shotTile = (item, index) => html`
   <div class="shot">
     <img

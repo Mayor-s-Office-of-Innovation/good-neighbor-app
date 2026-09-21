@@ -61,10 +61,19 @@ describe("counts and status", () => {
       placeOrder: ["b", "a"],
       places: {
         a: { items: [{ id: "a1", kind: "photo" }] },
-        b: { items: [{ id: "b1", kind: "text" }, { id: "b2", kind: "photo" }] },
+        b: {
+          items: [
+            { id: "b1", kind: "text" },
+            { id: "b2", kind: "photo" },
+          ],
+        },
       },
     };
-    expect(checkItems(check).map((item) => item.id)).toEqual(["b1", "b2", "a1"]);
+    expect(checkItems(check).map((item) => item.id)).toEqual([
+      "b1",
+      "b2",
+      "a1",
+    ]);
     expect(photoCount(check)).toBe(2);
     expect(textCount(check)).toBe(1);
     expect(hasEvidence(check)).toBe(true);

@@ -1,7 +1,12 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /**
- * Describe Instead flow for one place in a check.
- * Persists typed input, validates it, and returns to the capture flow.
+ * Describe Instead — text evidence as the alternative to photos.
+ *
+ * One code path for both flows: Continue files the typed text as a kind:"text"
+ * item through the same incremental pipeline as photos, so it is analyzed and
+ * counted exactly like a photo. For the perimeter check there is ONE
+ * description per check (docs/plan-remove-places.md): opening this screen
+ * again edits the saved description, and saving a change replaces it.
  */
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
@@ -9,14 +14,15 @@ import {
   addItem,
   getFlowType,
   getCurrentCheck,
+  getCapturePlaceId,
   loadDraft,
-  getActivePlaceIndex,
-  getPlaceOrder,
-  getPlaceDescription,
-  setPlaceDescription,
-  setPostDescribeAction,
+  removeItem,
   updateItem,
 } from "../state/check-session.js";
+import {
+  MIN_DESCRIPTION_LENGTH,
+  textItems,
+} from "../domain/check-completion.js";
 import { analyzeEvidenceItem } from "../services/photo-analysis.js";
 import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 
@@ -37,11 +43,14 @@ class DescribeInstead extends HTMLElement {
     this._flowType = getFlowType();
     this._routeBase =
       this._flowType === "single-problem" ? "/problem" : "/check";
-    this._places = getPlaceOrder();
-    this._placeIndex = getActivePlaceIndex() ?? 0;
-    this._placeId = this._places[this._placeIndex] || this._places[0];
-    this._savedDescription = getPlaceDescription(this._placeId);
-    this._savedText = this._savedDescription?.text || "";
+    this._placeId = getCapturePlaceId();
+    // The perimeter description must describe the whole area, so it carries a
+    // minimum length; a single-issue note only has to be non-empty.
+    this._minLength =
+      this._flowType === "perimeter" ? MIN_DESCRIPTION_LENGTH : 1;
+    this._existing =
+      this._flowType === "perimeter" ? textItems(check)[0] || null : null;
+    this._savedText = this._existing?.text || "";
     this._text = this._savedText;
     this._programmaticFieldUpdate = false;
 
@@ -77,7 +86,7 @@ class DescribeInstead extends HTMLElement {
         this._field.value = this._text;
         this._programmaticFieldUpdate = false;
       }
-      this._continue.disabled = !this._text.trim();
+      this._continue.disabled = !this._canContinue();
       this._syncClearUi();
     });
 
@@ -91,9 +100,15 @@ class DescribeInstead extends HTMLElement {
 
   _render() {
     this.innerHTML = shell({
-      text: this._text,
+      flowType: this._flowType,
+      minLength: this._minLength,
       hasText: Boolean(this._text.trim()),
+      canContinue: this._canContinue(),
     });
+  }
+
+  _canContinue() {
+    return this._text.trim().length >= this._minLength;
   }
 
   _syncClearUi() {
@@ -106,9 +121,7 @@ class DescribeInstead extends HTMLElement {
     this._field.value = "";
     this._programmaticFieldUpdate = false;
     this._text = "";
-    this._savedText = "";
-    this._savedDescription = null;
-    setPlaceDescription(this._placeId, null);
+    this._continue.disabled = true;
     this._syncClearUi();
     this._field.focus();
   }
@@ -123,7 +136,6 @@ class DescribeInstead extends HTMLElement {
 
   _onClose() {
     if (!this._hasUnsavedChanges()) {
-      this._returnToCurrentPlace();
       navigate(this._routeBase);
       return;
     }
@@ -132,43 +144,29 @@ class DescribeInstead extends HTMLElement {
 
   _discardAndExit() {
     this._dialog.close();
-    this._returnToCurrentPlace();
     navigate(this._routeBase);
   }
 
   async _onContinue() {
     const text = this._text.trim();
-    if (!text) return;
-    if (this._flowType === "single-problem") {
-      // A described problem report is real evidence: file it as a text item
-      // through the same incremental pipeline as photos, so Done's capture-
-      // complete path counts it and the backend never misses a text-only report
-      // (place.description is not counted by expectedArtifactCountForCheck).
-      const record = addItem(this._placeId, { kind: "text", text });
-      updateItem(this._placeId, record.id, {
-        upload: { status: "uploaded" },
-      });
-      analyzeEvidenceItem(this._placeId, record.id);
-      navigate(this._routeBase);
-      return;
+    if (!this._canContinue()) return;
+    if (this._existing) {
+      if (text === this._savedText.trim()) {
+        navigate(this._routeBase);
+        return;
+      }
+      // Replace, don't append: one description per perimeter check.
+      removeItem(this._existing.placeId || this._placeId, this._existing.id);
     }
-    setPlaceDescription(this._placeId, {
-      kind: "note",
-      text,
-      source: "typed",
-      validated: true,
-      validation: {
-        whatYouCanSee: true,
-        whereItIs: true,
-      },
+    // Typed text is real evidence: file it as a text item through the same
+    // incremental pipeline as photos, so Done's capture-complete path counts
+    // it and the backend never misses a text-only check.
+    const record = addItem(this._placeId, { kind: "text", text });
+    updateItem(this._placeId, record.id, {
+      upload: { status: "uploaded" },
     });
-    setPostDescribeAction({ type: "stay", placeIndex: this._placeIndex });
+    analyzeEvidenceItem(this._placeId, record.id);
     navigate(this._routeBase);
-  }
-
-  _returnToCurrentPlace() {
-    if (this._flowType !== "perimeter") return;
-    setPostDescribeAction({ type: "stay", placeIndex: this._placeIndex });
   }
 }
 
