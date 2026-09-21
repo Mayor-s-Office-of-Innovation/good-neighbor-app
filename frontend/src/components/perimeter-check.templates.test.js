@@ -46,14 +46,16 @@ describe("progressLine", () => {
   it("counts photos toward the minimum and offers the text alternative", () => {
     const markup = progressLine({ photos: 3, texts: 0, complete: false });
 
-    expect(markup).toContain(`3 of ${MIN_PERIMETER_PHOTOS} photos.`);
-    expect(markup).toContain("describe the area instead");
+    expect(markup).toContain(`3 of ${MIN_PERIMETER_PHOTOS} photos taken`);
+    expect(markup).toContain(
+      "Take at least 5 photos (you can also type descriptions)",
+    );
   });
 
   it("reads ready once the photo minimum is met", () => {
     const markup = progressLine({ photos: 5, texts: 0, complete: true });
 
-    expect(markup).toContain("5 photos.");
+    expect(markup).toContain("5 of 5 photos taken");
     expect(markup).toContain("Ready to finish");
   });
 
@@ -85,17 +87,17 @@ describe("descriptionCard", () => {
 });
 
 describe("photoGrid", () => {
-  it("renders tiles in capture order with the add tile last", () => {
+  it("renders the camera first with the newest photo immediately after it", () => {
     const markup = photoGrid([
       { id: "first", dataUrl: "data:first", placeName: "Site" },
       { id: "second", dataUrl: "data:second", placeName: "Site" },
     ]);
 
-    expect(markup.indexOf('data-del="first"')).toBeLessThan(
+    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
       markup.indexOf('data-del="second"'),
     );
     expect(markup.indexOf('data-del="second"')).toBeLessThan(
-      markup.indexOf('id="add-photo"'),
+      markup.indexOf('data-del="first"'),
     );
     expect(markup).not.toContain("addshot--empty");
   });
@@ -104,7 +106,8 @@ describe("photoGrid", () => {
     const markup = photoGrid([]);
 
     expect(markup).toContain("addshot--empty");
-    expect(markup).toContain("Tap to open your camera");
+    expect(markup).toContain("Take photo");
+    expect(markup).toContain('name="camera"');
   });
 });
 

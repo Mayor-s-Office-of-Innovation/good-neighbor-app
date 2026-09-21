@@ -49,7 +49,7 @@ export const shell = ({ embedded = false } = {}) => html`
     ></div>
 
     <button
-      class="check__describe check-roll__describe"
+      class="btn-outline check-roll__describe"
       id="describe-instead"
       type="button"
     >
@@ -219,8 +219,8 @@ export const analysisDialogs = () => html`
 `;
 
 /**
- * The one-line status under the title. Reads the completion rule so the copy
- * and the Finish button can never disagree.
+ * Stacked capture status under the title. The description minimum is
+ * instructional copy; the existing completion rule is unchanged.
  * @param {{ photos: number, texts: number, complete: boolean }} status
  * @returns {string}
  */
@@ -228,12 +228,10 @@ export function progressLine({ photos, texts, complete }) {
   if (texts > 0) {
     return "<strong>Description saved.</strong> Ready to finish. Photos are optional.";
   }
-  if (complete) {
-    return `<strong>${photos} photos.</strong> Ready to finish.`;
-  }
   return (
-    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos.</strong> ` +
-    `Take ${MIN_PERIMETER_PHOTOS} photos, or describe the area instead.`
+    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
+    `<span>Take at least ${MIN_PERIMETER_PHOTOS} photos (you can also type descriptions)</span>` +
+    (complete ? `<span>Ready to finish.</span>` : "")
   );
 }
 
@@ -270,14 +268,17 @@ export function descriptionCard(item) {
 }
 
 /**
- * The photo roll: captured tiles in capture order, the add tile last.
+ * The photo roll: camera first, then captured tiles from newest to oldest.
  * @param {Array<{ id: string, dataUrl?: string, placeName?: string }>} photos
  * @returns {string}
  */
 export function photoGrid(photos) {
   return (
-    photos.map((item, index) => shotTile(item, index)).join("") +
-    addTile(photos.length === 0)
+    addTile(photos.length === 0) +
+    photos
+      .map((item, index) => shotTile(item, index))
+      .reverse()
+      .join("")
   );
 }
 
@@ -351,13 +352,13 @@ export const shotTile = (item, index) => html`
 
 export const addTile = (empty) => html`
   <button
-    class="addshot ${empty ? "addshot--empty" : ""}"
+    class="btn-photo addshot ${empty ? "addshot--empty" : ""}"
     id="add-photo"
     type="button"
   >
-    <span class="addshot__label">Add photo</span>
-    ${empty
-      ? html`<span class="addshot__hint">Tap to open your camera</span>`
-      : ""}
+    <span class="addshot__icon" aria-hidden="true"
+      ><wa-icon name="camera"></wa-icon
+    ></span>
+    <span class="addshot__label">Take photo</span>
   </button>
 `;
