@@ -154,7 +154,7 @@ class ProblemReport extends HTMLElement {
       "click",
       () => {
         this._cancelDialog?.close();
-        this._exitCapture();
+        this._exitCapture({ discarded: true });
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -292,7 +292,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _cancel() {
     if (!isPlaceCovered(this._placeId)) {
-      this._exitCapture();
+      this._exitCapture({ discarded: true });
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
@@ -367,7 +367,7 @@ class ProblemReport extends HTMLElement {
     const check = getCurrentCheck();
     if (!isPlaceCovered(this._placeId)) {
       clearCheck();
-      this._exitCapture();
+      this._exitCapture({ discarded: true });
       return;
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
@@ -400,7 +400,7 @@ class ProblemReport extends HTMLElement {
     navigate("/today");
   }
 
-  _exitCapture() {
+  _exitCapture({ discarded = false } = {}) {
     this._finishing = true;
     this._cleanupSubscription();
     if (this._embedded) {
@@ -408,7 +408,7 @@ class ProblemReport extends HTMLElement {
         new CustomEvent("capturefinished", {
           bubbles: true,
           composed: true,
-          detail: { flowType: "single-problem" },
+          detail: { flowType: "single-problem", discarded },
         }),
       );
       return;
