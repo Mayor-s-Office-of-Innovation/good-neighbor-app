@@ -353,16 +353,12 @@ async function hydrateTaskEvidence(tasks) {
     tasks.map(async (task) => {
       const artifact = firstTaskArtifact(task, artifactsByCheck);
       if (!artifact) return task;
+      // `positionDescriptor` is not a fallback here: since ADR 0014 it is a
+      // fixed literal, not a location. Only pre-Phase-2 rows carry a place
+      // name; the card falls back to the site name otherwise.
       const evidence = {
         artifactId: artifact.artifactId || "",
-        placeId: artifact.placeId || task.placeId || "",
-        placeName:
-          artifact.placeName ||
-          task.placeName ||
-          task.positionDescriptor ||
-          task.position_descriptor ||
-          task.location ||
-          "",
+        placeName: artifact.placeName || task.placeName || task.location || "",
         text: artifact.text || "",
       };
       if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
@@ -1051,6 +1047,7 @@ class TodayView extends HTMLElement {
               ariaLabel: "New analysis results",
               tone: "new",
               footer: newTaskEntries.length ? "" : wrapSection,
+              siteName: this._site?.name || "",
             })
           : ""}
         ${newTaskEntries.length
@@ -1077,6 +1074,7 @@ class TodayView extends HTMLElement {
                       statusLabel: this._taskStatusMeta(entry),
                       isNew: false,
                       includeControls: entry.homeStatus === "needs_action",
+                      siteName: this._site?.name || "",
                     }),
                   )
                   .join("")}
@@ -1121,6 +1119,7 @@ class TodayView extends HTMLElement {
                 action: this._primaryCardAction(entry.task),
                 statusLabel: this._newTaskStatusMeta(entry),
                 isNew: true,
+                siteName: this._site?.name || "",
               }),
             )
             .join("")}
@@ -1142,7 +1141,7 @@ class TodayView extends HTMLElement {
     if (flowType === "single-problem") {
       await resumeOrStartProblemReport(this._siteId);
     } else {
-      await resumeOrStartCheck(this._siteId, this._site.name);
+      await resumeOrStartCheck(this._siteId);
     }
     await this.connectedCallback();
     this._scrollCaptureStartIntoView();
@@ -1328,10 +1327,7 @@ class TodayView extends HTMLElement {
   }
 
   _sessionItems(session) {
-    if (!session?.places || !Array.isArray(session.placeOrder)) return [];
-    return session.placeOrder.flatMap(
-      (placeId) => session.places[placeId]?.items || [],
-    );
+    return Array.isArray(session?.items) ? session.items : [];
   }
 
   _homeTasks(tasks) {
@@ -1639,26 +1635,21 @@ class TodayView extends HTMLElement {
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
     } else if (action === "retry") {
-      if (problem.placeId && problem.itemId)
-        retryEvidenceItem(problem.placeId, problem.itemId);
+      if (problem.itemId) retryEvidenceItem(problem.itemId);
     } else if (action === "remove-item") {
-      if (problem.placeId && problem.itemId) this._removeFailedItem(problem);
+      if (problem.itemId) this._removeFailedItem(problem);
     }
   }
 
   /** Drop a failed, never-uploaded item from the pending session. */
   _removeFailedItem(problem) {
-    const session = getCurrentCheck();
-    const item = session?.places?.[problem.placeId]?.items?.find(
-      (candidate) => candidate.id === problem.itemId,
-    );
+    const item = this._sessionItem(problem);
     if (!item || item.upload?.status === "uploaded") return;
-    removeItem(problem.placeId, problem.itemId);
+    removeItem(problem.itemId);
   }
 
   _problemFromCard(card, task = null) {
     return {
-      placeId: card.getAttribute("data-place-id") || "",
       itemId: card.getAttribute("data-item-id") || "",
       checkId: card.getAttribute("data-check-id") || task?.checkId || "",
       artifactId:
@@ -1744,19 +1735,10 @@ class TodayView extends HTMLElement {
             this._deleteProblemLocally(problem);
             return;
           }
-          if (
-            getCurrentCheck()?.id === problem.checkId &&
-            problem.placeId &&
-            problem.itemId
-          ) {
-            await refreshEvidenceAnalysis(
-              problem.placeId,
-              problem.itemId,
-              result,
-              {
-                rejectedConditionId: problem.conditionId,
-              },
-            ).catch((error) => {
+          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
+            await refreshEvidenceAnalysis(problem.itemId, result, {
+              rejectedConditionId: problem.conditionId,
+            }).catch((error) => {
               console.error("refresh after saved deletion failed", error);
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
@@ -1798,7 +1780,7 @@ class TodayView extends HTMLElement {
       return;
     }
     if (!problem.conditionId) {
-      if (!problem.placeId || !problem.itemId) {
+      if (!problem.itemId) {
         this._setDialogError(
           "analysis-edit-error",
           "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
@@ -1811,11 +1793,7 @@ class TodayView extends HTMLElement {
       this._setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
-        await analyzeNoIssueDescriptionEdit(
-          problem.placeId,
-          problem.itemId,
-          description,
-        );
+        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         await this.connectedCallback();
@@ -1853,8 +1831,8 @@ class TodayView extends HTMLElement {
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
-      if (problem.placeId && problem.itemId) {
-        await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+      if (problem.itemId) {
+        await refreshEvidenceAnalysis(problem.itemId, result);
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
@@ -1871,9 +1849,9 @@ class TodayView extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    if (!problem.placeId || !problem.itemId) return;
+    if (!problem.itemId) return;
     const item = this._sessionItem(problem);
-    updateItemAnalysis(problem.placeId, problem.itemId, {
+    updateItemAnalysis(problem.itemId, {
       tasks: (item?.analysis?.tasks || []).filter(
         (task) => task.taskId !== problem.taskId,
       ),
@@ -1926,12 +1904,7 @@ class TodayView extends HTMLElement {
     if (!(button instanceof HTMLButtonElement)) return;
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (
-      !problem.placeId ||
-      !problem.itemId ||
-      !problem.conditionId ||
-      !answerKey
-    ) {
+    if (!problem.itemId || !problem.conditionId || !answerKey) {
       this._setInlineProblemError(
         problem,
         "Could not save that answer. Please try again.",
@@ -1945,7 +1918,6 @@ class TodayView extends HTMLElement {
     this._setInlineProblemError(problem, "");
     try {
       await answerAnalysisQuestion(
-        problem.placeId,
         problem.itemId,
         problem.conditionId,
         answerKey,
@@ -1964,9 +1936,9 @@ class TodayView extends HTMLElement {
   }
 
   _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
-    if (problem.placeId && problem.itemId) {
+    if (problem.itemId) {
       const item = this._sessionItem(problem);
-      updateItemAnalysis(problem.placeId, problem.itemId, {
+      updateItemAnalysis(problem.itemId, {
         tasks: (item?.analysis?.tasks || []).filter(
           (task) => task.taskId !== problem.taskId,
         ),
@@ -1982,7 +1954,7 @@ class TodayView extends HTMLElement {
   }
 
   _sessionItem(problem) {
-    return getCurrentCheck()?.places?.[problem.placeId]?.items?.find(
+    return this._sessionItems(getCurrentCheck()).find(
       (item) => item.id === problem.itemId,
     );
   }

@@ -17,7 +17,6 @@ vi.mock("../state/check-session.js", () => ({
   updateItem,
   getFlowType,
   getCurrentCheck: vi.fn(() => null),
-  getCapturePlaceId: vi.fn(() => "place-1"),
   loadDraft: vi.fn(async () => null),
 }));
 
@@ -72,7 +71,6 @@ async function buildDescribeInstead({
   if (!DescribeInstead) throw new Error("describe-instead was not registered");
   const element = Object.create(DescribeInstead.prototype);
   element._flowType = flowType;
-  element._placeId = "place-1";
   element._minLength =
     flowType === "perimeter"
       ? MIN_DESCRIPTION_LENGTH
@@ -90,14 +88,14 @@ describe("describe-instead (single-problem)", () => {
 
     await element._onContinue();
 
-    expect(addItem).toHaveBeenCalledWith("place-1", {
+    expect(addItem).toHaveBeenCalledWith({
       kind: "text",
       text: "There is a pothole by the north entrance.",
     });
-    expect(updateItem).toHaveBeenCalledWith("place-1", "item-1", {
+    expect(updateItem).toHaveBeenCalledWith("item-1", {
       upload: { status: "uploaded" },
     });
-    expect(analyzeEvidenceItem).toHaveBeenCalledWith("place-1", "item-1");
+    expect(analyzeEvidenceItem).toHaveBeenCalledWith("item-1");
     expect(removeEvidenceItem).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/problem");
   });
@@ -135,11 +133,11 @@ describe("describe-instead (perimeter)", () => {
 
     await element._onContinue();
 
-    expect(addItem).toHaveBeenCalledWith("place-1", {
+    expect(addItem).toHaveBeenCalledWith({
       kind: "text",
       text: LONG_TEXT,
     });
-    expect(analyzeEvidenceItem).toHaveBeenCalledWith("place-1", "item-1");
+    expect(analyzeEvidenceItem).toHaveBeenCalledWith("item-1");
     expect(navigate).toHaveBeenCalledWith("/check");
   });
 
@@ -156,7 +154,7 @@ describe("describe-instead (perimeter)", () => {
   it("replaces the saved description instead of adding a second one", async () => {
     const element = await buildDescribeInstead({
       flowType: "perimeter",
-      existing: { id: "old-text", placeId: "place-1", text: LONG_TEXT },
+      existing: { id: "old-text", text: LONG_TEXT },
     });
     element._text = `${LONG_TEXT} Graffiti on the side wall.`;
 
@@ -164,12 +162,12 @@ describe("describe-instead (perimeter)", () => {
 
     // The old text was already a registered artifact: replacement deletes it
     // server-side via removeEvidenceItem before the new item is filed.
-    expect(removeEvidenceItem).toHaveBeenCalledWith("place-1", "old-text");
-    expect(addItem).toHaveBeenCalledWith("place-1", {
+    expect(removeEvidenceItem).toHaveBeenCalledWith("old-text");
+    expect(addItem).toHaveBeenCalledWith({
       kind: "text",
       text: `${LONG_TEXT} Graffiti on the side wall.`,
     });
-    expect(analyzeEvidenceItem).toHaveBeenCalledWith("place-1", "item-1");
+    expect(analyzeEvidenceItem).toHaveBeenCalledWith("item-1");
     expect(navigate).toHaveBeenCalledWith("/check");
   });
 
@@ -179,7 +177,7 @@ describe("describe-instead (perimeter)", () => {
     removeEvidenceItem.mockRejectedValueOnce(new Error("delete failed"));
     const element = await buildDescribeInstead({
       flowType: "perimeter",
-      existing: { id: "old-text", placeId: "place-1", text: LONG_TEXT },
+      existing: { id: "old-text", text: LONG_TEXT },
     });
     element._text = `${LONG_TEXT} Graffiti on the side wall.`;
 
@@ -193,7 +191,7 @@ describe("describe-instead (perimeter)", () => {
   it("leaves an unchanged description alone and just returns", async () => {
     const element = await buildDescribeInstead({
       flowType: "perimeter",
-      existing: { id: "old-text", placeId: "place-1", text: LONG_TEXT },
+      existing: { id: "old-text", text: LONG_TEXT },
     });
     element._text = `  ${LONG_TEXT}  `;
 

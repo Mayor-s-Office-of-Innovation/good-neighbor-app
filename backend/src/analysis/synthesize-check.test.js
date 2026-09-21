@@ -8,37 +8,35 @@ import { multiHighConcernResponse } from "./fixtures/multi-high-concern.js";
 /**
  * @param {string} artifactId
  * @param {import("./contract.js").AnalysisResponse} response
- * @param {string} [placeName]
  * @returns {import("./synthesize-check.js").AnalyzedArtifact}
  */
-const analyzed = (artifactId, response, placeName) => ({
+const analyzed = (artifactId, response) => ({
   artifactId,
-  placeName,
   adapted: adaptAssessment(response),
 });
 
 describe("synthesizeCheck", () => {
   it("takes the worst grade across the run's artifacts", () => {
     const scorecard = synthesizeCheck([
-      analyzed("art_01", excellentResponse, "north"),
-      analyzed("art_02", singleLowConcernResponse, "east"),
-      analyzed("art_03", multiHighConcernResponse, "south"),
+      analyzed("art_01", excellentResponse),
+      analyzed("art_02", singleLowConcernResponse),
+      analyzed("art_03", multiHighConcernResponse),
     ]);
     expect(scorecard.grade).toBe("Very Poor");
     expect(scorecard.rubricVersion).toBe("1.0.0");
-    // The overall summary is the general_conditions.description of the place that
+    // The overall summary is the general_conditions.description of the artifact that
     // set the worst grade (multiHighConcernResponse / "south").
     expect(scorecard.summary).toBe(
       multiHighConcernResponse.assessment.general_conditions.description,
     );
   });
 
-  it("uses the description from the first place to reach the worst grade (ties)", () => {
-    // Two Very Poor places: the first one wins, so its description is the summary.
+  it("uses the description from the first artifact to reach the worst grade (ties)", () => {
+    // Two Very Poor artifacts: the first one wins, so its description is the summary.
     const scorecard = synthesizeCheck([
-      analyzed("art_01", excellentResponse, "north"),
-      analyzed("art_02", multiHighConcernResponse, "east"),
-      analyzed("art_03", multiHighConcernResponse, "south"),
+      analyzed("art_01", excellentResponse),
+      analyzed("art_02", multiHighConcernResponse),
+      analyzed("art_03", multiHighConcernResponse),
     ]);
     expect(scorecard.grade).toBe("Very Poor");
     expect(scorecard.summary).toBe(
@@ -55,10 +53,10 @@ describe("synthesizeCheck", () => {
   });
 
   it("rolls up per-category max rating and attributes source artifacts", () => {
-    // Two artifacts both flag Litter — different severities in different places.
+    // Two artifacts both flag Litter — different severities on different artifacts.
     const scorecard = synthesizeCheck([
-      analyzed("art_02", singleLowConcernResponse, "east"),
-      analyzed("art_03", multiHighConcernResponse, "south"),
+      analyzed("art_02", singleLowConcernResponse),
+      analyzed("art_03", multiHighConcernResponse),
     ]);
 
     const litter = scorecard.categories.find((c) => c.category === "Litter");

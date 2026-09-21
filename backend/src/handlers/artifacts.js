@@ -30,38 +30,18 @@ const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 const MIN_ARTIFACT_TEXT_LENGTH = 5;
 
 /**
- * Place id used when a client registers evidence without one. The perimeter
- * check is a flat photo roll (docs/plan-remove-places.md), so every artifact of
- * a run lands under this single synthetic place; the S3 key and the `ART#` sort
- * key still embed it so existing prefix queries keep working unchanged.
- */
-export const DEFAULT_PLACE_ID = "perimeter";
-
-/**
- * Optional `placeName` body field → trimmed string, or `undefined` when absent
- * or blank. When omitted, the analyze worker falls back to "perimeter" for the
- * analyzer's `position_descriptor`.
- * @param {unknown} placeName
- * @returns {string | undefined}
- */
-const normalizePlaceName = (placeName) => {
-  if (typeof placeName !== "string") return undefined;
-  const trimmed = placeName.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-};
-
-/**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
  * presigned PUT can only ever land inside this exact site + check, and
- * `registerArtifact` can reject any key that doesn't.
+ * `registerArtifact` can reject any key that doesn't. Objects written before
+ * ADR 0014 Phase 2 carry an extra `<placeId>` segment; nothing reconstructs a
+ * key from parts, so they stay readable through the stored `s3Key`.
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} placeId
  * @param {string} artifactId
  * @returns {string}
  */
-const mediaKey = (siteId, checkId, placeId, artifactId) =>
-  `checks/${siteId}/${checkId}/${placeId}/${artifactId}`;
+const mediaKey = (siteId, checkId, artifactId) =>
+  `checks/${siteId}/${checkId}/${artifactId}`;
 
 /**
  * POST /v1/checks/{checkId}/artifacts:presign — mint an `artifactId` + S3 key
@@ -69,9 +49,8 @@ const mediaKey = (siteId, checkId, placeId, artifactId) =>
  * never transit our API). No DB write happens here; the artifact becomes real
  * at `registerArtifact`. content-type is pinned into the signature.
  *
- * Body: `contentType` (required, one of ALLOWED_CONTENT_TYPES); `placeId`
- * (optional non-empty string, defaults to DEFAULT_PLACE_ID); `placeName`
- * (optional, echoed back trimmed when present).
+ * Body: `contentType` (required, one of ALLOWED_CONTENT_TYPES). Legacy
+ * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignUpload = async (event) => {
@@ -87,24 +66,8 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const {
-    placeId: rawPlaceId,
-    placeName: rawPlaceName,
-    contentType,
-  } = /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
-    body ?? {}
-  );
+  const { contentType } = /** @type {{ contentType?: unknown }} */ (body ?? {});
 
-  // placeId is optional; when present it must be a non-empty string because
-  // it becomes a path segment of the S3 key.
-  if (
-    rawPlaceId !== undefined &&
-    (typeof rawPlaceId !== "string" || rawPlaceId.length === 0)
-  ) {
-    return jsonResponse(400, { error: "Invalid placeId" });
-  }
-  const placeId = rawPlaceId ?? DEFAULT_PLACE_ID;
-  const placeName = normalizePlaceName(rawPlaceName);
   if (
     typeof contentType !== "string" ||
     !ALLOWED_CONTENT_TYPES.has(contentType)
@@ -113,7 +76,7 @@ export const presignUpload = async (event) => {
   }
 
   const artifactId = randomUUID();
-  const key = mediaKey(siteId, checkId, placeId, artifactId);
+  const key = mediaKey(siteId, checkId, artifactId);
   const uploadUrl = await presignPut({
     bucket: uploadBucket,
     key,
@@ -123,8 +86,6 @@ export const presignUpload = async (event) => {
 
   return jsonResponse(200, {
     artifactId,
-    placeId,
-    ...(placeName ? { placeName } : {}),
     s3Key: key,
     contentType,
     uploadUrl,
@@ -151,10 +112,8 @@ export const presignUpload = async (event) => {
  * is a client-guaranteed invariant rather than one re-proven on every photo.
  *
  * Body: `artifactId` (required); one of `s3Key` (from presign) or `text`;
- * `placeId` (optional non-empty string, defaults to DEFAULT_PLACE_ID);
- * `placeName` (optional — omitted from the item and the queue message when
- * absent, so the worker's `position_descriptor` fallback applies); optional
- * `contentType`, `capturedAt`, `latitude` + `longitude`.
+ * optional `contentType`, `capturedAt`, `latitude` + `longitude`. Legacy
+ * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
@@ -172,29 +131,20 @@ export const registerArtifact = async (event) => {
   }
   const {
     artifactId,
-    placeId: rawPlaceId,
-    placeName: rawPlaceName,
     s3Key,
     contentType,
     capturedAt,
     latitude,
     longitude,
     text,
-  } = /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
-    body ?? {}
-  );
+  } =
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
+      body ?? {}
+    );
 
   if (typeof artifactId !== "string" || !artifactId) {
     return jsonResponse(400, { error: "Missing artifactId" });
   }
-  if (
-    rawPlaceId !== undefined &&
-    (typeof rawPlaceId !== "string" || rawPlaceId.length === 0)
-  ) {
-    return jsonResponse(400, { error: "Invalid placeId" });
-  }
-  const placeId = rawPlaceId ?? DEFAULT_PLACE_ID;
-  const placeName = normalizePlaceName(rawPlaceName);
   const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
   const normalizedText = typeof text === "string" ? text.trim() : "";
   const hasText = normalizedText.length > 0;
@@ -237,11 +187,9 @@ export const registerArtifact = async (event) => {
   // `reported_at`, so it must describe THIS artifact, not the batch.
   const capturedAtValue = typeof capturedAt === "string" ? capturedAt : now;
   const item = {
-    ...artifactKey(siteId, checkId, placeId, artifactId),
+    ...artifactKey(siteId, checkId, artifactId),
     checkId,
     artifactId,
-    placeId,
-    ...(placeName ? { placeName } : {}),
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(hasCoordinates ? { latitude, longitude } : {}),
@@ -290,8 +238,6 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        placeId,
-        ...(placeName ? { placeName } : {}),
         capturedAt: capturedAtValue,
         ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),
@@ -314,8 +260,9 @@ export const registerArtifact = async (event) => {
  * leaving the ART# row in place would let completeCheck fold the stale text
  * into the final scorecard alongside the replacement.
  *
- * The route carries only checkId + artifactId, but the ART# sort key embeds
- * `placeId`, so we query this check's ART# items and match on `artifactId`
+ * The route carries only checkId + artifactId. Rows written before ADR 0014
+ * Phase 2 embed a retired place id in the ART# sort key, so we query this
+ * check's ART# items and match on `artifactId` rather than rebuild the key
  * (same resolution presignMedia uses). Scoped to the derived site, so one
  * tenant can never delete another's artifact. The ANALYSIS# item is left in
  * place: completeCheck synthesizes only analyses whose artifact still has an
@@ -383,9 +330,10 @@ export const deleteArtifact = async (event) => {
 /**
  * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — mint a short-lived
  * presigned GET so staff can review the original photo. The route carries only
- * checkId + artifactId, but the sort key embeds `placeId`, so we query this check's
- * ART# items and match on `artifactId` (rather than reconstruct the key). Scoped
- * to the derived site, so one tenant can never sign another's media.
+ * checkId + artifactId; pre-Phase-2 rows embed a retired place id in the sort
+ * key, so we query this check's ART# items and match on `artifactId` (rather
+ * than reconstruct the key). Scoped to the derived site, so one tenant can never
+ * sign another's media.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignMedia = async (event) => {

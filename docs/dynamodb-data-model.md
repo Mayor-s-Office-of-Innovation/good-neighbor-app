@@ -77,7 +77,7 @@ without a separate timestamp in the key.
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, issueCount, maxSeverity; **+ synthesized scorecard and `photoCount` / `textCount` / `evidenceKind` at `complete`** (see note) |
-| **Artifact** (per photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<placeId>#<artifactId>` | placeId (the synthetic `"perimeter"` id — see note), placeName (the site name), S3 key or text, capturedAt |
+| **Artifact** (per photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType (see note on pre-ADR-0014 rows) |
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
@@ -85,15 +85,15 @@ without a separate timestamp in the key.
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
 
-The `<placeId>` segment of the artifact key is a leftover of the retired per-place
-capture model. Since [ADR 0014](./adr/0014-remove-places-photo-roll.md) every
-perimeter-check artifact lands under one **synthetic place**, `placeId:"perimeter"`
-(`DEFAULT_PLACE_ID` in `backend/src/handlers/artifacts.js`, applied when the client omits
-it), with `placeName` carrying the site name — which is also the analyzer's
-`position_descriptor`. The single-issue flow (`/problem`) uses `"problem"` the same way.
-The sort key is unchanged, so rows written under real place ids before the change stay
-readable: `getCheck` and `presignMedia` prefix-query the check and match on `artifactId`.
-Phase 2 of that ADR drops the segment from the key.
+Artifact rows written before Phase 2 of [ADR 0014](./adr/0014-remove-places-photo-roll.md)
+carry a retired `<placeId>` segment (`CHECK#<checkId>#ART#<placeId>#<artifactId>`) plus
+`placeId` / `placeName` attributes, and their S3 keys have a matching extra path segment.
+Nothing rebuilds an artifact key from parts: `getCheck`, `completeCheck`, `deleteArtifact`,
+and `presignMedia` prefix-query on `CHECK#<checkId>#ART#` and match on the `artifactId`
+attribute, so both shapes stay readable with no migration. The analyzer's
+`position_descriptor` is the fixed literal `"perimeter"` for every artifact
+(`backend/src/workers/analyze-artifact.js`); it is echoed onto tasks as
+`source.positionDescriptor` and nothing decides on it.
 
 Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
 item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
@@ -310,11 +310,10 @@ R1 (GSI3) and R2's buildout are post-MVP, tracked on the issue tracker; the rest
 3. **Analytics scope & metrics** — Tier 1 live KPIs + Tier 2 S3-export lake, post-MVP
    build; metric definitions settled (see above).
 4. **Single table** — confirmed, for the `LeadingKeys` isolation rationale.
-5. **Per-place artifact model** — retired as a capture concept
-   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Phase 1 keeps the `<placeId>` key
-   segment as the synthetic `"perimeter"` id so existing rows and prefix queries work
-   unchanged; multiple artifacts per check are supported (`SK` includes `<artifactId>`).
-   Phase 2 drops `placeId` from the key.
+5. **Per-place artifact model** — retired
+   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). The artifact key is
+   `CHECK#<checkId>#ART#<artifactId>`; rows written before the change keep their
+   `<placeId>` segment and stay readable through the prefix query + `artifactId` match.
 
 ### Guidance refresh lineage
 

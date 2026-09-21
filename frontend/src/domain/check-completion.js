@@ -16,7 +16,7 @@
   the backend records counts at completion but never refuses.
 
   Pure functions over the session check shape (state/check-session.js): items
-  live under `check.places[placeId].items` (one synthetic place in Phase 1).
+  live in `check.items[]` in capture order.
 */
 
 export const MIN_PERIMETER_PHOTOS = 5;
@@ -32,10 +32,10 @@ export const MIN_DESCRIPTION_LENGTH = 20;
 export const MIN_TEXT_EVIDENCE_LENGTH = 5;
 
 /**
- * @typedef {{ id: string, kind?: string, text?: string, placeId?: string,
+ * @typedef {{ id: string, kind?: string, text?: string,
  *   upload?: { status?: string, artifactId?: string },
  *   analysis?: { status?: string, artifactId?: string } }} EvidenceItem
- * @typedef {{ placeOrder?: string[], places?: Record<string, { items?: EvidenceItem[] }> } | null | undefined} SessionCheck
+ * @typedef {{ items?: EvidenceItem[] } | null | undefined} SessionCheck
  */
 
 /**
@@ -68,15 +68,7 @@ export function itemCountsTowardCompletion(item) {
  * @returns {EvidenceItem[]}
  */
 export function checkItems(check) {
-  if (!check?.places || typeof check.places !== "object") return [];
-  const order =
-    Array.isArray(check.placeOrder) && check.placeOrder.length
-      ? check.placeOrder
-      : Object.keys(check.places);
-  return order.flatMap((placeId) => {
-    const items = check.places?.[placeId]?.items;
-    return Array.isArray(items) ? items : [];
-  });
+  return Array.isArray(check?.items) ? check.items.filter(Boolean) : [];
 }
 
 /**

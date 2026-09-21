@@ -6,7 +6,7 @@
     - CHECK# header  : { checkId, status:"in_progress"|"completed", startedAt,
                          completedAt, grade, categories:[{category,maxRating,
                          sourceArtifactIds}], issueCount, maxSeverity }
-    - ANALYSIS# item : per-artifact adapted assessment — carries `placeName` + the rich
+    - ANALYSIS# item : per-artifact adapted assessment — carries the rich
                        `concerns:[{category, rating, explanation, evidenceIndices}]`
     - TASK# item     : the escalation/worklist routing (city vs on-site)
 

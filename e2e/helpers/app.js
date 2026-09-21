@@ -26,9 +26,12 @@ export async function bindSite(page) {
     ...(typeDelay > 0 ? { delay: typeDelay } : {}),
   });
   await page.locator("#continue").click();
-  await expect(
-    page.getByRole("heading", { name: SITE_NAME, exact: false }),
-  ).toBeVisible({ timeout: 30_000 });
+  // The bound site's name is always in the app header; the home heading is
+  // "Start your first check" until the site has a completed check (a fresh
+  // table, as in CI), so it is not a reliable binding signal.
+  await expect(page.locator(".app__title")).toHaveText(SITE_NAME, {
+    timeout: 30_000,
+  });
   await expect(page.locator("#start-check")).toBeVisible();
 }
 

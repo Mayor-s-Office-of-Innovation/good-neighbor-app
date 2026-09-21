@@ -139,20 +139,106 @@ that keys on `placeId + itemId` still resolves.
 
 ## Phase 2: remove the place layer (cleanup PR)
 
-Once the UI no longer depends on places, strip the plumbing.
+Refined 2026-09-21 against `feature/no-places-v2` (Phase 1 merged, all suites green).
+Once the UI no longer depends on places, strip the plumbing. No user-visible change.
 
-- `check-session.js`: flatten to a single `items[]`; mutation API takes only an `itemId`.
-  Update `problem-report.js`, `today-view.js`, `photo-analysis.js`, `describe-instead.js`,
-  `analysis-card-deletion.js`, and card `data-place-id` attributes to match.
-- `keys.js`: `artifactKey(siteId, checkId, artifactId)`; `artifacts.js` S3 key
-  `checks/<siteId>/<checkId>/<artifactId>`. Prefix queries and artifact-id matching keep old
-  rows readable.
-- `analyze-artifact.js`: drop `placeId` / `placeName` from the message and the `ANALYSIS#`
-  item; `position_descriptor` is the site name.
-- `analytics/convert.js`, `reports.js`: drop the `placeId` / `placeName` columns.
-- `synthesize-check.js`: drop the place fields from `AnalyzedArtifact`.
-- Draft compatibility: one-time migration in `loadDraft` that flattens an old `places` map
-  into `items[]`, or clear drafts on a DB version bump.
+### Decision: the analyzer's `position_descriptor`
+
+The analyzer requires a `position_descriptor` string ("where was this taken"). Phase 1
+fills it with the site name via `placeName`; Phase 2 drops that field from the wire and
+storage. Nothing in our system decides anything on the value: the analyzer echoes it, the
+guidance handler copies it onto tasks as `source.positionDescriptor`, and the only reader
+is a fallback label on task cards. So the worker sends the fixed literal `"perimeter"`
+(already its fallback), no site-name lookup is added, and evidence labels on cards use the
+bound site's name from local `getSite()`, falling back to `artifact.placeName` for
+pre-Phase-2 rows. Decided 2026-09-21.
+
+### Backend
+
+- `keys.js`: `artifactKey(siteId, checkId, artifactId)` → `CHECK#<checkId>#ART#<artifactId>`.
+  `checkArtifactPrefix` and `checkChildrenPrefix` are unchanged, so `getCheck`,
+  `completeCheck`, `deleteArtifact`, and `presignMedia` keep reading old four-segment
+  keys (they already match on `artifactId`, never on the key). Update `keys.test.js`.
+- `artifacts.js`: delete `DEFAULT_PLACE_ID`, `normalizePlaceName`, and the `placeId`
+  validation; `mediaKey` becomes `checks/<siteId>/<checkId>/<artifactId>` (the no-graft
+  prefix check still holds). Presign response, the `ART#` item, and the SQS message drop
+  both fields. **Ignore** `placeId` / `placeName` if a stale client still sends them
+  (devices mid-deploy must not 400). Replace the "defaults placeId" tests with "ignores
+  legacy place fields"; update every `place-north` key fixture.
+- `analyze-artifact.js`: drop the two fields from `AnalyzeMessage`, `markFailed`, and the
+  analyzed item; `buildMetadata` sends the fixed `position_descriptor`.
+- `checks.js` `completeCheck`: drop `placeId` / `placeName` from the `AnalyzedArtifact`
+  mapping. `synthesize-check.js`: drop the two typedef props and the "across places"
+  comments. Update `checks.test.js` fixtures (`artifactItem` / `analyzedItem` helpers).
+- `analytics/convert.js`, `reports.js`: drop the `placeId` / `placeName` columns from
+  `artifacts`. Old Parquet files keep the columns; `union_by_name` fills NULL for new
+  files, and nothing in `reports.js` selects them. Update `convert.test.js`.
+- `guidance.js`: untouched (`positionDescriptor` still arrives via the client assessment).
+
+### Frontend
+
+- `check-session.js`: the check is `{ id, siteId, flowType, window, startedAt, items[],
+  status, … }`. Mutation API: `addItem(item)`, `removeItem(itemId)`, `updateItem(itemId,
+  patch)`, `updateItemAnalysis(itemId, patch)`; readers `getItems()`, `findItem(itemId)`.
+  Delete `PERIMETER_PLACE_ID`, `SINGLE_PROBLEM_PLACE`, `perimeterPlace`, `getPlaceOrder`,
+  `getPlace`, `getCapturePlaceId`, and the `siteName` argument on `startCheck` /
+  `ensureCheck` / `resumeOrStartCheck`. Items carry no `placeId` / `placeName`.
+- **Draft migration** lives in `normalizeCheck`: when a persisted record has `places`,
+  concatenate `places[placeId].items` in `placeOrder` order into `items[]` and drop
+  `places` / `placeOrder`. Apply the same normalizer in `loadSubmitted` (it assigns the
+  raw review record today). No `DB_VERSION` bump: the draft and review stores are
+  out-of-line and schemaless. Unit-test with a pre-Phase-2 fixture (two places, mixed
+  photo/text items, an in-flight upload).
+- `domain/check-completion.js`: `checkItems` reads `check.items` (keep a `places`
+  fallback out; the normalizer owns compatibility). `submit-check.js`
+  `expectedArtifactCountForCheck` reads `items`.
+- `services/photo-analysis.js`: every function takes `itemId` only; the `active` set is
+  keyed by `itemId`; the register / upload / text calls drop `placeId` / `placeName`;
+  `assessmentFromAnalysis` keeps its `"perimeter"` descriptor. The `tag` for
+  perf spans becomes `item.id`.
+- `services/api.js`: drop the two fields from `presignArtifact`, `registerArtifact`,
+  `uploadArtifact`, `registerTextArtifact` signatures and typedefs.
+- `analysis-results.templates.js`: drop `data-place-id` from both card templates and the
+  `placeId` typedef props; evidence label = `item.placeName || siteName || "Site"`, with
+  `siteName` passed by the host through the tray options. `taskAnalysisCard` keeps its
+  `positionDescriptor` fallback chain for history tasks.
+- `perimeter-check.js`, `problem-report.js`, `today-view.js`, `describe-instead.js`:
+  drop `_placeId`, `_placeState`, `_sessionItems` (use `getItems()`), and the
+  `problem.placeId` guards; `_problemFromCard` drops `placeId`; the `camera:open` mark
+  drops its `placeId` field. `analysis-card-deletion.js` matches on condition +
+  artifact id already and needs no change.
+- `perimeter-check.templates.js` `shotTile`: alt text drops the `for <placeName>` suffix.
+- `domain/check-adapter.js`: comment only.
+
+### Tests
+
+- Backend: `keys.test.js`, `artifacts.test.js`, `checks.test.js`,
+  `analyze-artifact.test.js`, `synthesize-check.test.js`, `convert.test.js`.
+- Frontend: `check-session.test.js` (add the migration cases), `check-completion.test.js`,
+  `submit-check.resume.test.js`, `describe-instead.test.js`,
+  `analysis-results.templates.test.js`, `perimeter-check.templates.test.js`,
+  `photo-analysis.{retry,refresh,location}.test.js`.
+- E2E: nothing references places or `data-place-id` today; run the suite unchanged.
+
+### Docs
+
+- `dynamodb-data-model.md`: artifact key row, the "synthetic place" note, and item 5 of
+  the retired-concepts list.
+- `perimeter-check-data-flow.md`: presign / register lines in the sequence diagram, the
+  three write-point table rows, the "placeId optional" note, and the final-records table.
+- `architecture.md`: the presign line and the worker `placeName` line.
+- `dev-commands.md` line 109 still says places-setup shows after re-binding — stale since
+  Phase 1; fix it here.
+- ADR 0014: add a status line that Phase 2 shipped and the key is now three segments.
+- Then delete this file (per the header) once the PR merges.
+
+### Order of work
+
+1. Backend keys → artifacts → worker → completeCheck → analytics, tests green after each.
+2. Session flatten + migration + domain/submit-check, with tests.
+3. Services (`photo-analysis.js`, `api.js`).
+4. Components and templates.
+5. Docs, then `npm test`, `npm run typecheck`, `npm run lint`, and the e2e suite.
 
 ## Risks
 
@@ -169,4 +255,5 @@ Once the UI no longer depends on places, strip the plumbing.
 ## Rough size
 
 Phase 1 touches around fifteen source files plus tests, deletes three components and
-roughly 250 lines of CSS. Phase 2 touches about a dozen more.
+roughly 250 lines of CSS. Phase 2 touches about thirty files, half of them tests, with no
+user-visible change.
