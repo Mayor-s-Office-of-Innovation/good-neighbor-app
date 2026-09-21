@@ -14,6 +14,7 @@ import {
 import {
   presignUpload,
   registerArtifact,
+  deleteArtifact,
   presignMedia,
 } from "../handlers/artifacts.js";
 import { listTasks } from "../handlers/tasks.js";
@@ -80,6 +81,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/checks": listChecks,
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
+  "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}": getCheck,

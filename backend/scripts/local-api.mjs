@@ -19,6 +19,7 @@ import {
 import {
   presignUpload,
   registerArtifact,
+  deleteArtifact,
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import { listTasks } from "../src/handlers/tasks.js";
@@ -152,6 +153,11 @@ const routes = [
   route("GET", "/v1/checks", listChecks),
   route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
   route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
+  route(
+    "DELETE",
+    "/v1/checks/{checkId}/artifacts/{artifactId}",
+    deleteArtifact,
+  ),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",

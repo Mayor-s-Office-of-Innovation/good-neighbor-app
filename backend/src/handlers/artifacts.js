@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
 import { presignGet, presignPut } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import { artifactKey, checkArtifactPrefix, sitePk } from "./keys.js";
+import {
+  artifactKey,
+  checkArtifactPrefix,
+  checkHeaderKey,
+  sitePk,
+} from "./keys.js";
 
 const sqs = new SQSClient({});
 
@@ -19,6 +24,10 @@ const ALLOWED_CONTENT_TYPES = new Set([
 
 const PRESIGN_EXPIRY_SECONDS = 300;
 const MAX_ARTIFACT_TEXT_LENGTH = 4000;
+// The Street Conditions analysis service rejects text media under 5 characters
+// as an invalid request (permanent, non-retryable) — reject it here instead so
+// the client sees a 400 rather than a dead artifact.
+const MIN_ARTIFACT_TEXT_LENGTH = 5;
 
 /**
  * Place id used when a client registers evidence without one. The perimeter
@@ -192,6 +201,11 @@ export const registerArtifact = async (event) => {
   if (!hasS3Key && !hasText) {
     return jsonResponse(400, { error: "Missing s3Key or text" });
   }
+  if (hasText && normalizedText.length < MIN_ARTIFACT_TEXT_LENGTH) {
+    return jsonResponse(400, {
+      error: `text must be at least ${MIN_ARTIFACT_TEXT_LENGTH} characters`,
+    });
+  }
   if (normalizedText.length > MAX_ARTIFACT_TEXT_LENGTH) {
     return jsonResponse(400, {
       error: `text must be ${MAX_ARTIFACT_TEXT_LENGTH} characters or fewer`,
@@ -291,6 +305,79 @@ export const registerArtifact = async (event) => {
   return alreadyRegistered
     ? jsonResponse(409, { error: "artifact already registered" })
     : jsonResponse(202, { artifactId, status: "queued" });
+};
+
+/**
+ * DELETE /v1/checks/{checkId}/artifacts/{artifactId} — remove a registered
+ * artifact from its check. The client needs this when a user edits or deletes
+ * a saved description: the old text was already registered (and analyzed), so
+ * leaving the ART# row in place would let completeCheck fold the stale text
+ * into the final scorecard alongside the replacement.
+ *
+ * The route carries only checkId + artifactId, but the ART# sort key embeds
+ * `placeId`, so we query this check's ART# items and match on `artifactId`
+ * (same resolution presignMedia uses). Scoped to the derived site, so one
+ * tenant can never delete another's artifact. The ANALYSIS# item is left in
+ * place: completeCheck synthesizes only analyses whose artifact still has an
+ * ART# row, so the orphaned analysis is naturally excluded from the fold, and
+ * the coverage gate never blocks on it.
+ *
+ * Idempotent: deleting an unknown artifact (already deleted, never registered)
+ * 404s. Completed checks are not editable — the scorecard is already folded.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const deleteArtifact = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+
+  const checkId = event.pathParameters?.checkId;
+  if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
+  const artifactId = event.pathParameters?.artifactId;
+  if (!artifactId) return jsonResponse(400, { error: "Missing artifactId" });
+
+  const headerResult = await ddb.send(
+    new QueryCommand({
+      TableName: dynamoTable,
+      KeyConditionExpression: "pk = :pk AND sk = :sk",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":sk": checkHeaderKey(siteId, checkId).sk,
+      },
+      ProjectionExpression: "status",
+    }),
+  );
+  const header = (headerResult.Items ?? [])[0];
+  if (!header) return jsonResponse(404, { error: "Check not found" });
+  if (header.status === "completed") {
+    return jsonResponse(409, { error: "Check already completed" });
+  }
+
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: dynamoTable,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":prefix": checkArtifactPrefix(checkId),
+      },
+    }),
+  );
+  const artifact = (result.Items ?? []).find(
+    (it) => it.artifactId === artifactId,
+  );
+  if (!artifact) return jsonResponse(404, { error: "Artifact not found" });
+
+  await ddb.send(
+    new DeleteCommand({
+      TableName: dynamoTable,
+      Key: {
+        pk: sitePk(siteId),
+        sk: artifact.sk,
+      },
+    }),
+  );
+
+  return jsonResponse(200, { artifactId, status: "deleted" });
 };
 
 /**

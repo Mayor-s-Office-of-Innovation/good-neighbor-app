@@ -24,6 +24,7 @@ import {
   analyzeEvidenceItem,
   retryEvidenceItem,
   refreshEvidenceAnalysis,
+  removeEvidenceItem,
 } from "../services/photo-analysis.js";
 import {
   ApiError,
@@ -233,7 +234,16 @@ class PerimeterCheck extends HTMLElement {
     if (remove) {
       const itemId = remove.getAttribute("data-remove-description");
       const item = getItems().find((candidate) => candidate.id === itemId);
-      if (item) removeItem(item.placeId || this._placeId, itemId);
+      if (item) {
+        // The description may already be a registered artifact — delete it
+        // server-side too, or completeCheck folds the stale text into the
+        // scorecard even though the card is gone locally.
+        void removeEvidenceItem(item.placeId || this._placeId, itemId).catch(
+          (err) => {
+            console.error("Removing the description failed", err);
+          },
+        );
+      }
       this._render();
     }
   }

@@ -16,14 +16,17 @@ import {
   getCurrentCheck,
   getCapturePlaceId,
   loadDraft,
-  removeItem,
   updateItem,
 } from "../state/check-session.js";
 import {
   MIN_DESCRIPTION_LENGTH,
+  MIN_TEXT_EVIDENCE_LENGTH,
   textItems,
 } from "../domain/check-completion.js";
-import { analyzeEvidenceItem } from "../services/photo-analysis.js";
+import {
+  analyzeEvidenceItem,
+  removeEvidenceItem,
+} from "../services/photo-analysis.js";
 import { DESCRIPTION_MAX_LENGTH, shell } from "./describe-instead.templates.js";
 
 class DescribeInstead extends HTMLElement {
@@ -45,9 +48,12 @@ class DescribeInstead extends HTMLElement {
       this._flowType === "single-problem" ? "/problem" : "/check";
     this._placeId = getCapturePlaceId();
     // The perimeter description must describe the whole area, so it carries a
-    // minimum length; a single-issue note only has to be non-empty.
+    // minimum length; a single-issue note only has to clear the backend's
+    // text-artifact minimum (the analyzer rejects shorter text permanently).
     this._minLength =
-      this._flowType === "perimeter" ? MIN_DESCRIPTION_LENGTH : 1;
+      this._flowType === "perimeter"
+        ? MIN_DESCRIPTION_LENGTH
+        : MIN_TEXT_EVIDENCE_LENGTH;
     this._existing =
       this._flowType === "perimeter" ? textItems(check)[0] || null : null;
     this._savedText = this._existing?.text || "";
@@ -155,8 +161,20 @@ class DescribeInstead extends HTMLElement {
         navigate(this._routeBase);
         return;
       }
-      // Replace, don't append: one description per perimeter check.
-      removeItem(this._existing.placeId || this._placeId, this._existing.id);
+      // Replace, don't append: one description per check. The old text was
+      // already registered as an artifact — delete it server-side too, or
+      // completeCheck folds the stale description into the scorecard. A failed
+      // delete must not half-apply the edit (that would file BOTH texts), so
+      // stay on the screen and let the user retry.
+      try {
+        await removeEvidenceItem(
+          this._existing.placeId || this._placeId,
+          this._existing.id,
+        );
+      } catch (err) {
+        console.error("Could not replace the saved description", err);
+        return;
+      }
     }
     // Typed text is real evidence: file it as a text item through the same
     // incremental pipeline as photos, so Done's capture-complete path counts

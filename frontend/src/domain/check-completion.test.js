@@ -8,6 +8,7 @@ import {
   completionStatus,
   hasEvidence,
   isPerimeterCheckComplete,
+  itemCountsTowardCompletion,
   photoCount,
   textCount,
 } from "./check-completion.js";
@@ -52,6 +53,111 @@ describe("isPerimeterCheckComplete", () => {
     expect(isPerimeterCheckComplete(makeCheck(0, 0))).toBe(false);
     expect(isPerimeterCheckComplete(null)).toBe(false);
     expect(isPerimeterCheckComplete({})).toBe(false);
+  });
+});
+
+describe("itemCountsTowardCompletion (live evidence only)", () => {
+  const DEAD_PHOTO = {
+    id: "dead",
+    kind: "photo",
+    dataUrl: "data:,",
+    upload: { status: "failed" },
+    analysis: { status: "failed" },
+  };
+  const REGISTERED_BUT_FAILED = {
+    id: "reg-dead",
+    kind: "photo",
+    upload: { status: "uploaded", artifactId: "art-1" },
+    analysis: { status: "failed", artifactId: "art-1" },
+  };
+  const IN_FLIGHT = {
+    id: "flying",
+    kind: "text",
+    text: "Still being processed.",
+    analysis: { status: "analyzing" },
+  };
+
+  it("a registered item counts even when its analysis failed", () => {
+    // The backend artifact exists — the coverage gate knows it and the
+    // analysis failed marker satisfies the backend gate too.
+    expect(itemCountsTowardCompletion(REGISTERED_BUT_FAILED)).toBe(true);
+  });
+
+  it("a permanently failed item with no registered artifact does not count", () => {
+    expect(itemCountsTowardCompletion(DEAD_PHOTO)).toBe(false);
+  });
+
+  it("an in-flight item (idle/queued/analyzing) counts", () => {
+    expect(itemCountsTowardCompletion(IN_FLIGHT)).toBe(true);
+    expect(itemCountsTowardCompletion({ id: "new", kind: "photo" })).toBe(true);
+    expect(
+      itemCountsTowardCompletion({
+        id: "q",
+        kind: "photo",
+        analysis: { status: "queued" },
+      }),
+    ).toBe(true);
+  });
+
+  it("five failed uploads do NOT satisfy the five-photo rule", () => {
+    const check = makeCheck(0, 0);
+    check.places.perimeter.items = Array.from({ length: 5 }, (_, i) => ({
+      ...DEAD_PHOTO,
+      id: `dead-${i}`,
+    }));
+    expect(photoCount(check)).toBe(0);
+    expect(isPerimeterCheckComplete(check)).toBe(false);
+    expect(completionStatus(check)).toEqual({
+      photos: 0,
+      texts: 0,
+      complete: false,
+      remaining: 5,
+    });
+  });
+
+  it("five failed uploads plus four live photos count only four", () => {
+    const check = makeCheck(0, 0);
+    check.places.perimeter.items = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `dead-${i}`,
+        kind: "photo",
+        dataUrl: "data:,",
+        upload: { status: "failed" },
+        analysis: { status: "failed" },
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        id: `live-${i}`,
+        kind: "photo",
+        dataUrl: "data:,",
+      })),
+    ];
+    expect(photoCount(check)).toBe(4);
+    expect(isPerimeterCheckComplete(check)).toBe(false);
+  });
+
+  it("a failed description with no artifact does not satisfy the one-description rule", () => {
+    const check = makeCheck(0, 0);
+    check.places.perimeter.items = [
+      /** @type {any} */ ({
+        id: "dead-text",
+        kind: "text",
+        text: "Never registered.",
+        upload: { status: "failed" },
+        analysis: { status: "failed" },
+      }),
+    ];
+    expect(textCount(check)).toBe(0);
+    expect(isPerimeterCheckComplete(check)).toBe(false);
+  });
+
+  it("hasEvidence still sees dead items (cancel/discard decisions)", () => {
+    const check = makeCheck(0, 0);
+    check.places.perimeter.items = [
+      { ...DEAD_PHOTO, id: "dead-1" },
+      { ...DEAD_PHOTO, id: "dead-2" },
+    ];
+    expect(hasEvidence(check)).toBe(true);
+    expect(photoCount(check)).toBe(0);
   });
 });
 
