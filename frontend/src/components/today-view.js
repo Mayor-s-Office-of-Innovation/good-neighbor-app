@@ -508,7 +508,9 @@ class TodayView extends HTMLElement {
     super();
     this._viewPhase = "home";
     this._captureFlow = null;
-    this._captureFinishedHandler = () => this._finishCapture();
+    /** @param {CustomEvent<{ discarded?: boolean }>} event */
+    this._captureFinishedHandler = (event) => this._finishCapture(event);
+    this._discardingCapture = false;
     this._cardDeletedHandler = (event) => {
       if (!this._deferredDeletionRender) return;
       this._deferredDeletionRender = false;
@@ -1166,8 +1168,10 @@ class TodayView extends HTMLElement {
     });
   }
 
-  async _finishCapture() {
+  /** @param {CustomEvent<{ discarded?: boolean }>} event */
+  async _finishCapture(event) {
     if (this._viewPhase === "leaving-capture") return;
+    this._discardingCapture = Boolean(event.detail?.discarded);
     this._viewPhase = "leaving-capture";
     this._focusAfterRender =
       this._captureLauncherSelector || "home-primary-control";
@@ -1175,6 +1179,7 @@ class TodayView extends HTMLElement {
     this._afterCaptureAnimation("leaving-capture", async () => {
       this._viewPhase = "home";
       this._captureFlow = null;
+      this._discardingCapture = false;
       await this.connectedCallback();
       this._captureLauncherSelector = null;
     });
@@ -1193,6 +1198,7 @@ class TodayView extends HTMLElement {
       "home--leaving-capture",
       this._viewPhase === "leaving-capture",
     );
+    root.classList.toggle("home--discarding-capture", this._discardingCapture);
     const results = this.querySelector(".home-region--results");
     if (results) {
       const inactive = shouldInertHomeResults(this._viewPhase);
