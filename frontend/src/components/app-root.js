@@ -9,6 +9,7 @@
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
 */
+import { requestLocationPermissionEarly } from "../services/device-location.js";
 import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
 import { getSiteSettings } from "../services/api.js";
 import {
@@ -43,6 +44,7 @@ class AppRoot extends HTMLElement {
       await this._resetFirstLaunch();
       return;
     }
+    requestLocationPermissionEarly();
     this._site = await getSite();
     this._onAuthSignout = () => {
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
