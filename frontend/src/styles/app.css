@@ -141,6 +141,12 @@ body {
 
 body {
   margin: 0;
+  /* Web Awesome's native.css (layer wa-native) sets body { min-height: 100vh }.
+     On phones 100vh is the LARGE viewport (browser bar collapsed), so that rule
+     alone makes the document taller than the visible area by the bar's height
+     and every route scrolls by that much, even with tiny content. The shell
+     sizes itself (app-root, 100svh); the body must not add its own floor. */
+  min-height: 0;
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
