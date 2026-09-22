@@ -5,13 +5,15 @@ import { test as harnessTest } from "../helpers/harness.js";
 import { startCheck } from "../helpers/app.js";
 
 /*
-  Automated accessibility scans (axe-core) inside the existing e2e suite, per
-  ../notes/plan-automated-a11y-tests.md.
+  Automated accessibility scans (axe-core) inside the existing e2e suite.
 
   One test per state, each state scanned in BOTH themes: dark mode is driven
   through the app's real follow-OS path via colorScheme emulation (the theme
   init in index.html reads matchMedia synchronously before first paint), so
-  emulation must be set in test.use() — before the page loads.
+  the option must be set in test.use() before the page loads. Each theme's
+  test.use() lives inside its own describe block — at file scope, repeated
+  test.use() calls in a loop all append to the same suite and the last value
+  wins for every test (all "light" tests would silently scan a dark page).
 
   States:
     - code entry (unbound): the app's public front door, reached without a
@@ -96,33 +98,41 @@ function assertClean(s, label) {
 /* Code entry (unbound) — plain page, real front door, both themes.   */
 /* ------------------------------------------------------------------ */
 
-for (const scheme of THEMES) {
-  test.use({ colorScheme: scheme });
-  test(`a11y: code entry (${scheme})`, async ({ page }) => {
-    await page.goto("/");
-    await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
-    await settle(page);
-    assertClean(await scan(page), `code entry (${scheme})`);
-  });
-}
+test.describe("code entry", () => {
+  for (const scheme of THEMES) {
+    test.describe(`theme: ${scheme}`, () => {
+      test.use({ colorScheme: scheme });
+      test(`a11y: code entry (${scheme})`, async ({ page }) => {
+        await page.goto("/");
+        await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
+        await settle(page);
+        assertClean(await scan(page), `code entry (${scheme})`);
+      });
+    });
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /* Bound home (/today) and capture view — real bindSite flow via the  */
 /* shared harness (fresh context + real code-entry binding per test). */
 /* ------------------------------------------------------------------ */
 
-for (const scheme of THEMES) {
-  harnessTest.use({ colorScheme: scheme });
-  harnessTest(`a11y: bound home (${scheme})`, async ({ page }) => {
-    await expect(page.locator("#start-check")).toBeVisible();
-    await settle(page);
-    assertClean(await scan(page), `bound home (${scheme})`);
-  });
+test.describe("bound app", () => {
+  for (const scheme of THEMES) {
+    test.describe(`theme: ${scheme}`, () => {
+      harnessTest.use({ colorScheme: scheme });
+      harnessTest(`a11y: bound home (${scheme})`, async ({ page }) => {
+        await expect(page.locator("#start-check")).toBeVisible();
+        await settle(page);
+        assertClean(await scan(page), `bound home (${scheme})`);
+      });
 
-  harnessTest(`a11y: capture view (${scheme})`, async ({ page }) => {
-    await startCheck(page);
-    await expect(page.locator("#add-photo")).toBeVisible();
-    await settle(page);
-    assertClean(await scan(page), `capture view (${scheme})`);
-  });
-}
+      harnessTest(`a11y: capture view (${scheme})`, async ({ page }) => {
+        await startCheck(page);
+        await expect(page.locator("#add-photo")).toBeVisible();
+        await settle(page);
+        assertClean(await scan(page), `capture view (${scheme})`);
+      });
+    });
+  }
+});
