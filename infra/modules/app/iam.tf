@@ -214,7 +214,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "ReverseGeocodePhoto"
     effect    = "Allow"
     actions   = ["geo-places:ReverseGeocode"]
-    resources = ["*"] # Amazon Location Places V2 has no resource-level permission for this action.
+    resources = ["arn:aws:geo-places:${data.aws_region.current.name}::provider/default"]
   }
   statement {
     sid       = "Dynamo"
@@ -278,7 +278,7 @@ data "aws_iam_policy_document" "worker" {
 }
 
 resource "aws_iam_role_policy" "worker" {
-  #checkov:skip=CKV_AWS_355:X-Ray and geo-places:ReverseGeocode have no resource-level scope; "*" is required.
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
   #checkov:skip=CKV_AWS_290:Write actions are scoped to this env's own table/queue/DLQ ARNs.
   name   = "${local.name_prefix}-worker"
   role   = aws_iam_role.worker.id
