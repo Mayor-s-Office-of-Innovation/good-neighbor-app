@@ -58,4 +58,25 @@ describe("seedSiteCodes", () => {
       expect(input.ExpressionAttributeValues).not.toHaveProperty(":places");
     }
   });
+
+  it("seeds 640 Jones with its Census-geocoded address for local proximity checks", async () => {
+    const send = vi.fn(async () => ({}));
+    await seedSiteCodes({ send }, "gnp-test-app");
+    const site = send.mock.calls
+      .map(([command]) => command.input)
+      .find(
+        (input) =>
+          input.Key?.pk === "SITE#chc-640-jones" && input.Key?.sk === "#META",
+      );
+    expect(site.ExpressionAttributeValues[":address"]).toBe(
+      "640 Jones St, San Francisco, CA 94102",
+    );
+    expect(site.ExpressionAttributeValues[":location"]).toEqual({
+      latitude: 37.787283046268,
+      longitude: -122.413199283242,
+    });
+    expect(site.UpdateExpression).toContain(
+      "if_not_exists(#location, :location)",
+    );
+  });
 });

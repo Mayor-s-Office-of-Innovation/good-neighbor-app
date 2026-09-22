@@ -152,14 +152,29 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  */
 
 /**
- * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isClear?: boolean }} AnalysisCardEntry
+ * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isClear?: boolean, actionPriority?: number }} AnalysisCardEntry
  */
+
+/** Lower ranks appear first: emergency, non-emergency, 311, on-site. */
+export function analysisActionPriority(task) {
+  switch (routeType(task).tone) {
+    case "emergency":
+      return 0;
+    case "non-emergency":
+      return 1;
+    case "311":
+      return 2;
+    default:
+      return 3;
+  }
+}
 
 /** @param {AnalysisCardEntry[]} cards */
 export function sortAnalysisCards(cards) {
   return [...cards].sort(
     (a, b) =>
       Number(Boolean(b.needsAnswer)) - Number(Boolean(a.needsAnswer)) ||
+      (a.actionPriority ?? 4) - (b.actionPriority ?? 4) ||
       String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
   );
 }
@@ -366,6 +381,7 @@ function analysisCardEntries(evidence, sessionCheckId, { siteName = "", siteAddr
         }),
         createdAt,
         needsAnswer: Boolean(condition.needsAnswer),
+        actionPriority: analysisActionPriority(task),
       };
     });
     return [

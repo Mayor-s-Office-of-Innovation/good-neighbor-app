@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analysisActionPriority,
   analysisCards,
   analysisResultsTray,
   historicalCheckTitle,
@@ -42,6 +43,38 @@ describe("historical check titles", () => {
 });
 
 describe("analysis result summaries", () => {
+  it("ranks unanswered cards first, then emergency, non-emergency, 311 and on-site", () => {
+    const tasks = [
+      { kind: "action" },
+      { kind: "escalation" },
+      { kind: "non_actionable_escalation" },
+      {
+        kind: "non_actionable_escalation",
+        appActions: [{ code: "open_phone", payload: { phoneNumber: "911" } }],
+      },
+    ];
+    /** @type {Array<{markup: string, createdAt: string, actionPriority: number, needsAnswer?: boolean}>} */
+    const cards = tasks.map((task, index) => ({
+      markup: String(index),
+      createdAt: `2026-09-22T1${index}:00:00Z`,
+      actionPriority: analysisActionPriority(task),
+    }));
+    cards.push({ ...cards[0], markup: "question", needsAnswer: true });
+    expect(sortAnalysisCards(cards).map((card) => card.markup)).toEqual([
+      "question",
+      "3",
+      "2",
+      "1",
+      "0",
+    ]);
+    expect(
+      sortAnalysisCards([
+        { ...cards[1], markup: "older", createdAt: "2026-09-22T09:00:00Z" },
+        { ...cards[1], markup: "newer", createdAt: "2026-09-22T11:00:00Z" },
+      ]).map((card) => card.markup),
+    ).toEqual(["newer", "older"]);
+  });
+
   it("sorts unanswered questions first, then each card by its displayed timestamp", () => {
     const cards = [
       { markup: "older action", createdAt: "2026-09-22T09:00:00Z" },

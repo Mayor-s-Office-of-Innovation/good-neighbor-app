@@ -1,6 +1,13 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const session = vi.hoisted(() => ({ current: null }));
+const devicePosition = vi.hoisted(() => ({ current: null }));
+vi.mock("../services/device-location.js", () => ({
+  getSiteCheckDeviceLocation: async () => devicePosition.current,
+  getLastDeviceLocation: () => devicePosition.current,
+  onDeviceLocationChange: () => () => {},
+  refreshGrantedDeviceLocation: async () => null,
+}));
 const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),
   discardInMemorySession: vi.fn(),
@@ -59,6 +66,7 @@ beforeAll(async () => {
 });
 afterEach(() => {
   session.current = null;
+  devicePosition.current = null;
   logout.clearSiteSession.mockClear();
   logout.discardInMemorySession.mockClear();
   /** @type {any} */ (window.dispatchEvent).mockClear();
@@ -72,6 +80,78 @@ async function mount(search) {
   await view.connectedCallback();
   return view;
 }
+
+describe("site location prompt", () => {
+  it("checks a fresh position before both capture actions and pauses when off site", async () => {
+    const view = await mount("?filter=todo");
+    view._site = {
+      siteId: "site-1",
+      name: "Mission District",
+      location: { latitude: 37.7749, longitude: -122.4194 },
+    };
+    view._siteId = "site-1";
+    view._showLocationDialog = vi.fn();
+    view._enterCapture = vi.fn();
+    devicePosition.current = { latitude: 37.78, longitude: -122.4194 };
+    await view._startCapture("perimeter");
+    expect(view._showLocationDialog).toHaveBeenCalledOnce();
+    expect(view._enterCapture).not.toHaveBeenCalled();
+    await view._startCapture("single-problem");
+    expect(view._locationPrompt.flowType).toBe("single-problem");
+    devicePosition.current = { latitude: 37.7749, longitude: -122.4194 };
+    await view._startCapture("perimeter");
+    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+  });
+
+  it("logs when a check starts without a usable location and still continues", async () => {
+    const view = await mount("?filter=todo");
+    view._enterCapture = vi.fn();
+    devicePosition.current = null;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await view._startCapture("perimeter");
+    expect(warn).toHaveBeenCalledWith(
+      "[location] No usable device location when starting a full check; site proximity check skipped.",
+    );
+    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+    warn.mockRestore();
+  });
+
+  it("replaces the last-log summary only when the latest fix is outside the saved site radius", async () => {
+    const view = await mount("?filter=todo");
+    view._site = {
+      siteId: "site-1",
+      name: "Mission District",
+      location: { latitude: 37.7749, longitude: -122.4194 },
+    };
+    view._deviceLocation = { latitude: 37.78, longitude: -122.4194 };
+    const summary = view._summaryBlock(
+      { id: "check-1", submittedAt: new Date().toISOString(), issueCount: 1 },
+      [{ task: { checkId: "check-1" }, homeStatus: "needs_action" }],
+    );
+    expect(summary).toContain(
+      "Looks like you're not near this site.",
+    );
+    expect(summary).toContain('id="lastlog-change-site"');
+    expect(summary).toContain('appearance="plain"');
+    expect(summary).not.toContain("Last log:");
+    view._deviceLocation = null;
+    expect(view._summaryBlock(null, [])).toBe("");
+  });
+
+  it("lists provider sites and keeps site-change confirmation disabled initially", async () => {
+    const view = await mount("?filter=todo");
+    view._site = { siteId: "site-1", name: "Mission District" };
+    view._providerSites = [
+      { siteId: "site-1", name: "Mission District" },
+      { siteId: "site-2", name: "Site 2" },
+    ];
+    const markup = view._locationDialogMarkup();
+    expect(markup).toContain("Is your app set to the right location");
+    expect(markup).toContain("Site 2");
+    expect(markup).toMatch(/Confirm site change\s*<\/button>/);
+    expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
+  });
+});
 
 describe("worklist URL initialization", () => {
   it.each([
@@ -187,6 +267,27 @@ describe("task card labels", () => {
 });
 
 describe("site switcher", () => {
+  it("stays open when the location-summary link click reaches the outside-click listener", async () => {
+    const view = await mount("?filter=todo");
+    const originalElement = globalThis.Element;
+    class SiteChangeLink {
+      matches(selector) {
+        return selector.includes("#lastlog-change-site");
+      }
+    }
+    try {
+      vi.stubGlobal("Element", SiteChangeLink);
+      view._siteSwitcherOpen = true;
+      view._siteDocumentClick({ composedPath: () => [new SiteChangeLink()] });
+      expect(view._siteSwitcherOpen).toBe(true);
+
+      view._siteDocumentClick({ composedPath: () => [] });
+      expect(view._siteSwitcherOpen).toBe(false);
+    } finally {
+      vi.stubGlobal("Element", originalElement);
+    }
+  });
+
   it("lists provider sites without add-site or generic login actions", () => {
     const view = new TodayView();
     view._site = { name: "730 Polk" };
