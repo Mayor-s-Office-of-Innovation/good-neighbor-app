@@ -74,6 +74,12 @@ export const devSiteCodeSeeds = [
     siteShortCode: "640",
     providerSiteId: "provider-site-chc-640-jones",
     contactEmail: "chc640@example.org",
+    address: "640 Jones St, San Francisco, CA 94102",
+    geocodedAddress: "640 JONES ST, SAN FRANCISCO, CA, 94102",
+    location: {
+      latitude: 37.787283046268,
+      longitude: -122.413199283242,
+    },
   },
   {
     code: "SFA940",
@@ -260,6 +266,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
         "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        (seed.address
+          ? ", #address = if_not_exists(#address, :address), #geocodedAddress = if_not_exists(#geocodedAddress, :geocodedAddress)"
+          : "") +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
@@ -267,6 +276,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
         "#type": "type",
         "#name": "name",
         "#status": "status",
+        ...(seed.address
+          ? { "#address": "address", "#geocodedAddress": "geocodedAddress" }
+          : {}),
         ...(seed.location ? { "#location": "location" } : {}),
       },
       ExpressionAttributeValues: {
@@ -281,6 +293,12 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":name": seed.siteName,
         ":status": "active",
         ":now": now,
+        ...(seed.address
+          ? {
+              ":address": seed.address,
+              ":geocodedAddress": seed.geocodedAddress,
+            }
+          : {}),
         ...(seed.location ? { ":location": seed.location } : {}),
       },
     }),

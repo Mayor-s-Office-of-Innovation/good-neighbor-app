@@ -14,6 +14,22 @@ beforeAll(() => {
   });
 });
 
+describe("site proximity", () => {
+  it("uses a one-eighth-mile radius and ignores unavailable coordinates", async () => {
+    const { isOutsideSiteRadius } = await import("./today-view.js");
+    const site = { latitude: 37.7749, longitude: -122.4194 };
+    expect(isOutsideSiteRadius(site, site)).toBe(false);
+    expect(
+      isOutsideSiteRadius({ latitude: 37.7758, longitude: -122.4194 }, site),
+    ).toBe(false);
+    expect(
+      isOutsideSiteRadius({ latitude: 37.778, longitude: -122.4194 }, site),
+    ).toBe(true);
+    expect(isOutsideSiteRadius(null, site)).toBe(false);
+    expect(isOutsideSiteRadius(site, null)).toBe(false);
+  });
+});
+
 describe("isStalePendingSession", () => {
   it("clears a capture-complete session once the same backend check is completed", async () => {
     const { isStalePendingSession } = await import("./today-view.js");

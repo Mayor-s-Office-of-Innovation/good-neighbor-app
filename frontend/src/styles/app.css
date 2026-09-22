@@ -1144,6 +1144,12 @@ today-view {
   align-items: center;
   text-align: center;
 }
+.home-identity--with-summary {
+  gap: 0;
+}
+.home-identity--with-summary .lastlog {
+  padding-top: 0;
+}
 .home-site-switcher {
   position: relative;
   align-self: center;
@@ -1183,7 +1189,7 @@ today-view {
   z-index: 100;
   top: calc(100% + 0.25rem);
   left: 50%;
-  width: min(16rem, calc(100vw - 2rem));
+  width: min(20rem, calc(100vw - 2rem));
   padding: 0.5rem;
   border-radius: 0.75rem;
   background: var(--wa-color-surface-default, var(--surface));
@@ -1196,7 +1202,7 @@ today-view {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 1.5rem;
+  gap: 1rem;
   width: 100%;
   height: auto;
   min-height: 43px;
@@ -1209,8 +1215,15 @@ today-view {
   font-size: var(--wa-font-size-l, 1.25rem);
   font-weight: 400;
   line-height: 1.2;
-  padding: 0 2rem;
+  padding: 0 1rem;
+  margin: 0;
   text-align: left;
+  white-space: normal;
+}
+
+.home-site-switcher__item span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .home-site-switcher__item:hover span:last-child {
@@ -1235,6 +1248,115 @@ today-view {
 .home-site-switcher button:focus-visible {
   outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
   outline-offset: 0.125rem;
+}
+
+.lastlog__switch {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  height: auto;
+  min-height: 0;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.lastlog__switch:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+.location-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  border: 0;
+  border-radius: 1.5rem;
+  background: var(--wa-color-surface-default, var(--surface));
+  color: var(--wa-color-text-normal, var(--text));
+  box-shadow: var(--wa-shadow-m, 0 0.25rem 0.75rem rgb(0 0 0 / 12%));
+}
+
+.location-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.location-dialog__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-s, 0.75rem);
+  padding: var(--wa-space-l, 1.5rem);
+}
+
+.location-dialog__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.location-dialog__copy h2,
+.location-dialog__copy p {
+  margin: 0;
+  line-height: 1.2;
+}
+.location-dialog__copy h2 {
+  font-family: var(--wa-font-family-heading);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+}
+.location-dialog__copy p {
+  color: var(--wa-color-text-quiet, var(--text-secondary));
+  font-size: var(--wa-font-size-m, 1rem);
+}
+
+.location-dialog__sites {
+  display: flex;
+  flex-direction: column;
+}
+.location-dialog__site {
+  min-height: 43px;
+}
+.location-dialog__site:hover {
+  background: var(--wa-color-neutral-fill-quiet, var(--surface-3));
+}
+.location-dialog__site:focus-visible,
+.location-dialog__actions button:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+.location-dialog__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wa-space-xs, 0.5rem);
+  margin-top: var(--wa-space-s, 0.75rem);
+}
+.location-dialog__actions button {
+  appearance: none;
+  min-height: 3.25rem;
+  border: 0;
+  border-radius: var(--wa-border-radius-pill, 9999px);
+  font: inherit;
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  cursor: pointer;
+}
+.location-dialog__confirm {
+  background: var(--wa-color-danger-fill-loud, #b30532);
+  color: var(--wa-color-danger-on-loud, #fff);
+}
+.location-dialog__confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.location-dialog__stay {
+  background: transparent;
+  color: var(--wa-color-text-normal, var(--text));
 }
 .home-identity__org {
   margin: 0;
@@ -3485,6 +3607,10 @@ html.wa-dark .analysis-card__clear-copy a {
   .analysis-card__route,
   .analysis-card__skeleton--route {
     order: 1;
+  }
+
+  .analysis-card .analysis-card__route {
+    margin-bottom: 1rem;
   }
 
   .analysis-card__media {

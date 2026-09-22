@@ -65,6 +65,7 @@ import {
 } from "../state/check-session.js";
 import {
   analysisResultsTray,
+  analysisActionPriority,
   clearCheckCard,
   historicalCheckTitle,
   recentCheckTitle,
@@ -74,6 +75,12 @@ import {
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
+import {
+  getSiteCheckDeviceLocation,
+  getLastDeviceLocation,
+  onDeviceLocationChange,
+  refreshGrantedDeviceLocation,
+} from "../services/device-location.js";
 
 const HOME_TABS = [
   { id: "todo", label: "To do" },
@@ -85,6 +92,33 @@ const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
 const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
+const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
+
+/** @param {{latitude: number, longitude: number} | null | undefined} position @param {{latitude: number, longitude: number} | null | undefined} site */
+export function isOutsideSiteRadius(position, site) {
+  if (!position || !site) return false;
+  const { latitude: lat1, longitude: lon1 } = position;
+  const { latitude: lat2, longitude: lon2 } = site;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return false;
+  if (
+    Math.abs(lat1) > 90 ||
+    Math.abs(lat2) > 90 ||
+    Math.abs(lon1) > 180 ||
+    Math.abs(lon2) > 180
+  )
+    return false;
+  const radians = Math.PI / 180;
+  const deltaLat = (lat2 - lat1) * radians;
+  const deltaLon = (lon2 - lon1) * radians;
+  const arc =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1 * radians) *
+      Math.cos(lat2 * radians) *
+      Math.sin(deltaLon / 2) ** 2;
+  return (
+    6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(arc))) > SITE_RADIUS_METERS
+  );
+}
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
@@ -674,6 +708,11 @@ class TodayView extends HTMLElement {
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
+    this._deviceLocation = getLastDeviceLocation();
+    this._locationUnsub = null;
+    this._locationPrompt = null;
+    this._locationSelectedSiteId = "";
+    this._startingCapture = false;
   }
 
   disconnectedCallback() {
@@ -688,6 +727,8 @@ class TodayView extends HTMLElement {
     document.removeEventListener("click", this._siteDocumentClick);
     this._siteDocumentClick = null;
     this._captureFinishedListening = false;
+    this._locationUnsub?.();
+    this._locationUnsub = null;
     window.clearTimeout(this._capturePhaseTimer);
   }
 
@@ -702,6 +743,15 @@ class TodayView extends HTMLElement {
         if (status === "saved") void this.connectedCallback();
         else if (this._homeModel) this._renderHome(this._homeModel);
       });
+    }
+    if (!this._locationUnsub) {
+      this._locationUnsub = onDeviceLocationChange((location) => {
+        this._deviceLocation = location;
+        if (this.isConnected && this._homeModel && this._viewPhase === "home") {
+          this._renderHome(this._homeModel);
+        }
+      });
+      void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
@@ -738,7 +788,8 @@ class TodayView extends HTMLElement {
         if (
           !path.some(
             (node) =>
-              node instanceof Element && node.matches(".home-site-switcher"),
+              node instanceof Element &&
+              node.matches(".home-site-switcher, #lastlog-change-site"),
           )
         ) {
           this._siteSwitcherOpen = false;
@@ -892,12 +943,13 @@ class TodayView extends HTMLElement {
     this.querySelector("#site-switcher-trigger")?.addEventListener(
       "click",
       () => {
-        this._siteSwitcherOpen = !this._siteSwitcherOpen;
-        this._siteSwitchError = "";
-        this._renderHome(this._homeModel);
-        /** @type {HTMLElement | null} */ (
-          this.querySelector("#site-switcher-trigger")
-        )?.focus();
+        this._setSiteSwitcherOpen(!this._siteSwitcherOpen);
+      },
+    );
+    this.querySelector("#lastlog-change-site")?.addEventListener(
+      "click",
+      () => {
+        this._setSiteSwitcherOpen(true);
       },
     );
     this.querySelector(".home-site-switcher")?.addEventListener(
@@ -931,6 +983,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -948,6 +1001,14 @@ class TodayView extends HTMLElement {
         });
       },
     );
+    this.querySelectorAll(
+      ".analysis-card__clear-copy a[href='/problem']",
+    ).forEach((control) => {
+      control.addEventListener("click", (event) => {
+        event.preventDefault();
+        void this._startCapture("single-problem", control);
+      });
+    });
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         this._activateHomeTab(
@@ -1182,6 +1243,7 @@ class TodayView extends HTMLElement {
           })}
         </section>
         ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
+        ${this._locationDialogMarkup()}
         <dialog
           class="places-modal logout-dialog"
           id="logout-dialog"
@@ -1347,6 +1409,7 @@ class TodayView extends HTMLElement {
       }),
       createdAt: entry.createdAt,
       needsAnswer: Boolean(entry.task.needsAnswer),
+      actionPriority: analysisActionPriority(entry.task),
     }));
   }
 
@@ -1439,6 +1502,7 @@ class TodayView extends HTMLElement {
                       }),
                       createdAt: entry.createdAt,
                       needsAnswer: Boolean(entry.task.needsAnswer),
+                      actionPriority: analysisActionPriority(entry.task),
                     })),
                   )
                     .map((card) => card.markup)
@@ -1452,6 +1516,28 @@ class TodayView extends HTMLElement {
   }
 
   async _startCapture(flowType, launcher = null) {
+    if (this._startingCapture) return;
+    this._startingCapture = true;
+    try {
+      const position = await getSiteCheckDeviceLocation();
+      if (!position) {
+        console.warn(
+          `[location] No usable device location when starting ${flowType === "single-problem" ? "a single issue" : "a full check"}; site proximity check skipped.`,
+        );
+      }
+      if (isOutsideSiteRadius(position, this._site?.location)) {
+        this._locationPrompt = { flowType, launcher };
+        this._locationSelectedSiteId = this._siteId;
+        this._showLocationDialog();
+        return;
+      }
+      await this._enterCapture(flowType, launcher);
+    } finally {
+      this._startingCapture = false;
+    }
+  }
+
+  async _enterCapture(flowType, launcher = null) {
     this._captureFlow = flowType;
     this._viewPhase = "entering-capture";
     this._captureLauncherSelector =
@@ -1568,10 +1654,10 @@ class TodayView extends HTMLElement {
     return html`
       <div class="screen__sec home-lead">
         ${this._siteSwitcher(identity.org)}
-        <div class="home-identity">
+        <div class="home-identity home-identity--with-summary">
           <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+          ${this._summaryBlock(last, homeTasks)}
         </div>
-        ${this._summaryBlock(last, homeTasks)}
         ${this._homeActions({
           checkLabel: this._checkActionLabel(),
           reportLabel: "Flag a single issue",
@@ -1663,6 +1749,132 @@ class TodayView extends HTMLElement {
     `;
   }
 
+  _setSiteSwitcherOpen(open) {
+    this._siteSwitcherOpen = open;
+    this._siteSwitchError = "";
+    this._renderHome(this._homeModel);
+    /** @type {HTMLElement | null} */ (
+      this.querySelector("#site-switcher-trigger")
+    )?.focus();
+  }
+
+  _locationDialogMarkup() {
+    const sites = this._providerSites.length
+      ? [...this._providerSites]
+      : [{ siteId: this._siteId, name: this._site?.name || "Your site" }];
+    if (!sites.some((site) => site.siteId === this._siteId)) {
+      sites.unshift({
+        siteId: this._siteId,
+        name: this._site?.name || "Your site",
+      });
+    }
+    return html`<dialog
+      class="location-dialog"
+      id="location-dialog"
+      aria-labelledby="location-dialog-title"
+      aria-describedby="location-dialog-copy"
+    >
+      <div class="location-dialog__card">
+        <div class="location-dialog__copy">
+          <h2 id="location-dialog-title">
+            Is your app set to the right location
+          </h2>
+          <p id="location-dialog-copy">
+            It looks like you're not near
+            ${escapeHtml(this._site?.name || "this site")}. Consider changing
+            your app's site.
+          </p>
+        </div>
+        <div
+          class="location-dialog__sites"
+          role="group"
+          aria-label="Choose a site"
+        >
+          ${sites
+            .map(
+              (site) =>
+                html`<button
+                  class="home-site-switcher__item location-dialog__site"
+                  type="button"
+                  data-location-site="${escapeAttr(site.siteId)}"
+                  aria-pressed="${site.siteId === this._siteId
+                    ? "true"
+                    : "false"}"
+                >
+                  <span class="home-site-switcher__check" aria-hidden="true"
+                    >${site.siteId === this._siteId ? "✓" : ""}</span
+                  >
+                  <span>${escapeHtml(site.name)}</span>
+                </button>`,
+            )
+            .join("")}
+        </div>
+        <div class="location-dialog__actions">
+          <button
+            class="location-dialog__confirm"
+            id="location-confirm"
+            type="button"
+            disabled
+          >
+            Confirm site change
+          </button>
+          <button
+            class="location-dialog__stay"
+            id="location-stay"
+            type="button"
+          >
+            I'm in the right location
+          </button>
+        </div>
+      </div>
+    </dialog>`;
+  }
+
+  _wireLocationDialog() {
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#location-dialog")
+    );
+    if (!dialog) return;
+    dialog.addEventListener("close", () => {
+      this._locationPrompt = null;
+    });
+    dialog.querySelectorAll("[data-location-site]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._locationSelectedSiteId =
+          button.getAttribute("data-location-site") || this._siteId;
+        dialog.querySelectorAll("[data-location-site]").forEach((option) => {
+          const selected =
+            option.getAttribute("data-location-site") ===
+            this._locationSelectedSiteId;
+          option.setAttribute("aria-pressed", String(selected));
+          const check = option.querySelector(".home-site-switcher__check");
+          if (check) check.textContent = selected ? "✓" : "";
+        });
+        const confirm = /** @type {HTMLButtonElement | null} */ (
+          dialog.querySelector("#location-confirm")
+        );
+        if (confirm)
+          confirm.disabled = this._locationSelectedSiteId === this._siteId;
+      });
+    });
+    dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
+      if (this._locationSelectedSiteId === this._siteId) return;
+      dialog.close();
+      void this._switchToSite(this._locationSelectedSiteId);
+    });
+    dialog.querySelector("#location-stay")?.addEventListener("click", () => {
+      const prompt = this._locationPrompt;
+      dialog.close();
+      if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
+    });
+  }
+
+  _showLocationDialog() {
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#location-dialog")
+    )?.showModal();
+  }
+
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
@@ -1728,6 +1940,21 @@ class TodayView extends HTMLElement {
 
   // Last submitted check only: its recorded issue count and remaining actions.
   _summaryBlock(last, homeTasks) {
+    if (isOutsideSiteRadius(this._deviceLocation, this._site?.location)) {
+      return html`<div class="lastlog">
+        <p class="lastlog__eyebrow">
+          Looks like you're not near this site.
+          <button
+            id="lastlog-change-site"
+            class="lastlog__switch"
+            type="button"
+            appearance="plain"
+          >
+            Change the site
+          </button>
+        </p>
+      </div>`;
+    }
     const label = lastLogSummary(last, homeTasks);
     if (!label) return "";
     return html`

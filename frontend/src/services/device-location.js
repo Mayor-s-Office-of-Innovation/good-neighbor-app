@@ -6,11 +6,21 @@
 
 const LOCATION_TIMEOUT_MS = 10_000;
 const CAPTURE_LOCATION_TIMEOUT_MS = 2_000;
+const SITE_CHECK_LOCATION_TIMEOUT_MS = 2_000;
+const SITE_CHECK_CACHE_AGE_MS = 30_000;
+const SITE_CHECK_FALLBACK_AGE_MS = 60_000;
 const PERMISSION_REQUESTED_KEY = "gnp:location-permission-requested";
 let requestedEarly = false;
 /** @type {Promise<DeviceLocation | null> | null} */
 let earlyLocationRequest = null;
 let capturePromptAttempted = false;
+/** @type {DeviceLocation | null} */
+let lastDeviceLocation = null;
+/** @type {DeviceLocation | null} */
+let lastSuccessfulLocation = null;
+let lastSuccessfulAt = 0;
+/** @type {Set<(location: DeviceLocation | null) => void>} */
+const locationListeners = new Set();
 
 /**
  * @typedef {{ latitude: number, longitude: number }} DeviceLocation
@@ -21,19 +31,22 @@ let capturePromptAttempted = false;
  * cached position from being attached to a newly captured item.
  * @param {{
  *   timeoutMs?: number,
+ *   maximumAgeMs?: number,
+ *   enableHighAccuracy?: boolean,
  *   onError?: (error: GeolocationPositionError) => void,
  * }} [opts]
  * @returns {Promise<DeviceLocation | null>}
  */
 export function getDeviceLocation({
   timeoutMs = LOCATION_TIMEOUT_MS,
+  maximumAgeMs = 0,
+  enableHighAccuracy = true,
   onError,
 } = {}) {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
     return Promise.resolve(null);
   }
 
-  void locationPermissionState();
   console.info("[location] Position request started.");
 
   return new Promise((resolve) => {
@@ -42,6 +55,12 @@ export function getDeviceLocation({
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      lastDeviceLocation = location;
+      if (location) {
+        lastSuccessfulLocation = location;
+        lastSuccessfulAt = Date.now();
+      }
+      for (const listener of locationListeners) listener(location);
       resolve(location);
     };
     // Some mobile browsers fail to invoke either geolocation callback after
@@ -82,13 +101,68 @@ export function getDeviceLocation({
           onError?.(error);
           finish(null);
         },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs },
+        { enableHighAccuracy, maximumAge: maximumAgeMs, timeout: timeoutMs },
       );
     } catch (error) {
       console.warn("[location] Position request threw an exception.", error);
       finish(null);
     }
   });
+}
+
+export function getLastDeviceLocation() {
+  return lastDeviceLocation;
+}
+
+/** @param {(location: DeviceLocation | null) => void} listener */
+export function onDeviceLocationChange(listener) {
+  locationListeners.add(listener);
+  return () => locationListeners.delete(listener);
+}
+
+/** Refresh the home hint without presenting a new permission prompt. */
+export async function refreshGrantedDeviceLocation() {
+  if (earlyLocationRequest) return earlyLocationRequest;
+  if ((await locationPermissionState()) !== "granted") return null;
+  return getDeviceLocation({
+    timeoutMs: SITE_CHECK_LOCATION_TIMEOUT_MS,
+    maximumAgeMs: SITE_CHECK_CACHE_AGE_MS,
+    enableHighAccuracy: false,
+  });
+}
+
+/**
+ * Check proximity without re-opening a browser permission prompt. A recent
+ * position already fetched for the home screen is fresh enough to reuse; when
+ * permission is granted, a new request has a short deadline. Failure leaves
+ * capture available and can use only a still-recent successful fix.
+ * @returns {Promise<DeviceLocation | null>}
+ */
+export async function getSiteCheckDeviceLocation() {
+  const recent = () =>
+    lastSuccessfulLocation &&
+    Date.now() - lastSuccessfulAt <= SITE_CHECK_FALLBACK_AGE_MS
+      ? lastSuccessfulLocation
+      : null;
+  const permission = await locationPermissionState();
+  if (permission === "denied") return null;
+  if (
+    lastSuccessfulLocation &&
+    Date.now() - lastSuccessfulAt <= SITE_CHECK_CACHE_AGE_MS
+  ) {
+    return lastSuccessfulLocation;
+  }
+  if (earlyLocationRequest) {
+    return (await waitForStartupLocation(earlyLocationRequest)) || recent();
+  }
+  if (permission !== "granted") return recent();
+  return (
+    (await getDeviceLocation({
+      timeoutMs: SITE_CHECK_LOCATION_TIMEOUT_MS,
+      maximumAgeMs: SITE_CHECK_CACHE_AGE_MS,
+      enableHighAccuracy: false,
+    })) || recent()
+  );
 }
 
 /**
@@ -165,6 +239,7 @@ export function requestLocationPermissionEarly() {
   } catch {
     // Restricted storage still gets one attempt per page lifetime.
   }
+  void locationPermissionState();
   earlyLocationRequest = getDeviceLocation().finally(() => {
     earlyLocationRequest = null;
   });
