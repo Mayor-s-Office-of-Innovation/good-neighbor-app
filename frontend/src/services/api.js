@@ -262,6 +262,11 @@ export function getSiteSettings() {
   return request("GET", "/v1/site");
 }
 
+/** List the active sites belonging to the current authenticated site's provider. */
+export function listProviderSites() {
+  return request("GET", "/v1/provider-sites");
+}
+
 /**
  * POST /v1/checks — start a perimeter run. The client-minted `checkId` rides in
  * the `idempotency-key` header (not the body), so a replay can't duplicate the

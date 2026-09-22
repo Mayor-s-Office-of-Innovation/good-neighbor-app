@@ -1,4 +1,4 @@
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse } from "../http.js";
@@ -28,4 +28,63 @@ export const getSite = async (event) => {
     name: "Your site",
   };
   return jsonResponse(200, { site });
+};
+
+/**
+ * GET /v1/provider-sites — list active sites under the caller's provider.
+ * The provider is read from the authenticated site's metadata, never from a
+ * request parameter, so a device cannot enumerate another provider's sites.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const listProviderSites = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+  const current = await ddb.send(
+    new GetCommand({ TableName: dynamoTable, Key: siteMetaKey(siteId) }),
+  );
+  const site = current.Item;
+  if (!site || site.status === "inactive") {
+    return jsonResponse(404, { error: "site_not_found" });
+  }
+  const providerId = String(site.providerId || "");
+  if (!providerId) {
+    return jsonResponse(200, {
+      providerId: "",
+      providerName: String(site.providerName || ""),
+      sites: [{ siteId, name: String(site.name || "Your site") }],
+    });
+  }
+
+  const memberships = [];
+  /** @type {any} */
+  let cursor;
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: dynamoTable,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PROVIDER#${providerId}`,
+          ":prefix": "SITE#",
+        },
+        ...(cursor ? { ExclusiveStartKey: cursor } : {}),
+      }),
+    );
+    memberships.push(...(page.Items || []));
+    cursor = page.LastEvaluatedKey;
+  } while (cursor);
+
+  const sites = memberships
+    .filter((item) => item.status === "active" && item.siteId)
+    .map((item) => ({
+      siteId: String(item.siteId),
+      name: String(item.siteName || item.siteId),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return jsonResponse(200, {
+    providerId,
+    providerName: String(site.providerName || providerId),
+    sites,
+  });
 };

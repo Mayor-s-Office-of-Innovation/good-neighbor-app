@@ -773,7 +773,11 @@ class PerimeterCheck extends HTMLElement {
     if (getAnalyzingOpen() && evidence.length) {
       this.querySelector("#check-footer").insertAdjacentHTML(
         "afterend",
-        analyzingSection(evidence, check.id, this._site?.name || ""),
+        analyzingSection(evidence, check.id, {
+          startedAt: check.startedAt,
+          siteName: this._site?.name || "",
+          siteAddress: this._site?.address || "",
+        }),
       );
     }
     this._startElapsedTicker();

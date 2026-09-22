@@ -322,11 +322,18 @@ export function footer({ items, analyzingOpen, complete }) {
   `;
 }
 
-export function analyzingSection(items, sessionCheckId, siteName = "") {
+export function analyzingSection(
+  items,
+  sessionCheckId,
+  { startedAt = "", siteName = "", siteAddress = "" } = {},
+) {
   return analysisResultsTray(items, sessionCheckId, {
+    title: "",
     ariaLabel: "Analyzing evidence",
     emptyText: "All problems were resolved or deleted.",
     siteName,
+    siteAddress,
+    checkTime: startedAt,
   });
 }
 

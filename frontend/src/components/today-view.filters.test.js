@@ -7,9 +7,11 @@ const logout = vi.hoisted(() => ({
 }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
+  listBoundSites: async () => [],
   clearSiteSession: logout.clearSiteSession,
 }));
 vi.mock("../services/api.js", () => ({
+  listProviderSites: async () => ({ providerName: "Test provider", sites: [] }),
   listChecks: async () => ({ checks: [] }),
   listTasks: async () => ({ tasks: [] }),
 }));
@@ -72,9 +74,16 @@ async function mount(search) {
 }
 
 describe("worklist URL initialization", () => {
-  it.each(["needs_action", "in_progress", "resolved", "archived"])(
-    "restores %s on remount without reopening or discarding an active draft",
-    async (filter) => {
+  it.each([
+    ["todo", "todo"],
+    ["in_progress", "in_progress"],
+    ["history", "history"],
+    ["needs_action", "todo"],
+    ["resolved", "history"],
+    ["archived", "history"],
+  ])(
+    "restores %s as %s on remount without reopening or discarding an active draft",
+    async (filter, expectedTab) => {
       const draft = {
         id: "draft-1",
         status: "in-progress",
@@ -83,7 +92,7 @@ describe("worklist URL initialization", () => {
       session.current = draft;
       for (let remount = 0; remount < 2; remount++) {
         const view = await mount(`?filter=${filter}`);
-        expect(view._homeFilter).toBe(filter);
+        expect(view._homeFilter).toBe(expectedTab);
         expect(view._viewPhase).toBe("home");
         expect(view._renderHome).toHaveBeenCalledWith(
           expect.objectContaining({ captureSession: null }),
@@ -95,7 +104,7 @@ describe("worklist URL initialization", () => {
   );
   it.each(["", "?filter=unknown"])("defaults safely for %s", async (search) => {
     const view = await mount(search);
-    expect(view._homeFilter).toBe("needs_action");
+    expect(view._homeFilter).toBe("todo");
     view.disconnectedCallback();
   });
   it("still resumes capture when no recognized worklist filter was requested", async () => {
@@ -174,5 +183,26 @@ describe("task card labels", () => {
 
     expect(card).toContain("Lots of trash in tree well");
     expect(card).not.toContain(">File a 311 ticket</h3>");
+  });
+});
+
+describe("site switcher", () => {
+  it("lists provider sites without add-site or generic login actions", () => {
+    const view = new TodayView();
+    view._site = { name: "730 Polk" };
+    view._siteId = "chc-730-polk";
+    view._providerSites = [
+      { siteId: "chc-640-jones", name: "640 Jones" },
+      { siteId: "chc-730-polk", name: "730 Polk" },
+    ];
+    view._siteSwitcherOpen = true;
+
+    const menu = view._siteSwitcher("CHC");
+
+    expect(menu).toContain("640 Jones");
+    expect(menu).toContain("730 Polk");
+    expect(menu).toContain("home-site-switcher__item--selected");
+    expect(menu).not.toContain("Add another site");
+    expect(menu).not.toContain("Login to another site");
   });
 });
