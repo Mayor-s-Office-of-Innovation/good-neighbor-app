@@ -1,9 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  getCaptureDeviceLocation,
-  getDeviceLocation,
-  requestLocationPermissionEarly,
-} from "./device-location.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+let getCaptureDeviceLocation, getDeviceLocation, requestLocationPermissionEarly;
+beforeEach(async () => {
+  vi.resetModules();
+  ({
+    getCaptureDeviceLocation,
+    getDeviceLocation,
+    requestLocationPermissionEarly,
+  } = await import("./device-location.js"));
+  const stored = new Map();
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key) => stored.get(key) ?? null),
+    setItem: vi.fn((key, value) => stored.set(key, value)),
+  });
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -55,6 +65,10 @@ describe("getDeviceLocation", () => {
       geolocation: { getCurrentPosition: vi.fn() },
     });
 
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      permissions: { query: vi.fn().mockResolvedValue({ state: "granted" }) },
+    });
     const location = getCaptureDeviceLocation();
     await vi.advanceTimersByTimeAsync(1_999);
     let settled = false;
@@ -105,5 +119,107 @@ describe("requestLocationPermissionEarly", () => {
         "[location] Position request failed (code 1): User denied Geolocation",
       );
     });
+  });
+});
+
+describe("capture permission gating", () => {
+  it.each(["denied"])(
+    "never requests coordinates when permission is %s",
+    async (state) => {
+      const getCurrentPosition = vi.fn();
+      vi.stubGlobal("navigator", {
+        permissions: { query: vi.fn().mockResolvedValue({ state }) },
+        geolocation: { getCurrentPosition },
+      });
+      await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+      await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+      expect(getCurrentPosition).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses fresh coordinates while granted and stops after permission is denied", async () => {
+    const query = vi.fn().mockResolvedValue({ state: "granted" });
+    const getCurrentPosition = vi.fn((success) =>
+      success({ coords: { latitude: 37, longitude: -122 } }),
+    );
+    vi.stubGlobal("navigator", {
+      permissions: { query },
+      geolocation: { getCurrentPosition },
+    });
+    await expect(getCaptureDeviceLocation()).resolves.toEqual({
+      latitude: 37,
+      longitude: -122,
+    });
+    query.mockResolvedValue({ state: "denied" });
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    undefined,
+    { query: vi.fn().mockRejectedValue(new Error("Unsupported")) },
+  ])(
+    "attempts only once when permissions cannot be queried",
+    async (permissions) => {
+      const getCurrentPosition = vi.fn((_success, failure) => failure());
+      vi.stubGlobal("navigator", {
+        permissions,
+        geolocation: { getCurrentPosition },
+      });
+      await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+      await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+      expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("requests once across repeated startup calls and page reloads", async () => {
+    const getCurrentPosition = vi.fn((_success, failure) =>
+      failure({ code: 1, message: "Denied" }),
+    );
+    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
+    requestLocationPermissionEarly();
+    requestLocationPermissionEarly();
+    vi.resetModules();
+    const reloaded = await import("./device-location.js");
+    reloaded.requestLocationPermissionEarly();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduplicates pending startup requests even when storage is blocked", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("Blocked");
+      },
+    });
+    const getCurrentPosition = vi.fn();
+    vi.stubGlobal("navigator", { geolocation: { getCurrentPosition } });
+    requestLocationPermissionEarly();
+    requestLocationPermissionEarly();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capture fallback prompt", () => {
+  it("asks on the first capture when still prompt, but not on every photo", async () => {
+    const getCurrentPosition = vi.fn((_success, failure) => failure());
+    vi.stubGlobal("navigator", {
+      permissions: { query: vi.fn().mockResolvedValue({ state: "prompt" }) },
+      geolocation: { getCurrentPosition },
+    });
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+  it("does not duplicate a pending startup prompt", async () => {
+    vi.useFakeTimers();
+    const getCurrentPosition = vi.fn();
+    vi.stubGlobal("navigator", {
+      permissions: { query: vi.fn().mockResolvedValue({ state: "prompt" }) },
+      geolocation: { getCurrentPosition },
+    });
+    requestLocationPermissionEarly();
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 });
