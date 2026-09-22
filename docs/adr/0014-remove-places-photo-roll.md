@@ -3,9 +3,11 @@
 ## Status
 
 Accepted (2026-09-21). Retires the per-site "places" setup and the place-by-place
-capture timeline; no prior ADR covered them. Phase 1 (this decision) ships the
-photo roll on top of one synthetic place; Phase 2 (a follow-up cleanup) flattens
-the place layer out of the session shape and the artifact key.
+capture timeline; no prior ADR covered them. Phase 1 shipped the photo roll on
+top of one synthetic place; Phase 2 (same day, follow-up PR) flattened the
+place layer out of the session shape, the API, the artifact key, the S3 key,
+the analyze worker, and the analytics columns. The consequences below describe
+the built state after both phases.
 
 ## Context
 
@@ -53,23 +55,27 @@ capture machinery on one synthetic place).
   never refuses. The background scorecard finalization re-runs on every home
   load until a completed header appears, so a server-side 409 on evidence
   grounds would loop forever.
-- **Site name as `position_descriptor`.** The client sends the site name as
-  `placeName` on every upload; the worker forwards it to the analyzer, falling
-  back to the literal `"perimeter"` when absent. It is more useful on task
-  cards and 311 escalations than a place name.
-- **One synthetic place in Phase 1.** `startCheck` creates a single place
-  (`PERIMETER_PLACE_ID = "perimeter"`, named after the site) so every code path
-  keyed on `placeId + itemId` — analysis, result cards, deletion, answers,
-  retry, the S3 key and the `ART#` sort key — keeps working unchanged. The
-  backend makes `placeId` / `placeName` optional on presign and register
-  (`DEFAULT_PLACE_ID = "perimeter"`), so the API is not coupled to the client
-  change. Phase 2 flattens the session to `items[]` and drops `placeId` from
-  the key.
-- **No data migration.** `places` stays on existing `SITE#` items (unread), and
-  old `ART#` rows keyed by real place ids stay readable — `getCheck` and
-  `presignMedia` prefix-query the check and match on `artifactId`. In-progress
-  drafts resume: the session normalizer keeps any pre-change places and drops
-  the retired per-place fields.
+- **A fixed `position_descriptor`.** The analyzer requires one; the check has
+  no per-photo position, and nothing downstream decides on the value (it is
+  echoed onto tasks as `source.positionDescriptor` and read only as a card
+  caption fallback, which Phase 2 removed). The worker sends the literal
+  `"perimeter"` for every artifact. Phase 1 briefly sent the site name via a
+  `placeName` field; Phase 2 dropped the field rather than add a site lookup
+  to the worker for a value nobody consumes.
+- **Flat session and flat keys.** The session is `check.items[]` and every
+  mutation takes an item id. The artifact key is `CHECK#<checkId>#ART#<artifactId>`
+  and the S3 key is `checks/<siteId>/<checkId>/<artifactId>`. Presign and
+  register accept only the fields they store; legacy `placeId` / `placeName`
+  from a pre-Phase-2 client are ignored, never rejected. Evidence cards are
+  captioned with the bound site's name from local storage.
+- **No data migration.** `places` stays on existing `SITE#` items (unread).
+  `ART#` rows and S3 objects written with a `<placeId>` segment stay readable:
+  every reader prefix-queries `CHECK#<checkId>#ART#` and matches on the
+  `artifactId` attribute, and nothing rebuilds a key from parts. In-progress
+  drafts and review records resume: the session normalizer flattens a
+  pre-Phase-2 `places` map into `items[]` on load (place order, then capture
+  order) and keeps each item's own fields, so an old item's place name still
+  captions its card.
 
 Removed with this decision: `PUT /v1/site/places` (handler, local API, and the
 `api.tf` route), the dead `.../description:validate` route, seeded places, the
@@ -100,14 +106,15 @@ Removed with this decision: `PUT /v1/site/places` (handler, local API, and the
   text path is used. Text-only checks now carry whole runs through the analyzer,
   so the first week of `evidenceKind = description` results should be watched
   for empty or low-signal output.
-- Task cards and 311 escalations label evidence with the site name instead of a
-  place name; older rows keep their place names.
-- The `<placeId>` segment of the artifact key and S3 path is a constant until
-  Phase 2; new code must not read meaning into it.
-- Removing a tile or the description drops it from the session only — an
-  already-registered `ART#` stays on the backend, still counts toward the
-  completion coverage gate, and is counted by `evidenceSummary`. There is no
-  artifact delete route; an optional soft cap on photos per check (to bound
-  analysis cost) is not required for Phase 1.
+- Task cards caption evidence with the site name; rows written before the
+  change keep their place names. `source.positionDescriptor` on new tasks is
+  the literal `"perimeter"` and must not be treated as a location.
+- The analytics `artifacts` entity no longer exports `placeId` / `placeName`;
+  older Parquet files keep the columns and `union_by_name` fills them as NULL.
+- Removing the saved description, or an evidence card, deletes its registered
+  `ART#` through `DELETE /v1/checks/{checkId}/artifacts/{artifactId}` so a
+  stale artifact never reaches the scorecard fold; removing a photo tile drops
+  it from the session only. An optional soft cap on photos per check (to bound
+  analysis cost) is not required.
 - E2E and unit suites that drove the places gate and `.place-row` selectors
   change in the same PR, or CI fails.

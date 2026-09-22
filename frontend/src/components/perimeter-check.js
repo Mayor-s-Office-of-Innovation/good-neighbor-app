@@ -6,8 +6,8 @@
   description as the alternative to photos. Each photo or description is
   analyzed independently as soon as it is captured; Finish unlocks once the
   completion rule in domain/check-completion.js is met (five photos, or one
-  description). Captures land under the session's one synthetic place so the
-  per-item pipeline and result cards keep keying on placeId + itemId.
+  description). Every capture is one item in the session's flat `items[]`
+  (ADR 0014); the pipeline and the result cards key on the item id alone.
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
@@ -49,7 +49,7 @@ import {
   startCheck,
   loadDraft,
   clearCheck,
-  getCapturePlaceId,
+  findItem,
   getItems,
   getCurrentCheck,
   getFlowType,
@@ -91,9 +91,9 @@ class PerimeterCheck extends HTMLElement {
         ? currentCheck
         : (await loadDraft("perimeter")) || null;
     if (!check) {
-      ensureCheck(this._siteId, this._site.name);
+      ensureCheck(this._siteId);
     } else if (getFlowType() !== "perimeter") {
-      startCheck(this._siteId, this._site.name);
+      startCheck(this._siteId);
     }
 
     this._checkId = getCurrentCheck()?.id || "";
@@ -185,11 +185,6 @@ class PerimeterCheck extends HTMLElement {
     this._resumePendingEvidence();
   }
 
-  /** The place new captures go to (the session's one synthetic place). */
-  get _placeId() {
-    return getCapturePlaceId();
-  }
-
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
       this._exitCapture({ discarded: true });
@@ -202,7 +197,7 @@ class PerimeterCheck extends HTMLElement {
   _resumePendingEvidence() {
     for (const item of getItems()) {
       if (shouldResumeEvidenceItem(item)) {
-        analyzeEvidenceItem(item.placeId || this._placeId, item.id);
+        analyzeEvidenceItem(item.id);
       }
     }
   }
@@ -216,9 +211,7 @@ class PerimeterCheck extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      const itemId = del.getAttribute("data-del");
-      const item = getItems().find((candidate) => candidate.id === itemId);
-      if (item) removeItem(item.placeId || this._placeId, itemId);
+      removeItem(del.getAttribute("data-del"));
       this._render();
     }
   }
@@ -233,16 +226,13 @@ class PerimeterCheck extends HTMLElement {
     const remove = target.closest("[data-remove-description]");
     if (remove) {
       const itemId = remove.getAttribute("data-remove-description");
-      const item = getItems().find((candidate) => candidate.id === itemId);
-      if (item) {
+      if (findItem(itemId)) {
         // The description may already be a registered artifact — delete it
         // server-side too, or completeCheck folds the stale text into the
         // scorecard even though the card is gone locally.
-        void removeEvidenceItem(item.placeId || this._placeId, itemId).catch(
-          (err) => {
-            console.error("Removing the description failed", err);
-          },
-        );
+        void removeEvidenceItem(itemId).catch((err) => {
+          console.error("Removing the description failed", err);
+        });
       }
       this._render();
     }
@@ -279,16 +269,14 @@ class PerimeterCheck extends HTMLElement {
 
     if (action === "retry") {
       const card = button.closest(".analysis-card");
-      const placeId = card?.getAttribute("data-place-id") || "";
       const itemId = card?.getAttribute("data-item-id") || "";
-      if (placeId && itemId) retryEvidenceItem(placeId, itemId);
+      if (itemId) retryEvidenceItem(itemId);
       return;
     }
     if (action === "remove-item") {
       const card = button.closest(".analysis-card");
-      const placeId = card?.getAttribute("data-place-id") || "";
       const itemId = card?.getAttribute("data-item-id") || "";
-      if (placeId && itemId) this._removeFailedItem(placeId, itemId);
+      if (itemId) this._removeFailedItem(itemId);
       return;
     }
 
@@ -308,7 +296,6 @@ class PerimeterCheck extends HTMLElement {
 
   _problemFromCard(card) {
     return {
-      placeId: card.getAttribute("data-place-id") || "",
       itemId: card.getAttribute("data-item-id") || "",
       checkId: card.getAttribute("data-check-id") || "",
       artifactId: card.getAttribute("data-artifact-id") || "",
@@ -382,19 +369,10 @@ class PerimeterCheck extends HTMLElement {
             this._deleteProblemLocally(problem);
             return;
           }
-          if (
-            getCurrentCheck()?.id === problem.checkId &&
-            problem.placeId &&
-            problem.itemId
-          ) {
-            await refreshEvidenceAnalysis(
-              problem.placeId,
-              problem.itemId,
-              result,
-              {
-                rejectedConditionId: problem.conditionId,
-              },
-            ).catch((error) => {
+          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
+            await refreshEvidenceAnalysis(problem.itemId, result, {
+              rejectedConditionId: problem.conditionId,
+            }).catch((error) => {
               console.error("refresh after saved deletion failed", error);
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
@@ -418,13 +396,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    const check = getCurrentCheck();
-    const item = check?.places?.[problem.placeId]?.items?.find(
-      (candidate) => candidate.id === problem.itemId,
-    );
+    const item = findItem(problem.itemId);
     if (!item) return;
 
-    updateItemAnalysis(problem.placeId, problem.itemId, {
+    updateItemAnalysis(problem.itemId, {
       tasks: (item.analysis?.tasks || []).filter(
         (task) => task.taskId !== problem.taskId,
       ),
@@ -457,11 +432,7 @@ class PerimeterCheck extends HTMLElement {
       this._setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
-        await analyzeNoIssueDescriptionEdit(
-          problem.placeId,
-          problem.itemId,
-          description,
-        );
+        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         this._render();
@@ -497,7 +468,7 @@ class PerimeterCheck extends HTMLElement {
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
-      await refreshEvidenceAnalysis(problem.placeId, problem.itemId, result);
+      await refreshEvidenceAnalysis(problem.itemId, result);
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
@@ -553,12 +524,7 @@ class PerimeterCheck extends HTMLElement {
     if (!(button instanceof HTMLButtonElement)) return;
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (
-      !problem.placeId ||
-      !problem.itemId ||
-      !problem.conditionId ||
-      !answerKey
-    ) {
+    if (!problem.itemId || !problem.conditionId || !answerKey) {
       this._showToast("Could not save that answer. Please try again.");
       return;
     }
@@ -568,7 +534,6 @@ class PerimeterCheck extends HTMLElement {
     setQuestionAnswerBusy(this, problem.conditionId, true);
     try {
       await answerAnalysisQuestion(
-        problem.placeId,
         problem.itemId,
         problem.conditionId,
         answerKey,
@@ -585,12 +550,9 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _markProblemResolved(problem) {
-    const check = getCurrentCheck();
-    const item = check?.places?.[problem.placeId]?.items?.find(
-      (candidate) => candidate.id === problem.itemId,
-    );
+    const item = findItem(problem.itemId);
     if (!item) return;
-    updateItemAnalysis(problem.placeId, problem.itemId, {
+    updateItemAnalysis(problem.itemId, {
       tasks: (item.analysis?.tasks || []).filter(
         (task) => task.taskId !== problem.taskId,
       ),
@@ -603,14 +565,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   /** Drop a failed, never-uploaded photo from the session entirely. */
-  _removeFailedItem(placeId, itemId) {
-    const check = getCurrentCheck();
-    const item = check?.places?.[placeId]?.items?.find(
-      (candidate) => candidate.id === itemId,
-    );
+  _removeFailedItem(itemId) {
+    const item = findItem(itemId);
     if (!item) return;
     if (item.upload?.status === "uploaded") return;
-    removeItem(placeId, itemId);
+    removeItem(itemId);
   }
 
   /**
@@ -729,7 +688,7 @@ class PerimeterCheck extends HTMLElement {
     // Trace the tap → file-picker handoff: if the picker never opens (in-app
     // webview, OS restriction), the logs show the tap with no "picked" line
     // after it — the field demo "photo button did nothing" signature.
-    mark("camera:open", { placeId: this._placeId });
+    mark("camera:open");
     this._fileInput.value = "";
     this._fileInput.click();
   }
@@ -764,10 +723,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _addPhoto(dataUrl) {
-    const record = addItem(this._placeId, { kind: "photo", dataUrl });
+    const record = addItem({ kind: "photo", dataUrl });
     if (record) {
       setAnalyzingOpen(true);
-      analyzeEvidenceItem(record.placeId, record.id);
+      analyzeEvidenceItem(record.id);
     }
     this._render();
   }
@@ -814,7 +773,7 @@ class PerimeterCheck extends HTMLElement {
     if (getAnalyzingOpen() && evidence.length) {
       this.querySelector("#check-footer").insertAdjacentHTML(
         "afterend",
-        analyzingSection(evidence, check.id),
+        analyzingSection(evidence, check.id, this._site?.name || ""),
       );
     }
     this._startElapsedTicker();

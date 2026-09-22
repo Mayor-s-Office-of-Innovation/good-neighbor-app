@@ -13,7 +13,10 @@
   finalization idempotently on every load until the completed header lands.
 */
 import { waitForAnalyses, completeCheck } from "./api.js";
-import { itemCountsTowardCompletion } from "../domain/check-completion.js";
+import {
+  checkItems,
+  itemCountsTowardCompletion,
+} from "../domain/check-completion.js";
 import { startRun, span, mark } from "./instrument.js";
 
 const pendingScorecardFinalizations = new Map();
@@ -151,26 +154,14 @@ async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
  * @returns {number}
  */
 export function expectedArtifactCountForCheck(check) {
-  if (!check?.places) return 0;
-  return (check.placeOrder || Object.keys(check.places)).reduce(
-    (count, placeId) => {
-      const items = Array.isArray(check.places[placeId]?.items)
-        ? check.places[placeId].items
-        : [];
-      return (
-        count +
-        items.filter(
-          (item) =>
-            itemCountsTowardCompletion(item) &&
-            (item?.kind === "text" ||
-              item?.dataUrl ||
-              item?.upload?.artifactId ||
-              item?.analysis?.artifactId),
-        ).length
-      );
-    },
-    0,
-  );
+  return checkItems(check).filter(
+    (item) =>
+      itemCountsTowardCompletion(item) &&
+      (item?.kind === "text" ||
+        item?.dataUrl ||
+        item?.upload?.artifactId ||
+        item?.analysis?.artifactId),
+  ).length;
 }
 
 export function finalizeCaptureScorecardInBackground(

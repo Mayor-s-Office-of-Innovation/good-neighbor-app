@@ -55,7 +55,7 @@ export const providerMetaKey = (providerId) => ({
 });
 
 /**
- * CHECK header — one item per full perimeter run (all places).
+ * CHECK header — one item per full perimeter run.
  * @param {string} siteId
  * @param {string} checkId
  * @returns {PrimaryKey}
@@ -66,16 +66,18 @@ export const checkHeaderKey = (siteId, checkId) => ({
 });
 
 /**
- * Artifact (one per captured photo/audio/text, grouped by place).
+ * Artifact (one per captured photo or description). Rows written before
+ * ADR 0014 Phase 2 carry a retired `<placeId>` segment between `ART#` and the
+ * artifact id; readers prefix-query on `checkArtifactPrefix` and match on the
+ * `artifactId` attribute, so both shapes stay readable.
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} placeId
  * @param {string} artifactId
  * @returns {PrimaryKey}
  */
-export const artifactKey = (siteId, checkId, placeId, artifactId) => ({
+export const artifactKey = (siteId, checkId, artifactId) => ({
   pk: sitePk(siteId),
-  sk: `CHECK#${checkId}#ART#${placeId}#${artifactId}`,
+  sk: `CHECK#${checkId}#ART#${artifactId}`,
 });
 
 /**
@@ -129,7 +131,7 @@ export const checkAnalysisPrefix = (checkId) => `CHECK#${checkId}#ANALYSIS#`;
 
 /**
  * Sort-key prefix that gathers only a check's ART# items (one per captured
- * photo, across all places): `begins_with(sk, …)`.
+ * photo or description): `begins_with(sk, …)`.
  * @param {string} checkId
  * @returns {string}
  */

@@ -70,8 +70,8 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {"photo" | "text" | string} [kind]
  * @property {string} [dataUrl]
  * @property {string} [text]
- * @property {string} [placeId]
- * @property {string} [placeName]
+ * @property {string} [placeName] label under the evidence preview; legacy items
+ *   carry a place name, current items are labeled with the site name by the host
  * @property {string} [checkId]
  * @property {AnalysisState} [analysis]
  * @property {{ artifactId?: string }} [upload]
@@ -105,10 +105,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [mediaUrl]
  * @property {string} [photoUrl]
  * @property {string} [imageUrl]
- * @property {string} [placeId]
  * @property {string} [placeName]
- * @property {string} [positionDescriptor]
- * @property {string} [position_descriptor]
  * @property {string} [location]
  * @property {string} [text]
  * @property {string[]} [sourceArtifactIds]
@@ -131,6 +128,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [emptyText]
  * @property {string} [tone]
  * @property {string} [footer]
+ * @property {string} [siteName] label for evidence previews that carry no place name
  */
 
 /**
@@ -162,9 +160,12 @@ export function analysisResultsTray(
     emptyText = "All problems were resolved or deleted.",
     tone = "new",
     footer = "",
+    siteName = "",
   } = {},
 ) {
-  const cards = items.map((item) => analysisCards(item, sessionCheckId)).flat();
+  const cards = items
+    .map((item) => analysisCards(item, sessionCheckId, { siteName }))
+    .flat();
   const summary = problemSummary(items);
   return html`
     <section
@@ -185,11 +186,18 @@ export function analysisResultsTray(
 }
 
 /**
- * @param {AnalysisItem} item
+ * @param {AnalysisItem} evidence
  * @param {string} sessionCheckId
+ * @param {{ siteName?: string }} [options]
  * @returns {string[]}
  */
-export function analysisCards(item, sessionCheckId) {
+export function analysisCards(evidence, sessionCheckId, { siteName } = {}) {
+  // Current items carry no place name (ADR 0014): the evidence caption is the
+  // bound site's name. Legacy items keep the place name they were written with.
+  const item =
+    siteName && !evidence.placeName
+      ? { ...evidence, placeName: siteName }
+      : evidence;
   const status = item.analysis?.status || "idle";
   if (status === "failed") return [failedCard(item)];
   if (status !== "analyzed") return [pendingCard(item)];
@@ -277,6 +285,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
  * @param {string} params.statusLabel
  * @param {boolean} [params.isNew]
  * @param {boolean} [params.includeControls]
+ * @param {string} [params.siteName] caption when the task's evidence has no place name
  * @returns {string}
  */
 export function taskAnalysisCard({
@@ -285,6 +294,7 @@ export function taskAnalysisCard({
   statusLabel,
   isNew = false,
   includeControls = true,
+  siteName = "",
 }) {
   const mediaUrl =
     task.thumbnailUrl ||
@@ -293,21 +303,17 @@ export function taskAnalysisCard({
     task.photoUrl ||
     task.imageUrl ||
     "";
+  // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
+  // a fixed literal, not a location.
   const placeName =
-    task.evidence?.placeName ||
-    task.placeName ||
-    task.positionDescriptor ||
-    task.position_descriptor ||
-    task.location ||
-    "";
+    task.evidence?.placeName || task.placeName || task.location || "";
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
     kind: mediaUrl ? "photo" : "text",
     dataUrl: mediaUrl,
     text: evidenceText,
-    placeId: task.placeId || task.positionDescriptor || "",
-    placeName: placeName || "Site",
+    placeName: placeName || siteName || "Site",
     checkId: task.checkId || "",
     analysis: {
       artifactId: taskArtifactId(task),
@@ -461,7 +467,6 @@ function failedCard(item) {
   return html`
     <article
       class="analysis-card analysis-card--failed analysis-card--new"
-      data-place-id="${escapeAttr(item.placeId || "")}"
       data-item-id="${escapeAttr(item.id || "")}"
     >
       <div class="analysis-card__content">
@@ -591,7 +596,6 @@ function completedEvidenceCard(
       class="analysis-card analysis-card--done ${isNew
         ? "analysis-card--new"
         : "analysis-card--standard"}"
-      data-place-id="${escapeAttr(item.placeId || "")}"
       data-item-id="${escapeAttr(item.id || "")}"
       data-check-id="${escapeAttr(checkId)}"
       data-artifact-id="${escapeAttr(artifactId)}"
