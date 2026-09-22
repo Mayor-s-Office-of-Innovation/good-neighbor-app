@@ -4,12 +4,6 @@ import { normalizeExplicitShortCode } from "../../src/lib/short-codes.js";
 
 const nowIso = () => new Date().toISOString();
 
-export const stJohnPlaces = [
-  { id: "place-15th-st", name: "15th St", order: 0 },
-  { id: "place-front-entrance", name: "Front entrance", order: 1 },
-  { id: "place-caledonia-st", name: "Caledonia St", order: 2 },
-];
-
 export const devSiteCodeSeeds = [
   {
     code: "MOICHL",
@@ -21,7 +15,6 @@ export const devSiteCodeSeeds = [
     siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
     contactEmail: "cityhall@example.org",
-    places: [],
   },
   {
     code: "GUBSJE",
@@ -37,7 +30,6 @@ export const devSiteCodeSeeds = [
       latitude: 37.76656393517443,
       longitude: -122.4213267021692,
     },
-    places: stJohnPlaces,
   },
   {
     code: "CHC730",
@@ -49,7 +41,6 @@ export const devSiteCodeSeeds = [
     siteShortCode: "730",
     providerSiteId: "provider-site-chc-730-polk",
     contactEmail: "chc730@example.org",
-    places: [],
   },
   {
     code: "SFA940",
@@ -61,7 +52,6 @@ export const devSiteCodeSeeds = [
     siteShortCode: "940",
     providerSiteId: "provider-site-sfaf-940-howard",
     contactEmail: "sfaf940@example.org",
-    places: [],
   },
   {
     code: "THC440",
@@ -73,7 +63,6 @@ export const devSiteCodeSeeds = [
     siteShortCode: "440",
     providerSiteId: "provider-site-thc-440-eddy",
     contactEmail: "thc440@example.org",
-    places: [],
   },
 ];
 
@@ -215,7 +204,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
       TableName: tableName,
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
-        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
@@ -236,7 +225,6 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":siteShortCode": seed.siteShortCode,
         ":name": seed.siteName,
         ":status": "active",
-        ":places": seed.places,
         ":now": now,
         ...(seed.location ? { ":location": seed.location } : {}),
       },

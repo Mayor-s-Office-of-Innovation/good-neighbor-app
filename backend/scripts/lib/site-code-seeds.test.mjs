@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { seedSiteCodes } from "./site-code-seeds.mjs";
+import { devSiteCodeSeeds, seedSiteCodes } from "./site-code-seeds.mjs";
 
 describe("seedSiteCodes", () => {
   it("does not reset existing dynamic setup codes", async () => {
@@ -22,5 +22,26 @@ describe("seedSiteCodes", () => {
     expect(setupCodePuts[0].ConditionExpression).toBe(
       "attribute_not_exists(pk)",
     );
+  });
+
+  it("does not seed a places list on any site", async () => {
+    const send = vi.fn(async () => ({}));
+
+    await seedSiteCodes({ send }, "gnp-test-app");
+
+    for (const seed of devSiteCodeSeeds) {
+      expect(seed).not.toHaveProperty("places");
+    }
+    const siteUpserts = send.mock.calls
+      .map(([command]) => command.input)
+      .filter(
+        (input) =>
+          input.Key?.sk === "#META" && input.Key?.pk?.startsWith("SITE#"),
+      );
+    expect(siteUpserts.length).toBe(devSiteCodeSeeds.length);
+    for (const input of siteUpserts) {
+      expect(input.UpdateExpression).not.toMatch(/places/);
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":places");
+    }
   });
 });
