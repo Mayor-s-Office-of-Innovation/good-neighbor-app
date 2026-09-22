@@ -126,7 +126,7 @@ export function isOutsideSiteRadius(position, site) {
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, places?: Record<string, {items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}>}> } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
  * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
@@ -137,9 +137,7 @@ export function isStalePendingSession(session, submitted, tasks = []) {
     // The backend check can be submitted before per-artifact guidance has
     // finished. Keep the local results alive until every captured item has
     // settled; otherwise its last analysis update cannot refresh home.
-    const items = Object.values(session.places || {}).flatMap((place) =>
-      Array.isArray(place?.items) ? place.items : [],
-    );
+    const items = Array.isArray(session.items) ? session.items : [];
     if (items.some((item) => item.analysis?.status !== "analyzed")) {
       return false;
     }
@@ -504,6 +502,7 @@ async function hydrateTaskEvidence(tasks) {
       const evidence = {
         artifactId: artifact.artifactId || "",
         placeName: artifact.placeName || task.placeName || task.location || "",
+        georeferencedAddress: artifact.georeferencedAddress || "",
         text: artifact.text || "",
       };
       if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
@@ -536,7 +535,21 @@ async function cachedCheckArtifacts(checkId) {
     CHECK_ARTIFACTS_CACHE.set(
       checkId,
       getCheck(checkId)
-        .then((result) => result.artifacts || [])
+        .then((result) => {
+          const addresses = new Map(
+            (result.analyses || []).map((analysis) => [
+              analysis.artifactId,
+              analysis.georeferencedAddress || "",
+            ]),
+          );
+          return (result.artifacts || []).map((artifact) => ({
+            ...artifact,
+            georeferencedAddress:
+              addresses.get(artifact.artifactId) ||
+              artifact.georeferencedAddress ||
+              "",
+          }));
+        })
         .catch((err) => {
           console.warn("Could not hydrate task evidence", { checkId, err });
           CHECK_ARTIFACTS_CACHE.delete(checkId);
@@ -1242,6 +1255,14 @@ class TodayView extends HTMLElement {
                       ></wa-icon>
                       Logout
                     </button>
+                    <a
+                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      role="menuitem"
+                      aria-label="Address data attribution (opens in a new tab)"
+                      >Address data attribution</a
+                    >
                   </div>`
                 : ""}
             </div>
@@ -1441,6 +1462,7 @@ class TodayView extends HTMLElement {
           createdAt: entry.createdAt,
           siteAddress: entry.task.siteAddress || this._site?.address || "",
         },
+        siteName: this._site?.name || "",
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
@@ -1534,6 +1556,7 @@ class TodayView extends HTMLElement {
                           siteAddress:
                             entry.task.siteAddress || this._site?.address || "",
                         },
+                        siteName: this._site?.name || "",
                         action:
                           entry.homeStatus === "needs_action"
                             ? this._primaryCardAction(entry.task)

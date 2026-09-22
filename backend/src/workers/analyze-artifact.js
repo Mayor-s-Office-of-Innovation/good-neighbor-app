@@ -25,6 +25,7 @@ import {
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -183,9 +184,13 @@ async function markFailed({ dynamoTable, msg, err }) {
  * @param {import("../analysis/analyzer-client.js").AnalyzerClient} deps.client
  * @param {string} deps.dynamoTable
  * @param {string} deps.uploadBucket
+ * @param {boolean} deps.reverseGeocodingEnabled
  * @returns {Promise<void>}
  */
-async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
+async function analyzeArtifact(
+  msg,
+  { client, dynamoTable, uploadBucket, reverseGeocodingEnabled },
+) {
   /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
   const media = [];
   if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
@@ -252,6 +257,19 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     return;
   }
 
+  // Start optional address lookup alongside the analyzer so it does not add
+  // another network round trip to the skeleton-card wait. The catch is attached
+  // immediately, including when the analyzer subsequently fails.
+  const georeferencedAddressPromise =
+    reverseGeocodingEnabled && msg.s3Key
+      ? reverseGeocodePhoto(msg.latitude, msg.longitude).catch((err) => {
+          console.warn("Photo reverse geocoding unavailable", {
+            error: err instanceof Error ? err.name : "UnknownError",
+          });
+          return null;
+        })
+      : Promise.resolve(null);
+
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.
   let response;
@@ -271,6 +289,8 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
   }
 
   const adapted = adaptAssessment(response);
+  // A missing or failed lookup is a normal fallback to the site's address.
+  const georeferencedAddress = await georeferencedAddressPromise;
 
   // 3. Persist the per-artifact analysis. The conditional write is the
   //    idempotency gate for redelivery — EXCEPT that a re-driven artifact (a
@@ -287,6 +307,7 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
     ...(Number.isFinite(msg.latitude) && Number.isFinite(msg.longitude)
       ? { latitude: msg.latitude, longitude: msg.longitude }
       : {}),
+    ...(georeferencedAddress ? { georeferencedAddress } : {}),
     status: "analyzed",
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,
@@ -343,7 +364,12 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
  * @type {import("aws-lambda").SQSHandler}
  */
 export const handler = async (event) => {
-  const { dynamoTable, uploadBucket, analyzerBaseUrl } = getConfig();
+  const {
+    dynamoTable,
+    uploadBucket,
+    analyzerBaseUrl,
+    reverseGeocodingEnabled,
+  } = getConfig();
   if (!analyzerBaseUrl) {
     throw new Error(
       "Missing required environment variable ANALYZER_BASE_URL for the analyze worker",
@@ -363,7 +389,12 @@ export const handler = async (event) => {
   const settled = await Promise.allSettled(
     event.Records.map(async (record) => {
       const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
-      await analyzeArtifact(msg, { client, dynamoTable, uploadBucket });
+      await analyzeArtifact(msg, {
+        client,
+        dynamoTable,
+        uploadBucket,
+        reverseGeocodingEnabled: reverseGeocodingEnabled === true,
+      });
     }),
   );
 

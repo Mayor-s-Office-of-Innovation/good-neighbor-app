@@ -22,6 +22,23 @@ describe("getConfig", () => {
     });
   });
 
+  it("enables reverse geocoding only when explicitly configured", () => {
+    const base = {
+      S3_UPLOAD_BUCKET: "bucket",
+      SQS_QUEUE_URL: "queue",
+      DYNAMO_TABLE: "table",
+    };
+    expect(getConfig(base)).not.toHaveProperty("reverseGeocodingEnabled");
+    expect(
+      getConfig({ ...base, REVERSE_GEOCODING_ENABLED: "false" }),
+    ).not.toHaveProperty("reverseGeocodingEnabled");
+    expect(
+      getConfig({ ...base, REVERSE_GEOCODING_ENABLED: "true" }),
+    ).toMatchObject({
+      reverseGeocodingEnabled: true,
+    });
+  });
+
   it("passes analyzer wiring through when present, and omits it otherwise", () => {
     const base = {
       S3_UPLOAD_BUCKET: "bucket",

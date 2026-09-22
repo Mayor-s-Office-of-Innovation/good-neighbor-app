@@ -774,7 +774,8 @@ site-setup {
   box-shadow: var(--shadow-lift);
 }
 
-.home-settings-menu button {
+.home-settings-menu button,
+.home-settings-menu a {
   appearance: none;
   -webkit-appearance: none;
   display: flex;
@@ -798,7 +799,8 @@ site-setup {
   text-shadow: none;
 }
 
-.home-settings-menu button:hover {
+.home-settings-menu button:hover,
+.home-settings-menu a:hover {
   background: var(--surface-3);
 }
 
@@ -815,6 +817,7 @@ site-setup {
 }
 
 .home-settings-menu button:focus-visible,
+.home-settings-menu a:focus-visible,
 .logout-dialog__cancel:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
