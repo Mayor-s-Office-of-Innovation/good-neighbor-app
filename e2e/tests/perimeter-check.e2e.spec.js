@@ -37,13 +37,14 @@ test.describe("perimeter check", () => {
   }) => {
     await startCheck(page);
     const progress = page.locator("#check-progress");
+    const photoCount = progress.locator("strong");
     const done = page.locator("#done-check");
     const shots = page.locator(".shot img");
     const analyzingTray = page.locator(
       'section[aria-label="Analyzing evidence"]',
     );
 
-    await expect(progress).toContainText(`0 of ${MIN_PHOTOS} photos.`);
+    await expect(photoCount).toHaveText(`0 of ${MIN_PHOTOS} photos taken`);
     await expect(done).toBeDisabled();
 
     // --- Photo 1: the issues scene ----------------------------------------
@@ -52,7 +53,7 @@ test.describe("perimeter check", () => {
 
     // Upload leg: the photo tile lands in the roll.
     await expect(shots).toHaveCount(1, { timeout: 30_000 });
-    await expect(progress).toContainText(`1 of ${MIN_PHOTOS} photos.`);
+    await expect(photoCount).toHaveText(`1 of ${MIN_PHOTOS} photos taken`);
     await expect(done).toBeDisabled();
 
     // Analyzer + guidance legs: the multi fixture's three conditions resolve
@@ -80,16 +81,19 @@ test.describe("perimeter check", () => {
       await addPhoto(page, PHOTO_CLEAR);
       await expect(shots).toHaveCount(n, { timeout: 30_000 });
       if (n < MIN_PHOTOS) {
-        await expect(progress).toContainText(`${n} of ${MIN_PHOTOS} photos.`);
+        await expect(photoCount).toHaveText(
+          `${n} of ${MIN_PHOTOS} photos taken`,
+        );
         await expect(done).toBeDisabled();
       }
     }
 
-    // The fifth photo satisfies the completion rule: the progress line flips
-    // and Finish enables.
-    await expect(progress).toContainText(
-      `${MIN_PHOTOS} photos. Ready to finish.`,
+    // The fifth photo satisfies the completion rule: readiness appears
+    // alongside the count and Finish enables.
+    await expect(photoCount).toHaveText(
+      `${MIN_PHOTOS} of ${MIN_PHOTOS} photos taken`,
     );
+    await expect(progress).toContainText("Ready to finish.");
     await expect(done).toBeEnabled();
 
     // Clean verdicts: each clean photo renders the analyzed-with-zero-concerns

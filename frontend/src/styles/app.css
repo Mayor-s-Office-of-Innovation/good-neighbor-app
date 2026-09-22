@@ -2359,52 +2359,49 @@ button[data-loading] [data-loading-label] {
   outline-offset: 2px;
 }
 
-/* ＋ "Add photo" tile — opens the native camera (phone) / file picker (desktop).
-   Compact grid cell by default; larger + centered with a hint on an empty place. */
+/* Camera tile shared by the capture flows. */
 .addshot {
   appearance: none;
-  /* Buttons don't honour a grid item's default justify-self/align-self: stretch,
-     so pin to the cell explicitly — otherwise the tile shrinks to its label and
-     clips "Add photo" next to the full-size photo tiles. */
+  position: relative;
   width: 100%;
-  height: 100%;
+  height: auto;
   aspect-ratio: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  border: 2px dashed var(--c-line);
-  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--wa-border-radius-l, 16px);
   background: var(--surface-2);
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   box-shadow: none;
   margin: 0;
-  padding: 0.4rem;
+  padding: 0;
   min-width: 0;
-  overflow: hidden;
   text-align: center;
 }
-.addshot__label {
-  font-weight: 600;
-  font-size: 0.72rem;
-  line-height: 1.15;
+.addshot__icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--ink);
 }
-.addshot__hint {
-  font-size: 0.85rem;
-  color: var(--text-faint);
+.addshot__icon wa-icon {
+  font-size: 1rem;
+}
+.addshot__label {
+  position: absolute;
+  bottom: 10%;
+  inset-inline: 0;
+  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1.2;
 }
 .addshot--empty {
-  aspect-ratio: auto;
-  width: min(100%, 260px);
-  height: auto;
-  padding: 2.4rem 1.5rem;
-  gap: 0.5rem;
-}
-.addshot--empty .addshot__label {
-  font-size: 1.05rem;
+  width: min(100%, 200px);
 }
 .addshot:focus-visible {
   outline: 2px solid var(--brand-blue);
@@ -4440,6 +4437,9 @@ connection-status {
    .check-timeline chrome (topbar, title, footer buttons) and the .shotgrid /
    .shot / .addshot tiles shared with the single-issue flow. */
 .check-roll__progress {
+  display: grid;
+  gap: 0.25rem;
+  text-align: center;
   margin: 0;
   color: var(--text-secondary);
   font-size: 1.0625rem;
@@ -4450,15 +4450,37 @@ connection-status {
   font-weight: 700;
 }
 .check-roll__grid {
+  /* Keep the column's left edge, but let the roll reach the viewport edge. */
+  width: calc(50% + 50vw);
+  display: grid;
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 200px;
+  justify-content: start;
+  overflow-x: auto;
   flex: 0 0 auto;
+  min-width: 0;
   min-height: 0;
   margin-bottom: 0;
 }
+.check-roll__grid.shotgrid--empty {
+  justify-content: flex-start;
+}
+.check-roll__grid .addshot {
+  justify-self: start;
+}
 .check-roll__describe {
   align-self: flex-start;
+  padding: 0.75rem 1rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  line-height: 1.2;
 }
 .check-roll__describe[hidden] {
   display: none;
+}
+.check-roll .check-timeline__footer {
+  margin-top: 1rem;
 }
 .check-roll__description:empty {
   display: none;
