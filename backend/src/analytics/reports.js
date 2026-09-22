@@ -83,8 +83,6 @@ const VIEW_COLUMNS = {
     "siteId",
     "checkId",
     "artifactId",
-    "placeId",
-    "placeName",
     "capturedAt",
     "exportedAt",
     "raw",

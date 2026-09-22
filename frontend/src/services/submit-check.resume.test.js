@@ -22,7 +22,6 @@ vi.mock("../db.js", () => ({
 
 vi.mock("../state/check-session.js", () => ({
   getCurrentCheck,
-  getPlaceOrder: vi.fn(() => ["place-north"]),
 }));
 
 vi.mock("./instrument.js", () => ({
@@ -35,25 +34,14 @@ function makeDraft() {
   return {
     id: "check-1",
     flowType: "single-problem",
-    placeOrder: ["place-north"],
     submittedAt: "2026-08-27T00:21:00.000Z",
-    places: {
-      "place-north": {
-        id: "place-north",
-        name: "North",
-        skipped: false,
-        description: null,
-        items: [
-          {
-            id: "item-1",
-            placeId: "place-north",
-            placeName: "North",
-            dataUrl: "data:image/jpeg;base64,AA==",
-            uploadedAt: "2026-08-27T00:20:00.000Z",
-          },
-        ],
+    items: [
+      {
+        id: "item-1",
+        dataUrl: "data:image/jpeg;base64,AA==",
+        uploadedAt: "2026-08-27T00:20:00.000Z",
       },
-    },
+    ],
   };
 }
 
@@ -71,12 +59,10 @@ describe("capture scorecard finalization", () => {
   it("counts already captured evidence without registering anything on Done", async () => {
     const { expectedArtifactCountForCheck } = await import("./submit-check.js");
     const draft = makeDraft();
-    draft.places["place-north"].items.push(
+    draft.items.push(
       /** @type {any} */ ({
         id: "item-2",
         kind: "text",
-        placeId: "place-north",
-        placeName: "North",
         text: "There is litter near the entrance.",
         uploadedAt: "2026-08-27T00:22:00.000Z",
       }),
@@ -123,17 +109,14 @@ describe("capture scorecard finalization", () => {
       finalizeCaptureScorecardInBackground,
     } = await import("./submit-check.js");
     const draft = makeDraft();
-    draft.places["place-north"].items = [
+    draft.items = [
       /** @type {any} */ ({
         id: "item-text",
         kind: "text",
-        placeId: "place-north",
-        placeName: "North",
         text: "There is a large pothole near the north entrance.",
         uploadedAt: "2026-08-27T00:22:00Z",
       }),
     ];
-    draft.places["place-north"].description = null;
 
     expect(expectedArtifactCountForCheck(draft)).toBe(1);
 
@@ -152,7 +135,7 @@ describe("capture scorecard finalization", () => {
     // backend artifact exists, its failure marker satisfies the gate).
     const { expectedArtifactCountForCheck } = await import("./submit-check.js");
     const draft = makeDraft();
-    draft.places["place-north"].items = [
+    draft.items = [
       /** @type {any} */ ({
         id: "dead-photo",
         kind: "photo",

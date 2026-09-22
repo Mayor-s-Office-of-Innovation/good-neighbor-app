@@ -89,8 +89,8 @@ describe("descriptionCard", () => {
 describe("photoGrid", () => {
   it("renders the camera first with the newest photo immediately after it", () => {
     const markup = photoGrid([
-      { id: "first", dataUrl: "data:first", placeName: "Site" },
-      { id: "second", dataUrl: "data:second", placeName: "Site" },
+      { id: "first", dataUrl: "data:first" },
+      { id: "second", dataUrl: "data:second" },
     ]);
 
     expect(markup.indexOf('id="add-photo"')).toBeLessThan(

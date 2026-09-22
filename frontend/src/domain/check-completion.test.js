@@ -25,10 +25,7 @@ function makeCheck(photos, texts) {
   for (let i = 0; i < texts; i += 1) {
     items.push({ id: `text-${i}`, kind: "text", text: "A description." });
   }
-  return {
-    placeOrder: ["perimeter"],
-    places: { perimeter: { id: "perimeter", name: "Site", items } },
-  };
+  return { items };
 }
 
 describe("isPerimeterCheckComplete", () => {
@@ -101,7 +98,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 
   it("five failed uploads do NOT satisfy the five-photo rule", () => {
     const check = makeCheck(0, 0);
-    check.places.perimeter.items = Array.from({ length: 5 }, (_, i) => ({
+    check.items = Array.from({ length: 5 }, (_, i) => ({
       ...DEAD_PHOTO,
       id: `dead-${i}`,
     }));
@@ -117,7 +114,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 
   it("five failed uploads plus four live photos count only four", () => {
     const check = makeCheck(0, 0);
-    check.places.perimeter.items = [
+    check.items = [
       ...Array.from({ length: 5 }, (_, i) => ({
         id: `dead-${i}`,
         kind: "photo",
@@ -137,7 +134,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 
   it("a failed description with no artifact does not satisfy the one-description rule", () => {
     const check = makeCheck(0, 0);
-    check.places.perimeter.items = [
+    check.items = [
       /** @type {any} */ ({
         id: "dead-text",
         kind: "text",
@@ -152,7 +149,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 
   it("hasEvidence still sees dead items (cancel/discard decisions)", () => {
     const check = makeCheck(0, 0);
-    check.places.perimeter.items = [
+    check.items = [
       { ...DEAD_PHOTO, id: "dead-1" },
       { ...DEAD_PHOTO, id: "dead-2" },
     ];
@@ -162,18 +159,13 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 });
 
 describe("counts and status", () => {
-  it("counts photos and texts across every place in order", () => {
+  it("counts photos and texts in capture order", () => {
     const check = {
-      placeOrder: ["b", "a"],
-      places: {
-        a: { items: [{ id: "a1", kind: "photo" }] },
-        b: {
-          items: [
-            { id: "b1", kind: "text" },
-            { id: "b2", kind: "photo" },
-          ],
-        },
-      },
+      items: [
+        { id: "b1", kind: "text" },
+        { id: "b2", kind: "photo" },
+        { id: "a1", kind: "photo" },
+      ],
     };
     expect(checkItems(check).map((item) => item.id)).toEqual([
       "b1",

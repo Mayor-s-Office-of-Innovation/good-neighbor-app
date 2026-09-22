@@ -543,3 +543,55 @@ describe("taskAnalysisCard", () => {
     expect(card).not.toContain('data-analysis-action="delete"');
   });
 });
+
+describe("evidence captions without a place name", () => {
+  it("labels current items with the host's site name", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex" },
+    );
+
+    expect(cards[0]).toContain("Civic Center Annex");
+    expect(cards[0]).not.toContain("data-place-id");
+  });
+
+  it("keeps a legacy item's own place name", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        placeName: "North gate",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex" },
+    );
+
+    expect(cards[0]).toContain("North gate");
+    expect(cards[0]).not.toContain("Civic Center Annex");
+  });
+
+  it("never captions a task card with the fixed position descriptor", () => {
+    const card = taskAnalysisCard({
+      // Backend tasks may still carry the descriptor; the template ignores it.
+      task: item({
+        taskId: "task_1",
+        category: "Litter",
+        positionDescriptor: "perimeter",
+      }),
+      action: null,
+      statusLabel: "Existing",
+      siteName: "Civic Center Annex",
+    });
+
+    expect(card).toContain("Civic Center Annex");
+    expect(card).not.toContain(">perimeter<");
+  });
+});

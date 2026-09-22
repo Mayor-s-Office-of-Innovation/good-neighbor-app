@@ -75,7 +75,7 @@ sequenceDiagram
   Note over Dev: at capture time, PER EVIDENCE ITEM:
   Dev->>API: POST /v1/checks (idempotency-key, once, lazy)
   API->>DB: Put CHECK# header (conditional)
-  Dev->>API: POST .../artifacts:presign {contentType, placeId?, placeName?}<br/>(placeId defaults to "perimeter"; placeName is the site name)
+  Dev->>API: POST .../artifacts:presign {contentType}
   API-->>Dev: presigned PUT url + artifactId + s3Key
   Dev->>S3: PUT bytes (content-type pinned)
   Dev->>API: POST .../artifacts {artifactId, s3Key, capturedAt|text}
@@ -104,9 +104,9 @@ sequenceDiagram
 
 Typed descriptions register as text artifacts through the same
 `.../artifacts` path (`registerArtifact` with `text`, no bytes) and flow through
-the identical analyze→evaluate pipeline; the worker sends `placeName` (the site
-name) as the analyzer's `position_descriptor`, falling back to the literal
-`"perimeter"`. Duplicate or overlapping tasks are
+the identical analyze→evaluate pipeline; the worker sends the fixed literal
+`"perimeter"` as the analyzer's `position_descriptor` (there is no per-photo
+position, and nothing downstream decides on it). Duplicate or overlapping tasks are
 acceptable — two photos of the same issue may each produce tasks; deciding what
 to keep belongs to the user.
 
