@@ -15,7 +15,7 @@ export const codeEntryView = ({
   mode = "code",
   request = {},
 } = {}) => html`
-  <main class="login" aria-labelledby="login-title">
+  <div class="login" aria-labelledby="login-title">
     <section class="login__panel" aria-busy="${checking ? "true" : "false"}">
       <div class="login__mark" aria-hidden="true"></div>
 
@@ -32,7 +32,7 @@ export const codeEntryView = ({
         ? requestCodeView(request)
         : enterCodeView({ value, error, checking })}
     </section>
-  </main>
+  </div>
 `;
 
 /**

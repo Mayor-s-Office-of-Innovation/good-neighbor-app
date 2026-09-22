@@ -11,6 +11,9 @@ export default [
         Buffer: "readonly",
         setTimeout: "readonly",
         fetch: "readonly",
+        // Browser globals referenced inside page.evaluate() callbacks.
+        document: "readonly",
+        window: "readonly",
       },
     },
   },
