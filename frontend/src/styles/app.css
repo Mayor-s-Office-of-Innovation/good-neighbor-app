@@ -1248,6 +1248,26 @@ today-view {
   font-size: var(--wa-font-size-s, 0.875rem);
 }
 
+.home-site-switcher__status,
+.home-site-switcher__failure p {
+  margin: 0.5rem 1rem;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+}
+
+.home-site-switcher__failure button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--wa-color-neutral-on-quiet);
+  cursor: pointer;
+  font: inherit;
+  margin: 0 1rem 0.5rem;
+  padding: 0;
+  text-decoration: underline;
+}
+
 .home-site-switcher button:focus-visible {
   outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
   outline-offset: 0.125rem;
@@ -3159,6 +3179,12 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-gray-30, #424554);
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
+}
+
+.analysis-card__footer span + span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .analysis-card__skeleton {

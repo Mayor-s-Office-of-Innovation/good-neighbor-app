@@ -545,6 +545,7 @@ function taskDisplayReference(task) {
       task.displayId ||
       task.display_id ||
       task.assessmentId ||
+      task.taskId ||
       "",
   );
 }

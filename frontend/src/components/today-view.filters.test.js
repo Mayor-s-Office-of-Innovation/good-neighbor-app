@@ -1,4 +1,12 @@
-import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeAll,
+  beforeEach,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const session = vi.hoisted(() => ({ current: null }));
 const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
@@ -17,13 +25,14 @@ const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),
   discardInMemorySession: vi.fn(),
 }));
+const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
   listBoundSites: async () => [],
   clearSiteSession: logout.clearSiteSession,
 }));
 vi.mock("../services/api.js", () => ({
-  listProviderSites: async () => ({ providerName: "Test provider", sites: [] }),
+  listProviderSites: catalog.listProviderSites,
   listChecks: async () => ({ checks: [] }),
   listTasks: async () => ({ tasks: [] }),
 }));
@@ -36,6 +45,15 @@ vi.mock("../state/check-session.js", () => ({
 }));
 
 let TodayView;
+beforeEach(() => {
+  catalog.listProviderSites.mockReset();
+  catalog.listProviderSites.mockResolvedValue({
+    providerId: "provider-1",
+    providerName: "Test provider",
+    sites: [],
+    nextCursor: null,
+  });
+});
 beforeAll(async () => {
   vi.stubGlobal(
     "HTMLElement",
@@ -314,6 +332,77 @@ describe("task card labels", () => {
 });
 
 describe("site switcher", () => {
+  it("uses accessible filter buttons rather than incomplete tab semantics", () => {
+    const view = new TodayView();
+    view._homeFilter = "todo";
+    const markup = view._taskTabs();
+    expect(markup).toContain('role="group"');
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).not.toContain('role="tab"');
+    expect(markup).not.toContain('role="tablist"');
+    expect(markup).not.toContain('tabindex="-1"');
+  });
+
+  it("collects all provider-site pages and sorts the complete catalog", async () => {
+    catalog.listProviderSites
+      .mockResolvedValueOnce({
+        providerId: "provider-1",
+        providerName: "Provider One",
+        sites: [{ siteId: "site-z", name: "Zeta" }],
+        nextCursor: "next-page",
+      })
+      .mockResolvedValueOnce({
+        providerId: "provider-1",
+        providerName: "Provider One",
+        sites: [{ siteId: "site-a", name: "Alpha" }],
+        nextCursor: null,
+      });
+
+    const view = await mount("?filter=todo");
+    expect(
+      catalog.listProviderSites.mock.calls.map(([cursor]) => cursor),
+    ).toEqual(["", "next-page"]);
+    expect(view._providerSites.map((site) => site.name)).toEqual([
+      "Alpha",
+      "Zeta",
+    ]);
+    expect(view._providerSitesStatus).toBe("loaded");
+  });
+
+  it("shows a failed catalog separately from an empty catalog and retries", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    catalog.listProviderSites.mockRejectedValueOnce(new Error("Offline"));
+    const view = await mount("?filter=todo");
+    view._site = { siteId: "site-1", name: "Mission District" };
+    view._siteId = "site-1";
+    view._siteSwitcherOpen = true;
+
+    expect(view._providerSitesStatus).toBe("error");
+    expect(view._siteSwitcher("Provider One")).toContain(
+      'id="site-catalog-retry"',
+    );
+    expect(view._siteSwitcher("Provider One")).toContain(
+      "Other sites couldn't load.",
+    );
+
+    catalog.listProviderSites.mockResolvedValueOnce({
+      providerId: "provider-1",
+      providerName: "Provider One",
+      sites: [{ siteId: "site-2", name: "Second site" }],
+      nextCursor: null,
+    });
+    view._homeModel = { tasks: [] };
+    await view._retryProviderSites();
+    expect(view._providerSitesStatus).toBe("loaded");
+    expect(view._providerSites).toEqual([
+      { siteId: "site-2", name: "Second site" },
+    ]);
+    expect(view._siteSwitcher("Provider One")).not.toContain(
+      "Other sites couldn't load.",
+    );
+    errorLog.mockRestore();
+  });
+
   it("stays open when the location-summary link click reaches the outside-click listener", async () => {
     const view = await mount("?filter=todo");
     const originalElement = globalThis.Element;

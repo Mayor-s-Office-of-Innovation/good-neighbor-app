@@ -294,9 +294,15 @@ export function getSiteSettings() {
   return request("GET", "/v1/site");
 }
 
-/** List the active sites belonging to the current authenticated site's provider. */
-export function listProviderSites() {
-  return request("GET", "/v1/provider-sites");
+/**
+ * List one bounded page of the current provider's active sites.
+ * @param {string} [cursor]
+ */
+export function listProviderSites(cursor = "") {
+  return request(
+    "GET",
+    `/v1/provider-sites${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
 }
 
 /**
