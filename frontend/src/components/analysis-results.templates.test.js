@@ -771,6 +771,61 @@ describe("taskAnalysisCard", () => {
 });
 
 describe("evidence captions without a place name", () => {
+  it("uses the photo's reverse-geocoded first address line before the site address", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: {
+          status: "analyzing",
+          georeferencedAddress: "640 Jones St, San Francisco, CA",
+        },
+      }),
+      "check_1",
+      { siteAddress: "123 Main St, San Francisco, CA" },
+    );
+
+    expect(cards[0]).toContain("640 Jones St");
+    expect(cards[0]).not.toContain("123 Main St");
+    expect(cards[0]).not.toContain("San Francisco, CA");
+  });
+
+  it("falls back to the site's first address line when coordinates have no address", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex", siteAddress: "123 Main St\nSuite 2" },
+    );
+
+    expect(cards[0]).toContain("123 Main St");
+    expect(cards[0]).not.toContain("Suite 2");
+  });
+
+  it("shows the stored photo address on a hydrated home task", () => {
+    const card = taskAnalysisCard({
+      task: item({
+        taskId: "task_1",
+        category: "Litter",
+        siteAddress: "123 Main St, San Francisco",
+        evidence: {
+          georeferencedAddress: "640 Jones St, San Francisco, CA",
+        },
+      }),
+      action: null,
+      statusLabel: "Existing",
+      siteName: "Civic Center Annex",
+    });
+
+    expect(card).toContain("640 Jones St");
+    expect(card).not.toContain("123 Main St");
+  });
+
   it("labels current items with the host's site name", () => {
     const cards = analysisCards(
       item({

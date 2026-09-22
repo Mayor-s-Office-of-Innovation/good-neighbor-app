@@ -36,14 +36,12 @@ describe("isStalePendingSession", () => {
     const session = {
       id: "chk_1",
       status: "capture-complete",
-      places: {
-        entrance: { items: [{ analysis: { status: "analyzing" } }] },
-      },
+      items: [{ analysis: { status: "analyzing" } }],
     };
     const submitted = [{ id: "chk_1", status: "submitted" }];
 
     expect(isStalePendingSession(session, submitted)).toBe(false);
-    session.places.entrance.items[0].analysis.status = "analyzed";
+    session.items[0].analysis.status = "analyzed";
     expect(isStalePendingSession(session, submitted)).toBe(true);
   });
 
@@ -52,18 +50,14 @@ describe("isStalePendingSession", () => {
     const session = {
       id: "chk_1",
       status: "capture-complete",
-      places: {
-        entrance: {
-          items: [
-            {
-              analysis: {
-                status: "analyzed",
-                tasks: [{ taskId: "task_1" }],
-              },
-            },
-          ],
+      items: [
+        {
+          analysis: {
+            status: "analyzed",
+            tasks: [{ taskId: "task_1" }],
+          },
         },
-      },
+      ],
     };
     const submitted = [{ id: "chk_1", status: "submitted" }];
 

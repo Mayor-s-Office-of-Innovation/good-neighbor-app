@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.1106.0",
+    "@aws-sdk/client-geo-places": "3.1106.0",
     "@aws-sdk/client-s3": "3.1106.0",
     "@aws-sdk/client-secrets-manager": "3.1106.0",
     "@aws-sdk/client-sesv2": "3.1106.0",

@@ -56,6 +56,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [status]
  * @property {string} [artifactId]
  * @property {string} [checkId]
+ * @property {string} [georeferencedAddress]
  * @property {AnalysisAssessment} [assessment]
  * @property {AnalysisSource} [sourceAnalysis]
  * @property {AnalysisTask[]} [tasks]
@@ -91,6 +92,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @typedef {object} TaskEvidence
  * @property {string} [artifactId]
  * @property {string} [placeName]
+ * @property {string} [georeferencedAddress]
  * @property {string} [text]
  */
 
@@ -225,7 +227,10 @@ export function analysisResultsTray(
   let clearCardRendered = false;
   const cards = sortAnalysisCards([
     ...items.flatMap((item) =>
-      analysisCardEntries(item, sessionCheckId, { siteName, siteAddress }).filter((card) => {
+      analysisCardEntries(item, sessionCheckId, {
+        siteName,
+        siteAddress,
+      }).filter((card) => {
         if (!card.isClear) return true;
         if (
           summary.visible > 0 ||
@@ -329,13 +334,15 @@ export function historicalCheckTitle(value, now = new Date()) {
 }
 
 /**
- * @param {AnalysisItem} evidence
+ * @param {AnalysisItem} item
  * @param {string} sessionCheckId
  * @param {{ siteName?: string, siteAddress?: string }} [options]
  * @returns {string[]}
  */
 export function analysisCards(item, sessionCheckId, options = {}) {
-  return analysisCardEntries(item, sessionCheckId, options).map((card) => card.markup);
+  return analysisCardEntries(item, sessionCheckId, options).map(
+    (card) => card.markup,
+  );
 }
 
 /**
@@ -344,11 +351,19 @@ export function analysisCards(item, sessionCheckId, options = {}) {
  * @param {{ siteName?: string, siteAddress?: string }} [options]
  * @returns {AnalysisCardEntry[]}
  */
-function analysisCardEntries(evidence, sessionCheckId, { siteName = "", siteAddress = "" } = {}) {
+function analysisCardEntries(
+  evidence,
+  sessionCheckId,
+  { siteName = "", siteAddress = "" } = {},
+) {
   const item = {
     ...evidence,
     placeName: evidence.placeName || siteName,
     siteAddress: evidence.siteAddress || siteAddress,
+    georeferencedAddress:
+      evidence.georeferencedAddress ||
+      evidence.analysis?.georeferencedAddress ||
+      "",
   };
   const status = item.analysis?.status || "idle";
   const itemTime = item.uploadedAt || item.createdAt || "";
@@ -489,7 +504,8 @@ export function taskAnalysisCard({
     dataUrl: mediaUrl,
     text: evidenceText,
     placeName: placeName || siteName || "Site",
-    georeferencedAddress: task.georeferencedAddress || "",
+    georeferencedAddress:
+      task.georeferencedAddress || task.evidence?.georeferencedAddress || "",
     address: task.address || "",
     siteAddress: task.siteAddress || "",
     checkId: task.checkId || "",
@@ -910,8 +926,8 @@ function textPreview() {
 function cardPlace(record) {
   const value =
     record?.georeferencedAddress ||
-    record?.address ||
     record?.siteAddress ||
+    record?.address ||
     record?.placeName ||
     "Site";
   return (
