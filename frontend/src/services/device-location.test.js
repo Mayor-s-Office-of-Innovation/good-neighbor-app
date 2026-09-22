@@ -219,7 +219,84 @@ describe("capture fallback prompt", () => {
       geolocation: { getCurrentPosition },
     });
     requestLocationPermissionEarly();
-    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    const capture = getCaptureDeviceLocation();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(capture).resolves.toBeNull();
     expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capture reuses startup location", () => {
+  function pendingStartup(state = "granted") {
+    vi.useFakeTimers();
+    const getCurrentPosition = vi.fn();
+    vi.stubGlobal("navigator", {
+      permissions: { query: vi.fn().mockResolvedValue({ state }) },
+      geolocation: { getCurrentPosition },
+    });
+    requestLocationPermissionEarly();
+    return getCurrentPosition;
+  }
+
+  it("shares startup success with concurrent captures and clears their timers", async () => {
+    const request = pendingStartup();
+    const captures = [getCaptureDeviceLocation(), getCaptureDeviceLocation()];
+    await vi.advanceTimersByTimeAsync(500);
+    request.mock.calls[0][0]({ coords: { latitude: 37, longitude: -122 } });
+    expect(await Promise.all(captures)).toEqual([
+      { latitude: 37, longitude: -122 },
+      { latitude: 37, longitude: -122 },
+    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    request.mockImplementation((success) =>
+      success({ coords: { latitude: 38, longitude: -121 } }),
+    );
+    await expect(getCaptureDeviceLocation()).resolves.toEqual({
+      latitude: 38,
+      longitude: -121,
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("times out capture after two seconds without cancelling startup", async () => {
+    const request = pendingStartup();
+    const capture = getCaptureDeviceLocation();
+    const settled = vi.fn();
+    void capture.then(settled);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(capture).resolves.toBeNull();
+    const nextCapture = getCaptureDeviceLocation();
+    await vi.advanceTimersByTimeAsync(500);
+    request.mock.calls[0][0]({ coords: { latitude: 37, longitude: -122 } });
+    await expect(nextCapture).resolves.toEqual({
+      latitude: 37,
+      longitude: -122,
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back on startup failure and requests fresh coordinates afterward", async () => {
+    const request = pendingStartup();
+    const capture = getCaptureDeviceLocation();
+    await vi.advanceTimersByTimeAsync(10);
+    request.mock.calls[0][1]({ code: 2, message: "Position unavailable" });
+    await expect(capture).resolves.toBeNull();
+    request.mockImplementation((success) =>
+      success({ coords: { latitude: 38, longitude: -121 } }),
+    );
+    await expect(getCaptureDeviceLocation()).resolves.toEqual({
+      latitude: 38,
+      longitude: -121,
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("respects explicit denial even while startup is pending", async () => {
+    const request = pendingStartup("denied");
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
