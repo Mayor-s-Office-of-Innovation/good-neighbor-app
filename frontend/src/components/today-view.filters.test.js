@@ -128,9 +128,7 @@ describe("site location prompt", () => {
       { id: "check-1", submittedAt: new Date().toISOString(), issueCount: 1 },
       [{ task: { checkId: "check-1" }, homeStatus: "needs_action" }],
     );
-    expect(summary).toContain(
-      "Looks like you're not near this site.",
-    );
+    expect(summary).toContain("Looks like you're not near this site.");
     expect(summary).toContain('id="lastlog-change-site"');
     expect(summary).toContain('appearance="plain"');
     expect(summary).not.toContain("Last log:");
