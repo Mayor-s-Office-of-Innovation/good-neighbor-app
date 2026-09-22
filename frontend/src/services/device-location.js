@@ -132,10 +132,10 @@ export async function refreshGrantedDeviceLocation() {
 }
 
 /**
- * Check proximity without re-opening a browser permission prompt. A recent
- * position already fetched for the home screen is fresh enough to reuse; when
- * permission is granted, a new request has a short deadline. Failure leaves
- * capture available and can use only a still-recent successful fix.
+ * Check proximity when the user starts capture. A recent position is reused;
+ * otherwise a granted permission gets a short fresh request. Browsers without
+ * the Permissions API may also request on this user action, but never during
+ * the passive home refresh. A denied prompt is not repeated at capture time.
  * @returns {Promise<DeviceLocation | null>}
  */
 export async function getSiteCheckDeviceLocation() {
@@ -155,12 +155,22 @@ export async function getSiteCheckDeviceLocation() {
   if (earlyLocationRequest) {
     return (await waitForStartupLocation(earlyLocationRequest)) || recent();
   }
-  if (permission !== "granted") return recent();
+  if (
+    permission === "prompt" ||
+    (permission === null && capturePromptAttempted)
+  ) {
+    return recent();
+  }
   return (
     (await getDeviceLocation({
       timeoutMs: SITE_CHECK_LOCATION_TIMEOUT_MS,
       maximumAgeMs: SITE_CHECK_CACHE_AGE_MS,
       enableHighAccuracy: false,
+      onError: (error) => {
+        if (permission === null && error?.code === 1) {
+          capturePromptAttempted = true;
+        }
+      },
     })) || recent()
   );
 }

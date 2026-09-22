@@ -826,6 +826,18 @@ describe("evidence captions without a place name", () => {
     expect(card).not.toContain("123 Main St");
   });
 
+  it("retains a task-only identifier in current and historical card footers", () => {
+    for (const isNew of [true, false]) {
+      const card = taskAnalysisCard({
+        task: item({ taskId: "task-only-123", category: "Litter" }),
+        action: null,
+        statusLabel: isNew ? "New" : "Existing",
+        isNew,
+      });
+      expect(card).toContain("<span>task-only-123</span>");
+    }
+  });
+
   it("labels current items with the host's site name", () => {
     const cards = analysisCards(
       item({

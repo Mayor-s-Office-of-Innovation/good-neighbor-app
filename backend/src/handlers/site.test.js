@@ -72,6 +72,7 @@ describe("listProviderSites", () => {
       ":pk": "PROVIDER#provider-1",
       ":prefix": "SITE#",
     });
+    expect(send.mock.calls[1][0].input.Limit).toBe(25);
     expect(body(response)).toEqual({
       providerId: "provider-1",
       providerName: "Provider One",
@@ -79,6 +80,7 @@ describe("listProviderSites", () => {
         { siteId: "site-1", name: "First" },
         { siteId: "site-2", name: "Second" },
       ],
+      nextCursor: null,
     });
   });
 
@@ -124,5 +126,88 @@ describe("listProviderSites", () => {
       { siteId: "site-1", name: "Standalone" },
     ]);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a cursor and reads only one bounded membership page", async () => {
+    const lastKey = { pk: "PROVIDER#provider-1", sk: "SITE#site-25" };
+    send
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", status: "active" }],
+        LastEvaluatedKey: lastKey,
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1", name: "First" },
+      });
+
+    const first = await /** @type {any} */ (listProviderSites)(event("site-1"));
+    const cursor = body(first).nextCursor;
+    expect(cursor).toBe(Buffer.from("SITE#site-25").toString("base64url"));
+    expect(send).toHaveBeenCalledTimes(3);
+
+    send.mockReset();
+    send
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1" },
+      })
+      .mockResolvedValueOnce({ Items: [] });
+    const nextEvent = event("site-1");
+    nextEvent.queryStringParameters = { cursor };
+    const second = await /** @type {any} */ (listProviderSites)(nextEvent);
+    expect(body(second).nextCursor).toBeNull();
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(lastKey);
+  });
+
+  it("rejects a malformed cursor without querying memberships", async () => {
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", providerId: "provider-1" },
+    });
+    const request = event("site-1");
+    request.queryStringParameters = { cursor: "invalid!" };
+
+    const response = await /** @type {any} */ (listProviderSites)(request);
+    expect(response.statusCode).toBe(400);
+    expect(body(response)).toEqual({ error: "invalid_cursor" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("limits concurrent site metadata reads to five", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let currentSiteRead = true;
+    send.mockImplementation(async (command) => {
+      if (currentSiteRead) {
+        currentSiteRead = false;
+        return { Item: { siteId: "site-1", providerId: "provider-1" } };
+      }
+      if (command instanceof QueryCommand) {
+        return {
+          Items: Array.from({ length: 12 }, (_, index) => ({
+            siteId: `site-${index + 1}`,
+            status: "active",
+          })),
+        };
+      }
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return {
+        Item: {
+          siteId: command.input.Key.pk.replace("SITE#", ""),
+          providerId: "provider-1",
+          name: "Site",
+        },
+      };
+    });
+
+    const response = await /** @type {any} */ (listProviderSites)(
+      event("site-1"),
+    );
+    expect(body(response).sites).toHaveLength(12);
+    expect(peak).toBeLessThanOrEqual(5);
+    expect(peak).toBeGreaterThan(1);
   });
 });

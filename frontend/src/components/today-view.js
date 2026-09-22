@@ -746,6 +746,7 @@ class TodayView extends HTMLElement {
     this._siteSwitcherOpen = false;
     this._siteDocumentClick = null;
     this._providerSites = [];
+    this._providerSitesStatus = "idle";
     this._boundSites = [];
     this._providerName = "";
     this._siteSwitchError = "";
@@ -848,13 +849,15 @@ class TodayView extends HTMLElement {
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+    this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
-      listProviderSites().catch((error) => {
+      this._fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
         return null;
       }),
       listBoundSites(),
     ]);
+    this._providerSitesStatus = catalog ? "loaded" : "error";
     this._providerSites = catalog?.sites || [];
     this._providerName = catalog?.providerName || this._site.providerName || "";
     this._boundSites = bindings;
@@ -1022,6 +1025,9 @@ class TodayView extends HTMLElement {
       button.addEventListener("click", () => {
         void this._switchToSite(button.getAttribute("data-switch-site") || "");
       });
+    });
+    this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
+      void this._retryProviderSites();
     });
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
@@ -1288,6 +1294,7 @@ class TodayView extends HTMLElement {
 
         <section
           class="home-region home-region--results"
+          aria-label="Task results"
           ${resultsInactive ? html`inert aria-hidden="true"` : ""}
         >
           ${this._homeResults({
@@ -1748,6 +1755,59 @@ class TodayView extends HTMLElement {
     `;
   }
 
+  async _fetchProviderSites() {
+    const sites = new Map();
+    const seenCursors = new Set();
+    let cursor = "";
+    let providerId = "";
+    let providerName = "";
+    do {
+      const page = await listProviderSites(cursor);
+      if (!page || !Array.isArray(page.sites)) {
+        throw new Error("Invalid provider sites response");
+      }
+      if (providerId && page.providerId !== providerId) {
+        throw new Error("Provider changed during site listing");
+      }
+      providerId = String(page.providerId || "");
+      providerName = String(page.providerName || providerName);
+      for (const site of page.sites) {
+        if (site?.siteId) sites.set(site.siteId, site);
+      }
+      cursor = page.nextCursor || "";
+      if (cursor && seenCursors.has(cursor)) {
+        throw new Error("Repeated provider sites cursor");
+      }
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return {
+      providerName,
+      sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
+
+  async _retryProviderSites() {
+    if (this._providerSitesStatus === "loading") return;
+    const requestedSiteId = this._siteId;
+    this._providerSitesStatus = "loading";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      const catalog = await this._fetchProviderSites();
+      if (requestedSiteId !== this._siteId) return;
+      this._providerSites = catalog.sites;
+      this._providerName =
+        catalog.providerName || this._site?.providerName || "";
+      this._providerSitesStatus = "loaded";
+    } catch (error) {
+      console.error("listProviderSites retry failed", error);
+      this._providerSitesStatus = "error";
+    } finally {
+      if (requestedSiteId === this._siteId && this._homeModel) {
+        this._renderHome(this._homeModel);
+      }
+    }
+  }
+
   _siteIdentity() {
     const org =
       this._providerName ||
@@ -1763,7 +1823,7 @@ class TodayView extends HTMLElement {
 
   _siteSwitcher(providerName) {
     const sites = this._providerSites.length
-      ? this._providerSites
+      ? [...this._providerSites]
       : [{ siteId: this._siteId, name: this._site.name }];
     if (!sites.some((site) => site.siteId === this._siteId)) {
       sites.push({ siteId: this._siteId, name: this._site.name });
@@ -1807,6 +1867,17 @@ class TodayView extends HTMLElement {
                 ? html`<p class="home-site-switcher__error" role="alert">
                     ${escapeHtml(this._siteSwitchError)}
                   </p>`
+                : ""}
+              ${this._providerSitesStatus === "loading"
+                ? html`<p class="home-site-switcher__status" role="status">
+                    Loading sites…
+                  </p>`
+                : ""}
+              ${this._providerSitesStatus === "error"
+                ? html`<div class="home-site-switcher__failure">
+                    <p role="alert">Other sites couldn't load.</p>
+                    <button id="site-catalog-retry" type="button">Retry</button>
+                  </div>`
                 : ""}
             </div>`
           : ""}
@@ -2058,7 +2129,7 @@ class TodayView extends HTMLElement {
 
   _taskTabs() {
     return html`
-      <div class="home-tabs" role="tablist" aria-label="Tasks">
+      <div class="home-tabs" role="group" aria-label="Filter tasks">
         ${HOME_TABS.map(
           (tab) => html`
             <button
@@ -2066,9 +2137,7 @@ class TodayView extends HTMLElement {
                 ? "home-tabs__tab--active"
                 : ""}"
               type="button"
-              role="tab"
-              aria-selected="${tab.id === this._homeFilter ? "true" : "false"}"
-              tabindex="${tab.id === this._homeFilter ? "0" : "-1"}"
+              aria-pressed="${tab.id === this._homeFilter ? "true" : "false"}"
               data-home-filter="${escapeAttr(tab.id)}"
             >
               ${escapeHtml(tab.label)}

@@ -120,7 +120,7 @@ describe("getDeviceLocation", () => {
 });
 
 describe("site-start location check", () => {
-  it("does not re-prompt when browser permission is prompt or unavailable", async () => {
+  it("does not re-prompt when browser permission is prompt", async () => {
     const getCurrentPosition = vi.fn();
     vi.stubGlobal("navigator", {
       permissions: { query: vi.fn().mockResolvedValue({ state: "prompt" }) },
@@ -128,6 +128,43 @@ describe("site-start location check", () => {
     });
     await expect(getSiteCheckDeviceLocation()).resolves.toBeNull();
     expect(getCurrentPosition).not.toHaveBeenCalled();
+  });
+
+  it("uses a bounded user-initiated position request without the Permissions API", async () => {
+    const getCurrentPosition = vi.fn((success) =>
+      success({ coords: { latitude: 37.7873, longitude: -122.4132 } }),
+    );
+    vi.stubGlobal("navigator", {
+      geolocation: { getCurrentPosition },
+    });
+
+    await expect(refreshGrantedDeviceLocation()).resolves.toBeNull();
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+    await expect(getSiteCheckDeviceLocation()).resolves.toEqual({
+      latitude: 37.7873,
+      longitude: -122.4132,
+    });
+    expect(getCurrentPosition).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({ timeout: 2_000, maximumAge: 30_000 }),
+    );
+  });
+
+  it("does not repeat a denied prompt at capture or another site-start action", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const getCurrentPosition = vi.fn((_success, failure) =>
+      failure({ code: 1, message: "Denied" }),
+    );
+    vi.stubGlobal("navigator", {
+      geolocation: { getCurrentPosition },
+    });
+
+    await expect(getSiteCheckDeviceLocation()).resolves.toBeNull();
+    await expect(getCaptureDeviceLocation()).resolves.toBeNull();
+    await expect(getSiteCheckDeviceLocation()).resolves.toBeNull();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    warning.mockRestore();
   });
 
   it("reuses a recent successful fix without waiting or prompting again", async () => {
