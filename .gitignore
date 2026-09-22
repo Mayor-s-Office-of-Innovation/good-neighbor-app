@@ -40,5 +40,6 @@ skills-lock.json
 e2e/test-results/
 e2e/playwright-report/
 
-# Lighthouse CI local artifacts
+# Lighthouse CI local artifacts (lhci writes to ./<cwd>/.lighthouseci; CI and
+# local runs land it at the repo root)
 .lighthouseci/

@@ -127,8 +127,10 @@ jobs:
         run: npx lhci autorun
         working-directory: frontend
 
-      # Full HTML/JSON Lighthouse reports land in .lighthouseci/ on the runner;
-      # without this they die with the job and only the log summary survives.
+      # Full HTML/JSON Lighthouse reports land in .lighthouseci/ at the REPO
+      # ROOT on the runner (LHCI resolves its output dir relative to its own
+      # cwd, and the lhci step runs with working-directory: frontend — verified
+      # locally: reports appear at ./.lighthouseci, not frontend/.lighthouseci).
       # Uploaded always (not failure-only) because warn-level regressions don't
       # fail the job — the reports are how you see them.
       - name: Upload Lighthouse reports
@@ -136,7 +138,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lighthouse-reports
-          path: frontend/.lighthouseci/
+          path: .lighthouseci/
           retention-days: 7
           if-no-files-found: ignore
 
