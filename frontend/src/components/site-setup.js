@@ -18,8 +18,11 @@ const CODE_LENGTH = 6;
 const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 const SITE_SEARCH_DELAY_MS = 250;
 
-class SiteSetup extends HTMLElement {
+export class SiteSetup extends HTMLElement {
   connectedCallback() {
+    this._validationGeneration = 0;
+    this._cancelled = false;
+    this._committingSite = false;
     this._targetSiteId = this.getAttribute("data-target-site-id") || "";
     this._targetSiteName = this.getAttribute("data-target-site-name") || "";
     this._canCancel = this.hasAttribute("data-can-cancel");
@@ -88,11 +91,12 @@ class SiteSetup extends HTMLElement {
       mode: this._mode,
       targetSiteName: this._targetSiteName,
       canCancel: this._canCancel,
+      cancelDisabled: this._committingSite,
       request: this._request,
     });
 
     this.querySelector("#cancel-site-switch")?.addEventListener("click", () => {
-      this.dispatchEvent(new CustomEvent("sitecancel", { bubbles: true }));
+      this._cancelSwitch();
     });
 
     if (this._mode === "request") {
@@ -122,6 +126,13 @@ class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
+  }
+
+  _cancelSwitch() {
+    if (this._committingSite || this._cancelled) return;
+    this._cancelled = true;
+    this._validationGeneration += 1;
+    this.dispatchEvent(new CustomEvent("sitecancel", { bubbles: true }));
   }
 
   _bindRequestForm() {
@@ -319,10 +330,12 @@ class SiteSetup extends HTMLElement {
     this._code = code;
 
     this._checking = true;
+    const generation = ++this._validationGeneration;
     this._error = "";
     this._render();
 
     const result = await validateSetupCode(code);
+    if (this._cancelled || generation !== this._validationGeneration) return;
     if (!result.ok) {
       this._checking = false;
       this._error =
@@ -347,6 +360,7 @@ class SiteSetup extends HTMLElement {
     let session;
     try {
       session = await registerDevice(result.code);
+      if (this._cancelled || generation !== this._validationGeneration) return;
     } catch (err) {
       if (err instanceof Error && /invalid site code/.test(err.message)) {
         this._checking = false;
@@ -359,18 +373,31 @@ class SiteSetup extends HTMLElement {
       this._render();
       return;
     }
-    const site = await setSite(providerSite.name, {
-      code: result.code,
-      providerSiteId: providerSite.id,
-      siteId: providerSite.siteId,
-      deviceId: session.deviceId,
-      token: session.token,
-      refreshToken: session.refreshToken,
-      tokenExpiresAt: new Date(
-        Date.now() + session.expiresIn * 1000,
-      ).toISOString(),
-      tokenGeneration: session.tokenGeneration,
-    });
+    // Once persistence starts, keep the cancel control disabled until the
+    // binding is committed; otherwise a detached setup could change sites.
+    this._committingSite = true;
+    this._render();
+    let site;
+    try {
+      site = await setSite(providerSite.name, {
+        code: result.code,
+        providerSiteId: providerSite.id,
+        siteId: providerSite.siteId,
+        deviceId: session.deviceId,
+        token: session.token,
+        refreshToken: session.refreshToken,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
+        tokenGeneration: session.tokenGeneration,
+      });
+    } catch {
+      this._committingSite = false;
+      this._checking = false;
+      this._error = "We couldn't save this site. Try again in a moment.";
+      this._render();
+      return;
+    }
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );

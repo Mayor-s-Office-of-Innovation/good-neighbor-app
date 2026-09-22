@@ -75,12 +75,34 @@ export const listProviderSites = async (event) => {
     cursor = page.LastEvaluatedKey;
   } while (cursor);
 
-  const sites = memberships
-    .filter((item) => item.status === "active" && item.siteId)
-    .map((item) => ({
-      siteId: String(item.siteId),
-      name: String(item.siteName || item.siteId),
-    }))
+  const activeMemberships = memberships.filter(
+    (item) => item.status === "active" && item.siteId,
+  );
+  const verifiedSites = await Promise.all(
+    activeMemberships.map(async (membership) => {
+      const memberSiteId = String(membership.siteId);
+      const result = await ddb.send(
+        new GetCommand({
+          TableName: dynamoTable,
+          Key: siteMetaKey(memberSiteId),
+        }),
+      );
+      const metadata = result.Item;
+      if (
+        !metadata ||
+        metadata.status === "inactive" ||
+        String(metadata.providerId || "") !== providerId
+      ) {
+        return null;
+      }
+      return {
+        siteId: memberSiteId,
+        name: String(metadata.name || membership.siteName || memberSiteId),
+      };
+    }),
+  );
+  const sites = verifiedSites
+    .filter((site) => site !== null)
     .sort((a, b) => a.name.localeCompare(b.name));
   return jsonResponse(200, {
     providerId,

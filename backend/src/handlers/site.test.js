@@ -49,6 +49,12 @@ describe("listProviderSites", () => {
           { siteId: "site-1", siteName: "First", status: "active" },
           { siteId: "site-3", siteName: "Inactive", status: "inactive" },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-2", providerId: "provider-1", name: "Second" },
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1", name: "First" },
       });
 
     const response = await /** @type {any} */ (listProviderSites)(
@@ -74,6 +80,37 @@ describe("listProviderSites", () => {
         { siteId: "site-2", name: "Second" },
       ],
     });
+  });
+
+  it("excludes a site whose metadata is inactive despite an active membership", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          { siteId: "site-1", siteName: "First", status: "active" },
+          { siteId: "site-2", siteName: "Closed", status: "active" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", providerId: "provider-1", name: "First" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-2",
+          providerId: "provider-1",
+          name: "Closed",
+          status: "inactive",
+        },
+      });
+
+    const response = await /** @type {any} */ (listProviderSites)(
+      event("site-1"),
+    );
+
+    expect(body(response).sites).toEqual([{ siteId: "site-1", name: "First" }]);
+    expect(send).toHaveBeenCalledTimes(4);
   });
 
   it("does not enumerate sites when the current site has no provider", async () => {

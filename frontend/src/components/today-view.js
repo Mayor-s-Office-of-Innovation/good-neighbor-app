@@ -94,7 +94,11 @@ const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
 const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
 
-/** @param {{latitude: number, longitude: number} | null | undefined} position @param {{latitude: number, longitude: number} | null | undefined} site */
+/**
+ * @param {{latitude: number, longitude: number} | null | undefined} position
+ * @param {{latitude: number, longitude: number} | null | undefined} site
+ * @returns {boolean}
+ */
 export function isOutsideSiteRadius(position, site) {
   if (!position || !site) return false;
   const { latitude: lat1, longitude: lon1 } = position;
@@ -162,6 +166,10 @@ export function activeHomeFilterLabel(filterId, counts) {
   return `${tab.label} • ${counts[filterId] || 0}`;
 }
 
+/**
+ * @param {string} status
+ * @returns {"todo" | "in_progress" | "history"}
+ */
 export function homeTabForStatus(status) {
   if (status === "needs_action") return "todo";
   if (status === "in_progress") return "in_progress";
@@ -251,6 +259,7 @@ export function shouldShowFirstRunHome({
   return !captureVisible && !last && taskCount === 0 && !hasResultCards;
 }
 
+/** @returns {string} */
 export function homeAllDonePanel() {
   return html`
     <section
@@ -308,6 +317,7 @@ export function issueCountLabel(count) {
  * @param {{ id?: string, submittedAt?: string | null, issueCount?: number } | null | undefined} last
  * @param {Array<{ task: { checkId?: string }, homeStatus: string }>} entries
  * @param {Date} [now]
+ * @returns {string}
  */
 export function lastLogSummary(last, entries, now = new Date()) {
   if (!last?.submittedAt) return "";
@@ -567,6 +577,13 @@ function taskCheckGroupId(task) {
   return task?.checkId || "unknown";
 }
 
+/**
+ * @param {Array<{task: {checkId?: string}, createdAt?: string}>} entries
+ * @param {Array<{id: string, submittedAt?: string, startedAt?: string, issueCount?: number}>} checks
+ * @param {{id?: string, startedAt?: string, submittedAt?: string} | null} pendingSession
+ * @param {Date} [now]
+ * @returns {{id: string, time: string}}
+ */
 export function newestBlueCheckGroup(
   entries,
   checks,
@@ -712,6 +729,7 @@ class TodayView extends HTMLElement {
     this._locationUnsub = null;
     this._locationPrompt = null;
     this._locationSelectedSiteId = "";
+    this._pendingLocationRender = false;
     this._startingCapture = false;
   }
 
@@ -914,11 +932,18 @@ class TodayView extends HTMLElement {
   }
 
   _renderHome(model) {
+    this._homeModel = model;
+    // Keep the native dialog and its action buttons mounted while a location
+    // decision is pending. A background location update can otherwise replace
+    // the open dialog with a closed one.
+    if (this._locationPrompt) {
+      this._pendingLocationRender = true;
+      return;
+    }
     if (isDeletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
-    this._homeModel = model;
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
@@ -1836,7 +1861,14 @@ class TodayView extends HTMLElement {
     );
     if (!dialog) return;
     dialog.addEventListener("close", () => {
+      const changingSite = this._locationSelectedSiteId !== this._siteId;
       this._locationPrompt = null;
+      if (this._pendingLocationRender) {
+        this._pendingLocationRender = false;
+        if (!changingSite && this._viewPhase === "home" && this._homeModel) {
+          this._renderHome(this._homeModel);
+        }
+      }
     });
     dialog.querySelectorAll("[data-location-site]").forEach((button) => {
       button.addEventListener("click", () => {

@@ -139,20 +139,18 @@ export async function listBoundSites() {
 
 /** Select an already registered site without using its setup code again. */
 export async function activateSiteBinding(siteId) {
-  const current = await getSite();
-  if (current?.siteId === siteId) return current;
-  const saved = await tx("site", "readonly", (os) =>
-    reqToPromise(os.get(bindingKey(siteId))),
-  );
-  if (!saved?.token || !saved?.refreshToken) return null;
-  const selected = { ...saved, id: "current" };
-  await tx("site", "readwrite", (os) => {
+  return tx("site", "readwrite", async (os) => {
+    const current = await reqToPromise(os.get("current"));
+    if (current?.siteId === siteId) return current;
+    const saved = await reqToPromise(os.get(bindingKey(siteId)));
+    if (!saved?.token || !saved?.refreshToken) return null;
+    const selected = { ...saved, id: "current" };
     if (current?.siteId) {
       os.put({ ...current, id: bindingKey(current.siteId) });
     }
     os.put(selected);
+    return selected;
   });
-  return selected;
 }
 
 export async function setSite(name, meta = {}) {
@@ -167,8 +165,8 @@ export async function setSite(name, meta = {}) {
     name: name.trim(),
     boundAt: new Date().toISOString(),
   };
-  const previous = await getSite();
-  await tx("site", "readwrite", (os) => {
+  await tx("site", "readwrite", async (os) => {
+    const previous = await reqToPromise(os.get("current"));
     if (previous?.siteId && previous.siteId !== record.siteId) {
       os.put({ ...previous, id: bindingKey(previous.siteId) });
     }
@@ -271,28 +269,28 @@ export async function clearSiteSession() {
  * only the token fields are replaced. Returns the updated record.
  * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number }} session
  */
-export async function updateSiteSession({
-  deviceId,
-  token,
-  refreshToken,
-  expiresIn,
-  tokenGeneration,
-}) {
-  const current = await getSite();
-  if (!current) throw new Error("cannot store a token without a bound site");
-  const record = {
-    ...current,
-    deviceId,
-    token,
-    refreshToken,
-    tokenGeneration,
-    tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-  };
-  await tx("site", "readwrite", (os) => {
-    os.put(record);
-    if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
-  });
-  return record;
+export async function updateSiteSession(
+  { deviceId, token, refreshToken, expiresIn, tokenGeneration },
+  expectedSiteId,
+) {
+  // Read and write in one transaction: a site switch must not let a late
+  // refresh overwrite the newly selected site's credentials.
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((current) => {
+      if (!current || current.siteId !== expectedSiteId) return null;
+      const record = {
+        ...current,
+        deviceId,
+        token,
+        refreshToken,
+        tokenGeneration,
+        tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      };
+      os.put(record);
+      os.put({ ...record, id: bindingKey(expectedSiteId) });
+      return record;
+    }),
+  );
 }
 
 function draftKey(flowType, siteId = "") {
