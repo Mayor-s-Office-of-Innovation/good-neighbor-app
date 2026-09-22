@@ -127,20 +127,27 @@ jobs:
         run: npx lhci autorun
         working-directory: frontend
 
-      # Full HTML/JSON Lighthouse reports land in .lighthouseci/ at the REPO
-      # ROOT on the runner (LHCI resolves its output dir relative to its own
-      # cwd, and the lhci step runs with working-directory: frontend — verified
-      # locally: reports appear at ./.lighthouseci, not frontend/.lighthouseci).
-      # Uploaded always (not failure-only) because warn-level regressions don't
-      # fail the job — the reports are how you see them.
+      # LHCI's assert output only prints rows for warn/fail assertions, so a
+      # clean run logs nothing. This script prints a per-run metrics table into
+      # the step log AND the run's Summary tab. Reads .lighthouseci/ (which the
+      # step above leaves relative to THIS working-directory: frontend).
+      - name: Print Lighthouse results
+        run: node scripts/print-lighthouse.mjs
+        working-directory: frontend
+
+      # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and
+      # upload-artifact@v7 excludes hidden files by default — hence
+      # include-hidden-files: true (its absence is what produced
+      # "No files were found" on the first runs, twice).
       - name: Upload Lighthouse reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: lighthouse-reports
-          path: .lighthouseci/
+          path: frontend/.lighthouseci/
           retention-days: 7
           if-no-files-found: ignore
+          include-hidden-files: true
 
   security:
     name: Security scans
