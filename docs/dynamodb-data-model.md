@@ -3,7 +3,7 @@
 *Data-model reference · [index](../README.md) · ← [decision](./adr/0002-datastore-dynamodb.md)*
 
 **Status:** Live model — this is what the app writes and reads today
-**Date:** 2026-08-12 · updated 2026-09-04 for the built state
+**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md))
 
 Purpose: the factual reference for the single-table model — item shapes, keys, GSIs, and
 access patterns. The datastore decision and its alternatives live in
@@ -17,8 +17,10 @@ standard mitigations documented below.
 - Each site has an **Admin** (Cognito user) who does first-run setup on a **shared device**
   that lives at the front desk and gets carried around for photos.
 - **Perimeter checks** happen **3× daily** per site, performed by staff who **do not log in**.
-- Each check has, **per configured place**, 0–a-few **photos**, optional **audio**, and
-  optional **text** — all optional.
+- Each check is one flat **photo roll** for the whole perimeter: at least **five photos**,
+  or **one typed description** as the full alternative (the rule lives client-side in
+  `frontend/src/domain/check-completion.js`; the backend records the counts, never
+  refuses). There is no per-site list of places. Audio is out of scope.
 - Each check's artifacts are analyzed by the **AI engine**, which returns **issues + a
   severity score**.
 - Results become **action items**: business rules either **escalate to the city** (toxic
@@ -74,18 +76,24 @@ without a separate timestamp in the key.
 | Site config | `SITE#<siteId>` | `#META` | name, address, timezone, setup state, `providerShortCode`, `siteShortCode` |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
-| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, places, issueCount, maxSeverity; **+ synthesized scorecard at `complete`** (see note) |
-| **Artifact** (per place) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<placeId>#<artifactId>` | placeId, placeName, S3 keys, text, capturedAt |
-
-The single-issue flow (`/problem`, single-issue capture) reuses the same capture machinery
-with a **synthetic place** — one fixed `placeId` (e.g. `"problem"`) whose only artifact is a
-registered text artifact. Places remain a check-structure concept; no special item shapes.
+| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, issueCount, maxSeverity; **+ synthesized scorecard and `photoCount` / `textCount` / `evidenceKind` at `complete`** (see note) |
+| **Artifact** (per photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<placeId>#<artifactId>` | placeId (the synthetic `"perimeter"` id — see note), placeName (the site name), S3 key or text, capturedAt |
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
+
+The `<placeId>` segment of the artifact key is a leftover of the retired per-place
+capture model. Since [ADR 0014](./adr/0014-remove-places-photo-roll.md) every
+perimeter-check artifact lands under one **synthetic place**, `placeId:"perimeter"`
+(`DEFAULT_PLACE_ID` in `backend/src/handlers/artifacts.js`, applied when the client omits
+it), with `placeName` carrying the site name — which is also the analyzer's
+`position_descriptor`. The single-issue flow (`/problem`) uses `"problem"` the same way.
+The sort key is unchanged, so rows written under real place ids before the change stay
+readable: `getCheck` and `presignMedia` prefix-query the check and match on `artifactId`.
+Phase 2 of that ADR drops the segment from the key.
 
 Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
 item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
@@ -117,7 +125,7 @@ screen is a single query**: `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")`
 header, every artifact, and every analysis together.
 
 > **Synthesis lives on the header (decided 2026-08-14).** One `CHECK#<checkId>` = **one full
-> perimeter run across all places**; there is **no separate "perimeter synthesis" item**. At
+> perimeter run**; there is **no separate "perimeter synthesis" item**. At
 > `complete`, the analysis-backend worker writes the synthesized check-level scorecard **onto the
 > existing header**: `grade` (worst of Excellent<Good<Fair<Poor<Very Poor across the check's
 > artifacts — adopted from the service `general_conditions.label`), a per-category rollup
@@ -264,6 +272,9 @@ SQL simply mirrors the module.
   gone from the contract; per-category `weighting` lives server-side (baked into the grade),
   so we store no weighting of our own. See
   [`adapt-scorecard.js`](../backend/src/analysis/adapt-scorecard.js).
+- **Evidence mix — not a score input.** The header's `evidenceKind` (`photos` |
+  `description` | `mixed` | `none`, with `photoCount` / `textCount`), stamped once at
+  `complete`, supports reporting on how often the text path is used instead of photos.
 - **Regularity / compliance — legal 3×/day, no grace.** `CHECKS_PER_DAY = 3` is a hard
   constant (legal requirement); there is **no grace period** for device outages. Because the
   duty is per-day, compliance is per-day and binary: a day is **compliant iff it had ≥ 3
@@ -299,8 +310,11 @@ R1 (GSI3) and R2's buildout are post-MVP, tracked on the issue tracker; the rest
 3. **Analytics scope & metrics** — Tier 1 live KPIs + Tier 2 S3-export lake, post-MVP
    build; metric definitions settled (see above).
 4. **Single table** — confirmed, for the `LeadingKeys` isolation rationale.
-5. **Per-place artifact model** — multiple artifacts per place supported (`SK` includes
-   `<artifactId>`); in use.
+5. **Per-place artifact model** — retired as a capture concept
+   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Phase 1 keeps the `<placeId>` key
+   segment as the synthetic `"perimeter"` id so existing rows and prefix queries work
+   unchanged; multiple artifacts per check are supported (`SK` includes `<artifactId>`).
+   Phase 2 drops `placeId` from the key.
 
 ### Guidance refresh lineage
 

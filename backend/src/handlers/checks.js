@@ -58,12 +58,50 @@ async function queryAllCheckItems(
 }
 
 /**
- * POST /v1/checks — start a perimeter run (one CHECK header per full run across
- * all places). The client mints the ULID `checkId` and sends it as the
- * `idempotency-key` header — the same idempotency contract the offline app
- * already uses — so the write is conditional on that id and an offline replay
- * can't create a duplicate header. `siteId` is derived server-side from the JWT,
- * never from the body.
+ * Summarize a run's registered evidence for the CHECK header. Recorded at
+ * completion so the compliance report can show how often the text path is
+ * used (docs/plan-remove-places.md). Pure: takes the ART# items as read from
+ * the table.
+ *
+ * - `photoCount`: artifacts whose `contentType` starts with "image/".
+ * - `textCount`: artifacts carrying a `text` attribute and no `s3Key`.
+ * - `evidenceKind`: "photos" when there is no text, "description" when there
+ *   is text but no photos, "mixed" when both, "none" when neither.
+ * @typedef {"photos" | "description" | "mixed" | "none"} EvidenceKind
+ * @param {Array<Record<string, unknown>>} artifacts ART# items (raw table rows)
+ * @returns {{ photoCount: number, textCount: number, evidenceKind: EvidenceKind }}
+ */
+export function evidenceSummary(artifacts) {
+  let photoCount = 0;
+  let textCount = 0;
+  for (const it of artifacts) {
+    if (
+      typeof it.contentType === "string" &&
+      it.contentType.startsWith("image/")
+    ) {
+      photoCount += 1;
+    }
+    if (typeof it.text === "string" && it.s3Key === undefined) {
+      textCount += 1;
+    }
+  }
+  /** @type {EvidenceKind} */
+  let evidenceKind;
+  if (photoCount > 0 && textCount > 0) evidenceKind = "mixed";
+  else if (textCount > 0) evidenceKind = "description";
+  else if (photoCount > 0) evidenceKind = "photos";
+  else evidenceKind = "none";
+  return { photoCount, textCount, evidenceKind };
+}
+
+/**
+ * POST /v1/checks — start a perimeter run (one CHECK header per run). The
+ * client mints the ULID `checkId` and sends it as the `idempotency-key` header
+ * — the same idempotency contract the offline app already uses — so the write
+ * is conditional on that id and an offline replay can't create a duplicate
+ * header. `siteId` is derived server-side from the JWT, never from the body.
+ * The body is accepted but carries nothing the header stores (a legacy
+ * `places` list is ignored).
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const createCheck = async (event) => {
@@ -75,13 +113,11 @@ export const createCheck = async (event) => {
     return jsonResponse(400, { error: "Missing idempotency-key header" });
   }
 
-  let body;
   try {
-    body = readJsonBody(event);
+    readJsonBody(event);
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { places } = /** @type {{ places?: unknown }} */ (body ?? {});
 
   const startedAt = new Date().toISOString();
   const item = {
@@ -92,7 +128,6 @@ export const createCheck = async (event) => {
     startedAt,
     issueCount: 0,
     maxSeverity: 0,
-    ...(Array.isArray(places) ? { places } : {}),
   };
 
   try {
@@ -119,10 +154,12 @@ export const createCheck = async (event) => {
 
 /**
  * POST /v1/checks/{checkId}/complete — close out a perimeter run: fold every
- * analyzed artifact into one scorecard (worst grade across places, per-category
- * max rating) and persist the header scorecard. Guidance minting is per-item at
- * capture time (photo-analysis.js → assessments:evaluate), so this response is
- * the scorecard only.
+ * analyzed artifact into one scorecard (worst grade across artifacts,
+ * per-category max rating) and persist the header scorecard together with the
+ * evidence summary (`photoCount`, `textCount`, `evidenceKind` — see
+ * `evidenceSummary`). Guidance minting is per-item at capture time
+ * (photo-analysis.js → assessments:evaluate), so this response is the
+ * scorecard plus those counts.
  *
  * Coverage gate: analysis is asynchronous (register → SQS → worker), so a caller
  * that completes too early would fold only the analyses that happened to land —
@@ -186,11 +223,15 @@ export const completeCheck = async (event) => {
   }
 
   // Keep only the artifacts that analyzed cleanly (a "failed" marker has no
-  // concerns to synthesize).
+  // concerns to synthesize), and only those whose ART# row still exists — a
+  // deleted artifact (DELETE /v1/checks/{id}/artifacts/{id}) leaves its
+  // ANALYSIS# item behind, but its stale analysis must not reach the fold.
+  const registeredIds = new Set(artifacts.map((it) => it.artifactId));
   const analyzed =
     /** @type {import("../analysis/synthesize-check.js").AnalyzedArtifact[]} */ (
       analyses
         .filter((it) => it.status === "analyzed")
+        .filter((it) => registeredIds.has(it.artifactId))
         .map((it) => ({
           artifactId: it.artifactId,
           placeId: it.placeId,
@@ -200,6 +241,7 @@ export const completeCheck = async (event) => {
     );
 
   const scorecard = synthesizeCheck(analyzed);
+  const evidence = evidenceSummary(artifacts);
 
   const now = new Date().toISOString();
 
@@ -209,7 +251,7 @@ export const completeCheck = async (event) => {
       TableName: dynamoTable,
       Key: checkHeaderKey(siteId, checkId),
       UpdateExpression:
-        "SET #status = :completed, grade = :grade, summary = :summary, categories = :categories, rubricVersion = :rubricVersion, issueCount = :issueCount, maxSeverity = :maxSeverity, synthesizedAt = :now, completedAt = :now",
+        "SET #status = :completed, grade = :grade, summary = :summary, categories = :categories, rubricVersion = :rubricVersion, issueCount = :issueCount, maxSeverity = :maxSeverity, photoCount = :photoCount, textCount = :textCount, evidenceKind = :evidenceKind, synthesizedAt = :now, completedAt = :now",
       // Complete exactly once: the header must exist and not already be closed.
       ConditionExpression: "attribute_exists(sk) AND #status <> :completed",
       ExpressionAttributeNames: { "#status": "status" },
@@ -223,6 +265,10 @@ export const completeCheck = async (event) => {
         ":rubricVersion": scorecard.rubricVersion,
         ":issueCount": scorecard.issueCount,
         ":maxSeverity": scorecard.maxSeverity,
+        // Evidence mix, recorded once at completion (see evidenceSummary).
+        ":photoCount": evidence.photoCount,
+        ":textCount": evidence.textCount,
+        ":evidenceKind": evidence.evidenceKind,
         ":now": now,
       },
     },
@@ -243,6 +289,9 @@ export const completeCheck = async (event) => {
         summary: scorecard.summary,
         issueCount: scorecard.issueCount,
         maxSeverity: scorecard.maxSeverity,
+        photoCount: evidence.photoCount,
+        textCount: evidence.textCount,
+        evidenceKind: evidence.evidenceKind,
       });
     }
     throw err;
@@ -254,6 +303,9 @@ export const completeCheck = async (event) => {
     grade: scorecard.grade,
     issueCount: scorecard.issueCount,
     maxSeverity: scorecard.maxSeverity,
+    photoCount: evidence.photoCount,
+    textCount: evidence.textCount,
+    evidenceKind: evidence.evidenceKind,
   });
 };
 

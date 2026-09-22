@@ -10,9 +10,8 @@ export const PHOTO_ISSUES = join(FIXTURES, "input-1.jpg");
 /** input-2.jpg — clear scene, no issues expected. */
 export const PHOTO_CLEAR = join(FIXTURES, "input-2.jpg");
 
-/** Seed code for St. John the Evangelist (has 3 places, legacy → never consumed). */
+/** Seed code for St. John the Evangelist. */
 export const SITE_CODE = "GUBSJE";
 export const SITE_NAME = "St. John the Evangelist";
-export const PLACES = ["15th St", "Front entrance", "Caledonia St"];
 
 export { dirname, join };
