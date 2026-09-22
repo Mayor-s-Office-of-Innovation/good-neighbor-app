@@ -255,20 +255,11 @@ function qs(params) {
 // ── Checks ────────────────────────────────────────────────────────────────
 
 /**
- * GET /v1/site — the bound site's settings, including ordered places.
+ * GET /v1/site — the bound site's settings (name, provider).
  * @returns {Promise<{ site: any }>}
  */
 export function getSiteSettings() {
   return request("GET", "/v1/site");
-}
-
-/**
- * PUT /v1/site/places — replace the site's ordered places.
- * @param {{ id: string, name: string }[]} places
- * @returns {Promise<{ site: any }>}
- */
-export function putSitePlaces(places) {
-  return request("PUT", "/v1/site/places", { body: { places } });
 }
 
 /**
@@ -429,6 +420,22 @@ export function registerArtifact(checkId, body) {
     {
       body,
     },
+  );
+}
+
+/**
+ * DELETE /v1/checks/{checkId}/artifacts/{artifactId} — remove a registered
+ * artifact from its check (an edited/deleted description replaces or drops an
+ * already-registered text artifact; leaving it would let the final scorecard
+ * fold the stale text). Idempotent on replay; 404 = already gone.
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @returns {Promise<{ artifactId: string, status: string }>}
+ */
+export function deleteArtifact(checkId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}`,
   );
 }
 

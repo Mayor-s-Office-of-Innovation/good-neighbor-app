@@ -1,9 +1,13 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
 /*
-  perimeter-check — timeline capture flow.
+  perimeter-check — flat photo roll capture flow (docs/plan-remove-places.md).
 
-  The perimeter check is now a place-by-place capture container. Each photo or
-  typed description is analyzed independently as soon as it is submitted.
+  One grid of photos for the whole perimeter plus an optional single text
+  description as the alternative to photos. Each photo or description is
+  analyzed independently as soon as it is captured; Finish unlocks once the
+  completion rule in domain/check-completion.js is met (five photos, or one
+  description). Captures land under the session's one synthetic place so the
+  per-item pipeline and result cards keep keying on placeId + itemId.
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
@@ -20,6 +24,7 @@ import {
   analyzeEvidenceItem,
   retryEvidenceItem,
   refreshEvidenceAnalysis,
+  removeEvidenceItem,
 } from "../services/photo-analysis.js";
 import {
   ApiError,
@@ -32,30 +37,27 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
 import { isFiled311Completion } from "../domain/task-actions.js";
-import { hasPlaceEvidence } from "../domain/place-evidence.js";
+import {
+  completionStatus,
+  hasEvidence,
+  isPerimeterCheckComplete,
+  photoItems,
+  textItems,
+} from "../domain/check-completion.js";
 import {
   ensureCheck,
   startCheck,
   loadDraft,
   clearCheck,
-  getPlaceOrder,
-  getPlace,
+  getCapturePlaceId,
+  getItems,
   getCurrentCheck,
   getFlowType,
-  getActivePlaceIndex,
-  setActivePlaceIndex,
   addItem,
-  skipPlace,
   removeItem,
   isCurrentSession,
-  setPlaceInputMode,
-  reviewPlace,
-  addPlaceToCheck,
   getAnalyzingOpen,
   setAnalyzingOpen,
-  getOpenPhotoMenuItemId,
-  setOpenPhotoMenuItemId,
-  setPlaceDraftText,
   updateItemAnalysis,
   markCaptureComplete,
   onCheckSessionChange,
@@ -63,11 +65,11 @@ import {
 } from "../state/check-session.js";
 import {
   shell,
-  placeRow,
-  addPlaceButton,
+  progressLine,
+  descriptionCard,
+  photoGrid,
   footer,
   analyzingSection,
-  canSubmitTextDescription,
 } from "./perimeter-check.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
@@ -80,7 +82,6 @@ class PerimeterCheck extends HTMLElement {
   async connectedCallback() {
     this._finishing = false;
     this._embedded = this.hasAttribute("embedded");
-    this._photoMenuAnchor = null;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -90,13 +91,12 @@ class PerimeterCheck extends HTMLElement {
         ? currentCheck
         : (await loadDraft("perimeter")) || null;
     if (!check) {
-      ensureCheck(this._siteId, this._site.places || []);
+      ensureCheck(this._siteId, this._site.name);
     } else if (getFlowType() !== "perimeter") {
-      startCheck(this._siteId, this._site.places || []);
+      startCheck(this._siteId, this._site.name);
     }
 
     this._checkId = getCurrentCheck()?.id || "";
-    this._placeIndex = getActivePlaceIndex() ?? 0;
     this._deletionUnsub?.();
     this._deletionUnsub = onDeletionsChange(() => {
       if (this.isConnected && !this._finishing) this._render();
@@ -107,9 +107,6 @@ class PerimeterCheck extends HTMLElement {
     this.innerHTML = shell({ embedded: this._embedded });
     this._fileInput = this.querySelector("#file-input");
     this._cancelDialog = this.querySelector("#cancel-check-dialog");
-    this._addPlaceDialog = this.querySelector("#add-place-dialog");
-    this._addPlaceInput = this.querySelector("#add-place-name");
-    this._doneIncompleteDialog = this.querySelector("#done-incomplete-dialog");
     this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
     this._analysisSuccessDialog = this.querySelector(
       "#analysis-success-dialog",
@@ -144,37 +141,21 @@ class PerimeterCheck extends HTMLElement {
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
-    this._doneIncompleteDialog?.addEventListener("click", (e) => {
-      if (e.target === this._doneIncompleteDialog) {
-        this._doneIncompleteDialog.close();
-      }
-    });
-    this.querySelector("#done-incomplete-finish")?.addEventListener(
-      "click",
-      () => this._finishCheck(),
-    );
 
-    this.querySelector("#place-timeline").addEventListener("click", (e) =>
-      this._onTimelineClick(e),
+    this.querySelector("#shotgrid").addEventListener("click", (e) =>
+      this._onGridClick(e),
     );
-    this.querySelector("#place-timeline").addEventListener("input", (e) =>
-      this._onTimelineInput(e),
+    this.querySelector("#check-description").addEventListener("click", (e) =>
+      this._onDescriptionClick(e),
+    );
+    this.querySelector("#describe-instead").addEventListener("click", () =>
+      this._describeInstead(),
     );
     this.querySelector("#check-footer").addEventListener("click", (e) =>
       this._onFooterClick(e),
     );
     this.addEventListener("click", (e) => this._onAnalysisClick(e));
     this._fileInput.addEventListener("change", () => this._onFilePicked());
-    this._addPlaceInput.addEventListener("input", () =>
-      this._syncAddPlaceDialog(),
-    );
-    this.querySelector("#add-place-submit").addEventListener("click", () =>
-      this._addPlace(),
-    );
-    this._addPlaceDialog?.addEventListener("close", () => {
-      this._addPlaceInput.value = "";
-      this._syncAddPlaceDialog();
-    });
     [
       this._analysisDeleteDialog,
       this._analysisSuccessDialog,
@@ -200,36 +181,17 @@ class PerimeterCheck extends HTMLElement {
       () => this._analysisProgressDialog?.close(),
     );
 
-    document.addEventListener(
-      "click",
-      (this._documentClick = (event) => {
-        const path = event.composedPath?.() || [];
-        const withinPhotoMenu = path.some(
-          (node) =>
-            node instanceof Element &&
-            (node.matches(".photo-menu") || node.matches("[data-photo-menu]")),
-        );
-        if (getOpenPhotoMenuItemId() && !withinPhotoMenu) {
-          this._photoMenuAnchor = null;
-          setOpenPhotoMenuItemId(null);
-        }
-      }),
-    );
-
     this._render();
     this._resumePendingEvidence();
   }
 
-  get _places() {
-    return getPlaceOrder();
-  }
-
+  /** The place new captures go to (the session's one synthetic place). */
   get _placeId() {
-    return this._places[this._placeIndex];
+    return getCapturePlaceId();
   }
 
   _cancel() {
-    if (!this._hasCheckContent()) {
+    if (!hasEvidence(getCurrentCheck())) {
       this._exitCapture({ discarded: true });
       window.setTimeout(() => clearCheck(), 0);
       return;
@@ -237,108 +199,62 @@ class PerimeterCheck extends HTMLElement {
     this._cancelDialog?.showModal();
   }
 
-  _hasCheckContent() {
-    const check = getCurrentCheck();
-    if (!check) return false;
-    return (check.placeOrder || []).some((placeId) => {
-      const place = check.places[placeId];
-      if (!place) return false;
-      return Boolean(
-        place.items?.length ||
-          place.description?.text?.trim() ||
-          place.draftText?.trim(),
-      );
-    });
-  }
-
   _resumePendingEvidence() {
-    const check = getCurrentCheck();
-    if (!check) return;
-    for (const placeId of check.placeOrder || []) {
-      for (const item of check.places[placeId]?.items || []) {
-        if (shouldResumeEvidenceItem(item)) {
-          analyzeEvidenceItem(placeId, item.id);
-        }
+    for (const item of getItems()) {
+      if (shouldResumeEvidenceItem(item)) {
+        analyzeEvidenceItem(item.placeId || this._placeId, item.id);
       }
     }
   }
 
-  _onTimelineClick(e) {
+  _onGridClick(e) {
     const target = e.target;
     if (!(target instanceof Element)) return;
-
-    const toggle = target.closest("[data-toggle-place]");
-    if (toggle) {
-      this._activatePlace(toggle.getAttribute("data-toggle-place"));
-      return;
-    }
-
-    const addPhoto = target.closest("[data-add-photo]");
-    if (addPhoto) {
-      this._pendingPhotoPlaceId = addPhoto.getAttribute("data-add-photo");
+    if (target.closest("#add-photo")) {
       this._openCamera();
       return;
     }
-
-    const next = target.closest("[data-next-place]");
-    if (next) {
-      this._advanceOrSkip(next.getAttribute("data-next-place"));
-      return;
-    }
-
-    const type = target.closest("[data-type-place]");
-    if (type) {
-      setPlaceInputMode(type.getAttribute("data-type-place"), "text");
-      this._photoMenuAnchor = null;
-      setOpenPhotoMenuItemId(null);
+    const del = target.closest("[data-del]");
+    if (del) {
+      const itemId = del.getAttribute("data-del");
+      const item = getItems().find((candidate) => candidate.id === itemId);
+      if (item) removeItem(item.placeId || this._placeId, itemId);
       this._render();
-      return;
-    }
-
-    const photo = target.closest("[data-photo-place]");
-    if (photo) {
-      setPlaceInputMode(photo.getAttribute("data-photo-place"), "photo");
-      this._render();
-      return;
-    }
-
-    const menu = target.closest("[data-photo-menu]");
-    if (menu) {
-      const itemId = menu.getAttribute("data-photo-menu");
-      if (getOpenPhotoMenuItemId() === itemId) {
-        this._photoMenuAnchor = null;
-        setOpenPhotoMenuItemId(null);
-      } else {
-        this._photoMenuAnchor = this._anchorForPhotoMenu(menu);
-        setOpenPhotoMenuItemId(itemId);
-      }
-      this._render();
-      return;
-    }
-
-    if (target.closest("[data-photo-action]")) {
-      this._photoMenuAnchor = null;
-      setOpenPhotoMenuItemId(null);
-      this._render();
-      return;
-    }
-
-    const reviewText = target.closest("[data-review-text]");
-    if (reviewText) {
-      this._submitText(reviewText.getAttribute("data-review-text"));
     }
   }
 
-  _onTimelineInput(e) {
+  _onDescriptionClick(e) {
     const target = e.target;
-    if (!(target instanceof HTMLTextAreaElement)) return;
-    const placeId = target.getAttribute("data-text-input");
-    if (!placeId) return;
-    setPlaceDraftText(placeId, target.value);
-    const button = findReviewTextButton(this, placeId);
-    if (button instanceof HTMLButtonElement) {
-      button.disabled = !canSubmitTextDescription(target.value);
+    if (!(target instanceof Element)) return;
+    if (target.closest("[data-edit-description]")) {
+      this._describeInstead();
+      return;
     }
+    const remove = target.closest("[data-remove-description]");
+    if (remove) {
+      const itemId = remove.getAttribute("data-remove-description");
+      const item = getItems().find((candidate) => candidate.id === itemId);
+      if (item) {
+        // The description may already be a registered artifact — delete it
+        // server-side too, or completeCheck folds the stale text into the
+        // scorecard even though the card is gone locally.
+        void removeEvidenceItem(item.placeId || this._placeId, itemId).catch(
+          (err) => {
+            console.error("Removing the description failed", err);
+          },
+        );
+      }
+      this._render();
+    }
+  }
+
+  /**
+   * Text is the alternative to photos: the describe screen saves one
+   * description for the whole check (editing replaces it) and runs it through
+   * the same analysis pipeline as a photo.
+   */
+  _describeInstead() {
+    navigate("/check/describe");
   }
 
   _onFooterClick(e) {
@@ -755,28 +671,19 @@ class PerimeterCheck extends HTMLElement {
     return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
   }
 
+  /** Finish is disabled until the completion rule is met; this is the backstop. */
   _done() {
-    if (this._hasUnsavedNote()) {
-      this._showDoneIncomplete(0, { unsavedNote: true });
-      return;
-    }
-    const incompleteCount = this._incompletePlaceCount();
-    if (incompleteCount > 0) {
-      this._showDoneIncomplete(incompleteCount);
-      return;
-    }
+    if (!isPerimeterCheckComplete(getCurrentCheck())) return;
     this._finishCheck();
   }
 
   async _finishCheck() {
     const check = getCurrentCheck();
-    this._discardUnsavedNotes(check);
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    this._doneIncompleteDialog?.close();
     if (this._embedded) {
       this.dispatchEvent(
         new CustomEvent("capturefinished", { bubbles: true, composed: true }),
@@ -818,97 +725,11 @@ class PerimeterCheck extends HTMLElement {
     navigate("/today");
   }
 
-  _incompletePlaceCount() {
-    const check = getCurrentCheck();
-    if (!check) return 0;
-    return (check.placeOrder || []).filter((placeId) => {
-      const place = check.places[placeId];
-      if (!place) return false;
-      return !this._placeHasPhotoOrDescription(place);
-    }).length;
-  }
-
-  _placeHasPhotoOrDescription(place) {
-    return hasPlaceEvidence(place);
-  }
-
-  _hasUnsavedNote() {
-    const check = getCurrentCheck();
-    if (!check) return false;
-    return (check.placeOrder || []).some((placeId) =>
-      Boolean(check.places[placeId]?.draftText?.trim()),
-    );
-  }
-
-  _discardUnsavedNotes(check) {
-    for (const placeId of check?.placeOrder || []) {
-      if (check.places[placeId]?.draftText?.trim()) {
-        setPlaceDraftText(placeId, "");
-      }
-    }
-  }
-
-  _showDoneIncomplete(incompleteCount, { unsavedNote = false } = {}) {
-    const title = this.querySelector("#done-incomplete-title");
-    const copy = this.querySelector("#done-incomplete-copy");
-    const finish = this.querySelector("#done-incomplete-finish");
-    const keep = this.querySelector("#done-incomplete-keep");
-    if (unsavedNote) {
-      title.textContent = "Finish check?";
-      copy.textContent = "You have an unsaved note";
-      keep.textContent = "Keep editing";
-      finish.textContent = "Discard and finish";
-    } else {
-      title.textContent = "Finish check?";
-      const noun = incompleteCount === 1 ? "place does" : "places do";
-      copy.textContent = `${incompleteCount} ${noun} not have a photo or description.`;
-      keep.textContent = "Keep editing";
-      finish.textContent = "Finish check";
-    }
-    this._doneIncompleteDialog?.showModal();
-  }
-
-  _activatePlace(placeId) {
-    const index = this._places.indexOf(placeId);
-    if (index === -1) return;
-    if (this._placeIndex === index) {
-      this._placeIndex = null;
-      setActivePlaceIndex(null);
-      this._photoMenuAnchor = null;
-      setOpenPhotoMenuItemId(null);
-      this._render();
-      return;
-    }
-    this._placeIndex = index;
-    setActivePlaceIndex(index);
-    this._photoMenuAnchor = null;
-    setOpenPhotoMenuItemId(null);
-    this._render();
-  }
-
-  _advanceOrSkip(placeId) {
-    const place = getPlace(placeId);
-    if (!place) return;
-    if (!shouldReviewPlace(place)) {
-      skipPlace(placeId);
-    } else {
-      reviewPlace(placeId);
-    }
-    const index = this._places.indexOf(placeId);
-    this._placeIndex = Math.min(index + 1, this._places.length - 1);
-    setActivePlaceIndex(this._placeIndex);
-    this._photoMenuAnchor = null;
-    setOpenPhotoMenuItemId(null);
-    this._render();
-  }
-
   _openCamera() {
     // Trace the tap → file-picker handoff: if the picker never opens (in-app
     // webview, OS restriction), the logs show the tap with no "picked" line
     // after it — the field demo "photo button did nothing" signature.
-    mark("camera:open", {
-      placeId: this._pendingPhotoPlaceId || this._placeId,
-    });
+    mark("camera:open", { placeId: this._placeId });
     this._fileInput.value = "";
     this._fileInput.click();
   }
@@ -921,7 +742,6 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     const originCheckId = this._checkId;
-    const originPlaceId = this._pendingPhotoPlaceId || this._placeId;
     const reader = new FileReader();
     this._fileReader = reader;
     reader.onload = () => {
@@ -931,7 +751,7 @@ class PerimeterCheck extends HTMLElement {
       }
       this._fileReader = null;
       if (typeof reader.result === "string") {
-        this._addPhoto(originPlaceId, reader.result);
+        this._addPhoto(reader.result);
       }
     };
     reader.onerror = () => {
@@ -943,64 +763,12 @@ class PerimeterCheck extends HTMLElement {
     reader.readAsDataURL(file);
   }
 
-  _addPhoto(placeId, dataUrl) {
-    const record = addItem(placeId, { kind: "photo", dataUrl });
+  _addPhoto(dataUrl) {
+    const record = addItem(this._placeId, { kind: "photo", dataUrl });
     if (record) {
       setAnalyzingOpen(true);
       analyzeEvidenceItem(record.placeId, record.id);
     }
-    this._render();
-  }
-
-  _submitText(placeId) {
-    const input = [...this.querySelectorAll("[data-text-input]")].find(
-      (candidate) => candidate.getAttribute("data-text-input") === placeId,
-    );
-    const text = input?.value?.trim();
-    if (!canSubmitTextDescription(text)) return;
-    const record = addItem(placeId, { kind: "text", text });
-    setPlaceDraftText(placeId, "");
-    setAnalyzingOpen(true);
-    analyzeEvidenceItem(record.placeId, record.id);
-    this._advanceOrSkip(placeId);
-  }
-
-  _syncAddPlaceDialog() {
-    const input = this._addPlaceInput;
-    const button = this.querySelector("#add-place-submit");
-    const error = this.querySelector("#add-place-error");
-    const value = input.value.trim();
-    const duplicate = this._places.some((placeId) => {
-      const place = getPlace(placeId);
-      return place?.name.trim().toLowerCase() === value.toLowerCase();
-    });
-    input.classList.toggle("is-invalid", Boolean(value && duplicate));
-    button.disabled = !value;
-    error.textContent =
-      value && duplicate ? "This place is already in the check." : "";
-  }
-
-  _anchorForPhotoMenu(button) {
-    const expanded = button.closest(".place-row__expanded");
-    if (!expanded) return null;
-    const buttonRect = button.getBoundingClientRect();
-    const expandedRect = expanded.getBoundingClientRect();
-    return {
-      top: Math.max(0, buttonRect.bottom - expandedRect.top + 12),
-      right: Math.max(0, expandedRect.right - buttonRect.right),
-    };
-  }
-
-  _addPlace() {
-    const value = this._addPlaceInput.value.trim();
-    const result = addPlaceToCheck(value);
-    if (!result || result.duplicate) {
-      this._syncAddPlaceDialog();
-      return;
-    }
-    this._placeIndex = getActivePlaceIndex();
-    this._addPlaceDialog.close();
-    this._showToast(`${result.name} was added to this check.`);
     this._render();
   }
 
@@ -1022,27 +790,24 @@ class PerimeterCheck extends HTMLElement {
     if (isDeletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
-    const timeline = this.querySelector("#place-timeline");
-    const openMenuItemId = getOpenPhotoMenuItemId();
-    timeline.innerHTML =
-      this._places
-        .map((placeId, index) =>
-          placeRow({
-            place: check.places[placeId],
-            index,
-            expanded: index === this._placeIndex,
-            isLast: index === this._places.length - 1,
-            nextPlaceName: check.places[this._places[index + 1]]?.name,
-            openMenuItemId,
-            photoMenuAnchor: this._photoMenuAnchor,
-          }),
-        )
-        .join("") + addPlaceButton();
+    const status = completionStatus(check);
+    const photos = photoItems(check);
+    const description = textItems(check)[0] || null;
 
-    const evidence = this._allEvidence();
+    this.querySelector("#check-progress").innerHTML = progressLine(status);
+    this.querySelector("#check-description").innerHTML =
+      descriptionCard(description);
+    const grid = this.querySelector("#shotgrid");
+    grid.classList.toggle("shotgrid--empty", photos.length === 0);
+    grid.innerHTML = photoGrid(photos);
+    // One description per check: once saved, the card's Edit replaces it.
+    this.querySelector("#describe-instead").hidden = Boolean(description);
+
+    const evidence = getItems();
     this.querySelector("#check-footer").innerHTML = footer({
       items: evidence,
       analyzingOpen: getAnalyzingOpen(),
+      complete: status.complete,
     });
     const existingTray = this.querySelector("#analysis-tray");
     existingTray?.remove();
@@ -1052,18 +817,7 @@ class PerimeterCheck extends HTMLElement {
         analyzingSection(evidence, check.id),
       );
     }
-    this.querySelector("#add-place-open")?.addEventListener("click", () =>
-      this._addPlaceDialog.showModal(),
-    );
     this._startElapsedTicker();
-  }
-
-  _allEvidence() {
-    const check = getCurrentCheck();
-    if (!check) return [];
-    return (check.placeOrder || []).flatMap(
-      (placeId) => check.places[placeId]?.items || [],
-    );
   }
 
   disconnectedCallback() {
@@ -1071,7 +825,6 @@ class PerimeterCheck extends HTMLElement {
       this._fileReader.abort();
     }
     this._stopElapsedTicker();
-    document.removeEventListener("click", this._documentClick);
     this._deletionUnsub?.();
     this._unsubscribe?.();
     clearTimeout(this._toastTimer);
@@ -1095,17 +848,5 @@ export function shouldResumeEvidenceItem(item) {
     ["queued", "analyzing"].includes(analysisStatus) ||
       (analysisStatus === "failed" &&
         (hasUploadedArtifact || isRetryableTextRegistration)),
-  );
-}
-
-export function shouldReviewPlace(place) {
-  return hasPlaceEvidence(place);
-}
-
-export function findReviewTextButton(root, placeId) {
-  return (
-    [...root.querySelectorAll("[data-review-text]")].find(
-      (candidate) => candidate.getAttribute("data-review-text") === placeId,
-    ) || null
   );
 }

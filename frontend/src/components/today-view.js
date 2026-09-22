@@ -56,7 +56,6 @@ import {
   removeItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
-import { navigate } from "../router.js";
 import {
   analysisResultsTray,
   taskAnalysisCard,
@@ -718,13 +717,6 @@ class TodayView extends HTMLElement {
     this.querySelector("#home-settings")?.addEventListener("click", () =>
       this._toggleSettingsMenu(),
     );
-    this.querySelector("#settings-edit-places")?.addEventListener(
-      "click",
-      () => {
-        this._settingsMenuOpen = false;
-        navigate("/places/edit");
-      },
-    );
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
@@ -906,14 +898,6 @@ class TodayView extends HTMLElement {
                         aria-hidden="true"
                       ></wa-icon>
                       Logout
-                    </button>
-                    <button
-                      id="settings-edit-places"
-                      type="button"
-                      role="menuitem"
-                    >
-                      <wa-icon name="pen" aria-hidden="true"></wa-icon>
-                      Edit places
                     </button>
                   </div>`
                 : ""}
@@ -1158,7 +1142,7 @@ class TodayView extends HTMLElement {
     if (flowType === "single-problem") {
       await resumeOrStartProblemReport(this._siteId);
     } else {
-      await resumeOrStartCheck(this._siteId, this._site.places || []);
+      await resumeOrStartCheck(this._siteId, this._site.name);
     }
     await this.connectedCallback();
     this._scrollCaptureStartIntoView();

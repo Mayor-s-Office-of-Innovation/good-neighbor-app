@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let savedReview = null;
 let nextId = 1;
 
-const TEST_PLACES = [{ id: "place-north", name: "North" }];
+const TEST_SITE_NAME = "Test site";
 
 vi.mock("../db.js", () => ({
   newId: () => `test-check-id-${nextId++}`,
@@ -49,7 +49,7 @@ describe("legacy review records", () => {
       // Seed a legacy-stage record: start a check, then force the status.
       // These values are unreachable via the module's own mutators now, so
       // the write has to go through the session object directly.
-      startCheck("site-1", TEST_PLACES);
+      startCheck("site-1", TEST_SITE_NAME);
       const session = /** @type {any} */ (getCurrentCheck());
       session.status = status;
       savedReview = session;

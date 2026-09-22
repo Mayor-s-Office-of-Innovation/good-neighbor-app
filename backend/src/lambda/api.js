@@ -14,6 +14,7 @@ import {
 import {
   presignUpload,
   registerArtifact,
+  deleteArtifact,
   presignMedia,
 } from "../handlers/artifacts.js";
 import { listTasks } from "../handlers/tasks.js";
@@ -32,7 +33,7 @@ import {
   requestSetupCode,
   searchSites,
 } from "../handlers/setup-code-requests.js";
-import { getSite, putSitePlaces } from "../handlers/site.js";
+import { getSite } from "../handlers/site.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
 import {
@@ -73,14 +74,14 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/devices/token:refresh": refreshDeviceToken,
   "GET /v1/sites:search": searchSites,
   "POST /v1/setup-codes:request": requestSetupCode,
-  // Site config (feature/142 onboard locations)
+  // Site config
   "GET /v1/site": getSite,
-  "PUT /v1/site/places": putSitePlaces,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
+  "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}": getCheck,
