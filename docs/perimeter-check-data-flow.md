@@ -2,7 +2,7 @@
 
 *Core reference · [index](./README.md) · item shapes: [dynamodb-data-model.md](./dynamodb-data-model.md)*
 
-**Last reviewed:** 2026-09-17 against dev
+**Last reviewed:** 2026-09-21 against dev
 
 This doc walks one typical perimeter check end-to-end: what the user does, what the app
 sends to the Street Conditions analyzer and what comes back, what lands in DynamoDB at
@@ -18,14 +18,18 @@ writes it.
 
 One continuous per-item pipeline, with a background scorecard fold at the end:
 
-1. **Capture & analyze & guide — per item.** The staff member walks the perimeter taking
-   photos and/or typing descriptions, one "place" at a time. Each piece of evidence is its
+1. **Capture & analyze & guide — per item.** The staff member walks the perimeter adding
+   photos to one flat photo roll — or, when taking photos outside isn't practical or safe,
+   types one description of the whole area instead. There is no list of places to walk
+   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)); Finish unlocks at **five photos
+   or one saved description** (frontend/src/domain/check-completion.js), a client-side
+   rule the backend records but never enforces. Each piece of evidence is its
    own analysis unit: the moment it's captured it uploads to S3, registers, and the
    analyzer grades it asynchronously while the walk is still happening. As soon as the
    artifact's analysis lands, the client builds a per-item assessment from it and sends
    it to the guidance evaluator which translates issues discovered by the AI into a list 
    of tasks to be performed either by the site staff or the city.
-2. **Done just ends the walk.** It flips the session to `capture-complete` and kicks off
+2. **Finish just ends the walk.** It flips the session to `capture-complete` and kicks off
    the background scorecard fold — a check-level grade/summary rollup written to the
    check header for analytics and compliance. No UI reads it today; the task cards keep
    working the same way on home as they did in capture.
@@ -40,8 +44,8 @@ Who's who:
 - **Analyze worker** — SQS-triggered Lambda that fetches media from S3, downscales it
   (sharp: EXIF-orient, fit 1568 px long edge, JPEG q80 — ADR 0012), and calls the
   analyzer (backend/src/workers/analyze-artifact.js).
-- **Street Conditions analyzer** — external service. In: metadata (place name, capture
-  time, per-photo GPS) + downscaled image bytes (`store_input:false`). Out: one
+- **Street Conditions analyzer** — external service. In: metadata (`position_descriptor`
+  = the site name, capture time, per-photo GPS) + downscaled image bytes (`store_input:false`). Out: one
   assessment per photo — a `grade`, a one-line `general_conditions` description, and
   `identified_conditions_of_concern[]` (category/severity/explanation/evidence indices,
   plus a `user_friendly_label` per concern the cards prefer as their title).
@@ -64,14 +68,14 @@ sequenceDiagram
   participant DB as DynamoDB
 
   Note over Staff,UI: /check — capture screen
-  Staff->>UI: taps Add photo at "Loading Dock"
+  Staff->>UI: taps Add photo in the photo roll (or Describe instead → one text item)
   Note over UI: item added to session → its own pipeline starts immediately<br/>(device location is fetched best-effort, 2s cap, and rides along)
   UI->>API: POST /v1/checks (checkId as idempotency-key)<br/>once per run, lazily on the first item
   API->>DB: Put CHECK# header {status:"in_progress"}
-  UI->>API: POST .../artifacts:presign {placeId, contentType}
+  UI->>API: POST .../artifacts:presign {contentType, placeId:"perimeter", placeName:siteName}
   API-->>UI: artifactId + presigned PUT
   UI->>S3: PUT photo bytes
-  UI->>API: POST .../artifacts {artifactId, s3Key, capturedAt, latitude, longitude}
+  UI->>API: POST .../artifacts {artifactId, placeId, placeName, s3Key, capturedAt, latitude, longitude}
   API->>DB: Put ART# (conditional)
   API->>Q: SendMessage {s3Key…} (never bytes)
   Q->>W: deliver
@@ -88,12 +92,12 @@ sequenceDiagram
   API->>DB: task_created app actions (informational 311, best-effort)
   Note over UI: task / condition / question cards render on the item at once
   Staff->>UI: answers "More details needed", or Edit / Delete on a card
-  Staff->>UI: taps Done
+  Staff->>UI: taps Finish check (enabled at 5 photos or 1 description)
   Note over UI: navigate home on the tap — no API call<br/>session flips to capture-complete + background fold starts
   UI->>API: POST /v1/checks/{id}/complete (background, after coverage poll)
   API->>DB: Query header + ART# + ANALYSIS# (consistent)<br/>409 analyzing until every artifact has an ANALYSIS#
-  API->>DB: Update CHECK# header (scorecard, status="completed", once-only)
-  Note over UI: response is the scorecard only — no assessment envelope exists
+  API->>DB: Update CHECK# header (scorecard + photoCount/textCount/evidenceKind,<br/>status="completed", once-only)
+  Note over UI: response is the scorecard + evidence counts — no assessment envelope exists
   Note over UI: home re-renders from listTasks → task buckets<br/>session cards hand off to backend cards as they arrive
   Staff->>UI: works task cards (Done / File 311 / Can't / answers)
   UI->>API: POST /v1/tasks/{id}/complete · /cannot-do · .../answers
@@ -105,6 +109,11 @@ Reading notes:
 - Steps 3–15 repeat **per evidence item**. The check header is created once (step 3),
   lazily inside the first item's analysis run; every item then runs its own
   upload→analyze→evaluate loop concurrently.
+- `placeId` / `placeName` on presign and register are optional. The client sends the
+  synthetic id `"perimeter"` plus the site name (check-session.js `perimeterPlace`); the
+  backend defaults a missing `placeId` to the same constant (artifacts.js
+  `DEFAULT_PLACE_ID`), and the worker's `position_descriptor` falls back to the literal
+  `"perimeter"` when `placeName` is absent.
 - The worker→analyzer call is the only place media leaves our stack.
 - Steps 18–20 are **client-driven and background**: the backend never calls the client,
   and the scorecard fold neither mints tasks nor blocks the user — the user is working
@@ -177,35 +186,52 @@ before proceeding.
 
 ---
 
-## 3. Worked example — "Graffiti at the Loading Dock"
+## 3. Worked example — "Graffiti on the roll-up door"
 
 Follow one realistic run through every write. Site **Civic Center Annex** (`siteId:
-site-civic-01`, short codes `providerShortCode:"MOI"` / `siteShortCode:"CCA"`), places
-**Lobby** (typed description, no issues) and **Loading Dock** (one photo). ULID checkId
-minted client-side: `01JABCDEF…`; the photo's artifact uuid below is abbreviated
-`<uuid>`. Analyzer returns, for the Loading Dock photo: `{grade:"Poor", concerns:[{category:"Graffiti", severity:2, description:"Spray paint on the roll-up door", …}]}`.
+site-civic-01`, short codes `providerShortCode:"MOI"` / `siteShortCode:"CCA"`). Staff
+walk the perimeter and take **five photos** into the photo roll; four analyze "Good" with
+no concerns, and the third — the loading-dock roll-up door — comes back with graffiti.
+ULID checkId minted client-side: `01JABCDEF…`; that photo's artifact uuid below is
+abbreviated `<uuid>`. Analyzer returns for it: `{grade:"Poor", concerns:[{category:"Graffiti", severity:2, description:"Spray paint on the roll-up door", …}]}`.
+Every artifact of the run lands under the one synthetic place `placeId:"perimeter"` with
+`placeName:"Civic Center Annex"` (check-session.js `perimeterPlace`).
 
 ### Per-item capture & analyze (all during the walk)
 
 **User taps Add photo.** The photo is added to the local session and its pipeline starts
 at once (frontend/src/components/perimeter-check.js `_addPhoto` →
-frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `run`). No DB write yet —
-the first `createCheck` happens lazily inside the item's own analysis run
-(photo-analysis.js `ensureRemoteCheck`).
+frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `run`). The progress line
+reads "1 of 5 photos" and Finish stays disabled until the completion rule is met
+(check-completion.js `completionStatus`). No DB write yet — the first `createCheck`
+happens lazily inside the item's own analysis run (photo-analysis.js `ensureRemoteCheck`).
+
+**Describe instead** is the same pipeline with a text item. `/check/describe` saves one
+description per check (at least 20 characters, check-completion.js
+`MIN_DESCRIPTION_LENGTH`), files it as a `kind:"text"` session item and analyzes it like
+a photo (describe-instead.js `_onContinue`); reopening the screen edits the saved text,
+and saving a change replaces the session item.
 
 | API call | DB write | Record (abbreviated) |
 |---|---|---|
-| `POST /v1/checks` (once; idempotency-key = ULID) | Put CHECK# | `pk SITE#site-civic-01` · `sk CHECK#01JABC…` · `{status:"in_progress", startedAt, places:[…], issueCount:0, maxSeverity:0}` |
-| `POST .../artifacts:presign` | — (no write; mints artifactId + S3 key `checks/site-civic-01/01JABC…/loading-dock/<uuid>`) | — |
+| `POST /v1/checks` (once; idempotency-key = ULID) | Put CHECK# | `pk SITE#site-civic-01` · `sk CHECK#01JABC…` · `{status:"in_progress", startedAt, issueCount:0, maxSeverity:0}` (the body carries nothing the header stores; a legacy `places` list is ignored) |
+| `POST .../artifacts:presign` | — (no write; mints artifactId + S3 key `checks/site-civic-01/01JABC…/perimeter/<uuid>`; a missing `placeId` defaults to `"perimeter"`) | — |
 | (device PUTs bytes straight to S3) | — | — |
-| `POST .../artifacts` (register) | Put ART# (conditional) | `sk CHECK#01JABC…#ART#loading-dock#<uuid>` · `{placeId, placeName:"Loading Dock", s3Key, capturedAt, latitude, longitude, contentType}` → then SQS send `{siteId, checkId, artifactId, s3Key…}` (never bytes) |
+| `POST .../artifacts` (register) | Put ART# (conditional) | `sk CHECK#01JABC…#ART#perimeter#<uuid>` · `{placeId:"perimeter", placeName:"Civic Center Annex", s3Key, capturedAt, latitude, longitude, contentType:"image/jpeg"}` → then SQS send `{siteId, checkId, artifactId, placeId, placeName, s3Key…}` (never bytes) |
 | *(SQS → worker → analyzer)* | Put ANALYSIS# (conditional) | `sk CHECK#01JABC…#ANALYSIS#<uuid>` · `{status:"analyzed", grade:"Poor", gradeDescription:"…", concerns:[{category:"Graffiti", rating:2, explanation:"Spray paint…", userFriendlyLabel:"Graffiti", evidenceIndices:[0]}], issueCount:1, maxSeverity:2, analysisId, rubricVersion, model, latitude, longitude}` + best-effort header counter bump |
-| *(typed Lobby description)* `POST .../artifacts` (text: no s3Key, carries `text`) | Put ART# + ANALYSIS# | text artifacts take the same path minus S3; the analyzer's grade for it was "Good" with no concerns |
+| *(the other four photos)* same three calls each | Put ART# + ANALYSIS# ×4 | same shapes; each analyzed "Good" with `concerns:[]`, `issueCount:0` |
+| *(alternative: Describe instead)* `POST .../artifacts` (text: no s3Key, carries `text`) | Put ART# + ANALYSIS# | `sk CHECK#01JABC…#ART#perimeter#<uuid>` · `{placeId:"perimeter", placeName:"Civic Center Annex", text:"Sidewalk and loading dock are clear, no dumping or graffiti today.", capturedAt, latitude, longitude}`; the worker sends it as `{type:"text"}` media with the same `position_descriptor`. One description satisfies the completion rule on its own |
 
 While that runs, the card shows staged progress — "Photo uploaded" → "Sent to analyzer"
 with an elapsed timer (analysis-results.templates.js `pendingCard`) — and flips to
 result cards when `GET /v1/checks/{id}` returns the ANALYSIS# item
 (photo-analysis.js `waitForArtifactAnalysis`).
+
+Removing a tile or the description drops it from the session only: an ART# that has
+already registered stays in the table with its ANALYSIS#, still counts toward the
+completion coverage gate, and is counted by `evidenceSummary` at complete (there is no
+artifact delete route). An edited description therefore registers a second text
+artifact; the first stays on the backend.
 
 **Guidance mints for that item right away.** The client builds a per-item assessment
 from the analysis (photo-analysis.js `assessmentFromAnalysis` — the ids are
@@ -217,7 +243,7 @@ from the analysis (photo-analysis.js `assessmentFromAnalysis` — the ids are
 |---|---|---|
 | `POST /v1/assessments:evaluate` | TransactWrite | see below |
 | ↳ assessment | Put ASSESSMENT# (conditional) | `sk ASSESSMENT#01JABC…-<uuid>` · `{status:"tasks_created", policyVersion:"actions-escalations-v2", grade:"Poor", assessmentRevision:0, summary:{totalConditions:1, conditionsResolvedToTasks:1, openTaskCount:1, escalationCount:1, …}}` |
-| ↳ condition | Put COND# (conditional) | `sk ASSESSMENT#01JABC…-<uuid>#COND#<uuid>-001-graffiti` · `{status:"tasks_created", analyzerCategory:"Graffiti", canonicalCategory:"Graffiti", severity:2, userFriendlyLabel:"Graffiti", source:{latitude, longitude, positionDescriptor}, answers:{}, taskIds:[<taskId>], resolvedToTasks:true, selectedRuleId:"GRAFFITI-2", needsAnswer:null}` (+ GSI4/GSI5 stamps) |
+| ↳ condition | Put COND# (conditional) | `sk ASSESSMENT#01JABC…-<uuid>#COND#<uuid>-001-graffiti` · `{status:"tasks_created", analyzerCategory:"Graffiti", canonicalCategory:"Graffiti", severity:2, userFriendlyLabel:"Graffiti", source:{latitude, longitude, positionDescriptor:"Civic Center Annex"}, answers:{}, taskIds:[<taskId>], resolvedToTasks:true, selectedRuleId:"GRAFFITI-2", needsAnswer:null}` (+ GSI4/GSI5 stamps) |
 | ↳ task | Put TASK# (conditional) | `sk TASK#<uuid>` · `{shortId:"MOI-CCA-001", status:"open", kind:"escalation", type:"city_escalation", ruleId:"GRAFFITI-2", policyVersion, category:"Graffiti", userFriendlyLabel:"Graffiti", severity:2, label:"Ask the City to clean the graffiti.", guidance:"If the graffiti is not on your property…", appActions:[create_311_ticket…], conditionId, assessmentId, checkId, sourceArtifactIds:[<uuid>]}` (+ GSI2 worklist stamp) |
 
 The task's **shortId** is minted before the transaction: the store reads the site's
@@ -240,21 +266,23 @@ is folded into `appActionResults` with a `#status = :open` guard; a failure ther
 blocks task creation. User-confirmed actions (the 311 *filing* the Done button triggers,
 closures) wait for the user.
 
-The Lobby's "Good, no concerns" analysis still **writes no ASSESSMENT#/COND#/TASK#
-records** — its assessment envelope carries zero conditions, so nothing mints
+The four "Good, no concerns" photos still **write no ASSESSMENT#/COND#/TASK#
+records** — their assessment envelopes carry zero conditions, so nothing mints
 (assessmentFromAnalysis filters concerns to `rating > 0`, and a no-issue item stores its
 analysis locally only).
 
-### Done — background scorecard fold
+### Finish — background scorecard fold
 
-**User taps Done.** No API call on the tap: capture ends, the session flips to
+**User taps Finish check** — enabled once the roll holds five photos or one description
+(check-completion.js `isPerimeterCheckComplete`); the backend never refuses a completion
+on evidence grounds. No API call on the tap: capture ends, the session flips to
 `capture-complete` (check-session.js `markCaptureComplete`, draft cleared) and
 `finalizeCaptureScorecardInBackground` (submit-check.js) starts; the user lands on home
 (perimeter-check.js `_finishCheck` → `navigate("/today")`).
 
 | API call | DB write | Record (abbreviated) |
 |---|---|---|
-| `POST /v1/checks/{id}/complete` | Update CHECK# (guarded: `#status <> "completed"`) | `{status:"completed", grade:"Poor", summary:"<analyzer's own line for the worst place>", categories:[{category:"Graffiti", maxRating:2, sourceArtifactIds:[<uuid>]}], rubricVersion, issueCount:1, maxSeverity:2, synthesizedAt, completedAt}` — the Lobby's "Good" lost to the Dock's "Poor" (worst-of synthesis, backend/src/analysis/synthesize-check.js). No guidance envelope in the request or response. |
+| `POST /v1/checks/{id}/complete` | Update CHECK# (guarded: `#status <> "completed"`) | `{status:"completed", grade:"Poor", summary:"<analyzer's own line for the worst artifact>", categories:[{category:"Graffiti", maxRating:2, sourceArtifactIds:[<uuid>]}], rubricVersion, issueCount:1, maxSeverity:2, photoCount:5, textCount:0, evidenceKind:"photos", synthesizedAt, completedAt}` — four "Good" photos lost to the door's "Poor" (worst-of synthesis, backend/src/analysis/synthesize-check.js). The evidence mix is counted from the ART# items (checks.js `evidenceSummary`: `photos` / `description` / `mixed` / `none`). No guidance envelope in the request or response. |
 
 The endpoint is coverage-gated: it re-reads the header + all children consistently and
 returns `409 analyzing` until **every registered artifact has an ANALYSIS# item**
@@ -266,11 +294,13 @@ session (today-view.js; re-finalizing is idempotent), and the session is cleared
 completed header with the same id shows up in history
 (today-view.js `isStalePendingSession`).
 
-**The response is the scorecard only.** Guidance is per-item at capture time, so there
-is nothing for completion to evaluate. The header's `grade`/`summary`/`categories` rollup
-is written-once for analytics and compliance — no UI renders it today (the checks-list
-GSI1 read is its only reader; home's "last log" line reads only
-`completedAt`/`startedAt`).
+**The response is the scorecard plus the evidence counts.** Guidance is per-item at
+capture time, so there is nothing for completion to evaluate. The header's
+`grade`/`summary`/`categories` rollup and `photoCount`/`textCount`/`evidenceKind` are
+written-once for analytics and compliance — no UI renders them today (the checks-list
+GSI1 read is their only reader; home's "last log" line reads only
+`completedAt`/`startedAt`). `evidenceKind` is what lets the compliance report show how
+often staff use the text path instead of photos.
 
 ### While on home — cards, answers, amendments
 
@@ -357,10 +387,9 @@ card instead of silently doing nothing. How statuses map to home buckets is §4d
 |---|---|---|
 | `SITE#site-civic-01` | `#META` | site config incl. `providerShortCode:"MOI"`, `siteShortCode:"CCA"`, and the admin-geocoded `location` (Census geocoder; 311's fallback when a photo carried no GPS) |
 | `SITE#site-civic-01` | `COUNTER#task-display-id` | `nextTaskDisplayNumber:2` (one number allocated per minted task; gaps allowed) |
-| `SITE#site-civic-01` | `CHECK#01JABC…` | status `completed`, grade `Poor`, summary + categories rollup, issueCount 1, maxSeverity 2 |
-| `SITE#site-civic-01` | `CHECK#01JABC…#ART#loading-dock#<uuid>` | placeName, s3Key, capturedAt, latitude/longitude (photo metadata; bytes in S3) |
-| `SITE#site-civic-01` | `CHECK#01JABC…#ART#lobby#<uuid>` | text description (no s3Key) |
-| `SITE#site-civic-01` | `CHECK#01JABC…#ANALYSIS#<uuid>` ×2 | raw adapted analyzer output: grade + concerns[] per artifact |
+| `SITE#site-civic-01` | `CHECK#01JABC…` | status `completed`, grade `Poor`, summary + categories rollup, issueCount 1, maxSeverity 2, photoCount 5, textCount 0, evidenceKind `photos` |
+| `SITE#site-civic-01` | `CHECK#01JABC…#ART#perimeter#<uuid>` ×5 | placeId `perimeter`, placeName `Civic Center Annex`, s3Key, capturedAt, latitude/longitude (photo metadata; bytes in S3). A Describe-instead run holds one such row carrying `text` and no s3Key |
+| `SITE#site-civic-01` | `CHECK#01JABC…#ANALYSIS#<uuid>` ×5 | raw adapted analyzer output: grade + concerns[] per artifact |
 | `SITE#site-civic-01` | `GUIDANCE_CURRENT#<JSON [01JABC…, <uuid>]>` | pointer to the current assessment for the artifact's lineage (`assessmentId`) |
 | `SITE#site-civic-01` | `ASSESSMENT#01JABC…-<uuid>` | status `tasks_created`, summary counts, rawAssessment (per analyzed artifact that had concerns) |
 | `SITE#site-civic-01` | `ASSESSMENT#01JABC…-<uuid>#COND#<uuid>-001-graffiti` | status `tasks_created`, taskIds, selectedRuleId `GRAFFITI-2`, answers {} |
@@ -385,7 +414,7 @@ that the home view keys off (check-session.js `markCaptureComplete`):
 ```mermaid
 stateDiagram-v2
   [*] --> in_progress: start check
-  in_progress --> capture_complete: Done tap (no API call) → home
+  in_progress --> capture_complete: Finish tap (no API call) → home
   capture_complete --> [*]: completed header lands in history → stale-clear
 ```
 
@@ -459,8 +488,10 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 
 | Step | Write site | Read/render site |
 |---|---|---|
-| Create check (lazy, per run) | backend/src/handlers/checks.js `createCheck` | frontend/src/services/photo-analysis.js `ensureRemoteCheck` |
-| Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
+| Create check (lazy, per run) | backend/src/handlers/checks.js `createCheck` (empty body; no places) | frontend/src/services/photo-analysis.js `ensureRemoteCheck` |
+| Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (5 photos or 1 description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
+| Describe instead (one text item per check) | backend/src/handlers/artifacts.js `registerArtifact` (text, no s3Key) | frontend/src/components/describe-instead.js `_onContinue` → photo-analysis.js `analyzeEvidenceItem` |
+| Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (`placeId` optional → `DEFAULT_PLACE_ID` `"perimeter"`; `placeName` = site name) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
 | Device location (per item) | — | frontend/src/services/device-location.js `getCaptureDeviceLocation` (2s best-effort; 311 falls back to the site's geocoded `#META` location) |
 | Per-item analysis | backend/src/workers/analyze-artifact.js (+ media/downscale.js) | frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `waitForArtifactAnalysis` |
 | Failed-card retry | — | photo-analysis.js `retryEvidenceItem` (re-register same artifactId → fresh analyze) |
@@ -468,7 +499,7 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 | Card rendering | — | frontend/src/components/analysis-results.templates.js (tray on home/capture), today-view.js |
 | Question round-trip | backend/src/handlers/guidance.js `submitConditionAnswers` + guidance-store.js `answerCondition` (+ `recoverAnsweredCondition`) | frontend/src/services/photo-analysis.js `answerAnalysisQuestion`, components/analysis-answer-controls.js, today-view.js `_answerAnalysisQuestion` |
 | Edit / reject condition (amendments) | backend/src/handlers/analysis-amendments.js → guidance-store.js `supersedeOpenTasksForCondition` + lineage refresh `storeEvaluatedAssessment` | today-view.js `_saveProblemEdit` / `_confirmDeleteProblem`, components/analysis-card-deletion.js + state/pending-deletions.js, photo-analysis.js `refreshEvidenceAnalysis` |
-| Complete / synthesize scorecard | backend/src/handlers/checks.js `completeCheck` + backend/src/analysis/synthesize-check.js | frontend/src/services/submit-check.js `finalizeCaptureScorecardInBackground` |
+| Complete / synthesize scorecard + evidence counts | backend/src/handlers/checks.js `completeCheck`, `evidenceSummary` + backend/src/analysis/synthesize-check.js | frontend/src/services/submit-check.js `finalizeCaptureScorecardInBackground` |
 | Home worklist | backend/src/handlers/tasks.js `listTasks` | frontend/src/components/today-view.js (`homeTaskStatus`, evidence hydration) |
 | Task completion / 311 | guidance-store.js `completeTaskWithAppActions`, `executeTaskCreatedAppActions` | frontend/src/components/today-view.js `_onAction`, `_resolveAnalysisProblem` (+ state/toasts.js 311 toasts) |
 | Task short IDs | guidance-store.js `allocateTaskShortIds` (counter `COUNTER#task-display-id`) | today-view.js `displayTaskId` |

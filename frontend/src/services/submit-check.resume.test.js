@@ -130,7 +130,7 @@ describe("capture scorecard finalization", () => {
         placeId: "place-north",
         placeName: "North",
         text: "There is a large pothole near the north entrance.",
-        uploadedAt: "2026-08-27T00:22:00.000Z",
+        uploadedAt: "2026-08-27T00:22:00Z",
       }),
     ];
     draft.places["place-north"].description = null;
@@ -142,5 +142,43 @@ describe("capture scorecard finalization", () => {
     });
     expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
     expect(completeCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("excludes permanently failed unregistered items from the coverage target", async () => {
+    // Review finding 3: five photos whose uploads permanently failed used to
+    // count toward `expected`, so the backend (with 0 ART# rows) could never
+    // satisfy the coverage gate and the finalization timed out forever. A dead
+    // item must not be expected; a registered-but-failed one still is (its
+    // backend artifact exists, its failure marker satisfies the gate).
+    const { expectedArtifactCountForCheck } = await import("./submit-check.js");
+    const draft = makeDraft();
+    draft.places["place-north"].items = [
+      /** @type {any} */ ({
+        id: "dead-photo",
+        kind: "photo",
+        dataUrl: "data:image/jpeg;base64,AA==",
+        upload: { status: "failed" },
+        analysis: { status: "failed" },
+        uploadedAt: "2026-08-27T00:20:00Z",
+      }),
+      /** @type {any} */ ({
+        id: "registered-failed",
+        kind: "photo",
+        upload: { status: "uploaded", artifactId: "art-9" },
+        analysis: { status: "failed", artifactId: "art-9" },
+        uploadedAt: "2026-08-27T00:20:00Z",
+      }),
+      /** @type {any} */ ({
+        id: "dead-text",
+        kind: "text",
+        text: "Never registered.",
+        upload: { status: "failed" },
+        analysis: { status: "failed" },
+        uploadedAt: "2026-08-27T00:22:00Z",
+      }),
+    ];
+
+    // Only the registered (though analysis-failed) artifact is expected.
+    expect(expectedArtifactCountForCheck(draft)).toBe(1);
   });
 });

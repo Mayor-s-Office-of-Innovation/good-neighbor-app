@@ -1,0 +1,18 @@
+{
+  "name": "@good-neighbor/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "playwright test",
+    "test:headed": "E2E_SLOW_MS=200 playwright test --headed",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@eslint/js": "9.9.1",
+    "@playwright/test": "1.63.0",
+    "typescript": "5.5.4"
+  }
+}

@@ -28,6 +28,7 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
 import { isFiled311Completion } from "../domain/task-actions.js";
+import { hasEvidence } from "../domain/check-completion.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -35,10 +36,8 @@ import {
   clearCheck,
   getCurrentCheck,
   getPlaceOrder,
-  setActivePlaceIndex,
   addItem,
   removeItem,
-  isPlaceCovered,
   getFlowType,
   isCurrentSession,
   updateItemAnalysis,
@@ -109,7 +108,6 @@ class ProblemReport extends HTMLElement {
     this._checkId = getCurrentCheck()?.id || "";
 
     this._placeId = getPlaceOrder()[0];
-    setActivePlaceIndex(0);
 
     const unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
@@ -291,7 +289,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _cancel() {
-    if (!isPlaceCovered(this._placeId)) {
+    if (!hasEvidence(getCurrentCheck())) {
       this._exitCapture({ discarded: true });
       window.setTimeout(() => clearCheck(), 0);
       return;
@@ -365,7 +363,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {Promise<void>} */
   async _done() {
     const check = getCurrentCheck();
-    if (!isPlaceCovered(this._placeId)) {
+    if (!hasEvidence(getCurrentCheck())) {
       clearCheck();
       this._exitCapture({ discarded: true });
       return;

@@ -151,7 +151,6 @@ resource "aws_lambda_function" "analytics_export" {
       DYNAMO_TABLE     = aws_dynamodb_table.app.name
       DYNAMO_TABLE_ARN = aws_dynamodb_table.app.arn
       LAKE_BUCKET      = aws_s3_bucket.analytics_lake.bucket
-      WATERMARK_TABLE  = aws_dynamodb_table.app.name
       EXPORT_PREFIX    = "raw"
     }
   }
@@ -172,6 +171,16 @@ data "aws_iam_policy_document" "analytics_export" {
     effect    = "Allow"
     actions   = ["dynamodb:ExportTableToPointInTime"]
     resources = [aws_dynamodb_table.app.arn]
+  }
+
+  statement {
+    # Polled every run while an export is pending; the watermark advances only
+    # on COMPLETED. Export ARNs live under table/<name>/export/<id>, which the
+    # bare table ARN above does not cover.
+    sid       = "DescribeTableExport"
+    effect    = "Allow"
+    actions   = ["dynamodb:DescribeExport"]
+    resources = ["${aws_dynamodb_table.app.arn}/export/*"]
   }
 
   statement {

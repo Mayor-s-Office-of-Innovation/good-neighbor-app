@@ -710,9 +710,9 @@ function clarifyingQuestion(question, conditionId) {
 
 function evidencePreview(item) {
   if (item.kind === "text") {
-    return textPreview(item.placeName || "Place");
+    return textPreview(item.placeName || "Site");
   }
-  return imagePreview(item.dataUrl, item.placeName || "Place");
+  return imagePreview(item.dataUrl, item.placeName || "Site");
 }
 
 function imagePreview(src, placeName) {
@@ -720,9 +720,9 @@ function imagePreview(src, placeName) {
     <div class="analysis-card__media">
       <img
         src="${escapeAttr(src)}"
-        alt="Evidence from ${escapeAttr(placeName || "this place")}"
+        alt="Evidence from ${escapeAttr(placeName || "the site")}"
       />
-      <span>${escapeHtml(placeName || "Place")}</span>
+      <span>${escapeHtml(placeName || "Site")}</span>
     </div>
   `;
 }
@@ -730,7 +730,7 @@ function imagePreview(src, placeName) {
 function textPreview(placeName) {
   return html`
     <div class="analysis-card__media analysis-card__media--text">
-      <span>${escapeHtml(placeName || "Place")}</span>
+      <span>${escapeHtml(placeName || "Site")}</span>
       <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
     </div>
   `;

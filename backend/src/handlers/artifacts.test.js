@@ -1,5 +1,5 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Spies for the three side-effecting seams. vi.hoisted lets the mock factories
@@ -22,9 +22,13 @@ vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   };
 });
 
-const { presignUpload, registerArtifact, presignMedia } = await import(
-  "./artifacts.js"
-);
+const {
+  presignUpload,
+  registerArtifact,
+  deleteArtifact,
+  presignMedia,
+  DEFAULT_PLACE_ID,
+} = await import("./artifacts.js");
 
 /**
  * @param {object} opts
@@ -121,7 +125,9 @@ describe("presignUpload", () => {
     expect(presignPut).not.toHaveBeenCalled();
   });
 
-  it("requires a place", async () => {
+  it("defaults placeId and omits placeName when neither is sent", async () => {
+    presignPut.mockResolvedValueOnce("https://signed.example/put");
+
     const res = await callPresign(
       artifactEvent({
         checkId: "chk_01",
@@ -129,7 +135,46 @@ describe("presignUpload", () => {
         body: { contentType: "image/jpeg" },
       }),
     );
-    expect(res.statusCode).toBe(400);
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(DEFAULT_PLACE_ID).toBe("perimeter");
+    expect(payload.placeId).toBe(DEFAULT_PLACE_ID);
+    expect(payload).not.toHaveProperty("placeName");
+    // The key layout is unchanged: the default place is the path segment.
+    expect(payload.s3Key).toBe(
+      `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/${payload.artifactId}`,
+    );
+  });
+
+  it("treats a blank placeName as absent", async () => {
+    presignPut.mockResolvedValueOnce("https://signed.example/put");
+
+    const res = await callPresign(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { placeName: "   ", contentType: "image/jpeg" },
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).not.toHaveProperty("placeName");
+  });
+
+  it("rejects a placeId that is present but not a non-empty string", async () => {
+    for (const placeId of ["", 42, null]) {
+      const res = await callPresign(
+        artifactEvent({
+          checkId: "chk_01",
+          siteClaim: "site-1",
+          body: { placeId, contentType: "image/jpeg" },
+        }),
+      );
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
+    }
+    expect(presignPut).not.toHaveBeenCalled();
   });
 });
 
@@ -294,6 +339,60 @@ describe("registerArtifact", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("registers under the default place and omits placeName when neither is sent", async () => {
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          artifactId: "art_1",
+          s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+          contentType: "image/jpeg",
+          capturedAt: "2026-08-14T12:00:00.000Z",
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(202);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item).toMatchObject({
+      pk: "SITE#site-1",
+      sk: `CHECK#chk_01#ART#${DEFAULT_PLACE_ID}#art_1`,
+      artifactId: "art_1",
+      placeId: DEFAULT_PLACE_ID,
+    });
+    expect(put.input.Item).not.toHaveProperty("placeName");
+
+    // The worker falls back to "perimeter" for position_descriptor when the
+    // message carries no placeName, so it must be absent rather than "".
+    const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
+    expect(msg).toEqual({
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+      placeId: DEFAULT_PLACE_ID,
+      s3Key: `checks/site-1/chk_01/${DEFAULT_PLACE_ID}/art_1`,
+      capturedAt: "2026-08-14T12:00:00.000Z",
+    });
+  });
+
+  it("rejects a placeId that is present but not a non-empty string", async () => {
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { ...validBody, placeId: "" },
+      }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "Invalid placeId" });
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
+
   it("accepts text-only evidence and enqueues it without an s3Key", async () => {
     ddbSend.mockResolvedValueOnce({});
     sqsSend.mockResolvedValueOnce({});
@@ -355,6 +454,33 @@ describe("registerArtifact", () => {
     expect(ddbSend).not.toHaveBeenCalled();
     expect(sqsSend).not.toHaveBeenCalled();
   });
+
+  it("rejects text evidence below the analyzer's 5-character minimum", async () => {
+    // The Street Conditions service rejects text media under 5 chars as an
+    // invalid request (permanent) — registration must refuse it instead of
+    // enqueuing an artifact that can only die at the analyzer.
+    for (const text of ["hi", " ok ", "abcd"]) {
+      const res = await callRegister(
+        artifactEvent({
+          checkId: "chk_01",
+          siteClaim: "site-1",
+          body: {
+            artifactId: "art_text_short",
+            placeId: "place-west",
+            placeName: "West",
+            text,
+          },
+        }),
+      );
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "text must be at least 5 characters",
+      });
+    }
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -382,6 +508,145 @@ function mediaEvent({ checkId, artifactId, siteClaim }) {
  */
 const callMedia = (event) =>
   /** @type {any} */ (presignMedia(event, ctx, () => {}));
+
+/**
+ * @param {object} opts
+ * @param {string} [opts.checkId] path param
+ * @param {string} [opts.artifactId] path param
+ * @param {string} [opts.siteClaim] custom:siteId JWT claim
+ * @returns {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer}
+ */
+function deleteEvent({ checkId, artifactId, siteClaim }) {
+  return /** @type {any} */ ({
+    pathParameters: {
+      ...(checkId ? { checkId } : {}),
+      ...(artifactId ? { artifactId } : {}),
+    },
+    requestContext: siteClaim
+      ? { authorizer: { jwt: { claims: { "custom:siteId": siteClaim } } } }
+      : {},
+  });
+}
+
+/**
+ * @param {any} event
+ * @returns {Promise<any>}
+ */
+const callDelete = (event) =>
+  /** @type {any} */ (deleteArtifact(event, ctx, () => {}));
+
+describe("deleteArtifact", () => {
+  /** A header + one artifact, as deleteArtifact's two queries read them. */
+  function mockCheckWithArtifact() {
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01", status: "in_progress" }],
+    });
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#place-north#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/place-north/art_1",
+        },
+      ],
+    });
+  }
+
+  it("deletes the ART# item after resolving it by artifactId", async () => {
+    mockCheckWithArtifact();
+    ddbSend.mockResolvedValueOnce({});
+
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      artifactId: "art_1",
+      status: "deleted",
+    });
+    // The header read is site-scoped and keyed to this check's header only.
+    const headerQ = ddbSend.mock.calls[0][0];
+    expect(headerQ.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
+    expect(headerQ.input.ExpressionAttributeValues[":sk"]).toBe("CHECK#chk_01");
+    // The artifact lookup is the same ART#-prefix query presignMedia uses.
+    const artQ = ddbSend.mock.calls[1][0];
+    expect(artQ.input.ExpressionAttributeValues[":prefix"]).toBe(
+      "CHECK#chk_01#ART#",
+    );
+    // The delete touches exactly the resolved ART# item.
+    const del = ddbSend.mock.calls[2][0];
+    expect(del).toBeInstanceOf(DeleteCommand);
+    expect(del.input.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01#ART#place-north#art_1",
+    });
+  });
+
+  it("404s when the check header does not exist for this site", async () => {
+    ddbSend.mockResolvedValueOnce({ Items: [] });
+
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(ddbSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("409s when the check is already completed (scorecard is final)", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01", status: "completed" }],
+    });
+
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(ddbSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("404s when no ART# item matches the artifactId (idempotent replay)", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01", status: "in_progress" }],
+    });
+    ddbSend.mockResolvedValueOnce({ Items: [] });
+
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_gone",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(ddbSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires checkId and artifactId", async () => {
+    const noCheck = await callDelete(deleteEvent({ siteClaim: "site-1" }));
+    expect(noCheck.statusCode).toBe(400);
+    const noArtifact = await callDelete(
+      deleteEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+    expect(noArtifact.statusCode).toBe(400);
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+});
 
 describe("presignMedia", () => {
   it("finds the artifact by id (place is in its key) and presigns a GET", async () => {

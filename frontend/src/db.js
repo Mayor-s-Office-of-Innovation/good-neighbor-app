@@ -201,12 +201,6 @@ export async function saveSiteSettings(settings = {}) {
   await tx("site", "readwrite", (os) => os.put(record));
   return record;
 }
-export async function saveSitePlaces(places, meta = {}) {
-  return saveSiteSettings({
-    ...meta,
-    places: Array.isArray(places) ? places : [],
-  });
-}
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
 }

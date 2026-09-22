@@ -637,23 +637,7 @@ form > wa-button[type="submit"] {
 }
 
 /* ---- Places setup / edit ---- */
-.app__main:has(.places-flow) {
-  width: 100%;
-  max-width: none;
-  padding: 0;
-  background: var(--surface);
-}
-.places-flow {
-  flex: 1 0 auto;
-  display: grid;
-  align-items: start;
-  justify-items: center;
-  background: var(--surface);
-  color: var(--text);
-  padding: 4rem 1.5rem;
-  position: relative;
-}
-.places-flow__back,
+
 .home-settings {
   appearance: none;
   -webkit-appearance: none;
@@ -670,270 +654,7 @@ form > wa-button[type="submit"] {
   padding: 0;
   box-shadow: none;
 }
-.places-flow__back {
-  position: fixed;
-  top: max(1rem, env(safe-area-inset-top));
-  left: 1rem;
-  z-index: 2;
-}
-.places-flow__panel {
-  /* Keep the percentage and cap as separate constraints. Safari can use the
-     480px branch of min() as this grid item's intrinsic inline size, allowing
-     a wide form control to push the panel past a phone viewport. */
-  width: 100%;
-  max-width: 480px;
-  min-width: 0;
-  margin-block: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 32px;
-}
-.places-flow__copy {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  text-align: center;
-}
-.places-flow__title {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--wa-font-size-3xl, 2.5rem);
-  font-weight: 700;
-  line-height: 1.2;
-  text-wrap: balance;
-}
-.places-flow__subtitle {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--wa-font-size-l, 1.25rem);
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: pre-line;
-  text-wrap: balance;
-}
-.places-flow__site {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--wa-font-size-l, 1.25rem);
-  font-weight: 700;
-  line-height: 1.2;
-  text-align: center;
-}
-.places-list {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.places-list > .places-row {
-  /* Web Awesome's native element theme gives every <li> a 1.125em inline
-     start margin. These rows own their numbering, so remove that list indent. */
-  margin: 0;
-}
-.places-row {
-  width: 100%;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 43px minmax(0, 1fr) 62px;
-  gap: 8px;
-  align-items: center;
-  position: relative;
-}
-.places-row--single {
-  grid-template-columns: minmax(0, 1fr);
-}
-.places-row__number {
-  min-height: 62px;
-  display: inline-grid;
-  place-items: center;
-  color: var(--wa-color-neutral-on-normal);
-  font-family: "Font Awesome 7 Free", var(--wa-font-family-body);
-  font-size: var(--wa-font-size-m, 1rem);
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1.2;
-  text-align: center;
-}
-.places-row__input {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  justify-self: stretch;
-  --wa-form-control-height: 62px;
-  --wa-form-control-border-radius: 8px;
-  --wa-form-control-padding-block: 0;
-}
-.places-row__input::part(form-control-label) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  overflow: hidden;
-  white-space: nowrap;
-}
-.places-row__input::part(input-wrapper) {
-  /* App-level box-sizing resets do not cross the component's shadow root.
-     Web Awesome sets this part to width: 100% with inline padding and borders,
-     so Safari otherwise adds those outside the host and overflows the row. */
-  box-sizing: border-box;
-  /* `auto` fills the host while accounting for this part's own padding and
-     border. A percentage width can still participate in Safari's intrinsic
-     sizing before border-box is resolved. */
-  width: auto;
-  max-width: 100%;
-  min-height: 62px;
-  border-radius: 8px;
-  box-shadow: none;
-}
-.places-row__input::part(input) {
-  min-height: 60px;
-  height: 60px;
-  display: flex;
-  align-items: center;
-  line-height: 1.2;
-}
-.places-row__menu-wrap {
-  position: relative;
-}
-.places-row__menu-button {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 62px;
-  height: 62px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--text);
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  margin: 0;
-  padding: 0;
-  box-shadow: none;
-}
-.places-row__menu-button wa-icon {
-  font-size: 1.375rem;
-}
-.places-row__dots,
-.places-row__dots::before,
-.places-row__dots::after {
-  width: 5px;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: currentColor;
-}
-.places-row__dots {
-  position: relative;
-  display: block;
-}
-.places-row__dots::before,
-.places-row__dots::after {
-  content: "";
-  position: absolute;
-  left: 0;
-}
-.places-row__dots::before {
-  top: -9px;
-}
-.places-row__dots::after {
-  top: 9px;
-}
-.places-menu {
-  position: absolute;
-  z-index: 5;
-  left: 0;
-  right: auto;
-  top: calc(100% + 8px);
-  width: min(276px, calc(100vw - 2rem));
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  padding: 8px;
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: none;
-}
-.places-menu__item {
-  appearance: none;
-  -webkit-appearance: none;
-  min-height: 44px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 16px;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-  margin: 0;
-  box-shadow: none;
-}
-.places-menu__item:disabled {
-  cursor: not-allowed;
-  color: var(--text-faint);
-}
-.places-menu__item--danger {
-  color: var(--c-hazard);
-}
-.places-flow__future-note {
-  margin: 0;
-  color: var(--wa-color-text-quiet);
-  text-align: center;
-  font-family: var(--wa-font-family-body);
-  font-size: var(--wa-font-size-m);
-  font-style: normal;
-  font-weight: var(--wa-font-weight-body);
-  line-height: 1.6;
-}
-.places-flow__error {
-  margin: 0;
-  color: var(--c-hazard);
-  text-align: center;
-  font-family: var(--wa-font-family-body);
-  font-size: var(--wa-font-size-m);
-  font-style: normal;
-  font-weight: var(--wa-font-weight-body);
-  line-height: 1.4;
-}
-.places-flow__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-.places-flow__button {
-  font-size: var(--wa-font-size-l, 1.25rem);
-}
-.places-flow__button--add {
-  width: fit-content;
-  min-width: 0;
-  flex: 0 0 auto;
-  padding-inline: 1.5rem;
-  white-space: nowrap;
-}
-.places-flow__button:disabled,
-.places-row__menu-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
+
 .places-modal {
   border: 0;
   padding: 0;
@@ -1001,10 +722,7 @@ form > wa-button[type="submit"] {
   padding: 0 1rem;
   box-shadow: none;
 }
-.places-flow__back:focus-visible,
 .home-settings:focus-visible,
-.places-row__menu-button:focus-visible,
-.places-menu__item:focus-visible,
 .places-modal__danger:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
@@ -1162,26 +880,6 @@ form > wa-button[type="submit"] {
   padding: 0.5rem 1rem;
 }
 
-@media (max-width: 540px) {
-  .places-flow {
-    padding-inline: 1rem;
-  }
-  .places-flow__title {
-    font-size: 2rem;
-  }
-  .places-flow__subtitle {
-    font-size: 1.05rem;
-  }
-  /* Multi-place rows need narrower number/menu tracks on phones. Keep the
-     first-run single row on its one-column layout; otherwise its only child
-     is auto-placed into this rule's 32px number track. */
-  .places-row:not(.places-row--single) {
-    /* The menu control remains a 62px touch target, so its track must not be
-       narrower than the button or it will paint past the viewport edge. */
-    grid-template-columns: 32px minmax(0, 1fr) 62px;
-  }
-}
-
 /* ---- Media preview ---- */
 .media-preview img {
   max-width: 100%;
@@ -1235,11 +933,6 @@ theme-toggle {
 }
 .app--chromeless .app__main {
   padding-top: max(1rem, env(safe-area-inset-top));
-}
-.app--chromeless .app__main:has(.places-flow) {
-  /* The places flow owns its top spacing (see .places-flow padding); the
-     generic chromeless inset would stack on top of it. */
-  padding-top: 0;
 }
 
 .home {
@@ -2655,52 +2348,49 @@ button[data-loading] [data-loading-label] {
   outline-offset: 2px;
 }
 
-/* ＋ "Add photo" tile — opens the native camera (phone) / file picker (desktop).
-   Compact grid cell by default; larger + centered with a hint on an empty place. */
+/* Camera tile shared by the capture flows. */
 .addshot {
   appearance: none;
-  /* Buttons don't honour a grid item's default justify-self/align-self: stretch,
-     so pin to the cell explicitly — otherwise the tile shrinks to its label and
-     clips "Add photo" next to the full-size photo tiles. */
+  position: relative;
   width: 100%;
-  height: 100%;
+  height: auto;
   aspect-ratio: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  border: 2px dashed var(--c-line);
-  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--wa-border-radius-l, 16px);
   background: var(--surface-2);
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   box-shadow: none;
   margin: 0;
-  padding: 0.4rem;
+  padding: 0;
   min-width: 0;
-  overflow: hidden;
   text-align: center;
 }
-.addshot__label {
-  font-weight: 600;
-  font-size: 0.72rem;
-  line-height: 1.15;
+.addshot__icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--ink);
 }
-.addshot__hint {
-  font-size: 0.85rem;
-  color: var(--text-faint);
+.addshot__icon wa-icon {
+  font-size: 1rem;
+}
+.addshot__label {
+  position: absolute;
+  bottom: 10%;
+  inset-inline: 0;
+  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1.2;
 }
 .addshot--empty {
-  aspect-ratio: auto;
-  width: min(100%, 260px);
-  height: auto;
-  padding: 2.4rem 1.5rem;
-  gap: 0.5rem;
-}
-.addshot--empty .addshot__label {
-  font-size: 1.05rem;
+  width: min(100%, 200px);
 }
 .addshot:focus-visible {
   outline: 2px solid var(--brand-blue);
@@ -2895,315 +2585,6 @@ button[data-loading] [data-loading-label] {
   letter-spacing: 0;
 }
 
-.place-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  width: 100%;
-}
-
-.place-row {
-  display: grid;
-  grid-template-columns: 2.75rem minmax(0, 1fr);
-  column-gap: 1rem;
-  width: 100%;
-}
-
-.place-row__rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  min-height: 3.25rem;
-}
-
-.place-row__step {
-  width: 2.6875rem;
-  height: 2.6875rem;
-  min-width: 2.6875rem;
-  min-height: 2.6875rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-pill);
-  border: 2px solid var(--check-flow-ink);
-  background: transparent;
-  color: var(--check-flow-text);
-  text-align: center;
-  font-family: "Font Awesome 7 Pro", var(--font-sans);
-  font-size: var(--wa-font-size-m);
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.place-row__step--done {
-  background: var(--check-flow-ink);
-  color: var(--check-flow-on-ink);
-}
-
-.place-row__step--skipped {
-  background: var(--check-flow-ink);
-  color: var(--check-flow-on-ink);
-}
-
-.place-row__minus {
-  display: block;
-  width: 0.75rem;
-  height: 0.125rem;
-  border-radius: var(--radius-pill);
-  background: currentColor;
-}
-
-.place-row__check {
-  display: block;
-  width: 1rem;
-  height: 1rem;
-  position: relative;
-}
-
-.place-row__check::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 47%;
-  width: 0.625rem;
-  height: 0.375rem;
-  border-left: 0.125rem solid currentColor;
-  border-bottom: 0.125rem solid currentColor;
-  transform: translate(-50%, -50%) rotate(-45deg);
-  transform-origin: center;
-}
-
-.place-row__line {
-  width: 0.25rem;
-  flex: 1 1 auto;
-  min-height: 2rem;
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-}
-
-.place-row__line--short {
-  min-height: 1rem;
-}
-
-.place-row__line--done {
-  background: var(--check-flow-ink);
-}
-
-.place-row__body {
-  min-width: 0;
-  padding-bottom: 2.25rem;
-}
-
-.place-row__header {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: auto;
-  height: auto;
-  border: 0;
-  background: transparent;
-  color: var(--check-flow-text);
-  cursor: pointer;
-  font-family: var(--wa-font-family-heading, var(--font-sans));
-  font-size: var(--wa-font-size-xl);
-  font-style: normal;
-  font-weight: var(--wa-font-weight-heading);
-  line-height: 1.2;
-  margin: 0;
-  padding: 0;
-  box-shadow: none;
-  text-shadow: none;
-}
-
-.place-row__caret {
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.place-row__caret::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-top: 0.125rem solid var(--check-flow-text);
-  border-left: 0.125rem solid var(--check-flow-text);
-  transform: translate(-50%, -65%) rotate(225deg);
-}
-
-.place-row__caret--up::before {
-  transform: translate(-50%, -35%) rotate(45deg);
-}
-
-.place-row__summary,
-.place-row__prompt {
-  margin: 0.25rem 0 0;
-  color: var(--text-secondary);
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1.2;
-}
-
-.place-row__expanded {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-
-.perimeter-photos {
-  display: flex;
-  align-items: stretch;
-  gap: 0.5rem;
-  width: 100%;
-  overflow-x: auto;
-  padding-bottom: 0.25rem;
-}
-
-.perimeter-photo {
-  position: relative;
-  flex: 0 0 12.5rem;
-  width: 12.5rem;
-  height: 12.5rem;
-  aspect-ratio: 1;
-  overflow: visible;
-  border-radius: 1rem;
-}
-
-.perimeter-photo--add {
-  appearance: none;
-  -webkit-appearance: none;
-  min-height: 12.5rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1.25rem;
-  border: 0;
-  background: var(--surface-2);
-  color: var(--text-faint);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  margin: 0;
-  padding: 1rem;
-  box-shadow: none;
-  text-shadow: none;
-  line-height: 1.2;
-}
-
-.perimeter-photo__camera {
-  width: 3.375rem;
-  height: 3.375rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  color: var(--text);
-  font-size: 1.25rem;
-}
-
-.perimeter-photo--captured img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  border-radius: 1rem;
-}
-
-.perimeter-photo__menu-button {
-  position: absolute;
-  top: 1.25rem;
-  right: 1.25rem;
-  appearance: none;
-  -webkit-appearance: none;
-  width: 2.375rem;
-  height: 2.375rem;
-  flex: 0 0 2.375rem;
-  min-width: 2.375rem;
-  min-height: 2.375rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: rgba(0, 0, 0, 0.2);
-  color: #fff;
-  cursor: pointer;
-  margin: 0;
-  padding: 0;
-  box-shadow: none;
-  text-shadow: none;
-  line-height: 1;
-}
-
-.perimeter-photo__menu-button wa-icon {
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1;
-}
-
-.photo-menu {
-  position: absolute;
-  top: var(--photo-menu-top, 3.875rem);
-  right: var(--photo-menu-right, 0);
-  z-index: 5;
-  width: max-content;
-  max-width: min(17.5rem, calc(100vw - 2rem));
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  padding: 0.5rem;
-  border-radius: 1rem;
-  background: var(--surface);
-  box-shadow: var(--shadow-lift);
-}
-
-.photo-menu button {
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.5rem;
-  width: 100%;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1.2;
-  margin: 0;
-  padding: 0.75rem 1rem;
-  text-align: left;
-  white-space: nowrap;
-  box-shadow: none;
-  text-shadow: none;
-}
-
-.photo-menu button wa-icon {
-  flex: 0 0 var(--wa-font-size-s, 0.875rem);
-  width: var(--wa-font-size-s, 0.875rem);
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1;
-  text-align: center;
-}
-
-.photo-menu__danger {
-  color: var(--wa-color-danger-on-quiet, #b30532) !important;
-}
-
-.place-row__actions,
 .check-timeline__footer {
   display: flex;
   align-items: center;
@@ -3211,7 +2592,6 @@ button[data-loading] [data-loading-label] {
   flex-wrap: wrap;
 }
 
-.btn-pill,
 .check-timeline__done,
 .check-timeline__analyzing {
   appearance: none;
@@ -3232,36 +2612,6 @@ button[data-loading] [data-loading-label] {
   box-shadow: none;
   text-shadow: none;
   height: auto;
-}
-
-.place-row__actions .btn-pill {
-  min-height: 2.25rem;
-  padding: 0.5rem 1rem;
-  font-size: 1rem;
-}
-
-.btn-pill--filled {
-  background: var(--surface-3);
-  color: var(--text-secondary);
-}
-
-.btn-pill--outline {
-  border: 1px solid var(--c-line);
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.btn-pill--continue,
-.btn-pill--save-note {
-  background: var(--check-flow-ink);
-  color: var(--check-flow-on-ink);
-  font-family: var(--wa-font-family-heading, var(--font-sans));
-  font-weight: var(--wa-font-weight-heading, 600);
-}
-
-.btn-pill--continue:hover,
-.btn-pill--save-note:hover {
-  background: color-mix(in srgb, var(--check-flow-ink) 92%, #000);
 }
 
 .check-timeline__done {
@@ -3312,138 +2662,9 @@ button[data-loading] [data-loading-label] {
   transform: translate(-50%, -35%) rotate(45deg);
 }
 
-.place-timeline__add {
-  appearance: none;
-  -webkit-appearance: none;
-  align-self: flex-start;
-  width: auto;
-  height: auto;
-  min-width: 0;
-  min-height: 2.25rem;
-  max-width: max-content;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  margin: 0 0 0 0.125rem;
-  padding: 0.5rem 1rem;
-  font: inherit;
-  font-size: 1rem;
-  font-weight: 600;
-  box-shadow: none;
-  text-shadow: none;
-  line-height: 1.2;
-}
-
-.place-timeline__add-icon {
-  position: relative;
-  display: block;
-  width: 0.875rem;
-  height: 0.875rem;
-}
-
-.place-timeline__add-icon::before,
-.place-timeline__add-icon::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 0.75rem;
-  height: 0.125rem;
-  border-radius: var(--radius-pill);
-  background: currentColor;
-  transform: translate(-50%, -50%);
-}
-
-.place-timeline__add-icon::after {
-  transform: translate(-50%, -50%) rotate(90deg);
-}
-
-.typed-evidence textarea {
-  width: 100%;
-  min-height: 7.5rem;
-  resize: vertical;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1.6;
-  padding: 0.75rem 1rem;
-}
-
-.place-row__inline-ai {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--text-faint);
-}
-
-.place-row__inline-ai span,
 .skeleton-line {
   display: block;
   height: 1rem;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-}
-
-.place-row__inline-ai span {
-  width: 7.5rem;
-}
-
-.place-row__conditions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
-  list-style: none;
-  margin: 0.75rem 0 0 calc(-1 * (var(--wa-font-size-m, 1rem) + 0.5rem));
-  padding: 0;
-}
-
-.place-row__conditions li {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--check-flow-text);
-  font-family: var(--wa-font-family-heading, var(--font-sans));
-  font-size: var(--wa-font-size-m, 1rem);
-  font-weight: var(--wa-font-weight-heading, 600);
-}
-
-.place-row__conditions wa-icon {
-  flex: 0 0 var(--wa-font-size-m, 1rem);
-  width: var(--wa-font-size-m, 1rem);
-  color: var(--wa-color-neutral-fill-loud, #c4cad6);
-  font-size: var(--wa-font-size-m, 1rem);
-  line-height: 1;
-}
-
-.place-row__pending-issue {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0.75rem 0 0;
-  color: var(--wa-color-neutral-fill-loud, #c4cad6);
-}
-
-.place-row__pending-issue wa-icon {
-  flex: 0 0 var(--wa-font-size-m, 1rem);
-  width: var(--wa-font-size-m, 1rem);
-  font-size: var(--wa-font-size-m, 1rem);
-  line-height: 1;
-}
-
-.place-row__pending-issue span {
-  display: block;
-  width: 7.5rem;
-  height: 0.75rem;
   border-radius: var(--radius-pill);
   background: var(--surface-3);
 }
@@ -3913,73 +3134,6 @@ button[data-loading] [data-loading-label] {
   font-size: 2rem;
 }
 
-.add-place-dialog {
-  width: min(25rem, calc(100vw - 2rem));
-}
-
-.done-incomplete-dialog {
-  width: min(25rem, calc(100vw - 2rem));
-}
-
-.add-place-dialog__panel {
-  width: 100%;
-}
-
-.add-place-dialog__panel,
-.add-place-dialog__actions,
-.done-incomplete-dialog__panel,
-.done-incomplete-dialog__actions {
-  box-shadow: none;
-}
-
-.add-place-dialog__actions button,
-.done-incomplete-dialog__actions button {
-  width: 100%;
-  display: flex;
-  box-shadow: none;
-  text-shadow: none;
-}
-
-.add-place-dialog__field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  font-weight: 600;
-}
-
-.add-place-dialog__field input {
-  height: 2.6875rem;
-  min-height: 2.6875rem;
-  border: 1px solid var(--text-faint);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-weight: 400;
-  padding: 0.75rem 1rem;
-  box-shadow: none;
-}
-
-.add-place-dialog__field input.is-invalid {
-  border-color: var(--wa-color-danger-on-quiet, #b30532);
-  color: var(--wa-color-danger-on-quiet, #b30532);
-}
-
-.add-place-dialog__field:has(.is-invalid),
-.add-place-dialog__field small {
-  color: var(--wa-color-danger-on-quiet, #b30532);
-}
-
-#add-place-submit {
-  background: var(--ink);
-  color: var(--on-ink);
-}
-
-#add-place-submit:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
 .check-toast {
   position: fixed;
   left: 50%;
@@ -4003,8 +3157,6 @@ button[data-loading] [data-loading-label] {
 }
 
 .check-timeline button:not(.analysis-dialog__button):focus-visible,
-.typed-evidence textarea:focus-visible,
-.add-place-dialog input:focus-visible,
 .analysis-edit-dialog__field textarea:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
@@ -5258,4 +4410,108 @@ connection-status {
 .conn-banner__close:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+
+/* ---- Perimeter check: flat photo roll (docs/plan-remove-places.md) ----
+   One grid of photos for the whole perimeter, a one-line completion status,
+   and the saved description card that stands in for photos. Reuses the
+   .check-timeline chrome (topbar, title, footer buttons) and the .shotgrid /
+   .shot / .addshot tiles shared with the single-issue flow. */
+.check-roll__progress {
+  display: grid;
+  gap: 0.25rem;
+  text-align: center;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 1.0625rem;
+  line-height: 1.4;
+}
+.check-roll__progress strong {
+  color: var(--check-flow-text);
+  font-weight: 700;
+}
+.check-roll__grid {
+  /* Keep the column's left edge, but let the roll reach the viewport edge. */
+  width: calc(50% + 50vw);
+  display: grid;
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 200px;
+  justify-content: start;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
+}
+.check-roll__grid.shotgrid--empty {
+  justify-content: flex-start;
+}
+.check-roll__grid .addshot {
+  justify-self: start;
+}
+.check-roll__describe {
+  align-self: flex-start;
+  padding: 0.75rem 1rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.check-roll__describe[hidden] {
+  display: none;
+}
+.check-roll .check-timeline__footer {
+  margin-top: 1rem;
+}
+.check-roll__description:empty {
+  display: none;
+}
+.check-description {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1rem;
+}
+.check-description__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.check-description__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.check-description__button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0;
+  padding: 0.5rem 1rem;
+  box-shadow: none;
+  text-shadow: none;
+}
+.check-description__button--danger {
+  color: var(--wa-color-danger-on-quiet, #b42318);
+  border-color: currentColor;
+}
+.check-timeline__done:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

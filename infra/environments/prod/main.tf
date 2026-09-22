@@ -67,6 +67,6 @@ module "app" {
   data_classification      = var.data_classification
   bedrock_model_id         = var.bedrock_model_id
   tags                     = local.common_tags
-  frontend_domain_names    = [local.frontend_domain_name]
+  frontend_domain_names    = local.frontend_domain_names
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
 }

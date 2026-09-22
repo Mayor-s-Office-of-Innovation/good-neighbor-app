@@ -13,6 +13,7 @@
   finalization idempotently on every load until the completed header lands.
 */
 import { waitForAnalyses, completeCheck } from "./api.js";
+import { itemCountsTowardCompletion } from "../domain/check-completion.js";
 import { startRun, span, mark } from "./instrument.js";
 
 const pendingScorecardFinalizations = new Map();
@@ -139,6 +140,13 @@ async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
  * Count the evidence items already captured for this check. This is used only as
  * the coverage target for background run-level scorecard finalization; it does
  * not register or analyze anything on Done.
+ *
+ * Dead items don't count: a permanently failed item with no registered
+ * artifactId can never produce a backend artifact, so expecting it would leave
+ * waitForAnalyses waiting for an ART# row that will never exist (180s timeout,
+ * then the finalization re-kicks into the same wall on every home load). The
+ * live-item rule is shared with the completion gate (check-completion.js), so
+ * Finish enabling and the coverage target always describe the same set.
  * @param {any} check
  * @returns {number}
  */
@@ -153,10 +161,11 @@ export function expectedArtifactCountForCheck(check) {
         count +
         items.filter(
           (item) =>
-            item?.kind === "text" ||
-            item?.dataUrl ||
-            item?.upload?.artifactId ||
-            item?.analysis?.artifactId,
+            itemCountsTowardCompletion(item) &&
+            (item?.kind === "text" ||
+              item?.dataUrl ||
+              item?.upload?.artifactId ||
+              item?.analysis?.artifactId),
         ).length
       );
     },
