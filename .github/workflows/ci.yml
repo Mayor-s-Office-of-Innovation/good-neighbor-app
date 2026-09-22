@@ -95,6 +95,51 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  perf:
+    name: Performance budgets
+    # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
+    # size-budget's primary target. size-limit is the hard gate — raising a
+    # limit is a deliberate, reviewable package.json edit. lhci runs warn-only
+    # (see frontend/lighthouserc.json) until its noise floor is measured;
+    # promotion to hard gate is a separate change.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build -w frontend
+
+      - name: Bundle size budget
+        run: npx size-limit
+        working-directory: frontend
+
+      - name: Lighthouse (lab metrics, warn-only)
+        run: npx lhci autorun
+        working-directory: frontend
+
+      # Full HTML/JSON Lighthouse reports land in .lighthouseci/ on the runner;
+      # without this they die with the job and only the log summary survives.
+      # Uploaded always (not failure-only) because warn-level regressions don't
+      # fail the job — the reports are how you see them.
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-reports
+          path: frontend/.lighthouseci/
+          retention-days: 7
+          if-no-files-found: ignore
+
   security:
     name: Security scans
     if: github.actor != 'dependabot[bot]'
