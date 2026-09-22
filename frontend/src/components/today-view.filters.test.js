@@ -1,11 +1,16 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const session = vi.hoisted(() => ({ current: null }));
-const devicePosition = vi.hoisted(() => ({ current: null }));
+const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
 vi.mock("../services/device-location.js", () => ({
   getSiteCheckDeviceLocation: async () => devicePosition.current,
   getLastDeviceLocation: () => devicePosition.current,
-  onDeviceLocationChange: () => () => {},
+  onDeviceLocationChange: (listener) => {
+    devicePosition.listener = listener;
+    return () => {
+      devicePosition.listener = null;
+    };
+  },
   refreshGrantedDeviceLocation: async () => null,
 }));
 const logout = vi.hoisted(() => ({
@@ -148,6 +153,50 @@ describe("site location prompt", () => {
     expect(markup).toContain("Site 2");
     expect(markup).toMatch(/Confirm site change\s*<\/button>/);
     expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
+  });
+
+  it("keeps the location warning mounted through a background location update", async () => {
+    const view = await mount("?filter=todo");
+    view.isConnected = true;
+    const model = { tasks: [] };
+    view._homeModel = model;
+    view._viewPhase = "home";
+    view._locationPrompt = { flowType: "perimeter", launcher: null };
+    view._locationSelectedSiteId = view._siteId;
+    const render = vi.fn();
+    view._render = render;
+    view._renderHome = TodayView.prototype._renderHome.bind(view);
+    let onClose = () => {};
+    const stayButton = { addEventListener: vi.fn() };
+    const confirmButton = { addEventListener: vi.fn() };
+    const dialog = {
+      open: true,
+      addEventListener: (event, callback) => {
+        if (event === "close") onClose = callback;
+      },
+      querySelectorAll: () => [],
+      querySelector: (selector) =>
+        selector === "#location-stay" ? stayButton : confirmButton,
+    };
+    view.querySelector = () => dialog;
+    view._wireLocationDialog();
+
+    devicePosition.listener({ latitude: 37.78, longitude: -122.4194 });
+    expect(view._pendingLocationRender).toBe(true);
+    expect(render).not.toHaveBeenCalled();
+    expect(dialog.open).toBe(true);
+    expect(stayButton.addEventListener).toHaveBeenCalledWith(
+      "click",
+      expect.any(Function),
+    );
+    expect(confirmButton.addEventListener).toHaveBeenCalledWith(
+      "click",
+      expect.any(Function),
+    );
+
+    view._renderHome = vi.fn();
+    onClose();
+    expect(view._renderHome).toHaveBeenCalledWith(model);
   });
 });
 

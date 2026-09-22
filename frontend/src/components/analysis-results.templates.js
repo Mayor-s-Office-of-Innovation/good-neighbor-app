@@ -155,7 +155,11 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isClear?: boolean, actionPriority?: number }} AnalysisCardEntry
  */
 
-/** Lower ranks appear first: emergency, non-emergency, 311, on-site. */
+/**
+ * Lower ranks appear first: emergency, non-emergency, 311, on-site.
+ * @param {AnalysisTask | HomeTask} task
+ * @returns {number}
+ */
 export function analysisActionPriority(task) {
   switch (routeType(task).tone) {
     case "emergency":
@@ -169,7 +173,10 @@ export function analysisActionPriority(task) {
   }
 }
 
-/** @param {AnalysisCardEntry[]} cards */
+/**
+ * @param {AnalysisCardEntry[]} cards
+ * @returns {AnalysisCardEntry[]}
+ */
 export function sortAnalysisCards(cards) {
   return [...cards].sort(
     (a, b) =>
@@ -259,8 +266,12 @@ export function analysisResultsTray(
   `;
 }
 
+/**
+ * @param {string | Date} value date/time of the check
+ * @returns {string}
+ */
 export function recentCheckTitle(value) {
-  const date = new Date(value);
+  const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "From today's check";
   const today = new Date();
   const yesterday = new Date(today);
@@ -281,8 +292,13 @@ export function recentCheckTitle(value) {
   return `From ${day} ${time} check`;
 }
 
+/**
+ * @param {string | Date} value date/time of the check
+ * @param {Date} [now]
+ * @returns {string}
+ */
 export function historicalCheckTitle(value, now = new Date()) {
-  const date = new Date(value);
+  const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "From an earlier check";
   if (date.toDateString() === now.toDateString()) {
     const time = new Intl.DateTimeFormat(undefined, {
@@ -400,6 +416,7 @@ function analysisCardEntries(evidence, sessionCheckId, { siteName = "", siteAddr
   }));
 }
 
+/** @returns {string} */
 export function clearCheckCard() {
   return html`
     <article class="analysis-card analysis-card--clear">

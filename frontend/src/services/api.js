@@ -44,8 +44,22 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
   concurrent requests; failures surface as `ReauthRequiredError`.
 */
 
-/** Module-level in-flight refresh, shared by concurrent requests. */
-let refreshInFlight;
+/** Share refreshes only among requests for the same site. */
+const refreshInFlight = new Map();
+
+class SiteBindingChangedError extends Error {
+  constructor() {
+    super("The active site changed while this request was in flight.");
+    this.name = "SiteBindingChangedError";
+  }
+}
+
+/** @param {string} expectedSiteId */
+async function assertActiveSite(expectedSiteId) {
+  const current = await getSite().catch(() => null);
+  if (current?.siteId !== expectedSiteId) throw new SiteBindingChangedError();
+  return current;
+}
 
 /**
  * Exchange the stored refresh token for a fresh pair and persist it. Shared
@@ -63,31 +77,43 @@ let refreshInFlight;
  *   retry: `request` re-read the site but the shared promise it awaited had
  *   already resolved with the older rotation. Re-reading here (inside the
  *   shared promise) means every waiter observes the latest persisted session.
+ * @param {string} siteId the site that started the request
  * @returns {Promise<{ token: string }>}
  */
-async function refreshSession() {
-  refreshInFlight ??= (async () => {
+async function refreshSession(siteId) {
+  const existing = refreshInFlight.get(siteId);
+  if (existing) return existing;
+  const pending = (async () => {
     // Re-read inside the shared promise — never trust the caller's snapshot.
-    const site = await getSite().catch(() => null);
+    const site = await assertActiveSite(siteId);
     const refreshToken = site?.refreshToken;
     if (!refreshToken) throw new ReauthRequiredError();
     try {
       const session = await refreshDeviceToken(refreshToken);
-      await updateSiteSession(session);
+      if (session.site?.siteId && session.site.siteId !== siteId) {
+        throw new SiteBindingChangedError();
+      }
+      const stored = await updateSiteSession(session, siteId);
+      if (!stored) throw new SiteBindingChangedError();
       mark("auth:refreshed", { generation: session.tokenGeneration });
       return { token: session.token };
     } catch (err) {
+      if (err instanceof SiteBindingChangedError) throw err;
+      await assertActiveSite(siteId);
       // A 401 from the refresh endpoint is fatal: the stored session cannot
       // renew. 5xx/transport stays retryable — the session may be fine.
       if (is401(err)) throw new ReauthRequiredError();
       throw err;
-    } finally {
-      // Clear in the finally so a rejected refresh can't leave a poisoned
-      // shared promise for later requests to re-await.
-      refreshInFlight = null;
     }
   })();
-  return refreshInFlight;
+  refreshInFlight.set(siteId, pending);
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight.get(siteId) === pending) {
+      refreshInFlight.delete(siteId);
+    }
+  }
 }
 
 /**
@@ -111,15 +137,20 @@ function is401(err) {
  * @param {AbortSignal} [opts.signal]
  * @param {boolean} [opts.allowAuthRetry] internal: set false on the retry leg
  *   to stop a 401 loop
+ * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
 async function request(
   method,
   path,
-  { headers = {}, body, signal, allowAuthRetry = true } = {},
+  { headers = {}, body, signal, allowAuthRetry = true, originSiteId } = {},
 ) {
   const hasBody = body !== undefined;
   const site = await getSite().catch(() => null);
+  if (originSiteId && site?.siteId !== originSiteId) {
+    throw new SiteBindingChangedError();
+  }
+  const requestSiteId = originSiteId || site?.siteId || "";
   const authHeaders = site?.token
     ? { authorization: `Bearer ${site.token}` }
     : {};
@@ -182,7 +213,7 @@ async function request(
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
-        await refreshSession();
+        await refreshSession(requestSiteId);
       } catch (err) {
         classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
@@ -197,13 +228,14 @@ async function request(
       // invalidating our in-flight retry's token — devices.js CAS) — that's
       // a lost race, not a dead session: surface a plain 401 (this call
       // fails, the app stays healthy) instead of the global ReauthRequiredError.
-      const retryToken = (await getSite().catch(() => null))?.token;
+      const retryToken = (await assertActiveSite(requestSiteId))?.token;
       try {
         return await request(method, path, {
           headers,
           body,
           signal,
           allowAuthRetry: false,
+          originSiteId: requestSiteId,
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
