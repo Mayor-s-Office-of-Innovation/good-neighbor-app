@@ -95,6 +95,9 @@ class AppRoot extends HTMLElement {
     if (!viewport || this._onKeyboardViewport) return;
     this._onKeyboardViewport = () => this._syncKeyboardViewport();
     viewport.addEventListener("resize", this._onKeyboardViewport);
+    // Pans (Safari revealing a newly focused field, or the user dragging)
+    // change offsetTop without a resize; only "scroll" reports them.
+    viewport.addEventListener("scroll", this._onKeyboardViewport);
     document.addEventListener("focusin", this._onKeyboardViewport);
     document.addEventListener("focusout", this._onKeyboardViewport);
   }
@@ -103,6 +106,10 @@ class AppRoot extends HTMLElement {
     if (!this._onKeyboardViewport) return;
     window.visualViewport?.removeEventListener(
       "resize",
+      this._onKeyboardViewport,
+    );
+    window.visualViewport?.removeEventListener(
+      "scroll",
       this._onKeyboardViewport,
     );
     document.removeEventListener("focusin", this._onKeyboardViewport);
