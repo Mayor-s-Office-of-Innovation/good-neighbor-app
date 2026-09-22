@@ -6,6 +6,10 @@
 
 const LOCATION_TIMEOUT_MS = 10_000;
 const CAPTURE_LOCATION_TIMEOUT_MS = 2_000;
+const PERMISSION_REQUESTED_KEY = "gnp:location-permission-requested";
+let requestedEarly = false;
+let earlyRequestPending = false;
+let capturePromptAttempted = false;
 
 /**
  * @typedef {{ latitude: number, longitude: number }} DeviceLocation
@@ -28,7 +32,7 @@ export function getDeviceLocation({
     return Promise.resolve(null);
   }
 
-  void logLocationPermissionState();
+  void locationPermissionState();
   console.info("[location] Position request started.");
 
   return new Promise((resolve) => {
@@ -92,14 +96,22 @@ export function getDeviceLocation({
  * unresponsive browser must not hold up artifact registration or upload.
  * @returns {Promise<DeviceLocation | null>}
  */
-export function getCaptureDeviceLocation() {
+export async function getCaptureDeviceLocation() {
+  const state = await locationPermissionState();
+  if (state === "denied" || earlyRequestPending) return null;
+  if (state !== "granted") {
+    // A first capture is a user-initiated fallback for browsers that suppress
+    // startup prompts. Do not repeat a dismissed/unsupported prompt per photo.
+    if (capturePromptAttempted) return null;
+    capturePromptAttempted = true;
+  }
   return getDeviceLocation({ timeoutMs: CAPTURE_LOCATION_TIMEOUT_MS });
 }
 
-async function logLocationPermissionState() {
-  if (!navigator.permissions?.query) {
+async function locationPermissionState() {
+  if (typeof navigator === "undefined" || !navigator.permissions?.query) {
     console.info("[location] Permissions API unavailable.");
-    return;
+    return null;
   }
 
   try {
@@ -107,30 +119,31 @@ async function logLocationPermissionState() {
       name: "geolocation",
     });
     console.info(`[location] Permission state: ${permission.state}`);
+    return permission.state;
   } catch (error) {
     console.info("[location] Permission state unavailable.", error);
+    return null;
   }
 }
 
 /**
- * Start the permission request as soon as a device is bound. This is best
- * effort: the capture flow makes its own fresh request for every artifact.
+ * Ask once on first launch. The marker records an attempt, not permission:
+ * only the browser's current permission state authorizes capture requests.
  * @returns {void}
  */
 export function requestLocationPermissionEarly() {
-  if (typeof navigator === "undefined" || !navigator.geolocation) {
-    console.warn("[location] Geolocation API unavailable.");
-    return;
+  if (typeof navigator === "undefined" || !navigator.geolocation) return;
+  if (requestedEarly) return;
+  requestedEarly = true;
+  try {
+    if (localStorage.getItem(PERMISSION_REQUESTED_KEY)) return;
+    // Write before requesting so remounts/reloads cannot issue another prompt.
+    localStorage.setItem(PERMISSION_REQUESTED_KEY, "1");
+  } catch {
+    // Restricted storage still gets one attempt per page lifetime.
   }
-
-  void logLocationPermissionState();
-  void getDeviceLocation({
-    onError: (error) => {
-      console.warn(
-        `[location] Position request failed (code ${error.code}): ${error.message}`,
-      );
-    },
-  }).then((location) => {
-    if (location) console.info("[location] Position acquired.");
+  earlyRequestPending = true;
+  void getDeviceLocation().finally(() => {
+    earlyRequestPending = false;
   });
 }
