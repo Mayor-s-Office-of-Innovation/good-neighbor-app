@@ -95,6 +95,60 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  perf:
+    name: Performance budgets
+    # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
+    # size-budget's primary target. size-limit is the hard gate — raising a
+    # limit is a deliberate, reviewable package.json edit. lhci runs warn-only
+    # (see frontend/lighthouserc.json) until its noise floor is measured;
+    # promotion to hard gate is a separate change.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build -w frontend
+
+      - name: Bundle size budget
+        run: npx size-limit
+        working-directory: frontend
+
+      - name: Lighthouse (lab metrics, warn-only)
+        run: npx lhci autorun
+        working-directory: frontend
+
+      # LHCI's assert output only prints rows for warn/fail assertions, so a
+      # clean run logs nothing. This script prints a per-run metrics table into
+      # the step log AND the run's Summary tab. Reads .lighthouseci/ (which the
+      # step above leaves relative to THIS working-directory: frontend).
+      - name: Print Lighthouse results
+        run: node scripts/print-lighthouse.mjs
+        working-directory: frontend
+
+      # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and
+      # upload-artifact@v7 excludes hidden files by default — hence
+      # include-hidden-files: true (its absence is what produced
+      # "No files were found" on the first runs, twice).
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-reports
+          path: frontend/.lighthouseci/
+          retention-days: 7
+          if-no-files-found: ignore
+          include-hidden-files: true
+
   security:
     name: Security scans
     if: github.actor != 'dependabot[bot]'
