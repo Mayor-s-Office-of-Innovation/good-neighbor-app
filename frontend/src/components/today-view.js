@@ -126,17 +126,32 @@ export function isOutsideSiteRadius(position, site) {
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, places?: Record<string, {items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}>}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
+ * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
  */
-export function isStalePendingSession(session, submitted) {
+export function isStalePendingSession(session, submitted, tasks = []) {
   if (!session) return false;
   if (session.status === "capture-complete") {
-    // The background scorecard has no terminal transition, so a completed
-    // backend check with the same id is the only signal the run has landed —
-    // the local mirror can then be dropped (re-finalizing it is idempotent,
-    // but repeats on every home load otherwise).
+    // The backend check can be submitted before per-artifact guidance has
+    // finished. Keep the local results alive until every captured item has
+    // settled; otherwise its last analysis update cannot refresh home.
+    const items = Object.values(session.places || {}).flatMap((place) =>
+      Array.isArray(place?.items) ? place.items : [],
+    );
+    if (items.some((item) => item.analysis?.status !== "analyzed")) {
+      return false;
+    }
+    if (
+      items.some(
+        (item) =>
+          hasProblemResults(item) &&
+          !sessionProblemItemHasBackendCards(item, tasks),
+      )
+    ) {
+      return false;
+    }
     return submitted.some((check) => check.id === session.id);
   }
   if (submitted.some((check) => check.id === session.id)) return false;
@@ -905,7 +920,9 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
-    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+    if (
+      this._isStalePendingSession(effectivePendingSession, submitted, tasks)
+    ) {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "capture-complete") {
@@ -1666,8 +1683,8 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _isStalePendingSession(session, submitted) {
-    return isStalePendingSession(session, submitted);
+  _isStalePendingSession(session, submitted, tasks) {
+    return isStalePendingSession(session, submitted, tasks);
   }
 
   _firstRunBlock() {

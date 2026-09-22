@@ -1668,7 +1668,7 @@ html.wa-dark .home-tabs__tab--active {
 }
 
 .home-results__complete-content h2 {
-  color: var(--wa-color-brand-fill-loud, #0071ec);
+  color: var(--brand-blue);
   font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.6;
@@ -1688,10 +1688,6 @@ html.wa-dark .home-tabs__tab--active {
 
 .home-results__complete-note a {
   color: var(--wa-color-text-link, #0053c0);
-  text-decoration: none;
-}
-
-.home-results__complete-note a:hover {
   text-decoration: underline;
 }
 
@@ -1707,10 +1703,6 @@ html.wa-dark .home-results__complete {
 html.wa-dark .home-results__complete-content img {
   filter: invert(1);
   mix-blend-mode: screen;
-}
-
-html.wa-dark .home-results__complete-content h2 {
-  color: var(--wa-color-text-link, #78b8ff);
 }
 
 .assessment-tile {
