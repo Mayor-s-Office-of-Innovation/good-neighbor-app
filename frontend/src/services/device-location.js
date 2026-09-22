@@ -8,7 +8,8 @@ const LOCATION_TIMEOUT_MS = 10_000;
 const CAPTURE_LOCATION_TIMEOUT_MS = 2_000;
 const PERMISSION_REQUESTED_KEY = "gnp:location-permission-requested";
 let requestedEarly = false;
-let earlyRequestPending = false;
+/** @type {Promise<DeviceLocation | null> | null} */
+let earlyLocationRequest = null;
 let capturePromptAttempted = false;
 
 /**
@@ -97,8 +98,11 @@ export function getDeviceLocation({
  * @returns {Promise<DeviceLocation | null>}
  */
 export async function getCaptureDeviceLocation() {
+  // Retain the request even if it settles while the permission query runs.
+  const startupRequest = earlyLocationRequest;
   const state = await locationPermissionState();
-  if (state === "denied" || earlyRequestPending) return null;
+  if (state === "denied") return null;
+  if (startupRequest) return waitForStartupLocation(startupRequest);
   if (state !== "granted") {
     // A first capture is a user-initiated fallback for browsers that suppress
     // startup prompts. Do not repeat a dismissed/unsupported prompt per photo.
@@ -106,6 +110,25 @@ export async function getCaptureDeviceLocation() {
     capturePromptAttempted = true;
   }
   return getDeviceLocation({ timeoutMs: CAPTURE_LOCATION_TIMEOUT_MS });
+}
+
+/**
+ * Bound only this capture's wait; leave the shared startup request running.
+ * @param {Promise<DeviceLocation | null>} request
+ * @returns {Promise<DeviceLocation | null>}
+ */
+async function waitForStartupLocation(request) {
+  let timer;
+  try {
+    return await Promise.race([
+      request,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), CAPTURE_LOCATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function locationPermissionState() {
@@ -142,8 +165,7 @@ export function requestLocationPermissionEarly() {
   } catch {
     // Restricted storage still gets one attempt per page lifetime.
   }
-  earlyRequestPending = true;
-  void getDeviceLocation().finally(() => {
-    earlyRequestPending = false;
+  earlyLocationRequest = getDeviceLocation().finally(() => {
+    earlyLocationRequest = null;
   });
 }
