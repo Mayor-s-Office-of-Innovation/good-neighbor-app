@@ -17,10 +17,10 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
   - input-1.jpg → stub returns the multi-concern fixture → task / condition
     cards for temporary shelters / litter / graffiti appear in the
     "Analyzing evidence" tray on the capture view.
-  - input-2.jpg × 4 → stub returns the clean fixture → "No issues found" cards
-    only. Finish stays disabled until the fifth photo lands (the completion
-    rule in frontend/src/domain/check-completion.js: five photos, or one
-    description — see describe-instead.e2e.spec.js for the text path).
+  - input-2.jpg × 4 → stub returns the clean fixture. Since photo 1 has issues,
+    no clear-check card should appear. Finish stays disabled until the fifth
+    photo lands (the completion rule in frontend/src/domain/check-completion.js:
+    five photos, or one description — see describe-instead.e2e.spec.js).
   - Finish check → back home, NEW task cards appear in the results tray →
     dismiss every generated card via its delete (trash) button + confirm.
 
@@ -60,18 +60,12 @@ test.describe("perimeter check", () => {
     // into completed cards in the analyzing tray (tents → immediate 311
     // escalation task; litter + graffiti → rules that may need an answer).
     // The stub answers fast, but the pipeline (SQS → worker → analyzer →
-    // assessments:evaluate) takes a beat. Waiting for a completed card that is
-    // NOT the clean verdict proves the issues analysis actually landed.
-    const issueCards = analyzingTray.locator(
-      '.analysis-card--done:not([data-card-title="No issues found"])',
-    );
+    // assessments:evaluate) takes a beat. A completed issue card proves the
+    // issues analysis actually landed.
+    const issueCards = analyzingTray.locator(".analysis-card--done");
     await expect(issueCards.first()).toBeVisible({ timeout: 90_000 });
     expect(await issueCards.count()).toBeGreaterThan(0);
-    await expect(
-      analyzingTray.locator(
-        '.analysis-card[data-card-title="No issues found"]',
-      ),
-    ).toHaveCount(0);
+    await expect(analyzingTray.locator(".analysis-card--clear")).toHaveCount(0);
 
     // --- Photos 2–5: the clean scene, four times ---------------------------
     // Photo 1's analysis has landed, so switching the fixture now cannot leak
@@ -96,16 +90,21 @@ test.describe("perimeter check", () => {
     await expect(progress).toContainText("Ready to finish.");
     await expect(done).toBeEnabled();
 
-    // Clean verdicts: each clean photo renders the analyzed-with-zero-concerns
-    // terminal card ("No issues found") once its pipeline lands. Waiting for
-    // THOSE cards (rather than asserting absence of conditions) proves the
-    // analysis actually completed for every clean photo — a failed or stalled
-    // analysis would never produce one.
-    await expect(
-      analyzingTray.locator(
-        '.analysis-card[data-card-title="No issues found"]',
-      ),
-    ).toHaveCount(MIN_PHOTOS - 1, { timeout: 90_000 });
+    // Wait for every photo's analysis to finish. A clear-check card is shown
+    // only when the entire check has no issues, so these four clean photos
+    // must not add one alongside photo 1's issue cards.
+    await expect(page.locator("#toggle-analyzing")).not.toContainText(
+      "Analyzing...",
+      { timeout: 90_000 },
+    );
+    await expect(analyzingTray.locator(".analysis-card--pending")).toHaveCount(
+      0,
+    );
+    await expect(analyzingTray.locator(".analysis-card--failed")).toHaveCount(
+      0,
+    );
+    await expect(analyzingTray.locator(".analysis-card--clear")).toHaveCount(0);
+    await expect(issueCards.first()).toBeVisible();
 
     // --- Finish check → home ----------------------------------------------
     // No confirm dialog: the rule is met, so Finish goes straight home.
