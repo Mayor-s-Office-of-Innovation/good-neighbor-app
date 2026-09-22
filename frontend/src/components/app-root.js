@@ -59,6 +59,16 @@ class AppRoot extends HTMLElement {
       this._renderSetup();
     };
     window.addEventListener("authsignout", this._onAuthSignout);
+    this._onSiteRequested = (event) => {
+      const { siteId = "", siteName = "", mode = "code" } = event.detail || {};
+      this._renderSetup({
+        targetSiteId: siteId,
+        targetSiteName: siteName,
+        mode,
+        canCancel: Boolean(this._site),
+      });
+    };
+    this.addEventListener("siterequested", this._onSiteRequested);
     // Health monitoring starts regardless of binding state: /health is
     // authorizer-free, and the AUTH dialog is meaningful before setup too.
     startHealthMonitoring();
@@ -76,12 +86,23 @@ class AppRoot extends HTMLElement {
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
+    this.removeEventListener("siterequested", this._onSiteRequested);
   }
 
-  _renderSetup() {
-    this.innerHTML = setupView();
+  _renderSetup(options = {}) {
+    if (this._unsub) {
+      this._unsub();
+      this._unsub = null;
+    }
+    this.innerHTML = setupView(options);
     this.append(document.createElement("connection-status"));
     this._maybeWarnInAppBrowser();
+    this.querySelector("site-setup").addEventListener("sitecancel", () => {
+      if (!this._site) return;
+      this._renderApp();
+      this._unsub = onRouteChange(() => this._renderView());
+      this._renderView();
+    });
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state

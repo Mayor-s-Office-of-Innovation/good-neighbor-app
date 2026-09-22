@@ -2,6 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { devSiteCodeSeeds, seedSiteCodes } from "./site-code-seeds.mjs";
 
 describe("seedSiteCodes", () => {
+  it("gives every seeded provider more than one site and unique login codes", () => {
+    const byProvider = new Map();
+    for (const seed of devSiteCodeSeeds) {
+      byProvider.set(
+        seed.providerId,
+        (byProvider.get(seed.providerId) || 0) + 1,
+      );
+    }
+    expect([...byProvider.values()].every((count) => count >= 2)).toBe(true);
+    expect(new Set(devSiteCodeSeeds.map((seed) => seed.code)).size).toBe(
+      devSiteCodeSeeds.length,
+    );
+  });
+
   it("does not reset existing dynamic setup codes", async () => {
     const send = vi.fn(async (command) => {
       if (command.input.Item?.type === "setupCode") {

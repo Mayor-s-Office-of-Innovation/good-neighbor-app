@@ -20,6 +20,9 @@ const SITE_SEARCH_DELAY_MS = 250;
 
 class SiteSetup extends HTMLElement {
   connectedCallback() {
+    this._targetSiteId = this.getAttribute("data-target-site-id") || "";
+    this._targetSiteName = this.getAttribute("data-target-site-name") || "";
+    this._canCancel = this.hasAttribute("data-can-cancel");
     this._onVisualViewportChange = () => this._syncVisualViewport();
     window.visualViewport?.addEventListener(
       "resize",
@@ -33,7 +36,8 @@ class SiteSetup extends HTMLElement {
     this._code = formatSiteCode(readCodeFromUrl());
     this._checking = false;
     this._error = "";
-    this._mode = "code";
+    this._mode =
+      this.getAttribute("data-mode") === "request" ? "request" : "code";
     this._request = {
       query: "",
       email: "",
@@ -82,7 +86,13 @@ class SiteSetup extends HTMLElement {
       error: this._error,
       checking: this._checking,
       mode: this._mode,
+      targetSiteName: this._targetSiteName,
+      canCancel: this._canCancel,
       request: this._request,
+    });
+
+    this.querySelector("#cancel-site-switch")?.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("sitecancel", { bubbles: true }));
     });
 
     if (this._mode === "request") {
@@ -323,8 +333,14 @@ class SiteSetup extends HTMLElement {
       return;
     }
 
-    stripCodeFromUrl();
     const providerSite = result.providerSite;
+    if (this._targetSiteId && providerSite.siteId !== this._targetSiteId) {
+      this._checking = false;
+      this._error = `This code is for ${providerSite.name}, not ${this._targetSiteName || "the selected site"}.`;
+      this._render();
+      return;
+    }
+    stripCodeFromUrl();
     // Register the device and mint its session (Option 4 device auth —
     // docs/adr/0010): the token rides the site record; after this point the
     // setup code is never needed again (the refresh flow renews silently).

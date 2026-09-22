@@ -5,7 +5,7 @@
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
+ * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
@@ -13,6 +13,8 @@ export const codeEntryView = ({
   error = "",
   checking = false,
   mode = "code",
+  targetSiteName = "",
+  canCancel = false,
   request = {},
 } = {}) => html`
   <div class="login" aria-labelledby="login-title">
@@ -24,13 +26,20 @@ export const codeEntryView = ({
         <p>
           ${mode === "request"
             ? "Request a new site code"
-            : "Enter a site code"}
+            : targetSiteName
+              ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
+              : "Enter a site code"}
         </p>
       </div>
 
       ${mode === "request"
         ? requestCodeView(request)
         : enterCodeView({ value, error, checking })}
+      ${canCancel
+        ? html`<button id="cancel-site-switch" class="btn-link" type="button">
+            Back to current site
+          </button>`
+        : ""}
     </section>
   </div>
 `;

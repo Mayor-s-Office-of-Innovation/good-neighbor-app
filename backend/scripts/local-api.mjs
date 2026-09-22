@@ -38,7 +38,7 @@ import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
-import { getSite } from "../src/handlers/site.js";
+import { getSite, listProviderSites } from "../src/handlers/site.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
@@ -148,6 +148,7 @@ const routes = [
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config
   route("GET", "/v1/site", getSite),
+  route("GET", "/v1/provider-sites", listProviderSites),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
