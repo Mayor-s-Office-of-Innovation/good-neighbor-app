@@ -39,6 +39,7 @@
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
   folder is plans + history, see AGENTS.md).
+- **[Photo thumbnails](runbooks/photo-thumbnails.md)** — thumbnail generation, legacy fallback, and scoped backfill/retry commands.
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
 

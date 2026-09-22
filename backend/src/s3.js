@@ -112,3 +112,16 @@ export async function getObjectBytes({ bucket, key }) {
     contentLength: out.ContentLength,
   };
 }
+
+/** @param {{ bucket: string, key: string, bytes: Buffer, contentType: string }} options */
+export async function putObjectBytes({ bucket, key, bytes, contentType }) {
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: bytes,
+      ContentType: contentType,
+      CacheControl: "private, max-age=300",
+    }),
+  );
+}

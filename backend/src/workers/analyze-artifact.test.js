@@ -13,6 +13,7 @@ const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
     createAnalyzerClient: vi.fn(),
   }),
 );
+vi.mock("../media/thumbnail.js", () => ({ ensureThumbnail: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
 vi.mock("../media/downscale.js", () => ({
@@ -367,4 +368,20 @@ describe("analyze-artifact worker", () => {
       { type: "text", text: "Trash is next to the west entrance." },
     ]);
   });
+});
+
+it("continues analysis when thumbnail generation fails", async () => {
+  getObjectBytes.mockResolvedValueOnce({
+    bytes: Buffer.from("image"),
+    contentType: "image/jpeg",
+  });
+  analyze.mockResolvedValueOnce(singleLowConcernResponse);
+  ddbSend.mockResolvedValue({});
+  const { ensureThumbnail } = await import("../media/thumbnail.js");
+  vi.mocked(ensureThumbnail).mockRejectedValueOnce(
+    new Error("Thumbnail storage unavailable"),
+  );
+  const result = await invoke(baseMsg);
+  expect(result.batchItemFailures).toEqual([]);
+  expect(analyze).toHaveBeenCalled();
 });

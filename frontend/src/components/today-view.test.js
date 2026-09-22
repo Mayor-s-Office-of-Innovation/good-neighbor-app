@@ -1,5 +1,11 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.mock("../services/api.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getCheck: vi.fn(),
+  getMediaUrl: vi.fn(),
+}));
+
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("window", {
@@ -481,4 +487,44 @@ describe("card deletion events", () => {
       expect(view._focusAfterRender).toBe(fromChild ? "capture-heading" : null);
     },
   );
+});
+
+describe("home evidence refresh", () => {
+  it("loads photos added after an earlier read of the same check without a page reload", async () => {
+    const { getCheck, getMediaUrl } = await import("../services/api.js");
+    const { hydrateTaskEvidence } = await import("./today-view.js");
+    vi.mocked(getCheck)
+      .mockResolvedValueOnce(/** @type {any} */ ({ artifacts: [] }))
+      .mockResolvedValueOnce(
+        /** @type {any} */ ({
+          artifacts: [
+            {
+              artifactId: "new-photo",
+              s3Key: "checks/site/check/photo",
+              contentType: "image/jpeg",
+            },
+          ],
+        }),
+      );
+    vi.mocked(getMediaUrl).mockResolvedValue(
+      /** @type {any} */ ({ downloadUrl: "https://example.test/thumbnail" }),
+    );
+    const tasks = [
+      {
+        taskId: "new-task",
+        checkId: "growing-check",
+        sourceArtifactIds: ["new-photo"],
+      },
+    ];
+    expect((await hydrateTaskEvidence(tasks))[0].thumbnailUrl).toBeUndefined();
+    expect((await hydrateTaskEvidence(tasks))[0].thumbnailUrl).toBe(
+      "https://example.test/thumbnail",
+    );
+    expect(getCheck).toHaveBeenCalledTimes(2);
+    expect(getMediaUrl).toHaveBeenCalledWith(
+      "growing-check",
+      "new-photo",
+      "thumbnail",
+    );
+  });
 });

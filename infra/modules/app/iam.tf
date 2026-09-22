@@ -225,6 +225,13 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
+    sid       = "WriteThumbnails"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/checks/*/thumbnails/*"]
+  }
+
+  statement {
     sid    = "ConsumeQueue"
     effect = "Allow"
     actions = [

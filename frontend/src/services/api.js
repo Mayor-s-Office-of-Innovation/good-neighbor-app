@@ -469,15 +469,16 @@ export async function putMedia(uploadUrl, blob, contentType) {
 
 /**
  * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — a short-lived presigned
- * GET so staff can review the original photo (admin/read path).
+ * GET for an original photo or a compact card thumbnail.
  * @param {string} checkId
  * @param {string} artifactId
+ * @param {"original" | "thumbnail"} [variant]
  * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, expiresIn: number }>}
  */
-export function getMediaUrl(checkId, artifactId) {
+export function getMediaUrl(checkId, artifactId, variant = "original") {
   return request(
     "GET",
-    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/media${variant === "original" ? "" : `?variant=${encodeURIComponent(variant)}`}`,
   );
 }
 

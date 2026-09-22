@@ -69,6 +69,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [id]
  * @property {"photo" | "text" | string} [kind]
  * @property {string} [dataUrl]
+ * @property {string} [previewDataUrl]
  * @property {string} [text]
  * @property {string} [placeId]
  * @property {string} [placeName]
@@ -712,7 +713,10 @@ function evidencePreview(item) {
   if (item.kind === "text") {
     return textPreview(item.placeName || "Site");
   }
-  return imagePreview(item.dataUrl, item.placeName || "Site");
+  return imagePreview(
+    item.previewDataUrl || item.dataUrl,
+    item.placeName || "Site",
+  );
 }
 
 function imagePreview(src, placeName) {
@@ -720,6 +724,8 @@ function imagePreview(src, placeName) {
     <div class="analysis-card__media">
       <img
         src="${escapeAttr(src)}"
+        loading="lazy"
+        decoding="async"
         alt="Evidence from ${escapeAttr(placeName || "the site")}"
       />
       <span>${escapeHtml(placeName || "Site")}</span>

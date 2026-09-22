@@ -24,7 +24,8 @@ import {
 } from "../analysis/analyzer-client.js";
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
-import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import { ensureThumbnail } from "../media/thumbnail.js";
+import { artifactKey, analysisKey, checkHeaderKey } from "../handlers/keys.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -192,6 +193,27 @@ async function analyzeArtifact(msg, { client, dynamoTable, uploadBucket }) {
       bucket: uploadBucket,
       key: msg.s3Key,
     });
+    // Thumbnail failure must not discard a valid condition analysis. The
+    // thumbnail backfill command retries these artifacts without invoking AI.
+    try {
+      await ensureThumbnail({
+        dynamoTable,
+        uploadBucket,
+        key: artifactKey(
+          msg.siteId,
+          msg.checkId,
+          msg.placeId ?? "perimeter",
+          msg.artifactId,
+        ),
+        s3Key: msg.s3Key,
+        bytes: object.bytes,
+      });
+    } catch (error) {
+      console.warn("Thumbnail generation failed; backfill can retry", {
+        artifactId: msg.artifactId,
+        error,
+      });
+    }
     let downscaled;
     try {
       downscaled = await downscaleImage(

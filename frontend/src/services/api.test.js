@@ -4,6 +4,7 @@ import {
   dataUrlToBlob,
   editAnalysisCondition,
   getSiteSettings,
+  getMediaUrl,
   rejectAnalysisCondition,
   waitForAnalyses,
 } from "./api.js";
@@ -245,4 +246,16 @@ describe("dataUrlToBlob", () => {
       dataUrlToBlob("data:image/jpeg;base64"),
     ).rejects.toBeInstanceOf(ApiError);
   });
+});
+
+it("requests thumbnail media explicitly while leaving original reads unchanged", async () => {
+  const fetch = stubGetCheck([{ artifacts: [], analyses: [] }]);
+  await getMediaUrl("check-1", "photo-1", "thumbnail");
+  expect(/** @type {any} */ (fetch.mock.calls)[0][0]).toContain(
+    "/artifacts/photo-1/media?variant=thumbnail",
+  );
+  await getMediaUrl("check-1", "photo-1");
+  expect(/** @type {any} */ (fetch.mock.calls)[1][0]).toMatch(
+    /\/artifacts\/photo-1\/media$/,
+  );
 });

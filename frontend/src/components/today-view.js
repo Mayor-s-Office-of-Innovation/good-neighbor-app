@@ -336,7 +336,7 @@ function sameProblemCard(localTask, backendTask) {
   );
 }
 
-async function hydrateTaskEvidence(tasks) {
+export async function hydrateTaskEvidence(tasks) {
   const checkIds = [
     ...new Set(tasks.map((task) => task?.checkId).filter(Boolean)),
   ];
@@ -374,7 +374,6 @@ async function hydrateTaskEvidence(tasks) {
           return {
             ...task,
             evidence,
-            mediaUrl: downloadUrl,
             thumbnailUrl: downloadUrl,
           };
         } catch (err) {
@@ -391,27 +390,31 @@ async function hydrateTaskEvidence(tasks) {
 }
 
 async function cachedCheckArtifacts(checkId) {
+  // Deduplicate concurrent reads only. A check can gain more artifacts while
+  // capture is open; retaining a resolved snapshot hides later photos until
+  // reload, even when their task cards have already arrived.
   if (!CHECK_ARTIFACTS_CACHE.has(checkId)) {
-    CHECK_ARTIFACTS_CACHE.set(
-      checkId,
-      getCheck(checkId)
-        .then((result) => result.artifacts || [])
-        .catch((err) => {
-          console.warn("Could not hydrate task evidence", { checkId, err });
-          CHECK_ARTIFACTS_CACHE.delete(checkId);
-          return [];
-        }),
-    );
+    const request = getCheck(checkId)
+      .then((result) => result.artifacts || [])
+      .catch((err) => {
+        console.warn("Could not hydrate task evidence", { checkId, err });
+        return [];
+      })
+      .finally(() => {
+        CHECK_ARTIFACTS_CACHE.delete(checkId);
+      });
+    CHECK_ARTIFACTS_CACHE.set(checkId, request);
   }
   return CHECK_ARTIFACTS_CACHE.get(checkId);
 }
 
-async function cachedMediaUrl(checkId, artifactId) {
-  const key = `${checkId}:${artifactId}`;
+/** @param {string} checkId @param {string} artifactId @param {"original" | "thumbnail"} [variant] */
+async function cachedMediaUrl(checkId, artifactId, variant = "thumbnail") {
+  const key = `${checkId}:${artifactId}:${variant}`;
   if (!MEDIA_URL_CACHE.has(key)) {
     MEDIA_URL_CACHE.set(
       key,
-      getMediaUrl(checkId, artifactId)
+      getMediaUrl(checkId, artifactId, variant)
         .then((media) => media.downloadUrl)
         .catch((err) => {
           MEDIA_URL_CACHE.delete(key);

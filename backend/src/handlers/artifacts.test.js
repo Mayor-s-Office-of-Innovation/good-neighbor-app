@@ -656,6 +656,9 @@ describe("presignMedia", () => {
           sk: "CHECK#chk_01#ART#place-north#art_1",
           artifactId: "art_1",
           s3Key: "checks/site-1/chk_01/place-north/art_1",
+          thumbnail: {
+            s3Key: "checks/site-1/chk_01/place-north/art_1/thumbnails/v1.jpg",
+          },
         },
       ],
     });
@@ -717,4 +720,50 @@ describe("presignMedia", () => {
     expect(res.statusCode).toBe(400);
     expect(ddbSend).not.toHaveBeenCalled();
   });
+});
+
+it.each([true, false])(
+  "serves thumbnail variant with legacy fallback (thumbnail exists: %s)",
+  async (hasThumbnail) => {
+    const original = "checks/site-1/chk_01/perimeter/art_1";
+    const thumb = `${original}/thumbnails/v1.jpg`;
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "art_1",
+          s3Key: original,
+          ...(hasThumbnail ? { thumbnail: { s3Key: thumb } } : {}),
+        },
+      ],
+    });
+    presignGet.mockResolvedValueOnce("https://signed.example/image");
+    const event = {
+      ...mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+      queryStringParameters: { variant: "thumbnail" },
+    };
+    const response = await callMedia(event);
+    expect(response.statusCode).toBe(200);
+    expect(presignGet).toHaveBeenCalledWith(
+      expect.objectContaining({ key: hasThumbnail ? thumb : original }),
+    );
+    expect(
+      ddbSend.mock.calls[0][0].input.ExpressionAttributeValues[":pk"],
+    ).toBe("SITE#site-1");
+  },
+);
+it("rejects unknown media variants before signing", async () => {
+  const response = await callMedia({
+    ...mediaEvent({
+      checkId: "chk_01",
+      artifactId: "art_1",
+      siteClaim: "site-1",
+    }),
+    queryStringParameters: { variant: "arbitrary-key" },
+  });
+  expect(response.statusCode).toBe(400);
+  expect(presignGet).not.toHaveBeenCalled();
 });

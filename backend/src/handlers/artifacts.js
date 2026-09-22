@@ -390,6 +390,10 @@ export const deleteArtifact = async (event) => {
  */
 export const presignMedia = async (event) => {
   const { dynamoTable, uploadBucket } = getConfig();
+  const variant = event.queryStringParameters?.variant ?? "original";
+  if (!["original", "thumbnail"].includes(variant)) {
+    return jsonResponse(400, { error: "Invalid media variant" });
+  }
   const siteId = deriveSiteId(event);
 
   const checkId = event.pathParameters?.checkId;
@@ -415,15 +419,19 @@ export const presignMedia = async (event) => {
     return jsonResponse(404, { error: "Artifact not found" });
   }
 
+  const selectedKey =
+    variant === "thumbnail" && artifact.thumbnail?.s3Key
+      ? artifact.thumbnail.s3Key
+      : artifact.s3Key;
   const downloadUrl = await presignGet({
     bucket: uploadBucket,
-    key: artifact.s3Key,
+    key: selectedKey,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
 
   return jsonResponse(200, {
     artifactId,
-    s3Key: artifact.s3Key,
+    s3Key: selectedKey,
     downloadUrl,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });

@@ -334,3 +334,10 @@ when both revisions have an explicit condition ID (`explicitConditionId`), the
 same lineage, and matching policy/category/severity/description. Empty evidence
 lists alone do not establish identity. Task retirement is deferred until guidance
 publication succeeds; analyzer amendments alone no longer retire tasks.
+
+### Artifact thumbnail metadata
+
+Image artifacts may include `thumbnail: { s3Key, width, height, contentType }`.
+The analysis worker publishes this only after storing the derivative in S3.
+Older artifacts and failed thumbnail attempts omit it; media reads fall back to
+the original. See [photo thumbnail operations](runbooks/photo-thumbnails.md).

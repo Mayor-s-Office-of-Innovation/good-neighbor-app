@@ -21,6 +21,7 @@ import {
   ApiError,
   LEG,
 } from "./api.js";
+import { createPhotoPreview } from "./photo-preview.js";
 import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
@@ -736,6 +737,18 @@ async function run(placeId, itemId) {
 
   const startedAt = Date.now();
   try {
+    if (item.kind === "photo" && item.dataUrl && !item.previewDataUrl) {
+      const previewDataUrl = await createPhotoPreview(item.dataUrl);
+      const current = getCurrentCheck();
+      if (
+        current?.id !== check.id ||
+        !current.places?.[placeId]?.items?.some(
+          (candidate) => candidate.id === itemId,
+        )
+      )
+        return;
+      if (previewDataUrl) updateItem(placeId, itemId, { previewDataUrl });
+    }
     const locationPromise = hasCoordinates(item.location)
       ? Promise.resolve(item.location)
       : getCaptureDeviceLocation();

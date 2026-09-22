@@ -543,3 +543,20 @@ describe("taskAnalysisCard", () => {
     expect(card).not.toContain('data-analysis-action="delete"');
   });
 });
+
+it("uses the small local preview for capture analysis cards", () => {
+  const cards = analysisCards(
+    item({
+      id: "photo",
+      kind: "photo",
+      dataUrl: "data:original",
+      previewDataUrl: "data:preview",
+      analysis: { status: "queued" },
+    }),
+    "check-1",
+  );
+  const markup = typeof cards === "string" ? cards : JSON.stringify(cards);
+  expect(markup).toContain("data:preview");
+  expect(markup).not.toContain("data:original");
+  expect(markup).toContain("lazy");
+});
