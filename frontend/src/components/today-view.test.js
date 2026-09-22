@@ -31,6 +31,48 @@ describe("site proximity", () => {
 });
 
 describe("isStalePendingSession", () => {
+  it("keeps a submitted check's local cards until guidance has finished", async () => {
+    const { isStalePendingSession } = await import("./today-view.js");
+    const session = {
+      id: "chk_1",
+      status: "capture-complete",
+      places: {
+        entrance: { items: [{ analysis: { status: "analyzing" } }] },
+      },
+    };
+    const submitted = [{ id: "chk_1", status: "submitted" }];
+
+    expect(isStalePendingSession(session, submitted)).toBe(false);
+    session.places.entrance.items[0].analysis.status = "analyzed";
+    expect(isStalePendingSession(session, submitted)).toBe(true);
+  });
+
+  it("keeps analyzed local cards until the backend worklist includes them", async () => {
+    const { isStalePendingSession } = await import("./today-view.js");
+    const session = {
+      id: "chk_1",
+      status: "capture-complete",
+      places: {
+        entrance: {
+          items: [
+            {
+              analysis: {
+                status: "analyzed",
+                tasks: [{ taskId: "task_1" }],
+              },
+            },
+          ],
+        },
+      },
+    };
+    const submitted = [{ id: "chk_1", status: "submitted" }];
+
+    expect(isStalePendingSession(session, submitted, [])).toBe(false);
+    expect(
+      isStalePendingSession(session, submitted, [{ taskId: "task_1" }]),
+    ).toBe(true);
+  });
+
   it("clears a capture-complete session once the same backend check is completed", async () => {
     const { isStalePendingSession } = await import("./today-view.js");
 
