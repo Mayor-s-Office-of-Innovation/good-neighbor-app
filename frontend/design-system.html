@@ -1,7 +1,7 @@
 <!doctype html>
 <html
   lang="en"
-  class="wa-light wa-theme-awesome wa-palette-bright wa-brand-blue"
+  class="wa-light wa-theme-default wa-palette-default wa-brand-blue"
 >
   <head>
     <meta charset="utf-8" />
@@ -307,9 +307,9 @@
         <p class="ds-intro">
           We adopt WA for form controls, icons, spinners, badges, callouts — but
           with deliberate divergences. Theme base:
-          <code>wa-theme-awesome</code> + <code>wa-palette-bright</code> +
-          <code>wa-brand-blue</code>, vendored as
-          <code>wa-awesome.css</code> (drift-guarded in lint).
+          <code>wa-theme-default</code> + <code>wa-palette-default</code> +
+          <code>wa-brand-blue</code>, matching the official Web Awesome Figma
+          kit.
         </p>
         <table class="ds-table">
           <thead>
@@ -321,17 +321,6 @@
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>Fonts</td>
-              <td>
-                Quicksand (body) + Crimson Pro (longform), loaded from bunny.net
-              </td>
-              <td><strong>System sans stack</strong>, no webfont at all</td>
-              <td>
-                CDN-free requirement; system fonts match platform UI, zero
-                network cost, no FOUT
-              </td>
-            </tr>
             <tr>
               <td>Buttons</td>
               <td><code>&lt;wa-button&gt;</code> component</td>
@@ -345,7 +334,9 @@
             </tr>
             <tr>
               <td>Primary color</td>
-              <td>Bright palette brand blue <code>#235a96</code> (brand-40)</td>
+              <td>
+                Default palette brand blue <code>#0053c0</code> (brand-40)
+              </td>
               <td>App accent <code>--brand-blue: #155fce</code></td>
               <td>
                 Deliberately distinct — WA controls keep their tint; our UI uses
@@ -365,20 +356,15 @@
             </tr>
             <tr>
               <td>Hover behavior</td>
+              <td>Default theme: no hover transform; subtle active scale</td>
+              <td>Our buttons: subtle background change only</td>
               <td>
-                Awesome theme: bouncy transform + hard offset shadow press
-              </td>
-              <td>
-                <code>--wa-button-transform-hover: none</code>; our buttons:
-                subtle bg change only
-              </td>
-              <td>
-                Calm municipal tone; the vendored theme suppresses the transform
+                Calm municipal tone; no additional motion override is needed
               </td>
             </tr>
             <tr>
               <td>Button radius</td>
-              <td><code>--wa-border-radius-m</code> ≈ 9px (theme scale 1.5)</td>
+              <td><code>--wa-border-radius-m</code> = 6px (theme scale 1)</td>
               <td>Full pill (<code>--radius-pill: 999px</code>)</td>
               <td>Signature look of every .btn-* pill</td>
             </tr>
@@ -591,8 +577,7 @@
       import "@awesome.me/webawesome/dist/styles/layers.css";
       import "@awesome.me/webawesome/dist/styles/native.css";
       import "@awesome.me/webawesome/dist/styles/utilities.css";
-      import "@awesome.me/webawesome/dist/styles/color/palettes/bright.css";
-      import "/src/styles/wa-awesome.css";
+      import "@awesome.me/webawesome/dist/styles/themes/default.css";
       import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
       import "/src/styles/tokens.css";

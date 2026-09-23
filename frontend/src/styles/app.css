@@ -1425,8 +1425,8 @@ theme-toggle {
    Reusable: apply `.btn-ink` to any native <button> and it renders identically,
    no extra markup flags. It fully owns its box because Web Awesome's native-button
    styles (native.css `@layer wa-native`: fixed height, raised box-shadow, collapse
-   margins; wa-awesome.css `@layer wa-theme*`) are all layered, and app.css is
-   unlayered — so every property we set here wins the cascade regardless of WA's
+   margins; Web Awesome's default theme `@layer wa-theme`) are all layered, and
+   app.css is unlayered — so every property we set here wins the cascade regardless of WA's
    higher specificity. We therefore reset height/shadow/margin that WA would force. */
 .btn-ink {
   appearance: none;
