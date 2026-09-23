@@ -3,7 +3,10 @@
 Terraform is organized by environment roots and reusable modules. Both env roots use the remote
 **S3 backend with DynamoDB locking** (state bucket `good-neighbor-app-terraform-state`, lock table
 `good-neighbor-app-terraform-locks`, `us-west-2`) — the backend block is **live** (no longer
-commented).
+commented). The dev and prod roots are separate logical environments in AWS account
+`518892333858`, with distinct state keys, deploy roles, resource names, and GitHub Environments.
+The `dev` branch continues to deploy `dev.goodneighborsf.org`; a published release from `main`
+deploys the production app at `goodneighbor.sf.gov` after the `prod` Environment approval.
 
 ## State backend protection
 
@@ -25,15 +28,36 @@ state keys (`dev/terraform.tfstate` and `prod/terraform.tfstate`), encryption,
 and DynamoDB locking. Verify versioning again when changing backend ownership
 or configuration; do not recreate the shared bucket in an application root.
 
-## Production DNS bootstrap
+## Production DNS and first application deploy
 
-The **Provision goodneighbor.sf.gov DNS zone** workflow must be dispatched from `main`.
-It checks out the immutable commit recorded by that dispatch. The `prod`
-GitHub Environment is the external enforcement boundary: its selected-ref
-policy allows the `main` branch and the existing `v*` release tags, with required
-reviewer approval retained. Other branches and tags are rejected. The DNS
-workflow itself rejects tag dispatches; release tags remain available to the
-normal production release workflow. Merging to `dev` does not run this workflow.
+The existing `prod/terraform.tfstate` in the DEV account already owns the delegated
+`goodneighbor.sf.gov` zone (`Z013233314Z835D93KVOT`), its DNSSEC signing, and query logging.
+The public delegation points at that zone's four Route 53 nameservers. Do not create a second
+zone, migrate or reinitialize this state, or change the parent delegation as part of the
+application deployment. The older `gn.sf.gov` zone is also in this state and remains untouched.
+
+Production deployment uses the DEV-account role
+`arn:aws:iam::518892333858:role/good-neighbor-app-deploy-prod`. The `prod` GitHub Environment
+must have that ARN as `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION=us-west-2`, a required reviewer, and a
+selected-ref policy that admits release tags matching `v*`. The workflow checks the AWS account,
+the existing hosted-zone ID, and that the saved plan leaves the existing DNS/DNSSEC/logging
+resources unchanged. It also verifies that the tagged commit is on `main`.
+
+For the first app deployment, merge reviewed configuration to `main`, create a `v*` tag on a
+`main` commit, and run the reusable **Deploy** workflow manually against that tag with
+`environment=prod`. A manual production run is **plan-only**: review the Terraform plan summary
+and full workflow log before publishing a GitHub Release for the same tag and commit SHA. Publishing
+the release runs the normal reviewed production apply and web publish. Do not move the tag after
+the preview; do not use a local Terraform apply.
+
+The **Provision goodneighbor.sf.gov DNS zone** workflow is retained for DNS-only recovery; the
+zone is already provisioned, so normal application deployment must not run this bootstrap.
+
+The DNS-only recovery workflow itself accepts dispatches from `main` only. If
+the `prod` GitHub Environment is restricted to `v*` tags only, that separate
+Environment rule will block the recovery workflow. Review the recovery plan
+and any temporary Environment-rule change explicitly before rerunning it;
+normal releases do not require the DNS bootstrap.
 
 The DNS-only plan includes the hosted zone, DNSSEC signing and its asymmetric
 KMS key, plus query logging to an encrypted CloudWatch log group in `us-east-1`
@@ -45,22 +69,22 @@ safe only before DT publishes the parent DS record; it does not replace the host
 zone, KMS keys, or key-signing key. Other changes to existing resources require a
 normal reviewed infrastructure deployment.
 
-After applying, provide DT all four `goodneighbor_dns_name_servers`. Once
-delegation and zone signing are confirmed, coordinate publication of
-`goodneighbor_dnssec_ds_record` in `sf.gov` to establish the DNSSEC chain of
-trust. Signing alone does not establish that parent trust. The workflow summary
-reports both outputs.
+The four `goodneighbor_dns_name_servers` are already delegated by `sf.gov`.
+The zone is signing, but the parent DS record has not yet been published.
+Coordinate publication of `goodneighbor_dnssec_ds_record` with DT as a separate
+DNSSEC change, after confirming its value and the parent process. Signing alone
+does not establish the parent trust chain. The recovery workflow reports both
+outputs but does not publish the parent DS record.
 
 The earlier `gn.sf.gov` hosted zone is retained as protected infrastructure until
 its retirement is separately reviewed. Its nameservers are not valid for
 `goodneighbor.sf.gov`.
 
-The production provider app is served canonically from `goodneighbor.sf.gov`.
-During the hostname transition, `goodneighborsf.org` remains a second alias on
-the same production CloudFront distribution. The legacy `goodneighborsf.org`
-hosted zone also continues to own the `dev.goodneighborsf.org` delegation and
-the SES DKIM records for `codes@goodneighborsf.org`; do not remove that zone when
-the legacy production web alias is eventually retired.
+The production provider app is served only from `goodneighbor.sf.gov`; the production
+CloudFront distribution does not claim the legacy `goodneighborsf.org` apex. The legacy
+`goodneighborsf.org` hosted zone remains outside this Terraform root and continues to own
+the `dev.goodneighborsf.org` delegation and SES DKIM records for
+`codes@goodneighborsf.org`. Do not remove or repoint that zone.
 
 The DNSSEC key uses `ECC_NIST_P256` / `SIGN_VERIFY`, as required by Route 53.
 KMS automatic rotation is unsupported for this asymmetric key (the resource's

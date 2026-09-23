@@ -1,34 +1,30 @@
 # SES sender operations
 
 Good Neighbor's setup-code sender is `codes@goodneighborsf.org`.
-SES verifies the entire domain with 2048-bit Easy DKIM in `us-west-2`,
-separately in the dev account (`518892333858`) and prod account
-(`701893741736`). Both accounts have production sending access.
+Both application environments now deploy in AWS account `518892333858` and use
+the same verified SES domain identity in `us-west-2`, with 2048-bit Easy DKIM.
+The identity was verified with DKIM status `SUCCESS`, sending enabled, and
+production SES access on 2026-09-23. Production is configured with separate
+application resources, deploy credentials, and Terraform state.
 
 The authoritative Route 53 zone for `goodneighborsf.org` is
-`Z0308170YNRHEPQH0O3C` in prod. It holds three DKIM CNAME records for
-each account. Namecheap remains the registrar; no registrar change is
-needed for SES verification.
+`Z0308170YNRHEPQH0O3C` outside the application production Terraform root.
+It holds the DKIM CNAME records needed for the sender. Namecheap remains the
+registrar; no registrar change is needed for SES verification.
 
 ## Infrastructure ownership
 
-Each environment's `email.tf` owns its SES identity. The prod root owns
-both sets of DNS records. These resources were bootstrapped through the
-AWS CLI at the user's request. Declarative import blocks adopt the existing
-identities and records during the normal CI plan/apply; do not run a local
-Terraform apply or create duplicate resources.
-
-Deploy dev before prod so prod can consume the public DKIM tokens from
-dev's remote-state output. Until that output exists, prod uses the public
-bootstrap tokens recorded in its configuration. Replacing the dev SES
-identity requires a subsequent prod deployment to update its DNS records.
-Review the complete CI plan because it may include other infrastructure
-changes in the environment.
+The dev Terraform root owns the shared SES identity and exports its ARN. The
+production root reads that ARN from the dev remote state and grants its API
+Lambda permission to send from the identity. Production does not import or
+manage the SES identity or the parent-zone DKIM records. Keep the dev state and
+identity in place before deploying production; replacing that identity requires
+coordinated DNS and production IAM updates. Do not run a local Terraform apply
+or create a duplicate identity.
 
 ## Verify sending readiness
 
-After AWS SSO login, run for each profile (`default` for dev, `nst-prod`
-for prod):
+After AWS login to account `518892333858`, run:
 
 ```sh
 aws sesv2 get-email-identity --email-identity goodneighborsf.org \

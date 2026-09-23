@@ -193,6 +193,14 @@ jobs:
       - name: Validate
         run: terraform validate
 
+      - name: Init production without backend
+        working-directory: infra/environments/prod
+        run: terraform init -backend=false
+
+      - name: Validate production
+        working-directory: infra/environments/prod
+        run: terraform validate
+
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
         continue-on-error: ${{ github.actor == 'dependabot[bot]' }}

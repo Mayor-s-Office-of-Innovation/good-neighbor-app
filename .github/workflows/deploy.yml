@@ -3,7 +3,9 @@ name: Deploy
 # Reusable deploy core. Invoked by:
 #   - deploy-dev.yml   (push to `dev`         -> environment: dev)
 #   - deploy-prod.yml  (release published     -> environment: prod)
-# and directly via the Actions tab for manual reruns (workflow_dispatch).
+# and directly via the Actions tab for dev reruns or a production plan-only
+# preview from a v* tag on main (workflow_dispatch). Production apply requires
+# a published GitHub Release and the prod Environment approval.
 on:
   workflow_call:
     inputs:
@@ -27,7 +29,11 @@ permissions:
 
 jobs:
   terraform-apply:
-    name: Terraform apply (${{ inputs.environment }})
+    name: Terraform deploy or plan (${{ inputs.environment }})
+    if: >-
+      (inputs.environment == 'dev' && github.ref == 'refs/heads/dev') ||
+      (inputs.environment == 'prod' && startsWith(github.ref, 'refs/tags/v') &&
+        (github.event_name == 'release' || github.event_name == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     # Gates on the GitHub Environment: role ARN + region come from its
     # secret/variable, and prod's required-reviewer approval applies here.
@@ -41,12 +47,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify production release ancestry
+        if: ${{ inputs.environment == 'prod' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo 'The production tag must point to a commit on main.' >&2
+            exit 1
+          }
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: "518892333858"
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -76,15 +96,83 @@ jobs:
       - name: Init
         run: terraform init
 
+      - name: Verify existing production DNS state
+        if: ${{ inputs.environment == 'prod' }}
+        run: |
+          set -euo pipefail
+          zone_id="$(terraform output -raw goodneighbor_dns_zone_id)"
+          if [[ "$zone_id" != 'Z013233314Z835D93KVOT' ]]; then
+            echo "Production state does not own the delegated goodneighbor.sf.gov zone: $zone_id" >&2
+            exit 1
+          fi
+
       - name: Plan
         run: terraform plan -out=tfplan
 
+      - name: Protect existing DNS and DNSSEC resources
+        if: ${{ inputs.environment == 'prod' }}
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan | jq -e '
+            [ .resource_changes[]?
+              | select(.mode == "managed")
+              | select(.address | IN(
+                  "aws_route53_zone.goodneighbor",
+                  "aws_route53_hosted_zone_dnssec.goodneighbor",
+                  "aws_route53_key_signing_key.goodneighbor",
+                  "aws_kms_key.goodneighbor_dnssec",
+                  "aws_kms_key.goodneighbor_dns_logs",
+                  "aws_cloudwatch_log_group.goodneighbor_dns",
+                  "aws_cloudwatch_log_resource_policy.goodneighbor_dns",
+                  "aws_route53_query_log.goodneighbor",
+                  "aws_route53_zone.gn",
+                  "aws_route53_hosted_zone_dnssec.gn",
+                  "aws_route53_key_signing_key.gn",
+                  "aws_kms_key.gn_dnssec",
+                  "aws_kms_key.gn_dns_logs",
+                  "aws_cloudwatch_log_group.gn_dns",
+                  "aws_cloudwatch_log_resource_policy.gn_dns",
+                  "aws_route53_query_log.gn"
+                ))
+              | select(.change.actions != ["no-op"])
+              | .address
+            ] | length == 0
+          '
+
+      - name: Summarize production plan
+        if: ${{ inputs.environment == 'prod' }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Production Terraform plan'
+            echo 'AWS account: 518892333858 (DEV account; separate prod state and resources)'
+            echo 'Canonical domain: goodneighbor.sf.gov'
+            echo 'Protected delegated zone: Z013233314Z835D93KVOT'
+            echo "Tagged commit: $GITHUB_SHA"
+            echo '```text'
+            terraform show -json tfplan | jq -r '
+              .resource_changes[]?
+              | select(.mode == "managed" and .change.actions != ["no-op"])
+              | "\(.change.actions | join("+")) \(.address)"
+            '
+            echo '```'
+            if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+              echo 'Plan only: no Terraform apply or web publish was run.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Apply
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         run: terraform apply -auto-approve tfplan
+
+      - name: Stop after production plan preview
+        if: ${{ inputs.environment == 'prod' && github.event_name == 'workflow_dispatch' }}
+        run: echo 'Production plan preview complete; publish the release only after reviewing this plan.'
 
       # Read the invoke URL + publish targets from state for the frontend build
       # and CloudFront invalidation below.
       - name: Capture Terraform outputs
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         id: tf
         run: |
           set -euo pipefail
@@ -129,12 +217,14 @@ jobs:
       # RELEASE stamps the build for the error tracker (error-report.js reads
       # __RELEASE__, defined in vite.config.js) and keys the sourcemap upload.
       - name: Build frontend
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: npm run build -w @good-neighbor/frontend
 
       - name: Configure admin frontend
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         working-directory: ${{ github.workspace }}
         run: |
           cat > admin-frontend/config.js <<CONFIG
@@ -160,7 +250,7 @@ jobs:
       # stay minified until the next green run), hence continue-on-error on
       # both steps + the CLI's --no-fail on the upload.
       - name: Inject PostHog metadata into bundles
-        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        if: ${{ (inputs.environment == 'dev' || github.event_name == 'release') && vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
         working-directory: ${{ github.workspace }}
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
@@ -172,7 +262,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload sourcemaps to PostHog
-        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        if: ${{ (inputs.environment == 'dev' || github.event_name == 'release') && vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
         working-directory: ${{ github.workspace }}
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
@@ -190,10 +280,12 @@ jobs:
       # Maps must not go public — they'd leak full source. They live in
       # PostHog (uploaded above) and only there.
       - name: Publish frontend to S3
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         working-directory: ${{ github.workspace }}
         run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete --exclude "*.map"
 
       - name: Publish admin frontend to S3
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         working-directory: ${{ github.workspace }}
         run: |
           aws s3 sync admin-frontend "s3://${{ steps.tf.outputs.admin_bucket }}" \
@@ -203,12 +295,15 @@ jobs:
 
       # Env-scoped: only this environment's distribution is invalidated.
       - name: Invalidate CloudFront
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.dist_id }}" --paths "/*"
 
       - name: Invalidate admin CloudFront
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         run: aws cloudfront create-invalidation --distribution-id "${{ steps.tf.outputs.admin_dist_id }}" --paths "/*"
 
       - name: Smoke test /health
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         run: curl -fsS "${{ steps.tf.outputs.api_url }}/health"
 
       # API-response-integrity tripwire (plan §4): the API's JSON error
@@ -221,6 +316,7 @@ jobs:
       # absorb the seconds of error-page/behavior propagation after the
       # invalidation above.
       - name: Smoke test API error shape
+        if: ${{ inputs.environment == 'dev' || github.event_name == 'release' }}
         run: |
           set -euo pipefail
           url="${{ steps.tf.outputs.api_url }}/v1/checks/00000000-0000-0000-0000-000000000000"

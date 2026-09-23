@@ -1,5 +1,6 @@
-# Provisioned ahead of DT delegation. Production application records,
-# certificates, and CloudFront aliases are managed separately in domain.tf.
+# Delegated production zone in the DEV AWS account. Keep this existing zone and
+# its four name servers: the parent sf.gov delegation already points here.
+# Application records, certificates, and CloudFront aliases are in domain.tf.
 # The legacy gn.sf.gov hosted zone remains out of scope here.
 resource "aws_route53_zone" "goodneighbor" {
   name    = "goodneighbor.sf.gov"
@@ -10,13 +11,26 @@ resource "aws_route53_zone" "goodneighbor" {
   }
 }
 
+resource "aws_route53_record" "frontend_caa" {
+  zone_id = aws_route53_zone.goodneighbor.zone_id
+  name    = aws_route53_zone.goodneighbor.name
+  type    = "CAA"
+  ttl     = 300
+  records = [
+    "0 issue \"amazon.com\"",
+    "0 issue \"amazontrust.com\"",
+    "0 issue \"awstrust.com\"",
+    "0 issue \"amazonaws.com\"",
+  ]
+}
+
 output "goodneighbor_dns_zone_id" {
   description = "Route 53 public hosted zone for goodneighbor.sf.gov."
   value       = aws_route53_zone.goodneighbor.zone_id
 }
 
 output "goodneighbor_dns_name_servers" {
-  description = "Provide all four name servers to DT for goodneighbor.sf.gov NS delegation."
+  description = "Four assigned name servers for the existing goodneighbor.sf.gov delegation."
   value       = aws_route53_zone.goodneighbor.name_servers
 }
 

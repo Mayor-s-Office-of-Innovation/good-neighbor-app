@@ -4,7 +4,8 @@
 
 Accepted (2026-08-18). Supersedes the original (2026-08-14) three-environment,
 tag-promotion deploy model, which was never built. Builds on the architecture in
-[ADR 0001](0001-architecture-stack.md).
+[ADR 0001](0001-architecture-stack.md). Account placement is amended by
+[ADR 0015](0015-logical-prod-in-dev-aws-account.md).
 
 ## Context
 
@@ -26,9 +27,8 @@ a team this size.
   the dev environment.
 - `main` is the release branch, **admins-only**; a **GitHub Release published** from `main`
   deploys prod. A Release points at a tag, so prod lineage stays a `git describe` away. By
-  convention releases are cut from `main`, so prod ships a reviewed `main` commit rather than
-  `dev`'s tip — but this rests on admin discipline, **not** on pipeline enforcement (see
-  Consequences).
+  convention releases are cut from `main`, and the deployment workflow now verifies the tagged
+  commit is an ancestor of `main` (ADR 0015).
 - Credentials are **AWS OIDC only** — a per-env deploy role whose trust is scoped to the GitHub
   Environment (`environment: dev` / `prod`), not to the trigger. So the branch-vs-tag trigger is a
   repo-side choice needing zero AWS changes.
@@ -55,10 +55,6 @@ grows past two.**
   (re-run jobs) — a branch-ref `workflow_dispatch` is refused by the tag rule.
 - The prod gate does not enforce two-person control until the team grows; the audit record
   (named approver + timestamp) is the compensating control until then.
-- **The tag→`main` link is convention, not enforcement.** The `prod` Environment's `v*` rule
-  matches the tag *name* only; nothing verifies the tagged commit is an ancestor of `main`, and
-  `deploy-prod.yml` → `deploy.yml` check out the tag's commit with no ancestry check. A `v*` tag
-  placed on an arbitrary commit would pass both the tag rule and the approval gate and deploy that
-  commit. Only the two admins can publish releases, so this currently rests on their discipline. To
-  make the guarantee real, add a deploy step that fails unless
-  `git merge-base --is-ancestor <tag> origin/main`.
+- The tag→`main` link is now checked by the deployment workflow with
+  `git merge-base --is-ancestor <tag> origin/main` (ADR 0015), in addition to
+  the `prod` Environment's `v*` ref restriction.

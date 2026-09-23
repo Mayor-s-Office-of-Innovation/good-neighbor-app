@@ -32,6 +32,9 @@
 - **[ADR 0014](./adr/0014-remove-places-photo-roll.md)** — the perimeter check as a flat
   photo roll: no per-site places setup, completion at three photos or one description
   (client-side rule), text as a full alternative to photos.
+- **[ADR 0015](./adr/0015-logical-prod-in-dev-aws-account.md)** — dev and production as
+  separate logical stacks in the existing DEV AWS account, preserving the delegated
+  `goodneighbor.sf.gov` zone and production release gate.
 
 ## Operations
 

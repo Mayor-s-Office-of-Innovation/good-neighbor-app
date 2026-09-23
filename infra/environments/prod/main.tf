@@ -14,6 +14,8 @@ terraform {
 
   backend "s3" {
     bucket         = "good-neighbor-app-terraform-state"
+    # Separate logical production stack in the DEV AWS account. This state
+    # already owns the delegated goodneighbor.sf.gov hosted zone and DNSSEC.
     key            = "prod/terraform.tfstate"
     region         = "us-west-2"
     dynamodb_table = "good-neighbor-app-terraform-locks"
@@ -54,7 +56,7 @@ locals {
 
 module "app" {
   source                        = "../../modules/app"
-  setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
+  setup_code_email_identity_arn = data.terraform_remote_state.dev.outputs.setup_code_email_identity_arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
 
   providers = {
@@ -67,6 +69,6 @@ module "app" {
   data_classification      = var.data_classification
   bedrock_model_id         = var.bedrock_model_id
   tags                     = local.common_tags
-  frontend_domain_names    = local.frontend_domain_names
+  frontend_domain_names    = [local.frontend_domain_name]
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
 }
