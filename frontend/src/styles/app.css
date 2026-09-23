@@ -1342,7 +1342,14 @@ theme-toggle {
 .location-dialog__site:hover {
   background: var(--wa-color-neutral-fill-quiet, var(--surface-3));
 }
-.location-dialog__site:focus-visible,
+.location-dialog__site:focus-visible {
+  outline: 0.1875rem solid
+    var(--wa-color-neutral-on-quiet, var(--text-secondary));
+  outline-offset: 0.125rem;
+}
+.location-dialog__copy h2:focus {
+  outline: none;
+}
 .location-dialog__actions button:focus-visible {
   outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
   outline-offset: 0.125rem;
@@ -1355,12 +1362,18 @@ theme-toggle {
 }
 .location-dialog__actions button {
   appearance: none;
+  -webkit-appearance: none;
+  height: auto;
   min-height: 3.25rem;
   border: 0;
   border-radius: var(--wa-border-radius-pill, 9999px);
   font: inherit;
   font-weight: var(--wa-form-control-label-font-weight, 500);
   cursor: pointer;
+  margin: 0;
+  padding: 0 1.25rem;
+  box-shadow: none;
+  transform: none;
 }
 .location-dialog__confirm {
   background: var(--wa-color-danger-fill-loud, #b30532);

@@ -80,7 +80,7 @@ export async function addPhoto(page, filePath) {
 
 /**
  * Finish the check from the capture screen and wait for home.
- * Finish carries `disabled` until the completion rule is met (five photos or
+ * Finish carries `disabled` until the completion rule is met (three photos or
  * one description), so callers assert on that before calling this.
  * @param {import("@playwright/test").Page} page
  */
