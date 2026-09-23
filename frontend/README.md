@@ -41,7 +41,7 @@ places setup: a bound device lands straight on `/today`
 ```text
 src/
   components/   web components — one <thing>.js (+ optional <thing>.templates.js for markup)
-  styles/       tokens.css (design tokens) · app.css (component classes) · wa-*.css (vendored WA)
+  styles/       tokens.css (design tokens) · app.css (component classes)
   services/     backend API calls (services/api.js is the seam)
   state/        check-session and other app state
   domain/       read-model adapters (backend items → UI records) · check-completion.js (the perimeter completion rule)
