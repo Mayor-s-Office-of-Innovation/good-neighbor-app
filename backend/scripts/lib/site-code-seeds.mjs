@@ -17,6 +17,17 @@ export const devSiteCodeSeeds = [
     contactEmail: "cityhall@example.org",
   },
   {
+    code: "MOIMIS",
+    providerId: "moi",
+    providerName: "MOI",
+    providerShortCode: "MOI",
+    siteId: "moi-mission-district",
+    siteName: "Mission District",
+    siteShortCode: "MIS",
+    providerSiteId: "provider-site-moi-mission-district",
+    contactEmail: "moimission@example.org",
+  },
+  {
     code: "GUBSJE",
     providerId: "the-gubbio-project",
     providerName: "The Gubbio Project",
@@ -32,6 +43,17 @@ export const devSiteCodeSeeds = [
     },
   },
   {
+    code: "GUBMIS",
+    providerId: "the-gubbio-project",
+    providerName: "The Gubbio Project",
+    providerShortCode: "GUB",
+    siteId: "gubbio-mission-district",
+    siteName: "Mission District",
+    siteShortCode: "MIS",
+    providerSiteId: "provider-site-gubbio-mission-district",
+    contactEmail: "gubbiomission@example.org",
+  },
+  {
     code: "CHC730",
     providerId: "chc",
     providerName: "CHC",
@@ -41,6 +63,23 @@ export const devSiteCodeSeeds = [
     siteShortCode: "730",
     providerSiteId: "provider-site-chc-730-polk",
     contactEmail: "chc730@example.org",
+  },
+  {
+    code: "CHC640",
+    providerId: "chc",
+    providerName: "CHC",
+    providerShortCode: "CHC",
+    siteId: "chc-640-jones",
+    siteName: "640 Jones",
+    siteShortCode: "640",
+    providerSiteId: "provider-site-chc-640-jones",
+    contactEmail: "chc640@example.org",
+    address: "640 Jones St, San Francisco, CA 94102",
+    geocodedAddress: "640 JONES ST, SAN FRANCISCO, CA, 94102",
+    location: {
+      latitude: 37.787283046268,
+      longitude: -122.413199283242,
+    },
   },
   {
     code: "SFA940",
@@ -54,6 +93,17 @@ export const devSiteCodeSeeds = [
     contactEmail: "sfaf940@example.org",
   },
   {
+    code: "SFA880",
+    providerId: "sfaf",
+    providerName: "SFAF",
+    providerShortCode: "SFA",
+    siteId: "sfaf-880-howard",
+    siteName: "880 Howard",
+    siteShortCode: "880",
+    providerSiteId: "provider-site-sfaf-880-howard",
+    contactEmail: "sfaf880@example.org",
+  },
+  {
     code: "THC440",
     providerId: "thc",
     providerName: "THC",
@@ -63,6 +113,17 @@ export const devSiteCodeSeeds = [
     siteShortCode: "440",
     providerSiteId: "provider-site-thc-440-eddy",
     contactEmail: "thc440@example.org",
+  },
+  {
+    code: "THC460",
+    providerId: "thc",
+    providerName: "THC",
+    providerShortCode: "THC",
+    siteId: "thc-460-eddy",
+    siteName: "460 Eddy",
+    siteShortCode: "460",
+    providerSiteId: "provider-site-thc-460-eddy",
+    contactEmail: "thc460@example.org",
   },
 ];
 
@@ -205,6 +266,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
         "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        (seed.address
+          ? ", #address = if_not_exists(#address, :address), #geocodedAddress = if_not_exists(#geocodedAddress, :geocodedAddress)"
+          : "") +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
@@ -212,6 +276,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
         "#type": "type",
         "#name": "name",
         "#status": "status",
+        ...(seed.address
+          ? { "#address": "address", "#geocodedAddress": "geocodedAddress" }
+          : {}),
         ...(seed.location ? { "#location": "location" } : {}),
       },
       ExpressionAttributeValues: {
@@ -226,6 +293,12 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":name": seed.siteName,
         ":status": "active",
         ":now": now,
+        ...(seed.address
+          ? {
+              ":address": seed.address,
+              ":geocodedAddress": seed.geocodedAddress,
+            }
+          : {}),
         ...(seed.location ? { ":location": seed.location } : {}),
       },
     }),

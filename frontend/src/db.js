@@ -3,12 +3,12 @@
   No dependency: raw IndexedDB behind small promise helpers.
 
   Stores:
-    - site   (keyPath 'id')   : single record, the site this device is bound to
-    - draft  (out-of-line)    : the single in-progress check (key 'current'), so a
+    - site   (keyPath 'id')   : current binding plus one saved binding per site
+    - draft  (out-of-line)    : the in-progress check (per-site keys), so a
                                 walk survives reload / app-close and can be resumed
                                 from home. Photos ride inline as JPEG data-URLs.
     - review (out-of-line)    : the just-submitted check awaiting the reviewer's
-                                Continue (key 'current'). Kept separate from `draft`
+                                Continue (per-site key). Kept separate from `draft`
                                 so home never offers to "Resume" it, and so the
                                 assessment envelope + findings + photos survive a
                                 reload — otherwise the results screen would fall back
@@ -47,13 +47,13 @@ function openDb() {
       if (db.objectStoreNames.contains("tasks")) db.deleteObjectStore("tasks");
       if (db.objectStoreNames.contains("checks"))
         db.deleteObjectStore("checks");
-      // Out-of-line key: the check keeps its own generated `id`, and there is only
-      // ever one active draft, stored under the fixed key "current".
+      // Out-of-line key: the check keeps its own generated `id`; drafts are
+      // keyed by site and flow, with legacy "current" entries still readable.
       if (!db.objectStoreNames.contains("draft")) {
         db.createObjectStore("draft");
       }
-      // Same shape as `draft`: a single submitted check under key "current", held
-      // only until the reviewer hits Continue.
+      // Same shape as `draft`: the submitted check for each site is held
+      // until the reviewer hits Continue.
       if (!db.objectStoreNames.contains("review")) {
         db.createObjectStore("review");
       }
@@ -116,18 +116,63 @@ export function newId() {
 export async function getSite() {
   return tx("site", "readonly", (os) => reqToPromise(os.get("current")));
 }
+
+const bindingKey = (siteId) => `bound:${siteId}`;
+
+/** All site sessions saved on this device, including a legacy current-only binding. */
+export async function listBoundSites() {
+  const records = await tx("site", "readonly", (os) =>
+    reqToPromise(os.getAll()),
+  );
+  const bindings = records.filter((record) =>
+    String(record.id || "").startsWith("bound:"),
+  );
+  const current = records.find((record) => record.id === "current");
+  if (
+    current?.siteId &&
+    !bindings.some((record) => record.siteId === current.siteId)
+  ) {
+    bindings.push({ ...current, id: bindingKey(current.siteId) });
+  }
+  return bindings;
+}
+
+/** Select an already registered site without using its setup code again. */
+export async function activateSiteBinding(siteId) {
+  return tx("site", "readwrite", async (os) => {
+    const current = await reqToPromise(os.get("current"));
+    if (current?.siteId === siteId) return current;
+    const saved = await reqToPromise(os.get(bindingKey(siteId)));
+    if (!saved?.token || !saved?.refreshToken) return null;
+    const selected = { ...saved, id: "current" };
+    if (current?.siteId) {
+      os.put({ ...current, id: bindingKey(current.siteId) });
+    }
+    os.put(selected);
+    return selected;
+  });
+}
+
 export async function setSite(name, meta = {}) {
   // meta may carry the onboarding code (identity provenance) and, once device
   // auth lands (services/devices.js), the device session (deviceId, token,
   // refreshToken, tokenExpiresAt, tokenGeneration). id/name/boundAt are
   // authoritative and can't be clobbered by it.
+  /** @type {Record<string, any>} */
   const record = {
     ...meta,
     id: "current",
     name: name.trim(),
     boundAt: new Date().toISOString(),
   };
-  await tx("site", "readwrite", (os) => os.put(record));
+  await tx("site", "readwrite", async (os) => {
+    const previous = await reqToPromise(os.get("current"));
+    if (previous?.siteId && previous.siteId !== record.siteId) {
+      os.put({ ...previous, id: bindingKey(previous.siteId) });
+    }
+    os.put(record);
+    if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
+  });
   return record;
 }
 /**
@@ -198,7 +243,10 @@ export async function saveSiteSettings(settings = {}) {
     id: "current",
     name: String(settings.name || current.name || "Your site").trim(),
   };
-  await tx("site", "readwrite", (os) => os.put(record));
+  await tx("site", "readwrite", (os) => {
+    os.put(record);
+    if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
+  });
   return record;
 }
 export async function clearSite() {
@@ -206,14 +254,9 @@ export async function clearSite() {
 }
 
 /**
- * Sign-out recovery (site switch): clear the site binding AND every
- * site-scoped local artifact — drafts, review, and the in-memory walk state
- * are all keyed by flow type only, with the owning `siteId` stored inside the
- * check record. If they survived a re-bind to a DIFFERENT site, the next
- * session would resume/submit the previous site's photos under the new
- * binding (loadDraft/hasDraft compare no siteId). Site data is not portable
- * across sites, so sign-out clears it all; nothing here is recoverable once
- * the binding is replaced.
+ * Explicit sign-out clears every saved site binding and local check artifact.
+ * Ordinary site switching retains each site's independently keyed draft and
+ * review record so the user can safely return to an unfinished check.
  * @returns {Promise<void>}
  */
 export async function clearSiteSession() {
@@ -226,41 +269,52 @@ export async function clearSiteSession() {
  * only the token fields are replaced. Returns the updated record.
  * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number }} session
  */
-export async function updateSiteSession({
-  deviceId,
-  token,
-  refreshToken,
-  expiresIn,
-  tokenGeneration,
-}) {
-  const current = await getSite();
-  if (!current) throw new Error("cannot store a token without a bound site");
-  const record = {
-    ...current,
-    deviceId,
-    token,
-    refreshToken,
-    tokenGeneration,
-    tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-  };
-  await tx("site", "readwrite", (os) => os.put(record));
-  return record;
+export async function updateSiteSession(
+  { deviceId, token, refreshToken, expiresIn, tokenGeneration },
+  expectedSiteId,
+) {
+  // Read and write in one transaction: a site switch must not let a late
+  // refresh overwrite the newly selected site's credentials.
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((current) => {
+      if (!current || current.siteId !== expectedSiteId) return null;
+      const record = {
+        ...current,
+        deviceId,
+        token,
+        refreshToken,
+        tokenGeneration,
+        tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      };
+      os.put(record);
+      os.put({ ...record, id: bindingKey(expectedSiteId) });
+      return record;
+    }),
+  );
 }
 
-function draftKey(flowType) {
-  return flowType ? `flow:${flowType}` : "current";
+function draftKey(flowType, siteId = "") {
+  const key = flowType ? `flow:${flowType}` : "current";
+  return siteId ? `site:${siteId}:${key}` : key;
 }
 
 /* ---- draft (resumable in-progress checks, keyed by flow + current) ---- */
 export async function getDraft(flowType) {
-  return tx("draft", "readonly", (os) =>
+  const siteId = (await getSite())?.siteId || "";
+  const scoped = await tx("draft", "readonly", (os) =>
+    reqToPromise(os.get(draftKey(flowType, siteId))),
+  );
+  if (scoped || !siteId) return scoped;
+  const legacy = await tx("draft", "readonly", (os) =>
     reqToPromise(os.get(draftKey(flowType))),
   );
+  return legacy?.siteId === siteId ? legacy : null;
 }
 export async function saveDraft(check) {
+  const siteId = check?.siteId || (await getSite())?.siteId || "";
   await tx("draft", "readwrite", (os) => {
-    os.put(check, "current");
-    if (check?.flowType) os.put(check, draftKey(check.flowType));
+    os.put(check, draftKey(undefined, siteId));
+    if (check?.flowType) os.put(check, draftKey(check.flowType, siteId));
   });
   return check;
 }
@@ -278,10 +332,14 @@ async function deleteDraftIfMatches(os, key, checkId) {
 
 /**
  * Clear the resumable draft, optionally only if it still belongs to one check.
- * @param {string | { flowType?: string, checkId?: string } | undefined} flowOrOpts
+ * @param {string | { flowType?: string, checkId?: string, siteId?: string } | undefined} flowOrOpts
  * @param {string} [maybeCheckId]
  */
 export async function clearDraft(flowOrOpts, maybeCheckId) {
+  const siteId =
+    (typeof flowOrOpts === "object" && flowOrOpts?.siteId) ||
+    (await getSite())?.siteId ||
+    "";
   const flowType =
     flowOrOpts && typeof flowOrOpts === "object"
       ? flowOrOpts.flowType
@@ -291,23 +349,48 @@ export async function clearDraft(flowOrOpts, maybeCheckId) {
       ? flowOrOpts.checkId
       : maybeCheckId;
   return tx("draft", "readwrite", async (os) => {
-    await deleteDraftIfMatches(os, draftKey(flowType), checkId);
+    await deleteDraftIfMatches(os, draftKey(flowType, siteId), checkId);
+    if (siteId) {
+      const legacy = await reqToPromise(os.get(draftKey(flowType)));
+      if (legacy?.siteId === siteId) {
+        await deleteDraftIfMatches(os, draftKey(flowType), checkId);
+      }
+    }
     if (!flowType) {
-      await deleteDraftIfMatches(os, "current", checkId);
+      await deleteDraftIfMatches(os, draftKey(undefined, siteId), checkId);
     }
   });
 }
 
 /* ---- review (single just-submitted check awaiting Continue, key 'current') ---- */
 export async function getReview() {
-  return tx("review", "readonly", (os) => reqToPromise(os.get("current")));
+  const siteId = (await getSite())?.siteId || "";
+  const scoped = await tx("review", "readonly", (os) =>
+    reqToPromise(os.get(draftKey(undefined, siteId))),
+  );
+  if (scoped || !siteId) return scoped;
+  const legacy = await tx("review", "readonly", (os) =>
+    reqToPromise(os.get("current")),
+  );
+  return legacy?.siteId === siteId ? legacy : null;
 }
 export async function saveReview(check) {
-  await tx("review", "readwrite", (os) => os.put(check, "current"));
+  const siteId = check?.siteId || (await getSite())?.siteId || "";
+  await tx("review", "readwrite", (os) =>
+    os.put(check, draftKey(undefined, siteId)),
+  );
   return check;
 }
-export async function clearReview() {
-  return tx("review", "readwrite", (os) => os.delete("current"));
+/** @param {string} [owningSiteId] */
+export async function clearReview(owningSiteId) {
+  const siteId = owningSiteId || (await getSite())?.siteId || "";
+  return tx("review", "readwrite", async (os) => {
+    os.delete(draftKey(undefined, siteId));
+    if (siteId) {
+      const legacy = await reqToPromise(os.get("current"));
+      if (legacy?.siteId === siteId) os.delete("current");
+    }
+  });
 }
 
 export async function resetLocalAppState() {

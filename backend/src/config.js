@@ -18,6 +18,7 @@
  * @property {string} [sf311BasicAuthPass]
  * @property {string} [sf311DefaultResponsibleAgency]
  * @property {string} [sf311ClassifierServiceCodeMap]
+ * @property {boolean} [reverseGeocodingEnabled]
  */
 
 /**
@@ -38,6 +39,9 @@ export function getConfig(env = process.env) {
   }
 
   const config = /** @type {AppConfig} */ (required);
+  if (env.REVERSE_GEOCODING_ENABLED === "true") {
+    config.reverseGeocodingEnabled = true;
+  }
 
   // Analyzer wiring is optional at load time: the check/artifact API handlers
   // don't touch the analyzer, and leaving it optional lets the config load in

@@ -343,6 +343,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     artifactId,
     checkId,
     sourceAnalysis: analysis,
+    georeferencedAddress: analysis.georeferencedAddress || "",
     assessment: guidance.assessment,
     conditions: guidance.conditions || assessment.conditions,
     tasks: guidance.tasks || [],

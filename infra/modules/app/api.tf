@@ -14,6 +14,7 @@ locals {
     "POST /v1/setup-codes:request",
     # Site config
     "GET /v1/site",
+    "GET /v1/provider-sites",
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
     "GET /v1/checks",

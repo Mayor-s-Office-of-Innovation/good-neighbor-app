@@ -548,6 +548,41 @@ describe("provider and site management", () => {
     });
   });
 
+  it("also deactivates provider membership when deactivating a provider site", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerId: "provider-one",
+          status: "active",
+        },
+      })
+      .mockResolvedValue({ Items: [] });
+
+    const res = await call(
+      deactivateSite,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[1][0]
+    );
+    expect(transaction.input.TransactItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
+            ExpressionAttributeValues: expect.objectContaining({
+              ":inactive": "inactive",
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("updates provider membership and public search records when renaming sites", async () => {
     send
       .mockResolvedValueOnce({

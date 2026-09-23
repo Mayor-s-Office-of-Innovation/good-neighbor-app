@@ -164,6 +164,11 @@ Two env notes (see [`.env.example`](../.env.example)):
   and a real `ANALYZER_API_KEY` in your `.env.local` for the analyzer leg to fire. Without a key
   the worker throws and the message redelivers — the upload/presign legs still work, so you can
   verify object-lands-in-MinIO independently.
+- Photo coordinates are reverse-geocoded by AWS Location Places V2 in deployed environments.
+  The local worker leaves this off by default because `.env.local` uses dummy AWS credentials for
+  MinIO. When no address is returned, cards display the first line of the site's saved address.
+  To exercise the live lookup locally, run the worker with `REVERSE_GEOCODING_ENABLED=true` and
+  real AWS credentials authorized for `geo-places:ReverseGeocode`; do not commit credentials.
 
 > **Full media loop:** perimeter check → presigned `PUT` to MinIO → `register` enqueues to SQS →
 > worker reads the object from MinIO, downscales + base64-encodes, calls the remote analyzer,

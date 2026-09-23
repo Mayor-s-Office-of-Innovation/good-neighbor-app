@@ -21,10 +21,16 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { clearSiteSession, getSite } from "../db.js";
+import {
+  activateSiteBinding,
+  clearSiteSession,
+  getSite,
+  listBoundSites,
+} from "../db.js";
 import {
   listChecks,
   listTasks,
+  listProviderSites,
   getCheck,
   getMediaUrl,
   ApiError,
@@ -51,6 +57,7 @@ import {
   onCheckSessionChange,
   clearSubmittedSession,
   discardInMemorySession,
+  pauseCheck,
   resumeOrStartCheck,
   resumeOrStartProblemReport,
   removeItem,
@@ -58,37 +65,91 @@ import {
 } from "../state/check-session.js";
 import {
   analysisResultsTray,
+  analysisActionPriority,
+  clearCheckCard,
+  historicalCheckTitle,
+  recentCheckTitle,
+  sortAnalysisCards,
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
+import {
+  getSiteCheckDeviceLocation,
+  getLastDeviceLocation,
+  onDeviceLocationChange,
+  refreshGrantedDeviceLocation,
+} from "../services/device-location.js";
 
-const HOME_FILTERS = [
-  { id: "needs_action", label: "Needs Action" },
+const HOME_TABS = [
+  { id: "todo", label: "To do" },
   { id: "in_progress", label: "In progress" },
-  { id: "resolved", label: "Resolved" },
-  { id: "archived", label: "Archived" },
+  { id: "history", label: "History" },
 ];
 const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
 const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
 const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
+const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
+
+/**
+ * @param {{latitude: number, longitude: number} | null | undefined} position
+ * @param {{latitude: number, longitude: number} | null | undefined} site
+ * @returns {boolean}
+ */
+export function isOutsideSiteRadius(position, site) {
+  if (!position || !site) return false;
+  const { latitude: lat1, longitude: lon1 } = position;
+  const { latitude: lat2, longitude: lon2 } = site;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return false;
+  if (
+    Math.abs(lat1) > 90 ||
+    Math.abs(lat2) > 90 ||
+    Math.abs(lon1) > 180 ||
+    Math.abs(lon2) > 180
+  )
+    return false;
+  const radians = Math.PI / 180;
+  const deltaLat = (lat2 - lat1) * radians;
+  const deltaLon = (lon2 - lon1) * radians;
+  const arc =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1 * radians) *
+      Math.cos(lat2 * radians) *
+      Math.sin(deltaLon / 2) ** 2;
+  return (
+    6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(arc))) > SITE_RADIUS_METERS
+  );
+}
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
+ * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
  */
-export function isStalePendingSession(session, submitted) {
+export function isStalePendingSession(session, submitted, tasks = []) {
   if (!session) return false;
   if (session.status === "capture-complete") {
-    // The background scorecard has no terminal transition, so a completed
-    // backend check with the same id is the only signal the run has landed —
-    // the local mirror can then be dropped (re-finalizing it is idempotent,
-    // but repeats on every home load otherwise).
+    // The backend check can be submitted before per-artifact guidance has
+    // finished. Keep the local results alive until every captured item has
+    // settled; otherwise its last analysis update cannot refresh home.
+    const items = Array.isArray(session.items) ? session.items : [];
+    if (items.some((item) => item.analysis?.status !== "analyzed")) {
+      return false;
+    }
+    if (
+      items.some(
+        (item) =>
+          hasProblemResults(item) &&
+          !sessionProblemItemHasBackendCards(item, tasks),
+      )
+    ) {
+      return false;
+    }
     return submitted.some((check) => check.id === session.id);
   }
   if (submitted.some((check) => check.id === session.id)) return false;
@@ -113,10 +174,25 @@ export function newestTasksFirst(tasks) {
 }
 
 export function activeHomeFilterLabel(filterId, counts) {
-  const filter =
-    HOME_FILTERS.find((candidate) => candidate.id === filterId) ||
-    HOME_FILTERS[0];
-  return `${filter.label} • ${counts[filter.id] || 0}`;
+  const tab =
+    HOME_TABS.find((candidate) => candidate.id === filterId) || HOME_TABS[0];
+  return `${tab.label} • ${counts[filterId] || 0}`;
+}
+
+/**
+ * @param {string} status
+ * @returns {"todo" | "in_progress" | "history"}
+ */
+export function homeTabForStatus(status) {
+  if (status === "needs_action") return "todo";
+  if (status === "in_progress") return "in_progress";
+  return "history";
+}
+
+function normalizedHomeTab(value) {
+  if (value === "needs_action") return "todo";
+  if (value === "resolved" || value === "archived") return "history";
+  return HOME_TABS.some((tab) => tab.id === value) ? value : "todo";
 }
 
 export function homeTaskStatus(task, override, now = new Date()) {
@@ -125,7 +201,11 @@ export function homeTaskStatus(task, override, now = new Date()) {
     return "in_progress";
   }
   if (status === "completed" || status === "cannot_do") {
-    if (status === "completed" && task.completionMethod === "311_filed") {
+    if (
+      status === "completed" &&
+      task.completionMethod === "311_filed" &&
+      !hasCompleted311Ticket(task)
+    ) {
       return "in_progress";
     }
     const resolvedAt =
@@ -145,6 +225,15 @@ export function homeTaskStatus(task, override, now = new Date()) {
       : "resolved";
   }
   return "needs_action";
+}
+
+function hasCompleted311Ticket(task) {
+  const terminalStatuses = new Set(["closed", "completed", "resolved"]);
+  return (task.appActionResults || []).some(
+    (result) =>
+      result?.code === "create_311_ticket" &&
+      terminalStatuses.has(String(result.status || "").toLowerCase()),
+  );
 }
 
 export function isNewHomeTask(task, override, now = new Date()) {
@@ -183,6 +272,30 @@ export function shouldShowFirstRunHome({
   return !captureVisible && !last && taskCount === 0 && !hasResultCards;
 }
 
+/** @returns {string} */
+export function homeAllDonePanel() {
+  return html`
+    <section
+      class="home-results__complete"
+      aria-labelledby="home-all-done-title"
+    >
+      <div class="home-results__complete-content">
+        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
+        <h2 id="home-all-done-title">All done!</h2>
+        <p>
+          Your site is in great shape. Nothing needs your attention right now.
+        </p>
+        <p class="home-results__complete-note">
+          <a href="/problem" data-start-capture="single-problem">
+            Add a problem
+          </a>
+          if we missed something.
+        </p>
+      </div>
+    </section>
+  `;
+}
+
 export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
   if (!["entering-capture", "capture", "leaving-capture"].includes(viewPhase)) {
     return false;
@@ -213,10 +326,40 @@ export function issueCountLabel(count) {
   return `${count} ${count === 1 ? "issue" : "issues"} found`;
 }
 
-export function currentIssueCount(entries) {
-  return entries.filter((entry) =>
-    ["needs_action", "in_progress"].includes(entry.homeStatus),
-  ).length;
+/**
+ * @param {{ id?: string, submittedAt?: string | null, issueCount?: number } | null | undefined} last
+ * @param {Array<{ task: { checkId?: string }, homeStatus: string }>} entries
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function lastLogSummary(last, entries, now = new Date()) {
+  if (!last?.submittedAt) return "";
+  const date = new Date(last.submittedAt);
+  if (Number.isNaN(date.getTime())) return "";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const day =
+    date.toDateString() === now.toDateString()
+      ? "today"
+      : date.toDateString() === yesterday.toDateString()
+        ? "yesterday"
+        : new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  const count = Number(last.issueCount) || 0;
+  const needsAction = entries.some(
+    (entry) =>
+      entry.task.checkId === last.id && entry.homeStatus === "needs_action",
+  );
+  const outcome =
+    count === 0
+      ? "No issues found"
+      : last.id && !needsAction
+        ? "All issues handled"
+        : issueCountLabel(count);
+  return `Last log: ${day} at ${time} · ${outcome}`;
 }
 
 export function taskSignaturesFromSessionItems(items) {
@@ -359,6 +502,7 @@ async function hydrateTaskEvidence(tasks) {
       const evidence = {
         artifactId: artifact.artifactId || "",
         placeName: artifact.placeName || task.placeName || task.location || "",
+        georeferencedAddress: artifact.georeferencedAddress || "",
         text: artifact.text || "",
       };
       if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
@@ -391,7 +535,21 @@ async function cachedCheckArtifacts(checkId) {
     CHECK_ARTIFACTS_CACHE.set(
       checkId,
       getCheck(checkId)
-        .then((result) => result.artifacts || [])
+        .then((result) => {
+          const addresses = new Map(
+            (result.analyses || []).map((analysis) => [
+              analysis.artifactId,
+              analysis.georeferencedAddress || "",
+            ]),
+          );
+          return (result.artifacts || []).map((artifact) => ({
+            ...artifact,
+            georeferencedAddress:
+              addresses.get(artifact.artifactId) ||
+              artifact.georeferencedAddress ||
+              "",
+          }));
+        })
         .catch((err) => {
           console.warn("Could not hydrate task evidence", { checkId, err });
           CHECK_ARTIFACTS_CACHE.delete(checkId);
@@ -443,9 +601,68 @@ function newestTaskEntriesFirst(entries) {
   );
 }
 
+function taskCheckGroupId(task) {
+  return task?.checkId || "unknown";
+}
+
+/**
+ * @param {Array<{task: {checkId?: string}, createdAt?: string}>} entries
+ * @param {Array<{id: string, submittedAt?: string, startedAt?: string, issueCount?: number}>} checks
+ * @param {{id?: string, startedAt?: string, submittedAt?: string} | null} pendingSession
+ * @param {Date} [now]
+ * @returns {{id: string, time: string}}
+ */
+export function newestBlueCheckGroup(
+  entries,
+  checks,
+  pendingSession,
+  now = new Date(),
+) {
+  const checkTimes = new Map(
+    (checks || []).map((check) => [
+      check.id,
+      check.submittedAt || check.startedAt || "",
+    ]),
+  );
+  const candidates = new Map();
+  for (const entry of entries || []) {
+    const id = taskCheckGroupId(entry.task);
+    const timestamp = checkTimes.get(id) || entry.createdAt || "";
+    const previous = candidates.get(id) || "";
+    if (String(timestamp).localeCompare(String(previous)) > 0) {
+      candidates.set(id, timestamp);
+    }
+  }
+  for (const check of checks || []) {
+    if (Number(check.issueCount) !== 0 || !check.id) continue;
+    candidates.set(
+      check.id,
+      check.submittedAt || check.startedAt || candidates.get(check.id) || "",
+    );
+  }
+  if (pendingSession?.id) {
+    candidates.set(
+      pendingSession.id,
+      pendingSession.startedAt || pendingSession.submittedAt || "",
+    );
+  }
+  const newest = [...candidates.entries()].sort((a, b) =>
+    String(b[1]).localeCompare(String(a[1])),
+  )[0];
+  if (!newest) return { id: "", time: "" };
+  const date = new Date(newest[1]);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.toDateString() !== now.toDateString()
+  ) {
+    return { id: "", time: "" };
+  }
+  return { id: newest[0], time: newest[1] };
+}
+
 export function visibleTaskEntriesForHydration(entries, homeFilter) {
   return entries.filter(
-    (entry) => entry.isNew || entry.homeStatus === homeFilter,
+    (entry) => homeTabForStatus(entry.homeStatus) === homeFilter,
   );
 }
 
@@ -526,10 +743,23 @@ class TodayView extends HTMLElement {
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
+    this._siteSwitcherOpen = false;
+    this._siteDocumentClick = null;
+    this._providerSites = [];
+    this._providerSitesStatus = "idle";
+    this._boundSites = [];
+    this._providerName = "";
+    this._siteSwitchError = "";
     this._logoutDialog = null;
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
+    this._deviceLocation = getLastDeviceLocation();
+    this._locationUnsub = null;
+    this._locationPrompt = null;
+    this._locationSelectedSiteId = "";
+    this._pendingLocationRender = false;
+    this._startingCapture = false;
   }
 
   disconnectedCallback() {
@@ -541,7 +771,11 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
+    document.removeEventListener("click", this._siteDocumentClick);
+    this._siteDocumentClick = null;
     this._captureFinishedListening = false;
+    this._locationUnsub?.();
+    this._locationUnsub = null;
     window.clearTimeout(this._capturePhaseTimer);
   }
 
@@ -556,6 +790,15 @@ class TodayView extends HTMLElement {
         if (status === "saved") void this.connectedCallback();
         else if (this._homeModel) this._renderHome(this._homeModel);
       });
+    }
+    if (!this._locationUnsub) {
+      this._locationUnsub = onDeviceLocationChange((location) => {
+        this._deviceLocation = location;
+        if (this.isConnected && this._homeModel && this._viewPhase === "home") {
+          this._renderHome(this._homeModel);
+        }
+      });
+      void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
       this._sessionUnsub = onCheckSessionChange((session) => {
@@ -585,18 +828,50 @@ class TodayView extends HTMLElement {
       };
       document.addEventListener("click", this._settingsDocumentClick);
     }
+    if (!this._siteDocumentClick) {
+      this._siteDocumentClick = (event) => {
+        if (!this._siteSwitcherOpen) return;
+        const path = event.composedPath?.() || [];
+        if (
+          !path.some(
+            (node) =>
+              node instanceof Element &&
+              node.matches(".home-site-switcher, #lastlog-change-site"),
+          )
+        ) {
+          this._siteSwitcherOpen = false;
+          if (this._homeModel) this._renderHome(this._homeModel);
+        }
+      };
+      document.addEventListener("click", this._siteDocumentClick);
+    }
 
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+    this._providerSitesStatus = "loading";
+    const [catalog, bindings] = await Promise.all([
+      this._fetchProviderSites().catch((error) => {
+        console.error("listProviderSites failed", error);
+        return null;
+      }),
+      listBoundSites(),
+    ]);
+    this._providerSitesStatus = catalog ? "loaded" : "error";
+    this._providerSites = catalog?.sites || [];
+    this._providerName = catalog?.providerName || this._site.providerName || "";
+    this._boundSites = bindings;
 
     const active = getCurrentCheck();
     const requestedFilter = new URLSearchParams(window.location.search).get(
       "filter",
     );
-    const recognizedFilter = HOME_FILTERS.some(
-      ({ id }) => id === requestedFilter,
-    );
+    const recognizedFilter = [
+      ...HOME_TABS.map(({ id }) => id),
+      "needs_action",
+      "resolved",
+      "archived",
+    ].includes(requestedFilter || "");
     // Explicit worklist links retain the resumable draft without reopening it.
     const showRequestedWorklist =
       recognizedFilter && this._viewPhase === "home";
@@ -661,7 +936,9 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
-    if (this._isStalePendingSession(effectivePendingSession, submitted)) {
+    if (
+      this._isStalePendingSession(effectivePendingSession, submitted, tasks)
+    ) {
       await clearSubmittedSession();
       effectivePendingSession = null;
     } else if (effectivePendingSession?.status === "capture-complete") {
@@ -674,11 +951,12 @@ class TodayView extends HTMLElement {
     // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
-      this._homeFilter || (recognizedFilter ? requestedFilter : "needs_action");
+      this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     this._renderHome({
       last,
+      checks: submitted,
       tasks,
       captureSession,
       pendingSession: effectivePendingSession,
@@ -687,11 +965,18 @@ class TodayView extends HTMLElement {
   }
 
   _renderHome(model) {
+    this._homeModel = model;
+    // Keep the native dialog and its action buttons mounted while a location
+    // decision is pending. A background location update can otherwise replace
+    // the open dialog with a closed one.
+    if (this._locationPrompt) {
+      this._pendingLocationRender = true;
+      return;
+    }
     if (isDeletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
-    this._homeModel = model;
     // Index tasks by id so card action handlers can read the task (e.g. its
     // allowlisted cannot-do reasons) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
@@ -713,6 +998,37 @@ class TodayView extends HTMLElement {
     this.querySelector("#home-settings")?.addEventListener("click", () =>
       this._toggleSettingsMenu(),
     );
+    this.querySelector("#site-switcher-trigger")?.addEventListener(
+      "click",
+      () => {
+        this._setSiteSwitcherOpen(!this._siteSwitcherOpen);
+      },
+    );
+    this.querySelector("#lastlog-change-site")?.addEventListener(
+      "click",
+      () => {
+        this._setSiteSwitcherOpen(true);
+      },
+    );
+    this.querySelector(".home-site-switcher")?.addEventListener(
+      "keydown",
+      (event) => {
+        if (/** @type {KeyboardEvent} */ (event).key !== "Escape") return;
+        this._siteSwitcherOpen = false;
+        this._renderHome(this._homeModel);
+        /** @type {HTMLElement | null} */ (
+          this.querySelector("#site-switcher-trigger")
+        )?.focus();
+      },
+    );
+    this.querySelectorAll("[data-switch-site]").forEach((button) => {
+      button.addEventListener("click", () => {
+        void this._switchToSite(button.getAttribute("data-switch-site") || "");
+      });
+    });
+    this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
+      void this._retryProviderSites();
+    });
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
@@ -728,6 +1044,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -745,22 +1062,39 @@ class TodayView extends HTMLElement {
         });
       },
     );
-    this.querySelector("#task-filter-button")?.addEventListener("click", () =>
-      this._toggleTaskFilter(),
-    );
+    this.querySelectorAll(
+      ".analysis-card__clear-copy a[href='/problem']",
+    ).forEach((control) => {
+      control.addEventListener("click", (event) => {
+        event.preventDefault();
+        void this._startCapture("single-problem", control);
+      });
+    });
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._homeFilter =
-          button.getAttribute("data-home-filter") || "needs_action";
-        const url = new URL(window.location.href);
-        url.searchParams.set("filter", this._homeFilter);
-        window.history.replaceState(window.history.state, "", url);
-        this._filterOpen = false;
-        this._focusAfterRender = "task-filter-button";
-        if (this._homeModel) {
-          this._renderHome(this._homeModel);
-          void this._hydrateVisibleHomeTasks();
+        this._activateHomeTab(
+          button.getAttribute("data-home-filter") || "todo",
+        );
+      });
+      button.addEventListener("keydown", (event) => {
+        const key = /** @type {KeyboardEvent} */ (event).key;
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) {
+          return;
         }
+        event.preventDefault();
+        const currentIndex = HOME_TABS.findIndex(
+          ({ id }) => id === this._homeFilter,
+        );
+        const nextIndex =
+          key === "Home"
+            ? 0
+            : key === "End"
+              ? HOME_TABS.length - 1
+              : (currentIndex +
+                  (key === "ArrowRight" ? 1 : -1) +
+                  HOME_TABS.length) %
+                HOME_TABS.length;
+        this._activateHomeTab(HOME_TABS[nextIndex].id);
       });
     });
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
@@ -820,7 +1154,7 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, tasks, captureSession, pendingSession }) {
+  _render({ last, checks = [], tasks, captureSession, pendingSession }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -836,17 +1170,56 @@ class TodayView extends HTMLElement {
       return !taskArtifactIds.has(artifactId);
     });
     const homeTasks = this._homeTasks(tasks);
-    const issueCount = currentIssueCount(homeTasks);
-    const newTaskEntries = homeTasks.filter((entry) => entry.isNew);
-    const bucketTaskEntries = homeTasks.filter((entry) => !entry.isNew);
-    const statusCounts = this._statusCounts(bucketTaskEntries);
-    const visibleTasks = newestTasksFirst(
-      bucketTaskEntries.filter(
-        (entry) => entry.homeStatus === this._homeFilter,
+    const taskCheckIds = new Set(
+      homeTasks.map((entry) => taskCheckGroupId(entry.task)),
+    );
+    const clearChecks = checks.filter(
+      (check) => Number(check.issueCount) === 0 && !taskCheckIds.has(check.id),
+    );
+    const newestCheck = newestBlueCheckGroup(homeTasks, checks, pendingSession);
+    const selectedTaskEntries = newestTaskEntriesFirst(
+      homeTasks.filter(
+        (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
+    const newTaskEntries = selectedTaskEntries.filter(
+      (entry) => taskCheckGroupId(entry.task) === newestCheck.id,
+    );
+    const visibleTasks = selectedTaskEntries.filter(
+      (entry) => taskCheckGroupId(entry.task) !== newestCheck.id,
+    );
+    const selectedClearChecks =
+      this._homeFilter === "history" ? clearChecks : [];
+    const newClearCheck = selectedClearChecks.find(
+      (check) => check.id === newestCheck.id,
+    );
+    const historicalClearChecks = selectedClearChecks.filter(
+      (check) => check.id !== newestCheck.id,
+    );
     const hasPendingAssessment = !!pendingSession;
-    const hasResultCards = recentItems.length || newTaskEntries.length;
+    const pendingHasTaskCards = homeTasks.some(
+      (entry) => entry.task.checkId === pendingSession?.id,
+    );
+    const displayRecentItems = pendingHasTaskCards
+      ? recentItems.filter(
+          (item) =>
+            item.analysis?.status !== "analyzed" || hasProblemResults(item),
+        )
+      : recentItems;
+    const recentSessionIsClear = Boolean(
+      displayRecentItems.length &&
+        !pendingHasTaskCards &&
+        displayRecentItems.every(
+          (item) =>
+            item.analysis?.status === "analyzed" && !hasProblemResults(item),
+        ),
+    );
+    const visibleRecentItems =
+      this._homeFilter === (recentSessionIsClear ? "history" : "todo")
+        ? displayRecentItems
+        : [];
+    const hasResultCards =
+      recentItems.length || homeTasks.length || clearChecks.length;
     const captureVisible =
       Boolean(captureSession) || this._viewPhase === "leaving-capture";
     const showFirstRun = shouldShowFirstRunHome({
@@ -855,19 +1228,12 @@ class TodayView extends HTMLElement {
       taskCount: tasks.length,
       hasResultCards,
     });
-    const showWorklist =
-      hasPendingAssessment ||
-      recentItems.length ||
-      newTaskEntries.length ||
-      bucketTaskEntries.length > 0;
     const phaseClass = `home--${this._viewPhase}`;
     const resultsInactive = shouldInertHomeResults(this._viewPhase);
 
     return html`
       <div
-        class="home ${showFirstRun
-          ? "home--first-run"
-          : ""} ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
+        class="home ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
       >
         <section class="home-region home-region--header">
           <div class="home-top-actions">
@@ -895,15 +1261,21 @@ class TodayView extends HTMLElement {
                       ></wa-icon>
                       Logout
                     </button>
+                    <a
+                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      role="menuitem"
+                      aria-label="Address data attribution (opens in a new tab)"
+                      >Address data attribution</a
+                    >
                   </div>`
                 : ""}
             </div>
             <feedback-dialog class="feedback-dialog"></feedback-dialog>
           </div>
           <div
-            class="screen screen--today-hero ${showFirstRun
-              ? "screen--first-run"
-              : ""}"
+            class="screen screen--today-hero"
             role="group"
             aria-label="Today"
           >
@@ -911,7 +1283,7 @@ class TodayView extends HTMLElement {
               ? this._firstRunBlock()
               : this._activityBlock({
                   last,
-                  issueCount,
+                  homeTasks,
                 })}
           </div>
         </section>
@@ -922,25 +1294,26 @@ class TodayView extends HTMLElement {
 
         <section
           class="home-region home-region--results"
+          aria-label="Task results"
           ${resultsInactive ? html`inert aria-hidden="true"` : ""}
         >
-          ${showWorklist
-            ? html`
-                ${hasResultCards
-                  ? ""
-                  : html`<div class="home-divider" aria-hidden="true"></div>`}
-                ${this._homeResults({
-                  pendingSession,
-                  recentItems,
-                  newTaskEntries,
-                  visibleTasks,
-                  statusCounts,
-                  hasBucketTasks: bucketTaskEntries.length > 0,
-                })}
-              `
-            : ""}
+          ${this._homeResults({
+            pendingSession,
+            recentCheckTime:
+              newestCheck.time ||
+              pendingSession?.startedAt ||
+              last?.submittedAt ||
+              "",
+            checks,
+            recentItems: visibleRecentItems,
+            newTaskEntries,
+            visibleTasks,
+            newClearCheck,
+            historicalClearChecks,
+          })}
         </section>
-        ${showWorklist ? analysisDialogs() : ""}
+        ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
+        ${this._locationDialogMarkup()}
         <dialog
           class="places-modal logout-dialog"
           id="logout-dialog"
@@ -1026,110 +1399,217 @@ class TodayView extends HTMLElement {
 
   _homeResults({
     pendingSession,
+    recentCheckTime,
+    checks,
     recentItems,
     newTaskEntries,
     visibleTasks,
-    statusCounts,
-    hasBucketTasks,
+    newClearCheck,
+    historicalClearChecks,
   }) {
-    const hasNewResults = recentItems.length || newTaskEntries.length;
-    const hasActiveNewAnalysis = recentItems.some((item) =>
-      ["queued", "analyzing"].includes(item.analysis?.status),
-    );
-    const wrapSection =
-      hasNewResults && !hasActiveNewAnalysis ? this._wrapSection() : "";
+    const newTaskCards = this._newTaskCardEntries(newTaskEntries);
+    const hasVisibleCards =
+      recentItems.length ||
+      newTaskEntries.length ||
+      visibleTasks.length ||
+      Boolean(newClearCheck) ||
+      historicalClearChecks.length;
     return html`
       <div class="home-results">
+        ${this._taskTabs()}
         ${recentItems.length
           ? analysisResultsTray(recentItems, pendingSession.id, {
               id: "home-analysis-results",
               title: "",
               ariaLabel: "New analysis results",
               tone: "new",
-              footer: newTaskEntries.length ? "" : wrapSection,
               siteName: this._site?.name || "",
+              siteAddress: this._site?.address || "",
+              checkTime: recentCheckTime,
+              extraCards: newTaskCards,
             })
           : ""}
-        ${newTaskEntries.length
-          ? this._newTaskCards(newTaskEntries, wrapSection)
+        ${newTaskEntries.length && !recentItems.length
+          ? this._newTaskCards(newTaskEntries, recentCheckTime)
           : ""}
-        ${hasBucketTasks
+        ${newClearCheck && !recentItems.length && !newTaskEntries.length
+          ? this._clearCheckTray(newClearCheck, true)
+          : ""}
+        ${visibleTasks.length || historicalClearChecks.length
           ? html`
-              ${recentItems.length || newTaskEntries.length
-                ? html`<div
-                    class="home-results__divider"
-                    aria-hidden="true"
-                  ></div>`
-                : ""}
-              ${this._taskFilter(statusCounts)}
               <div class="home-results__cards">
-                ${visibleTasks
-                  .map((entry) =>
-                    taskAnalysisCard({
-                      task: entry.task,
-                      action:
-                        entry.homeStatus === "needs_action"
-                          ? this._primaryCardAction(entry.task)
-                          : null,
-                      statusLabel: this._taskStatusMeta(entry),
-                      isNew: false,
-                      includeControls: entry.homeStatus === "needs_action",
-                      siteName: this._site?.name || "",
-                    }),
-                  )
-                  .join("")}
+                ${this._historicalTaskGroups(
+                  visibleTasks,
+                  checks,
+                  historicalClearChecks,
+                )}
               </div>
             `
+          : ""}
+        ${!hasVisibleCards
+          ? this._homeFilter === "todo" && !pendingSession
+            ? homeAllDonePanel()
+            : html`<p class="home-results__empty" role="status">
+                ${this._homeFilter === "todo"
+                  ? "No tasks to do."
+                  : this._homeFilter === "in_progress"
+                    ? "No tasks in progress."
+                    : "No task history yet."}
+              </p>`
           : ""}
       </div>
     `;
   }
 
-  _wrapSection() {
-    return html`
-      <section class="home-wrap" aria-label="New issue summary">
-        <h2>That's a wrap</h2>
-        <p>
-          We didn't identify any other new issues.
-          <a
-            class="home-wrap__link"
-            href="#flag-single-issue"
-            data-start-capture="single-problem"
-          >
-            Flag a single issue
-          </a>
-          if we missed something, or check below for older pending or resolved
-          issues.
-        </p>
-      </section>
-    `;
+  _newTaskCardEntries(entries) {
+    return entries.map((entry) => ({
+      markup: taskAnalysisCard({
+        task: {
+          ...entry.task,
+          createdAt: entry.createdAt,
+          siteAddress: entry.task.siteAddress || this._site?.address || "",
+        },
+        siteName: this._site?.name || "",
+        action:
+          entry.homeStatus === "needs_action"
+            ? this._primaryCardAction(entry.task)
+            : null,
+        statusLabel: this._newTaskStatusMeta(entry),
+        isNew: true,
+        includeControls: entry.homeStatus === "needs_action",
+      }),
+      createdAt: entry.createdAt,
+      needsAnswer: Boolean(entry.task.needsAnswer),
+      actionPriority: analysisActionPriority(entry.task),
+    }));
   }
 
-  _newTaskCards(entries, footer = "") {
+  _newTaskCards(entries, checkTime = "") {
     return html`
       <section
-        class="analysis-tray analysis-tray--new"
+        class="analysis-tray analysis-tray--new analysis-tray--recent"
         aria-label="New analysis results"
       >
         <div class="analysis-tray__cards">
-          ${newestTaskEntriesFirst(entries)
-            .map((entry) =>
-              taskAnalysisCard({
-                task: entry.task,
-                action: this._primaryCardAction(entry.task),
-                statusLabel: this._newTaskStatusMeta(entry),
-                isNew: true,
-                siteName: this._site?.name || "",
-              }),
-            )
+          <h2 class="analysis-tray__check-title">
+            ${escapeHtml(recentCheckTitle(checkTime))}
+          </h2>
+          ${sortAnalysisCards(this._newTaskCardEntries(entries))
+            .map((card) => card.markup)
             .join("")}
-          ${footer}
         </div>
       </section>
     `;
   }
 
+  _clearCheckTray(check, recent = false) {
+    const checkTime = check.submittedAt || check.startedAt || "";
+    const title = recent
+      ? recentCheckTitle(checkTime)
+      : historicalCheckTitle(checkTime);
+    return html`
+      <section
+        class="analysis-tray ${recent
+          ? "analysis-tray--new analysis-tray--recent"
+          : "analysis-tray--history"}"
+        aria-label="${escapeAttr(title)}"
+      >
+        <div class="analysis-tray__cards">
+          <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
+          ${clearCheckCard()}
+        </div>
+      </section>
+    `;
+  }
+
+  _historicalTaskGroups(entries, checks, clearChecks = []) {
+    const checkTimes = new Map(
+      checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
+    );
+    const groups = new Map();
+    for (const entry of entries) {
+      const checkId = taskCheckGroupId(entry.task);
+      if (!groups.has(checkId)) groups.set(checkId, []);
+      groups.get(checkId).push(entry);
+    }
+    for (const check of clearChecks) {
+      if (!groups.has(check.id)) groups.set(check.id, []);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => {
+        const aTime = checkTimes.get(a[0]) || a[1][0]?.createdAt || "";
+        const bTime = checkTimes.get(b[0]) || b[1][0]?.createdAt || "";
+        return String(bTime).localeCompare(String(aTime));
+      })
+      .map(([checkId, group]) => {
+        const checkTime =
+          checkTimes.get(checkId) || group[0]?.createdAt || new Date();
+        return html`
+          <section
+            class="analysis-tray analysis-tray--history"
+            aria-label="${escapeAttr(historicalCheckTitle(checkTime))}"
+          >
+            <div class="analysis-tray__cards">
+              <h2 class="analysis-tray__check-title">
+                ${escapeHtml(historicalCheckTitle(checkTime))}
+              </h2>
+              ${group.length
+                ? sortAnalysisCards(
+                    group.map((entry) => ({
+                      markup: taskAnalysisCard({
+                        task: {
+                          ...entry.task,
+                          createdAt: entry.createdAt,
+                          siteAddress:
+                            entry.task.siteAddress || this._site?.address || "",
+                        },
+                        siteName: this._site?.name || "",
+                        action:
+                          entry.homeStatus === "needs_action"
+                            ? this._primaryCardAction(entry.task)
+                            : null,
+                        statusLabel: this._taskStatusMeta(entry),
+                        isNew: false,
+                        includeControls: entry.homeStatus === "needs_action",
+                      }),
+                      createdAt: entry.createdAt,
+                      needsAnswer: Boolean(entry.task.needsAnswer),
+                      actionPriority: analysisActionPriority(entry.task),
+                    })),
+                  )
+                    .map((card) => card.markup)
+                    .join("")
+                : clearCheckCard()}
+            </div>
+          </section>
+        `;
+      })
+      .join("");
+  }
+
   async _startCapture(flowType, launcher = null) {
+    if (this._startingCapture) return;
+    this._startingCapture = true;
+    try {
+      const position = await getSiteCheckDeviceLocation();
+      if (!position) {
+        console.warn(
+          `[location] No usable device location when starting ${flowType === "single-problem" ? "a single issue" : "a full check"}; site proximity check skipped.`,
+        );
+      }
+      if (isOutsideSiteRadius(position, this._site?.location)) {
+        this._locationPrompt = { flowType, launcher };
+        this._locationSelectedSiteId = this._siteId;
+        this._showLocationDialog();
+        return;
+      }
+      await this._enterCapture(flowType, launcher);
+    } finally {
+      this._startingCapture = false;
+    }
+  }
+
+  async _enterCapture(flowType, launcher = null) {
     this._captureFlow = flowType;
     this._viewPhase = "entering-capture";
     this._captureLauncherSelector =
@@ -1233,38 +1713,23 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _isStalePendingSession(session, submitted) {
-    return isStalePendingSession(session, submitted);
+  _isStalePendingSession(session, submitted, tasks) {
+    return isStalePendingSession(session, submitted, tasks);
   }
 
   _firstRunBlock() {
-    return html`
-      <div class="screen__sec home-lead home-lead--first-run">
-        <div class="home-first-run">
-          <h1 class="home-first-run__title">Start your first check</h1>
-          ${this._homeActions({
-            checkLabel: this._checkActionLabel(),
-            reportLabel: "Flag a single issue",
-            stacked: true,
-          })}
-        </div>
-      </div>
-    `;
+    return this._activityBlock({ last: null, homeTasks: [] });
   }
 
-  _activityBlock({ last, issueCount }) {
+  _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
     return html`
       <div class="screen__sec home-lead">
-        <div class="home-identity">
-          ${identity.org
-            ? html`<p class="home-identity__org">
-                ${escapeHtml(identity.org)}
-              </p>`
-            : ""}
+        ${this._siteSwitcher(identity.org)}
+        <div class="home-identity home-identity--with-summary">
           <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+          ${this._summaryBlock(last, homeTasks)}
         </div>
-        ${this._summaryBlock(last, issueCount)}
         ${this._homeActions({
           checkLabel: this._checkActionLabel(),
           reportLabel: "Flag a single issue",
@@ -1290,40 +1755,356 @@ class TodayView extends HTMLElement {
     `;
   }
 
+  async _fetchProviderSites() {
+    const sites = new Map();
+    const seenCursors = new Set();
+    let cursor = "";
+    let providerId = "";
+    let providerName = "";
+    do {
+      const page = await listProviderSites(cursor);
+      if (!page || !Array.isArray(page.sites)) {
+        throw new Error("Invalid provider sites response");
+      }
+      if (providerId && page.providerId !== providerId) {
+        throw new Error("Provider changed during site listing");
+      }
+      providerId = String(page.providerId || "");
+      providerName = String(page.providerName || providerName);
+      for (const site of page.sites) {
+        if (site?.siteId) sites.set(site.siteId, site);
+      }
+      cursor = page.nextCursor || "";
+      if (cursor && seenCursors.has(cursor)) {
+        throw new Error("Repeated provider sites cursor");
+      }
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return {
+      providerName,
+      sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
+
+  async _retryProviderSites() {
+    if (this._providerSitesStatus === "loading") return;
+    const requestedSiteId = this._siteId;
+    this._providerSitesStatus = "loading";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      const catalog = await this._fetchProviderSites();
+      if (requestedSiteId !== this._siteId) return;
+      this._providerSites = catalog.sites;
+      this._providerName =
+        catalog.providerName || this._site?.providerName || "";
+      this._providerSitesStatus = "loaded";
+    } catch (error) {
+      console.error("listProviderSites retry failed", error);
+      this._providerSitesStatus = "error";
+    } finally {
+      if (requestedSiteId === this._siteId && this._homeModel) {
+        this._renderHome(this._homeModel);
+      }
+    }
+  }
+
   _siteIdentity() {
     const org =
-      (this._site && (this._site.orgName || this._site.organizationName)) || "";
+      this._providerName ||
+      (this._site &&
+        (this._site.providerName ||
+          this._site.orgName ||
+          this._site.organizationName)) ||
+      "";
     const name = (this._site && this._site.name) || "Your site";
     if (org) return { org, site: name };
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
-  // Section 1: timestamp for the last submitted check, with issue count when
-  // there are task cards for the site. Overall condition text is no longer used.
-  _summaryBlock(last, issueCount = 0) {
-    if (!last || !last.submittedAt) return "";
-    const log = this._lastLog(last);
-    const issues = issueCountLabel(issueCount);
-    const label = [log.eyebrow, issues].filter(Boolean).join(" · ");
+  _siteSwitcher(providerName) {
+    const sites = this._providerSites.length
+      ? [...this._providerSites]
+      : [{ siteId: this._siteId, name: this._site.name }];
+    if (!sites.some((site) => site.siteId === this._siteId)) {
+      sites.push({ siteId: this._siteId, name: this._site.name });
+    }
     return html`
-      <div class="lastlog">
-        ${label
-          ? html`<p class="lastlog__eyebrow">${escapeHtml(label)}</p>`
+      <div class="home-site-switcher">
+        <button
+          id="site-switcher-trigger"
+          class="home-site-switcher__trigger"
+          type="button"
+          aria-expanded="${this._siteSwitcherOpen ? "true" : "false"}"
+          aria-controls="site-switcher-list"
+        >
+          <span>${escapeHtml(providerName || "Your provider")}</span>
+          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+        </button>
+        ${this._siteSwitcherOpen
+          ? html`<div id="site-switcher-list" class="home-site-switcher__menu">
+              ${sites
+                .map(
+                  (site) =>
+                    html`<button
+                      class="home-site-switcher__item ${site.siteId ===
+                      this._siteId
+                        ? "home-site-switcher__item--selected"
+                        : ""}"
+                      type="button"
+                      data-switch-site="${escapeAttr(site.siteId)}"
+                      ${site.siteId === this._siteId
+                        ? 'aria-current="page"'
+                        : ""}
+                    >
+                      <span class="home-site-switcher__check" aria-hidden="true"
+                        >${site.siteId === this._siteId ? "✓" : ""}</span
+                      >
+                      <span>${escapeHtml(site.name)}</span>
+                    </button>`,
+                )
+                .join("")}
+              ${this._siteSwitchError
+                ? html`<p class="home-site-switcher__error" role="alert">
+                    ${escapeHtml(this._siteSwitchError)}
+                  </p>`
+                : ""}
+              ${this._providerSitesStatus === "loading"
+                ? html`<p class="home-site-switcher__status" role="status">
+                    Loading sites…
+                  </p>`
+                : ""}
+              ${this._providerSitesStatus === "error"
+                ? html`<div class="home-site-switcher__failure">
+                    <p role="alert">Other sites couldn't load.</p>
+                    <button id="site-catalog-retry" type="button">Retry</button>
+                  </div>`
+                : ""}
+            </div>`
           : ""}
       </div>
     `;
   }
 
-  // The last submitted check as a one-line log:
-  //   eyebrow  = "LAST LOG · <relative day> · <time>"
-  _lastLog(last) {
-    if (!last || !last.submittedAt) {
-      return { eyebrow: "" };
+  _setSiteSwitcherOpen(open) {
+    this._siteSwitcherOpen = open;
+    this._siteSwitchError = "";
+    this._renderHome(this._homeModel);
+    /** @type {HTMLElement | null} */ (
+      this.querySelector("#site-switcher-trigger")
+    )?.focus();
+  }
+
+  _locationDialogMarkup() {
+    const sites = this._providerSites.length
+      ? [...this._providerSites]
+      : [{ siteId: this._siteId, name: this._site?.name || "Your site" }];
+    if (!sites.some((site) => site.siteId === this._siteId)) {
+      sites.unshift({
+        siteId: this._siteId,
+        name: this._site?.name || "Your site",
+      });
     }
-    const eyebrow = `LAST LOG · ${relativeDay(last.submittedAt)} · ${timeOf(
-      last.submittedAt,
-    )}`;
-    return { eyebrow };
+    return html`<dialog
+      class="location-dialog"
+      id="location-dialog"
+      aria-labelledby="location-dialog-title"
+      aria-describedby="location-dialog-copy"
+    >
+      <div class="location-dialog__card">
+        <div class="location-dialog__copy">
+          <h2 id="location-dialog-title">
+            Is your app set to the right location
+          </h2>
+          <p id="location-dialog-copy">
+            It looks like you're not near
+            ${escapeHtml(this._site?.name || "this site")}. Consider changing
+            your app's site.
+          </p>
+        </div>
+        <div
+          class="location-dialog__sites"
+          role="group"
+          aria-label="Choose a site"
+        >
+          ${sites
+            .map(
+              (site) =>
+                html`<button
+                  class="home-site-switcher__item location-dialog__site"
+                  type="button"
+                  data-location-site="${escapeAttr(site.siteId)}"
+                  aria-pressed="${site.siteId === this._siteId
+                    ? "true"
+                    : "false"}"
+                >
+                  <span class="home-site-switcher__check" aria-hidden="true"
+                    >${site.siteId === this._siteId ? "✓" : ""}</span
+                  >
+                  <span>${escapeHtml(site.name)}</span>
+                </button>`,
+            )
+            .join("")}
+        </div>
+        <div class="location-dialog__actions">
+          <button
+            class="location-dialog__confirm"
+            id="location-confirm"
+            type="button"
+            disabled
+          >
+            Confirm site change
+          </button>
+          <button
+            class="location-dialog__stay"
+            id="location-stay"
+            type="button"
+          >
+            I'm in the right location
+          </button>
+        </div>
+      </div>
+    </dialog>`;
+  }
+
+  _wireLocationDialog() {
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#location-dialog")
+    );
+    if (!dialog) return;
+    dialog.addEventListener("close", () => {
+      const changingSite = this._locationSelectedSiteId !== this._siteId;
+      this._locationPrompt = null;
+      if (this._pendingLocationRender) {
+        this._pendingLocationRender = false;
+        if (!changingSite && this._viewPhase === "home" && this._homeModel) {
+          this._renderHome(this._homeModel);
+        }
+      }
+    });
+    dialog.querySelectorAll("[data-location-site]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this._locationSelectedSiteId =
+          button.getAttribute("data-location-site") || this._siteId;
+        dialog.querySelectorAll("[data-location-site]").forEach((option) => {
+          const selected =
+            option.getAttribute("data-location-site") ===
+            this._locationSelectedSiteId;
+          option.setAttribute("aria-pressed", String(selected));
+          const check = option.querySelector(".home-site-switcher__check");
+          if (check) check.textContent = selected ? "✓" : "";
+        });
+        const confirm = /** @type {HTMLButtonElement | null} */ (
+          dialog.querySelector("#location-confirm")
+        );
+        if (confirm)
+          confirm.disabled = this._locationSelectedSiteId === this._siteId;
+      });
+    });
+    dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
+      if (this._locationSelectedSiteId === this._siteId) return;
+      dialog.close();
+      void this._switchToSite(this._locationSelectedSiteId);
+    });
+    dialog.querySelector("#location-stay")?.addEventListener("click", () => {
+      const prompt = this._locationPrompt;
+      dialog.close();
+      if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
+    });
+  }
+
+  _showLocationDialog() {
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#location-dialog")
+    )?.showModal();
+  }
+
+  async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
+    const active = getCurrentCheck();
+    if (active?.status === "capture-complete") {
+      this._siteSwitchError =
+        "Wait for this check to finish analyzing before switching sites.";
+      this._renderHome(this._homeModel);
+      return;
+    }
+    try {
+      if (active) await pauseCheck();
+      discardInMemorySession();
+      this._siteSwitcherOpen = false;
+      this.dispatchEvent(
+        new CustomEvent("siterequested", {
+          bubbles: true,
+          detail: { siteId, siteName, mode },
+        }),
+      );
+    } catch (error) {
+      console.error("site switch preparation failed", error);
+      this._siteSwitchError =
+        "We couldn't save this check before switching sites.";
+      this._renderHome(this._homeModel);
+    }
+  }
+
+  async _switchToSite(siteId) {
+    if (!siteId || siteId === this._siteId) {
+      this._siteSwitcherOpen = false;
+      this._renderHome(this._homeModel);
+      return;
+    }
+    const target = this._providerSites.find((site) => site.siteId === siteId);
+    const bound = this._boundSites.some(
+      (site) => site.siteId === siteId && site.token && site.refreshToken,
+    );
+    if (!bound) {
+      await this._requestAnotherSite("code", siteId, target?.name || "");
+      return;
+    }
+    const active = getCurrentCheck();
+    if (active?.status === "capture-complete") {
+      this._siteSwitchError =
+        "Wait for this check to finish analyzing before switching sites.";
+      this._renderHome(this._homeModel);
+      return;
+    }
+    try {
+      if (active) await pauseCheck();
+      const selected = await activateSiteBinding(siteId);
+      if (!selected) {
+        await this._requestAnotherSite("code", siteId, target?.name || "");
+        return;
+      }
+      discardInMemorySession();
+      window.location.assign("/today");
+    } catch (error) {
+      console.error("site switch failed", error);
+      this._siteSwitchError = "We couldn't switch sites. Try again.";
+      this._renderHome(this._homeModel);
+    }
+  }
+
+  // Last submitted check only: its recorded issue count and remaining actions.
+  _summaryBlock(last, homeTasks) {
+    if (isOutsideSiteRadius(this._deviceLocation, this._site?.location)) {
+      return html`<div class="lastlog">
+        <p class="lastlog__eyebrow">
+          Looks like you're not near this site.
+          <button
+            id="lastlog-change-site"
+            class="lastlog__switch"
+            type="button"
+            appearance="plain"
+          >
+            Change the site
+          </button>
+        </p>
+      </div>`;
+    }
+    const label = lastLogSummary(last, homeTasks);
+    if (!label) return "";
+    return html`
+      <div class="lastlog">
+        <p class="lastlog__eyebrow">${escapeHtml(label)}</p>
+      </div>
+    `;
   }
 
   _sessionItems(session) {
@@ -1346,63 +2127,37 @@ class TodayView extends HTMLElement {
       }));
   }
 
-  _statusCounts(entries) {
-    return HOME_FILTERS.reduce((counts, filter) => {
-      counts[filter.id] = entries.filter(
-        (entry) => entry.homeStatus === filter.id,
-      ).length;
-      return counts;
-    }, {});
-  }
-
-  _taskFilter(counts) {
-    const label = activeHomeFilterLabel(this._homeFilter, counts);
+  _taskTabs() {
     return html`
-      <div class="task-filter">
-        <button
-          class="task-filter__button"
-          id="task-filter-button"
-          type="button"
-          aria-expanded="${this._filterOpen ? "true" : "false"}"
-        >
-          ${escapeHtml(label)}
-          <span
-            class="task-filter__caret ${this._filterOpen
-              ? "task-filter__caret--up"
-              : ""}"
-            aria-hidden="true"
-          ></span>
-        </button>
-        ${this._filterOpen
-          ? html`
-              <div class="task-filter__menu" role="menu">
-                ${HOME_FILTERS.map(
-                  (filter) => html`
-                    <button
-                      class="task-filter__item ${filter.id === this._homeFilter
-                        ? "task-filter__item--active"
-                        : ""}"
-                      type="button"
-                      role="menuitem"
-                      data-home-filter="${escapeAttr(filter.id)}"
-                    >
-                      ${escapeHtml(activeHomeFilterLabel(filter.id, counts))}
-                    </button>
-                  `,
-                ).join("")}
-              </div>
-            `
-          : ""}
+      <div class="home-tabs" role="group" aria-label="Filter tasks">
+        ${HOME_TABS.map(
+          (tab) => html`
+            <button
+              class="home-tabs__tab ${tab.id === this._homeFilter
+                ? "home-tabs__tab--active"
+                : ""}"
+              type="button"
+              aria-pressed="${tab.id === this._homeFilter ? "true" : "false"}"
+              data-home-filter="${escapeAttr(tab.id)}"
+            >
+              ${escapeHtml(tab.label)}
+            </button>
+          `,
+        ).join("")}
       </div>
     `;
   }
 
-  _toggleTaskFilter() {
-    this._filterOpen = !this._filterOpen;
-    this._focusAfterRender = this._filterOpen
-      ? "task-filter-active-item"
-      : "task-filter-button";
-    if (this._homeModel) this._renderHome(this._homeModel);
+  _activateHomeTab(tabId) {
+    this._homeFilter = normalizedHomeTab(tabId);
+    const url = new URL(window.location.href);
+    url.searchParams.set("filter", this._homeFilter);
+    window.history.replaceState(window.history.state, "", url);
+    this._focusAfterRender = "home-tab-current";
+    if (this._homeModel) {
+      this._renderHome(this._homeModel);
+      void this._hydrateVisibleHomeTasks();
+    }
   }
 
   _restoreFocusAfterRender() {
@@ -1417,9 +2172,7 @@ class TodayView extends HTMLElement {
   }
 
   _focusSelector(target) {
-    if (target === "task-filter-active-item")
-      return ".task-filter__item--active";
-    if (target === "task-filter-button") return "#task-filter-button";
+    if (target === "home-tab-current") return ".home-tabs__tab--active";
     if (target === "capture-heading") {
       return ".check-timeline__title, .single-issue__title, .home-region--capture button";
     }

@@ -3,11 +3,23 @@
   (data) → HTML string; route → view mounting stays in app-root.js. The `html` tag
   drives editor highlighting + Prettier formatting (see src/lib/html.js).
 */
-import { html, escapeHtml } from "../lib/html.js";
+import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /* first-run: mount the onboarding flow */
-export const setupView = () => html`
-  <main class="app__main"><site-setup></site-setup></main>
+export const setupView = ({
+  targetSiteId = "",
+  targetSiteName = "",
+  mode = "code",
+  canCancel = false,
+} = {}) => html`
+  <main class="app__main">
+    <site-setup
+      data-target-site-id="${escapeAttr(targetSiteId)}"
+      data-target-site-name="${escapeAttr(targetSiteName)}"
+      data-mode="${escapeAttr(mode)}"
+      ${canCancel ? "data-can-cancel" : ""}
+    ></site-setup>
+  </main>
   <theme-toggle></theme-toggle>
 `;
 

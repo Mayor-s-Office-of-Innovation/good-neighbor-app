@@ -300,7 +300,7 @@ export function markCaptureComplete({
     current.expectedArtifacts = expectedArtifacts;
   }
   persistReview();
-  void clearDraft(current.flowType);
+  void clearDraft({ flowType: current.flowType, siteId: current.siteId });
   emit();
   return current;
 }
@@ -310,10 +310,11 @@ export function markCaptureComplete({
  * marker is stale and should no longer override the backend home view.
  */
 export async function clearSubmittedSession() {
+  const siteId = current?.siteId;
   if (current && current.status !== "in-progress") {
     current = null;
   }
-  await clearReview();
+  await clearReview(siteId);
   emit();
 }
 
@@ -323,18 +324,18 @@ export async function clearSubmittedSession() {
  */
 export function clearCheck() {
   const flowType = current?.flowType;
+  const siteId = current?.siteId;
   current = null;
-  void clearDraft(flowType);
-  if (flowType) void clearDraft();
-  void clearReview();
+  void clearDraft({ flowType, siteId });
+  if (flowType) void clearDraft({ siteId });
+  void clearReview(siteId);
   emit();
 }
 
 /**
- * Drop the in-memory session without touching persisted stores (db.js does
- * the store clears). Used on sign-out recovery, where clearSiteSession()
- * clears draft+review wholesale and any in-memory `current` would otherwise
- * survive as a stale singleton from the previous site.
+ * Drop the in-memory session without touching persisted stores. Used for
+ * site switching after pauseCheck() saves the active site's draft, and for
+ * sign-out recovery after clearSiteSession() clears all local records.
  */
 export function discardInMemorySession() {
   current = null;

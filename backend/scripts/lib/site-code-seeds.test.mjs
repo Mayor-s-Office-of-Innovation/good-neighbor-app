@@ -2,6 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { devSiteCodeSeeds, seedSiteCodes } from "./site-code-seeds.mjs";
 
 describe("seedSiteCodes", () => {
+  it("gives every seeded provider more than one site and unique login codes", () => {
+    const byProvider = new Map();
+    for (const seed of devSiteCodeSeeds) {
+      byProvider.set(
+        seed.providerId,
+        (byProvider.get(seed.providerId) || 0) + 1,
+      );
+    }
+    expect([...byProvider.values()].every((count) => count >= 2)).toBe(true);
+    expect(new Set(devSiteCodeSeeds.map((seed) => seed.code)).size).toBe(
+      devSiteCodeSeeds.length,
+    );
+  });
+
   it("does not reset existing dynamic setup codes", async () => {
     const send = vi.fn(async (command) => {
       if (command.input.Item?.type === "setupCode") {
@@ -43,5 +57,26 @@ describe("seedSiteCodes", () => {
       expect(input.UpdateExpression).not.toMatch(/places/);
       expect(input.ExpressionAttributeValues).not.toHaveProperty(":places");
     }
+  });
+
+  it("seeds 640 Jones with its Census-geocoded address for local proximity checks", async () => {
+    const send = vi.fn(async () => ({}));
+    await seedSiteCodes({ send }, "gnp-test-app");
+    const site = send.mock.calls
+      .map(([command]) => command.input)
+      .find(
+        (input) =>
+          input.Key?.pk === "SITE#chc-640-jones" && input.Key?.sk === "#META",
+      );
+    expect(site.ExpressionAttributeValues[":address"]).toBe(
+      "640 Jones St, San Francisco, CA 94102",
+    );
+    expect(site.ExpressionAttributeValues[":location"]).toEqual({
+      latitude: 37.787283046268,
+      longitude: -122.413199283242,
+    });
+    expect(site.UpdateExpression).toContain(
+      "if_not_exists(#location, :location)",
+    );
   });
 });
