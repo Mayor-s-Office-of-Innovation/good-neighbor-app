@@ -25,6 +25,11 @@ import {
   escapeUrlForPlatform,
 } from "../services/browser-context.js";
 import { reportClientEvent } from "../services/error-report.js";
+import {
+  deepActiveElement,
+  isEditable,
+  keyboardViewport,
+} from "../services/keyboard-viewport.js";
 
 const ROUTE_VIEW = [
   ["/problem/describe", "describe-instead"],
@@ -40,6 +45,7 @@ if (import.meta.env.DEV) {
 
 class AppRoot extends HTMLElement {
   async connectedCallback() {
+    this._startKeyboardViewportSync();
     if (this._isDevResetRoute()) {
       await this._resetFirstLaunch();
       return;
@@ -87,6 +93,58 @@ class AppRoot extends HTMLElement {
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
     this.removeEventListener("siterequested", this._onSiteRequested);
+    this._stopKeyboardViewportSync();
+  }
+
+  /**
+   * iOS keyboard fallback (see services/keyboard-viewport.js). While an
+   * editable control has focus and the keyboard has shrunk only the visual
+   * viewport, expose its height and pan offset to the shell's CSS.
+   */
+  _startKeyboardViewportSync() {
+    const viewport = window.visualViewport;
+    if (!viewport || this._onKeyboardViewport) return;
+    this._onKeyboardViewport = () => this._syncKeyboardViewport();
+    viewport.addEventListener("resize", this._onKeyboardViewport);
+    // Pans (Safari revealing a newly focused field, or the user dragging)
+    // change offsetTop without a resize; only "scroll" reports them.
+    viewport.addEventListener("scroll", this._onKeyboardViewport);
+    document.addEventListener("focusin", this._onKeyboardViewport);
+    document.addEventListener("focusout", this._onKeyboardViewport);
+  }
+
+  _stopKeyboardViewportSync() {
+    if (!this._onKeyboardViewport) return;
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._onKeyboardViewport,
+    );
+    window.visualViewport?.removeEventListener(
+      "scroll",
+      this._onKeyboardViewport,
+    );
+    document.removeEventListener("focusin", this._onKeyboardViewport);
+    document.removeEventListener("focusout", this._onKeyboardViewport);
+    this._onKeyboardViewport = null;
+    this._applyKeyboardViewport(null);
+  }
+
+  _syncKeyboardViewport() {
+    const editing = isEditable(deepActiveElement(document));
+    this._applyKeyboardViewport(
+      keyboardViewport(window.visualViewport, window.innerHeight, editing),
+    );
+  }
+
+  /** @param {{ height: number, top: number } | null} box */
+  _applyKeyboardViewport(box) {
+    if (!box) {
+      this.style.removeProperty("--app-viewport-height");
+      this.style.removeProperty("--app-viewport-top");
+      return;
+    }
+    this.style.setProperty("--app-viewport-height", `${box.height}px`);
+    this.style.setProperty("--app-viewport-top", `${box.top}px`);
   }
 
   _renderSetup(options = {}) {
