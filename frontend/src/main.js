@@ -12,9 +12,9 @@
   small icon set in /public/icons and register it as the `default` library below, so
   every <wa-icon> resolves locally — no kit fetch (the ka-*.fontawesome.com strings
   left in the WA bundle are its default resolver, never reached once we override it).
-  The `awesome` theme is vendored (src/styles/wa-awesome.css) with its remote font
-  @import stripped (Quicksand dropped for the system font stack), and imported eagerly
-  below, so the app is fully CDN-free at runtime.
+  The default theme and palette use system fonts and are imported from the installed
+  package, so the app remains fully CDN-free at runtime while matching the official
+  Web Awesome Figma kit.
 
   (No service worker ships in the MVP — real offline/precaching is a later pass; see
   vite.config.js and memory step2-gnp-port-scope.)
@@ -35,14 +35,14 @@ registerIconLibrary("default", {
 });
 
 // Web Awesome base styles, imported piecewise instead of `webawesome.css` so the
-// unused default theme (themes/default.css — our <html> carries wa-theme-awesome)
-// never ships. Keep this list in sync with webawesome.css's own import list.
+// unused styles and components never ship. Keep this list in sync with
+// webawesome.css's own import list.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
 import "@awesome.me/webawesome/dist/styles/utilities.css";
-// The "awesome" theme is our locked-in look. Vendored (src/styles/wa-awesome.css)
-// with its remote font @import stripped, so it's fully offline + CDN-free.
-import "./styles/wa-awesome.css";
+// Match the official Figma kit: Default theme + Default palette. The theme
+// stylesheet imports the palette and uses only local/system font stacks.
+import "@awesome.me/webawesome/dist/styles/themes/default.css";
 
 // Cherry-picked WA components (tree-shaken — only what we use). Any component
 // used only by a dev screen is imported in that module instead (see
