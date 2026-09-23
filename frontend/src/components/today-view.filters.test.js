@@ -287,7 +287,9 @@ describe("site location prompt", () => {
     ];
     const markup = view._locationDialogMarkup();
     expect(markup).toContain("Is your app set to the right location?");
-    expect(markup).toContain('id="location-dialog-title" tabindex="-1"');
+    expect(markup).toContain('<h2 id="location-dialog-title">');
+    expect(markup).toContain('aria-labelledby="location-dialog-title"');
+    expect(markup).toContain('aria-describedby="location-dialog-copy"');
     expect(markup).toContain("Site 2");
     expect(markup).toMatch(/location-dialog__site"\s+appearance="plain"/);
     expect(markup).toMatch(/location-dialog__confirm"\s+appearance="plain"/);
@@ -296,19 +298,30 @@ describe("site location prompt", () => {
     expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
   });
 
-  it("focuses the title instead of an unselected site when opening the location dialog", async () => {
+  it("focuses the selected site when opening the location dialog", async () => {
     const view = await mount("?filter=todo");
     const focus = vi.fn();
     const showModal = vi.fn();
+    const querySelector = vi.fn((selector) =>
+      selector === '.location-dialog__site[aria-pressed="true"]'
+        ? { focus }
+        : null,
+    );
     view.querySelector = () => ({
       showModal,
-      querySelector: () => ({ focus }),
+      querySelector,
     });
 
     view._showLocationDialog();
 
     expect(showModal).toHaveBeenCalledOnce();
+    expect(querySelector).toHaveBeenCalledWith(
+      '.location-dialog__site[aria-pressed="true"]',
+    );
     expect(focus).toHaveBeenCalledOnce();
+    expect(showModal.mock.invocationCallOrder[0]).toBeLessThan(
+      focus.mock.invocationCallOrder[0],
+    );
   });
 
   it("keeps the location warning mounted through a background location update", async () => {

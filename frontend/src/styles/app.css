@@ -748,7 +748,7 @@ form > wa-button[type="submit"] {
   justify-content: space-between;
   box-sizing: border-box;
   position: relative;
-  z-index: 2;
+  z-index: 5;
 }
 
 .home-settings {
@@ -864,6 +864,10 @@ form > wa-button[type="submit"] {
 .logout-dialog__confirm:disabled {
   cursor: wait;
   opacity: 0.7;
+}
+
+.logout-dialog__confirm:focus-visible {
+  outline: none;
 }
 
 .logout-dialog__error {
@@ -1343,11 +1347,6 @@ theme-toggle {
   background: var(--wa-color-neutral-fill-quiet, var(--surface-3));
 }
 .location-dialog__site:focus-visible {
-  outline: 0.1875rem solid
-    var(--wa-color-neutral-on-quiet, var(--text-secondary));
-  outline-offset: 0.125rem;
-}
-.location-dialog__copy h2:focus {
   outline: none;
 }
 .location-dialog__actions button:focus-visible {
@@ -1563,8 +1562,12 @@ button[data-loading] [data-loading-label] {
   flex: 0 0 auto;
 }
 
+.single-issue .shotgrid--empty {
+  justify-content: flex-start;
+}
+
 .single-issue__describe {
-  align-self: center;
+  align-self: flex-start;
   margin-top: -0.5rem;
 }
 
@@ -3585,10 +3588,13 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-success-on-quiet, #036730);
 }
 
-.check-timeline button:not(.analysis-dialog__button):focus-visible,
-.analysis-edit-dialog__field textarea:focus-visible {
+.check-timeline button:not(.analysis-dialog__button):focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+
+.analysis-edit-dialog__field textarea:focus-visible {
+  outline: none;
 }
 
 @media (max-width: 520px) {
