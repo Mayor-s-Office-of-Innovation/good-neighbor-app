@@ -230,7 +230,7 @@ export function progressLine({ photos, texts, complete }) {
   }
   return (
     `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
-    `<span>Take at least ${MIN_PERIMETER_PHOTOS} photos (you can also type descriptions)</span>` +
+    `<span>Try to take at least 3-5 photos</span>` +
     (complete ? `<span>Ready to finish.</span>` : "")
   );
 }

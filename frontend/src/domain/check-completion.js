@@ -19,7 +19,7 @@
   live in `check.items[]` in capture order.
 */
 
-export const MIN_PERIMETER_PHOTOS = 5;
+export const MIN_PERIMETER_PHOTOS = 3;
 
 /** Minimum trimmed length for a perimeter description to count as evidence. */
 export const MIN_DESCRIPTION_LENGTH = 20;
