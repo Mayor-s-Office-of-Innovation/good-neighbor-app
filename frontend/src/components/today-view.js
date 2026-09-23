@@ -1902,7 +1902,7 @@ class TodayView extends HTMLElement {
     >
       <div class="location-dialog__card">
         <div class="location-dialog__copy">
-          <h2 id="location-dialog-title" tabindex="-1">
+          <h2 id="location-dialog-title">
             Is your app set to the right location?
           </h2>
           <p id="location-dialog-copy">
@@ -2010,8 +2010,9 @@ class TodayView extends HTMLElement {
       this.querySelector("#location-dialog")
     );
     dialog?.showModal();
-    /** @type {HTMLElement | null} */ (
-      dialog?.querySelector("#location-dialog-title") || null
+    /** @type {HTMLButtonElement | null} */ (
+      dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
+        null
     )?.focus();
   }
 
