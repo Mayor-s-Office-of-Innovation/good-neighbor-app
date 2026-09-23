@@ -28,9 +28,9 @@ resource "aws_route53_record" "frontend_certificate_validation" {
   for_each = {
     for option in aws_acm_certificate.frontend.domain_validation_options :
     option.domain_name => {
-      name    = option.resource_record_name
-      record  = option.resource_record_value
-      type    = option.resource_record_type
+      name   = option.resource_record_name
+      record = option.resource_record_value
+      type   = option.resource_record_type
     }
   }
 

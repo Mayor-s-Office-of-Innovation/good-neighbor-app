@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "good-neighbor-app-terraform-state"
+    bucket = "good-neighbor-app-terraform-state"
     # Separate logical production stack in the DEV AWS account. This state
     # already owns the delegated goodneighbor.sf.gov hosted zone and DNSSEC.
     key            = "prod/terraform.tfstate"
