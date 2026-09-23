@@ -44,18 +44,16 @@ describe("shell", () => {
 
 describe("progressLine", () => {
   it("counts photos toward the minimum and offers the text alternative", () => {
-    const markup = progressLine({ photos: 3, texts: 0, complete: false });
+    const markup = progressLine({ photos: 2, texts: 0, complete: false });
 
-    expect(markup).toContain(`3 of ${MIN_PERIMETER_PHOTOS} photos taken`);
-    expect(markup).toContain(
-      "Take at least 5 photos (you can also type descriptions)",
-    );
+    expect(markup).toContain(`2 of ${MIN_PERIMETER_PHOTOS} photos taken`);
+    expect(markup).toContain("Try to take at least 3-5 photos");
   });
 
   it("reads ready once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 5, texts: 0, complete: true });
+    const markup = progressLine({ photos: 3, texts: 0, complete: true });
 
-    expect(markup).toContain("5 of 5 photos taken");
+    expect(markup).toContain("3 of 3 photos taken");
     expect(markup).toContain("Ready to finish");
   });
 

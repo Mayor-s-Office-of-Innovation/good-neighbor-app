@@ -5,7 +5,7 @@
   One grid of photos for the whole perimeter plus an optional single text
   description as the alternative to photos. Each photo or description is
   analyzed independently as soon as it is captured; Finish unlocks once the
-  completion rule in domain/check-completion.js is met (five photos, or one
+  completion rule in domain/check-completion.js is met (three photos, or one
   description). Every capture is one item in the session's flat `items[]`
   (ADR 0014); the pipeline and the result cards key on the item id alone.
 */

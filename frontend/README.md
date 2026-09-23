@@ -27,7 +27,7 @@ real `tokens.css`/`app.css`, so it can't drift. Dev-only: `vite build` ships onl
 
 - `/today` — the home hub (worklist, last log, Start/Flag CTAs)
 - `/check` — perimeter check capture: one flat photo roll for the whole perimeter. Finish
-  unlocks at five photos or one saved description (`src/domain/check-completion.js`).
+  unlocks at three photos or one saved description (`src/domain/check-completion.js`).
 - `/check/describe` — the description alternative to photos (one per check; reopening
   edits it)
 - `/problem` — single-issue capture (with a `/problem/describe` variant)

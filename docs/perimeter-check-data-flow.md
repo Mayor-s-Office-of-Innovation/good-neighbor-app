@@ -21,7 +21,7 @@ One continuous per-item pipeline, with a background scorecard fold at the end:
 1. **Capture & analyze & guide — per item.** The staff member walks the perimeter adding
    photos to one flat photo roll — or, when taking photos outside isn't practical or safe,
    types one description of the whole area instead. There is no list of places to walk
-   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)); Finish unlocks at **five photos
+   ([ADR 0014](./adr/0014-remove-places-photo-roll.md)); Finish unlocks at **three photos
    or one saved description** (frontend/src/domain/check-completion.js), a client-side
    rule the backend records but never enforces. Each piece of evidence is its
    own analysis unit: the moment it's captured it uploads to S3, registers, and the
@@ -92,7 +92,7 @@ sequenceDiagram
   API->>DB: task_created app actions (informational 311, best-effort)
   Note over UI: task / condition / question cards render on the item at once
   Staff->>UI: answers "More details needed", or Edit / Delete on a card
-  Staff->>UI: taps Finish check (enabled at 5 photos or 1 description)
+  Staff->>UI: taps Finish check (enabled at 3 photos or 1 description)
   Note over UI: navigate home on the tap — no API call<br/>session flips to capture-complete + background fold starts
   UI->>API: POST /v1/checks/{id}/complete (background, after coverage poll)
   API->>DB: Query header + ART# + ANALYSIS# (consistent)<br/>409 analyzing until every artifact has an ANALYSIS#
@@ -200,7 +200,7 @@ Every artifact of the run is one entry in the session's flat `items[]`
 **User taps Add photo.** The photo is added to the local session and its pipeline starts
 at once (frontend/src/components/perimeter-check.js `_addPhoto` →
 frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `run`). The progress line
-reads "1 of 5 photos" and Finish stays disabled until the completion rule is met
+reads "1 of 3 photos taken" and Finish stays disabled until the completion rule is met
 (check-completion.js `completionStatus`). No DB write yet — the first `createCheck`
 happens lazily inside the item's own analysis run (photo-analysis.js `ensureRemoteCheck`).
 
@@ -271,7 +271,7 @@ analysis locally only).
 
 ### Finish — background scorecard fold
 
-**User taps Finish check** — enabled once the roll holds five photos or one description
+**User taps Finish check** — enabled once the roll holds three photos or one description
 (check-completion.js `isPerimeterCheckComplete`); the backend never refuses a completion
 on evidence grounds. No API call on the tap: capture ends, the session flips to
 `capture-complete` (check-session.js `markCaptureComplete`, draft cleared) and
@@ -487,7 +487,7 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 | Step | Write site | Read/render site |
 |---|---|---|
 | Create check (lazy, per run) | backend/src/handlers/checks.js `createCheck` (empty body; no places) | frontend/src/services/photo-analysis.js `ensureRemoteCheck` |
-| Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (5 photos or 1 description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
+| Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (3 photos or 1 description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
 | Describe instead (one text item per check) | backend/src/handlers/artifacts.js `registerArtifact` (text, no s3Key) | frontend/src/components/describe-instead.js `_onContinue` → photo-analysis.js `analyzeEvidenceItem` |
 | Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (S3 key `checks/<siteId>/<checkId>/<artifactId>`; legacy place fields ignored) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
 | Device location (per item) | — | frontend/src/services/device-location.js `getCaptureDeviceLocation` (2s best-effort; 311 falls back to the site's geocoded `#META` location) |

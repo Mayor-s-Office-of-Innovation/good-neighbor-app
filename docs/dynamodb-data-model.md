@@ -17,7 +17,7 @@ standard mitigations documented below.
 - Each site has an **Admin** (Cognito user) who does first-run setup on a **shared device**
   that lives at the front desk and gets carried around for photos.
 - **Perimeter checks** happen **3× daily** per site, performed by staff who **do not log in**.
-- Each check is one flat **photo roll** for the whole perimeter: at least **five photos**,
+- Each check is one flat **photo roll** for the whole perimeter: at least **three photos**,
   or **one typed description** as the full alternative (the rule lives client-side in
   `frontend/src/domain/check-completion.js`; the backend records the counts, never
   refuses). There is no per-site list of places. Audio is out of scope.
