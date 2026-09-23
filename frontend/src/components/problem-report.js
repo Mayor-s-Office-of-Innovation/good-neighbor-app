@@ -51,7 +51,7 @@ import { shotTile, addTile } from "./perimeter-check.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
- * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string }} SiteRecord
+ * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string, address?: string }} SiteRecord
  * @typedef {{ kind: "photo", dataUrl: string }} PhotoItemInput
  * @typedef {{ kind?: "photo" | "text", id: string, dataUrl?: string, text?: string, analysis?: { status?: string } }} EvidenceItem
  */
@@ -313,7 +313,12 @@ class ProblemReport extends HTMLElement {
     if (!container) return;
     const items = getItems();
     container.innerHTML = items.length
-      ? analysisSection(items, this._checkId, this._site?.name || "")
+      ? analysisSection(
+          items,
+          this._checkId,
+          this._site?.name || "",
+          this._site?.address || "",
+        )
       : "";
     this._wireAnalysisCards();
   }

@@ -79,9 +79,15 @@ export const shell = ({
   </div>
 `;
 
-export const analysisSection = (items, checkId, siteName = "") =>
+export const analysisSection = (
+  items,
+  checkId,
+  siteName = "",
+  siteAddress = "",
+) =>
   analysisResultsTray(items, checkId, {
     ariaLabel: "Single issue analysis results",
     emptyText: "All problems were resolved or deleted.",
     siteName,
+    siteAddress,
   });

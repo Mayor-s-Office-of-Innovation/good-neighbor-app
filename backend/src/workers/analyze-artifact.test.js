@@ -5,16 +5,22 @@ import { singleLowConcernResponse } from "../analysis/fixtures/single-low-concer
 // Spies for every side-effecting seam. The analyzer client is mocked to hand
 // back a controllable `analyze` spy; AnalyzerError is kept from the real module
 // (spread) so instanceof checks in the worker still work.
-const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
-  () => ({
-    ddbSend: vi.fn(),
-    getObjectBytes: vi.fn(),
-    analyze: vi.fn(),
-    createAnalyzerClient: vi.fn(),
-  }),
-);
+const {
+  ddbSend,
+  getObjectBytes,
+  analyze,
+  createAnalyzerClient,
+  reverseGeocodePhoto,
+} = vi.hoisted(() => ({
+  ddbSend: vi.fn(),
+  getObjectBytes: vi.fn(),
+  analyze: vi.fn(),
+  createAnalyzerClient: vi.fn(),
+  reverseGeocodePhoto: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
+vi.mock("../integrations/reverse-geocoder.js", () => ({ reverseGeocodePhoto }));
 vi.mock("../media/downscale.js", () => ({
   downscaleImage: vi.fn(
     async (/** @type {Buffer} */ bytes, /** @type {string} */ contentType) => ({
@@ -61,6 +67,8 @@ beforeEach(() => {
   getObjectBytes.mockReset();
   analyze.mockReset();
   createAnalyzerClient.mockReset();
+  reverseGeocodePhoto.mockReset();
+  delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.SQS_QUEUE_URL = "queue";
@@ -70,6 +78,50 @@ beforeEach(() => {
 });
 
 describe("analyze-artifact worker", () => {
+  it("stores a photo address returned for its coordinates", async () => {
+    process.env.REVERSE_GEOCODING_ENABLED = "true";
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    reverseGeocodePhoto.mockResolvedValue("640 Jones St, San Francisco, CA");
+    ddbSend.mockResolvedValue({});
+
+    await invoke({ ...baseMsg, latitude: 37.7881, longitude: -122.4132 });
+
+    expect(reverseGeocodePhoto).toHaveBeenCalledWith(37.7881, -122.4132);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item.georeferencedAddress).toBe(
+      "640 Jones St, San Francisco, CA",
+    );
+  });
+
+  it("keeps the analysis when address lookup fails", async () => {
+    process.env.REVERSE_GEOCODING_ENABLED = "true";
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    reverseGeocodePhoto.mockRejectedValue(new Error("Unavailable"));
+    ddbSend.mockResolvedValue({});
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await invoke({ ...baseMsg, latitude: 37.7881, longitude: -122.4132 });
+      expect(
+        ddbSend.mock.calls[0][0].input.Item.georeferencedAddress,
+      ).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(
+        "Photo reverse geocoding unavailable",
+        { error: "Error" },
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("analyzes a photo, stores the ANALYSIS#, and bumps header counters", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img-bytes"),

@@ -92,9 +92,8 @@ export async function finishCheck(page) {
 }
 
 /**
- * The home tray that holds only THIS check's fresh cards. GET /v1/tasks also
- * returns older persisted tasks from previous runs (DDB Local keeps state),
- * which render in a separate section.
+ * The To do tab's blue tray for the newest check. GET /v1/tasks can also
+ * return older persisted tasks, which render in historical check groups.
  * @param {import("@playwright/test").Page} page
  */
 export function newResultsTray(page) {

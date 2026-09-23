@@ -186,6 +186,7 @@ resource "aws_lambda_function" "worker" {
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
+      REVERSE_GEOCODING_ENABLED   = "true"
     }
   }
 

@@ -13,10 +13,10 @@
      Fix: reset uses/maxUses on SETUP_CODE# items each run.
 
   2. TASK# items from previous runs stay `open` forever. The home worklist
-     (GET /v1/tasks) returns them all, and isNewHomeTask files anything
-     needs_action younger than 3h into the "New analysis results" tray — so
-     reruns inherit a polluted NEW tray and card-counting can't scope to this
-     run's guidance.
+     (GET /v1/tasks) returns them all, and recent tasks can appear in To do
+     or the newest-check tray before this run creates its own check. Reruns
+     would inherit unrelated cards and card-counting could not reliably
+     scope to this run's guidance.
      Fix: delete TASK# items (their GSI2 projection lives on the same item,
      so one delete suffices) each run.
 
