@@ -82,9 +82,11 @@ its retirement is separately reviewed. Its nameservers are not valid for
 
 The production provider app is served only from `goodneighbor.sf.gov`; the production
 CloudFront distribution does not claim the legacy `goodneighborsf.org` apex. The legacy
-`goodneighborsf.org` hosted zone remains outside this Terraform root and continues to own
-the `dev.goodneighborsf.org` delegation and SES DKIM records for
-`codes@goodneighborsf.org`. Do not remove or repoint that zone.
+`goodneighborsf.org` hosted zone (`Z0308170YNRHEPQH0O3C`, AWS account `701893741736`)
+remains outside both app Terraform roots and continues to hold the
+`dev.goodneighborsf.org` delegation and SES DKIM records for
+`codes@goodneighborsf.org`. SF Mayor's Office of Innovation coordinates changes to
+that zone; do not remove or repoint it.
 
 The DNSSEC key uses `ECC_NIST_P256` / `SIGN_VERIFY`, as required by Route 53.
 KMS automatic rotation is unsupported for this asymmetric key (the resource's

@@ -8,8 +8,10 @@ production SES access on 2026-09-23. Production is configured with separate
 application resources, deploy credentials, and Terraform state.
 
 The authoritative Route 53 zone for `goodneighborsf.org` is
-`Z0308170YNRHEPQH0O3C` outside the application production Terraform root.
-It holds the DKIM CNAME records needed for the sender. Namecheap remains the
+`Z0308170YNRHEPQH0O3C` in AWS account `701893741736`, separate from the app
+account (`518892333858`). SF Mayor's Office of Innovation is the team to
+contact for changes to this zone. It holds the DKIM CNAME records needed for
+the sender; neither app Terraform root manages them. Namecheap remains the
 registrar; no registrar change is needed for SES verification.
 
 ## Infrastructure ownership
@@ -19,8 +21,11 @@ production root reads that ARN from the dev remote state and grants its API
 Lambda permission to send from the identity. Production does not import or
 manage the SES identity or the parent-zone DKIM records. Keep the dev state and
 identity in place before deploying production; replacing that identity requires
-coordinated DNS and production IAM updates. Do not run a local Terraform apply
-or create a duplicate identity.
+coordinated DNS and production IAM updates. If SES issues new DKIM tokens,
+coordinate the CNAME changes in the parent zone with SF Mayor's Office of
+Innovation, then verify that SES reports DKIM `SUCCESS`. Do not remove the
+existing records while SES still sends setup-code or Cognito admin mail. Do
+not run a local Terraform apply or create a duplicate identity.
 
 ## Verify sending readiness
 

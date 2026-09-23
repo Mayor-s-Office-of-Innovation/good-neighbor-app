@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -52,10 +52,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -73,7 +73,7 @@ jobs:
       # run. Cache across runs — especially the MinIO binary, which is fetched
       # from a pinned GitHub release asset (dl.min.io went 410 in 2026).
       - name: Cache local harness binaries
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: backend/.local
           key: local-harness-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: playwright-report
           path: |
@@ -105,10 +105,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -141,7 +141,7 @@ jobs:
       # "No files were found" on the first runs, twice).
       - name: Upload Lighthouse reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lighthouse-reports
           path: frontend/.lighthouseci/
@@ -155,18 +155,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Gitleaks
         run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.18.4 detect --source /repo --redact --verbose
 
       - name: CodeQL init
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         with:
           languages: javascript-typescript
 
       - name: CodeQL analyze
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         continue-on-error: true
 
   terraform:
@@ -177,10 +177,10 @@ jobs:
         working-directory: infra/environments/dev
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: 1.9.8
 
@@ -202,7 +202,7 @@ jobs:
         run: terraform validate
 
       - name: Checkov
-        uses: bridgecrewio/checkov-action@v12
+        uses: bridgecrewio/checkov-action@444c9db6fa75e2d9c19ebf1fde7322089be9009e # v12
         continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
         with:
           directory: infra

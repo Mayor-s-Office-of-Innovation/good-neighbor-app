@@ -18,6 +18,6 @@ output "setup_code_email_identity_arn" {
 }
 
 output "setup_code_email_dkim_tokens" {
-  description = "Public DKIM tokens; the prod root owns the authoritative DNS records."
+  description = "Public DKIM tokens; SF Mayor's Office of Innovation maintains their CNAMEs in goodneighborsf.org zone Z0308170YNRHEPQH0O3C (AWS account 701893741736)."
   value       = aws_sesv2_email_identity.setup_codes.dkim_signing_attributes[0].tokens
 }
