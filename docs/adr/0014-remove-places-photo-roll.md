@@ -9,6 +9,9 @@ place layer out of the session shape, the API, the artifact key, the S3 key,
 the analyze worker, and the analytics columns. The consequences below describe
 the built state after both phases.
 
+The original five-photo minimum recorded below was reduced to three photos on
+2026-09-23; `frontend/src/domain/check-completion.js` owns the current rule.
+
 ## Context
 
 Before a site could run its first perimeter check, an admin had to configure a

@@ -29,13 +29,13 @@ function makeCheck(photos, texts) {
 }
 
 describe("isPerimeterCheckComplete", () => {
-  it("is incomplete with four photos and no description", () => {
-    expect(isPerimeterCheckComplete(makeCheck(4, 0))).toBe(false);
+  it("is incomplete with two photos and no description", () => {
+    expect(isPerimeterCheckComplete(makeCheck(2, 0))).toBe(false);
   });
 
-  it("is complete with five photos", () => {
-    expect(isPerimeterCheckComplete(makeCheck(5, 0))).toBe(true);
-    expect(MIN_PERIMETER_PHOTOS).toBe(5);
+  it("is complete with three photos", () => {
+    expect(isPerimeterCheckComplete(makeCheck(3, 0))).toBe(true);
+    expect(MIN_PERIMETER_PHOTOS).toBe(3);
   });
 
   it("is complete with zero photos and one description", () => {
@@ -96,9 +96,9 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
     ).toBe(true);
   });
 
-  it("five failed uploads do NOT satisfy the five-photo rule", () => {
+  it("three failed uploads do NOT satisfy the three-photo rule", () => {
     const check = makeCheck(0, 0);
-    check.items = Array.from({ length: 5 }, (_, i) => ({
+    check.items = Array.from({ length: 3 }, (_, i) => ({
       ...DEAD_PHOTO,
       id: `dead-${i}`,
     }));
@@ -108,27 +108,27 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
       photos: 0,
       texts: 0,
       complete: false,
-      remaining: 5,
+      remaining: 3,
     });
   });
 
-  it("five failed uploads plus four live photos count only four", () => {
+  it("three failed uploads plus two live photos count only two", () => {
     const check = makeCheck(0, 0);
     check.items = [
-      ...Array.from({ length: 5 }, (_, i) => ({
+      ...Array.from({ length: 3 }, (_, i) => ({
         id: `dead-${i}`,
         kind: "photo",
         dataUrl: "data:,",
         upload: { status: "failed" },
         analysis: { status: "failed" },
       })),
-      ...Array.from({ length: 4 }, (_, i) => ({
+      ...Array.from({ length: 2 }, (_, i) => ({
         id: `live-${i}`,
         kind: "photo",
         dataUrl: "data:,",
       })),
     ];
-    expect(photoCount(check)).toBe(4);
+    expect(photoCount(check)).toBe(2);
     expect(isPerimeterCheckComplete(check)).toBe(false);
   });
 
@@ -179,12 +179,13 @@ describe("counts and status", () => {
   });
 
   it("reports remaining photos until the minimum is met", () => {
-    expect(completionStatus(makeCheck(3, 0))).toEqual({
-      photos: 3,
+    expect(completionStatus(makeCheck(2, 0))).toEqual({
+      photos: 2,
       texts: 0,
       complete: false,
-      remaining: 2,
+      remaining: 1,
     });
+    expect(completionStatus(makeCheck(3, 0)).complete).toBe(true);
     expect(completionStatus(makeCheck(7, 0)).remaining).toBe(0);
     expect(completionStatus(makeCheck(0, 1)).complete).toBe(true);
   });

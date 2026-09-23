@@ -11,16 +11,16 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
   Perimeter check, end to end, against the local harness with the analyzer
-  stub. One spec, five photos into the flat photo roll, plus the post-check
+  stub. One spec, three photos into the flat photo roll, plus the post-check
   cleanup pass:
 
   - input-1.jpg → stub returns the multi-concern fixture → task / condition
     cards for temporary shelters / litter / graffiti appear in the
     "Analyzing evidence" tray on the capture view.
-  - input-2.jpg × 4 → stub returns the clean fixture. Since photo 1 has issues,
-    no clear-check card should appear. Finish stays disabled until the fifth
+  - input-2.jpg × 2 → stub returns the clean fixture. Since photo 1 has issues,
+    no clear-check card should appear. Finish stays disabled until the third
     photo lands (the completion rule in frontend/src/domain/check-completion.js:
-    five photos, or one description — see describe-instead.e2e.spec.js).
+    three photos, or one description — see describe-instead.e2e.spec.js).
   - Finish check → back home, NEW task cards appear in the results tray →
     dismiss every generated card via its delete (trash) button + confirm.
 
@@ -29,10 +29,38 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
   prod.
 */
 
-const MIN_PHOTOS = 5;
+const MIN_PHOTOS = 3;
 
 test.describe("perimeter check", () => {
-  test("issue photo generates task guidance; Finish unlocks at five photos", async ({
+  test("an all-clear check remains visible on home after finishing", async ({
+    page,
+  }) => {
+    await startCheck(page);
+    await setAnalyzerFixture("excellent");
+    for (let count = 1; count <= MIN_PHOTOS; count += 1) {
+      await addPhoto(page, PHOTO_CLEAR);
+      await expect(page.locator(".shot img")).toHaveCount(count, {
+        timeout: 30_000,
+      });
+    }
+
+    await expect(page.locator("#done-check")).toBeEnabled();
+    await finishCheck(page);
+
+    const newClearCard = page.locator(
+      ".home-results .analysis-tray--new .analysis-card--clear",
+    );
+    await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
+    await expect(newClearCard).toContainText("Your check was clear!");
+    await expect(page.locator(".analysis-tray--new")).toContainText(
+      "From today's",
+    );
+
+    await page.reload();
+    await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
+  });
+
+  test("issue photo generates task guidance; Finish unlocks at three photos", async ({
     page,
   }) => {
     await startCheck(page);
@@ -67,7 +95,7 @@ test.describe("perimeter check", () => {
     expect(await issueCards.count()).toBeGreaterThan(0);
     await expect(analyzingTray.locator(".analysis-card--clear")).toHaveCount(0);
 
-    // --- Photos 2–5: the clean scene, four times ---------------------------
+    // --- Photos 2–3: the clean scene, twice -------------------------------
     // Photo 1's analysis has landed, so switching the fixture now cannot leak
     // into it. Reusing the same file is fine: each upload is its own artifact.
     await setAnalyzerFixture("excellent");
@@ -82,7 +110,7 @@ test.describe("perimeter check", () => {
       }
     }
 
-    // The fifth photo satisfies the completion rule: readiness appears
+    // The third photo satisfies the completion rule: readiness appears
     // alongside the count and Finish enables.
     await expect(photoCount).toHaveText(
       `${MIN_PHOTOS} of ${MIN_PHOTOS} photos taken`,
@@ -91,7 +119,7 @@ test.describe("perimeter check", () => {
     await expect(done).toBeEnabled();
 
     // Wait for every photo's analysis to finish. A clear-check card is shown
-    // only when the entire check has no issues, so these four clean photos
+    // only when the entire check has no issues, so these two clean photos
     // must not add one alongside photo 1's issue cards.
     await expect(page.locator("#toggle-analyzing")).not.toContainText(
       "Analyzing...",

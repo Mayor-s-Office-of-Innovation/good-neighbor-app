@@ -1188,14 +1188,14 @@ class TodayView extends HTMLElement {
     const visibleTasks = selectedTaskEntries.filter(
       (entry) => taskCheckGroupId(entry.task) !== newestCheck.id,
     );
-    const selectedClearChecks =
-      this._homeFilter === "history" ? clearChecks : [];
-    const newClearCheck = selectedClearChecks.find(
-      (check) => check.id === newestCheck.id,
-    );
-    const historicalClearChecks = selectedClearChecks.filter(
-      (check) => check.id !== newestCheck.id,
-    );
+    const newClearCheck =
+      this._homeFilter === "todo"
+        ? clearChecks.find((check) => check.id === newestCheck.id)
+        : null;
+    const historicalClearChecks =
+      this._homeFilter === "history"
+        ? clearChecks.filter((check) => check.id !== newestCheck.id)
+        : [];
     const hasPendingAssessment = !!pendingSession;
     const pendingHasTaskCards = homeTasks.some(
       (entry) => entry.task.checkId === pendingSession?.id,
@@ -1206,18 +1206,8 @@ class TodayView extends HTMLElement {
             item.analysis?.status !== "analyzed" || hasProblemResults(item),
         )
       : recentItems;
-    const recentSessionIsClear = Boolean(
-      displayRecentItems.length &&
-        !pendingHasTaskCards &&
-        displayRecentItems.every(
-          (item) =>
-            item.analysis?.status === "analyzed" && !hasProblemResults(item),
-        ),
-    );
     const visibleRecentItems =
-      this._homeFilter === (recentSessionIsClear ? "history" : "todo")
-        ? displayRecentItems
-        : [];
+      this._homeFilter === "todo" ? displayRecentItems : [];
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     const captureVisible =
@@ -1913,7 +1903,7 @@ class TodayView extends HTMLElement {
       <div class="location-dialog__card">
         <div class="location-dialog__copy">
           <h2 id="location-dialog-title">
-            Is your app set to the right location
+            Is your app set to the right location?
           </h2>
           <p id="location-dialog-copy">
             It looks like you're not near
@@ -1931,6 +1921,7 @@ class TodayView extends HTMLElement {
               (site) =>
                 html`<button
                   class="home-site-switcher__item location-dialog__site"
+                  appearance="plain"
                   type="button"
                   data-location-site="${escapeAttr(site.siteId)}"
                   aria-pressed="${site.siteId === this._siteId
@@ -1948,6 +1939,7 @@ class TodayView extends HTMLElement {
         <div class="location-dialog__actions">
           <button
             class="location-dialog__confirm"
+            appearance="plain"
             id="location-confirm"
             type="button"
             disabled
@@ -1956,6 +1948,7 @@ class TodayView extends HTMLElement {
           </button>
           <button
             class="location-dialog__stay"
+            appearance="plain"
             id="location-stay"
             type="button"
           >
@@ -2013,9 +2006,14 @@ class TodayView extends HTMLElement {
   }
 
   _showLocationDialog() {
-    /** @type {HTMLDialogElement | null} */ (
+    const dialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#location-dialog")
-    )?.showModal();
+    );
+    dialog?.showModal();
+    /** @type {HTMLButtonElement | null} */ (
+      dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
+        null
+    )?.focus();
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {

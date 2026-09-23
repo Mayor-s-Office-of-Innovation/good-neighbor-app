@@ -55,7 +55,7 @@ alternative to photos; there is no per-site list of places to walk
 ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Each photo (or the description) is
 uploaded, registered, analyzed, and evaluated independently as soon as it's captured —
 results appear on the capture screen as they land, without waiting for the walk to
-finish. Finish unlocks at five photos or one description; the rule is client-side
+finish. Finish unlocks at three photos or one description; the rule is client-side
 (`frontend/src/domain/check-completion.js`) and the backend only records the counts.
 A check-level synthesis still exists, but only as the deferred, idempotent
 **completion** step the client runs in the background after `Finish` (so the saved

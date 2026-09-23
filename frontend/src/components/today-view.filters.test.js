@@ -104,6 +104,125 @@ async function mount(search) {
   return view;
 }
 
+describe("clear perimeter checks on home", () => {
+  it("keeps a just-finished clear check in the newest blue group", async () => {
+    const view = await mount("?filter=todo");
+    const startedAt = new Date().toISOString();
+    const pendingSession = {
+      id: "clear-check",
+      status: "capture-complete",
+      startedAt,
+      items: [
+        {
+          id: "photo-1",
+          kind: "photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+        {
+          id: "photo-2",
+          kind: "photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+      ],
+    };
+
+    const markup = view._render({
+      last: null,
+      checks: [],
+      tasks: [],
+      captureSession: null,
+      pendingSession,
+    });
+
+    expect(markup).toContain("From today&#39;s");
+    expect(markup).toContain("analysis-tray--new");
+    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+
+    const completed = {
+      id: pendingSession.id,
+      status: "submitted",
+      submittedAt: startedAt,
+      issueCount: 0,
+    };
+    const overlapMarkup = view._render({
+      last: completed,
+      checks: [completed],
+      tasks: [],
+      captureSession: null,
+      pendingSession,
+    });
+    expect(overlapMarkup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+
+  it("shows the persisted newest clear check in To do and superseded checks in History", async () => {
+    const view = await mount("?filter=todo");
+    const older = new Date();
+    older.setHours(9, 0, 0, 0);
+    const newer = new Date();
+    newer.setHours(10, 0, 0, 0);
+    const checks = [
+      {
+        id: "newer-clear",
+        status: "submitted",
+        submittedAt: newer.toISOString(),
+        issueCount: 0,
+      },
+      {
+        id: "older-clear",
+        status: "submitted",
+        submittedAt: older.toISOString(),
+        issueCount: 0,
+      },
+    ];
+    const model = {
+      last: checks[0],
+      checks,
+      tasks: [],
+      captureSession: null,
+      pendingSession: null,
+    };
+
+    const todoMarkup = view._render(model);
+    expect(todoMarkup).toContain("analysis-tray--new");
+    expect(todoMarkup).toContain("From today&#39;s 10:00 AM check");
+    expect(todoMarkup).not.toContain("From today&#39;s 9:00 AM check");
+    expect(todoMarkup.match(/Your check was clear!/g)).toHaveLength(1);
+
+    view._homeFilter = "history";
+    const historyMarkup = view._render(model);
+    expect(historyMarkup).toContain("analysis-tray--history");
+    expect(historyMarkup).toContain("From today&#39;s 9:00 AM check");
+    expect(historyMarkup).not.toContain("From today&#39;s 10:00 AM check");
+    expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+
+  it("moves a clear check from a previous day into the gray History group", async () => {
+    const view = await mount("?filter=todo");
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const check = {
+      id: "yesterday-clear",
+      status: "submitted",
+      submittedAt: yesterday.toISOString(),
+      issueCount: 0,
+    };
+    const model = {
+      last: check,
+      checks: [check],
+      tasks: [],
+      captureSession: null,
+      pendingSession: null,
+    };
+
+    expect(view._render(model)).not.toContain("Your check was clear!");
+    view._homeFilter = "history";
+    const markup = view._render(model);
+    expect(markup).toContain("analysis-tray--history");
+    expect(markup).toContain("From yesterday&#39;s check");
+    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+});
+
 describe("site location prompt", () => {
   it("checks a fresh position before both capture actions and pauses when off site", async () => {
     const view = await mount("?filter=todo");
@@ -167,10 +286,42 @@ describe("site location prompt", () => {
       { siteId: "site-2", name: "Site 2" },
     ];
     const markup = view._locationDialogMarkup();
-    expect(markup).toContain("Is your app set to the right location");
+    expect(markup).toContain("Is your app set to the right location?");
+    expect(markup).toContain('<h2 id="location-dialog-title">');
+    expect(markup).toContain('aria-labelledby="location-dialog-title"');
+    expect(markup).toContain('aria-describedby="location-dialog-copy"');
     expect(markup).toContain("Site 2");
+    expect(markup).toMatch(/location-dialog__site"\s+appearance="plain"/);
+    expect(markup).toMatch(/location-dialog__confirm"\s+appearance="plain"/);
+    expect(markup).toMatch(/location-dialog__stay"\s+appearance="plain"/);
     expect(markup).toMatch(/Confirm site change\s*<\/button>/);
     expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
+  });
+
+  it("focuses the selected site when opening the location dialog", async () => {
+    const view = await mount("?filter=todo");
+    const focus = vi.fn();
+    const showModal = vi.fn();
+    const querySelector = vi.fn((selector) =>
+      selector === '.location-dialog__site[aria-pressed="true"]'
+        ? { focus }
+        : null,
+    );
+    view.querySelector = () => ({
+      showModal,
+      querySelector,
+    });
+
+    view._showLocationDialog();
+
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(querySelector).toHaveBeenCalledWith(
+      '.location-dialog__site[aria-pressed="true"]',
+    );
+    expect(focus).toHaveBeenCalledOnce();
+    expect(showModal.mock.invocationCallOrder[0]).toBeLessThan(
+      focus.mock.invocationCallOrder[0],
+    );
   });
 
   it("keeps the location warning mounted through a background location update", async () => {
