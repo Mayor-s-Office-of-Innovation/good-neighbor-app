@@ -47,6 +47,21 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          # Fail closed if a GitHub Environment is accidentally configured with
+          # the other environment's role. The Terraform roots contain account-
+          # scoped resources and must never be applied across this boundary.
+          allowed-account-ids: ${{ inputs.environment == 'prod' && '701893741736' || '518892333858' }}
+
+      - name: Verify AWS account boundary
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ inputs.environment == 'prod' && '701893741736' || '518892333858' }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          if [ "$actual_account_id" != "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "Expected AWS account $EXPECTED_ACCOUNT_ID, authenticated to $actual_account_id" >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v7
