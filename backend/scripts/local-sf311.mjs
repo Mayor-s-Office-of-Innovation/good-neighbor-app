@@ -123,6 +123,30 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (method === "GET" && url.pathname.startsWith("/latest/")) {
+      const requests = await readRequests();
+      const records = requests
+        .filter((entry) => entry?.kind === "createsr")
+        .map((entry) => ({
+          SRNum: entry.response?.SRNum,
+          SourceAgencyReceiveDate: entry.receivedAt,
+          ResponsibleAgency: entry.payload?.ResponsibleAgency,
+          LocationDescription: entry.payload?.LocationDescription,
+          Status: "9",
+          Updates: requests
+            .filter(
+              (update) =>
+                update?.kind === "updatesr" &&
+                update.payload?.SRnum === entry.response?.SRNum,
+            )
+            .map((update) => update.payload),
+        }));
+      sendJson(res, 200, {
+        data: { return_code: "0", service_requests: records },
+      });
+      return;
+    }
+
     if (method === "POST" && url.pathname.includes("updatesr")) {
       const bodyText = await readBody(req);
       const payload = bodyText ? JSON.parse(bodyText) : {};

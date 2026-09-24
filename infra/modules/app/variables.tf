@@ -48,6 +48,12 @@ variable "sf311_agency_lookup_url" {
   default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/HUBWEB/1.0/lookup_agency_table"
 }
 
+variable "sf311_latest_updates_url" {
+  description = "SF311 HUB latest status updates endpoint URL; {agencyID} is replaced at runtime."
+  type        = string
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/GETSTATUSUPDATESBYSOURCEAGENCY/1.0/new_updates_by_source_agency/{agencyID}"
+}
+
 variable "sf311_default_responsible_agency" {
   description = "Optional fallback ResponsibleAgency value if the HUB lookup response does not map the selected service code."
   type        = string

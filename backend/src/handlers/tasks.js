@@ -1,9 +1,17 @@
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import { GSI2_NAME, taskWorklistPk } from "./keys.js";
+import { GSI2_NAME, taskKey, taskWorklistPk } from "./keys.js";
+import {
+  createSf311Client,
+  GOOD_NEIGHBOR_AGENCY,
+} from "../integrations/sf311-client.js";
+import {
+  findServiceRequest,
+  normalizeSf311Detail,
+} from "../integrations/sf311-status.js";
 
 // A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
 // so the index serves date-range task lists efficiently (see the data model doc,
@@ -75,4 +83,60 @@ export const listTasks = async (event) => {
 
   const ranked = byWorklistPriority(result.Items ?? []);
   return jsonResponse(200, { tasks: limit ? ranked.slice(0, limit) : ranked });
+};
+
+const updateCache = new Map();
+const UPDATE_CACHE_MS = 60_000;
+
+/** @param {Record<string, any>} task @param {string} srNum */
+function taskHasTicket(task, srNum) {
+  const results = Array.isArray(task.appActionResults)
+    ? task.appActionResults
+    : [];
+  return results.some(
+    (result) =>
+      result?.code === "create_311_ticket" &&
+      Array.isArray(result?.payload?.tickets) &&
+      result.payload.tickets.some(
+        (/** @type {any} */ ticket) => String(ticket?.srNum ?? "") === srNum,
+      ),
+  );
+}
+
+/** @param {import("../config.js").AppConfig} config */
+async function latestUpdates(config) {
+  const cached = updateCache.get(GOOD_NEIGHBOR_AGENCY);
+  if (cached && Date.now() - cached.at < UPDATE_CACHE_MS) return cached.body;
+  const body = await createSf311Client({
+    config,
+  }).getLatestUpdatesBySourceAgency();
+  updateCache.set(GOOD_NEIGHBOR_AGENCY, { at: Date.now(), body });
+  return body;
+}
+
+/** Authenticated, site-scoped and PII-free detail for one app-created 311 request. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
+export const get311RequestDetail = async (event) => {
+  const config = getConfig();
+  const siteId = deriveSiteId(event);
+  const taskId = String(event.pathParameters?.taskId ?? "").trim();
+  const srNum = String(event.pathParameters?.srNum ?? "").trim();
+  if (!taskId || !srNum)
+    return jsonResponse(400, { error: "taskId and srNum are required" });
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: config.dynamoTable,
+      Key: taskKey(siteId, taskId),
+    }),
+  );
+  const task = result.Item;
+  if (!task || !taskHasTicket(task, srNum))
+    return jsonResponse(404, { error: "311 request not found" });
+  const body = await latestUpdates(config);
+  const record = findServiceRequest(body, srNum);
+  if (!record)
+    return jsonResponse(404, { error: "311 request has no status data yet" });
+  return jsonResponse(200, {
+    request: normalizeSf311Detail({ record, task, srNum }),
+  });
 };

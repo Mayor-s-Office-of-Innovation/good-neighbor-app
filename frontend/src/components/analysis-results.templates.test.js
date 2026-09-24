@@ -747,7 +747,7 @@ describe("taskAnalysisCard", () => {
     expect(phone).not.toContain("analysis-card__primary--escalation");
   });
 
-  it("omits action, edit, and delete controls for read-only task cards", () => {
+  it("supports a read-only details action without edit or delete controls", () => {
     const card = taskAnalysisCard({
       task: {
         taskId: "task_1",
@@ -758,13 +758,14 @@ describe("taskAnalysisCard", () => {
         guidance: "Clean it up.",
         buttons: ["Cleaned it up"],
       },
-      action: { label: "Cleaned it up", variant: "ink", kind: "done" },
+      action: { label: "View details", variant: "outline", kind: "view311" },
       statusLabel: "YESTERDAY · 10:00AM",
       isNew: false,
       includeControls: false,
     });
 
-    expect(card).not.toContain("Cleaned it up</button>");
+    expect(card).toContain("View details");
+    expect(card).toContain('data-action="view311"');
     expect(card).not.toContain('data-analysis-action="edit"');
     expect(card).not.toContain('data-analysis-action="delete"');
   });

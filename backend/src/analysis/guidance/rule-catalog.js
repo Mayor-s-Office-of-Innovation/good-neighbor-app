@@ -31,6 +31,7 @@
 /**
  * @typedef {object} GuidanceRule
  * @property {string} policyVersion
+ * @property {number} [maxAcceptableResponseHours]
  * @property {string} ruleId
  * @property {string} category
  * @property {RuleWeighting} weighting
@@ -239,7 +240,14 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
-      const isResponsibleAgencyRulebaseShape = row.length === 16;
+      const isResponseTimeRulebaseShape = row.length === 17;
+      const isResponsibleAgencyRulebaseShape =
+        row.length === 16 || isResponseTimeRulebaseShape;
+      if (![15, 16, 17].includes(row.length)) {
+        throw new Error(
+          `Unsupported rulebase row shape: ${row.length} columns`,
+        );
+      }
       const category = row[0];
       const weighting = row[1];
       const ruleId = row[2];
@@ -255,17 +263,34 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
       const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
         ? row[12]
         : "";
-      const guidance = isResponsibleAgencyRulebaseShape ? row[13] : row[12];
-      const cannotDoReasons = isResponsibleAgencyRulebaseShape
+      const responseHours = isResponseTimeRulebaseShape ? row[13] : undefined;
+      const guidance = isResponseTimeRulebaseShape
         ? row[14]
+        : isResponsibleAgencyRulebaseShape
+          ? row[13]
+          : row[12];
+      const cannotDoReasons = isResponsibleAgencyRulebaseShape
+        ? row[isResponseTimeRulebaseShape ? 15 : 14]
         : row[13];
-      const source = isResponsibleAgencyRulebaseShape ? row[15] : row[14];
+      const source = isResponseTimeRulebaseShape
+        ? row[16]
+        : isResponsibleAgencyRulebaseShape
+          ? row[15]
+          : row[14];
+
+      const normalizedResponseHours =
+        responseHours === undefined
+          ? undefined
+          : Number(cleanCell(responseHours));
 
       return {
         policyVersion,
         ruleId: cleanCell(ruleId),
         category: cleanCell(category),
         weighting: /** @type {RuleWeighting} */ (cleanCell(weighting)),
+        ...(normalizedResponseHours === undefined
+          ? {}
+          : { maxAcceptableResponseHours: normalizedResponseHours }),
         evaluationOrder: Number(cleanCell(evaluationOrder)),
         severity: parseSeverityRange(severity),
         requiredQuestions: questionsForPrompt(askUser),
@@ -322,6 +347,13 @@ export function validateCatalog(catalog) {
     }
     if (!Number.isInteger(rule.evaluationOrder) || rule.evaluationOrder < 1) {
       errors.push(`${rule.ruleId} has invalid evaluationOrder`);
+    }
+    if (
+      rule.maxAcceptableResponseHours !== undefined &&
+      (!Number.isFinite(rule.maxAcceptableResponseHours) ||
+        rule.maxAcceptableResponseHours < 0)
+    ) {
+      errors.push(`${rule.ruleId} has invalid maxAcceptableResponseHours`);
     }
 
     for (const question of rule.requiredQuestions) {

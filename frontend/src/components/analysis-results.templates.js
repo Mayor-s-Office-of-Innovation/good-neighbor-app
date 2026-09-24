@@ -519,7 +519,7 @@ export function taskAnalysisCard({
     title: displayCategory(task) || task.label || "Condition found",
     description: task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
-    action: includeControls ? action?.label || "Done" : "",
+    action: action?.label || (includeControls ? "Done" : ""),
     actionKind:
       task.kind || (action?.variant === "blue" ? "escalation" : "action"),
     taskId: task.taskId || "",
