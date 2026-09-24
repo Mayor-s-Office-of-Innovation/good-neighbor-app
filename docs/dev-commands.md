@@ -238,6 +238,12 @@ at `http://127.0.0.1:3999/requests`, or clear them with:
 curl -X DELETE http://127.0.0.1:3999/requests
 ```
 
+The 311 detail timeline reads the fake latest-update feed at
+`http://127.0.0.1:3999/latest/76`. If that URL returns 404, an older fake server is still
+holding port 3999. Stop all previously running backend terminals and restart
+`npm run dev -w backend`. The fake-server health handshake includes a capability version so
+new runs fail visibly instead of silently reusing an incompatible process.
+
 > **Seed data note.** A fresh `npm run dev` seeds only provider/site login
 > codes and site metadata. It does not seed checks, artifacts, analyses, tasks,
 > or submission receipts; those appear after you submit through the local loop.

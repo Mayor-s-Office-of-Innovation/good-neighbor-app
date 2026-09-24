@@ -42,7 +42,8 @@ describe("SF311 status normalization", () => {
       },
     });
     expect(detail).toMatchObject({
-      status: "Open",
+      status: "In progress",
+      responseOverdue: false,
       problemType: "Blocked sidewalk",
       assignedAgency: "San Francisco Police Department (SFPD)",
     });
@@ -66,20 +67,85 @@ describe("SF311 status normalization", () => {
         task,
         now: new Date("2026-09-20T17:00:00Z"),
       });
-    expect(normalize(base, { maxAcceptableResponseHours: 4 }).status).toBe(
-      "Response overdue",
-    );
+    expect(normalize(base, { maxAcceptableResponseHours: 4 })).toMatchObject({
+      status: "Open",
+      statusDetail: "response overdue",
+      responseOverdue: true,
+    });
     expect(
       normalize({ ...base, Status: "4", ClosedReason: "8" }),
     ).toMatchObject({
-      status: "Resolved",
+      status: "Closed",
+      statusDetail: "field work completed",
+      responseOverdue: false,
       closureReason: "Field Work Completed",
     });
     expect(
       normalize({ ...base, Status: "4", ClosedReason: "2" }),
-    ).toMatchObject({ status: "Closed", closureReason: "Duplicate" });
+    ).toMatchObject({
+      status: "Closed",
+      statusDetail: "duplicate",
+      closureReason: "Duplicate",
+    });
     expect(
       normalize(base, { maxAcceptableResponseHours: 0 }),
     ).not.toHaveProperty("expectedResponseAt");
+  });
+
+  it("uses the most recent dated status update instead of a stale summary status", () => {
+    const detail = normalizeSf311Detail({
+      record: {
+        SRNum: "123",
+        Status: "9",
+        SourceAgencyReceiveDate: "2026-09-20T12:00:00Z",
+        Updates: [
+          {
+            UpdateType: "3",
+            NumericSubType: "7",
+            EffectiveDate: "2026-09-20T13:00:00Z",
+          },
+          {
+            UpdateType: "3",
+            NumericSubType: "6",
+            EffectiveDate: "2026-09-20T14:00:00Z",
+          },
+        ],
+      },
+      srNum: "123",
+      task: {},
+      now: new Date("2026-09-20T16:00:00Z"),
+    });
+
+    expect(detail).toMatchObject({
+      status: "On hold",
+      responseOverdue: false,
+    });
+    expect(detail).not.toHaveProperty("statusDetail");
+  });
+
+  it("puts the closure reason and agency note below the resolved title", () => {
+    const detail = normalizeSf311Detail({
+      record: {
+        SRNum: "123",
+        Status: "4",
+        SourceAgencyReceiveDate: "2026-09-20T12:00:00Z",
+        Updates: [
+          {
+            UpdateType: "11",
+            NumericSubType: "8",
+            Notes: "Removed the debris.",
+            EffectiveDate: "2026-09-20T15:00:00Z",
+          },
+        ],
+      },
+      srNum: "123",
+      task: {},
+      now: new Date("2026-09-20T16:00:00Z"),
+    });
+
+    expect(detail.events[0]).toMatchObject({
+      title: "The ticket was resolved",
+      description: "Agency said: Field Work Completed\nRemoved the debris.",
+    });
   });
 });

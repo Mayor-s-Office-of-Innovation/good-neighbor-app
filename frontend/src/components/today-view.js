@@ -51,6 +51,7 @@ import {
   appActionFailureMessage,
   isFiled311Completion,
 } from "../domain/task-actions.js";
+import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import {
   getCurrentCheck,
   hasDraft,
@@ -94,6 +95,28 @@ const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
 const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
+
+/**
+ * @param {string | number | Date} expectedAt
+ * @param {string | number | Date} [now]
+ */
+export function formatOverdueElapsed(expectedAt, now = Date.now()) {
+  const elapsedHours = Math.max(
+    1,
+    Math.floor(
+      (new Date(now).getTime() - new Date(expectedAt).getTime()) / 3_600_000,
+    ),
+  );
+  if (elapsedHours < 24) {
+    return `${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"}`;
+  }
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays} ${elapsedDays === 1 ? "day" : "days"}`;
+}
+
+function ticketEventDescription(description) {
+  return description ? html`<p>${escapeHtml(description)}</p>` : "";
+}
 
 function submitted311Ticket(task) {
   for (const result of task?.appActionResults || []) {
@@ -774,6 +797,8 @@ class TodayView extends HTMLElement {
     this._ticketDetailState = "idle";
     this._ticketDetailOpen = false;
     this._ticketDetailTrigger = null;
+    this._311StatusByTaskId = new Map();
+    this._311StatusGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -975,7 +1000,60 @@ class TodayView extends HTMLElement {
       captureSession,
       pendingSession: effectivePendingSession,
     });
+    void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  _taskWith311CardStatus(task) {
+    if (!submitted311Ticket(task)) return task;
+    const cardState = this._311StatusByTaskId.get(task.taskId);
+    return {
+      ...task,
+      ticketStatus: cardState?.status || "Open",
+      ticketStatusDetail: cardState?.statusDetail || "",
+      ticketResponseOverdue: Boolean(cardState?.responseOverdue),
+      ticketUpdatedAt: cardState?.updatedAt || task.createdAt || "",
+    };
+  }
+
+  async _hydrate311CardStatuses(tasks) {
+    const generation = ++this._311StatusGeneration;
+    const submittedTasks = tasks
+      .map((task) => ({ task, ticket: submitted311Ticket(task) }))
+      .filter(({ task, ticket }) => task.taskId && ticket?.srNum);
+    const statuses = await Promise.all(
+      submittedTasks.map(async ({ task, ticket }) => {
+        try {
+          const response = await get311RequestDetail(task.taskId, ticket.srNum);
+          return [
+            task.taskId,
+            {
+              status: response.request?.status || "Open",
+              statusDetail: response.request?.statusDetail || "",
+              responseOverdue: Boolean(response.request?.responseOverdue),
+              updatedAt:
+                response.request?.relevantDate ||
+                response.request?.submittedAt ||
+                task.createdAt ||
+                "",
+            },
+          ];
+        } catch {
+          return [
+            task.taskId,
+            {
+              status: "Open",
+              statusDetail: "",
+              responseOverdue: false,
+              updatedAt: task.createdAt || "",
+            },
+          ];
+        }
+      }),
+    );
+    if (generation !== this._311StatusGeneration || !this.isConnected) return;
+    this._311StatusByTaskId = new Map(statuses);
+    if (this._homeModel) this._renderHome(this._homeModel);
   }
 
   _renderHome(model) {
@@ -1366,13 +1444,6 @@ class TodayView extends HTMLElement {
 
   _311DialogMarkup() {
     const detail = this._ticketDetail;
-    const value = (label, content) =>
-      content
-        ? html`<div>
-            <dt>${escapeHtml(label)}</dt>
-            <dd>${escapeHtml(String(content))}</dd>
-          </div>`
-        : "";
     const formatDate = (date) =>
       date
         ? new Intl.DateTimeFormat(undefined, {
@@ -1380,6 +1451,18 @@ class TodayView extends HTMLElement {
             timeStyle: "short",
           }).format(new Date(date))
         : "";
+    const formatRelativeDate = (date) => {
+      if (!date) return "";
+      const days = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
+      );
+      return days === 0
+        ? "today"
+        : days === 1
+          ? "1 day ago"
+          : `${days} days ago`;
+    };
     return html` <dialog
       class="ticket-detail"
       id="ticket-detail-dialog"
@@ -1387,21 +1470,13 @@ class TodayView extends HTMLElement {
     >
       <div class="ticket-detail__sheet">
         <header class="ticket-detail__header">
-          <div>
-            <p class="ticket-detail__eyebrow">311 request</p>
-            <h2 id="ticket-detail-title">
-              ${detail
-                ? escapeHtml(detail.problemType || "Request details")
-                : "Request details"}
-            </h2>
-          </div>
           <button
             type="button"
-            class="ticket-detail__close"
+            class="btn-icon ticket-detail__close wa-plain"
             data-close-311
             aria-label="Close request details"
           >
-            ×
+            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
           </button>
         </header>
         ${this._ticketDetailState === "loading"
@@ -1424,56 +1499,120 @@ class TodayView extends HTMLElement {
                 class="ticket-detail__summary"
                 aria-label="Request summary"
               >
-                <span
-                  class="ticket-status ticket-status--${escapeAttr(
-                    detail.status.toLowerCase().replaceAll(" ", "-"),
-                  )}"
-                  >${escapeHtml(detail.status)}</span
+                <p
+                  class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
+                    ? "overdue"
+                    : detail.status === "Closed"
+                      ? "closed"
+                      : "default"}"
                 >
-                <dl>
-                  ${value("Location", detail.location)}${value(
-                    "Problem type",
-                    detail.problemType,
+                  <span aria-hidden="true"></span>
+                  <span class="ticket-detail__type-label">311 request</span>
+                  <span class="ticket-detail__type-separator" aria-hidden="true"
+                    >·</span
+                  >
+                  <strong
+                    >${escapeHtml(detail.status)}${detail.statusDetail
+                      ? html`: ${escapeHtml(detail.statusDetail)}`
+                      : ""}</strong
+                  >
+                </p>
+                ${detail.location
+                  ? html`<p class="ticket-detail__location">
+                      ${escapeHtml(String(detail.location).split(/\r?\n|,/)[0])}
+                    </p>`
+                  : ""}
+                <h2 id="ticket-detail-title">
+                  ${escapeHtml(
+                    detail.title || detail.problemType || "Request details",
                   )}
-                  ${value("Request number", detail.requestNumber)}${value(
-                    "Assigned agency",
-                    detail.assignedAgency,
-                  )}
-                  ${value(
-                    "Request age",
-                    Number.isFinite(detail.ageHours)
-                      ? `${detail.ageHours} hours`
-                      : "",
-                  )}
-                  ${value(
-                    "Most recent update",
-                    formatDate(detail.relevantDate),
-                  )}
-                  ${value("Closure reason", detail.closureReason)}
+                </h2>
+                ${detail.description
+                  ? html`<p class="ticket-detail__description">
+                      ${escapeHtml(detail.description)}
+                    </p>`
+                  : ""}
+                ${detail.mediaUrl
+                  ? html`<img
+                      class="ticket-detail__photo"
+                      src="${escapeAttr(detail.mediaUrl)}"
+                      alt="Evidence for ${escapeAttr(
+                        detail.title || detail.problemType || "the 311 request",
+                      )}"
+                    />`
+                  : html`<div
+                      class="ticket-detail__photo photo-placeholder"
+                      role="img"
+                      aria-label="No photo available"
+                    >
+                      <wa-icon name="image" aria-hidden="true"></wa-icon>
+                    </div>`}
+                <dl class="ticket-detail__metadata">
+                  ${detail.assignedAgency
+                    ? html`<div>
+                        <dt>Agency:</dt>
+                        <dd>${escapeHtml(detail.assignedAgency)}</dd>
+                      </div>`
+                    : ""}
+                  ${detail.submittedAt
+                    ? html`<div>
+                        <dt>Submitted:</dt>
+                        <dd>
+                          ${escapeHtml(formatRelativeDate(detail.submittedAt))}
+                        </dd>
+                      </div>`
+                    : ""}
+                  ${detail.expectedResponseAt
+                    ? html`<div>
+                        <dt>Response expected:</dt>
+                        <dd>
+                          ${escapeHtml(formatDate(detail.expectedResponseAt))}
+                        </dd>
+                      </div>`
+                    : ""}
+                  ${detail.closureReason
+                    ? html`<div>
+                        <dt>Closure reason:</dt>
+                        <dd>${escapeHtml(detail.closureReason)}</dd>
+                      </div>`
+                    : ""}
                 </dl>
+                ${detail.responseOverdue && detail.expectedResponseAt
+                  ? html`<p class="ticket-detail__overdue-message">
+                      The City's expected response time passed
+                      ${escapeHtml(
+                        formatOverdueElapsed(detail.expectedResponseAt),
+                      )}
+                      ago.
+                    </p>`
+                  : ""}
               </section>
               <section class="ticket-detail__updates">
                 <h3>Request updates</h3>
                 ${detail.events?.length
-                  ? html`<ol>
+                  ? html`<ol class="ticket-timeline">
                       ${detail.events
                         .map(
                           (event) =>
-                            html`<li>
-                              <time datetime="${escapeAttr(event.occurredAt)}"
-                                >${escapeHtml(
-                                  formatDate(event.occurredAt),
-                                )}</time
-                              ><strong>${escapeHtml(event.title)}</strong
-                              >${event.description
-                                ? html`<p>${escapeHtml(event.description)}</p>`
-                                : ""}
+                            html`<li class="ticket-timeline__item">
+                              <div class="ticket-timeline__content">
+                                <strong>${escapeHtml(event.title)}</strong
+                                >${ticketEventDescription(event.description)}
+                                <time datetime="${escapeAttr(event.occurredAt)}"
+                                  >${escapeHtml(
+                                    formatDate(event.occurredAt),
+                                  )}</time
+                                >
+                              </div>
                             </li>`,
                         )
                         .join("")}
                     </ol>`
                   : html`<p>No updates are available yet.</p>`}
-              </section>`
+              </section>
+              <p class="ticket-detail__reference">
+                #${escapeHtml(detail.requestNumber)}
+              </p>`
           : ""}
       </div>
     </dialog>`;
@@ -1523,7 +1662,25 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
       const response = await get311RequestDetail(task.taskId, ticket.srNum);
-      this._ticketDetail = response.request;
+      const request = response.request;
+      this._ticketDetail = {
+        ...request,
+        title:
+          task.userFriendlyLabel ||
+          task.user_friendly_label ||
+          task.category ||
+          task.analyzerCategory ||
+          request.problemType,
+        description: task.description || request.description || "",
+        location: ticketDetailLocation(task, this._site || {}, request),
+        mediaUrl:
+          task.thumbnailUrl ||
+          task.thumbUrl ||
+          task.mediaUrl ||
+          task.photoUrl ||
+          task.imageUrl ||
+          "",
+      };
       this._ticketDetailState = "ready";
     } catch {
       this._ticketDetailState = "error";
@@ -1636,11 +1793,11 @@ class TodayView extends HTMLElement {
   _newTaskCardEntries(entries) {
     return entries.map((entry) => ({
       markup: taskAnalysisCard({
-        task: {
+        task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
           siteAddress: entry.task.siteAddress || this._site?.address || "",
-        },
+        }),
         siteName: this._site?.name || "",
         action:
           entry.homeStatus === "needs_action"
@@ -1732,12 +1889,12 @@ class TodayView extends HTMLElement {
                 ? sortAnalysisCards(
                     group.map((entry) => ({
                       markup: taskAnalysisCard({
-                        task: {
+                        task: this._taskWith311CardStatus({
                           ...entry.task,
                           createdAt: entry.createdAt,
                           siteAddress:
                             entry.task.siteAddress || this._site?.address || "",
-                        },
+                        }),
                         siteName: this._site?.name || "",
                         action:
                           entry.homeStatus === "needs_action"

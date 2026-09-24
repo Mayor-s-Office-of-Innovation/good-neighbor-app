@@ -79,4 +79,26 @@ describe("seedSiteCodes", () => {
       "if_not_exists(#location, :location)",
     );
   });
+
+  it("seeds St. John the Evangelist with its street address", async () => {
+    const send = vi.fn(async () => ({}));
+    await seedSiteCodes({ send }, "gnp-test-app");
+    const site = send.mock.calls
+      .map(([command]) => command.input)
+      .find(
+        (input) =>
+          input.Key?.pk === "SITE#st-john-the-evangelist" &&
+          input.Key?.sk === "#META",
+      );
+    expect(site.ExpressionAttributeValues[":address"]).toBe(
+      "1661 15th St, San Francisco, CA",
+    );
+    expect(site.ExpressionAttributeValues).not.toHaveProperty(
+      ":geocodedAddress",
+    );
+    expect(site.UpdateExpression).not.toContain(":geocodedAddress");
+    expect(site.UpdateExpression).toContain(
+      "if_not_exists(#address, :address)",
+    );
+  });
 });

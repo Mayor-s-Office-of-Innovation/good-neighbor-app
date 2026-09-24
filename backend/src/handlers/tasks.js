@@ -12,6 +12,7 @@ import {
   findServiceRequest,
   normalizeSf311Detail,
 } from "../integrations/sf311-status.js";
+import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 
 // A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
 // so the index serves date-range task lists efficiently (see the data model doc,
@@ -136,7 +137,20 @@ export const get311RequestDetail = async (event) => {
   const record = findServiceRequest(body, srNum);
   if (!record)
     return jsonResponse(404, { error: "311 request has no status data yet" });
+  // Open tickets created before the response-time rubric shipped have no
+  // persisted deadline. Resolve those legacy tasks by stable ruleId so the
+  // current operational response window also appears on their detail view.
+  const currentRule = activeCatalog().rules.find(
+    (rule) => rule.ruleId === task.ruleId,
+  );
+  const detailTask =
+    task.maxAcceptableResponseHours === undefined && currentRule
+      ? {
+          ...task,
+          maxAcceptableResponseHours: currentRule.maxAcceptableResponseHours,
+        }
+      : task;
   return jsonResponse(200, {
-    request: normalizeSf311Detail({ record, task, srNum }),
+    request: normalizeSf311Detail({ record, task: detailTask, srNum }),
   });
 };
