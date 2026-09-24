@@ -85,4 +85,14 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/devices/${encodeURIComponent(deviceId)}`,
       { method: "DELETE" },
     ),
+  /**
+   * Run a read-only SQL query against the analytics lake (ADR 0013 ad-hoc leg).
+   * @param {string} sql
+   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number }>}
+   */
+  analyticsQuery: (sql) =>
+    adminFetch("/admin/v1/analytics/query", {
+      method: "POST",
+      body: JSON.stringify({ sql }),
+    }),
 };

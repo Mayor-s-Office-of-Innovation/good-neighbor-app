@@ -167,6 +167,66 @@ button[type="submit"] {
   color: #17613a;
 }
 
+.analytics-panel__hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  max-width: 480px;
+}
+
+.analytics-panel__meta {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.analytics-form {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+
+.analytics-form textarea {
+  width: 100%;
+  min-height: 96px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  resize: vertical;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
 @media (max-width: 640px) {
   .inline-form {
     grid-template-columns: 1fr;
