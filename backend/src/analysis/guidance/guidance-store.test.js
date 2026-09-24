@@ -224,7 +224,8 @@ describe("storeEvaluatedAssessment", () => {
     );
   });
 
-  it("runs task-created 311 actions silently after minting an action task", async () => {
+  it("records and logs failed task-created 311 actions", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     mockTaskShortIdAllocation({
       providerShortCode: "GUB",
       siteShortCode: "STJ",
@@ -283,6 +284,17 @@ describe("storeEvaluatedAssessment", () => {
       taskId: "task-silent",
       appActionStatus: "failed",
     });
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+      level: "ERROR",
+      route: "task app-action create_311_ticket",
+      eventType: "311_app_action_failed",
+      taskId: "task-silent",
+      siteId: "site-1",
+      ruleId: "LITTER-1",
+      trigger: "task_created",
+    });
+    errorLog.mockRestore();
   });
 
   it("marks unresolved analyzer categories for manual review", async () => {
