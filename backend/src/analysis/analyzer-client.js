@@ -87,6 +87,7 @@ export class AnalyzerError extends Error {
  * @typedef {{ type: "image", content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }} ImageMedia
  * @typedef {{ type: "text", text: string, metadata?: object }} TextMedia
  * @typedef {ImageMedia | TextMedia} AnalyzeMedia
+ * @typedef {{ type: "image", image: Omit<ImageMedia, "type"> } | { type: "text", text: string }} ClassifierEvidence
  */
 
 /**
@@ -133,6 +134,7 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
  * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string }) => Promise<AnalysisResponse>} analyze
  * @property {(analysisId: string, conditionId: string, input: { description: string, requestId?: string, appId?: string }) => Promise<unknown>} editCondition
  * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
+ * @property {(input: { classifierId: string, evidence: ClassifierEvidence, requestId?: string, appId?: string }) => Promise<unknown>} classifyEvidence
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
  * @property {() => Promise<unknown>} listRubrics
  */
@@ -283,6 +285,22 @@ export function createAnalyzerClient({
         method: "POST",
         body: {
           image,
+          ...(Object.keys(caller).length > 0 ? { caller } : {}),
+        },
+        auth: true,
+      });
+    },
+    classifyEvidence({ classifierId, evidence, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request(`/v1/classifiers/${encodeURIComponent(classifierId)}`, {
+        method: "POST",
+        body: {
+          ...(evidence.type === "image"
+            ? { image: evidence.image }
+            : { text: evidence.text }),
           ...(Object.keys(caller).length > 0 ? { caller } : {}),
         },
         auth: true,
