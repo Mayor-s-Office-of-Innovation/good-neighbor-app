@@ -1,6 +1,7 @@
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes, presignGet } from "../../s3.js";
+import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
@@ -366,7 +367,11 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
       bucket: config.uploadBucket,
       key: String(imageArtifact.s3Key),
     });
-    const contentType = String(imageArtifact.contentType || object.contentType);
+    const downscaled = await downscaleImage(
+      object.bytes,
+      String(object.contentType || imageArtifact.contentType),
+    );
+    const contentType = downscaled.contentType;
     if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) {
       throw new Error(
         `Unsupported classifier image content type: ${contentType}`,
@@ -378,7 +383,7 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
         content_type: /** @type {"image/jpeg" | "image/png" | "image/webp"} */ (
           contentType
         ),
-        base64: object.bytes.toString("base64"),
+        base64: downscaled.bytes.toString("base64"),
       },
     };
   }

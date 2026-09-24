@@ -3,12 +3,17 @@ import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const {
   createAnalyzerClient,
+  downscaleImage,
   getAnalyzerApiKey,
   getObjectBytes,
   presignGet,
   send,
 } = vi.hoisted(() => ({
   createAnalyzerClient: vi.fn(),
+  downscaleImage: vi.fn(async (bytes) => ({
+    bytes,
+    contentType: "image/jpeg",
+  })),
   getAnalyzerApiKey: vi.fn(),
   getObjectBytes: vi.fn(),
   presignGet: vi.fn(),
@@ -16,6 +21,7 @@ const {
 }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
 vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
+vi.mock("../../media/downscale.js", () => ({ downscaleImage }));
 vi.mock("../api-key.js", () => ({ getAnalyzerApiKey }));
 vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
 
@@ -312,9 +318,14 @@ describe("app action execution", () => {
       bytes: Buffer.from("image"),
       contentType: "image/jpeg",
     });
+    downscaleImage.mockResolvedValueOnce({
+      bytes: Buffer.from("resized-image"),
+      contentType: "image/jpeg",
+    });
     getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
     createAnalyzerClient.mockReturnValueOnce({
-      classifyEvidence: vi.fn().mockResolvedValueOnce({ labels: [] }),
+      classifyEvidence,
     });
 
     try {
@@ -359,6 +370,21 @@ describe("app action execution", () => {
           recordedAt: "2026-08-18T12:00:00.000Z",
         },
       ]);
+      expect(downscaleImage).toHaveBeenCalledWith(
+        Buffer.from("image"),
+        "image/jpeg",
+      );
+      expect(classifyEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          evidence: {
+            type: "image",
+            image: {
+              content_type: "image/jpeg",
+              base64: Buffer.from("resized-image").toString("base64"),
+            },
+          },
+        }),
+      );
     } finally {
       createAnalyzerClient.mockReset();
       getAnalyzerApiKey.mockReset();
