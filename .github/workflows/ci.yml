@@ -193,6 +193,14 @@ jobs:
       - name: Validate
         run: terraform validate
 
+      - name: Initialize production tests without backend
+        working-directory: infra/environments/prod
+        run: terraform init -backend=false
+
+      - name: Test production Terraform inputs
+        working-directory: infra/environments/prod
+        run: terraform test
+
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
         continue-on-error: ${{ github.actor == 'dependabot[bot]' }}
