@@ -48,12 +48,8 @@ import "@awesome.me/webawesome/dist/styles/themes/default.css";
 // used only by a dev screen is imported in that module instead (see
 // guidance-harness.js), so the prod bundle carries only production components.
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
-import "@awesome.me/webawesome/dist/components/input/input.js";
 import "@awesome.me/webawesome/dist/components/otp-input/otp-input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
-import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
-import "@awesome.me/webawesome/dist/components/badge/badge.js";
-import "@awesome.me/webawesome/dist/components/callout/callout.js";
 import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
 // Our tokens + layout. Unlayered, so they win over WA's @layer-ed native styles.

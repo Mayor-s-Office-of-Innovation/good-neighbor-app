@@ -73,6 +73,7 @@ import {
   recentCheckTitle,
   sortAnalysisCards,
   taskAnalysisCard,
+  taskMediaUrl,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
@@ -1673,13 +1674,7 @@ class TodayView extends HTMLElement {
           request.problemType,
         description: task.description || request.description || "",
         location: ticketDetailLocation(task, this._site || {}, request),
-        mediaUrl:
-          task.thumbnailUrl ||
-          task.thumbUrl ||
-          task.mediaUrl ||
-          task.photoUrl ||
-          task.imageUrl ||
-          "",
+        mediaUrl: taskMediaUrl(task),
       };
       this._ticketDetailState = "ready";
     } catch {
