@@ -144,6 +144,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   text report and carries it through the condition/task; 311 filing uses that location first,
   then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
   the app action with a retryable `missing_location` result rather than guessing.
+- **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
+  analyzer classifier when one exists, otherwise it sends the original text artifact. The
+  classifier returns only approved labels, which the app maps to SF311 service codes. An empty
+  label result is stored explicitly as `insufficient_classifier_information`; the app does not
+  guess a fallback code. Description-only tickets proceed to CreateSR without an attachment once
+  a label maps successfully. This requires the analyzer classifier endpoint to accept the
+  `{text}` request variant alongside its existing `{image}` variant.
 - **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
