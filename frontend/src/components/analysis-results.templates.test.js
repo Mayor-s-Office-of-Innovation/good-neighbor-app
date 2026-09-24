@@ -9,6 +9,7 @@ import {
   problemSummaryLabel,
   sortAnalysisCards,
   taskAnalysisCard,
+  updatedCardTime,
 } from "./analysis-results.templates.js";
 
 /** Fixture helper — test items only need the fields the templates read. */
@@ -766,9 +767,56 @@ describe("taskAnalysisCard", () => {
 
     expect(card).toContain("View details");
     expect(card).toContain('data-action="view311"');
+    expect(card).toContain("analysis-card__primary--outline");
+    expect(card).not.toContain('name="circle-check"');
+    expect(card).toContain("analysis-card__media--placeholder");
+    expect(card).toContain('name="image"');
+    expect(card).not.toContain("analysis-card__media--text");
     expect(card).not.toContain('data-analysis-action="edit"');
     expect(card).not.toContain('data-analysis-action="delete"');
   });
+
+  it("formats latest 311 update timestamps for card footers", () => {
+    const now = new Date(2026, 8, 24, 12, 0);
+    expect(updatedCardTime(new Date(2026, 8, 24, 9, 15), now)).toBe(
+      "Updated today, 9:15 AM",
+    );
+    expect(updatedCardTime(new Date(2026, 8, 22, 9, 15), now)).toBe(
+      "Updated Tuesday, 9:15 AM",
+    );
+    expect(updatedCardTime(new Date(2026, 8, 17, 9, 15), now)).toBe(
+      "Updated Sep 17, 9:15 AM",
+    );
+  });
+
+  it.each([
+    ["Open", "", false, "default", "Open"],
+    ["Open", "response overdue", true, "overdue", "Open: response overdue"],
+    ["Closed", "resolved", false, "closed", "Closed: resolved"],
+    ["Closed", "unable to locate", false, "closed", "Closed: unable to locate"],
+    ["On hold", "", false, "default", "On hold"],
+  ])(
+    "shows the %s 311 status and qualifier beside the route",
+    (ticketStatus, ticketStatusDetail, ticketResponseOverdue, tone, label) => {
+      const card = taskAnalysisCard({
+        task: {
+          taskId: "task_311",
+          kind: "escalation",
+          category: "Litter",
+          ticketStatus,
+          ticketStatusDetail,
+          ticketResponseOverdue,
+        },
+        action: { label: "View details", variant: "outline", kind: "view311" },
+        statusLabel: "Today",
+        includeControls: false,
+      });
+
+      expect(card).toContain("311 request");
+      expect(card).toContain(`analysis-card__ticket-status--${tone}`);
+      expect(card).toContain(`>${label}</span`);
+    },
+  );
 });
 
 describe("evidence captions without a place name", () => {

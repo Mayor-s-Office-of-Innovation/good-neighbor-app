@@ -35,8 +35,6 @@ const CLOSED_REASONS = {
   9: "No Merit",
 };
 
-const RESOLVED_REASONS = new Set(["1", "5", "8"]);
-
 /** @type {Record<string, string>} */
 export const AGENCY_NAMES = {
   1: "Department of Public Works (DPW)",
@@ -190,9 +188,12 @@ function updateEvent(update) {
     title = "Problem details have been updated";
     description = notes;
   } else if (type === "10") title = "The ticket was accepted for action";
-  else if (type === "11" && CLOSED_REASONS[numeric])
-    title = `The ticket was resolved: ${CLOSED_REASONS[numeric]}`;
-  else if (type === "12" && text)
+  else if (type === "11" && CLOSED_REASONS[numeric]) {
+    title = "The ticket was resolved";
+    description = [`Agency said: ${CLOSED_REASONS[numeric]}`, notes]
+      .filter(Boolean)
+      .join("\n");
+  } else if (type === "12" && text)
     title = `Another ticket was linked to this, #${text}`;
   else if (type === "14" && agency)
     title = `${agency} has received this ticket and is reviewing`;
@@ -218,6 +219,34 @@ function requestUpdates(record) {
   return [];
 }
 
+/** @param {Record<string, unknown>} update */
+function updateDate(update) {
+  return validDate(update.EffectiveDate, update.ToHubDate, update.ToAgencyDate);
+}
+
+/**
+ * Resolve the latest HUB status-affecting update. A ClosedReason update closes
+ * the request even when the upstream summary record still carries a stale
+ * active status.
+ * @param {Record<string, unknown>} record
+ */
+function latestStatusCode(record) {
+  const candidates = requestUpdates(record)
+    .flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const update = /** @type {Record<string, unknown>} */ (item);
+      const type = first(update, "UpdateType", "update_type");
+      const numeric = first(update, "NumericSubType", "numeric_sub_type");
+      const code = type === "11" ? "4" : type === "3" ? numeric : "";
+      const occurredAt = updateDate(update);
+      return code && STATUS_NAMES[code] && occurredAt
+        ? [{ code, occurredAt }]
+        : [];
+    })
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  return candidates[0]?.code || "";
+}
+
 /** Normalize a HUB record into the app's stable, PII-free ticket-detail contract. */
 /** @param {{record: Record<string, unknown>, task: Record<string, any>, srNum: string, now?: Date}} params */
 export function normalizeSf311Detail({
@@ -226,17 +255,22 @@ export function normalizeSf311Detail({
   srNum,
   now = new Date(),
 }) {
-  const statusCode = first(record, "Status", "StatusCode", "status");
-  const closedReasonUpdate = requestUpdates(record).find(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      first(
-        /** @type {Record<string, unknown>} */ (item),
-        "UpdateType",
-        "update_type",
-      ) === "11",
-  );
+  const closedReasonUpdate = requestUpdates(record)
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        first(
+          /** @type {Record<string, unknown>} */ (item),
+          "UpdateType",
+          "update_type",
+        ) === "11",
+    )
+    .sort((a, b) =>
+      updateDate(/** @type {Record<string, unknown>} */ (b)).localeCompare(
+        updateDate(/** @type {Record<string, unknown>} */ (a)),
+      ),
+    )[0];
   const closedReasonCode =
     first(record, "ClosedReason", "ClosedReasonCode", "closed_reason") ||
     (closedReasonUpdate && typeof closedReasonUpdate === "object"
@@ -246,24 +280,25 @@ export function normalizeSf311Detail({
           "numeric_sub_type",
         )
       : "");
+  const recordStatusCode = first(record, "Status", "StatusCode", "status");
+  const eventStatusCode = latestStatusCode(record);
+  const statusCode =
+    eventStatusCode ||
+    (closedReasonCode ? "4" : "") ||
+    (STATUS_NAMES[recordStatusCode] ? recordStatusCode : "9");
+  const status = STATUS_NAMES[statusCode] || "Open";
   const submittedAt = validDate(
     record.SourceAgencyReceiveDate,
     record.ToHubDate,
     task.createdAt,
   );
-  const closed = statusCode === "4" || Boolean(closedReasonCode);
-  const terminalStatus = closed
-    ? RESOLVED_REASONS.has(closedReasonCode)
-      ? "Resolved"
-      : "Closed"
-    : "Open";
   const maxHours = Number(task.maxAcceptableResponseHours);
   const expectedResponseAt =
     maxHours > 0 && submittedAt
       ? new Date(Date.parse(submittedAt) + maxHours * 3_600_000).toISOString()
       : "";
   const overdue =
-    terminalStatus === "Open" &&
+    status !== "Closed" &&
     expectedResponseAt &&
     now.getTime() > Date.parse(expectedResponseAt);
   const events = requestUpdates(record)
@@ -291,14 +326,23 @@ export function normalizeSf311Detail({
     task.evidence?.placeName ||
     "";
   const relevantDate = events[0]?.occurredAt || submittedAt;
+  const closureReason = CLOSED_REASONS[closedReasonCode] || "";
+  const statusDetail =
+    status === "Closed" && closureReason
+      ? closureReason.toLocaleLowerCase()
+      : overdue
+        ? "response overdue"
+        : "";
   return {
     requestNumber: clean(srNum),
-    status: overdue ? "Response overdue" : terminalStatus,
-    ...(closedReasonCode && CLOSED_REASONS[closedReasonCode]
-      ? { closureReason: CLOSED_REASONS[closedReasonCode] }
-      : {}),
+    status,
+    responseOverdue: Boolean(overdue),
+    ...(statusDetail ? { statusDetail } : {}),
+    ...(closureReason ? { closureReason } : {}),
     ...(location ? { location } : {}),
-    problemType: task.userFriendlyLabel || task.label || task.category || "",
+    problemType:
+      task.userFriendlyLabel || task.category || task.analyzerCategory || "",
+    ...(task.guidance ? { guidance: task.guidance } : {}),
     ...(agencyName(agencyCode)
       ? { assignedAgency: agencyName(agencyCode) }
       : {}),

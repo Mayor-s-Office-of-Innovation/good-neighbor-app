@@ -3106,7 +3106,7 @@ html.wa-dark .analysis-card__clear-copy a {
   line-height: 1.2;
 }
 
-.analysis-card__route > span {
+.analysis-card__route > .analysis-card__route-dot {
   width: 1rem;
   height: 1rem;
   flex: 0 0 1rem;
@@ -3114,16 +3114,28 @@ html.wa-dark .analysis-card__clear-copy a {
   background: var(--wa-color-neutral-60, #9194a2);
 }
 
-.analysis-card__route--311 > span {
+.analysis-card__route--311 > .analysis-card__route-dot {
   background: var(--wa-color-blue-60, #0071ec);
 }
 
-.analysis-card__route--non-emergency > span {
+.analysis-card__route--non-emergency > .analysis-card__route-dot {
   background: var(--wa-color-warning-70, #ef9d00);
 }
 
-.analysis-card__route--emergency > span {
+.analysis-card__route--emergency > .analysis-card__route-dot {
   background: var(--wa-color-danger-60, #f3676c);
+}
+
+.analysis-card__route-separator {
+  color: var(--wa-color-neutral-70, #abaeb9);
+}
+
+.analysis-card__ticket-status--closed {
+  color: var(--wa-color-success-50, #00883c);
+}
+
+.analysis-card__ticket-status--overdue {
+  color: var(--wa-color-warning-60, #da7e00);
 }
 
 .analysis-card .analysis-card__place {
@@ -3273,6 +3285,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__primary,
+.btn-icon,
 .analysis-card__icon {
   appearance: none;
   -webkit-appearance: none;
@@ -3308,11 +3321,19 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-brand-on-normal, #003f9c);
 }
 
+.analysis-card__primary--outline {
+  border: var(--wa-border-width-s, 1px) solid
+    var(--wa-color-neutral-border-loud, #9194a2);
+  background: transparent;
+  color: var(--wa-color-neutral-on-quiet, #545868);
+}
+
 .analysis-card__primary wa-icon {
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1;
 }
 
+.btn-icon,
 .analysis-card__icon {
   width: 2.6875rem;
   height: 2.6875rem;
@@ -3330,6 +3351,7 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-neutral-on-normal, #424554);
 }
 
+.btn-icon wa-icon,
 .analysis-card__icon wa-icon {
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1;
@@ -3558,6 +3580,7 @@ html.wa-dark .analysis-card__clear-copy a {
   font-size: 2rem;
 }
 
+.photo-placeholder,
 .analysis-card__media--placeholder {
   display: flex;
   align-items: center;
@@ -3638,6 +3661,31 @@ html.wa-dark .analysis-card__clear-copy a {
 
   .analysis-card .analysis-card__route {
     margin-bottom: 1rem;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status) {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    column-gap: 0.5rem;
+    row-gap: 0.25rem;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-dot {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-label,
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__ticket-status {
+    grid-column: 2;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-separator {
+    display: none;
   }
 
   .analysis-card__media {
@@ -4990,8 +5038,8 @@ connection-status {
 }
 
 .ticket-detail {
-  width: min(100% - 2rem, 38rem);
-  max-height: min(90vh, 52rem);
+  width: min(100% - 2rem, 52rem);
+  max-height: 94vh;
   border: 0;
   border-radius: var(--radius, 1rem);
   padding: 0;
@@ -5001,92 +5049,129 @@ connection-status {
   background: rgb(0 0 0 / 0.5);
 }
 .ticket-detail__sheet {
-  padding: 1.25rem;
+  min-height: min(70rem, 88vh);
+  padding: 3.5rem clamp(1.5rem, 9vw, 11rem) 4rem;
   overflow: auto;
 }
 .ticket-detail__header {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  justify-content: flex-end;
   align-items: start;
 }
-.ticket-detail__header h2,
 .ticket-detail__updates h3 {
   margin: 0;
 }
-.ticket-detail__eyebrow {
-  margin: 0 0 0.25rem;
-  color: var(--text-secondary);
-  font-weight: 700;
-}
 .ticket-detail__close {
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 2rem;
-  line-height: 1;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  cursor: pointer;
+  color: var(--wa-color-neutral-fill-loud, #2f323f);
+}
+.ticket-detail__close wa-icon {
+  font-size: var(--wa-font-size-m, 1rem);
 }
 .ticket-detail__summary {
-  margin-top: 1.25rem;
+  margin-top: 1.75rem;
 }
-.ticket-status {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 0.35rem 0.7rem;
-  background: #e7f0ff;
+.ticket-detail__type {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
   font-weight: 700;
 }
-.ticket-status--response-overdue {
-  background: #fff0c2;
+.ticket-detail__type > span:first-child {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #62aaf7;
 }
-.ticket-status--resolved {
-  background: #d9f4e4;
-}
-.ticket-status--closed {
-  background: #ececef;
-}
-.ticket-detail dl {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  margin: 1.25rem 0;
-}
-.ticket-detail dt {
+.ticket-detail__type-separator {
   color: var(--text-secondary);
-  font-size: 0.875rem;
 }
-.ticket-detail dd {
-  margin: 0.2rem 0 0;
-  font-weight: 600;
+.ticket-detail__type--closed strong {
+  color: var(--wa-color-success-50, #00883c);
+}
+.ticket-detail__type--overdue strong {
+  color: var(--wa-color-warning-60, #da7e00);
+}
+.ticket-detail__location,
+.ticket-detail__description {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.ticket-detail__summary h2 {
+  margin: 0.35rem 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+.ticket-detail__photo {
+  display: block;
+  width: 7.5rem;
+  height: 7.5rem;
+  margin: 1.25rem 0 1rem;
+  border-radius: 0.7rem;
+  background: var(--surface-2);
+  object-fit: cover;
+}
+.ticket-detail__photo.photo-placeholder {
+  display: flex;
+}
+.ticket-detail__metadata {
+  margin: 0;
+}
+.ticket-detail__metadata div {
+  display: flex;
+  gap: 0.3rem;
+}
+.ticket-detail__metadata dt {
+  font-weight: 700;
+}
+.ticket-detail__metadata dd {
+  margin: 0;
   overflow-wrap: anywhere;
+}
+.ticket-detail__overdue-message {
+  margin: 1rem 0 0;
+  color: var(--wa-color-warning-on-quiet, #8c4602);
+}
+.ticket-detail__updates {
+  margin-top: 1.7rem;
 }
 .ticket-detail__updates ol {
   list-style: none;
-  margin: 1rem 0 0;
-  padding: 0 0 0 1.25rem;
-  border-left: 2px solid var(--c-line);
+  margin: 1.25rem 0 0;
+  padding: 0;
 }
 .ticket-detail__updates li {
   position: relative;
-  display: grid;
-  gap: 0.25rem;
-  padding: 0 0 1.25rem 1rem;
+  min-height: 5.4rem;
+  padding: 0 0 1.25rem 3.75rem;
 }
 .ticket-detail__updates li::before {
   content: "";
   position: absolute;
-  left: -1.68rem;
-  top: 0.35rem;
-  width: 0.75rem;
-  height: 0.75rem;
+  left: 0.65rem;
+  top: 0;
+  width: 1.5rem;
+  height: 1.5rem;
   border-radius: 50%;
-  background: var(--wa-color-brand-fill-loud, #155eef);
+  background: #c9cdd5;
+}
+.ticket-detail__updates li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 1.3rem;
+  top: 2rem;
+  bottom: 0.45rem;
+  width: 0.25rem;
+  border-radius: 999px;
+  background: #eceef2;
+}
+.ticket-timeline__content {
+  display: grid;
+  gap: 0.2rem;
 }
 .ticket-detail__updates time {
-  color: var(--text-secondary);
+  color: #a0a5af;
   font-size: 0.875rem;
 }
 .ticket-detail__updates p {
@@ -5094,8 +5179,35 @@ connection-status {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.ticket-detail__reference {
+  margin: 1.75rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
 @media (max-width: 32rem) {
-  .ticket-detail dl {
-    grid-template-columns: 1fr;
+  .ticket-detail__sheet {
+    min-height: 88vh;
+    padding: 1.5rem;
+  }
+
+  .ticket-detail__type {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    column-gap: 0.6rem;
+    row-gap: 0.25rem;
+  }
+
+  .ticket-detail__type > span:first-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .ticket-detail__type-label,
+  .ticket-detail__type strong {
+    grid-column: 2;
+  }
+
+  .ticket-detail__type-separator {
+    display: none;
   }
 }

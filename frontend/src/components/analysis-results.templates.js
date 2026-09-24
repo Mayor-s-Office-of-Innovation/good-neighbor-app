@@ -130,6 +130,10 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [georeferencedAddress]
  * @property {string} [address]
  * @property {string} [siteAddress]
+ * @property {string} [ticketStatus]
+ * @property {string} [ticketStatusDetail]
+ * @property {boolean} [ticketResponseOverdue]
+ * @property {string} [ticketUpdatedAt]
  */
 
 /**
@@ -500,7 +504,7 @@ export function taskAnalysisCard({
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
-    kind: mediaUrl ? "photo" : "text",
+    kind: mediaUrl || action?.kind === "view311" ? "photo" : "text",
     dataUrl: mediaUrl,
     text: evidenceText,
     placeName: placeName || siteName || "Site",
@@ -520,6 +524,7 @@ export function taskAnalysisCard({
     description: task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
     action: action?.label || (includeControls ? "Done" : ""),
+    actionVariant: action?.variant || "",
     actionKind:
       task.kind || (action?.variant === "blue" ? "escalation" : "action"),
     taskId: task.taskId || "",
@@ -531,8 +536,46 @@ export function taskAnalysisCard({
     isNew,
     routeType: routeType(task),
     createdAt: task.createdAt || task.created_at || "",
+    footerTimeLabel: task.ticketUpdatedAt
+      ? updatedCardTime(task.ticketUpdatedAt)
+      : "",
+    mediaPlaceholder: action?.kind === "view311" && !mediaUrl,
     shortId: taskDisplayReference(task),
   });
+}
+
+/**
+ * @param {string | number | Date} value
+ * @param {string | number | Date} [now]
+ */
+export function updatedCardTime(value, now = new Date()) {
+  const date = new Date(value);
+  const current = new Date(now);
+  if (Number.isNaN(date.getTime()) || Number.isNaN(current.getTime()))
+    return "";
+  const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const currentDay = new Date(
+    current.getFullYear(),
+    current.getMonth(),
+    current.getDate(),
+  );
+  const daysAgo = Math.round(
+    (currentDay.getTime() - dateDay.getTime()) / 86_400_000,
+  );
+  const dayLabel =
+    daysAgo === 0
+      ? "today"
+      : daysAgo > 0 && daysAgo <= 6
+        ? new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date)
+        : new Intl.DateTimeFormat(undefined, {
+            month: "short",
+            day: "numeric",
+          }).format(date);
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `Updated ${dayLabel}, ${time}`;
 }
 
 /**
@@ -750,6 +793,7 @@ function completedEvidenceCard(
     description,
     editableDescription = description,
     action,
+    actionVariant = "",
     actionKind = "",
     taskId = "",
     conditionId = "",
@@ -763,14 +807,21 @@ function completedEvidenceCard(
     routeType: route = routeType({ kind: actionKind }),
     createdAt = item.uploadedAt || item.createdAt || "",
     shortId = "",
+    footerTimeLabel = "",
+    mediaPlaceholder = false,
   },
 ) {
   const actionClass =
-    actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
+    actionVariant === "outline"
+      ? " analysis-card__primary--outline"
+      : actionKind === "escalation"
+        ? " analysis-card__primary--escalation"
+        : "";
   const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
   const artifactId = item.analysis?.artifactId || "";
   const checkId =
     item.checkId || item.analysis?.checkId || sessionCheckId || "";
+  const footerLabel = footerTimeLabel || cardTime(createdAt) || metaLabel;
   return html`
     <article
       class="analysis-card analysis-card--done ${isNew
@@ -793,7 +844,23 @@ function completedEvidenceCard(
             route.tone,
           )}"
         >
-          <span aria-hidden="true"></span>${escapeHtml(route.label)}
+          <span class="analysis-card__route-dot" aria-hidden="true"></span
+          ><span class="analysis-card__route-label"
+            >${escapeHtml(route.label)}</span
+          >${route.status
+            ? html`<span
+                  class="analysis-card__route-separator"
+                  aria-hidden="true"
+                  >·</span
+                ><span
+                  class="analysis-card__ticket-status analysis-card__ticket-status--${escapeAttr(
+                    route.statusTone,
+                  )}"
+                  >${escapeHtml(route.status)}${route.statusDetail
+                    ? html`: ${escapeHtml(route.statusDetail)}`
+                    : ""}</span
+                >`
+            : ""}
         </p>
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
@@ -808,7 +875,12 @@ function completedEvidenceCard(
                     type="button"
                     ${actionAttribute}="${escapeAttr(actionValue)}"
                   >
-                    <wa-icon name="circle-check" aria-hidden="true"></wa-icon>
+                    ${actionVariant === "outline"
+                      ? ""
+                      : html`<wa-icon
+                          name="circle-check"
+                          aria-hidden="true"
+                        ></wa-icon>`}
                     ${escapeHtml(action)}
                   </button>`
                 : ""}
@@ -839,11 +911,11 @@ function completedEvidenceCard(
             </div>
             <p class="actioncard__error" role="alert" hidden></p>
           </div>
-          ${evidencePreview(item)}
+          ${evidencePreview(item, mediaPlaceholder)}
         </div>
       </div>
       <footer class="analysis-card__footer">
-        <span>${escapeHtml(cardTime(createdAt) || metaLabel)}</span>
+        <span>${escapeHtml(footerLabel)}</span>
         ${shortId ? html`<span>${escapeHtml(shortId)}</span>` : ""}
       </footer>
     </article>
@@ -952,7 +1024,33 @@ function cardTime(value) {
 }
 
 function routeType(task) {
-  if (task?.kind === "escalation") return { label: "311 request", tone: "311" };
+  if (task?.kind === "escalation") {
+    const status = [
+      "New",
+      "Accepted",
+      "Prioritized",
+      "Closed",
+      "In progress",
+      "On hold",
+      "Scheduled",
+      "Deferred",
+      "Open",
+      "Sent",
+    ].includes(task.ticketStatus || "")
+      ? task.ticketStatus
+      : "";
+    return {
+      label: "311 request",
+      tone: "311",
+      status,
+      statusDetail: status ? task.ticketStatusDetail || "" : "",
+      statusTone: task.ticketResponseOverdue
+        ? "overdue"
+        : status === "Closed"
+          ? "closed"
+          : "default",
+    };
+  }
   if (task?.kind === "non_actionable_escalation") {
     const emergency = (task.appActions || []).some(
       (action) =>
@@ -960,10 +1058,10 @@ function routeType(task) {
         String(action?.payload?.phoneNumber || "").replace(/\D/g, "") === "911",
     );
     return emergency
-      ? { label: "Emergency call", tone: "emergency" }
-      : { label: "Non-emergency call", tone: "non-emergency" };
+      ? { label: "Emergency call", tone: "emergency", status: "" }
+      : { label: "Non-emergency call", tone: "non-emergency", status: "" };
   }
-  return { label: "On-site action", tone: "onsite" };
+  return { label: "On-site action", tone: "onsite", status: "" };
 }
 
 function taskButtonLabel(task) {
