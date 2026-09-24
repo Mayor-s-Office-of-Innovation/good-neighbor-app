@@ -22,7 +22,11 @@ import {
   deleteArtifact,
   presignMedia,
 } from "../src/handlers/artifacts.js";
-import { get311RequestDetail, listTasks } from "../src/handlers/tasks.js";
+import {
+  get311RequestDetail,
+  get311RequestDetails,
+  listTasks,
+} from "../src/handlers/tasks.js";
 import {
   cannotDoTask,
   completeTask,
@@ -168,6 +172,7 @@ const routes = [
   route("GET", "/v1/checks/{checkId}", getCheck),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),

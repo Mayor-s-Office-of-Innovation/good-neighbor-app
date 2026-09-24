@@ -3135,7 +3135,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__ticket-status--overdue {
-  color: var(--wa-color-warning-60, #da7e00);
+  color: var(--wa-color-warning-on-quiet, #8c4602);
 }
 
 .analysis-card .analysis-card__place {
@@ -5091,7 +5091,7 @@ connection-status {
   color: var(--wa-color-success-50, #00883c);
 }
 .ticket-detail__type--overdue strong {
-  color: var(--wa-color-warning-60, #da7e00);
+  color: var(--wa-color-warning-on-quiet, #8c4602);
 }
 .ticket-detail__location,
 .ticket-detail__description {
@@ -5171,7 +5171,7 @@ connection-status {
   gap: 0.2rem;
 }
 .ticket-detail__updates time {
-  color: #a0a5af;
+  color: var(--wa-color-text-quiet, #545868);
   font-size: 0.875rem;
 }
 .ticket-detail__updates p {

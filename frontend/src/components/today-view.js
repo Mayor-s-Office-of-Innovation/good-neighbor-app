@@ -39,6 +39,7 @@ import {
   editAnalysisCondition,
   rejectAnalysisCondition,
   get311RequestDetail,
+  get311RequestDetails,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -800,6 +801,7 @@ class TodayView extends HTMLElement {
     this._ticketDetailTrigger = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
+    this._311DetailGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -1010,7 +1012,7 @@ class TodayView extends HTMLElement {
     const cardState = this._311StatusByTaskId.get(task.taskId);
     return {
       ...task,
-      ticketStatus: cardState?.status || "Open",
+      ticketStatus: cardState?.status || "",
       ticketStatusDetail: cardState?.statusDetail || "",
       ticketResponseOverdue: Boolean(cardState?.responseOverdue),
       ticketUpdatedAt: cardState?.updatedAt || task.createdAt || "",
@@ -1022,38 +1024,36 @@ class TodayView extends HTMLElement {
     const submittedTasks = tasks
       .map((task) => ({ task, ticket: submitted311Ticket(task) }))
       .filter(({ task, ticket }) => task.taskId && ticket?.srNum);
-    const statuses = await Promise.all(
-      submittedTasks.map(async ({ task, ticket }) => {
-        try {
-          const response = await get311RequestDetail(task.taskId, ticket.srNum);
-          return [
-            task.taskId,
-            {
-              status: response.request?.status || "Open",
-              statusDetail: response.request?.statusDetail || "",
-              responseOverdue: Boolean(response.request?.responseOverdue),
-              updatedAt:
-                response.request?.relevantDate ||
-                response.request?.submittedAt ||
-                task.createdAt ||
-                "",
-            },
-          ];
-        } catch {
-          return [
-            task.taskId,
-            {
-              status: "Open",
-              statusDetail: "",
-              responseOverdue: false,
-              updatedAt: task.createdAt || "",
-            },
-          ];
-        }
-      }),
-    );
+    if (!submittedTasks.length) return;
+    let response;
+    try {
+      response = await get311RequestDetails(
+        submittedTasks.map(({ task, ticket }) => ({
+          taskId: task.taskId,
+          srNum: ticket.srNum,
+        })),
+      );
+    } catch {
+      return;
+    }
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
-    this._311StatusByTaskId = new Map(statuses);
+    this._311StatusByTaskId = new Map(
+      (response.requests || []).flatMap(({ taskId, request }) =>
+        taskId && request?.status
+          ? [
+              [
+                taskId,
+                {
+                  status: request.status,
+                  statusDetail: request.statusDetail || "",
+                  responseOverdue: Boolean(request.responseOverdue),
+                  updatedAt: request.relevantDate || request.submittedAt || "",
+                },
+              ],
+            ]
+          : [],
+      ),
+    );
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
@@ -1245,6 +1245,18 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
+    const activeTask = tasks.find(
+      (task) => task.taskId === this._ticketDetailTask?.taskId,
+    );
+    if (activeTask) {
+      this._ticketDetailTask = activeTask;
+      if (this._ticketDetail) {
+        this._ticketDetail = {
+          ...this._ticketDetail,
+          mediaUrl: taskMediaUrl(activeTask),
+        };
+      }
+    }
     this._renderHome({ ...model, tasks });
   }
 
@@ -1637,6 +1649,7 @@ class TodayView extends HTMLElement {
     });
     dialog.addEventListener("close", () => {
       this._ticketDetailOpen = false;
+      this._311DetailGeneration += 1;
       const taskId = this._ticketDetailTask?.taskId;
       const currentTrigger = taskId
         ? this.querySelector(
@@ -1649,20 +1662,26 @@ class TodayView extends HTMLElement {
   }
 
   async _open311Detail(task, trigger) {
-    this._ticketDetailTask = task;
+    this._ticketDetailTask = this._tasksById.get(task.taskId) || task;
     this._ticketDetailTrigger = trigger;
     this._ticketDetailOpen = true;
     this._ticketDetail = null;
-    await this._load311Detail(task);
+    await this._load311Detail(this._ticketDetailTask);
   }
 
   async _load311Detail(task) {
     const ticket = submitted311Ticket(task);
     if (!ticket) return;
+    const generation = ++this._311DetailGeneration;
+    const isCurrent = () =>
+      generation === this._311DetailGeneration &&
+      task.taskId === this._ticketDetailTask?.taskId &&
+      ticket.srNum === submitted311Ticket(this._ticketDetailTask)?.srNum;
     this._ticketDetailState = "loading";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
       const response = await get311RequestDetail(task.taskId, ticket.srNum);
+      if (!isCurrent()) return;
       const request = response.request;
       this._ticketDetail = {
         ...request,
@@ -1678,6 +1697,7 @@ class TodayView extends HTMLElement {
       };
       this._ticketDetailState = "ready";
     } catch {
+      if (!isCurrent()) return;
       this._ticketDetailState = "error";
     }
     if (this._homeModel) this._renderHome(this._homeModel);

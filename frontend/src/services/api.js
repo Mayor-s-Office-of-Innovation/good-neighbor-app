@@ -542,6 +542,10 @@ export function get311RequestDetail(taskId, srNum) {
   );
 }
 
+export function get311RequestDetails(requests) {
+  return request("POST", "/v1/311-requests:batch", { body: { requests } });
+}
+
 /**
  * POST /v1/tasks/{taskId}/complete — mark a guidance task complete and record
  * any backend app-action results for audit.
