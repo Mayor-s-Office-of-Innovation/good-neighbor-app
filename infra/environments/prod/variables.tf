@@ -71,3 +71,34 @@ variable "bedrock_model_id" {
   type        = string
   default     = "anthropic.claude-sonnet-4-20250514-v1:0"
 }
+
+variable "dev_frontend_dns_name_servers" {
+  description = "Public Route 53 name servers for the DEV-owned dev.goodneighborsf.org delegated zone. Update only through an explicit DEV-to-PROD DNS handoff."
+  type        = list(string)
+  default = [
+    "ns-1312.awsdns-36.org",
+    "ns-1886.awsdns-43.co.uk",
+    "ns-482.awsdns-60.com",
+    "ns-645.awsdns-16.net",
+  ]
+
+  validation {
+    condition     = length(var.dev_frontend_dns_name_servers) == 4 && alltrue([for name_server in var.dev_frontend_dns_name_servers : endswith(name_server, ".") || can(regex("^[a-z0-9.-]+\\.(com|net|org|co\\.uk)$", name_server))])
+    error_message = "Exactly four valid DEV authoritative name servers must be provided."
+  }
+}
+
+variable "setup_code_dev_dkim_tokens" {
+  description = "Public Easy DKIM tokens exported by the DEV SES identity and handed off explicitly for publication in the PROD-owned root zone."
+  type        = list(string)
+  default = [
+    "7rxq7zquj342nyi6ipribuy3p67fh2ik",
+    "mdld2zah6porodxrvafpl4ti4nvp4oai",
+    "gi2cbrtmuxmodqdztfoq33ee5ifc4pqi",
+  ]
+
+  validation {
+    condition     = length(var.setup_code_dev_dkim_tokens) == 3 && alltrue([for token in var.setup_code_dev_dkim_tokens : can(regex("^[a-z0-9]+$", token))])
+    error_message = "Exactly three valid DEV Easy DKIM tokens must be provided."
+  }
+}
