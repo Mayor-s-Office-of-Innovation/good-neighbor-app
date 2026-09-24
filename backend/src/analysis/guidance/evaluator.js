@@ -1,4 +1,4 @@
-import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
+import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
 import { resolveCategory } from "./category-resolver.js";
 
 /**
@@ -105,7 +105,7 @@ function rulesByEvaluationOrder(rules) {
 export function evaluateCondition({
   condition,
   answers = {},
-  catalog = actionsEscalationsV2Catalog,
+  catalog = actionsEscalationsV3Catalog,
 }) {
   const severity = conditionSeverity(condition);
   if (severity <= 0) {

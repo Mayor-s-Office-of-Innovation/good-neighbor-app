@@ -1,11 +1,13 @@
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handler's read hits a spy, not AWS.
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { listTasks } = await import("./tasks.js");
+const { get311RequestDetail, get311RequestDetails, listTasks } = await import(
+  "./tasks.js"
+);
 
 /**
  * @param {object} opts
@@ -156,5 +158,99 @@ describe("listTasks", () => {
       expect.stringContaining("SITE#site-1#TASK#open exceeded one page"),
     );
     warn.mockRestore();
+  });
+});
+
+describe("get311RequestDetail", () => {
+  beforeEach(() => {
+    send.mockReset();
+    process.env.S3_UPLOAD_BUCKET = "bucket";
+    process.env.SQS_QUEUE_URL = "queue";
+    process.env.DYNAMO_TABLE = "gnp-test-app";
+    process.env.SF311_CREATESR_URL = "https://hub.test/create";
+    process.env.SF311_AGENCY_LOOKUP_URL = "https://hub.test/lookup";
+    process.env.SF311_LATEST_UPDATES_URL = "https://hub.test/latest/{agencyID}";
+    process.env.SF311_BASIC_AUTH_USER = "user";
+    process.env.SF311_BASIC_AUTH_PASS = "pass";
+  });
+
+  it("does not call 311 unless the site-scoped task owns the request number", async () => {
+    send.mockResolvedValueOnce({
+      Item: { taskId: "task-1", appActionResults: [] },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const event = /** @type {any} */ ({
+      ...readEvent({ siteClaim: "site-1" }),
+      pathParameters: { taskId: "task-1", srNum: "someone-elses-ticket" },
+    });
+    const response = await /** @type {any} */ (
+      get311RequestDetail(event, /** @type {any} */ ({}), () => {})
+    );
+    expect(response.statusCode).toBe(404);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[0][0].input.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("coalesces the agency feed while batching site-owned requests", async () => {
+    const ownedTasks = ["task-1", "task-2", "task-1", "task-2"].map(
+      (taskId, index) => ({
+        Item: {
+          taskId,
+          appActionResults: [
+            {
+              code: "create_311_ticket",
+              payload: { tickets: [{ srNum: index % 2 ? "SR-2" : "SR-1" }] },
+            },
+          ],
+        },
+      }),
+    );
+    for (const result of ownedTasks) send.mockResolvedValueOnce(result);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            return_code: 0,
+            requests: [
+              { SRNum: "SR-1", Status: "9" },
+              { SRNum: "SR-2", Status: "5" },
+            ],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const event = /** @type {any} */ ({
+      ...readEvent({ siteClaim: "site-1" }),
+      body: JSON.stringify({
+        requests: [
+          { taskId: "task-1", srNum: "SR-1" },
+          { taskId: "task-2", srNum: "SR-2" },
+        ],
+      }),
+    });
+
+    const [response, concurrentResponse] = await Promise.all([
+      /** @type {any} */ (
+        get311RequestDetails(event, /** @type {any} */ ({}), () => {})
+      ),
+      /** @type {any} */ (
+        get311RequestDetails(event, /** @type {any} */ ({}), () => {})
+      ),
+    ]);
+
+    expect(response.statusCode).toBe(200);
+    expect(concurrentResponse.statusCode).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(response.body).requests).toMatchObject([
+      { taskId: "task-1", request: { status: "Open" } },
+      { taskId: "task-2", request: { status: "In progress" } },
+    ]);
+    fetchSpy.mockRestore();
   });
 });
