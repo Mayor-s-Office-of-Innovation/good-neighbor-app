@@ -438,6 +438,9 @@ function buildTaskItem({
     checkId,
     conditionId,
     policyVersion: rule.policyVersion,
+    ...(rule.maxAcceptableResponseHours === undefined
+      ? {}
+      : { maxAcceptableResponseHours: rule.maxAcceptableResponseHours }),
     ruleId: rule.ruleId,
     kind,
     type: kind === "action" ? "onsite" : "city_escalation",

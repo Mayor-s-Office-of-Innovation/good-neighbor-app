@@ -17,7 +17,11 @@ import {
   deleteArtifact,
   presignMedia,
 } from "../handlers/artifacts.js";
-import { listTasks } from "../handlers/tasks.js";
+import {
+  get311RequestDetail,
+  get311RequestDetails,
+  listTasks,
+} from "../handlers/tasks.js";
 import {
   cannotDoTask,
   completeTask,
@@ -88,6 +92,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/checks/{checkId}": getCheck,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  "POST /v1/311-requests:batch": get311RequestDetails,
+  "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
   "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
   // Assessment guidance workflow

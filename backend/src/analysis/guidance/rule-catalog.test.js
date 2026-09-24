@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
+import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
 import {
   buildCatalog,
   parsePredicate,
@@ -10,6 +11,17 @@ import {
 import { resolveCategory } from "./category-resolver.js";
 
 describe("actions/escalations v2 catalog", () => {
+  it("loads all GNP-3 response-time values", () => {
+    expect(actionsEscalationsV3Catalog.rules).toHaveLength(34);
+    expect(
+      actionsEscalationsV3Catalog.rules.find(
+        (rule) => rule.ruleId === "TENTS-1",
+      ),
+    ).toMatchObject({ maxAcceptableResponseHours: 96 });
+    expect(
+      actionsEscalationsV3Catalog.rules.find((rule) => rule.ruleId === "MED-1"),
+    ).toMatchObject({ maxAcceptableResponseHours: 0 });
+  });
   it("normalizes and validates the v2 rulebase", () => {
     expect(actionsEscalationsV2Catalog.policyVersion).toBe(
       "actions-escalations-v2",

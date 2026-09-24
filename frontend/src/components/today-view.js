@@ -38,6 +38,8 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
+  get311RequestDetail,
+  get311RequestDetails,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -50,6 +52,7 @@ import {
   appActionFailureMessage,
   isFiled311Completion,
 } from "../domain/task-actions.js";
+import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import {
   getCurrentCheck,
   hasDraft,
@@ -71,6 +74,7 @@ import {
   recentCheckTitle,
   sortAnalysisCards,
   taskAnalysisCard,
+  taskMediaUrl,
 } from "./analysis-results.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { analysisDialogs } from "./perimeter-check.templates.js";
@@ -93,6 +97,37 @@ const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
 const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
+
+/**
+ * @param {string | number | Date} expectedAt
+ * @param {string | number | Date} [now]
+ */
+export function formatOverdueElapsed(expectedAt, now = Date.now()) {
+  const elapsedHours = Math.max(
+    1,
+    Math.floor(
+      (new Date(now).getTime() - new Date(expectedAt).getTime()) / 3_600_000,
+    ),
+  );
+  if (elapsedHours < 24) {
+    return `${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"}`;
+  }
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays} ${elapsedDays === 1 ? "day" : "days"}`;
+}
+
+function ticketEventDescription(description) {
+  return description ? html`<p>${escapeHtml(description)}</p>` : "";
+}
+
+function submitted311Ticket(task) {
+  for (const result of task?.appActionResults || []) {
+    if (result?.code !== "create_311_ticket") continue;
+    const ticket = result?.payload?.tickets?.find((item) => item?.srNum);
+    if (ticket) return ticket;
+  }
+  return null;
+}
 
 /**
  * @param {{latitude: number, longitude: number} | null | undefined} position
@@ -760,6 +795,13 @@ class TodayView extends HTMLElement {
     this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
+    this._ticketDetail = null;
+    this._ticketDetailState = "idle";
+    this._ticketDetailOpen = false;
+    this._ticketDetailTrigger = null;
+    this._311StatusByTaskId = new Map();
+    this._311StatusGeneration = 0;
+    this._311DetailGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -961,7 +1003,58 @@ class TodayView extends HTMLElement {
       captureSession,
       pendingSession: effectivePendingSession,
     });
+    void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  _taskWith311CardStatus(task) {
+    if (!submitted311Ticket(task)) return task;
+    const cardState = this._311StatusByTaskId.get(task.taskId);
+    return {
+      ...task,
+      ticketStatus: cardState?.status || "",
+      ticketStatusDetail: cardState?.statusDetail || "",
+      ticketResponseOverdue: Boolean(cardState?.responseOverdue),
+      ticketUpdatedAt: cardState?.updatedAt || task.createdAt || "",
+    };
+  }
+
+  async _hydrate311CardStatuses(tasks) {
+    const generation = ++this._311StatusGeneration;
+    const submittedTasks = tasks
+      .map((task) => ({ task, ticket: submitted311Ticket(task) }))
+      .filter(({ task, ticket }) => task.taskId && ticket?.srNum);
+    if (!submittedTasks.length) return;
+    let response;
+    try {
+      response = await get311RequestDetails(
+        submittedTasks.map(({ task, ticket }) => ({
+          taskId: task.taskId,
+          srNum: ticket.srNum,
+        })),
+      );
+    } catch {
+      return;
+    }
+    if (generation !== this._311StatusGeneration || !this.isConnected) return;
+    this._311StatusByTaskId = new Map(
+      (response.requests || []).flatMap(({ taskId, request }) =>
+        taskId && request?.status
+          ? [
+              [
+                taskId,
+                {
+                  status: request.status,
+                  statusDetail: request.statusDetail || "",
+                  responseOverdue: Boolean(request.responseOverdue),
+                  updatedAt: request.relevantDate || request.submittedAt || "",
+                },
+              ],
+            ]
+          : [],
+      ),
+    );
+    if (this._homeModel) this._renderHome(this._homeModel);
   }
 
   _renderHome(model) {
@@ -1044,6 +1137,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._wire311Dialog();
     this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -1151,6 +1245,18 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
+    const activeTask = tasks.find(
+      (task) => task.taskId === this._ticketDetailTask?.taskId,
+    );
+    if (activeTask) {
+      this._ticketDetailTask = activeTask;
+      if (this._ticketDetail) {
+        this._ticketDetail = {
+          ...this._ticketDetail,
+          mediaUrl: taskMediaUrl(activeTask),
+        };
+      }
+    }
     this._renderHome({ ...model, tasks });
   }
 
@@ -1303,7 +1409,7 @@ class TodayView extends HTMLElement {
           })}
         </section>
         ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
-        ${this._locationDialogMarkup()}
+        ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
         <dialog
           class="places-modal logout-dialog"
           id="logout-dialog"
@@ -1346,6 +1452,254 @@ class TodayView extends HTMLElement {
 
   _toggleSettingsMenu() {
     this._settingsMenuOpen = !this._settingsMenuOpen;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _311DialogMarkup() {
+    const detail = this._ticketDetail;
+    const formatDate = (date) =>
+      date
+        ? new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(date))
+        : "";
+    const formatRelativeDate = (date) => {
+      if (!date) return "";
+      const days = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
+      );
+      return days === 0
+        ? "today"
+        : days === 1
+          ? "1 day ago"
+          : `${days} days ago`;
+    };
+    return html` <dialog
+      class="ticket-detail"
+      id="ticket-detail-dialog"
+      aria-labelledby="ticket-detail-title"
+    >
+      <div class="ticket-detail__sheet">
+        <header class="ticket-detail__header">
+          <button
+            type="button"
+            class="btn-icon ticket-detail__close wa-plain"
+            data-close-311
+            aria-label="Close request details"
+          >
+            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+          </button>
+        </header>
+        ${this._ticketDetailState === "loading"
+          ? html`<p role="status">Loading request updates…</p>`
+          : ""}
+        ${this._ticketDetailState === "error"
+          ? html`<div role="alert">
+              <p>We couldn't load the latest 311 updates.</p>
+              <button
+                type="button"
+                class="btn-outline btn-outline--sm"
+                data-retry-311
+              >
+                Try again
+              </button>
+            </div>`
+          : ""}
+        ${detail
+          ? html` <section
+                class="ticket-detail__summary"
+                aria-label="Request summary"
+              >
+                <p
+                  class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
+                    ? "overdue"
+                    : detail.status === "Closed"
+                      ? "closed"
+                      : "default"}"
+                >
+                  <span aria-hidden="true"></span>
+                  <span class="ticket-detail__type-label">311 request</span>
+                  <span class="ticket-detail__type-separator" aria-hidden="true"
+                    >·</span
+                  >
+                  <strong
+                    >${escapeHtml(detail.status)}${detail.statusDetail
+                      ? html`: ${escapeHtml(detail.statusDetail)}`
+                      : ""}</strong
+                  >
+                </p>
+                ${detail.location
+                  ? html`<p class="ticket-detail__location">
+                      ${escapeHtml(String(detail.location).split(/\r?\n|,/)[0])}
+                    </p>`
+                  : ""}
+                <h2 id="ticket-detail-title">
+                  ${escapeHtml(
+                    detail.title || detail.problemType || "Request details",
+                  )}
+                </h2>
+                ${detail.description
+                  ? html`<p class="ticket-detail__description">
+                      ${escapeHtml(detail.description)}
+                    </p>`
+                  : ""}
+                ${detail.mediaUrl
+                  ? html`<img
+                      class="ticket-detail__photo"
+                      src="${escapeAttr(detail.mediaUrl)}"
+                      alt="Evidence for ${escapeAttr(
+                        detail.title || detail.problemType || "the 311 request",
+                      )}"
+                    />`
+                  : html`<div
+                      class="ticket-detail__photo photo-placeholder"
+                      role="img"
+                      aria-label="No photo available"
+                    >
+                      <wa-icon name="image" aria-hidden="true"></wa-icon>
+                    </div>`}
+                <dl class="ticket-detail__metadata">
+                  ${detail.assignedAgency
+                    ? html`<div>
+                        <dt>Agency:</dt>
+                        <dd>${escapeHtml(detail.assignedAgency)}</dd>
+                      </div>`
+                    : ""}
+                  ${detail.submittedAt
+                    ? html`<div>
+                        <dt>Submitted:</dt>
+                        <dd>
+                          ${escapeHtml(formatRelativeDate(detail.submittedAt))}
+                        </dd>
+                      </div>`
+                    : ""}
+                  ${detail.expectedResponseAt
+                    ? html`<div>
+                        <dt>Response expected:</dt>
+                        <dd>
+                          ${escapeHtml(formatDate(detail.expectedResponseAt))}
+                        </dd>
+                      </div>`
+                    : ""}
+                  ${detail.closureReason
+                    ? html`<div>
+                        <dt>Closure reason:</dt>
+                        <dd>${escapeHtml(detail.closureReason)}</dd>
+                      </div>`
+                    : ""}
+                </dl>
+                ${detail.responseOverdue && detail.expectedResponseAt
+                  ? html`<p class="ticket-detail__overdue-message">
+                      The City's expected response time passed
+                      ${escapeHtml(
+                        formatOverdueElapsed(detail.expectedResponseAt),
+                      )}
+                      ago.
+                    </p>`
+                  : ""}
+              </section>
+              <section class="ticket-detail__updates">
+                <h3>Request updates</h3>
+                ${detail.events?.length
+                  ? html`<ol class="ticket-timeline">
+                      ${detail.events
+                        .map(
+                          (event) =>
+                            html`<li class="ticket-timeline__item">
+                              <div class="ticket-timeline__content">
+                                <strong>${escapeHtml(event.title)}</strong
+                                >${ticketEventDescription(event.description)}
+                                <time datetime="${escapeAttr(event.occurredAt)}"
+                                  >${escapeHtml(
+                                    formatDate(event.occurredAt),
+                                  )}</time
+                                >
+                              </div>
+                            </li>`,
+                        )
+                        .join("")}
+                    </ol>`
+                  : html`<p>No updates are available yet.</p>`}
+              </section>
+              <p class="ticket-detail__reference">
+                #${escapeHtml(detail.requestNumber)}
+              </p>`
+          : ""}
+      </div>
+    </dialog>`;
+  }
+
+  _wire311Dialog() {
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#ticket-detail-dialog")
+    );
+    if (!dialog) return;
+    this._ticketDetailDialog = dialog;
+    dialog
+      .querySelector("[data-close-311]")
+      ?.addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-retry-311]")?.addEventListener("click", () => {
+      if (this._ticketDetailTask)
+        void this._load311Detail(this._ticketDetailTask);
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      this._ticketDetailOpen = false;
+      this._311DetailGeneration += 1;
+      const taskId = this._ticketDetailTask?.taskId;
+      const currentTrigger = taskId
+        ? this.querySelector(
+            `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
+          )
+        : null;
+      (currentTrigger || this._ticketDetailTrigger)?.focus?.();
+    });
+    if (this._ticketDetailOpen) dialog.showModal();
+  }
+
+  async _open311Detail(task, trigger) {
+    this._ticketDetailTask = this._tasksById.get(task.taskId) || task;
+    this._ticketDetailTrigger = trigger;
+    this._ticketDetailOpen = true;
+    this._ticketDetail = null;
+    await this._load311Detail(this._ticketDetailTask);
+  }
+
+  async _load311Detail(task) {
+    const ticket = submitted311Ticket(task);
+    if (!ticket) return;
+    const generation = ++this._311DetailGeneration;
+    const isCurrent = () =>
+      generation === this._311DetailGeneration &&
+      task.taskId === this._ticketDetailTask?.taskId &&
+      ticket.srNum === submitted311Ticket(this._ticketDetailTask)?.srNum;
+    this._ticketDetailState = "loading";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      const response = await get311RequestDetail(task.taskId, ticket.srNum);
+      if (!isCurrent()) return;
+      const request = response.request;
+      this._ticketDetail = {
+        ...request,
+        title:
+          task.userFriendlyLabel ||
+          task.user_friendly_label ||
+          task.category ||
+          task.analyzerCategory ||
+          request.problemType,
+        description: task.description || request.description || "",
+        location: ticketDetailLocation(task, this._site || {}, request),
+        mediaUrl: taskMediaUrl(task),
+      };
+      this._ticketDetailState = "ready";
+    } catch {
+      if (!isCurrent()) return;
+      this._ticketDetailState = "error";
+    }
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
@@ -1454,16 +1808,19 @@ class TodayView extends HTMLElement {
   _newTaskCardEntries(entries) {
     return entries.map((entry) => ({
       markup: taskAnalysisCard({
-        task: {
+        task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
           siteAddress: entry.task.siteAddress || this._site?.address || "",
-        },
+        }),
         siteName: this._site?.name || "",
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
-            : null,
+            : entry.homeStatus === "in_progress" &&
+                submitted311Ticket(entry.task)
+              ? { kind: "view311", label: "View details", variant: "outline" }
+              : null,
         statusLabel: this._newTaskStatusMeta(entry),
         isNew: true,
         includeControls: entry.homeStatus === "needs_action",
@@ -1547,17 +1904,24 @@ class TodayView extends HTMLElement {
                 ? sortAnalysisCards(
                     group.map((entry) => ({
                       markup: taskAnalysisCard({
-                        task: {
+                        task: this._taskWith311CardStatus({
                           ...entry.task,
                           createdAt: entry.createdAt,
                           siteAddress:
                             entry.task.siteAddress || this._site?.address || "",
-                        },
+                        }),
                         siteName: this._site?.name || "",
                         action:
                           entry.homeStatus === "needs_action"
                             ? this._primaryCardAction(entry.task)
-                            : null,
+                            : entry.homeStatus === "in_progress" &&
+                                submitted311Ticket(entry.task)
+                              ? {
+                                  kind: "view311",
+                                  label: "View details",
+                                  variant: "outline",
+                                }
+                              : null,
                         statusLabel: this._taskStatusMeta(entry),
                         isNew: false,
                         includeControls: entry.homeStatus === "needs_action",
@@ -2377,7 +2741,9 @@ class TodayView extends HTMLElement {
   _onAnalysisAction(card, task, btn) {
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
-    if (action === "delete") {
+    if (action === "view311" && task) {
+      void this._open311Detail(task, btn);
+    } else if (action === "delete") {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       this._openEditProblem(problem);
@@ -2751,7 +3117,9 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "done") {
+    if (action === "view311") {
+      void this._open311Detail(task, btn);
+    } else if (action === "done") {
       this._run(card, () =>
         completeTask(task.taskId, { completionMethod: "manual" }),
       ).then((ok) => {

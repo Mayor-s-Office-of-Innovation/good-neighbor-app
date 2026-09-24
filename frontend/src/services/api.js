@@ -535,6 +535,17 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
+export function get311RequestDetail(taskId, srNum) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/311-requests/${encodeURIComponent(srNum)}`,
+  );
+}
+
+export function get311RequestDetails(requests) {
+  return request("POST", "/v1/311-requests:batch", { body: { requests } });
+}
+
 /**
  * POST /v1/tasks/{taskId}/complete — mark a guidance task complete and record
  * any backend app-action results for audit.

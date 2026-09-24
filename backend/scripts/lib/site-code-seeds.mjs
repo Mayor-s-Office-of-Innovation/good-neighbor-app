@@ -37,6 +37,7 @@ export const devSiteCodeSeeds = [
     siteShortCode: "STJ",
     providerSiteId: "provider-site-st-john-the-evangelist",
     contactEmail: "stjohn@example.org",
+    address: "1661 15th St, San Francisco, CA",
     location: {
       latitude: 37.76656393517443,
       longitude: -122.4213267021692,
@@ -266,8 +267,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
         "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
-        (seed.address
-          ? ", #address = if_not_exists(#address, :address), #geocodedAddress = if_not_exists(#geocodedAddress, :geocodedAddress)"
+        (seed.address ? ", #address = if_not_exists(#address, :address)" : "") +
+        (seed.geocodedAddress
+          ? ", #geocodedAddress = if_not_exists(#geocodedAddress, :geocodedAddress)"
           : "") +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
@@ -276,8 +278,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
         "#type": "type",
         "#name": "name",
         "#status": "status",
-        ...(seed.address
-          ? { "#address": "address", "#geocodedAddress": "geocodedAddress" }
+        ...(seed.address ? { "#address": "address" } : {}),
+        ...(seed.geocodedAddress
+          ? { "#geocodedAddress": "geocodedAddress" }
           : {}),
         ...(seed.location ? { "#location": "location" } : {}),
       },
@@ -293,11 +296,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":name": seed.siteName,
         ":status": "active",
         ":now": now,
-        ...(seed.address
-          ? {
-              ":address": seed.address,
-              ":geocodedAddress": seed.geocodedAddress,
-            }
+        ...(seed.address ? { ":address": seed.address } : {}),
+        ...(seed.geocodedAddress
+          ? { ":geocodedAddress": seed.geocodedAddress }
           : {}),
         ...(seed.location ? { ":location": seed.location } : {}),
       },

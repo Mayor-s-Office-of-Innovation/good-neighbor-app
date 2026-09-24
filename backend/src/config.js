@@ -13,6 +13,7 @@
  * @property {string} [sf311CreateSrUrl]
  * @property {string} [sf311UpdateSrUrl]
  * @property {string} [sf311AgencyLookupUrl]
+ * @property {string} [sf311LatestUpdatesUrl]
  * @property {string} [sf311BasicAuthSecretArn]
  * @property {string} [sf311BasicAuthUser]
  * @property {string} [sf311BasicAuthPass]
@@ -78,6 +79,9 @@ export function getConfig(env = process.env) {
   if (env.SF311_UPDATESR_URL) config.sf311UpdateSrUrl = env.SF311_UPDATESR_URL;
   if (env.SF311_AGENCY_LOOKUP_URL) {
     config.sf311AgencyLookupUrl = env.SF311_AGENCY_LOOKUP_URL;
+  }
+  if (env.SF311_LATEST_UPDATES_URL) {
+    config.sf311LatestUpdatesUrl = env.SF311_LATEST_UPDATES_URL;
   }
   if (env.SF311_BASIC_AUTH_SECRET_ARN) {
     config.sf311BasicAuthSecretArn = env.SF311_BASIC_AUTH_SECRET_ARN;
