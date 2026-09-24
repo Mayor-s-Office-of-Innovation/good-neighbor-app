@@ -83,8 +83,15 @@ variable "dev_frontend_dns_name_servers" {
   ]
 
   validation {
-    condition     = length(var.dev_frontend_dns_name_servers) == 4 && alltrue([for name_server in var.dev_frontend_dns_name_servers : endswith(name_server, ".") || can(regex("^[a-z0-9.-]+\\.(com|net|org|co\\.uk)$", name_server))])
-    error_message = "Exactly four valid DEV authoritative name servers must be provided."
+    condition = (
+      length(var.dev_frontend_dns_name_servers) == 4 &&
+      length(toset(var.dev_frontend_dns_name_servers)) == 4 &&
+      alltrue([
+        for name_server in var.dev_frontend_dns_name_servers :
+        can(regex("^ns-[0-9]+\\.awsdns-[0-9]+\\.(com|net|org|co\\.uk)\\.?$", name_server))
+      ])
+    )
+    error_message = "Exactly four distinct Route 53 authoritative name servers must be provided."
   }
 }
 
@@ -98,7 +105,14 @@ variable "setup_code_dev_dkim_tokens" {
   ]
 
   validation {
-    condition     = length(var.setup_code_dev_dkim_tokens) == 3 && alltrue([for token in var.setup_code_dev_dkim_tokens : can(regex("^[a-z0-9]+$", token))])
-    error_message = "Exactly three valid DEV Easy DKIM tokens must be provided."
+    condition = (
+      length(var.setup_code_dev_dkim_tokens) == 3 &&
+      length(toset(var.setup_code_dev_dkim_tokens)) == 3 &&
+      alltrue([
+        for token in var.setup_code_dev_dkim_tokens :
+        can(regex("^[a-z0-9]{32}$", token))
+      ])
+    )
+    error_message = "Exactly three distinct 32-character DEV Easy DKIM tokens must be provided."
   }
 }
