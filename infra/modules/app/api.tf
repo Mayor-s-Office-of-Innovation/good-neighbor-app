@@ -27,6 +27,7 @@ locals {
     "GET /v1/tasks",
     "POST /v1/tasks/{taskId}/complete",
     "POST /v1/tasks/{taskId}/cannot-do",
+    "GET /v1/tasks/{taskId}/311-requests/{srNum}",
     "POST /v1/assessments:evaluate",
     "GET /v1/assessments/{assessmentId}/guidance",
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",

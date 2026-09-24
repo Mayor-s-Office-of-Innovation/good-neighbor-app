@@ -4988,3 +4988,114 @@ connection-status {
   opacity: 0.45;
   cursor: default;
 }
+
+.ticket-detail {
+  width: min(100% - 2rem, 38rem);
+  max-height: min(90vh, 52rem);
+  border: 0;
+  border-radius: var(--radius, 1rem);
+  padding: 0;
+  color: var(--text, #17202a);
+}
+.ticket-detail::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+.ticket-detail__sheet {
+  padding: 1.25rem;
+  overflow: auto;
+}
+.ticket-detail__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+}
+.ticket-detail__header h2,
+.ticket-detail__updates h3 {
+  margin: 0;
+}
+.ticket-detail__eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+.ticket-detail__close {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 2rem;
+  line-height: 1;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  cursor: pointer;
+}
+.ticket-detail__summary {
+  margin-top: 1.25rem;
+}
+.ticket-status {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  background: #e7f0ff;
+  font-weight: 700;
+}
+.ticket-status--response-overdue {
+  background: #fff0c2;
+}
+.ticket-status--resolved {
+  background: #d9f4e4;
+}
+.ticket-status--closed {
+  background: #ececef;
+}
+.ticket-detail dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+.ticket-detail dt {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.ticket-detail dd {
+  margin: 0.2rem 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ticket-detail__updates ol {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0 0 0 1.25rem;
+  border-left: 2px solid var(--c-line);
+}
+.ticket-detail__updates li {
+  position: relative;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0 0 1.25rem 1rem;
+}
+.ticket-detail__updates li::before {
+  content: "";
+  position: absolute;
+  left: -1.68rem;
+  top: 0.35rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--wa-color-brand-fill-loud, #155eef);
+}
+.ticket-detail__updates time {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.ticket-detail__updates p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 32rem) {
+  .ticket-detail dl {
+    grid-template-columns: 1fr;
+  }
+}

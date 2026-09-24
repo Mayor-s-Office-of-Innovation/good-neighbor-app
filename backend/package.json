@@ -10,6 +10,7 @@
     "seed:dev-site-codes": "node scripts/seed-dev-site-codes.mjs",
     "lint": "eslint src",
     "policy:diff": "node scripts/policy-diff.mjs",
+    "policy:import": "node scripts/policy-import.mjs",
     "policy:validate": "node scripts/policy-validate.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",

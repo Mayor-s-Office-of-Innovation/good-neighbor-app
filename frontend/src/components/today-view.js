@@ -38,6 +38,7 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
+  get311RequestDetail,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -93,6 +94,15 @@ const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
 const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
+
+function submitted311Ticket(task) {
+  for (const result of task?.appActionResults || []) {
+    if (result?.code !== "create_311_ticket") continue;
+    const ticket = result?.payload?.tickets?.find((item) => item?.srNum);
+    if (ticket) return ticket;
+  }
+  return null;
+}
 
 /**
  * @param {{latitude: number, longitude: number} | null | undefined} position
@@ -760,6 +770,10 @@ class TodayView extends HTMLElement {
     this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
+    this._ticketDetail = null;
+    this._ticketDetailState = "idle";
+    this._ticketDetailOpen = false;
+    this._ticketDetailTrigger = null;
   }
 
   disconnectedCallback() {
@@ -1044,6 +1058,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._wire311Dialog();
     this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -1303,7 +1318,7 @@ class TodayView extends HTMLElement {
           })}
         </section>
         ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
-        ${this._locationDialogMarkup()}
+        ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
         <dialog
           class="places-modal logout-dialog"
           id="logout-dialog"
@@ -1346,6 +1361,173 @@ class TodayView extends HTMLElement {
 
   _toggleSettingsMenu() {
     this._settingsMenuOpen = !this._settingsMenuOpen;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  _311DialogMarkup() {
+    const detail = this._ticketDetail;
+    const value = (label, content) =>
+      content
+        ? html`<div>
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(String(content))}</dd>
+          </div>`
+        : "";
+    const formatDate = (date) =>
+      date
+        ? new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(date))
+        : "";
+    return html` <dialog
+      class="ticket-detail"
+      id="ticket-detail-dialog"
+      aria-labelledby="ticket-detail-title"
+    >
+      <div class="ticket-detail__sheet">
+        <header class="ticket-detail__header">
+          <div>
+            <p class="ticket-detail__eyebrow">311 request</p>
+            <h2 id="ticket-detail-title">
+              ${detail
+                ? escapeHtml(detail.problemType || "Request details")
+                : "Request details"}
+            </h2>
+          </div>
+          <button
+            type="button"
+            class="ticket-detail__close"
+            data-close-311
+            aria-label="Close request details"
+          >
+            ×
+          </button>
+        </header>
+        ${this._ticketDetailState === "loading"
+          ? html`<p role="status">Loading request updates…</p>`
+          : ""}
+        ${this._ticketDetailState === "error"
+          ? html`<div role="alert">
+              <p>We couldn't load the latest 311 updates.</p>
+              <button
+                type="button"
+                class="btn-outline btn-outline--sm"
+                data-retry-311
+              >
+                Try again
+              </button>
+            </div>`
+          : ""}
+        ${detail
+          ? html` <section
+                class="ticket-detail__summary"
+                aria-label="Request summary"
+              >
+                <span
+                  class="ticket-status ticket-status--${escapeAttr(
+                    detail.status.toLowerCase().replaceAll(" ", "-"),
+                  )}"
+                  >${escapeHtml(detail.status)}</span
+                >
+                <dl>
+                  ${value("Location", detail.location)}${value(
+                    "Problem type",
+                    detail.problemType,
+                  )}
+                  ${value("Request number", detail.requestNumber)}${value(
+                    "Assigned agency",
+                    detail.assignedAgency,
+                  )}
+                  ${value(
+                    "Request age",
+                    Number.isFinite(detail.ageHours)
+                      ? `${detail.ageHours} hours`
+                      : "",
+                  )}
+                  ${value(
+                    "Most recent update",
+                    formatDate(detail.relevantDate),
+                  )}
+                  ${value("Closure reason", detail.closureReason)}
+                </dl>
+              </section>
+              <section class="ticket-detail__updates">
+                <h3>Request updates</h3>
+                ${detail.events?.length
+                  ? html`<ol>
+                      ${detail.events
+                        .map(
+                          (event) =>
+                            html`<li>
+                              <time datetime="${escapeAttr(event.occurredAt)}"
+                                >${escapeHtml(
+                                  formatDate(event.occurredAt),
+                                )}</time
+                              ><strong>${escapeHtml(event.title)}</strong
+                              >${event.description
+                                ? html`<p>${escapeHtml(event.description)}</p>`
+                                : ""}
+                            </li>`,
+                        )
+                        .join("")}
+                    </ol>`
+                  : html`<p>No updates are available yet.</p>`}
+              </section>`
+          : ""}
+      </div>
+    </dialog>`;
+  }
+
+  _wire311Dialog() {
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#ticket-detail-dialog")
+    );
+    if (!dialog) return;
+    this._ticketDetailDialog = dialog;
+    dialog
+      .querySelector("[data-close-311]")
+      ?.addEventListener("click", () => dialog.close());
+    dialog.querySelector("[data-retry-311]")?.addEventListener("click", () => {
+      if (this._ticketDetailTask)
+        void this._load311Detail(this._ticketDetailTask);
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      this._ticketDetailOpen = false;
+      const taskId = this._ticketDetailTask?.taskId;
+      const currentTrigger = taskId
+        ? this.querySelector(
+            `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
+          )
+        : null;
+      (currentTrigger || this._ticketDetailTrigger)?.focus?.();
+    });
+    if (this._ticketDetailOpen) dialog.showModal();
+  }
+
+  async _open311Detail(task, trigger) {
+    this._ticketDetailTask = task;
+    this._ticketDetailTrigger = trigger;
+    this._ticketDetailOpen = true;
+    this._ticketDetail = null;
+    await this._load311Detail(task);
+  }
+
+  async _load311Detail(task) {
+    const ticket = submitted311Ticket(task);
+    if (!ticket) return;
+    this._ticketDetailState = "loading";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    try {
+      const response = await get311RequestDetail(task.taskId, ticket.srNum);
+      this._ticketDetail = response.request;
+      this._ticketDetailState = "ready";
+    } catch {
+      this._ticketDetailState = "error";
+    }
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
@@ -1463,7 +1645,10 @@ class TodayView extends HTMLElement {
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
-            : null,
+            : entry.homeStatus === "in_progress" &&
+                submitted311Ticket(entry.task)
+              ? { kind: "view311", label: "View details", variant: "outline" }
+              : null,
         statusLabel: this._newTaskStatusMeta(entry),
         isNew: true,
         includeControls: entry.homeStatus === "needs_action",
@@ -1557,7 +1742,14 @@ class TodayView extends HTMLElement {
                         action:
                           entry.homeStatus === "needs_action"
                             ? this._primaryCardAction(entry.task)
-                            : null,
+                            : entry.homeStatus === "in_progress" &&
+                                submitted311Ticket(entry.task)
+                              ? {
+                                  kind: "view311",
+                                  label: "View details",
+                                  variant: "outline",
+                                }
+                              : null,
                         statusLabel: this._taskStatusMeta(entry),
                         isNew: false,
                         includeControls: entry.homeStatus === "needs_action",
@@ -2377,7 +2569,9 @@ class TodayView extends HTMLElement {
   _onAnalysisAction(card, task, btn) {
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
-    if (action === "delete") {
+    if (action === "view311" && task) {
+      void this._open311Detail(task, btn);
+    } else if (action === "delete") {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       this._openEditProblem(problem);
@@ -2751,7 +2945,9 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "done") {
+    if (action === "view311") {
+      void this._open311Detail(task, btn);
+    } else if (action === "done") {
       this._run(card, () =>
         completeTask(task.taskId, { completionMethod: "manual" }),
       ).then((ok) => {

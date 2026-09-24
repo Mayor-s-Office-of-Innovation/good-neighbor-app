@@ -114,7 +114,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v2",
+      policyVersion: "actions-escalations-v3",
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -134,7 +134,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v2",
+      policyVersion: "actions-escalations-v3",
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
@@ -148,7 +148,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v2",
+      policyVersion: "actions-escalations-v3",
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
@@ -324,7 +324,7 @@ describe("answerCondition", () => {
       sk: "ASSESSMENT#asm-1",
       assessmentId: "asm-1",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v2",
+      policyVersion: "actions-escalations-v3",
       summary: {
         totalConditions: 2,
         conditionsNeedAnswer: 2,
@@ -342,7 +342,7 @@ describe("answerCondition", () => {
       conditionId: "cond-2",
       assessmentId: "asm-1",
       checkId: "chk-1",
-      policyVersion: "actions-escalations-v2",
+      policyVersion: "actions-escalations-v3",
       status: "needs_answer",
       analyzerCategory: "Graffiti",
       canonicalCategory: "Graffiti",
@@ -1449,7 +1449,7 @@ describe("assessment refresh preserves unchanged conditions", () => {
     assessmentId: "original",
     checkId: "check-1",
     conditionId: "couch",
-    policyVersion: "actions-escalations-v2",
+    policyVersion: "actions-escalations-v3",
     analyzerCategory: "Bulky Items",
     severity: 3,
     description: "Couch on sidewalk",
