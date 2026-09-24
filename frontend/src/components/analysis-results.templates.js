@@ -3,6 +3,18 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
 const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 
+/** @param {HomeTask} task */
+export function taskMediaUrl(task) {
+  return (
+    task.thumbnailUrl ||
+    task.thumbUrl ||
+    task.mediaUrl ||
+    task.photoUrl ||
+    task.imageUrl ||
+    ""
+  );
+}
+
 /**
  * @typedef {object} AnalysisCondition
  * @property {string} [conditionId]
@@ -490,13 +502,7 @@ export function taskAnalysisCard({
   includeControls = true,
   siteName = "",
 }) {
-  const mediaUrl =
-    task.thumbnailUrl ||
-    task.thumbUrl ||
-    task.mediaUrl ||
-    task.photoUrl ||
-    task.imageUrl ||
-    "";
+  const mediaUrl = taskMediaUrl(task);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.
   const placeName =
