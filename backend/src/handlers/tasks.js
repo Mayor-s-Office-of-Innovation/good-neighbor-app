@@ -1,7 +1,7 @@
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { jsonResponse } from "../http.js";
+import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { GSI2_NAME, taskKey, taskWorklistPk } from "./keys.js";
 import {
@@ -108,11 +108,35 @@ function taskHasTicket(task, srNum) {
 async function latestUpdates(config) {
   const cached = updateCache.get(GOOD_NEIGHBOR_AGENCY);
   if (cached && Date.now() - cached.at < UPDATE_CACHE_MS) return cached.body;
-  const body = await createSf311Client({
-    config,
-  }).getLatestUpdatesBySourceAgency();
-  updateCache.set(GOOD_NEIGHBOR_AGENCY, { at: Date.now(), body });
-  return body;
+  if (cached?.pending) return cached.pending;
+  const pending = createSf311Client({ config })
+    .getLatestUpdatesBySourceAgency()
+    .then((body) => {
+      updateCache.set(GOOD_NEIGHBOR_AGENCY, { at: Date.now(), body });
+      return body;
+    })
+    .catch((error) => {
+      if (updateCache.get(GOOD_NEIGHBOR_AGENCY)?.pending === pending) {
+        updateCache.delete(GOOD_NEIGHBOR_AGENCY);
+      }
+      throw error;
+    });
+  updateCache.set(GOOD_NEIGHBOR_AGENCY, { at: 0, pending });
+  return pending;
+}
+
+/** @param {Record<string, any>} task */
+function taskWithResponseWindow(task) {
+  if (task.maxAcceptableResponseHours !== undefined) return task;
+  const currentRule = activeCatalog().rules.find(
+    (rule) => rule.ruleId === task.ruleId,
+  );
+  return currentRule
+    ? {
+        ...task,
+        maxAcceptableResponseHours: currentRule.maxAcceptableResponseHours,
+      }
+    : task;
 }
 
 /** Authenticated, site-scoped and PII-free detail for one app-created 311 request. */
@@ -140,17 +164,83 @@ export const get311RequestDetail = async (event) => {
   // Open tickets created before the response-time rubric shipped have no
   // persisted deadline. Resolve those legacy tasks by stable ruleId so the
   // current operational response window also appears on their detail view.
-  const currentRule = activeCatalog().rules.find(
-    (rule) => rule.ruleId === task.ruleId,
-  );
-  const detailTask =
-    task.maxAcceptableResponseHours === undefined && currentRule
-      ? {
-          ...task,
-          maxAcceptableResponseHours: currentRule.maxAcceptableResponseHours,
-        }
-      : task;
   return jsonResponse(200, {
-    request: normalizeSf311Detail({ record, task: detailTask, srNum }),
+    request: normalizeSf311Detail({
+      record,
+      task: taskWithResponseWindow(task),
+      srNum,
+    }),
   });
+};
+
+/** Fetch normalized status summaries for multiple site-owned requests using one HUB feed load. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
+export const get311RequestDetails = async (event) => {
+  let body;
+  try {
+    body = readJsonBody(event);
+  } catch {
+    return jsonResponse(400, { error: "invalid JSON body" });
+  }
+  const input =
+    body && typeof body === "object"
+      ? /** @type {Record<string, unknown>} */ (body)
+      : {};
+  const requests = Array.isArray(input.requests) ? input.requests : [];
+  if (!requests.length || requests.length > 50) {
+    return jsonResponse(400, { error: "requests must contain 1 to 50 items" });
+  }
+  const normalized = requests.map((item) => {
+    const request =
+      item && typeof item === "object"
+        ? /** @type {Record<string, unknown>} */ (item)
+        : {};
+    return {
+      taskId: String(request.taskId ?? "").trim(),
+      srNum: String(request.srNum ?? "").trim(),
+    };
+  });
+  if (normalized.some(({ taskId, srNum }) => !taskId || !srNum)) {
+    return jsonResponse(400, { error: "every request needs taskId and srNum" });
+  }
+
+  const config = getConfig();
+  const siteId = deriveSiteId(event);
+  const tasks = await Promise.all(
+    normalized.map(({ taskId }) =>
+      ddb
+        .send(
+          new GetCommand({
+            TableName: config.dynamoTable,
+            Key: taskKey(siteId, taskId),
+          }),
+        )
+        .then((result) => result.Item),
+    ),
+  );
+  if (
+    tasks.some(
+      (task, index) => !task || !taskHasTicket(task, normalized[index].srNum),
+    )
+  ) {
+    return jsonResponse(404, { error: "311 request not found" });
+  }
+
+  const updates = await latestUpdates(config);
+  const results = normalized.flatMap(({ taskId, srNum }, index) => {
+    const task = tasks[index];
+    const record = findServiceRequest(updates, srNum);
+    if (!task || !record) return [];
+    return [
+      {
+        taskId,
+        request: normalizeSf311Detail({
+          record,
+          task: taskWithResponseWindow(task),
+          srNum,
+        }),
+      },
+    ];
+  });
+  return jsonResponse(200, { requests: results });
 };

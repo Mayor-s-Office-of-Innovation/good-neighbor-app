@@ -817,6 +817,23 @@ describe("taskAnalysisCard", () => {
       expect(card).toContain(`>${label}</span`);
     },
   );
+
+  it("omits an unverified 311 status", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_311",
+        kind: "escalation",
+        category: "Litter",
+        ticketStatus: "",
+      },
+      action: { label: "View details", variant: "outline", kind: "view311" },
+      statusLabel: "Today",
+      includeControls: false,
+    });
+
+    expect(card).toContain("311 request");
+    expect(card).not.toContain("analysis-card__ticket-status");
+  });
 });
 
 describe("evidence captions without a place name", () => {

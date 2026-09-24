@@ -25,6 +25,7 @@ locals {
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
     "GET /v1/checks/{checkId}",
     "GET /v1/tasks",
+    "POST /v1/311-requests:batch",
     "POST /v1/tasks/{taskId}/complete",
     "POST /v1/tasks/{taskId}/cannot-do",
     "GET /v1/tasks/{taskId}/311-requests/{srNum}",
