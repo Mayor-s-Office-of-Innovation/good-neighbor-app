@@ -65,6 +65,7 @@ import {
   updateProvider,
   updateSite,
 } from "../src/handlers/admin.js";
+import { runAnalyticsQuery } from "../src/handlers/admin-analytics.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -225,6 +226,7 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
   route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
   route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
+  route("POST", "/admin/v1/analytics/query", runAnalyticsQuery),
 ];
 
 /**
