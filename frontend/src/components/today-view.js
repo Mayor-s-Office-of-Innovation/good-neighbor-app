@@ -1294,13 +1294,19 @@ class TodayView extends HTMLElement {
     const visibleTasks = selectedTaskEntries.filter(
       (entry) => taskCheckGroupId(entry.task) !== newestCheck.id,
     );
-    const newClearCheck =
-      this._homeFilter === "todo"
-        ? clearChecks.find((check) => check.id === newestCheck.id)
+    const latestSubmittedCheck = [...checks].sort((a, b) =>
+      String(b.submittedAt || b.startedAt || "").localeCompare(
+        String(a.submittedAt || a.startedAt || ""),
+      ),
+    )[0];
+    const activeClearCheck =
+      Number(latestSubmittedCheck?.issueCount) === 0
+        ? clearChecks.find((check) => check.id === latestSubmittedCheck.id) ||
+          null
         : null;
     const historicalClearChecks =
       this._homeFilter === "history"
-        ? clearChecks.filter((check) => check.id !== newestCheck.id)
+        ? clearChecks.filter((check) => check.id !== activeClearCheck?.id)
         : [];
     const hasPendingAssessment = !!pendingSession;
     const pendingHasTaskCards = homeTasks.some(
@@ -1314,6 +1320,12 @@ class TodayView extends HTMLElement {
       : recentItems;
     const visibleRecentItems =
       this._homeFilter === "todo" ? displayRecentItems : [];
+    const hasPendingClearResult =
+      displayRecentItems.length > 0 &&
+      displayRecentItems.every(
+        (item) =>
+          item.analysis?.status === "analyzed" && !hasProblemResults(item),
+      );
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     const captureVisible =
@@ -1404,7 +1416,8 @@ class TodayView extends HTMLElement {
             recentItems: visibleRecentItems,
             newTaskEntries,
             visibleTasks,
-            newClearCheck,
+            activeClearCheck,
+            hasPendingClearResult,
             historicalClearChecks,
           })}
         </section>
@@ -1748,7 +1761,8 @@ class TodayView extends HTMLElement {
     recentItems,
     newTaskEntries,
     visibleTasks,
-    newClearCheck,
+    activeClearCheck,
+    hasPendingClearResult,
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
@@ -1756,12 +1770,26 @@ class TodayView extends HTMLElement {
       recentItems.length ||
       newTaskEntries.length ||
       visibleTasks.length ||
-      Boolean(newClearCheck) ||
+      Boolean(activeClearCheck) ||
       historicalClearChecks.length;
     return html`
       <div class="home-results">
+        ${hasPendingClearResult
+          ? analysisResultsTray(recentItems, pendingSession.id, {
+              id: "home-analysis-results",
+              title: "",
+              ariaLabel: "New analysis results",
+              tone: "new",
+              siteName: this._site?.name || "",
+              siteAddress: this._site?.address || "",
+              checkTime: recentCheckTime,
+              extraCards: newTaskCards,
+            })
+          : activeClearCheck && !recentItems.length && !newTaskEntries.length
+            ? this._clearCheckTray(activeClearCheck, true)
+            : ""}
         ${this._taskTabs()}
-        ${recentItems.length
+        ${recentItems.length && !hasPendingClearResult
           ? analysisResultsTray(recentItems, pendingSession.id, {
               id: "home-analysis-results",
               title: "",
@@ -1775,9 +1803,6 @@ class TodayView extends HTMLElement {
           : ""}
         ${newTaskEntries.length && !recentItems.length
           ? this._newTaskCards(newTaskEntries, recentCheckTime)
-          : ""}
-        ${newClearCheck && !recentItems.length && !newTaskEntries.length
-          ? this._clearCheckTray(newClearCheck, true)
           : ""}
         ${visibleTasks.length || historicalClearChecks.length
           ? html`
