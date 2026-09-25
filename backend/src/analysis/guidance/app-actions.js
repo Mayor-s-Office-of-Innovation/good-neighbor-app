@@ -1,6 +1,7 @@
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes, presignGet } from "../../s3.js";
+import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
@@ -330,14 +331,16 @@ async function resolveLocation({ tableName, siteId, task }) {
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
  * @param {import("../../config.js").AppConfig} opts.config
- * @returns {Promise<{ content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }>}
+ * @returns {Promise<import("../analyzer-client.js").ClassifierEvidence>}
  */
-async function loadClassifierImage({ tableName, siteId, task, config }) {
+async function loadClassifierEvidence({ tableName, siteId, task, config }) {
   const artifactIds = new Set(
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
   if (!task.checkId || artifactIds.size === 0) {
-    throw new Error("No source image is available for 311 classifier analysis");
+    throw new Error(
+      "No source image or text is available for 311 classifier analysis",
+    );
   }
   const result = await ddb.send(
     new QueryCommand({
@@ -350,32 +353,49 @@ async function loadClassifierImage({ tableName, siteId, task, config }) {
       ConsistentRead: true,
     }),
   );
-  const artifact = (result.Items ?? []).find(
+  const artifacts = (result.Items ?? []).filter((item) =>
+    artifactIds.has(String(item.artifactId ?? "")),
+  );
+  const imageArtifact = artifacts.find(
     (item) =>
-      artifactIds.has(String(item.artifactId ?? "")) &&
       typeof item.s3Key === "string" &&
       typeof item.contentType === "string" &&
       String(item.contentType).startsWith("image/"),
   );
-  if (!artifact) {
-    throw new Error("No source image is available for 311 classifier analysis");
-  }
-  const object = await getObjectBytes({
-    bucket: config.uploadBucket,
-    key: String(artifact.s3Key),
-  });
-  const contentType = String(artifact.contentType || object.contentType);
-  if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) {
-    throw new Error(
-      `Unsupported classifier image content type: ${contentType}`,
+  if (imageArtifact) {
+    const object = await getObjectBytes({
+      bucket: config.uploadBucket,
+      key: String(imageArtifact.s3Key),
+    });
+    const downscaled = await downscaleImage(
+      object.bytes,
+      String(object.contentType || imageArtifact.contentType),
     );
+    const contentType = downscaled.contentType;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) {
+      throw new Error(
+        `Unsupported classifier image content type: ${contentType}`,
+      );
+    }
+    return {
+      type: "image",
+      image: {
+        content_type: /** @type {"image/jpeg" | "image/png" | "image/webp"} */ (
+          contentType
+        ),
+        base64: downscaled.bytes.toString("base64"),
+      },
+    };
   }
-  return {
-    content_type: /** @type {"image/jpeg" | "image/png" | "image/webp"} */ (
-      contentType
-    ),
-    base64: object.bytes.toString("base64"),
-  };
+  const textArtifact = artifacts.find(
+    (item) => typeof item.text === "string" && item.text.trim().length > 0,
+  );
+  if (textArtifact) {
+    return { type: "text", text: String(textArtifact.text).trim() };
+  }
+  throw new Error(
+    "No source image or text is available for 311 classifier analysis",
+  );
 }
 
 /**
@@ -544,16 +564,16 @@ async function execute311Action({
       baseUrl: config.analyzerBaseUrl ?? "",
       apiKey: analyzerApiKey,
     });
-    const image = await loadClassifierImage({
+    const evidence = await loadClassifierEvidence({
       tableName,
       siteId,
       task,
       config,
     });
     const result = /** @type {{ labels?: unknown }} */ (
-      await analyzer.classifyImage({
+      await analyzer.classifyEvidence({
         classifierId: parsed.classifierId,
-        image,
+        evidence,
         requestId: String(task.taskId ?? ""),
         appId: "good-neighbor-app",
       })
@@ -571,7 +591,10 @@ async function execute311Action({
     return {
       code: action.code,
       status: "failed",
-      reason: "no_service_codes",
+      reason:
+        parsed.kind === "classifier"
+          ? "insufficient_classifier_information"
+          : "no_service_codes",
       payload: action.payload ?? {},
       recordedAt: now,
     };

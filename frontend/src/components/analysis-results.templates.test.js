@@ -1,16 +1,179 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analysisActionPriority,
   analysisCards,
+  analysisResultsTray,
+  historicalCheckTitle,
   problemSummary,
   problemSummaryLabel,
+  sortAnalysisCards,
   taskAnalysisCard,
+  updatedCardTime,
 } from "./analysis-results.templates.js";
 
 /** Fixture helper — test items only need the fields the templates read. */
 const item = (fields) => /** @type {any} */ (fields);
 
+describe("historical check titles", () => {
+  const now = new Date(2026, 8, 23, 12, 0);
+
+  it("shows the time for a superseded check from today", () => {
+    expect(historicalCheckTitle(new Date(2026, 8, 23, 9, 5), now)).toBe(
+      "From today's 9:05 AM check",
+    );
+  });
+
+  it("uses yesterday for the prior calendar day", () => {
+    expect(historicalCheckTitle(new Date(2026, 8, 22, 9, 0), now)).toBe(
+      "From yesterday's check",
+    );
+  });
+
+  it("uses the weekday within the current calendar week", () => {
+    expect(historicalCheckTitle(new Date(2026, 8, 21, 9, 0), now)).toBe(
+      "From Monday's check",
+    );
+  });
+
+  it("uses a numeric date before the current calendar week", () => {
+    expect(historicalCheckTitle(new Date(2026, 8, 14, 9, 0), now)).toBe(
+      "From the check on 09/14/26",
+    );
+  });
+});
+
 describe("analysis result summaries", () => {
+  it("ranks unanswered cards first, then emergency, non-emergency, 311 and on-site", () => {
+    const tasks = [
+      { kind: "action" },
+      { kind: "escalation" },
+      { kind: "non_actionable_escalation" },
+      {
+        kind: "non_actionable_escalation",
+        appActions: [{ code: "open_phone", payload: { phoneNumber: "911" } }],
+      },
+    ];
+    /** @type {Array<{markup: string, createdAt: string, actionPriority: number, needsAnswer?: boolean}>} */
+    const cards = tasks.map((task, index) => ({
+      markup: String(index),
+      createdAt: `2026-09-22T1${index}:00:00Z`,
+      actionPriority: analysisActionPriority(task),
+    }));
+    cards.push({ ...cards[0], markup: "question", needsAnswer: true });
+    expect(sortAnalysisCards(cards).map((card) => card.markup)).toEqual([
+      "question",
+      "3",
+      "2",
+      "1",
+      "0",
+    ]);
+    expect(
+      sortAnalysisCards([
+        { ...cards[1], markup: "older", createdAt: "2026-09-22T09:00:00Z" },
+        { ...cards[1], markup: "newer", createdAt: "2026-09-22T11:00:00Z" },
+      ]).map((card) => card.markup),
+    ).toEqual(["newer", "older"]);
+  });
+
+  it("sorts unanswered questions first, then each card by its displayed timestamp", () => {
+    const cards = [
+      { markup: "older action", createdAt: "2026-09-22T09:00:00Z" },
+      { markup: "newer action", createdAt: "2026-09-22T11:00:00Z" },
+      {
+        markup: "older question",
+        createdAt: "2026-09-22T08:00:00Z",
+        needsAnswer: true,
+      },
+      {
+        markup: "newer question",
+        createdAt: "2026-09-22T10:00:00Z",
+        needsAnswer: true,
+      },
+    ];
+
+    expect(sortAnalysisCards(cards).map((card) => card.markup)).toEqual([
+      "newer question",
+      "older question",
+      "newer action",
+      "older action",
+    ]);
+    expect(
+      sortAnalysisCards(
+        cards.map((card) =>
+          card.markup === "older question"
+            ? { ...card, needsAnswer: false }
+            : card,
+        ),
+      ).map((card) => card.markup),
+    ).toEqual([
+      "newer question",
+      "newer action",
+      "older action",
+      "older question",
+    ]);
+    expect(cards[0].markup).toBe("older action");
+  });
+
+  it("orders live result cards and persisted cards together within one check", () => {
+    const markup = analysisResultsTray(
+      [
+        {
+          id: "old-question",
+          uploadedAt: "2026-09-22T08:00:00Z",
+          analysis: {
+            status: "analyzed",
+            tasks: [],
+            conditions: [
+              {
+                conditionId: "needs-answer",
+                description: "Question from the older photo.",
+                needsAnswer: {
+                  key: "onsite",
+                  prompt: "Is this yours?",
+                  options: [{ label: "Yes", value: true }],
+                },
+              },
+            ],
+          },
+        },
+        {
+          id: "newer-photo",
+          uploadedAt: "2026-09-22T11:00:00Z",
+          analysis: {
+            status: "analyzed",
+            tasks: [
+              {
+                taskId: "live-task",
+                userFriendlyLabel: "Newer live issue",
+                guidance: "Review it.",
+                kind: "action",
+              },
+            ],
+            conditions: [],
+          },
+        },
+      ],
+      "check-1",
+      {
+        extraCards: [
+          {
+            markup:
+              '<article data-testid="persisted">Persisted issue</article>',
+            createdAt: "2026-09-22T10:00:00Z",
+          },
+        ],
+      },
+    );
+
+    expect(markup.indexOf("Question from the older photo.")).toBeLessThan(
+      markup.indexOf("Newer live issue"),
+    );
+    expect(markup.indexOf("Newer live issue")).toBeLessThan(
+      markup.indexOf("Persisted issue"),
+    );
+  });
+
   it("uses the user-friendly condition label as the card title", () => {
     const cards = analysisCards(
       {
@@ -322,7 +485,7 @@ describe("analysis result summaries", () => {
     expect(cards[0]).not.toContain("Condition found");
   });
 
-  it("keeps no-issue cards editable without offering delete", () => {
+  it("renders the check-level clear result with an add-problem link", () => {
     const cards = analysisCards(
       {
         id: "item_1",
@@ -338,14 +501,63 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("No issues found");
-    expect(cards[0]).toContain('data-analysis-action="edit"');
+    expect(cards[0]).toContain("Your check was clear!");
+    expect(cards[0]).toContain(
+      "We didn't identify any perimeter issues in this check.",
+    );
+    expect(cards[0]).toContain('href="/problem"');
+    expect(cards[0]).not.toContain('data-analysis-action="edit"');
     expect(cards[0]).not.toContain('data-analysis-action="delete"');
+  });
+
+  it("shows one clear card for multiple clear photos", () => {
+    const clearItem = (id) => ({
+      id,
+      kind: "photo",
+      analysis: { status: "analyzed", tasks: [], conditions: [] },
+    });
+    const markup = analysisResultsTray(
+      [clearItem("photo_1"), clearItem("photo_2")],
+      "check_1",
+    );
+
+    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+
+  it("removes the clear card as soon as any issue is present", () => {
+    const markup = analysisResultsTray(
+      [
+        {
+          id: "clear_photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+        {
+          id: "issue_photo",
+          analysis: {
+            status: "analyzed",
+            tasks: [
+              {
+                taskId: "task_1",
+                conditionId: "condition_1",
+                userFriendlyLabel: "Litter",
+                guidance: "Pick it up.",
+                kind: "action",
+              },
+            ],
+            conditions: [],
+          },
+        },
+      ],
+      "check_1",
+    );
+
+    expect(markup).not.toContain("Your check was clear!");
+    expect(markup).toContain("Litter");
   });
 });
 
 describe("pending progress cards", () => {
-  it("shows upload progress before the analyzer is involved", () => {
+  it("uses the analyzing skeleton while upload and analysis are in flight", () => {
     const card = analysisCards(
       item({
         id: "item_1",
@@ -357,14 +569,14 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Uploading photo...");
-    expect(card).not.toContain("Waiting for results");
-    // Upload stage not reached yet, analyzer stage dimmed.
-    expect(card).toContain('class="analysis-card__stage ');
-    expect(card).toContain('class="visually-hidden">In progress. </span>');
+    expect(card).toContain("Analyzing...");
+    expect(card).toContain("15th St");
+    expect(card).toContain("analysis-card__skeleton--route");
+    expect(card).toContain("analysis-card__skeleton--button");
+    expect(card).toContain("analysis-card__media--placeholder");
   });
 
-  it("shows the uploaded + sent checkpoints and an elapsed timer once polling", () => {
+  it("keeps the same stable skeleton once polling begins", () => {
     const card = analysisCards(
       item({
         id: "item_1",
@@ -381,15 +593,9 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Photo uploaded");
-    expect(card).toContain("Sent to analyzer");
-    expect(card).toContain("Waiting for results");
-    expect(card).toContain('data-elapsed-since="2026-09-15T10:00:02Z"');
-    // Stage state is in text for screen readers, not only the glyph — both
-    // stages have stamps here, so both read "Done."
-    expect(card).toContain('class="visually-hidden">Done. </span>');
-    expect(card).not.toContain("In progress. </span>");
-    expect(card).not.toContain("skeleton-line");
+    expect(card).toContain("Analyzing...");
+    expect(card).toContain("analysis-card__skeleton--wide");
+    expect(card).toContain("analysis-card__skeleton--mid");
   });
 
   it("does not show photo stages on text items", () => {
@@ -403,8 +609,9 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Analyzing description...");
-    expect(card).not.toContain("Photo uploaded");
+    expect(card).toContain("Analyzing...");
+    expect(card).toContain("analysis-card__media--text");
+    expect(card).not.toContain("analysis-card__media--placeholder");
   });
 });
 
@@ -521,7 +728,27 @@ describe("taskAnalysisCard", () => {
     );
   });
 
-  it("omits action, edit, and delete controls for read-only task cards", () => {
+  it("uses the blue primary treatment only for 311 escalation tasks", () => {
+    const escalation = taskAnalysisCard({
+      task: { taskId: "task_311", kind: "escalation", category: "Litter" },
+      action: { label: "File 311 ticket", variant: "blue", kind: "file311" },
+      statusLabel: "Today",
+    });
+    const phone = taskAnalysisCard({
+      task: {
+        taskId: "task_phone",
+        kind: "non_actionable_escalation",
+        category: "Safety",
+      },
+      action: { label: "I called 911", variant: "blue", kind: "done" },
+      statusLabel: "Today",
+    });
+
+    expect(escalation).toContain("analysis-card__primary--escalation");
+    expect(phone).not.toContain("analysis-card__primary--escalation");
+  });
+
+  it("supports a read-only details action without edit or delete controls", () => {
     const card = taskAnalysisCard({
       task: {
         taskId: "task_1",
@@ -532,14 +759,198 @@ describe("taskAnalysisCard", () => {
         guidance: "Clean it up.",
         buttons: ["Cleaned it up"],
       },
-      action: { label: "Cleaned it up", variant: "ink", kind: "done" },
+      action: { label: "View details", variant: "outline", kind: "view311" },
       statusLabel: "YESTERDAY · 10:00AM",
       isNew: false,
       includeControls: false,
     });
 
-    expect(card).not.toContain("Cleaned it up</button>");
+    expect(card).toContain("View details");
+    expect(card).toContain('data-action="view311"');
+    expect(card).toContain("analysis-card__primary--outline");
+    expect(card).not.toContain('name="circle-check"');
+    expect(card).toContain("analysis-card__media--placeholder");
+    expect(card).toContain('name="image"');
+    expect(card).not.toContain("analysis-card__media--text");
     expect(card).not.toContain('data-analysis-action="edit"');
     expect(card).not.toContain('data-analysis-action="delete"');
+  });
+
+  it("formats latest 311 update timestamps for card footers", () => {
+    const now = new Date(2026, 8, 24, 12, 0);
+    expect(updatedCardTime(new Date(2026, 8, 24, 9, 15), now)).toBe(
+      "Updated today, 9:15 AM",
+    );
+    expect(updatedCardTime(new Date(2026, 8, 22, 9, 15), now)).toBe(
+      "Updated Tuesday, 9:15 AM",
+    );
+    expect(updatedCardTime(new Date(2026, 8, 17, 9, 15), now)).toBe(
+      "Updated Sep 17, 9:15 AM",
+    );
+  });
+
+  it.each([
+    ["Open", "", false, "default", "Open"],
+    ["Open", "response overdue", true, "overdue", "Open: response overdue"],
+    ["Closed", "resolved", false, "closed", "Closed: resolved"],
+    ["Closed", "unable to locate", false, "closed", "Closed: unable to locate"],
+    ["On hold", "", false, "default", "On hold"],
+  ])(
+    "shows the %s 311 status and qualifier beside the route",
+    (ticketStatus, ticketStatusDetail, ticketResponseOverdue, tone, label) => {
+      const card = taskAnalysisCard({
+        task: {
+          taskId: "task_311",
+          kind: "escalation",
+          category: "Litter",
+          ticketStatus,
+          ticketStatusDetail,
+          ticketResponseOverdue,
+        },
+        action: { label: "View details", variant: "outline", kind: "view311" },
+        statusLabel: "Today",
+        includeControls: false,
+      });
+
+      expect(card).toContain("311 request");
+      expect(card).toContain(`analysis-card__ticket-status--${tone}`);
+      expect(card).toContain(`>${label}</span`);
+    },
+  );
+
+  it("omits an unverified 311 status", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_311",
+        kind: "escalation",
+        category: "Litter",
+        ticketStatus: "",
+      },
+      action: { label: "View details", variant: "outline", kind: "view311" },
+      statusLabel: "Today",
+      includeControls: false,
+    });
+
+    expect(card).toContain("311 request");
+    expect(card).not.toContain("analysis-card__ticket-status");
+  });
+});
+
+describe("evidence captions without a place name", () => {
+  it("uses the photo's reverse-geocoded first address line before the site address", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: {
+          status: "analyzing",
+          georeferencedAddress: "640 Jones St, San Francisco, CA",
+        },
+      }),
+      "check_1",
+      { siteAddress: "123 Main St, San Francisco, CA" },
+    );
+
+    expect(cards[0]).toContain("640 Jones St");
+    expect(cards[0]).not.toContain("123 Main St");
+    expect(cards[0]).not.toContain("San Francisco, CA");
+  });
+
+  it("falls back to the site's first address line when coordinates have no address", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex", siteAddress: "123 Main St\nSuite 2" },
+    );
+
+    expect(cards[0]).toContain("123 Main St");
+    expect(cards[0]).not.toContain("Suite 2");
+  });
+
+  it("shows the stored photo address on a hydrated home task", () => {
+    const card = taskAnalysisCard({
+      task: item({
+        taskId: "task_1",
+        category: "Litter",
+        siteAddress: "123 Main St, San Francisco",
+        evidence: {
+          georeferencedAddress: "640 Jones St, San Francisco, CA",
+        },
+      }),
+      action: null,
+      statusLabel: "Existing",
+      siteName: "Civic Center Annex",
+    });
+
+    expect(card).toContain("640 Jones St");
+    expect(card).not.toContain("123 Main St");
+  });
+
+  it("retains a task-only identifier in current and historical card footers", () => {
+    for (const isNew of [true, false]) {
+      const card = taskAnalysisCard({
+        task: item({ taskId: "task-only-123", category: "Litter" }),
+        action: null,
+        statusLabel: isNew ? "New" : "Existing",
+        isNew,
+      });
+      expect(card).toContain("<span>task-only-123</span>");
+    }
+  });
+
+  it("labels current items with the host's site name", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex" },
+    );
+
+    expect(cards[0]).toContain("Civic Center Annex");
+    expect(cards[0]).not.toContain("data-place-id");
+  });
+
+  it("keeps a legacy item's own place name", () => {
+    const cards = analysisCards(
+      item({
+        id: "item_1",
+        kind: "photo",
+        dataUrl: "data:,",
+        placeName: "North gate",
+        analysis: { status: "analyzing" },
+      }),
+      "check_1",
+      { siteName: "Civic Center Annex" },
+    );
+
+    expect(cards[0]).toContain("North gate");
+    expect(cards[0]).not.toContain("Civic Center Annex");
+  });
+
+  it("never captions a task card with the fixed position descriptor", () => {
+    const card = taskAnalysisCard({
+      // Backend tasks may still carry the descriptor; the template ignores it.
+      task: item({
+        taskId: "task_1",
+        category: "Litter",
+        positionDescriptor: "perimeter",
+      }),
+      action: null,
+      statusLabel: "Existing",
+      siteName: "Civic Center Annex",
+    });
+
+    expect(card).toContain("Civic Center Annex");
+    expect(card).not.toContain(">perimeter<");
   });
 });

@@ -19,9 +19,14 @@ import {
 import {
   presignUpload,
   registerArtifact,
+  deleteArtifact,
   presignMedia,
 } from "../src/handlers/artifacts.js";
-import { listTasks } from "../src/handlers/tasks.js";
+import {
+  get311RequestDetail,
+  get311RequestDetails,
+  listTasks,
+} from "../src/handlers/tasks.js";
 import {
   cannotDoTask,
   completeTask,
@@ -37,7 +42,7 @@ import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
-import { getSite, putSitePlaces } from "../src/handlers/site.js";
+import { getSite, listProviderSites } from "../src/handlers/site.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
@@ -145,14 +150,19 @@ const routes = [
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
   route("GET", "/v1/sites:search", searchSites),
   route("POST", "/v1/setup-codes:request", requestSetupCode),
-  // Site config (feature/142 onboard locations)
+  // Site config
   route("GET", "/v1/site", getSite),
-  route("PUT", "/v1/site/places", putSitePlaces),
+  route("GET", "/v1/provider-sites", listProviderSites),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
   route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
   route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
+  route(
+    "DELETE",
+    "/v1/checks/{checkId}/artifacts/{artifactId}",
+    deleteArtifact,
+  ),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",
@@ -162,6 +172,8 @@ const routes = [
   route("GET", "/v1/checks/{checkId}", getCheck),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/311-requests:batch", get311RequestDetails),
+  route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   // Assessment guidance workflow

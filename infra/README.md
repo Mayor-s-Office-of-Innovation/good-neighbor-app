@@ -1,29 +1,73 @@
 # Infrastructure
 
-Terraform is organized by environment roots and reusable modules. Both env roots use the remote
-**S3 backend with DynamoDB locking** (state bucket `good-neighbor-app-terraform-state`, lock table
-`good-neighbor-app-terraform-locks`, `us-west-2`) — the backend block is **live** (no longer
-commented).
+Terraform is organized by environment roots and reusable modules. Each AWS account owns its own
+remote **S3 backend with DynamoDB locking** in `us-west-2`:
+
+- DEV account: bucket `good-neighbor-app-terraform-state`, lock table
+  `good-neighbor-app-terraform-locks`, key `dev/terraform.tfstate`.
+- PROD account: bucket and lock-table names are supplied by the `prod` GitHub Environment;
+  application key `app/terraform.tfstate` and bootstrap key `bootstrap/terraform.tfstate`.
+
+The PROD backend resources are declared in `infra/bootstrap/prod-state`; the application root does
+not own or destroy its own backend.
 
 ## State backend protection
 
-The shared state bucket is managed outside these environment roots in AWS account
-`518892333858`. On 2026-09-11, a read-only check with the owning account's
+The DEV state bucket is managed outside the application environment root in the DEV AWS account.
+On 2026-09-11, a read-only check with the owning account's
 `nst-dev` profile confirmed that S3 versioning is `Enabled`:
 
 ```bash
 aws s3api get-bucket-versioning \
   --bucket good-neighbor-app-terraform-state \
-  --expected-bucket-owner 518892333858 \
+  --expected-bucket-owner "$AWS_ACCOUNT_ID" \
   --profile nst-dev
 # { "Status": "Enabled" }
 ```
 
-This is a dated verification of the externally managed bucket, not a resource
-owned by the application Terraform. Both environments retain their existing
-state keys (`dev/terraform.tfstate` and `prod/terraform.tfstate`), encryption,
-and DynamoDB locking. Verify versioning again when changing backend ownership
-or configuration; do not recreate the shared bucket in an application root.
+This is a dated verification of the externally managed DEV bucket, not a resource
+owned by the application Terraform. Verify versioning again when changing backend ownership
+or configuration; do not recreate it in an application root.
+
+### One-time PROD backend bootstrap and state migration
+
+Both workflows below are manual, accept dispatches only from `main`, use GitHub Environment
+approval, and verify the exact AWS account before making changes. Terraform apply runs only in CI.
+Each GitHub Environment must define the `AWS_ACCOUNT_ID` secret and the `AWS_REGION`,
+`TF_STATE_BUCKET`, and `TF_LOCK_TABLE` variables. PROD must additionally define
+`TF_STATE_LOG_BUCKET` and `TF_STATE_KMS_KEY_ALIAS`. The alias is resolved to the key ARN at runtime,
+and every PROD backend initialization supplies that ARN as `kms_key_id`. These values are
+deliberately not committed.
+Set `TF_STATE_KMS_KEY_ALIAS` to `alias/good-neighbor-app-prod-terraform-state`.
+
+1. Run **Bootstrap production Terraform backend**. It creates only the allowlisted KMS key, S3
+   state and access-log buckets, and DynamoDB lock table in PROD, then immediately migrates its bootstrap state
+   from the runner into `bootstrap/terraform.tfstate`. It refuses to run if the bucket or lock
+   table already exists, so a partial failure must be inspected rather than blindly retried.
+2. Record the exact version ID and lineage of the repaired DEV-hosted source object. The source is
+   retained as rollback evidence; the migration does not delete it:
+
+   ```bash
+   aws s3api list-object-versions \
+     --bucket "$TF_STATE_BUCKET" \
+     --prefix prod/terraform.tfstate \
+     --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+     --query 'Versions[?IsLatest].[VersionId,LastModified]' \
+     --output table
+   ```
+
+3. Run **Migrate production application state** with that exact version ID and the expected
+   lineage. The DEV job exports only that immutable S3 version. It rejects the file unless it has
+   zero managed resources and contains only the known public DNS outputs and caller-identity data.
+   The PROD job refuses to overwrite an existing destination, then writes the verified state to
+   `app/terraform.tfstate` and confirms the lineage and zero-managed-resource invariant.
+4. Run the normal production Terraform plan. Confirm it proposes the PROD application resources,
+   including `goodneighbor.sf.gov`, and does not propose `gn.sf.gov` resources before approving an
+   apply.
+
+The temporary cross-job artifact is retained for one day. GitHub environment secrets provide a
+different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migration job uses
+`prod`. Never use the DEV role to create or operate the PROD backend.
 
 ## Production DNS bootstrap
 
@@ -51,9 +95,16 @@ delegation and zone signing are confirmed, coordinate publication of
 trust. Signing alone does not establish that parent trust. The workflow summary
 reports both outputs.
 
-The earlier `gn.sf.gov` hosted zone is retained as protected infrastructure until
-its retirement is separately reviewed. Its nameservers are not valid for
+The earlier `gn.sf.gov` hosted zone and its DNS controls remain in the DEV
+account pending a separately reviewed retirement. They are deliberately absent
+from the PROD Terraform root and PROD state: production workflows must not
+recreate or manage them. Their name servers are not valid for
 `goodneighbor.sf.gov`.
+
+The PROD root does not read DEV Terraform state. The public DEV delegation name
+servers and SES Easy DKIM tokens are explicit, validated PROD inputs. When DEV
+rotates either value, update the corresponding PROD input through a reviewed
+handoff before applying the parent-zone records.
 
 The production provider app is served canonically from `goodneighbor.sf.gov`.
 During the hostname transition, `goodneighborsf.org` remains a second alias on
@@ -72,6 +123,8 @@ encryption key is symmetric and has automatic rotation enabled.
 
 ```text
 infra/
+  bootstrap/
+    prod-state/ # one-time PROD-owned backend root
   environments/
     dev/     # env root: backend "s3" + providers (aws, aws.us_east_1) + module "app"
     prod/

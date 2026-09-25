@@ -20,7 +20,6 @@ vi.mock("./device-location.js", () => ({
 vi.mock("../state/check-session.js", () => ({
   addItem: vi.fn(),
   getCurrentCheck: vi.fn(),
-  getPlaceOrder: vi.fn(),
   updateItem: vi.fn(),
   updateItemAnalysis: vi.fn(),
 }));
@@ -42,13 +41,7 @@ it("stores capture location on a generated text report", async () => {
     /** @type {any} */ ({
       id: "check",
       remoteStarted: true,
-      places: {
-        sidewalk: {
-          id: "sidewalk",
-          name: "Sidewalk",
-          items: [originalItem],
-        },
-      },
+      items: [originalItem],
     }),
   );
   vi.mocked(getCaptureDeviceLocation).mockResolvedValue(location);
@@ -80,14 +73,9 @@ it("stores capture location on a generated text report", async () => {
   );
   vi.mocked(addItem).mockReturnValue(/** @type {any} */ ({ id: "generated" }));
 
-  await analyzeNoIssueDescriptionEdit(
-    "sidewalk",
-    "original",
-    "Litter by the door",
-  );
+  await analyzeNoIssueDescriptionEdit("original", "Litter by the door");
 
   expect(addItem).toHaveBeenCalledWith(
-    "sidewalk",
     expect.objectContaining({
       kind: "text",
       text: "Litter by the door",
@@ -105,7 +93,6 @@ it("stores capture location on a generated text report", async () => {
     }),
   );
   expect(updateItem).toHaveBeenCalledWith(
-    "sidewalk",
     "generated",
     expect.objectContaining({
       upload: { status: "uploaded", artifactId: "artifact" },

@@ -1,12 +1,15 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
-  the main view based on the hash route. Everything is scoped to the bound site.
+  the main view based on the route. Everything is scoped to the bound site.
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
-  problem-report. Setup (device→site binding) is retained and
-  gates everything (see docs/take5-plan.md).
+  problem-report, /check/describe + /problem/describe → describe-instead.
+  Setup (device→site binding) is retained and gates everything. There is no
+  per-site places setup any more (docs/plan-remove-places.md): a bound device
+  lands straight on home.
 */
+import { requestLocationPermissionEarly } from "../services/device-location.js";
 import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
 import { getSiteSettings } from "../services/api.js";
 import {
@@ -22,13 +25,16 @@ import {
   escapeUrlForPlatform,
 } from "../services/browser-context.js";
 import { reportClientEvent } from "../services/error-report.js";
+import {
+  deepActiveElement,
+  isEditable,
+  keyboardViewport,
+} from "../services/keyboard-viewport.js";
 
 const ROUTE_VIEW = [
   ["/problem/describe", "describe-instead"],
   ["/problem", "problem-report"],
   ["/check/describe", "describe-instead"],
-  ["/places/setup", "places-setup"],
-  ["/places/edit", "places-setup"],
   ["/check", "perimeter-check"],
   ["/today", "today-view"],
 ];
@@ -37,25 +43,15 @@ if (import.meta.env.DEV) {
   ROUTE_VIEW.unshift(["/dev/guidance-harness", "guidance-harness"]);
 }
 
-export function hasConfirmedPlaces(site) {
-  return (
-    Array.isArray(site?.places) &&
-    site.places.some((place) => String(place?.name || "").trim()) &&
-    Boolean(site.placesConfirmedAt || site.placesConfiguredAt)
-  );
-}
-
 class AppRoot extends HTMLElement {
   async connectedCallback() {
+    this._startKeyboardViewportSync();
     if (this._isDevResetRoute()) {
       await this._resetFirstLaunch();
       return;
     }
+    requestLocationPermissionEarly();
     this._site = await getSite();
-    this._onSitePlacesUpdated = (event) => {
-      if (event.detail?.site) this._site = event.detail.site;
-    };
-    window.addEventListener("siteplacesupdated", this._onSitePlacesUpdated);
     this._onAuthSignout = () => {
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
@@ -69,6 +65,16 @@ class AppRoot extends HTMLElement {
       this._renderSetup();
     };
     window.addEventListener("authsignout", this._onAuthSignout);
+    this._onSiteRequested = (event) => {
+      const { siteId = "", siteName = "", mode = "code" } = event.detail || {};
+      this._renderSetup({
+        targetSiteId: siteId,
+        targetSiteName: siteName,
+        mode,
+        canCancel: Boolean(this._site),
+      });
+    };
+    this.addEventListener("siterequested", this._onSiteRequested);
     // Health monitoring starts regardless of binding state: /health is
     // authorizer-free, and the AUTH dialog is meaningful before setup too.
     startHealthMonitoring();
@@ -84,27 +90,84 @@ class AppRoot extends HTMLElement {
 
   disconnectedCallback() {
     if (this._unsub) this._unsub();
-    if (this._onSitePlacesUpdated) {
-      window.removeEventListener(
-        "siteplacesupdated",
-        this._onSitePlacesUpdated,
-      );
-    }
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
+    this.removeEventListener("siterequested", this._onSiteRequested);
+    this._stopKeyboardViewportSync();
   }
 
-  _renderSetup() {
-    this.innerHTML = setupView();
+  /**
+   * iOS keyboard fallback (see services/keyboard-viewport.js). While an
+   * editable control has focus and the keyboard has shrunk only the visual
+   * viewport, expose its height and pan offset to the shell's CSS.
+   */
+  _startKeyboardViewportSync() {
+    const viewport = window.visualViewport;
+    if (!viewport || this._onKeyboardViewport) return;
+    this._onKeyboardViewport = () => this._syncKeyboardViewport();
+    viewport.addEventListener("resize", this._onKeyboardViewport);
+    // Pans (Safari revealing a newly focused field, or the user dragging)
+    // change offsetTop without a resize; only "scroll" reports them.
+    viewport.addEventListener("scroll", this._onKeyboardViewport);
+    document.addEventListener("focusin", this._onKeyboardViewport);
+    document.addEventListener("focusout", this._onKeyboardViewport);
+  }
+
+  _stopKeyboardViewportSync() {
+    if (!this._onKeyboardViewport) return;
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._onKeyboardViewport,
+    );
+    window.visualViewport?.removeEventListener(
+      "scroll",
+      this._onKeyboardViewport,
+    );
+    document.removeEventListener("focusin", this._onKeyboardViewport);
+    document.removeEventListener("focusout", this._onKeyboardViewport);
+    this._onKeyboardViewport = null;
+    this._applyKeyboardViewport(null);
+  }
+
+  _syncKeyboardViewport() {
+    const editing = isEditable(deepActiveElement(document));
+    this._applyKeyboardViewport(
+      keyboardViewport(window.visualViewport, window.innerHeight, editing),
+    );
+  }
+
+  /** @param {{ height: number, top: number } | null} box */
+  _applyKeyboardViewport(box) {
+    if (!box) {
+      this.style.removeProperty("--app-viewport-height");
+      this.style.removeProperty("--app-viewport-top");
+      return;
+    }
+    this.style.setProperty("--app-viewport-height", `${box.height}px`);
+    this.style.setProperty("--app-viewport-top", `${box.top}px`);
+  }
+
+  _renderSetup(options = {}) {
+    if (this._unsub) {
+      this._unsub();
+      this._unsub = null;
+    }
+    this.innerHTML = setupView(options);
     this.append(document.createElement("connection-status"));
     this._maybeWarnInAppBrowser();
+    this.querySelector("site-setup").addEventListener("sitecancel", () => {
+      if (!this._site) return;
+      this._renderApp();
+      this._unsub = onRouteChange(() => this._renderView());
+      this._renderView();
+    });
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state
       await this._refreshSiteSettings();
       this._renderApp();
       this._unsub = onRouteChange(() => this._renderView());
-      navigate(this._hasPlaces() ? "/today" : "/places/setup");
+      navigate("/today");
       this._renderView();
     });
   }
@@ -162,10 +225,6 @@ class AppRoot extends HTMLElement {
       void this._resetFirstLaunch();
       return;
     }
-    if (!this._hasPlaces() && !route.startsWith("/places/setup")) {
-      navigate("/places/setup");
-      return;
-    }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
     // Every screen owns its own header now (design port): the home hub has its
@@ -179,31 +238,23 @@ class AppRoot extends HTMLElement {
     this._view.focus();
   }
 
+  /**
+   * Pull the site's settings (name etc.) from the backend and merge them onto
+   * the local binding record. Best-effort: the app runs on the stored record
+   * when the request fails.
+   */
   async _refreshSiteSettings() {
     try {
       const { site } = await getSiteSettings();
       if (site) {
-        const localPlaces = Array.isArray(this._site?.places)
-          ? this._site.places
-          : [];
-        const remotePlaces = Array.isArray(site.places) ? site.places : [];
         this._site = await saveSiteSettings({
           ...site,
-          places: remotePlaces.length ? remotePlaces : localPlaces,
-          placesConfirmedAt:
-            site.placesConfirmedAt ||
-            site.placesConfiguredAt ||
-            this._site?.placesConfirmedAt,
           providerSiteId: this._site.providerSiteId || site.providerSiteId,
         });
       }
     } catch (err) {
       console.error("getSiteSettings failed", err);
     }
-  }
-
-  _hasPlaces() {
-    return hasConfirmedPlaces(this._site);
   }
 
   _isDevResetRoute(route = currentRoute()) {

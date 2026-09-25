@@ -106,8 +106,7 @@ site name plus the setup code). To get the setup screen back:
 - **Dev reset route (easiest):** open **`/dev/reset-first-launch`** (dev builds only, e.g.
   `http://localhost:5173/dev/reset-first-launch`). It clears the site binding **and** any
   in-progress draft, rewrites the URL to `/today`, and shows the setup screen immediately —
-  no DevTools, no reload. (After re-binding, places-setup shows on its own if the site has no
-  confirmed places; there is no separate reset route for places.)
+  no DevTools, no reload. After re-binding, the device lands straight on `/today`.
 - **Surgical (leaves any saved checks intact):**
   - **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
     right-click the `current` row → Delete, then reload.
@@ -165,6 +164,11 @@ Two env notes (see [`.env.example`](../.env.example)):
   and a real `ANALYZER_API_KEY` in your `.env.local` for the analyzer leg to fire. Without a key
   the worker throws and the message redelivers — the upload/presign legs still work, so you can
   verify object-lands-in-MinIO independently.
+- Photo coordinates are reverse-geocoded by AWS Location Places V2 in deployed environments.
+  The local worker leaves this off by default because `.env.local` uses dummy AWS credentials for
+  MinIO. When no address is returned, cards display the first line of the site's saved address.
+  To exercise the live lookup locally, run the worker with `REVERSE_GEOCODING_ENABLED=true` and
+  real AWS credentials authorized for `geo-places:ReverseGeocode`; do not commit credentials.
 
 > **Full media loop:** perimeter check → presigned `PUT` to MinIO → `register` enqueues to SQS →
 > worker reads the object from MinIO, downscales + base64-encodes, calls the remote analyzer,
@@ -233,6 +237,12 @@ at `http://127.0.0.1:3999/requests`, or clear them with:
 ```bash
 curl -X DELETE http://127.0.0.1:3999/requests
 ```
+
+The 311 detail timeline reads the fake latest-update feed at
+`http://127.0.0.1:3999/latest/76`. If that URL returns 404, an older fake server is still
+holding port 3999. Stop all previously running backend terminals and restart
+`npm run dev -w backend`. The fake-server health handshake includes a capability version so
+new runs fail visibly instead of silently reusing an incompatible process.
 
 > **Seed data note.** A fresh `npm run dev` seeds only provider/site login
 > codes and site metadata. It does not seed checks, artifacts, analyses, tasks,

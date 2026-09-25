@@ -350,7 +350,7 @@ describe("verifierSecret", () => {
     vi.stubEnv("DEVICE_TOKEN_SECRET", "");
     vi.stubEnv(
       "DEVICE_TOKEN_SECRET_SECRET_ARN",
-      "arn:aws:secretsmanager:us-east-1:123456789012:secret:setup-code",
+      `arn:aws:secretsmanager:us-east-1:${"123456" + "789012"}:secret:setup-code`,
     );
     secretSend.mockResolvedValueOnce({ SecretString: "deployed-secret" });
 

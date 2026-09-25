@@ -49,13 +49,18 @@ only (api/authorizer never import it).
 
 ## Async analyze flow
 
-The **evidence item is the unit of analysis**. A check is a capture container; each
-photo (or typed description) is uploaded, registered, analyzed, and evaluated
-independently as soon as it's captured — results appear on the capture screen as
-they land, without waiting for the walk to finish. A check-level synthesis still
-exists, but only as the deferred, idempotent **completion** step the client runs in
-the background after `Done` (so the saved scorecard exists for analytics/review);
-it never blocks or gates capture-time guidance.
+The **evidence item is the unit of analysis**. A check is a capture container — one
+flat photo roll for the whole perimeter, with a single typed description as the
+alternative to photos; there is no per-site list of places to walk
+([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Each photo (or the description) is
+uploaded, registered, analyzed, and evaluated independently as soon as it's captured —
+results appear on the capture screen as they land, without waiting for the walk to
+finish. Finish unlocks at three photos or one description; the rule is client-side
+(`frontend/src/domain/check-completion.js`) and the backend only records the counts.
+A check-level synthesis still exists, but only as the deferred, idempotent
+**completion** step the client runs in the background after `Finish` (so the saved
+scorecard exists for analytics/review); it never blocks or gates capture-time
+guidance.
 
 ```mermaid
 sequenceDiagram
@@ -70,7 +75,7 @@ sequenceDiagram
   Note over Dev: at capture time, PER EVIDENCE ITEM:
   Dev->>API: POST /v1/checks (idempotency-key, once, lazy)
   API->>DB: Put CHECK# header (conditional)
-  Dev->>API: POST .../artifacts:presign {placeId, placeName, contentType}
+  Dev->>API: POST .../artifacts:presign {contentType}
   API-->>Dev: presigned PUT url + artifactId + s3Key
   Dev->>S3: PUT bytes (content-type pinned)
   Dev->>API: POST .../artifacts {artifactId, s3Key, capturedAt|text}
@@ -90,16 +95,18 @@ sequenceDiagram
   API->>DB: Put TASK# items (immediately resolvable ones)
   API-->>Dev: guidance steps → card on the capture view
 
-  Note over Dev: at Done (background, non-blocking):
+  Note over Dev: at Finish (background, non-blocking):
   Dev->>API: POST /v1/checks/{checkId}/complete
   API->>DB: Query header + ART# + ANALYSIS# (coverage gate)
   API->>API: synthesize check scorecard
-  API->>DB: Update CHECK# header (scorecard + assessmentReady)
+  API->>DB: Update CHECK# header (scorecard + photoCount/textCount/evidenceKind)
 ```
 
 Typed descriptions register as text artifacts through the same
 `.../artifacts` path (`registerArtifact` with `text`, no bytes) and flow through
-the identical analyze→evaluate pipeline. Duplicate or overlapping tasks are
+the identical analyze→evaluate pipeline; the worker sends the fixed literal
+`"perimeter"` as the analyzer's `position_descriptor` (there is no per-photo
+position, and nothing downstream decides on it). Duplicate or overlapping tasks are
 acceptable — two photos of the same issue may each produce tasks; deciding what
 to keep belongs to the user.
 
@@ -127,7 +134,7 @@ system one.
 Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance.js`):
 
 - **Deterministic, point-in-time, auditable:** each task keeps its `ruleId` +
-  `policyVersion` forever; rulebase updates ship as new catalog versions (`actions-escalations-v2.js`),
+  `policyVersion` forever; rulebase updates ship as new catalog versions (`actions-escalations-v3.js`),
   validated in CI (`npm run policy:validate`), diffed semantically with fixture impact
   reports (`npm run policy:diff`). The changelog is
   [guidance-policy-changelog.md](./guidance-policy-changelog.md).
@@ -137,6 +144,15 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   text report and carries it through the condition/task; 311 filing uses that location first,
   then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
   the app action with a retryable `missing_location` result rather than guessing.
+- **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
+  analyzer classifier when one exists, otherwise it sends the original text artifact. Images use
+  the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as
+  the main analysis path before base64 encoding. The classifier returns only approved labels,
+  which the app maps to SF311 service codes. An empty label result is stored explicitly as
+  `insufficient_classifier_information`; the app does not guess a fallback code. Description-only
+  tickets proceed to CreateSR without an attachment once a label maps successfully. This requires
+  the analyzer classifier endpoint to accept the `{text}` request variant alongside its existing
+  `{image}` variant.
 - **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
@@ -149,8 +165,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   richer `kind`/`escalationChannel`/`appActions[]` fields.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
-  `POST /v1/tasks/{id}/cannot-do`. A dev-only harness (`/dev/guidance-harness`, dev builds
-  only) exercises the flow with fixtures.
+  `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
+  `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
+  owns its service-request number and return only the normalized summary and timeline fields used
+  by the client. Card hydration batches visible requests so one handler invocation loads the
+  agency-76 feed once; concurrent detail loads in the same Lambda environment also share an
+  in-flight feed request. The raw HUB response and customer fields are never returned. A dev-only
+  harness (`/dev/guidance-harness`, dev builds only) exercises the flow with fixtures.
 
 ## Single-table data model
 

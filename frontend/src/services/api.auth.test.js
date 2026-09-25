@@ -31,7 +31,8 @@ function stubFetch(list) {
 
 vi.mock("../db.js", () => ({
   getSite: vi.fn(() => Promise.resolve(site)),
-  updateSiteSession: vi.fn((session) => {
+  updateSiteSession: vi.fn((session, expectedSiteId) => {
+    if (site.siteId !== expectedSiteId) return Promise.resolve(null);
     // Mirror the real merge: token fields replace, identity stays.
     site = { ...site, ...session };
     return Promise.resolve(site);
@@ -45,7 +46,7 @@ vi.mock("./devices.js", () => ({
 }));
 
 import { refreshDeviceToken } from "./devices.js";
-import { listChecks } from "./api.js";
+import { completeTask, listChecks } from "./api.js";
 
 /** A valid session the refresh endpoint would mint. */
 const freshSession = {
@@ -61,6 +62,7 @@ const freshSession = {
 beforeEach(() => {
   site = {
     id: "current",
+    siteId: "site_1",
     name: "Site",
     deviceId: "dev_1",
     token: "access-1",
@@ -85,7 +87,7 @@ describe("request auth flow (listChecks as the vehicle)", () => {
 
     await expect(listChecks()).resolves.toMatchObject({ checks: [] });
     expect(refreshDeviceToken).toHaveBeenCalledWith("refresh-1");
-    expect(updateSiteSession).toHaveBeenCalledWith(freshSession);
+    expect(updateSiteSession).toHaveBeenCalledWith(freshSession, "site_1");
     // Retry leg rode the persisted access token.
     expect(fetch).toHaveBeenLastCalledWith(
       expect.anything(),
@@ -104,6 +106,98 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     );
 
     await expect(listChecks()).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+
+  it("does not refresh or retry a late 401 after switching sites", async () => {
+    let releaseResponse = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseResponse = () =>
+              resolve({
+                ok: false,
+                status: 401,
+                statusText: "Unauthorized",
+                text: () => Promise.resolve("{}"),
+              });
+          }),
+      ),
+    );
+
+    const pending = completeTask("task-1", { completionMethod: "on_site" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith(
+      "/v1/tasks/task-1/complete",
+      expect.objectContaining({ method: "POST" }),
+    );
+    site = {
+      ...site,
+      siteId: "site_2",
+      token: "site-2-access",
+      refreshToken: "site-2-refresh",
+    };
+    releaseResponse();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not persist a refresh that completes after switching sites", async () => {
+    vi.stubGlobal("fetch", stubFetch([{ status: 401 }]));
+    let releaseRefresh = () => {};
+    vi.mocked(refreshDeviceToken).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseRefresh = () => resolve(freshSession);
+        }),
+    );
+
+    const pending = listChecks();
+    await vi.waitFor(() => expect(refreshDeviceToken).toHaveBeenCalledTimes(1));
+    site = {
+      ...site,
+      siteId: "site_2",
+      token: "site-2-access",
+      refreshToken: "site-2-refresh",
+    };
+    releaseRefresh();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    expect(site.token).toBe("site-2-access");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not require reauthentication for a previous site's late refresh rejection", async () => {
+    vi.stubGlobal("fetch", stubFetch([{ status: 401 }]));
+    let rejectRefresh = () => {};
+    vi.mocked(refreshDeviceToken).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectRefresh = () =>
+            reject(new ApiError("old token revoked", { status: 401 }));
+        }),
+    );
+
+    const pending = listChecks();
+    await vi.waitFor(() => expect(refreshDeviceToken).toHaveBeenCalledTimes(1));
+    site = {
+      ...site,
+      siteId: "site_2",
+      token: "site-2-access",
+      refreshToken: "site-2-refresh",
+    };
+    rejectRefresh();
+
+    const error = await pending.catch((caught) => caught);
+    expect(error.name).toBe("SiteBindingChangedError");
+    expect(error).not.toBeInstanceOf(ReauthRequiredError);
   });
 
   it("surfaces a retryable refresh failure (5xx) as-is, not ReauthRequiredError", async () => {

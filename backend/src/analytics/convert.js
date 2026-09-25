@@ -170,8 +170,6 @@ export function toRow(entity, item, exportedAt) {
       Object.assign(row, {
         checkId: str(item.checkId),
         artifactId: str(item.artifactId),
-        placeId: str(item.placeId),
-        placeName: str(item.placeName),
         capturedAt: str(item.capturedAt),
         date: dateFromTimestamp(str(item.capturedAt)),
       });
@@ -318,8 +316,6 @@ export const ENTITY_COLUMNS = {
     "siteId",
     "checkId",
     "artifactId",
-    "placeId",
-    "placeName",
     "capturedAt",
     "exportedAt",
     "raw",

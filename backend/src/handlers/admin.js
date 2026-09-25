@@ -267,7 +267,6 @@ export const createSite = (event) =>
       providerName: provider.Item.name,
       providerSiteId,
       status: "active",
-      places: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -485,6 +484,27 @@ export const deactivateSite = (event) =>
               },
             },
           },
+          ...(site.providerId
+            ? [
+                {
+                  Update: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `PROVIDER#${site.providerId}`,
+                      sk: `SITE#${siteId}`,
+                    },
+                    UpdateExpression:
+                      "SET #status = :inactive, updatedAt = :now",
+                    ConditionExpression: "attribute_exists(pk)",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: {
+                      ":inactive": "inactive",
+                      ":now": now,
+                    },
+                  },
+                },
+              ]
+            : []),
           {
             Delete: {
               TableName: tableName,

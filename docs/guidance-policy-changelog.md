@@ -2,6 +2,17 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v3 - 2026-09-23
+
+- Source asset: `GNP-3.csv`.
+- Added `Max acceptable response time (hours)` to every rule; values are
+  snapshotted onto new tasks so later policy releases cannot change an existing
+  ticket's expected-response deadline.
+- Added the final SF311 service codes supplied by GNP-3 and normalized the
+  animal category to `Animals`.
+- A zero-hour response value explicitly disables response-overdue assessment.
+- Preserved `actions-escalations-v2` for historical assessments and tasks.
+
 ## 311 ticket closure - 2026-09-04
 
 - App-behavior addition (no rulebase change): when a task with a submitted informational

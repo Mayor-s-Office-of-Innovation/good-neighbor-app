@@ -1,6 +1,20 @@
 import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
+const CLEAR_CHECK_ICON = "/clear-check-icon.png";
+
+/** @param {HomeTask} task */
+export function taskMediaUrl(task) {
+  return (
+    task.thumbnailUrl ||
+    task.thumbUrl ||
+    task.mediaUrl ||
+    task.photoUrl ||
+    task.imageUrl ||
+    ""
+  );
+}
+
 /**
  * @typedef {object} AnalysisCondition
  * @property {string} [conditionId]
@@ -30,6 +44,9 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [guidance]
  * @property {string} [kind]
  * @property {string[]} [buttons]
+ * @property {Array<{ code?: string, payload?: { phoneNumber?: string } }>} [appActions]
+ * @property {string} [createdAt]
+ * @property {string} [created_at]
  */
 
 /**
@@ -51,6 +68,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [status]
  * @property {string} [artifactId]
  * @property {string} [checkId]
+ * @property {string} [georeferencedAddress]
  * @property {AnalysisAssessment} [assessment]
  * @property {AnalysisSource} [sourceAnalysis]
  * @property {AnalysisTask[]} [tasks]
@@ -70,8 +88,13 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {"photo" | "text" | string} [kind]
  * @property {string} [dataUrl]
  * @property {string} [text]
- * @property {string} [placeId]
- * @property {string} [placeName]
+ * @property {string} [placeName] label under the evidence preview; legacy items
+ *   carry a place name, current items are labeled with the site name by the host
+ * @property {string} [georeferencedAddress]
+ * @property {string} [address]
+ * @property {string} [siteAddress]
+ * @property {string} [uploadedAt]
+ * @property {string} [createdAt]
  * @property {string} [checkId]
  * @property {AnalysisState} [analysis]
  * @property {{ artifactId?: string }} [upload]
@@ -81,6 +104,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @typedef {object} TaskEvidence
  * @property {string} [artifactId]
  * @property {string} [placeName]
+ * @property {string} [georeferencedAddress]
  * @property {string} [text]
  */
 
@@ -100,20 +124,28 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [label]
  * @property {string} [description]
  * @property {string} [guidance]
+ * @property {string} [kind]
  * @property {string} [thumbnailUrl]
  * @property {string} [thumbUrl]
  * @property {string} [mediaUrl]
  * @property {string} [photoUrl]
  * @property {string} [imageUrl]
- * @property {string} [placeId]
  * @property {string} [placeName]
- * @property {string} [positionDescriptor]
- * @property {string} [position_descriptor]
  * @property {string} [location]
  * @property {string} [text]
  * @property {string[]} [sourceArtifactIds]
  * @property {TaskEvidence} [evidence]
  * @property {string[]} [buttons]
+ * @property {Array<{ code?: string, payload?: { phoneNumber?: string } }>} [appActions]
+ * @property {string} [createdAt]
+ * @property {string} [created_at]
+ * @property {string} [georeferencedAddress]
+ * @property {string} [address]
+ * @property {string} [siteAddress]
+ * @property {string} [ticketStatus]
+ * @property {string} [ticketStatusDetail]
+ * @property {boolean} [ticketResponseOverdue]
+ * @property {string} [ticketUpdatedAt]
  */
 
 /**
@@ -131,7 +163,46 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
  * @property {string} [emptyText]
  * @property {string} [tone]
  * @property {string} [footer]
+ * @property {string} [siteName] label for evidence previews that carry no place name
+ * @property {string} [siteAddress] fallback address for current evidence
+ * @property {string} [checkTime]
+ * @property {AnalysisCardEntry[]} [extraCards]
  */
+
+/**
+ * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isClear?: boolean, actionPriority?: number }} AnalysisCardEntry
+ */
+
+/**
+ * Lower ranks appear first: emergency, non-emergency, 311, on-site.
+ * @param {AnalysisTask | HomeTask} task
+ * @returns {number}
+ */
+export function analysisActionPriority(task) {
+  switch (routeType(task).tone) {
+    case "emergency":
+      return 0;
+    case "non-emergency":
+      return 1;
+    case "311":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+/**
+ * @param {AnalysisCardEntry[]} cards
+ * @returns {AnalysisCardEntry[]}
+ */
+export function sortAnalysisCards(cards) {
+  return [...cards].sort(
+    (a, b) =>
+      Number(Boolean(b.needsAnswer)) - Number(Boolean(a.needsAnswer)) ||
+      (a.actionPriority ?? 4) - (b.actionPriority ?? 4) ||
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+  );
+}
 
 /**
  * @typedef {object} ProblemSummary
@@ -162,20 +233,52 @@ export function analysisResultsTray(
     emptyText = "All problems were resolved or deleted.",
     tone = "new",
     footer = "",
+    siteName = "",
+    siteAddress = "",
+    checkTime = "",
+    extraCards = [],
   } = {},
 ) {
-  const cards = items.map((item) => analysisCards(item, sessionCheckId)).flat();
   const summary = problemSummary(items);
+  let clearCardRendered = false;
+  const cards = sortAnalysisCards([
+    ...items.flatMap((item) =>
+      analysisCardEntries(item, sessionCheckId, {
+        siteName,
+        siteAddress,
+      }).filter((card) => {
+        if (!card.isClear) return true;
+        if (
+          summary.visible > 0 ||
+          summary.hidden > 0 ||
+          extraCards.length > 0 ||
+          clearCardRendered
+        ) {
+          return false;
+        }
+        clearCardRendered = true;
+        return true;
+      }),
+    ),
+    ...extraCards,
+  ]);
   return html`
     <section
-      class="analysis-tray analysis-tray--${escapeAttr(tone)}"
+      class="analysis-tray analysis-tray--${escapeAttr(tone)} ${checkTime
+        ? "analysis-tray--recent"
+        : ""}"
       id="${escapeAttr(id)}"
       aria-label="${escapeAttr(ariaLabel)}"
     >
       ${title ? html`<h2>${escapeHtml(title)}</h2>` : ""}
       ${cards.length
         ? html`<div class="analysis-tray__cards">
-            ${cards.join("")}${footer}
+            ${checkTime
+              ? html`<h2 class="analysis-tray__check-title">
+                  ${escapeHtml(recentCheckTitle(checkTime))}
+                </h2>`
+              : ""}
+            ${cards.map((card) => card.markup).join("")}${footer}
           </div>`
         : summary.hidden > 0
           ? html`<p class="analysis-tray__empty">${escapeHtml(emptyText)}</p>`
@@ -185,30 +288,112 @@ export function analysisResultsTray(
 }
 
 /**
+ * @param {string | Date} value date/time of the check
+ * @returns {string}
+ */
+export function recentCheckTitle(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "From today's check";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const day =
+    date.toDateString() === today.toDateString()
+      ? "today's"
+      : date.toDateString() === yesterday.toDateString()
+        ? "yesterday's"
+        : `${new Intl.DateTimeFormat(undefined, {
+            month: "short",
+            day: "numeric",
+          }).format(date)}'s`;
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `From ${day} ${time} check`;
+}
+
+/**
+ * @param {string | Date} value date/time of the check
+ * @param {Date} [now]
+ * @returns {string}
+ */
+export function historicalCheckTitle(value, now = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "From an earlier check";
+  if (date.toDateString() === now.toDateString()) {
+    const time = new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+    return `From today's ${time} check`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) {
+    return "From yesterday's check";
+  }
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(now.getDate() - now.getDay());
+  if (date >= weekStart && date < now) {
+    const weekday = new Intl.DateTimeFormat(undefined, {
+      weekday: "long",
+    }).format(date);
+    return `From ${weekday}'s check`;
+  }
+  return `From the check on ${new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "2-digit",
+  }).format(date)}`;
+}
+
+/**
  * @param {AnalysisItem} item
  * @param {string} sessionCheckId
+ * @param {{ siteName?: string, siteAddress?: string }} [options]
  * @returns {string[]}
  */
-export function analysisCards(item, sessionCheckId) {
+export function analysisCards(item, sessionCheckId, options = {}) {
+  return analysisCardEntries(item, sessionCheckId, options).map(
+    (card) => card.markup,
+  );
+}
+
+/**
+ * @param {AnalysisItem} evidence
+ * @param {string} sessionCheckId
+ * @param {{ siteName?: string, siteAddress?: string }} [options]
+ * @returns {AnalysisCardEntry[]}
+ */
+function analysisCardEntries(
+  evidence,
+  sessionCheckId,
+  { siteName = "", siteAddress = "" } = {},
+) {
+  const item = {
+    ...evidence,
+    placeName: evidence.placeName || siteName,
+    siteAddress: evidence.siteAddress || siteAddress,
+    georeferencedAddress:
+      evidence.georeferencedAddress ||
+      evidence.analysis?.georeferencedAddress ||
+      "",
+  };
   const status = item.analysis?.status || "idle";
-  if (status === "failed") return [failedCard(item)];
-  if (status !== "analyzed") return [pendingCard(item)];
+  const itemTime = item.uploadedAt || item.createdAt || "";
+  if (status === "failed") {
+    return [{ markup: failedCard(item), createdAt: itemTime }];
+  }
+  if (status !== "analyzed") {
+    return [{ markup: pendingCard(item), createdAt: itemTime }];
+  }
   const { hiddenConditionIds, visibleTasks, visibleConditions } =
     visibleProblemSelection(item);
   if (!visibleTasks.length && !visibleConditions.length) {
     if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
-    return [
-      completedEvidenceCard(item, sessionCheckId, {
-        title: "No issues found",
-        description:
-          item.analysis?.noIssuesDescription ||
-          "The analysis did not identify any conditions of concern.",
-        action: "",
-        actionKind: "",
-        includeDelete: false,
-        showAssessmentId: false,
-      }),
-    ];
+    return [{ markup: clearCheckCard(), createdAt: itemTime, isClear: true }];
   }
   if (visibleTasks.length) {
     const taskConditionIds = new Set(
@@ -223,31 +408,61 @@ export function analysisCards(item, sessionCheckId) {
           (candidate) =>
             task.conditionId && candidate.conditionId === task.conditionId,
         ) || {};
-      return completedEvidenceCard(item, sessionCheckId, {
-        title:
-          displayCategory(task) ||
-          displayCategory(condition) ||
-          "Condition found",
-        description:
-          task.guidance || condition.description || "Review this condition.",
-        action: taskButtonLabel(task) || actionLabel(task.kind),
-        actionKind: task.kind || "",
-        taskId: task.taskId || "",
-        conditionId: task.conditionId || condition.conditionId || "",
-        metaLabel: newTaskMetaLabel(task),
-        showAssessmentId: false,
-      });
+      const createdAt = task.createdAt || task.created_at || itemTime;
+      return {
+        markup: completedEvidenceCard(item, sessionCheckId, {
+          title:
+            displayCategory(task) ||
+            displayCategory(condition) ||
+            "Condition found",
+          description:
+            task.guidance || condition.description || "Review this condition.",
+          action: taskButtonLabel(task) || actionLabel(task.kind),
+          actionKind: task.kind || "",
+          routeType: routeType(task),
+          taskId: task.taskId || "",
+          conditionId: task.conditionId || condition.conditionId || "",
+          metaLabel: newTaskMetaLabel(task),
+          createdAt,
+          shortId: taskDisplayReference(task),
+        }),
+        createdAt,
+        needsAnswer: Boolean(condition.needsAnswer),
+        actionPriority: analysisActionPriority(task),
+      };
     });
     return [
       ...taskCards,
-      ...unpairedConditions.map((condition) =>
-        conditionEvidenceCard(item, sessionCheckId, condition),
-      ),
+      ...unpairedConditions.map((condition) => ({
+        markup: conditionEvidenceCard(item, sessionCheckId, condition),
+        createdAt: itemTime,
+        needsAnswer: Boolean(condition.needsAnswer),
+      })),
     ];
   }
-  return visibleConditions.map((condition) =>
-    conditionEvidenceCard(item, sessionCheckId, condition),
-  );
+  return visibleConditions.map((condition) => ({
+    markup: conditionEvidenceCard(item, sessionCheckId, condition),
+    createdAt: itemTime,
+    needsAnswer: Boolean(condition.needsAnswer),
+  }));
+}
+
+/** @returns {string} */
+export function clearCheckCard() {
+  return html`
+    <article class="analysis-card analysis-card--clear">
+      <div class="analysis-card__panel">
+        <div class="analysis-card__clear-title">
+          <img src="${escapeAttr(CLEAR_CHECK_ICON)}" alt="" />
+          <h3>Your check was clear!</h3>
+        </div>
+        <p class="analysis-card__clear-copy">
+          We didn't identify any perimeter issues in this check.
+          <a href="/problem">Add a problem</a> if we missed something
+        </p>
+      </div>
+    </article>
+  `;
 }
 
 /**
@@ -266,7 +481,6 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
     actionKind: "",
     conditionId: condition.conditionId || "",
     question: condition.needsAnswer,
-    showAssessmentId: false,
   });
 }
 
@@ -277,6 +491,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
  * @param {string} params.statusLabel
  * @param {boolean} [params.isNew]
  * @param {boolean} [params.includeControls]
+ * @param {string} [params.siteName] caption when the task's evidence has no place name
  * @returns {string}
  */
 export function taskAnalysisCard({
@@ -285,29 +500,24 @@ export function taskAnalysisCard({
   statusLabel,
   isNew = false,
   includeControls = true,
+  siteName = "",
 }) {
-  const mediaUrl =
-    task.thumbnailUrl ||
-    task.thumbUrl ||
-    task.mediaUrl ||
-    task.photoUrl ||
-    task.imageUrl ||
-    "";
+  const mediaUrl = taskMediaUrl(task);
+  // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
+  // a fixed literal, not a location.
   const placeName =
-    task.evidence?.placeName ||
-    task.placeName ||
-    task.positionDescriptor ||
-    task.position_descriptor ||
-    task.location ||
-    "";
+    task.evidence?.placeName || task.placeName || task.location || "";
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
-    kind: mediaUrl ? "photo" : "text",
+    kind: mediaUrl || action?.kind === "view311" ? "photo" : "text",
     dataUrl: mediaUrl,
     text: evidenceText,
-    placeId: task.placeId || task.positionDescriptor || "",
-    placeName: placeName || "Site",
+    placeName: placeName || siteName || "Site",
+    georeferencedAddress:
+      task.georeferencedAddress || task.evidence?.georeferencedAddress || "",
+    address: task.address || "",
+    siteAddress: task.siteAddress || "",
     checkId: task.checkId || "",
     analysis: {
       artifactId: taskArtifactId(task),
@@ -319,8 +529,10 @@ export function taskAnalysisCard({
     title: displayCategory(task) || task.label || "Condition found",
     description: task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
-    action: includeControls ? action?.label || "Done" : "",
-    actionKind: action?.variant === "blue" ? "escalation" : "action",
+    action: action?.label || (includeControls ? "Done" : ""),
+    actionVariant: action?.variant || "",
+    actionKind:
+      task.kind || (action?.variant === "blue" ? "escalation" : "action"),
     taskId: task.taskId || "",
     conditionId: task.conditionId || "",
     metaLabel: statusLabel || taskMetaLabel(task, isNew),
@@ -328,8 +540,48 @@ export function taskAnalysisCard({
     actionValue: action?.kind || "done",
     includeEditDelete: includeControls,
     isNew,
-    showStar: isNew,
+    routeType: routeType(task),
+    createdAt: task.createdAt || task.created_at || "",
+    footerTimeLabel: task.ticketUpdatedAt
+      ? updatedCardTime(task.ticketUpdatedAt)
+      : "",
+    mediaPlaceholder: action?.kind === "view311" && !mediaUrl,
+    shortId: taskDisplayReference(task),
   });
+}
+
+/**
+ * @param {string | number | Date} value
+ * @param {string | number | Date} [now]
+ */
+export function updatedCardTime(value, now = new Date()) {
+  const date = new Date(value);
+  const current = new Date(now);
+  if (Number.isNaN(date.getTime()) || Number.isNaN(current.getTime()))
+    return "";
+  const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const currentDay = new Date(
+    current.getFullYear(),
+    current.getMonth(),
+    current.getDate(),
+  );
+  const daysAgo = Math.round(
+    (currentDay.getTime() - dateDay.getTime()) / 86_400_000,
+  );
+  const dayLabel =
+    daysAgo === 0
+      ? "today"
+      : daysAgo > 0 && daysAgo <= 6
+        ? new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date)
+        : new Intl.DateTimeFormat(undefined, {
+            month: "short",
+            day: "numeric",
+          }).format(date);
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `Updated ${dayLabel}, ${time}`;
 }
 
 /**
@@ -342,6 +594,7 @@ function taskDisplayReference(task) {
       task.displayId ||
       task.display_id ||
       task.assessmentId ||
+      task.taskId ||
       "",
   );
 }
@@ -367,53 +620,34 @@ function taskMetaLabel(task, isNew) {
 }
 
 function pendingCard(item) {
-  const stages = item.analysis?.stages || {};
-  const uploadFailedEarly =
-    item.kind !== "text" &&
-    !stages.uploaded &&
-    item.upload?.status === "failed";
-  const headline =
-    item.kind === "text"
-      ? "Analyzing description..."
-      : stages.uploaded
-        ? "Photo uploaded"
-        : "Uploading photo...";
+  const place = cardPlace(item);
   return html`
     <article class="analysis-card analysis-card--pending analysis-card--new">
-      <div class="analysis-card__content">
-        <p class="analysis-card__meta">
-          <img
-            class="analysis-card__star"
-            src="/icons/star.svg"
-            alt=""
-            aria-hidden="true"
-          />
-          IN PROGRESS
-        </p>
-        <h3>${headline}</h3>
-        ${item.kind === "text"
-          ? ""
-          : html`
-              <ul class="analysis-card__stages">
-                ${stageRow(
-                  "Photo uploaded",
-                  stages.uploaded,
-                  !uploadFailedEarly,
-                )}
-                ${stageRow("Sent to analyzer", stages.sent, stages.uploaded)}
-              </ul>
-            `}
-        ${stages.sent
-          ? html`<p class="analysis-card__waiting">
-              Waiting for results<span
-                class="analysis-card__elapsed"
-                data-elapsed-since="${escapeAttr(stages.sent)}"
+      <div class="analysis-card__panel">
+        <span
+          class="analysis-card__skeleton analysis-card__skeleton--route"
+          aria-hidden="true"
+        ></span>
+        <div class="analysis-card__layout">
+          <div class="analysis-card__content">
+            <p class="analysis-card__place">${escapeHtml(place || "Place")}</p>
+            <h3>Analyzing...</h3>
+            <div class="analysis-card__skeleton-copy" aria-hidden="true">
+              <span
+                class="analysis-card__skeleton analysis-card__skeleton--wide"
               ></span>
-            </p>`
-          : html`<span class="skeleton-line skeleton-line--wide"></span>
-              <span class="skeleton-line skeleton-line--mid"></span>`}
+              <span
+                class="analysis-card__skeleton analysis-card__skeleton--mid"
+              ></span>
+            </div>
+            <span
+              class="analysis-card__skeleton analysis-card__skeleton--button"
+              aria-hidden="true"
+            ></span>
+          </div>
+          ${evidencePreview(item, true)}
+        </div>
       </div>
-      ${evidencePreview(item)}
     </article>
   `;
 }
@@ -461,7 +695,6 @@ function failedCard(item) {
   return html`
     <article
       class="analysis-card analysis-card--failed analysis-card--new"
-      data-place-id="${escapeAttr(item.placeId || "")}"
       data-item-id="${escapeAttr(item.id || "")}"
     >
       <div class="analysis-card__content">
@@ -566,6 +799,7 @@ function completedEvidenceCard(
     description,
     editableDescription = description,
     action,
+    actionVariant = "",
     actionKind = "",
     taskId = "",
     conditionId = "",
@@ -576,22 +810,29 @@ function completedEvidenceCard(
     includeEditDelete = true,
     includeDelete = includeEditDelete,
     isNew = true,
-    showStar = true,
-    showAssessmentId = true,
+    routeType: route = routeType({ kind: actionKind }),
+    createdAt = item.uploadedAt || item.createdAt || "",
+    shortId = "",
+    footerTimeLabel = "",
+    mediaPlaceholder = false,
   },
 ) {
   const actionClass =
-    actionKind === "escalation" ? " analysis-card__primary--escalation" : "";
+    actionVariant === "outline"
+      ? " analysis-card__primary--outline"
+      : actionKind === "escalation"
+        ? " analysis-card__primary--escalation"
+        : "";
   const analysisId = item.analysis?.sourceAnalysis?.analysisId || "";
   const artifactId = item.analysis?.artifactId || "";
   const checkId =
     item.checkId || item.analysis?.checkId || sessionCheckId || "";
+  const footerLabel = footerTimeLabel || cardTime(createdAt) || metaLabel;
   return html`
     <article
       class="analysis-card analysis-card--done ${isNew
         ? "analysis-card--new"
         : "analysis-card--standard"}"
-      data-place-id="${escapeAttr(item.placeId || "")}"
       data-item-id="${escapeAttr(item.id || "")}"
       data-check-id="${escapeAttr(checkId)}"
       data-artifact-id="${escapeAttr(artifactId)}"
@@ -603,66 +844,86 @@ function completedEvidenceCard(
       data-card-description="${escapeAttr(description)}"
       data-card-edit-description="${escapeAttr(editableDescription)}"
     >
-      <div class="analysis-card__content">
-        <p class="analysis-card__meta">
-          ${showStar
-            ? html`<img
-                class="analysis-card__star"
-                src="/icons/star.svg"
-                alt=""
-                aria-hidden="true"
-              />`
-            : ""}
-          <span>${escapeHtml(metaLabel)}</span>${showAssessmentId &&
-          item.analysis?.assessment?.assessmentId
-            ? html`<span>•</span
+      <div class="analysis-card__panel">
+        <p
+          class="analysis-card__route analysis-card__route--${escapeAttr(
+            route.tone,
+          )}"
+        >
+          <span class="analysis-card__route-dot" aria-hidden="true"></span
+          ><span class="analysis-card__route-label"
+            >${escapeHtml(route.label)}</span
+          >${route.status
+            ? html`<span
+                  class="analysis-card__route-separator"
+                  aria-hidden="true"
+                  >·</span
                 ><span
-                  >${escapeHtml(item.analysis.assessment.assessmentId)}</span
+                  class="analysis-card__ticket-status analysis-card__ticket-status--${escapeAttr(
+                    route.statusTone,
+                  )}"
+                  >${escapeHtml(route.status)}${route.statusDetail
+                    ? html`: ${escapeHtml(route.statusDetail)}`
+                    : ""}</span
                 >`
             : ""}
         </p>
-        <h3>${escapeHtml(title)}</h3>
-        <p>${escapeHtml(description)}</p>
-        ${question ? clarifyingQuestion(question, conditionId) : ""}
-        <div class="analysis-card__actions">
-          ${action
-            ? html`<button
-                class="analysis-card__primary${actionClass} wa-plain"
-                type="button"
-                ${actionAttribute}="${escapeAttr(actionValue)}"
-              >
-                <wa-icon name="circle-check" aria-hidden="true"></wa-icon>
-                ${escapeHtml(action)}
-              </button>`
-            : ""}
-          ${includeEditDelete
-            ? html`
-                <button
-                  class="analysis-card__icon wa-plain"
-                  type="button"
-                  aria-label="Edit problem"
-                  data-analysis-action="edit"
-                >
-                  <wa-icon name="pen" aria-hidden="true"></wa-icon>
-                </button>
-              `
-            : ""}
-          ${includeDelete
-            ? html`
-                <button
-                  class="analysis-card__icon analysis-card__icon--danger wa-plain"
-                  type="button"
-                  aria-label="Remove problem"
-                  data-analysis-action="delete"
-                >
-                  <wa-icon name="trash" aria-hidden="true"></wa-icon>
-                </button>
-              `
-            : ""}
+        <div class="analysis-card__layout">
+          <div class="analysis-card__content">
+            <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(description)}</p>
+            ${question ? clarifyingQuestion(question, conditionId) : ""}
+            <div class="analysis-card__actions">
+              ${action
+                ? html`<button
+                    class="analysis-card__primary${actionClass} wa-plain"
+                    type="button"
+                    ${actionAttribute}="${escapeAttr(actionValue)}"
+                  >
+                    ${actionVariant === "outline"
+                      ? ""
+                      : html`<wa-icon
+                          name="circle-check"
+                          aria-hidden="true"
+                        ></wa-icon>`}
+                    ${escapeHtml(action)}
+                  </button>`
+                : ""}
+              ${includeEditDelete
+                ? html`
+                    <button
+                      class="analysis-card__icon wa-plain"
+                      type="button"
+                      aria-label="Edit problem"
+                      data-analysis-action="edit"
+                    >
+                      <wa-icon name="pen" aria-hidden="true"></wa-icon>
+                    </button>
+                  `
+                : ""}
+              ${includeDelete
+                ? html`
+                    <button
+                      class="analysis-card__icon analysis-card__icon--danger wa-plain"
+                      type="button"
+                      aria-label="Remove problem"
+                      data-analysis-action="delete"
+                    >
+                      <wa-icon name="trash" aria-hidden="true"></wa-icon>
+                    </button>
+                  `
+                : ""}
+            </div>
+            <p class="actioncard__error" role="alert" hidden></p>
+          </div>
+          ${evidencePreview(item, mediaPlaceholder)}
         </div>
-        <p class="actioncard__error" role="alert" hidden></p>
       </div>
-      ${evidencePreview(item)}
+      <footer class="analysis-card__footer">
+        <span>${escapeHtml(footerLabel)}</span>
+        ${shortId ? html`<span>${escapeHtml(shortId)}</span>` : ""}
+      </footer>
     </article>
   `;
 }
@@ -708,11 +969,18 @@ function clarifyingQuestion(question, conditionId) {
   `;
 }
 
-function evidencePreview(item) {
-  if (item.kind === "text") {
-    return textPreview(item.placeName || "Place");
+function evidencePreview(item, placeholder = false) {
+  if (placeholder && item.kind !== "text") {
+    return html`<div
+      class="analysis-card__media analysis-card__media--placeholder"
+    >
+      <wa-icon name="image" aria-hidden="true"></wa-icon>
+    </div>`;
   }
-  return imagePreview(item.dataUrl, item.placeName || "Place");
+  if (item.kind === "text") {
+    return textPreview();
+  }
+  return imagePreview(item.dataUrl, item.placeName || "Site");
 }
 
 function imagePreview(src, placeName) {
@@ -720,20 +988,86 @@ function imagePreview(src, placeName) {
     <div class="analysis-card__media">
       <img
         src="${escapeAttr(src)}"
-        alt="Evidence from ${escapeAttr(placeName || "this place")}"
+        alt="Evidence from ${escapeAttr(placeName || "the site")}"
       />
-      <span>${escapeHtml(placeName || "Place")}</span>
     </div>
   `;
 }
 
-function textPreview(placeName) {
+function textPreview() {
   return html`
     <div class="analysis-card__media analysis-card__media--text">
-      <span>${escapeHtml(placeName || "Place")}</span>
       <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
     </div>
   `;
+}
+
+function cardPlace(record) {
+  const value =
+    record?.georeferencedAddress ||
+    record?.siteAddress ||
+    record?.address ||
+    record?.placeName ||
+    "Site";
+  return (
+    String(value)
+      .split(/\r?\n|,/)[0]
+      .trim() || "Site"
+  );
+}
+
+function cardTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  const sameDay = date.toDateString() === today.toDateString();
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+  return `${sameDay ? "Today" : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date)}, ${time}`;
+}
+
+function routeType(task) {
+  if (task?.kind === "escalation") {
+    const status = [
+      "New",
+      "Accepted",
+      "Prioritized",
+      "Closed",
+      "In progress",
+      "On hold",
+      "Scheduled",
+      "Deferred",
+      "Open",
+      "Sent",
+    ].includes(task.ticketStatus || "")
+      ? task.ticketStatus
+      : "";
+    return {
+      label: "311 request",
+      tone: "311",
+      status,
+      statusDetail: status ? task.ticketStatusDetail || "" : "",
+      statusTone: task.ticketResponseOverdue
+        ? "overdue"
+        : status === "Closed"
+          ? "closed"
+          : "default",
+    };
+  }
+  if (task?.kind === "non_actionable_escalation") {
+    const emergency = (task.appActions || []).some(
+      (action) =>
+        action?.code === "open_phone" &&
+        String(action?.payload?.phoneNumber || "").replace(/\D/g, "") === "911",
+    );
+    return emergency
+      ? { label: "Emergency call", tone: "emergency", status: "" }
+      : { label: "Non-emergency call", tone: "non-emergency", status: "" };
+  }
+  return { label: "On-site action", tone: "onsite", status: "" };
 }
 
 function taskButtonLabel(task) {

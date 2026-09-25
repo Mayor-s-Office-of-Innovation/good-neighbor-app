@@ -44,8 +44,22 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
   concurrent requests; failures surface as `ReauthRequiredError`.
 */
 
-/** Module-level in-flight refresh, shared by concurrent requests. */
-let refreshInFlight;
+/** Share refreshes only among requests for the same site. */
+const refreshInFlight = new Map();
+
+class SiteBindingChangedError extends Error {
+  constructor() {
+    super("The active site changed while this request was in flight.");
+    this.name = "SiteBindingChangedError";
+  }
+}
+
+/** @param {string} expectedSiteId */
+async function assertActiveSite(expectedSiteId) {
+  const current = await getSite().catch(() => null);
+  if (current?.siteId !== expectedSiteId) throw new SiteBindingChangedError();
+  return current;
+}
 
 /**
  * Exchange the stored refresh token for a fresh pair and persist it. Shared
@@ -63,31 +77,43 @@ let refreshInFlight;
  *   retry: `request` re-read the site but the shared promise it awaited had
  *   already resolved with the older rotation. Re-reading here (inside the
  *   shared promise) means every waiter observes the latest persisted session.
+ * @param {string} siteId the site that started the request
  * @returns {Promise<{ token: string }>}
  */
-async function refreshSession() {
-  refreshInFlight ??= (async () => {
+async function refreshSession(siteId) {
+  const existing = refreshInFlight.get(siteId);
+  if (existing) return existing;
+  const pending = (async () => {
     // Re-read inside the shared promise — never trust the caller's snapshot.
-    const site = await getSite().catch(() => null);
+    const site = await assertActiveSite(siteId);
     const refreshToken = site?.refreshToken;
     if (!refreshToken) throw new ReauthRequiredError();
     try {
       const session = await refreshDeviceToken(refreshToken);
-      await updateSiteSession(session);
+      if (session.site?.siteId && session.site.siteId !== siteId) {
+        throw new SiteBindingChangedError();
+      }
+      const stored = await updateSiteSession(session, siteId);
+      if (!stored) throw new SiteBindingChangedError();
       mark("auth:refreshed", { generation: session.tokenGeneration });
       return { token: session.token };
     } catch (err) {
+      if (err instanceof SiteBindingChangedError) throw err;
+      await assertActiveSite(siteId);
       // A 401 from the refresh endpoint is fatal: the stored session cannot
       // renew. 5xx/transport stays retryable — the session may be fine.
       if (is401(err)) throw new ReauthRequiredError();
       throw err;
-    } finally {
-      // Clear in the finally so a rejected refresh can't leave a poisoned
-      // shared promise for later requests to re-await.
-      refreshInFlight = null;
     }
   })();
-  return refreshInFlight;
+  refreshInFlight.set(siteId, pending);
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight.get(siteId) === pending) {
+      refreshInFlight.delete(siteId);
+    }
+  }
 }
 
 /**
@@ -111,15 +137,20 @@ function is401(err) {
  * @param {AbortSignal} [opts.signal]
  * @param {boolean} [opts.allowAuthRetry] internal: set false on the retry leg
  *   to stop a 401 loop
+ * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
 async function request(
   method,
   path,
-  { headers = {}, body, signal, allowAuthRetry = true } = {},
+  { headers = {}, body, signal, allowAuthRetry = true, originSiteId } = {},
 ) {
   const hasBody = body !== undefined;
   const site = await getSite().catch(() => null);
+  if (originSiteId && site?.siteId !== originSiteId) {
+    throw new SiteBindingChangedError();
+  }
+  const requestSiteId = originSiteId || site?.siteId || "";
   const authHeaders = site?.token
     ? { authorization: `Bearer ${site.token}` }
     : {};
@@ -182,7 +213,7 @@ async function request(
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
-        await refreshSession();
+        await refreshSession(requestSiteId);
       } catch (err) {
         classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
@@ -197,13 +228,14 @@ async function request(
       // invalidating our in-flight retry's token — devices.js CAS) — that's
       // a lost race, not a dead session: surface a plain 401 (this call
       // fails, the app stays healthy) instead of the global ReauthRequiredError.
-      const retryToken = (await getSite().catch(() => null))?.token;
+      const retryToken = (await assertActiveSite(requestSiteId))?.token;
       try {
         return await request(method, path, {
           headers,
           body,
           signal,
           allowAuthRetry: false,
+          originSiteId: requestSiteId,
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -255,7 +287,7 @@ function qs(params) {
 // ── Checks ────────────────────────────────────────────────────────────────
 
 /**
- * GET /v1/site — the bound site's settings, including ordered places.
+ * GET /v1/site — the bound site's settings (name, provider).
  * @returns {Promise<{ site: any }>}
  */
 export function getSiteSettings() {
@@ -263,12 +295,14 @@ export function getSiteSettings() {
 }
 
 /**
- * PUT /v1/site/places — replace the site's ordered places.
- * @param {{ id: string, name: string }[]} places
- * @returns {Promise<{ site: any }>}
+ * List one bounded page of the current provider's active sites.
+ * @param {string} [cursor]
  */
-export function putSitePlaces(places) {
-  return request("PUT", "/v1/site/places", { body: { places } });
+export function listProviderSites(cursor = "") {
+  return request(
+    "GET",
+    `/v1/provider-sites${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
 }
 
 /**
@@ -404,8 +438,8 @@ export function getCheck(checkId) {
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, contentType: string }} body
- * @returns {Promise<{ artifactId: string, placeId: string, placeName: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
+ * @param {{ contentType: string }} body
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body) {
   return request(
@@ -419,7 +453,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, placeId: string, placeName: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -429,6 +463,22 @@ export function registerArtifact(checkId, body) {
     {
       body,
     },
+  );
+}
+
+/**
+ * DELETE /v1/checks/{checkId}/artifacts/{artifactId} — remove a registered
+ * artifact from its check (an edited/deleted description replaces or drops an
+ * already-registered text artifact; leaving it would let the final scorecard
+ * fold the stale text). Idempotent on replay; 404 = already gone.
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @returns {Promise<{ artifactId: string, status: string }>}
+ */
+export function deleteArtifact(checkId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}`,
   );
 }
 
@@ -483,6 +533,17 @@ export function getMediaUrl(checkId, artifactId) {
  */
 export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
+}
+
+export function get311RequestDetail(taskId, srNum) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/311-requests/${encodeURIComponent(srNum)}`,
+  );
+}
+
+export function get311RequestDetails(requests) {
+  return request("POST", "/v1/311-requests:batch", { body: { requests } });
 }
 
 /**
@@ -562,34 +623,22 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
- *   `tag` is a caller-supplied label used only for perf traces (e.g. "front#0").
+ * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
  * @returns {Promise<{ artifactId: string, s3Key: string }>}
  */
 export async function uploadArtifact(
   checkId,
-  {
-    placeId,
-    placeName,
-    dataUrl,
-    capturedAt,
-    latitude,
-    longitude,
-    text,
-    tag,
-    onLeg,
-  },
+  { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
 ) {
-  const art = tag ?? placeName;
+  const art = tag ?? "photo";
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    placeId,
-    placeName,
     contentType,
   });
   endPresign({ artifactId });
@@ -604,8 +653,6 @@ export async function uploadArtifact(
   const endRegister = span("upload.register", { art, artifactId });
   await registerArtifact(checkId, {
     artifactId,
-    placeId,
-    placeName,
     s3Key,
     contentType,
     ...(capturedAt ? { capturedAt } : {}),
@@ -622,20 +669,18 @@ export async function uploadArtifact(
 }
 
 /**
- * Register validated text evidence for a place without uploading media bytes.
+ * Register validated text evidence without uploading media bytes.
  * @param {string} checkId
- * @param {{ placeId: string, placeName: string, text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
+ * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { placeId, placeName, text, capturedAt, latitude, longitude },
+  { text, capturedAt, latitude, longitude },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,
-    placeId,
-    placeName,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
       ? { latitude, longitude }

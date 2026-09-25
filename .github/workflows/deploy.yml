@@ -29,8 +29,9 @@ jobs:
   terraform-apply:
     name: Terraform apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
-    # Gates on the GitHub Environment: role ARN + region come from its
-    # secret/variable, and prod's required-reviewer approval applies here.
+    # Gates on the GitHub Environment: account ID + role ARN come from its
+    # secrets, region comes from its variable, and prod's required-reviewer
+    # approval applies here.
     environment: ${{ inputs.environment }}
     concurrency:
       group: deploy-${{ inputs.environment }}
@@ -42,11 +43,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Validate deployment configuration
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          if [ -z "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "AWS_ACCOUNT_ID is not configured for this GitHub Environment" >&2
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          # Fail closed if a GitHub Environment is accidentally configured with
+          # the other environment's role. The Terraform roots contain account-
+          # scoped resources and must never be applied across this boundary.
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Verify AWS account boundary
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
+          if [ "$actual_account_id" != "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "Authenticated AWS account does not match the configured environment" >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -74,7 +99,32 @@ jobs:
           terraform_wrapper: false
 
       - name: Init
-        run: terraform init
+        env:
+          TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KMS_KEY_ALIAS: ${{ vars.TF_STATE_KMS_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is not configured for PROD" >&2; exit 1; }
+            test -n "$TF_LOCK_TABLE" || { echo "TF_LOCK_TABLE is not configured for PROD" >&2; exit 1; }
+            test -n "$TF_STATE_KMS_KEY_ALIAS" || { echo "TF_STATE_KMS_KEY_ALIAS is not configured for PROD" >&2; exit 1; }
+            state_kms_key_arn="$(aws kms describe-key \
+              --key-id "$TF_STATE_KMS_KEY_ALIAS" \
+              --query KeyMetadata.Arn \
+              --output text)"
+            test -n "$state_kms_key_arn"
+            test "$state_kms_key_arn" != "None"
+            terraform init -reconfigure \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
+              -backend-config="key=app/terraform.tfstate" \
+              -backend-config="region=${{ vars.AWS_REGION }}" \
+              -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+              -backend-config="kms_key_id=$state_kms_key_arn" \
+              -backend-config="encrypt=true"
+          else
+            terraform init
+          fi
 
       - name: Plan
         run: terraform plan -out=tfplan
@@ -223,7 +273,8 @@ jobs:
       - name: Smoke test API error shape
         run: |
           set -euo pipefail
-          url="${{ steps.tf.outputs.api_url }}/v1/checks/00000000-0000-0000-0000-000000000000"
+          printf -v zero_uuid_suffix '%012d' 0
+          url="${{ steps.tf.outputs.api_url }}/v1/checks/00000000-0000-0000-0000-$zero_uuid_suffix"
           content_type=""
           for _ in 1 2 3 4 5; do
             content_type="$(

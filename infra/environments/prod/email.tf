@@ -22,28 +22,18 @@ output "setup_code_email_dkim_tokens" {
   value       = aws_sesv2_email_identity.setup_codes.dkim_signing_attributes[0].tokens
 }
 
-# The root hosted zone is in prod, so both accounts' DKIM records live here.
-# Bootstrap tokens cover the interval before dev CI exports the SES outputs.
-# After dev deploys, its state becomes the source of truth, including replacements.
-locals {
-  setup_code_dev_dkim_tokens = try(
-    data.terraform_remote_state.dev.outputs.setup_code_email_dkim_tokens,
-    [
-      "7rxq7zquj342nyi6ipribuy3p67fh2ik",
-      "mdld2zah6porodxrvafpl4ti4nvp4oai",
-      "gi2cbrtmuxmodqdztfoq33ee5ifc4pqi",
-    ]
-  )
-}
+# The root hosted zone is in prod, so both accounts' public DKIM records live
+# here. DEV token replacements must be handed off explicitly rather than read
+# across the environment's Terraform-state boundary.
 
 resource "aws_route53_record" "setup_code_dev_dkim" {
   count = 3
 
   zone_id = data.aws_route53_zone.frontend_root.zone_id
-  name    = "${local.setup_code_dev_dkim_tokens[count.index]}._domainkey.goodneighborsf.org"
+  name    = "${var.setup_code_dev_dkim_tokens[count.index]}._domainkey.goodneighborsf.org"
   type    = "CNAME"
   ttl     = 300
-  records = ["${local.setup_code_dev_dkim_tokens[count.index]}.dkim.amazonses.com"]
+  records = ["${var.setup_code_dev_dkim_tokens[count.index]}.dkim.amazonses.com"]
 }
 
 resource "aws_route53_record" "setup_code_prod_dkim" {

@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.LOCAL_SF311_PORT ?? 3999);
+const SERVICE_CAPABILITIES = ["latest-updates-v1"];
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = resolve(
   process.env.LOCAL_SF311_LOG_PATH ??
@@ -95,7 +96,11 @@ const server = createServer(async (req, res) => {
 
   try {
     if (method === "GET" && url.pathname === "/health") {
-      sendJson(res, 200, { ok: true, service: "fake-sf311" });
+      sendJson(res, 200, {
+        ok: true,
+        service: "fake-sf311",
+        capabilities: SERVICE_CAPABILITIES,
+      });
       return;
     }
 
@@ -119,6 +124,30 @@ const server = createServer(async (req, res) => {
           { NatureofRequest: "1.1.4.7.15.0", ResponsibleAgency: "76" },
           { NatureofRequest: "1.23.1.1.1.0", ResponsibleAgency: "76" },
         ],
+      });
+      return;
+    }
+
+    if (method === "GET" && url.pathname.startsWith("/latest/")) {
+      const requests = await readRequests();
+      const records = requests
+        .filter((entry) => entry?.kind === "createsr")
+        .map((entry) => ({
+          SRNum: entry.response?.SRNum,
+          SourceAgencyReceiveDate: entry.receivedAt,
+          ResponsibleAgency: entry.payload?.ResponsibleAgency || "1",
+          LocationDescription: entry.payload?.LocationDescription,
+          Status: "9",
+          Updates: requests
+            .filter(
+              (update) =>
+                update?.kind === "updatesr" &&
+                update.payload?.SRnum === entry.response?.SRNum,
+            )
+            .map((update) => update.payload),
+        }));
+      sendJson(res, 200, {
+        data: { return_code: "0", service_requests: records },
       });
       return;
     }
@@ -203,8 +232,17 @@ server.on("error", async (err) => {
       // A non-HTTP squatter may accept and never answer — don't hang on it.
       signal: AbortSignal.timeout(1500),
     });
-    const body = /** @type {{ service?: unknown }} */ (await res.json());
-    if (res.ok && body.service === "fake-sf311") {
+    const body = /** @type {{ service?: unknown, capabilities?: unknown }} */ (
+      await res.json()
+    );
+    if (
+      res.ok &&
+      body.service === "fake-sf311" &&
+      Array.isArray(body.capabilities) &&
+      SERVICE_CAPABILITIES.every((capability) =>
+        body.capabilities.includes(capability),
+      )
+    ) {
       console.log(
         `[sf311] port ${PORT} already serves fake-sf311 — reusing it (idling while the stack runs)`,
       );
@@ -225,7 +263,8 @@ server.on("error", async (err) => {
       return;
     }
     console.error(
-      `[sf311] port ${PORT} is held by another process (health: ${res.status}) — free it and retry`,
+      `[sf311] port ${PORT} is serving an incompatible or stale fake SF311 — ` +
+        "stop the old backend process, then restart npm run dev -w backend",
     );
     process.exitCode = 1;
   } catch {
@@ -241,6 +280,7 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`[sf311] CreateSR URL: http://127.0.0.1:${PORT}/createsr`);
   console.log(`[sf311] UpdateSR URL: http://127.0.0.1:${PORT}/updatesr`);
   console.log(`[sf311] lookup URL:   http://127.0.0.1:${PORT}/lookup`);
+  console.log(`[sf311] latest URL:   http://127.0.0.1:${PORT}/latest/76`);
   console.log(`[sf311] requests:     http://127.0.0.1:${PORT}/requests`);
   console.log(`[sf311] log file:     ${LOG_PATH}`);
 });

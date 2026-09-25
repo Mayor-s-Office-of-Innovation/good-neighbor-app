@@ -4,12 +4,6 @@ import { normalizeExplicitShortCode } from "../../src/lib/short-codes.js";
 
 const nowIso = () => new Date().toISOString();
 
-export const stJohnPlaces = [
-  { id: "place-15th-st", name: "15th St", order: 0 },
-  { id: "place-front-entrance", name: "Front entrance", order: 1 },
-  { id: "place-caledonia-st", name: "Caledonia St", order: 2 },
-];
-
 export const devSiteCodeSeeds = [
   {
     code: "MOICHL",
@@ -21,7 +15,17 @@ export const devSiteCodeSeeds = [
     siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
     contactEmail: "cityhall@example.org",
-    places: [],
+  },
+  {
+    code: "MOIMIS",
+    providerId: "moi",
+    providerName: "MOI",
+    providerShortCode: "MOI",
+    siteId: "moi-mission-district",
+    siteName: "Mission District",
+    siteShortCode: "MIS",
+    providerSiteId: "provider-site-moi-mission-district",
+    contactEmail: "moimission@example.org",
   },
   {
     code: "GUBSJE",
@@ -33,11 +37,22 @@ export const devSiteCodeSeeds = [
     siteShortCode: "STJ",
     providerSiteId: "provider-site-st-john-the-evangelist",
     contactEmail: "stjohn@example.org",
+    address: "1661 15th St, San Francisco, CA",
     location: {
       latitude: 37.76656393517443,
       longitude: -122.4213267021692,
     },
-    places: stJohnPlaces,
+  },
+  {
+    code: "GUBMIS",
+    providerId: "the-gubbio-project",
+    providerName: "The Gubbio Project",
+    providerShortCode: "GUB",
+    siteId: "gubbio-mission-district",
+    siteName: "Mission District",
+    siteShortCode: "MIS",
+    providerSiteId: "provider-site-gubbio-mission-district",
+    contactEmail: "gubbiomission@example.org",
   },
   {
     code: "CHC730",
@@ -49,7 +64,23 @@ export const devSiteCodeSeeds = [
     siteShortCode: "730",
     providerSiteId: "provider-site-chc-730-polk",
     contactEmail: "chc730@example.org",
-    places: [],
+  },
+  {
+    code: "CHC640",
+    providerId: "chc",
+    providerName: "CHC",
+    providerShortCode: "CHC",
+    siteId: "chc-640-jones",
+    siteName: "640 Jones",
+    siteShortCode: "640",
+    providerSiteId: "provider-site-chc-640-jones",
+    contactEmail: "chc640@example.org",
+    address: "640 Jones St, San Francisco, CA 94102",
+    geocodedAddress: "640 JONES ST, SAN FRANCISCO, CA, 94102",
+    location: {
+      latitude: 37.787283046268,
+      longitude: -122.413199283242,
+    },
   },
   {
     code: "SFA940",
@@ -61,7 +92,17 @@ export const devSiteCodeSeeds = [
     siteShortCode: "940",
     providerSiteId: "provider-site-sfaf-940-howard",
     contactEmail: "sfaf940@example.org",
-    places: [],
+  },
+  {
+    code: "SFA880",
+    providerId: "sfaf",
+    providerName: "SFAF",
+    providerShortCode: "SFA",
+    siteId: "sfaf-880-howard",
+    siteName: "880 Howard",
+    siteShortCode: "880",
+    providerSiteId: "provider-site-sfaf-880-howard",
+    contactEmail: "sfaf880@example.org",
   },
   {
     code: "THC440",
@@ -73,7 +114,17 @@ export const devSiteCodeSeeds = [
     siteShortCode: "440",
     providerSiteId: "provider-site-thc-440-eddy",
     contactEmail: "thc440@example.org",
-    places: [],
+  },
+  {
+    code: "THC460",
+    providerId: "thc",
+    providerName: "THC",
+    providerShortCode: "THC",
+    siteId: "thc-460-eddy",
+    siteName: "460 Eddy",
+    siteShortCode: "460",
+    providerSiteId: "provider-site-thc-460-eddy",
+    contactEmail: "thc460@example.org",
   },
 ];
 
@@ -215,7 +266,11 @@ async function upsertSite(docDdb, tableName, seed, now) {
       TableName: tableName,
       Key: { pk: `SITE#${seed.siteId}`, sk: "#META" },
       UpdateExpression:
-        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, places = if_not_exists(places, :places), seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        "SET #type = :type, entityType = :entityType, siteId = :siteId, providerId = :providerId, providerName = :providerName, providerSiteId = :providerSiteId, providerShortCode = :providerShortCode, siteShortCode = :siteShortCode, #name = :name, #status = :status, seededAt = if_not_exists(seededAt, :now), updatedAt = :now" +
+        (seed.address ? ", #address = if_not_exists(#address, :address)" : "") +
+        (seed.geocodedAddress
+          ? ", #geocodedAddress = if_not_exists(#geocodedAddress, :geocodedAddress)"
+          : "") +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
           : ""),
@@ -223,6 +278,10 @@ async function upsertSite(docDdb, tableName, seed, now) {
         "#type": "type",
         "#name": "name",
         "#status": "status",
+        ...(seed.address ? { "#address": "address" } : {}),
+        ...(seed.geocodedAddress
+          ? { "#geocodedAddress": "geocodedAddress" }
+          : {}),
         ...(seed.location ? { "#location": "location" } : {}),
       },
       ExpressionAttributeValues: {
@@ -236,8 +295,11 @@ async function upsertSite(docDdb, tableName, seed, now) {
         ":siteShortCode": seed.siteShortCode,
         ":name": seed.siteName,
         ":status": "active",
-        ":places": seed.places,
         ":now": now,
+        ...(seed.address ? { ":address": seed.address } : {}),
+        ...(seed.geocodedAddress
+          ? { ":geocodedAddress": seed.geocodedAddress }
+          : {}),
         ...(seed.location ? { ":location": seed.location } : {}),
       },
     }),

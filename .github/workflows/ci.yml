@@ -29,6 +29,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Reject literal AWS account identifiers
+        run: |
+          set -euo pipefail
+          if rg --pcre2 '(?<![[:alnum:]_.])[0-9]{12}(?![[:alnum:]_])' --hidden --glob '!.git/**'; then
+            echo "Literal AWS account identifiers are prohibited; use environment configuration." >&2
+            exit 1
+          fi
+
       - name: Format
         run: npm run format:check
 
@@ -73,7 +81,7 @@ jobs:
       # run. Cache across runs — especially the MinIO binary, which is fetched
       # from a pinned GitHub release asset (dl.min.io went 410 in 2026).
       - name: Cache local harness binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: backend/.local
           key: local-harness-${{ runner.os }}-${{ hashFiles('backend/scripts/local-minio.mjs', 'backend/scripts/local-mq.mjs') }}
@@ -86,7 +94,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
@@ -94,6 +102,60 @@ jobs:
             e2e/playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  perf:
+    name: Performance budgets
+    # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
+    # size-budget's primary target. size-limit is the hard gate — raising a
+    # limit is a deliberate, reviewable package.json edit. lhci runs warn-only
+    # (see frontend/lighthouserc.json) until its noise floor is measured;
+    # promotion to hard gate is a separate change.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build -w frontend
+
+      - name: Bundle size budget
+        run: npx size-limit
+        working-directory: frontend
+
+      - name: Lighthouse (lab metrics, warn-only)
+        run: npx lhci autorun
+        working-directory: frontend
+
+      # LHCI's assert output only prints rows for warn/fail assertions, so a
+      # clean run logs nothing. This script prints a per-run metrics table into
+      # the step log AND the run's Summary tab. Reads .lighthouseci/ (which the
+      # step above leaves relative to THIS working-directory: frontend).
+      - name: Print Lighthouse results
+        run: node scripts/print-lighthouse.mjs
+        working-directory: frontend
+
+      # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and
+      # upload-artifact@v7 excludes hidden files by default — hence
+      # include-hidden-files: true (its absence is what produced
+      # "No files were found" on the first runs, twice).
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lighthouse-reports
+          path: frontend/.lighthouseci/
+          retention-days: 7
+          if-no-files-found: ignore
+          include-hidden-files: true
 
   security:
     name: Security scans
@@ -137,6 +199,22 @@ jobs:
         run: terraform init -backend=false
 
       - name: Validate
+        run: terraform validate
+
+      - name: Initialize production tests without backend
+        working-directory: infra/environments/prod
+        run: terraform init -backend=false
+
+      - name: Test production Terraform inputs
+        working-directory: infra/environments/prod
+        run: terraform test
+
+      - name: Initialize production backend bootstrap without backend
+        working-directory: infra/bootstrap/prod-state
+        run: terraform init -backend=false
+
+      - name: Validate production backend bootstrap
+        working-directory: infra/bootstrap/prod-state
         run: terraform validate
 
       - name: Checkov

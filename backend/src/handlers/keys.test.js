@@ -20,7 +20,7 @@ describe("single-table key builders", () => {
   it("shares one tenant partition across item types", () => {
     expect(sitePk("s1")).toBe("SITE#s1");
     expect(checkHeaderKey("s1", "c1").pk).toBe("SITE#s1");
-    expect(artifactKey("s1", "c1", "north", "a1").pk).toBe("SITE#s1");
+    expect(artifactKey("s1", "c1", "a1").pk).toBe("SITE#s1");
     expect(taskKey("s1", "t1").pk).toBe("SITE#s1");
   });
 
@@ -28,13 +28,11 @@ describe("single-table key builders", () => {
     const prefix = checkChildrenPrefix("c1");
     expect(prefix).toBe("CHECK#c1");
     expect(checkHeaderKey("s1", "c1").sk).toBe("CHECK#c1");
-    expect(artifactKey("s1", "c1", "north", "a1").sk).toBe(
-      "CHECK#c1#ART#north#a1",
-    );
+    expect(artifactKey("s1", "c1", "a1").sk).toBe("CHECK#c1#ART#a1");
     expect(analysisKey("s1", "c1", "a1").sk).toBe("CHECK#c1#ANALYSIS#a1");
     // Every child begins with the header's prefix — that's what makes AP7 one query.
     for (const sk of [
-      artifactKey("s1", "c1", "north", "a1").sk,
+      artifactKey("s1", "c1", "a1").sk,
       analysisKey("s1", "c1", "a1").sk,
     ]) {
       expect(sk.startsWith(prefix)).toBe(true);
