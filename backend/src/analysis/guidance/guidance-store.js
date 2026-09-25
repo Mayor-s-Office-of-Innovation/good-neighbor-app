@@ -925,6 +925,24 @@ async function executeTaskCreatedAppActions({
         ),
       trigger: "task_created",
     });
+    for (const result of appActionResults) {
+      if (result.status !== "failed" || result.code !== "create_311_ticket") {
+        continue;
+      }
+      logServerError(
+        `task app-action ${result.code}`,
+        new Error(String(result.reason ?? "app action failed")),
+        {
+          extra: {
+            eventType: "311_app_action_failed",
+            taskId: String(task.taskId ?? ""),
+            siteId,
+            ruleId: String(task.ruleId ?? ""),
+            trigger: "task_created",
+          },
+        },
+      );
+    }
     if (appActionResults.length === 0) {
       updatedTasks.push(task);
       continue;
@@ -1529,8 +1547,13 @@ export async function completeTaskWithAppActions(opts) {
         new Error(String(result.reason ?? "app action failed")),
         {
           extra: {
+            ...(result.code === "create_311_ticket"
+              ? { eventType: "311_app_action_failed" }
+              : {}),
             taskId: opts.taskId,
             siteId: opts.siteId,
+            ruleId: String(existing.Item.ruleId ?? ""),
+            trigger: "user_confirmed",
             completionMethod: opts.completionMethod ?? "user_confirmed",
           },
         },
