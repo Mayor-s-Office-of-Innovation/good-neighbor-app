@@ -179,7 +179,11 @@ jobs:
             "aws_s3_bucket_versioning.terraform_state",
             "aws_s3_bucket_versioning.terraform_state_logs"
           ]'
-          actual_addresses="$(terraform state list | jq -R -s 'split("\n") | map(select(length > 0)) | sort')"
+          actual_addresses="$(terraform state list | jq -R -s '
+            split("\n")
+            | map(select(length > 0 and (startswith("data.") | not)))
+            | sort
+          ')"
           jq -e -n --argjson expected "$expected_addresses" --argjson actual "$actual_addresses" \
             '$actual == ($expected | sort)'
           aws s3api head-object \
