@@ -60,7 +60,9 @@ Set `TF_STATE_KMS_KEY_ALIAS` to `alias/good-neighbor-app-prod-terraform-state`.
    lineage. The DEV job exports only that immutable S3 version. It rejects the file unless it has
    zero managed resources and contains only the known public DNS outputs and caller-identity data.
    The PROD job refuses to overwrite an existing destination, then writes the verified state to
-   `app/terraform.tfstate` and confirms the lineage and zero-managed-resource invariant.
+   `app/terraform.tfstate`. Terraform may assign the fresh destination backend a new lineage; the
+   workflow records both lineages and confirms the destination's zero-managed-resource invariant
+   and exact non-sensitive DNS metadata inventory.
 4. Run the normal production Terraform plan. Confirm it proposes the PROD application resources,
    including `goodneighbor.sf.gov`, and does not propose `gn.sf.gov` resources before approving an
    apply.
