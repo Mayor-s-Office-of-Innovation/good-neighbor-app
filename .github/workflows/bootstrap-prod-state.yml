@@ -96,7 +96,7 @@ jobs:
       # The first run must use local state because the remote backend does not
       # exist yet. The same job migrates this state immediately after apply.
       - name: Initialize bootstrap root locally
-        run: terraform init -backend=false -input=false
+        run: terraform init -input=false
 
       - name: Plan backend resources
         run: terraform plan -out=tfplan -input=false
@@ -144,6 +144,10 @@ jobs:
 
       - name: Migrate bootstrap state into PROD backend
         run: |
+          # The bootstrap root intentionally has no backend block until its S3
+          # backend exists. Add the partial backend configuration only after
+          # the local apply, then migrate the local state in this same job.
+          printf '%s\n' 'terraform {' '  backend "s3" {}' '}' > backend_override.tf
           terraform init -migrate-state -force-copy -input=false \
             -backend-config="bucket=$TF_STATE_BUCKET" \
             -backend-config="key=bootstrap/terraform.tfstate" \
