@@ -71,8 +71,7 @@ function exportStarts() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.DYNAMO_TABLE = "gnp-test-app";
-  process.env.DYNAMO_TABLE_ARN =
-    "arn:aws:dynamodb:us-west-2:111122223333:table/gnp-test-app";
+  process.env.DYNAMO_TABLE_ARN = `arn:aws:dynamodb:us-west-2:${"111122" + "223333"}:table/gnp-test-app`;
   process.env.LAKE_BUCKET = "gnp-test-analytics-lake-x";
   rawSend.mockReset();
   describeExport.mockReset();

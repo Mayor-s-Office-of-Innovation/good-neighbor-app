@@ -1,0 +1,223 @@
+name: Migrate production application state
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_version_id:
+        description: Exact S3 version ID of the repaired DEV-hosted prod/terraform.tfstate object
+        required: true
+        type: string
+      source_lineage:
+        description: Expected Terraform state lineage
+        required: true
+        default: 9378dde8-5440-c9a0-bab6-7b8d403ec12d
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  export:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      SOURCE_LINEAGE: ${{ inputs.source_lineage }}
+      SOURCE_VERSION_ID: ${{ inputs.source_version_id }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate DEV environment configuration
+        run: |
+          set -euo pipefail
+          for name in AWS_ACCOUNT_ID AWS_REGION TF_STATE_BUCKET; do
+            test -n "${!name}" || { echo "Missing DEV environment variable: $name" >&2; exit 1; }
+          done
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "AWS_ACCOUNT_ID must contain 12 digits" >&2; exit 1; }
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Export exact repaired source state
+        run: |
+          set -euo pipefail
+          aws s3api get-object \
+            --bucket "$TF_STATE_BUCKET" \
+            --key prod/terraform.tfstate \
+            --version-id "$SOURCE_VERSION_ID" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            "$RUNNER_TEMP/prod-terraform.tfstate" >/dev/null
+
+      - name: Reject populated or unexpected source state
+        run: |
+          set -euo pipefail
+          jq -e --arg lineage "$SOURCE_LINEAGE" '
+            .version == 4
+            and .lineage == $lineage
+            and ([.resources[]? | select(.mode == "managed")] | length == 0)
+            and all(.resources[]?;
+              .mode == "data"
+              and .type == "aws_caller_identity"
+              and (.name == "gn_dns" or .name == "goodneighbor_dns")
+            )
+            and all(.outputs[]?; .sensitive == false)
+            and ((.outputs | keys | sort) == ([
+              "gn_dns_name_servers",
+              "gn_dns_zone_id",
+              "gn_dnssec_ds_record",
+              "goodneighbor_dns_name_servers",
+              "goodneighbor_dns_zone_id",
+              "goodneighbor_dnssec_ds_record"
+            ] | sort))
+          ' "$RUNNER_TEMP/prod-terraform.tfstate"
+
+      - name: Upload verified state for PROD job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-prod-terraform-state
+          path: ${{ runner.temp }}/prod-terraform.tfstate
+          if-no-files-found: error
+          retention-days: 1
+
+  migrate:
+    needs: export
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      SOURCE_LINEAGE: ${{ inputs.source_lineage }}
+      SOURCE_VERSION_ID: ${{ inputs.source_version_id }}
+      TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_KMS_KEY_ALIAS: ${{ vars.TF_STATE_KMS_KEY_ALIAS }}
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra/environments/prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate PROD environment configuration
+        run: |
+          set -euo pipefail
+          for name in AWS_ACCOUNT_ID AWS_REGION TF_LOCK_TABLE TF_STATE_BUCKET TF_STATE_KMS_KEY_ALIAS; do
+            test -n "${!name}" || { echo "Missing PROD environment variable: $name" >&2; exit 1; }
+          done
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "AWS_ACCOUNT_ID must contain 12 digits" >&2; exit 1; }
+          [[ "$TF_STATE_KMS_KEY_ALIAS" =~ ^alias/[a-zA-Z0-9/_-]+$ ]] || { echo "TF_STATE_KMS_KEY_ALIAS is invalid" >&2; exit 1; }
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-prod-terraform-state
+          path: ${{ runner.temp }}/prod-state-migration
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Confirm destination state does not exist
+        run: |
+          set -euo pipefail
+          destination_inventory="$(aws s3api list-object-versions \
+            --bucket "$TF_STATE_BUCKET" \
+            --prefix app/terraform.tfstate \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" \
+            --output json)"
+          if jq -e '
+            [.Versions[]?, .DeleteMarkers[]?]
+            | any(.Key == "app/terraform.tfstate")
+          ' <<< "$destination_inventory" >/dev/null; then
+            echo "Destination application state has existing history; refusing to overwrite it" >&2
+            exit 1
+          fi
+
+      - name: Resolve state KMS key ARN
+        run: |
+          set -euo pipefail
+          state_kms_key_arn="$(aws kms describe-key \
+            --key-id "$TF_STATE_KMS_KEY_ALIAS" \
+            --query KeyMetadata.Arn \
+            --output text)"
+          test -n "$state_kms_key_arn"
+          test "$state_kms_key_arn" != "None"
+          echo "TF_STATE_KMS_KEY_ARN=$state_kms_key_arn" >> "$GITHUB_ENV"
+
+      - name: Initialize PROD application backend
+        run: |
+          terraform init -reconfigure -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=app/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+            -backend-config="kms_key_id=$TF_STATE_KMS_KEY_ARN" \
+            -backend-config="encrypt=true"
+
+      - name: Revalidate transferred state
+        run: |
+          set -euo pipefail
+          jq -e --arg lineage "$SOURCE_LINEAGE" '
+            .version == 4
+            and .lineage == $lineage
+            and ([.resources[]? | select(.mode == "managed")] | length == 0)
+            and all(.resources[]?;
+              .mode == "data"
+              and .type == "aws_caller_identity"
+              and (.name == "gn_dns" or .name == "goodneighbor_dns")
+            )
+            and all(.outputs[]?; .sensitive == false)
+            and ((.outputs | keys | sort) == ([
+              "gn_dns_name_servers",
+              "gn_dns_zone_id",
+              "gn_dnssec_ds_record",
+              "goodneighbor_dns_name_servers",
+              "goodneighbor_dns_zone_id",
+              "goodneighbor_dnssec_ds_record"
+            ] | sort))
+          ' "$RUNNER_TEMP/prod-state-migration/prod-terraform.tfstate"
+
+      - name: Push repaired state to PROD backend
+        run: terraform state push -force "$RUNNER_TEMP/prod-state-migration/prod-terraform.tfstate"
+
+      - name: Verify destination lineage and isolation
+        run: |
+          set -euo pipefail
+          terraform state pull > "$RUNNER_TEMP/migrated-prod-terraform.tfstate"
+          jq -e --arg lineage "$SOURCE_LINEAGE" '
+            .lineage == $lineage
+            and ([.resources[]? | select(.mode == "managed")] | length == 0)
+          ' "$RUNNER_TEMP/migrated-prod-terraform.tfstate"
+          aws s3api head-object \
+            --bucket "$TF_STATE_BUCKET" \
+            --key app/terraform.tfstate \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
+
+      - name: Report migration result
+        run: |
+          {
+            echo '## Production application state migrated'
+            echo "Destination: \`s3://$TF_STATE_BUCKET/app/terraform.tfstate\`"
+            echo "Lineage: $SOURCE_LINEAGE"
+            echo "Source version: $SOURCE_VERSION_ID"
+            echo 'Managed resources: 0'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,193 @@
+name: Bootstrap production Terraform backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+      TF_STATE_KMS_KEY_ALIAS: ${{ vars.TF_STATE_KMS_KEY_ALIAS }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_LOG_BUCKET: ${{ vars.TF_STATE_LOG_BUCKET }}
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_expected_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+      TF_VAR_lock_table_name: ${{ vars.TF_LOCK_TABLE }}
+      TF_VAR_kms_alias_name: ${{ vars.TF_STATE_KMS_KEY_ALIAS }}
+      TF_VAR_state_bucket_name: ${{ vars.TF_STATE_BUCKET }}
+      TF_VAR_state_log_bucket_name: ${{ vars.TF_STATE_LOG_BUCKET }}
+    concurrency:
+      group: bootstrap-prod-state
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: infra/bootstrap/prod-state
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate PROD environment configuration
+        run: |
+          set -euo pipefail
+          for name in AWS_ACCOUNT_ID AWS_REGION TF_LOCK_TABLE TF_STATE_BUCKET TF_STATE_KMS_KEY_ALIAS TF_STATE_LOG_BUCKET; do
+            test -n "${!name}" || { echo "Missing PROD environment variable: $name" >&2; exit 1; }
+          done
+          [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "AWS_ACCOUNT_ID must contain 12 digits" >&2; exit 1; }
+          [[ "$TF_STATE_KMS_KEY_ALIAS" =~ ^alias/[a-zA-Z0-9/_-]+$ ]] || { echo "TF_STATE_KMS_KEY_ALIAS is invalid" >&2; exit 1; }
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+
+      - name: Verify PROD account
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Refuse an existing or partial bootstrap
+        run: |
+          set -euo pipefail
+          if aws s3api head-bucket \
+            --bucket "$TF_STATE_BUCKET" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null 2>&1; then
+            echo "The PROD backend bucket already exists; refusing a second bootstrap." >&2
+            echo "Inspect the existing backend before attempting recovery." >&2
+            exit 1
+          fi
+          if aws s3api head-bucket \
+            --bucket "$TF_STATE_LOG_BUCKET" \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null 2>&1; then
+            echo "The PROD backend log bucket already exists; refusing a partial bootstrap." >&2
+            echo "Inspect the existing backend before attempting recovery." >&2
+            exit 1
+          fi
+          if aws dynamodb describe-table \
+            --table-name "$TF_LOCK_TABLE" \
+            --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "The PROD lock table already exists; refusing a partial bootstrap." >&2
+            echo "Inspect the existing backend before attempting recovery." >&2
+            exit 1
+          fi
+          if aws kms list-aliases \
+            --query 'Aliases[?AliasName==`'"$TF_STATE_KMS_KEY_ALIAS"'`]' \
+            --output text | grep -q .; then
+            echo "The PROD state KMS alias already exists; refusing a partial bootstrap." >&2
+            echo "Inspect the existing backend before attempting recovery." >&2
+            exit 1
+          fi
+
+      # The first run must use local state because the remote backend does not
+      # exist yet. The same job migrates this state immediately after apply.
+      - name: Initialize bootstrap root locally
+        run: terraform init -backend=false -input=false
+
+      - name: Plan backend resources
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Reject unrelated or destructive changes
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan | jq -e '
+            [.resource_changes[]? | select(.mode == "managed")]
+            | length == 18
+              and all(
+                (.address as $address | [
+                  "aws_kms_key.terraform_state",
+                  "aws_kms_alias.terraform_state",
+                  "aws_s3_bucket.terraform_state",
+                  "aws_s3_bucket_ownership_controls.terraform_state",
+                  "aws_s3_bucket_public_access_block.terraform_state",
+                  "aws_s3_bucket_versioning.terraform_state",
+                  "aws_s3_bucket_lifecycle_configuration.terraform_state",
+                  "aws_s3_bucket_server_side_encryption_configuration.terraform_state",
+                  "aws_s3_bucket_policy.terraform_state",
+                  "aws_s3_bucket_logging.terraform_state",
+                  "aws_s3_bucket.terraform_state_logs",
+                  "aws_s3_bucket_ownership_controls.terraform_state_logs",
+                  "aws_s3_bucket_public_access_block.terraform_state_logs",
+                  "aws_s3_bucket_versioning.terraform_state_logs",
+                  "aws_s3_bucket_server_side_encryption_configuration.terraform_state_logs",
+                  "aws_s3_bucket_lifecycle_configuration.terraform_state_logs",
+                  "aws_s3_bucket_policy.terraform_state_logs",
+                  "aws_dynamodb_table.terraform_locks"
+                ] | index($address) != null)
+                and (.change.actions == ["create"] or .change.actions == ["no-op"])
+              )
+          '
+
+      - name: Apply saved backend plan
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture state KMS key ARN
+        run: |
+          set -euo pipefail
+          state_kms_key_arn="$(terraform output -raw state_kms_key_arn)"
+          test -n "$state_kms_key_arn"
+          echo "TF_STATE_KMS_KEY_ARN=$state_kms_key_arn" >> "$GITHUB_ENV"
+
+      - name: Migrate bootstrap state into PROD backend
+        run: |
+          terraform init -migrate-state -force-copy -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=bootstrap/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_LOCK_TABLE" \
+            -backend-config="kms_key_id=$TF_STATE_KMS_KEY_ARN" \
+            -backend-config="encrypt=true"
+
+      - name: Verify remote bootstrap state
+        run: |
+          set -euo pipefail
+          expected_addresses='[
+            "aws_dynamodb_table.terraform_locks",
+            "aws_kms_alias.terraform_state",
+            "aws_kms_key.terraform_state",
+            "aws_s3_bucket.terraform_state",
+            "aws_s3_bucket.terraform_state_logs",
+            "aws_s3_bucket_lifecycle_configuration.terraform_state",
+            "aws_s3_bucket_lifecycle_configuration.terraform_state_logs",
+            "aws_s3_bucket_logging.terraform_state",
+            "aws_s3_bucket_ownership_controls.terraform_state",
+            "aws_s3_bucket_ownership_controls.terraform_state_logs",
+            "aws_s3_bucket_policy.terraform_state",
+            "aws_s3_bucket_policy.terraform_state_logs",
+            "aws_s3_bucket_public_access_block.terraform_state",
+            "aws_s3_bucket_public_access_block.terraform_state_logs",
+            "aws_s3_bucket_server_side_encryption_configuration.terraform_state",
+            "aws_s3_bucket_server_side_encryption_configuration.terraform_state_logs",
+            "aws_s3_bucket_versioning.terraform_state",
+            "aws_s3_bucket_versioning.terraform_state_logs"
+          ]'
+          actual_addresses="$(terraform state list | jq -R -s 'split("\n") | map(select(length > 0)) | sort')"
+          jq -e -n --argjson expected "$expected_addresses" --argjson actual "$actual_addresses" \
+            '$actual == ($expected | sort)'
+          aws s3api head-object \
+            --bucket "$TF_STATE_BUCKET" \
+            --key bootstrap/terraform.tfstate \
+            --expected-bucket-owner "$AWS_ACCOUNT_ID" >/dev/null
+
+      - name: Report backend outputs
+        run: |
+          {
+            echo '## Production Terraform backend'
+            echo "State bucket: $(terraform output -raw state_bucket_name)"
+            echo "Lock table: $(terraform output -raw lock_table_name)"
+            echo "KMS key: $(terraform output -raw state_kms_key_arn)"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -29,6 +29,14 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Reject literal AWS account identifiers
+        run: |
+          set -euo pipefail
+          if rg --pcre2 '(?<![[:alnum:]_.])[0-9]{12}(?![[:alnum:]_])' --hidden --glob '!.git/**'; then
+            echo "Literal AWS account identifiers are prohibited; use environment configuration." >&2
+            exit 1
+          fi
+
       - name: Format
         run: npm run format:check
 
@@ -200,6 +208,14 @@ jobs:
       - name: Test production Terraform inputs
         working-directory: infra/environments/prod
         run: terraform test
+
+      - name: Initialize production backend bootstrap without backend
+        working-directory: infra/bootstrap/prod-state
+        run: terraform init -backend=false
+
+      - name: Validate production backend bootstrap
+        working-directory: infra/bootstrap/prod-state
+        run: terraform validate
 
       - name: Checkov
         uses: bridgecrewio/checkov-action@v12
