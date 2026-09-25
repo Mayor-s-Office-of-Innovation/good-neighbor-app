@@ -140,6 +140,7 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 | `npm run local:minio -w backend` | Just MinIO (local S3, :9000; console :9001) |
 | `npm run local:sf311 -w backend` | Fake local SF311 CreateSR server (:3999) that records requests without calling HUB |
 | `npm run local:api -w backend` | Just the in-process API router (:3001) |
+| `LAKE_BUCKET=… LAKE_AWS_PROFILE=… npm run local:api -w backend` | Same, with the admin analytics routes reading the real S3 lake (ADR 0013). Set both in `.env.local`; then open the admin console's Analytics page (`admin-frontend/analytics.html`). |
 | `npm run local:worker -w backend` | Just the SQS→worker pump (dispatches analyze messages → analyze worker, others → submission worker) |
 | `npm run local:bootstrap -w backend` | Create the table + queue only (normally not needed — `dev` self-bootstraps) |
 | `npm run analyze:smoke -w backend` | Hand-run live analyzer smoke test (reads `backend/.env`, needs a real API key) |

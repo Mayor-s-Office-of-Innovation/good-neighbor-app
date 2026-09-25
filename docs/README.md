@@ -28,7 +28,8 @@
   worker (the 413 `input_too_large` fix) and its Lambda packaging choice.
 - **[ADR 0013](./adr/0013-analytics-read-plane.md)** — the analytics read plane: scheduled
   DynamoDB PITR exports → entity-split Parquet in S3 → DuckDB (supersedes the Glue/Athena
-  sketch in the data-model doc; Athena remains a future add-on over the same Parquet).
+  sketch in the data-model doc; Athena remains a future add-on over the same Parquet), plus
+  the dedicated analytics-query Lambda + canned query catalog behind the admin Analytics page.
 - **[ADR 0014](./adr/0014-remove-places-photo-roll.md)** — the perimeter check as a flat
   photo roll: no per-site places setup, completion at three photos or one description
   (client-side rule), text as a full alternative to photos.
