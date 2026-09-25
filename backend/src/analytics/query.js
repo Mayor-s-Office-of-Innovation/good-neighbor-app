@@ -13,12 +13,10 @@
 // - Views mirror reports.js createViews: latest-wins per (pk, sk) ordered by
 //   exportedAt, built with union_by_name over the hive-partitioned Parquet.
 
-import {
-  S3Client,
-  ListObjectsV2Command,
-} from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { DuckDBInstance } from "@duckdb/node-api";
+import { logServerError } from "../lib/log-server-error.js";
 
 // The analytics lake is always real AWS S3 — never the local MinIO harness
 // bucket — and lives in us-west-2. The local harness exports MinIO-flavored
@@ -128,7 +126,15 @@ const VIEW_COLUMNS = {
     "exportedAt",
     "raw",
   ],
-  sites: ["siteId", "providerId", "name", "address", "status", "exportedAt", "raw"],
+  sites: [
+    "siteId",
+    "providerId",
+    "name",
+    "address",
+    "status",
+    "exportedAt",
+    "raw",
+  ],
   providers: ["providerId", "name", "status", "exportedAt", "raw"],
   devices: ["siteId", "deviceId", "label", "status", "exportedAt", "raw"],
 };
@@ -140,6 +146,29 @@ const DUCKDB_HOME = process.env.DUCKDB_HOME_DIRECTORY || "/tmp";
 /** @returns {string} */
 function region() {
   return LAKE_REGION;
+}
+
+/**
+ * Run SQL without echoing it on failure. The secret-creation statement embeds
+ * the resolved AWS credentials; a DuckDB parse/validation error would surface
+ * the full SQL (credentials included) in the exception message and any caller
+ * that logs it. This wrapper replaces the statement with a scrubbed marker so
+ * the failure is diagnosable but never carries credentials.
+ * @param {any} conn
+ * @param {string} sql statement to run
+ * @param {string} scrubbed label logged in place of the statement on error
+ * @returns {Promise<void>}
+ */
+async function runScrubbed(conn, sql, scrubbed) {
+  try {
+    await conn.run(sql);
+  } catch (err) {
+    const message = /** @type {Error} */ (err).message ?? String(err);
+    logServerError("analytics-query", new Error(scrubbed), {
+      extra: { duckdbError: message.slice(0, 500) },
+    });
+    throw new Error(`${scrubbed} (statement redacted)`);
+  }
 }
 
 /**
@@ -164,9 +193,20 @@ async function installHttpfs(conn) {
       creds.sessionToken ? `SESSION_TOKEN '${creds.sessionToken}'` : "",
       `REGION '${region()}'`,
     ].filter(Boolean);
-    await conn.run(`CREATE OR REPLACE SECRET gn_lake (${parts.join(", ")});`);
-  } catch {
-    await conn.run(`CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`);
+    await runScrubbed(
+      conn,
+      `CREATE OR REPLACE SECRET gn_lake (${parts.join(", ")});`,
+      "analytics secret creation failed",
+    );
+  } catch (err) {
+    // Fallback path: the credential chain itself failed to resolve (no creds
+    // at all), or the explicit secret was rejected. Either way the statement
+    // above never reaches the caller with credentials in it.
+    if (/** @type {Error} */ (err).message?.includes("statement redacted"))
+      throw err;
+    await conn.run(
+      `CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`,
+    );
   }
 }
 
@@ -295,7 +335,11 @@ async function getWarmConnection(bucket) {
     const db = await DuckDBInstance.create(":memory:");
     const conn = await db.connect();
     await createAllViews(conn, bucket);
-    warm = { conn, bucket, checksPartition: await latestPartition(bucket, "checks") };
+    warm = {
+      conn,
+      bucket,
+      checksPartition: await latestPartition(bucket, "checks"),
+    };
     return conn;
   }
   // Freshness check is one cheap ListObjectsV2; a new partition triggers a
@@ -342,10 +386,13 @@ export async function runQuery(bucket, sql) {
     const truncated = all.length > cap;
     /** @type {unknown[][]} */
     const rows = truncated ? all.slice(0, cap) : all;
-    const converted = rows.map((row) => row.map((/** @type {any} */ v) => convertValue(v)));
+    const converted = rows.map((row) =>
+      row.map((/** @type {any} */ v) => convertValue(v)),
+    );
 
     let bytes = 0;
-    for (const row of converted) for (const v of row) bytes += String(v ?? "").length;
+    for (const row of converted)
+      for (const v of row) bytes += String(v ?? "").length;
     if (bytes > MAX_RESULT_BYTES) {
       const kept = Math.max(
         1,
@@ -358,7 +405,12 @@ export async function runQuery(bucket, sql) {
         elapsedMs: Date.now() - start,
       };
     }
-    return { columns, rows: converted, truncated, elapsedMs: Date.now() - start };
+    return {
+      columns,
+      rows: converted,
+      truncated,
+      elapsedMs: Date.now() - start,
+    };
   } catch (err) {
     const message = /** @type {Error} */ (err).message ?? String(err);
     // A stale S3 view (partition rotated away mid-flight) can leave the
