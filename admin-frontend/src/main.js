@@ -429,72 +429,6 @@ class AdminApp extends HTMLElement {
   }
 
 /**
- * Render the analytics query panel (signed-in only).
- * @param {AdminState} state
- * @returns {string}
- */
-function renderAnalyticsPanel(state) {
-  const result = state.analyticsResult;
-  return `
-    <section class="panel analytics-panel">
-      <div class="panel__head">
-        <h2>Analytics</h2>
-        <p class="muted analytics-panel__hint">
-          Read-only SQL over the reporting lake — views: checks, tasks, conditions,
-          assessments, artifacts, analyses, sites, providers, devices
-        </p>
-      </div>
-      <form id="analytics-form" class="analytics-form">
-        <label>
-          <span>SQL</span>
-          <textarea
-            name="analytics-sql"
-            rows="4"
-            spellcheck="false"
-            placeholder="SELECT siteId, count(*) AS n FROM checks WHERE date >= current_date - 7 GROUP BY 1 ORDER BY 2 DESC"
-          >${escapeHtml(state.analyticsSql)}</textarea>
-        </label>
-        <button type="submit" ${state.analyticsBusy ? "disabled" : ""}>
-          ${state.analyticsBusy ? "Running..." : "Run query"}
-        </button>
-      </form>
-      ${
-        state.analyticsError
-          ? `<p class="error" role="alert">${escapeHtml(state.analyticsError)}</p>`
-          : ""
-      }
-      ${
-        result
-          ? `
-            <p class="muted analytics-panel__meta">
-              ${result.rows.length} row${result.rows.length === 1 ? "" : "s"}
-              ${result.truncated ? "· <strong>truncated</strong>" : ""}
-              · ${result.elapsedMs} ms
-            </p>
-            ${
-              result.rows.length
-                ? `<div class="table-wrap"><table>
-                    <thead><tr>${result.columns.map((c) => `<th scope="col">${escapeHtml(c)}</th>`).join("")}</tr></thead>
-                    <tbody>
-                      ${result.rows
-                        .map(
-                          (row) => `<tr>${row
-                            .map((v) => `<td>${escapeHtml(String(v ?? ""))}</td>`)
-                            .join("")}</tr>`,
-                        )
-                        .join("")}
-                    </tbody>
-                  </table></div>`
-                : '<p class="muted">No rows returned.</p>'
-            }
-          `
-          : ""
-      }
-    </section>
-  `;
-}
-
-/**
  * Render the current admin application state.
  * @returns {void}
  */
@@ -701,6 +635,72 @@ function renderAnalyticsPanel(state) {
 }
 
 customElements.define("admin-app", AdminApp);
+
+/**
+ * Render the analytics query panel (signed-in only).
+ * @param {AdminState} state
+ * @returns {string}
+ */
+function renderAnalyticsPanel(state) {
+  const result = state.analyticsResult;
+  return `
+    <section class="panel analytics-panel">
+      <div class="panel__head">
+        <h2>Analytics</h2>
+        <p class="muted analytics-panel__hint">
+          Read-only SQL over the reporting lake — views: checks, tasks, conditions,
+          assessments, artifacts, analyses, sites, providers, devices
+        </p>
+      </div>
+      <form id="analytics-form" class="analytics-form">
+        <label>
+          <span>SQL</span>
+          <textarea
+            name="analytics-sql"
+            rows="4"
+            spellcheck="false"
+            placeholder="SELECT siteId, count(*) AS n FROM checks WHERE date >= current_date - 7 GROUP BY 1 ORDER BY 2 DESC"
+          >${escapeHtml(state.analyticsSql)}</textarea>
+        </label>
+        <button type="submit" ${state.analyticsBusy ? "disabled" : ""}>
+          ${state.analyticsBusy ? "Running..." : "Run query"}
+        </button>
+      </form>
+      ${
+        state.analyticsError
+          ? `<p class="error" role="alert">${escapeHtml(state.analyticsError)}</p>`
+          : ""
+      }
+      ${
+        result
+          ? `
+            <p class="muted analytics-panel__meta">
+              ${result.rows.length} row${result.rows.length === 1 ? "" : "s"}
+              ${result.truncated ? "· <strong>truncated</strong>" : ""}
+              · ${result.elapsedMs} ms
+            </p>
+            ${
+              result.rows.length
+                ? `<div class="table-wrap"><table>
+                    <thead><tr>${result.columns.map((c) => `<th scope="col">${escapeHtml(c)}</th>`).join("")}</tr></thead>
+                    <tbody>
+                      ${result.rows
+                        .map(
+                          (row) => `<tr>${row
+                            .map((v) => `<td>${escapeHtml(String(v ?? ""))}</td>`)
+                            .join("")}</tr>`,
+                        )
+                        .join("")}
+                    </tbody>
+                  </table></div>`
+                : '<p class="muted">No rows returned.</p>'
+            }
+          `
+          : ""
+      }
+    </section>
+  `;
+}
 
 /**
  * @param {EventTarget | null} target
