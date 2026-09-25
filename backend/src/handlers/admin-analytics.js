@@ -1,15 +1,28 @@
-// POST /admin/v1/analytics/query — ad-hoc read-only SQL over the analytics
-// lake for central admins (ADR 0013 ad-hoc leg). See analytics/query.js for
-// the engine. This handler only gates (central-admin), validates the SQL
-// shape, resolves the lake bucket, and wraps the query result in JSON.
+// Admin analytics endpoints (ADR 0013 ad-hoc leg) — read-only queries over
+// the analytics lake for central admins. See analytics/query.js for the
+// engine and its lockdown and analytics/catalog.js for the canned queries;
+// this handler only gates (central-admin), validates the request shape,
+// resolves the lake bucket, and shapes the JSON response.
+//
+// Routes (served by the dedicated analytics-query Lambda, never the app api):
+//   GET  /admin/v1/analytics/queries              the catalog
+//   POST /admin/v1/analytics/queries/{queryId}    run one, body { params }
+//   POST /admin/v1/analytics/query                raw SQL, body { sql }
 import { jsonResponse } from "../http.js";
-import { runQuery, toQueryResponse } from "../analytics/query.js";
+import { adminOnly } from "../lib/admin-auth.js";
+import { QueryError, runQuery, toQueryResponse } from "../analytics/query.js";
+import {
+  ParamError,
+  bindParams,
+  getQuery,
+  listCatalog,
+} from "../analytics/catalog.js";
 import { logServerError } from "../lib/log-server-error.js";
 
 /**
- * Resolve the analytics lake bucket. Matches how getDynamoTableName works:
- * required at use time, not at module load, so the config loads in tests and
- * in the local API where the analytics env may not be set.
+ * Resolve the analytics lake bucket. Required at use time, not at module
+ * load, so the module loads in tests and in the local API where the
+ * analytics env may not be set.
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string}
  */
@@ -21,87 +34,81 @@ function getLakeBucket(env = process.env) {
   return bucket;
 }
 
-/** Statements that mutate state or read outside the lake's data plane. */
-const BLOCKED_SQL =
-  /\b(attach|detach|install|load|create\s+secret|set\s+secret|drop\s+secret|copy\s+[^;]*\bfrom\b|read_csv|read_json|parquet_scan|write_file|glob)\b/i;
+export const MAX_SQL_LENGTH = 20_000;
 
 /**
- * POST /admin/v1/analytics/query  body: { sql: string }
+ * GET /admin/v1/analytics/queries — the canned query catalog.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
-export const runAnalyticsQuery = (event) =>
-  adminAnalytics(event, async (body) => {
-    const sql = typeof body.sql === "string" ? body.sql.trim() : "";
-    if (!sql) return jsonResponse(400, { error: "sql_required" });
-    if (sql.length > 20_000)
-      return jsonResponse(400, { error: "sql_too_long" });
-    if (BLOCKED_SQL.test(sql)) {
-      return jsonResponse(400, { error: "sql_not_allowed" });
-    }
-    let result;
+export const listAnalyticsQueries = (event) =>
+  adminOnly(event, async () => jsonResponse(200, { queries: listCatalog() }));
+
+/**
+ * POST /admin/v1/analytics/queries/{queryId}  body: { params?: object }
+ *
+ * Runs one catalog query with validated, prepared-statement-bound
+ * parameters.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const runAnalyticsCatalogQuery = (event) =>
+  adminOnly(event, async (body) => {
+    const queryId = event.pathParameters?.queryId ?? "";
+    const query = getQuery(queryId);
+    if (!query) return jsonResponse(404, { error: "query_not_found" });
+    let params;
     try {
-      result = await runQuery(getLakeBucket(), sql);
+      params = bindParams(query, body.params);
     } catch (err) {
-      // Log the detail server-side only; the response carries a generic error
-      // so internals (bucket names, SQL fragments, engine messages) don't leak
-      // back to the caller.
-      logServerError("admin-analytics", /** @type {Error} */ (err), {
-        extra: { sqlLength: sql.length },
-      });
-      return jsonResponse(502, { error: "query_failed" });
+      if (err instanceof ParamError) {
+        return jsonResponse(400, {
+          error: "params_invalid",
+          message: err.message,
+        });
+      }
+      throw err;
     }
-    return jsonResponse(200, toQueryResponse(result));
+    return respond(() => runQuery(getLakeBucket(), query.sql, params), {
+      queryId,
+    });
   });
 
 /**
- * @param {import("aws-lambda").APIGatewayProxyEventV2} event
- * @param {(body: Record<string, unknown>) => Promise<any>} fn
+ * POST /admin/v1/analytics/query  body: { sql: string }
+ *
+ * Raw SQL for central admins (the "advanced" leg). Statement shape and
+ * filesystem/config access are enforced by the engine, not here.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const runAnalyticsQuery = (event) =>
+  adminOnly(event, async (body) => {
+    const sql = typeof body.sql === "string" ? body.sql.trim() : "";
+    if (!sql) return jsonResponse(400, { error: "sql_required" });
+    if (sql.length > MAX_SQL_LENGTH)
+      return jsonResponse(400, { error: "sql_too_long" });
+    return respond(() => runQuery(getLakeBucket(), sql), {
+      sqlLength: sql.length,
+    });
+  });
+
+/**
+ * Run a query and map its outcome to an HTTP response. User errors (the
+ * caller's SQL) are echoed back as 400 so the admin can fix the statement;
+ * engine errors are logged server-side and returned as a generic 502 so
+ * internals (bucket names, S3 paths, extension state) don't leak.
+ * @param {() => Promise<import("../analytics/query.js").QueryResult>} work
+ * @param {Record<string, unknown>} logExtra
  * @returns {Promise<any>}
  */
-async function adminAnalytics(event, fn) {
-  const authorizer =
-    /** @type {any} */ (event.requestContext)?.authorizer ?? {};
-  const groups =
-    authorizer.jwt?.claims?.["cognito:groups"] ??
-    authorizer["claims.cognito:groups"] ??
-    "";
-  let groupList = /** @type {string[]} */ ([]);
-  if (Array.isArray(groups)) {
-    groupList = groups;
-  } else if (typeof groups === "string") {
-    const value = groups.trim();
-    if (value.startsWith("[")) {
-      if (!value.endsWith("]"))
-        return jsonResponse(403, { error: "forbidden" });
-      try {
-        const parsed = JSON.parse(value);
-        groupList = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        // HTTP API JWT claims can stringify a group list without JSON quotes.
-        // Match whole comma-delimited names, never substrings.
-        groupList = value
-          .slice(1, -1)
-          .split(",")
-          .map((g) => g.trim());
-      }
-    } else {
-      groupList = value.split(",").map((g) => g.trim());
+async function respond(work, logExtra = {}) {
+  try {
+    return jsonResponse(200, toQueryResponse(await work()));
+  } catch (err) {
+    if (err instanceof QueryError && err.kind === "user") {
+      return jsonResponse(400, { error: "sql_invalid", message: err.message });
     }
+    logServerError("admin-analytics", /** @type {Error} */ (err), {
+      extra: logExtra,
+    });
+    return jsonResponse(502, { error: "query_failed" });
   }
-  if (!groupList.includes("central-admin")) {
-    return jsonResponse(403, { error: "forbidden" });
-  }
-  let body = /** @type {Record<string, unknown>} */ ({});
-  if (event.body) {
-    try {
-      body = JSON.parse(
-        event.isBase64Encoded
-          ? Buffer.from(event.body, "base64").toString("utf8")
-          : event.body,
-      );
-    } catch {
-      return jsonResponse(400, { error: "invalid_json" });
-    }
-  }
-  return fn(body);
 }

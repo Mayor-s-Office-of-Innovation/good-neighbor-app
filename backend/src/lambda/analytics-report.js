@@ -1,7 +1,8 @@
 // Entrypoint for the scheduled analytics-report Lambda (ADR 0013 Phase 4).
 // Bundled to dist/analytics-report/index.mjs; handler is `index.handler`.
-// The build copies backend/src/analytics/reports/*.sql next to the bundle so
-// the .sql files are repo-tracked and laptop-runnable.
+// The reports are the catalog entries flagged `scheduled` in
+// backend/src/analytics/catalog.js — the same SQL the admin analytics page
+// runs on demand.
 
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 import { runScheduledReports } from "../analytics/reports.js";

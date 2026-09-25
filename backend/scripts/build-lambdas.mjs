@@ -14,10 +14,10 @@
 // deployment artifacts so their zips are self-contained. On the deploy runner,
 // `npm ci` resolves the linux-x64 binaries via sharp's optionalDependencies.
 //
-// `@duckdb/node-api` (analytics convert + report lambdas) gets the same
-// treatment: native `.node` binding + platform-specific `libduckdb.dylib` in
-// `@duckdb/node-bindings-<platform>`, kept external and copied into
-// dist/analytics-convert/ and dist/analytics-report/. On the deploy runner
+// `@duckdb/node-api` (analytics convert + report + query lambdas) gets the
+// same treatment: native `.node` binding + platform-specific `libduckdb.dylib`
+// in `@duckdb/node-bindings-<platform>`, kept external and copied into
+// dist/analytics-convert/, dist/analytics-report/ and dist/analytics-query/. On the deploy runner
 // `npm ci` resolves the linux binaries via the platform packages'
 // optionalDependencies (same mechanism as @img/*).
 
@@ -85,6 +85,13 @@ const entries = [
   {
     name: "analytics-report",
     entry: resolve(backendRoot, "src/lambda/analytics-report.js"),
+    external: ["@duckdb/node-api", "@duckdb/node-bindings"],
+  },
+  {
+    // Admin analytics API (catalog + raw SQL) — its own function so DuckDB
+    // never rides in the app api bundle.
+    name: "analytics-query",
+    entry: resolve(backendRoot, "src/lambda/analytics-query.js"),
     external: ["@duckdb/node-api", "@duckdb/node-bindings"],
   },
 ];
@@ -160,7 +167,7 @@ if (!sharpSrc) {
   }
 }
 
-// Copy @duckdb/node-api + its native bindings into the two analytics dists.
+// Copy @duckdb/node-api + its native bindings into the analytics dists.
 // Same resolution logic as sharp: workspace-root node_modules first.
 //
 // The bindings package (@duckdb/node-bindings) loads its platform binary
@@ -171,7 +178,11 @@ if (!sharpSrc) {
 // (~22 MB zipped), so copying every installed variant would blow Lambda's 50 MB
 // direct-upload zip limit on the Linux deploy runner (which resolves several
 // platform packages at once).
-const duckTargets = ["analytics-convert", "analytics-report"];
+const duckTargets = [
+  "analytics-convert",
+  "analytics-report",
+  "analytics-query",
+];
 // Lambda nodejs22.x runs on x86_64 glibc (AL2023) unless explicitly configured
 // for arm64 — keep this in sync with the Terraform Lambda architectures.
 const LAMBDA_TARGET = process.env.ANALYTICS_LAMBDA_ARCH ?? "linux-x64";
@@ -233,14 +244,8 @@ if (!duckApiSrc) {
       }
       await cp(src, join(dist, "node_modules", dep), { recursive: true });
     }
-    // The report bundle reads backend/src/analytics/reports/*.sql — copy them
-    // next to index.mjs so the repo-tracked SQL ships in the zip.
-    const reportsSrc = resolve(backendRoot, "src/analytics/reports");
-    if (existsSync(reportsSrc)) {
-      await cp(reportsSrc, join(dist, "reports"), { recursive: true });
-    }
     console.log(
-      `[build-lambdas] copied @duckdb/node-api + node-bindings + ${targetPkg} + [${bindingsDeps.join(", ")}]${target === "analytics-report" ? " + reports/*.sql" : ""} into dist/${target}/node_modules/`,
+      `[build-lambdas] copied @duckdb/node-api + node-bindings + ${targetPkg} + [${bindingsDeps.join(", ")}] into dist/${target}/node_modules/`,
     );
   }
 }

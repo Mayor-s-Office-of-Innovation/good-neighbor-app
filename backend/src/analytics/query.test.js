@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// S3 seam: hasParquetFiles/latestPartition probes during createAllViews.
+// S3 seam: the prefix probes during view (re)builds.
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
@@ -13,12 +13,26 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
 }));
 
-const { createAllViews, runQuery, toQueryResponse, _test } = await import(
+const { QueryError, runQuery, toQueryResponse, _test } = await import(
   "./query.js"
 );
+const { createViews } = await import("./lake-views.js");
 
 /** @type {any} */
 let conn;
+
+/**
+ * Seed the warm cache with empty views on a fresh connection. The cold path
+ * (getWarm → installHttpfs) needs network + AWS credentials, so tests never
+ * take it.
+ * @param {{ empty?: string[], asOf?: string | null, refreshedAt?: number }} [opts]
+ */
+async function seed(opts = {}) {
+  send.mockResolvedValue({ KeyCount: 0 });
+  await createViews(conn, "bucket-x", { s3: { send }, install: false });
+  send.mockClear();
+  _test.seedWarm(conn, "bucket-x", opts);
+}
 
 beforeEach(async () => {
   send.mockReset();
@@ -32,33 +46,9 @@ afterEach(() => {
   conn.closeSync();
 });
 
-describe("createAllViews (empty lake)", () => {
-  it("creates typed views for all nine entities when nothing has files", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-
-    await createAllViews(conn, "bucket-x", { install: false });
-
-    // Every entity binds and queries without error (empty typed views).
-    for (const entity of _test.ENTITIES) {
-      const r = await conn.runAndReadAll(`SELECT count(*) AS n FROM ${entity}`);
-      expect(r.getRowsJS()[0][0]).toBe(1n);
-    }
-  });
-
-  it("probes the readings/<entity>/ prefix for each entity", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    expect(
-      send.mock.calls.map((/** @type {any[]} */ c) => c[0].input.Prefix),
-    ).toEqual(_test.ENTITIES.map((/** @type {string} */ e) => `readings/${e}/`));
-  });
-});
-
 describe("runQuery", () => {
-  it("runs SQL against seeded views and returns JSON-safe rows", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    // Replace one view with real data to exercise the result path.
+  it("runs SQL against the views and returns JSON-safe rows plus the freshness stamp", async () => {
+    await seed({ asOf: "2026-09-21T10:00:00.000Z" });
     await conn.run(`CREATE OR REPLACE VIEW checks AS
       SELECT 's1' AS siteId, 'c1' AS checkId, 'completed' AS status,
              CAST(4 AS BIGINT) AS gradeScore,
@@ -66,77 +56,144 @@ describe("runQuery", () => {
       UNION ALL
       SELECT 's1', 'c2', 'completed', CAST(5 AS BIGINT),
              TIMESTAMP '2026-09-21 10:00:00'`);
-    _test.seedWarm(conn, "bucket-x", null);
 
     const result = await runQuery(
       "bucket-x",
-      "SELECT status, count(*) AS n, max(gradeScore) AS best FROM checks GROUP BY status ORDER BY status",
+      "SELECT status, count(*) AS n, max(gradeScore) AS best, max(exportedAt) AS t FROM checks GROUP BY status ORDER BY status;",
     );
-    expect(result.columns).toEqual(["status", "n", "best"]);
-    expect(result.rows).toEqual([["completed", 2, 5]]);
+    expect(result.columns).toEqual(["status", "n", "best", "t"]);
+    expect(result.rows).toEqual([
+      ["completed", 2, 5, "2026-09-21T10:00:00.000Z"],
+    ]);
     expect(result.truncated).toBe(false);
+    expect(result.asOf).toBe("2026-09-21T10:00:00.000Z");
     expect(result.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("converts BigInt to numbers and timestamps to ISO strings", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    await conn.run(`CREATE OR REPLACE VIEW checks AS
-      SELECT TIMESTAMP '2026-09-20 10:00:00' AS exportedAt, CAST(123456789 AS BIGINT) AS gradeScore`);
-    _test.seedWarm(conn, "bucket-x", null);
-    const result = await runQuery("bucket-x", "SELECT * FROM checks");
-    expect(result.rows[0]).toEqual(["2026-09-20T10:00:00.000Z", 123456789]);
+  it("keeps CTEs working inside the subquery wrapper", async () => {
+    await seed();
+    const result = await runQuery(
+      "bucket-x",
+      "WITH x AS (SELECT 1 AS n UNION ALL SELECT 2) SELECT sum(n) AS total FROM x",
+    );
+    expect(result.rows).toEqual([[3]]);
   });
 
-  it("throws query_failed and invalidates the warm cache on engine errors", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    _test.seedWarm(conn, "bucket-x", null);
-    // A Catalog Error (not an IO/HTTP error) does NOT invalidate the warm
-    // cache — the views are fine, the SQL was wrong.
-    await expect(
-      runQuery("bucket-x", "SELECT * FROM no_such_table"),
-    ).rejects.toThrow(/query_failed/);
+  it("binds parameters through a prepared statement", async () => {
+    await seed();
+    const result = await runQuery(
+      "bucket-x",
+      "SELECT $siteId AS s, current_date - CAST($days AS INTEGER) < current_date AS earlier",
+      { siteId: "s-9", days: 7 },
+    );
+    expect(result.columns).toEqual(["s", "earlier"]);
+    expect(result.rows).toEqual([["s-9", true]]);
+  });
+
+  it("rejects DDL, PRAGMA, INSTALL and multi-statement input as user errors", async () => {
+    await seed();
+    for (const sql of [
+      "CREATE TABLE t (i INT)",
+      "SELECT 1; SELECT 2",
+      "PRAGMA database_size",
+      "INSTALL spatial",
+      "SET threads = 1",
+      "COPY checks TO '/tmp/x.csv'",
+      "ATTACH 's3://other/db'",
+    ]) {
+      const err = await runQuery("bucket-x", sql).catch((e) => e);
+      expect(err, sql).toBeInstanceOf(QueryError);
+      expect(err.kind, sql).toBe("user");
+    }
+    // The user's SQL was wrong; the views are fine — cache kept.
     expect(_test.warmState()).not.toBeNull();
   });
 
-  it("invalidates the warm cache on IO/S3 errors", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    _test.seedWarm(conn, "bucket-x", null);
-    await expect(
-      runQuery("bucket-x", "SELECT * FROM read_parquet('/nonexistent/*.parquet')"),
-    ).rejects.toThrow(/query_failed/);
+  it("classifies a missing table as a user error and keeps the warm cache", async () => {
+    await seed();
+    const err = await runQuery("bucket-x", "SELECT * FROM no_such_table").catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(QueryError);
+    expect(err.kind).toBe("user");
+    expect(err.message).toMatch(/Catalog Error/);
+    expect(_test.warmState()).not.toBeNull();
+  });
+
+  it("classifies IO errors as engine errors and invalidates the warm cache", async () => {
+    await seed();
+    const err = await runQuery(
+      "bucket-x",
+      "SELECT * FROM read_parquet('/nonexistent/*.parquet')",
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(QueryError);
+    expect(err.kind).toBe("engine");
     expect(_test.warmState()).toBeNull();
   });
 
-  it("caps rows at MAX_ROWS with truncated: true", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
+  it("caps rows with truncated: true", async () => {
+    await seed();
     await conn.run(
       `CREATE OR REPLACE VIEW checks AS SELECT unnest(range(25)) AS i`,
     );
-    _test.MAX_ROWS_SET(10);
+    _test.setRowCap(10);
     try {
-      _test.seedWarm(conn, "bucket-x", null);
       const result = await runQuery("bucket-x", "SELECT * FROM checks");
       expect(result.rows.length).toBe(10);
       expect(result.truncated).toBe(true);
     } finally {
-      _test.MAX_ROWS_SET(_test.MAX_ROWS_ORIGINAL);
+      _test.setRowCap(_test.MAX_ROWS);
     }
   });
 
   it("survives an empty result set", async () => {
-    send.mockResolvedValue({ KeyCount: 0 });
-    await createAllViews(conn, "bucket-x", { install: false });
-    _test.seedWarm(conn, "bucket-x", null);
+    await seed();
     const result = await runQuery(
       "bucket-x",
       "SELECT * FROM checks WHERE siteId = 'nope'",
     );
     expect(result.rows).toEqual([]);
     expect(result.columns.length).toBeGreaterThan(0);
+  });
+});
+
+describe("warm refresh", () => {
+  it("re-probes only the entities still on an empty stand-in view once the interval passes", async () => {
+    await seed({
+      empty: ["sites", "devices"],
+      refreshedAt: Date.now() - _test.REFRESH_MS - 1,
+    });
+    send.mockResolvedValue({ KeyCount: 0 });
+
+    await runQuery("bucket-x", "SELECT 1");
+
+    expect(send.mock.calls.map((c) => c[0].input.Prefix)).toEqual([
+      "readings/sites/",
+      "readings/devices/",
+    ]);
+    const state = _test.warmState();
+    expect([...(state?.empty ?? [])]).toEqual(["sites", "devices"]);
+    expect(Date.now() - (state?.refreshedAt ?? 0)).toBeLessThan(
+      _test.REFRESH_MS,
+    );
+  });
+
+  it("does not probe before the interval passes", async () => {
+    await seed({ empty: ["sites"] });
+    await runQuery("bucket-x", "SELECT 1");
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("readAsOf", () => {
+  it("is null on an empty lake and the newest export stamp otherwise", async () => {
+    await seed();
+    expect(await _test.readAsOf(conn)).toBeNull();
+    await conn.run(`CREATE OR REPLACE VIEW tasks AS
+      SELECT TIMESTAMP '2026-09-22 18:00:00' AS exportedAt`);
+    await conn.run(`CREATE OR REPLACE VIEW checks AS
+      SELECT TIMESTAMP '2026-09-21 06:00:00' AS exportedAt`);
+    expect(await _test.readAsOf(conn)).toBe("2026-09-22T18:00:00.000Z");
   });
 });
 
@@ -161,9 +218,14 @@ describe("convertValue", () => {
 });
 
 describe("toQueryResponse", () => {
-  it("passes through the result shape", () => {
-    expect(
-      toQueryResponse({ columns: ["a"], rows: [[1]], truncated: false, elapsedMs: 5 }),
-    ).toEqual({ columns: ["a"], rows: [[1]], truncated: false, elapsedMs: 5 });
+  it("passes through the result shape including asOf", () => {
+    const result = {
+      columns: ["a"],
+      rows: [[1]],
+      truncated: false,
+      elapsedMs: 5,
+      asOf: "2026-09-21T10:00:00.000Z",
+    };
+    expect(toQueryResponse(result)).toEqual(result);
   });
 });
