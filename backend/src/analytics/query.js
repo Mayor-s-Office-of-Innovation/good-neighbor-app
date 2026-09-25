@@ -13,10 +13,30 @@
 // - Views mirror reports.js createViews: latest-wins per (pk, sk) ordered by
 //   exportedAt, built with union_by_name over the hive-partitioned Parquet.
 
-import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
+import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { DuckDBInstance } from "@duckdb/node-api";
 
-const s3 = new S3Client({});
+// The analytics lake is always real AWS S3 — never the local MinIO harness
+// bucket — and lives in us-west-2. The local harness exports MinIO-flavored
+// AWS_* env creds plus an S3 endpoint override for the app services; the
+// analytics leg must ignore both. Pin the real regional endpoint. Credentials
+// resolve through the node chain with an explicit profile, which makes the
+// chain skip the env stubs (AWS_PROFILE detection) and use the laptop's real
+// credentials; the deployed Lambda sets no profile, so its container
+// credentials resolve through the same chain.
+const LAKE_REGION = "us-west-2";
+const lakeCredentials = defaultProvider({
+  profile: process.env.LAKE_AWS_PROFILE || undefined,
+});
+const s3 = new S3Client({
+  region: LAKE_REGION,
+  endpoint: `https://s3.${LAKE_REGION}.amazonaws.com`,
+  credentialDefaultProvider: () => lakeCredentials,
+});
 
 // Every entity the converter writes (convert.js ENTITY_ORDER). reports.js only
 // defines views for six of them; the query engine needs all nine so dashboards
@@ -117,14 +137,37 @@ const VIEW_COLUMNS = {
 // Lambda is read-only outside /tmp and sets no HOME; local runs may override.
 const DUCKDB_HOME = process.env.DUCKDB_HOME_DIRECTORY || "/tmp";
 
+/** @returns {string} */
+function region() {
+  return LAKE_REGION;
+}
+
 /**
- * Install httpfs + aws extensions and the S3 credential-chain secret.
+ * Install httpfs + aws extensions and the S3 secret.
+ *
+ * DuckDB's own credential_chain provider doesn't resolve every local
+ * credential source (e.g. macOS login-tool session creds fail secret
+ * validation locally), while the AWS SDK's provider chain does. Resolve
+ * through the SDK and pin an explicit S3 secret; the plain credential_chain
+ * remains the fallback for the deployed Lambda's container credentials.
  * @param {any} conn
  */
 async function installHttpfs(conn) {
   await conn.run(`SET home_directory = '${DUCKDB_HOME}';`);
   await conn.run(`INSTALL httpfs; LOAD httpfs; INSTALL aws; LOAD aws;`);
-  await conn.run(`CREATE SECRET (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`);
+  try {
+    const creds = await lakeCredentials();
+    if (!creds.accessKeyId) throw new Error("no credentials resolved");
+    const parts = [
+      `KEY_ID '${creds.accessKeyId}'`,
+      `SECRET '${creds.secretAccessKey}'`,
+      creds.sessionToken ? `SESSION_TOKEN '${creds.sessionToken}'` : "",
+      `REGION '${region()}'`,
+    ].filter(Boolean);
+    await conn.run(`CREATE OR REPLACE SECRET gn_lake (${parts.join(", ")});`);
+  } catch {
+    await conn.run(`CREATE OR REPLACE SECRET gn_lake (TYPE S3, PROVIDER CREDENTIAL_CHAIN);`);
+  }
 }
 
 /**
