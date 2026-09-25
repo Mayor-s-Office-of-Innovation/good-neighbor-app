@@ -38,6 +38,12 @@ data "archive_file" "analytics_report" {
   output_path = "${path.module}/dist/analytics-report.zip"
 }
 
+data "archive_file" "analytics_query" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/analytics-query"
+  output_path = "${path.module}/dist/analytics-query.zip"
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${local.name_prefix}-api"
   retention_in_days = 365

@@ -7,6 +7,7 @@ import {
 } from "./services/admin-auth.js";
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
+import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
@@ -16,7 +17,6 @@ import { getAdminConfig } from "./config.js";
  * @typedef {{ email: string, emailHash: string, name?: string, status?: string }} AdminContact
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
- * @typedef {{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number }} AnalyticsResult
  * @typedef {object} AdminState
  * @property {AdminProvider[]} providers
  * @property {AdminProvider | null} provider
@@ -27,10 +27,6 @@ import { getAdminConfig } from "./config.js";
  * @property {string} siteSaveMessage
  * @property {string} siteSaveError
  * @property {boolean} siteSaving
- * @property {string} analyticsSql
- * @property {AnalyticsResult | null} analyticsResult
- * @property {boolean} analyticsBusy
- * @property {string} analyticsError
  * @property {string} error
  * @property {boolean} hasToken
  * @property {AdminConfig} authConfig
@@ -51,10 +47,6 @@ class AdminApp extends HTMLElement {
       siteSaveMessage: "",
       siteSaveError: "",
       siteSaving: false,
-      analyticsSql: "",
-      analyticsResult: null,
-      analyticsBusy: false,
-      analyticsError: "",
       error: "",
       hasToken: false,
       authConfig: getAdminConfig(),
@@ -77,10 +69,6 @@ class AdminApp extends HTMLElement {
       siteSaveMessage: "",
       siteSaveError: "",
       siteSaving: false,
-      analyticsSql: "",
-      analyticsResult: null,
-      analyticsBusy: false,
-      analyticsError: "",
       error: "",
       hasToken: hasAdminSession(),
       authConfig: getAdminConfig(),
@@ -307,27 +295,6 @@ class AdminApp extends HTMLElement {
   }
 
   /**
-   * Run the SQL from the analytics panel against the lake.
-   * @param {HTMLFormElement} form
-   * @returns {Promise<void>}
-   */
-  async runAnalyticsQuery(form) {
-    const sql = String(new FormData(form).get("analytics-sql") || "").trim();
-    if (!sql) return;
-    this.state.analyticsSql = sql;
-    this.state.analyticsBusy = true;
-    this.state.analyticsError = "";
-    this.render();
-    try {
-      this.state.analyticsResult = await adminApi.analyticsQuery(sql);
-    } catch (err) {
-      this.state.analyticsError = err.message;
-    }
-    this.state.analyticsBusy = false;
-    this.render();
-  }
-
-  /**
    * Bind event handlers to the currently rendered DOM.
    * @returns {void}
    */
@@ -385,10 +352,6 @@ class AdminApp extends HTMLElement {
       e.preventDefault();
       this.issueSetupCode(asForm(e.currentTarget));
     });
-    this.querySelector("#analytics-form")?.addEventListener("submit", (e) => {
-      e.preventDefault();
-      this.runAnalyticsQuery(asForm(e.currentTarget));
-    });
     this.querySelectorAll("[data-provider]").forEach((button) => {
       button.addEventListener("click", () =>
         this.openProvider(dataAttr(button, "data-provider")),
@@ -428,17 +391,24 @@ class AdminApp extends HTMLElement {
     });
   }
 
-/**
- * Render the current admin application state.
- * @returns {void}
- */
+  /**
+   * Render the current admin application state.
+   * @returns {void}
+   */
   render() {
     const provider = this.state.provider;
     const site = this.state.site;
     this.innerHTML = `
       <main class="admin">
         <header class="admin__header">
-          <h1>Good Neighbor Admin</h1>
+          <div class="site-title">
+            <h1>Good Neighbor Admin</h1>
+            ${
+              this.state.hasToken
+                ? '<nav class="admin__nav"><a href="/analytics.html">Analytics</a></nav>'
+                : ""
+            }
+          </div>
           ${
             this.state.hasToken
               ? '<button id="clear-token" type="button">Sign out</button>'
@@ -470,7 +440,6 @@ class AdminApp extends HTMLElement {
             `
         }
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
-        ${this.state.hasToken ? renderAnalyticsPanel(this.state) : ""}
         ${
           this.state.hasToken
             ? `<section class="panel">
@@ -635,127 +604,6 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
-
-/**
- * Render the analytics query panel (signed-in only).
- * @param {AdminState} state
- * @returns {string}
- */
-function renderAnalyticsPanel(state) {
-  const result = state.analyticsResult;
-  return `
-    <section class="panel analytics-panel">
-      <div class="panel__head">
-        <h2>Analytics</h2>
-        <p class="muted analytics-panel__hint">
-          Read-only SQL over the reporting lake — views: checks, tasks, conditions,
-          assessments, artifacts, analyses, sites, providers, devices
-        </p>
-      </div>
-      <form id="analytics-form" class="analytics-form">
-        <label>
-          <span>SQL</span>
-          <textarea
-            name="analytics-sql"
-            rows="4"
-            spellcheck="false"
-            placeholder="SELECT siteId, count(*) AS n FROM checks WHERE date >= current_date - 7 GROUP BY 1 ORDER BY 2 DESC"
-          >${escapeHtml(state.analyticsSql)}</textarea>
-        </label>
-        <button type="submit" ${state.analyticsBusy ? "disabled" : ""}>
-          ${state.analyticsBusy ? "Running..." : "Run query"}
-        </button>
-      </form>
-      ${
-        state.analyticsError
-          ? `<p class="error" role="alert">${escapeHtml(state.analyticsError)}</p>`
-          : ""
-      }
-      ${
-        result
-          ? `
-            <p class="muted analytics-panel__meta">
-              ${result.rows.length} row${result.rows.length === 1 ? "" : "s"}
-              ${result.truncated ? "· <strong>truncated</strong>" : ""}
-              · ${result.elapsedMs} ms
-            </p>
-            ${
-              result.rows.length
-                ? `<div class="table-wrap"><table>
-                    <thead><tr>${result.columns.map((c) => `<th scope="col">${escapeHtml(c)}</th>`).join("")}</tr></thead>
-                    <tbody>
-                      ${result.rows
-                        .map(
-                          (row) => `<tr>${row
-                            .map((v) => `<td>${escapeHtml(String(v ?? ""))}</td>`)
-                            .join("")}</tr>`,
-                        )
-                        .join("")}
-                    </tbody>
-                  </table></div>`
-                : '<p class="muted">No rows returned.</p>'
-            }
-          `
-          : ""
-      }
-    </section>
-  `;
-}
-
-/**
- * @param {EventTarget | null} target
- * @returns {HTMLFormElement}
- */
-function asForm(target) {
-  if (target instanceof HTMLFormElement) return target;
-  throw new TypeError("Expected form event target");
-}
-
-/**
- * @param {Element} element
- * @param {string} name
- * @returns {string}
- */
-function dataAttr(element, name) {
-  return element.getAttribute(name) ?? "";
-}
-
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return ch;
-    }
-  });
-}
-
-/**
- * @param {string | undefined} value
- * @returns {string}
- */
-function formatTimestamp(value) {
-  if (!value) return "not available";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "not available";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
 
 /**
  * @param {{ latitude?: number, longitude?: number } | undefined} location

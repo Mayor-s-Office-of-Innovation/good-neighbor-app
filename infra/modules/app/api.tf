@@ -1,5 +1,7 @@
-# API Gateway v2 HTTP API fronting the api Lambda. One integration; every route
-# key targets it, and the Lambda dispatches on event.routeKey. No authorizer for
+# API Gateway v2 HTTP API fronting the api Lambda. One integration for the app
+# routes — every key in api_routes targets it, and the Lambda dispatches on
+# event.routeKey — plus a second integration for the admin analytics routes,
+# which a dedicated DuckDB-carrying Lambda serves (analytics.tf). No authorizer for
 # MVP — the site-code flow mints no Cognito JWT, so requests resolve to
 # DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
 # route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
@@ -58,6 +60,15 @@ locals {
     "GET /health",
   ]
 
+  # Admin analytics (ADR 0013): served by aws_lambda_function.analytics_query,
+  # never the app api function — DuckDB + a 2 GB footprint stay out of the
+  # operational path. Mirrors backend/src/lambda/analytics-query.js.
+  analytics_routes = [
+    "GET /admin/v1/analytics/queries",
+    "POST /admin/v1/analytics/queries/{queryId}",
+    "POST /admin/v1/analytics/query",
+  ]
+
   # Routes an anonymous caller may reach: bootstrap + health + best-effort
   # intakes. Everything else gets the device-token authorizer (Option 4).
   # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
@@ -101,6 +112,14 @@ resource "aws_apigatewayv2_integration" "api" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "analytics_query" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.analytics_query.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
+}
+
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
 # the claim-shaped context handlers read. Identity source = the Authorization
@@ -140,6 +159,19 @@ resource "aws_apigatewayv2_route" "routes" {
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
   authorization_type = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? "JWT" : "CUSTOM"
   authorizer_id      = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+}
+
+# Admin analytics routes: always the admin JWT authorizer, always the
+# analytics-query integration. Kept as a separate resource so the app route
+# set above stays a plain list.
+resource "aws_apigatewayv2_route" "analytics" {
+  for_each = toset(local.analytics_routes)
+
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.analytics_query.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.admin_jwt.id
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

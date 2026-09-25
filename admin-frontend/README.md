@@ -1,7 +1,27 @@
 # Good Neighbor Admin Frontend
 
 Static central-admin console for managing providers, sites, contacts, setup
-codes, and devices.
+codes, and devices (`index.html`), plus an Analytics page (`analytics.html`)
+that runs canned queries over the reporting lake (ADR 0013).
+
+## Analytics page
+
+`analytics.html` lists the query catalog served by
+`GET /admin/v1/analytics/queries` as buttons grouped by topic. Clicking one
+runs it (with its default parameters) through
+`POST /admin/v1/analytics/queries/{queryId}`; queries with parameters (days
+back, site) show a small form first. Results render as a table with a CSV
+download, and an "Advanced" section shows the SQL behind the last query and
+lets you edit and run it via `POST /admin/v1/analytics/query`.
+
+Everything on the page reads the Parquet lake (six-hourly exports), never the
+live app database; the "as of" line shows the newest export stamp. Add or
+change canned queries in `backend/src/analytics/catalog.js` — no frontend
+change needed.
+
+Locally, the analytics routes need `LAKE_BUCKET` and `LAKE_AWS_PROFILE` in
+`.env.local` (see `.env.example`); without them the page loads but queries
+fail with a lake error.
 
 ## Local Debug Mode
 
