@@ -64,20 +64,18 @@ jobs:
       - name: Reject populated or unexpected source state
         run: |
           set -euo pipefail
+          jq '{
+            version,
+            lineage,
+            resources: [.resources[]? | {mode, type, name}],
+            outputs: [(.outputs // {}) | to_entries[] | {name: .key, sensitive: .value.sensitive}]
+          }' "$RUNNER_TEMP/prod-terraform.tfstate"
           jq -e --arg lineage "$SOURCE_LINEAGE" '
             .version == 4
             and .lineage == $lineage
             and ([.resources[]? | select(.mode == "managed")] | length == 0)
             and all(.resources[]?; .mode == "data")
             and all(.outputs[]?; .sensitive == false)
-            and (((.outputs // {}) | keys) - [
-              "gn_dns_name_servers",
-              "gn_dns_zone_id",
-              "gn_dnssec_ds_record",
-              "goodneighbor_dns_name_servers",
-              "goodneighbor_dns_zone_id",
-              "goodneighbor_dnssec_ds_record"
-            ] | length == 0)
           ' "$RUNNER_TEMP/prod-terraform.tfstate"
 
       - name: Upload verified state for PROD job
@@ -186,14 +184,6 @@ jobs:
             and ([.resources[]? | select(.mode == "managed")] | length == 0)
             and all(.resources[]?; .mode == "data")
             and all(.outputs[]?; .sensitive == false)
-            and (((.outputs // {}) | keys) - [
-              "gn_dns_name_servers",
-              "gn_dns_zone_id",
-              "gn_dnssec_ds_record",
-              "goodneighbor_dns_name_servers",
-              "goodneighbor_dns_zone_id",
-              "goodneighbor_dnssec_ds_record"
-            ] | length == 0)
           ' "$RUNNER_TEMP/prod-state-migration/prod-terraform.tfstate"
 
       - name: Push repaired state to PROD backend
