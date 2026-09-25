@@ -5,7 +5,7 @@
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
+ * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
@@ -13,9 +13,12 @@ export const codeEntryView = ({
   error = "",
   checking = false,
   mode = "code",
+  targetSiteName = "",
+  canCancel = false,
+  cancelDisabled = false,
   request = {},
 } = {}) => html`
-  <main class="login" aria-labelledby="login-title">
+  <div class="login" aria-labelledby="login-title">
     <section class="login__panel" aria-busy="${checking ? "true" : "false"}">
       <div class="login__mark" aria-hidden="true"></div>
 
@@ -24,15 +27,27 @@ export const codeEntryView = ({
         <p>
           ${mode === "request"
             ? "Request a new site code"
-            : "Enter a site code"}
+            : targetSiteName
+              ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
+              : "Enter a site code"}
         </p>
       </div>
 
       ${mode === "request"
         ? requestCodeView(request)
         : enterCodeView({ value, error, checking })}
+      ${canCancel
+        ? html`<button
+            id="cancel-site-switch"
+            class="btn-link"
+            type="button"
+            ${cancelDisabled ? "disabled" : ""}
+          >
+            Back to current site
+          </button>`
+        : ""}
     </section>
-  </main>
+  </div>
 `;
 
 /**

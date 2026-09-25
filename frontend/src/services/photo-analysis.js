@@ -10,6 +10,7 @@
 */
 import {
   createCheck,
+  deleteArtifact,
   evaluateAssessment,
   getAssessmentGuidance,
   getCheck,
@@ -24,13 +25,27 @@ import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   getCurrentCheck,
-  getPlaceOrder,
+  removeItem,
   updateItem,
   updateItemAnalysis,
 } from "../state/check-session.js";
 
 const POLL_TIMEOUT_MS = 180000;
 const POLL_INTERVAL_MS = 2000;
+
+// What every artifact sends the analyzer as `position_descriptor` (ADR 0014):
+// the check has no per-photo position, and nothing downstream decides on the
+// value, so it is a fixed literal that matches the worker's.
+const POSITION_DESCRIPTOR = "perimeter";
+
+/**
+ * One evidence item of a session check, or null.
+ * @param {any} check
+ * @param {string} itemId
+ */
+function sessionItem(check, itemId) {
+  return check?.items?.find((candidate) => candidate.id === itemId) || null;
+}
 
 /**
  * One human-readable progress stage the card shows as it happens:
@@ -110,17 +125,9 @@ async function withLeg(leg, work) {
   }
 }
 
-function placesPayload(check) {
-  return (check.placeOrder || getPlaceOrder()).map((placeId) => ({
-    placeId,
-    placeName: check.places[placeId].name,
-    skipped: !!check.places[placeId].skipped,
-  }));
-}
-
 async function ensureRemoteCheck(check) {
   if (check.remoteStarted) return;
-  await createCheck(check.id, { places: placesPayload(check) });
+  await createCheck(check.id);
   check.remoteStarted = true;
 }
 
@@ -183,7 +190,7 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
       ? {
           assessment: {
             metadata: {
-              position_descriptor: analysis.placeName || "perimeter",
+              position_descriptor: POSITION_DESCRIPTOR,
               reported_at: analysis.capturedAt || analyzedAt,
               latitude: analysis.latitude,
               longitude: analysis.longitude,
@@ -299,16 +306,14 @@ function assessmentFromRefreshedAnalysis({
   };
 }
 
-async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
-  updateItemAnalysis(placeId, itemId, {
+async function evaluateArtifact(checkId, itemId, artifactId) {
+  updateItemAnalysis(itemId, {
     status: "analyzing",
     artifactId,
     // Merge onto the existing stages — a full object here would discard the
     // earlier `uploaded` stamp (updateItemAnalysis merges shallowly).
     stages: {
-      ...(getCurrentCheck()?.places?.[placeId]?.items?.find(
-        (candidate) => candidate.id === itemId,
-      )?.analysis?.stages || {}),
+      ...(sessionItem(getCurrentCheck(), itemId)?.analysis?.stages || {}),
       sent: new Date().toISOString(),
     },
   });
@@ -316,7 +321,7 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
     waitForArtifactAnalysis(checkId, artifactId),
   );
   if (analysis.status && analysis.status !== "analyzed") {
-    updateItemAnalysis(placeId, itemId, {
+    updateItemAnalysis(itemId, {
       status: "failed",
       artifactId,
       error: analysis.error?.message || "Analysis failed.",
@@ -333,11 +338,12 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
   const { assessment, guidance } = await withLeg("evaluate", () =>
     guidanceFromAnalysis(checkId, artifactId, analysis),
   );
-  updateItemAnalysis(placeId, itemId, {
+  updateItemAnalysis(itemId, {
     status: "analyzed",
     artifactId,
     checkId,
     sourceAnalysis: analysis,
+    georeferencedAddress: analysis.georeferencedAddress || "",
     assessment: guidance.assessment,
     conditions: guidance.conditions || assessment.conditions,
     tasks: guidance.tasks || [],
@@ -349,14 +355,12 @@ async function evaluateArtifact(checkId, placeId, itemId, artifactId) {
  * an already-active run is not restarted — so a manual "Retry" tap and the
  * auto-resume share one entry point. Called by capture, describe-instead, and
  * the perimeter check's resume path.
- * @param {string} placeId
  * @param {string} itemId
  */
-export function analyzeEvidenceItem(placeId, itemId) {
-  const key = `${placeId}:${itemId}`;
-  if (active.has(key)) return;
-  active.add(key);
-  void run(placeId, itemId).finally(() => active.delete(key));
+export function analyzeEvidenceItem(itemId) {
+  if (active.has(itemId)) return;
+  active.add(itemId);
+  void run(itemId).finally(() => active.delete(itemId));
 }
 
 /**
@@ -373,14 +377,11 @@ export function analyzeEvidenceItem(placeId, itemId) {
  *   see it (run() reads only `analysis.artifactId`).
  *
  * All paths reuse `analyzeEvidenceItem`'s idempotent-run guard.
- * @param {string} placeId
  * @param {string} itemId
  */
-export function retryEvidenceItem(placeId, itemId) {
+export function retryEvidenceItem(itemId) {
   const check = getCurrentCheck();
-  const item = check?.places?.[placeId]?.items?.find(
-    (candidate) => candidate.id === itemId,
-  );
+  const item = sessionItem(check, itemId);
   if (!item) return;
 
   const analysisArtifactId = item.analysis?.artifactId;
@@ -396,12 +397,12 @@ export function retryEvidenceItem(placeId, itemId) {
   if (analyzeLegFailure) {
     // Seed the artifact coordinates so run() and the poll both see them.
     if (uploadArtifactId && !analysisArtifactId) {
-      updateItemAnalysis(placeId, itemId, {
+      updateItemAnalysis(itemId, {
         artifactId: uploadArtifactId,
         ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
       });
     }
-    updateItemAnalysis(placeId, itemId, {
+    updateItemAnalysis(itemId, {
       status: "analyzing",
       error: undefined,
       failure: undefined,
@@ -412,8 +413,6 @@ export function retryEvidenceItem(placeId, itemId) {
     void withLeg("start", () =>
       registerArtifact(check.id, {
         artifactId: analysisArtifactId || uploadArtifactId,
-        placeId,
-        placeName: item.placeName || check.places?.[placeId]?.name || "",
         s3Key: item.analysis?.s3Key || item.upload?.s3Key,
         capturedAt: item.uploadedAt,
         ...(hasCoordinates(item.location) ? item.location : {}),
@@ -422,17 +421,17 @@ export function retryEvidenceItem(placeId, itemId) {
       }),
     )
       .then(() => {
-        analyzeEvidenceItem(placeId, itemId);
+        analyzeEvidenceItem(itemId);
       })
       .catch((err) => {
         // 409 = already registered — the backend enqueued on that path too,
         // so a poll is still the right next step.
         if (/** @type {any} */ (err)?.status === 409) {
-          analyzeEvidenceItem(placeId, itemId);
+          analyzeEvidenceItem(itemId);
           return;
         }
         console.error("retryEvidenceItem re-register failed", err);
-        updateItemAnalysis(placeId, itemId, {
+        updateItemAnalysis(itemId, {
           status: "failed",
           error: "Could not restart the analysis. Please try again.",
           failure: { leg: "start", uploaded: true, enqueued: false },
@@ -442,26 +441,48 @@ export function retryEvidenceItem(placeId, itemId) {
   }
 
   // Upload-leg failure (or never got far enough): replay the pipeline.
-  updateItem(placeId, itemId, { upload: { status: "failed" } });
-  updateItemAnalysis(placeId, itemId, {
+  updateItem(itemId, { upload: { status: "failed" } });
+  updateItemAnalysis(itemId, {
     status: "queued",
     error: undefined,
     failure: undefined,
   });
-  analyzeEvidenceItem(placeId, itemId);
+  analyzeEvidenceItem(itemId);
 }
 
-export async function refreshEvidenceAnalysis(
-  placeId,
-  itemId,
-  response,
-  opts = {},
-) {
+/**
+ * Delete an evidence item from the session AND from the backend check.
+ *
+ * Local `removeItem` alone is not enough once capture is incremental: a
+ * registered artifact has an ART# row (and usually an ANALYSIS#), and
+ * completeCheck folds every registered artifact into the final scorecard —
+ * leaving the row would file stale text (e.g. the pre-edit description) into
+ * the run's permanent record.
+ *
+ * The backend delete goes first (it is the side that must not be skipped),
+ * then the local item is removed. 404 = already deleted, which is success for
+ * an idempotent UI. Everything else rethrows so the caller can keep the item
+ * and surface the failure — silently dropping it locally would guarantee the
+ * exact stale-artifact corruption this helper exists to prevent.
+ * @param {string} itemId
+ * @returns {Promise<void>}
+ */
+export async function removeEvidenceItem(itemId) {
+  const check = getCurrentCheck();
+  const item = sessionItem(check, itemId);
+  if (!check || !item) return;
+  const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
+  if (artifactId) {
+    await deleteArtifact(check.id, artifactId);
+  }
+  removeItem(itemId);
+}
+
+export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
   const check = getCurrentCheck();
   if (!check) return;
-  const place = check.places?.[placeId];
-  const item = place?.items?.find((candidate) => candidate.id === itemId);
-  if (!place || !item || !response?.assessment) return;
+  const item = sessionItem(check, itemId);
+  if (!item || !response?.assessment) return;
 
   const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
   if (!artifactId) return;
@@ -511,9 +532,7 @@ export async function refreshEvidenceAnalysis(
       guidance.assessment.assessmentId !== refreshed.assessmentId,
   );
   const publishedRaw = reconciled ? guidance.assessment.rawAssessment : null;
-  const currentItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
-    (candidate) => candidate.id === itemId,
-  );
+  const currentItem = sessionItem(getCurrentCheck(), itemId);
   const currentAssessmentId = currentItem?.analysis?.assessment?.assessmentId;
   if (
     currentAssessmentId !== previousAssessmentId &&
@@ -522,7 +541,7 @@ export async function refreshEvidenceAnalysis(
     return;
 
   if (getCurrentCheck()?.id !== check.id) return;
-  updateItemAnalysis(placeId, itemId, {
+  updateItemAnalysis(itemId, {
     status: "analyzed",
     artifactId,
     checkId: check.id,
@@ -550,18 +569,15 @@ export async function refreshEvidenceAnalysis(
   });
 }
 
-export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
+export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const check = getCurrentCheck();
-  const place = check?.places?.[placeId];
-  const item = place?.items?.find((candidate) => candidate.id === itemId);
-  if (!check || !place || !item) return null;
+  const item = sessionItem(check, itemId);
+  if (!check || !item) return null;
 
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
   const location = await getCaptureDeviceLocation();
   const artifactId = await registerTextArtifact(check.id, {
-    placeId,
-    placeName: place.name,
     text,
     capturedAt,
     ...(location ?? {}),
@@ -582,7 +598,7 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     (guidance.tasks || []).length || (guidance.conditions || []).length,
   );
   if (!hasProblems) {
-    updateItemAnalysis(placeId, itemId, {
+    updateItemAnalysis(itemId, {
       noIssuesDescription: text,
       noIssuesTextArtifactId: artifactId,
       noIssuesTextAnalysis: analysis,
@@ -590,18 +606,18 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
     return { status: "no_problems", artifactId };
   }
 
-  updateItemAnalysis(placeId, itemId, { hideNoIssuesCard: true });
-  const textItem = addItem(placeId, {
+  updateItemAnalysis(itemId, { hideNoIssuesCard: true });
+  const textItem = addItem({
     kind: "text",
     text,
     uploadedAt: capturedAt,
     ...(location ? { location } : {}),
   });
   if (!textItem) return { status: "problems", artifactId };
-  updateItem(placeId, textItem.id, {
+  updateItem(textItem.id, {
     upload: { status: "uploaded", artifactId },
   });
-  updateItemAnalysis(placeId, textItem.id, {
+  updateItemAnalysis(textItem.id, {
     status: "analyzed",
     artifactId,
     checkId: check.id,
@@ -616,7 +632,6 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
 /**
  * Submit an answer for an analyzer follow-up question and merge the refreshed
  * condition/task state back into the local capture item.
- * @param {string} placeId
  * @param {string} itemId
  * @param {string} conditionId
  * @param {string} answerKey
@@ -624,24 +639,15 @@ export async function analyzeNoIssueDescriptionEdit(placeId, itemId, text) {
  * @returns {Promise<AnswerAnalysisQuestionResult>}
  */
 export async function answerAnalysisQuestion(
-  placeId,
   itemId,
   conditionId,
   answerKey,
   answerValue,
 ) {
   const check = getCurrentCheck();
-  const place = check?.places?.[placeId];
-  const item = place?.items?.find((candidate) => candidate.id === itemId);
+  const item = sessionItem(check, itemId);
   const assessmentId = item?.analysis?.assessment?.assessmentId;
-  if (
-    !check ||
-    !place ||
-    !item ||
-    !assessmentId ||
-    !conditionId ||
-    !answerKey
-  ) {
+  if (!check || !item || !assessmentId || !conditionId || !answerKey) {
     throw new ApiError("This item has no assessment to answer against.", {
       body: { code: "missing_assessment" },
     });
@@ -656,18 +662,15 @@ export async function answerAnalysisQuestion(
     if (err?.body?.code === "AssessmentRevisionConflict") {
       const latest = await getAssessmentGuidance(assessmentId);
       const current = getCurrentCheck();
-      const currentId = current?.places?.[placeId]?.items?.find(
-        (candidate) => candidate.id === itemId,
-      )?.analysis?.assessment?.assessmentId;
+      const currentId = sessionItem(current, itemId)?.analysis?.assessment
+        ?.assessmentId;
       if (current?.id === check.id && currentId === assessmentId)
-        updateItemAnalysis(placeId, itemId, latest);
+        updateItemAnalysis(itemId, latest);
     }
     throw err;
   }
   if (getCurrentCheck()?.id !== check.id) return result;
-  const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
-    (candidate) => candidate.id === itemId,
-  );
+  const latestItem = sessionItem(getCurrentCheck(), itemId);
   if (
     !latestItem ||
     latestItem.analysis?.assessment?.assessmentId !== assessmentId
@@ -696,7 +699,7 @@ export async function answerAnalysisQuestion(
   );
   if (task) nextTasks.push(task);
 
-  updateItemAnalysis(placeId, itemId, {
+  updateItemAnalysis(itemId, {
     conditions: nextConditions,
     tasks: nextTasks,
     assessment: result?.assessmentItem || latestItem.analysis?.assessment,
@@ -704,63 +707,58 @@ export async function answerAnalysisQuestion(
   return result;
 }
 
-async function run(placeId, itemId) {
+async function run(itemId) {
   const check = getCurrentCheck();
-  const place = check?.places?.[placeId];
-  const item = place?.items?.find((candidate) => candidate.id === itemId);
-  if (!check || !place || !item) return;
+  const item = sessionItem(check, itemId);
+  if (!check || !item) return;
 
   const startedAt = Date.now();
   try {
     const locationPromise = hasCoordinates(item.location)
       ? Promise.resolve(item.location)
       : getCaptureDeviceLocation();
-    updateItemAnalysis(placeId, itemId, { status: "queued" });
+    updateItemAnalysis(itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
     const location = await locationPromise;
     if (location && !hasCoordinates(item.location)) {
-      updateItem(placeId, itemId, { location });
+      updateItem(itemId, { location });
     }
     // An interrupted run may have completed the upload before analysis started:
     // the artifact coordinates then live only under `upload`. Adopt them here
     // so run() and the poll both see them instead of re-uploading.
     let artifactId = item.analysis?.artifactId || item.upload?.artifactId;
     if (artifactId && !item.analysis?.artifactId) {
-      updateItemAnalysis(placeId, itemId, {
+      updateItemAnalysis(itemId, {
         artifactId,
         ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
       });
     }
     if (!artifactId) {
       if (item.kind === "text") {
-        updateItem(placeId, itemId, { upload: { status: "uploading" } });
+        updateItem(itemId, { upload: { status: "uploading" } });
         artifactId = await withLeg("upload", () =>
           registerTextArtifact(check.id, {
-            placeId,
-            placeName: place.name,
             text: item.text,
             capturedAt: item.uploadedAt,
             ...(location ?? {}),
           }),
         );
-        updateItem(placeId, itemId, {
+        updateItem(itemId, {
           upload: { status: "uploaded", artifactId },
         });
       } else {
-        updateItem(placeId, itemId, { upload: { status: "uploading" } });
+        updateItem(itemId, { upload: { status: "uploading" } });
         const { artifactId: uploadedId, s3Key } = await withLeg("upload", () =>
           uploadArtifact(check.id, {
-            placeId,
-            placeName: place.name,
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
             ...(location ?? {}),
             ...(item.note ? { text: item.note } : {}),
-            tag: `${place.name}:${item.id}`,
+            tag: item.id,
             onLeg: (leg) => {
               if (leg === LEG.PUT) {
                 // Bytes reached S3 — the card's "Photo uploaded" check.
-                updateItemAnalysis(placeId, itemId, {
+                updateItemAnalysis(itemId, {
                   stages: { uploaded: new Date().toISOString() },
                 });
               }
@@ -773,30 +771,28 @@ async function run(placeId, itemId) {
         artifactId = uploadedId;
         // Persist the s3Key with the artifact: retry re-registers the SAME
         // artifact from these coordinates (no new upload, no new object).
-        updateItem(placeId, itemId, {
+        updateItem(itemId, {
           upload: { status: "uploaded", artifactId, s3Key },
         });
-        updateItemAnalysis(placeId, itemId, { s3Key });
+        updateItemAnalysis(itemId, { s3Key });
       }
     }
-    await evaluateArtifact(check.id, placeId, itemId, artifactId);
+    await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {
     console.error("analyzeEvidenceItem failed", err);
     const failure = describeFailure(err);
-    const latestItem = getCurrentCheck()?.places?.[placeId]?.items?.find(
-      (candidate) => candidate.id === itemId,
-    );
+    const latestItem = sessionItem(getCurrentCheck(), itemId);
     const hasUploadedArtifact = Boolean(
       latestItem?.upload?.status === "uploaded" &&
         (latestItem?.analysis?.artifactId || latestItem?.upload?.artifactId),
     );
-    updateItem(placeId, itemId, {
+    updateItem(itemId, {
       upload: {
         ...(latestItem?.upload || item.upload || {}),
         status: hasUploadedArtifact ? "uploaded" : "failed",
       },
     });
-    updateItemAnalysis(placeId, itemId, {
+    updateItemAnalysis(itemId, {
       status: "failed",
       error:
         err?.body?.code === "analyses_pending"

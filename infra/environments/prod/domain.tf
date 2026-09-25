@@ -9,22 +9,12 @@ data "aws_route53_zone" "frontend_root" {
   private_zone = false
 }
 
-data "terraform_remote_state" "dev" {
-  backend = "s3"
-
-  config = {
-    bucket = "good-neighbor-app-terraform-state"
-    key    = "dev/terraform.tfstate"
-    region = "us-west-2"
-  }
-}
-
 resource "aws_route53_record" "frontend_subdomain_delegation" {
   zone_id = data.aws_route53_zone.frontend_root.zone_id
   name    = "dev.${local.legacy_frontend_domain_name}"
   type    = "NS"
   ttl     = 300
-  records = data.terraform_remote_state.dev.outputs.frontend_dns_name_servers
+  records = var.dev_frontend_dns_name_servers
 }
 
 resource "aws_acm_certificate" "frontend" {

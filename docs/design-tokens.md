@@ -1,15 +1,15 @@
 # Design tokens — Figma ↔ code reference
 
-**Status:** living reference · **Date:** 2026-09-14
+**Status:** living reference · **Date:** 2026-09-23
 
 The authoritative values live in the repo, not in Figma:
 
 - [frontend/src/styles/tokens.css](../frontend/src/styles/tokens.css) — the app's
   semantic tokens (light in `:root`, dark under `html.wa-dark`). **These are the
   source of truth for anything we style ourselves.**
-- [frontend/src/styles/wa-awesome.css](../frontend/src/styles/wa-awesome.css) — the
-  vendored Web Awesome "Awesome" theme + Bright palette that wa-* components
-  re-theme off.
+- `@awesome.me/webawesome/dist/styles/themes/default.css` — the package-owned
+  Default theme + Default palette used by `wa-*` components. The import lives in
+  [frontend/src/main.js](../frontend/src/main.js).
 - [frontend/design-system.html](../frontend/design-system.html) — the self-demonstrating
   visual reference (dev-only, `npm run dev:frontend`): every token rendered as a live
   swatch in light + dark, every button state, and the WA divergences as examples.
@@ -21,31 +21,22 @@ This doc records the values so Figma files can match what actually renders.
 Enabled on `<html>` in [frontend/index.html](../frontend/index.html):
 
 ```
-class="wa-light wa-theme-awesome wa-palette-bright wa-brand-blue"
+class="wa-light wa-theme-default wa-palette-default wa-brand-blue"
 ```
 
 | Layer | Choice | What it affects |
 |---|---|---|
-| Theme | `wa-theme-awesome` (vendored fork) | WA components' fonts, borders, shadows, spacing |
-| Palette | `wa-palette-bright` | the 10-hue ramp behind every `--wa-color-*` |
-| Variant | `wa-brand-blue` | maps WA's `brand` role to Bright's blue ramp |
+| Theme | `wa-theme-default` | WA components' fonts, borders, shadows, spacing, and semantic color mappings |
+| Palette | `wa-palette-default` | the 10-hue ramp behind every `--wa-color-*` |
+| Variant | `wa-brand-blue` | maps WA's `brand` role to the Default palette's blue ramp |
 | Scheme | `wa-light` / `wa-dark` (runtime toggle) | light/dark token swap for both layers |
 | App tokens | `tokens.css` | everything we style ourselves |
-
-| Layer | Choice |
-|---|---|
-| Theme | `wa-theme-awesome` |
-| Palette | `wa-palette-bright` |
-| Variant | `wa-brand-blue` |
-| Scheme | `wa-light` / `wa-dark` (runtime toggle) |
-| App tokens | `tokens.css` |
-
-
 
 **Fonts:** no webfont ships (CDN-free requirement). Everything renders the system
 sans stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, …`). Figma can
 mock with Inter/SF, but know the shipped app uses system fonts. WA base size is
-16px scaling on a 1.125 ratio; button labels are `font-weight: 700`.
+16px scaling on a 1.125 ratio. App-owned `.btn-*` labels remain `font-weight: 700`;
+WA's Default theme uses its own action and bold weight tokens.
 
 ## Semantic tokens (the app's palette — match these first)
 
@@ -99,20 +90,22 @@ Focus ring (all interactive elements): 2px solid `--brand-blue`, offset 2-3px.
 
 Our app accent (`#155fce`) is deliberately **not** the same as the WA brand ramp —
 don't average them in Figma. WA form controls (wa-input, wa-select, …) tint from
-Bright's blue ramp:
+the Default palette's blue ramp:
 
-| WA token | Value (Bright palette) |
+| WA token | Value (Default palette, light mode) |
 |---|---|
-| `--wa-color-brand-40` (WA's link/quiet accent) | `#235a96` |
-| `--wa-color-brand-60` (focus ring) | `#4a99e4` |
-| `--wa-color-neutral-95/90` (WA surfaces) | white / `#f0f0f0`-ish greys from Bright |
+| `--wa-color-brand-40` (WA's link/quiet accent) | `#0053c0` |
+| `--wa-color-brand-60` (focus ring) | `#3e96ff` |
+| `--wa-color-neutral-fill-loud` | `#2f323f` (`neutral-20`) |
+| `--wa-color-neutral-on-loud` | `#ffffff` |
+| `--wa-color-neutral-95/90` (WA surfaces) | `#f1f2f3` / `#e4e5e9` |
 
-WA structural knobs from the Awesome theme (vendored): system font stack,
+WA structural knobs from the Default theme: system font stack,
 `--wa-font-size-scale: 1` (16px base, 1.125 ratio steps),
-`--wa-border-radius-scale: 1.5` (s≈4.5px, m≈9px, l≈18px, pill 9999px), no hover
-transform on buttons, hard offset shadows instead of soft ones. In practice our
-native `.btn-*` pills use **our** tokens, so the WA knobs only matter when
-mocking wa-input/wa-select/wa-callout etc.
+`--wa-border-radius-scale: 1` (s=3px, m=6px, l=12px, pill 9999px), no hover
+transform on buttons, and soft shadows. In practice our native `.btn-*` pills use
+**our** tokens, so the WA knobs only matter when mocking wa-input/wa-select/
+wa-callout etc.
 
 ## Rules the palette encodes (don't violate in Figma)
 
@@ -129,12 +122,15 @@ mocking wa-input/wa-select/wa-callout etc.
    component set, two palettes; keep Figma variables structured the same way
    (light/dark collections bound to the same component styles).
 
-## Reconciliation notes (2026-09-14)
+## Reconciliation notes (2026-09-23)
 
 - The app's own UI follows **tokens.css**; WA components follow the
-  Awesome/Bright stack. The two agree on structure (greyscale + one blue) but
-  not on the exact blue (`#155fce` vs `#235a96`). Figma: bind app-UI components
-  to the semantic tokens; bind wa-* control mockups to the WA values.
+  Default/Default stack used by the official Web Awesome Figma kit. The two agree
+  on Web Awesome semantic mappings but the app accent remains intentionally
+  distinct (`#155fce` vs `#0053c0`). Figma: bind app-UI components to the app
+  semantic tokens; use the kit's standard variables for `wa-*` control mockups.
+- `.btn-ink` remains an app-owned native button, not Web Awesome
+  `Neutral / filled / loud`. It intentionally uses `--ink` / `--on-ink`.
 - `--wa-form-control-*` values (WA form-control height/padding) are derived from
-  font metrics (`round()` expressions) — see `wa-awesome.css` for the live
-  expressions rather than hard-coding px in Figma.
+  font metrics (`round()` expressions) — see the installed Default theme for the
+  live expressions rather than hard-coding px in Figma.

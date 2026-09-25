@@ -34,16 +34,20 @@ production anyway.
   (their only consumer), so the button chunk + select graph drop out of the
   production bundle automatically (~24 KB gzip of the WA graph, measured).
 - We own the loading pattern: `button[data-loading]` + `wa-spinner`.
-- The unused default WA theme (`webawesome.css` → `themes/default.css`) is
-  replaced by direct imports of the layers/utilities/theme files we actually use.
+- Web Awesome styles are imported piecewise rather than through the all-in-one
+  `webawesome.css`, so only the layers, utilities, Default theme, and components
+  the app actually uses enter the bundle. The Default theme and palette were
+  standardized on 2026-09-23 to match the official Web Awesome Figma kit; this
+  does not change the native-button decision.
 
 ## Consequences
 
 - One button vocabulary: `.btn-ink` / `.btn-outline` / `.btn-blue` (+ `--sm`
   variants), documented in docs/frontend-design-system.md.
-- Bundle: ~−3 KB gzip CSS (default theme) plus ~−24 KB gzip JS (select+button
-  graph no longer ships). Buttons themselves cost ~nothing; the win came from
-  untangling select's dependency on the button chunk.
+- Bundle: ~−24 KB gzip JS (select+button graph no longer ships). Buttons
+  themselves cost ~nothing; the win came from untangling select's dependency on
+  the button chunk. The original ~3 KB CSS reduction no longer applies after the
+  Default theme was restored to align code with the Figma kit.
 - If a genuinely stateful button need appears (e.g. width-pinned async submit
   UX that our loading pattern can't cover), revisit.
 - wa-select/wa-option remain approved form controls for future screens — this

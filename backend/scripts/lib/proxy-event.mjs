@@ -71,7 +71,7 @@ export function buildProxyEvent({
     ...(pathParameters ? { pathParameters } : {}),
     ...(queryStringParameters ? { queryStringParameters } : {}),
     requestContext: {
-      accountId: "000000000000",
+      accountId: "local",
       apiId: "local",
       domainName: "localhost",
       requestId,

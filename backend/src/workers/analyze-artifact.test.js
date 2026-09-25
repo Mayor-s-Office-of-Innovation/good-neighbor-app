@@ -5,16 +5,22 @@ import { singleLowConcernResponse } from "../analysis/fixtures/single-low-concer
 // Spies for every side-effecting seam. The analyzer client is mocked to hand
 // back a controllable `analyze` spy; AnalyzerError is kept from the real module
 // (spread) so instanceof checks in the worker still work.
-const { ddbSend, getObjectBytes, analyze, createAnalyzerClient } = vi.hoisted(
-  () => ({
-    ddbSend: vi.fn(),
-    getObjectBytes: vi.fn(),
-    analyze: vi.fn(),
-    createAnalyzerClient: vi.fn(),
-  }),
-);
+const {
+  ddbSend,
+  getObjectBytes,
+  analyze,
+  createAnalyzerClient,
+  reverseGeocodePhoto,
+} = vi.hoisted(() => ({
+  ddbSend: vi.fn(),
+  getObjectBytes: vi.fn(),
+  analyze: vi.fn(),
+  createAnalyzerClient: vi.fn(),
+  reverseGeocodePhoto: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes }));
+vi.mock("../integrations/reverse-geocoder.js", () => ({ reverseGeocodePhoto }));
 vi.mock("../media/downscale.js", () => ({
   downscaleImage: vi.fn(
     async (/** @type {Buffer} */ bytes, /** @type {string} */ contentType) => ({
@@ -36,9 +42,7 @@ const baseMsg = {
   siteId: "site-1",
   checkId: "chk_01",
   artifactId: "art_1",
-  s3Key: "checks/site-1/chk_01/place-north/art_1",
-  placeId: "place-north",
-  placeName: "North",
+  s3Key: "checks/site-1/chk_01/art_1",
   capturedAt: "2026-08-14T12:00:00.000Z",
   text: "north gate clear",
 };
@@ -63,6 +67,8 @@ beforeEach(() => {
   getObjectBytes.mockReset();
   analyze.mockReset();
   createAnalyzerClient.mockReset();
+  reverseGeocodePhoto.mockReset();
+  delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.SQS_QUEUE_URL = "queue";
@@ -72,6 +78,50 @@ beforeEach(() => {
 });
 
 describe("analyze-artifact worker", () => {
+  it("stores a photo address returned for its coordinates", async () => {
+    process.env.REVERSE_GEOCODING_ENABLED = "true";
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    reverseGeocodePhoto.mockResolvedValue("640 Jones St, San Francisco, CA");
+    ddbSend.mockResolvedValue({});
+
+    await invoke({ ...baseMsg, latitude: 37.7881, longitude: -122.4132 });
+
+    expect(reverseGeocodePhoto).toHaveBeenCalledWith(37.7881, -122.4132);
+    const put = ddbSend.mock.calls[0][0];
+    expect(put.input.Item.georeferencedAddress).toBe(
+      "640 Jones St, San Francisco, CA",
+    );
+  });
+
+  it("keeps the analysis when address lookup fails", async () => {
+    process.env.REVERSE_GEOCODING_ENABLED = "true";
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    reverseGeocodePhoto.mockRejectedValue(new Error("Unavailable"));
+    ddbSend.mockResolvedValue({});
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await invoke({ ...baseMsg, latitude: 37.7881, longitude: -122.4132 });
+      expect(
+        ddbSend.mock.calls[0][0].input.Item.georeferencedAddress,
+      ).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(
+        "Photo reverse geocoding unavailable",
+        { error: "Error" },
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("analyzes a photo, stores the ANALYSIS#, and bumps header counters", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img-bytes"),
@@ -85,15 +135,17 @@ describe("analyze-artifact worker", () => {
     // Media is fetched by S3 key — never carried on the message.
     expect(getObjectBytes).toHaveBeenCalledWith({
       bucket: "bucket",
-      key: "checks/site-1/chk_01/place-north/art_1",
+      key: "checks/site-1/chk_01/art_1",
     });
 
     // The analyzer gets per-photo metadata + image (and text) media, keyed for
     // tracing as checkId#artifactId.
     expect(analyze).toHaveBeenCalledTimes(1);
     const call = analyze.mock.calls[0][0];
+    // No per-photo position exists (ADR 0014): the descriptor is a fixed
+    // literal the analyzer requires, never a place or site name.
     expect(call.metadata).toEqual({
-      position_descriptor: "North",
+      position_descriptor: "perimeter",
       reported_at: "2026-08-14T12:00:00.000Z",
       latitude: 0,
       longitude: 0,
@@ -122,8 +174,6 @@ describe("analyze-artifact worker", () => {
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "analyzed",
-      placeId: "place-north",
-      placeName: "North",
       grade: "Fair",
       issueCount: 1,
       maxSeverity: 2,
@@ -261,10 +311,10 @@ describe("analyze-artifact worker", () => {
     expect(put.input.Item).toMatchObject({
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "failed",
-      placeId: "place-north",
-      placeName: "North",
       error: { code: "invalid_request", status: 400, message: "bad request" },
     });
+    expect(put.input.Item).not.toHaveProperty("placeId");
+    expect(put.input.Item).not.toHaveProperty("placeName");
   });
 
   it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
@@ -308,8 +358,6 @@ describe("analyze-artifact worker", () => {
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.Item).toMatchObject({
       status: "failed",
-      placeId: "place-north",
-      placeName: "North",
       error: { code: "unsupported_input_type" },
     });
   });
@@ -355,8 +403,6 @@ describe("analyze-artifact worker", () => {
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_text_1",
-      placeId: "place-west",
-      placeName: "West entrance",
       capturedAt: "2026-08-21T15:00:00.000Z",
       text: "Trash is next to the west entrance.",
     });

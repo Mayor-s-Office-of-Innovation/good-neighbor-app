@@ -147,6 +147,8 @@ describe("provider and site management", () => {
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
       },
     });
+    // Sites no longer carry a places list (docs/plan-remove-places.md).
+    expect(tx.input.TransactItems?.[0]?.Put?.Item).not.toHaveProperty("places");
     expect(tx.input.TransactItems?.[1]).toMatchObject({
       Put: {
         Item: {
@@ -544,6 +546,41 @@ describe("provider and site management", () => {
       siteId: "site-1",
       status: "inactive",
     });
+  });
+
+  it("also deactivates provider membership when deactivating a provider site", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          providerId: "provider-one",
+          status: "active",
+        },
+      })
+      .mockResolvedValue({ Items: [] });
+
+    const res = await call(
+      deactivateSite,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[1][0]
+    );
+    expect(transaction.input.TransactItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
+            ExpressionAttributeValues: expect.objectContaining({
+              ":inactive": "inactive",
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 
   it("updates provider membership and public search records when renaming sites", async () => {

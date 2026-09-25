@@ -86,6 +86,7 @@ resource "aws_lambda_function" "api" {
       SF311_CREATESR_URL                = var.sf311_createsr_url
       SF311_UPDATESR_URL                = var.sf311_updatesr_url
       SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
+      SF311_LATEST_UPDATES_URL          = var.sf311_latest_updates_url
       SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
       SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
       SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
@@ -186,6 +187,7 @@ resource "aws_lambda_function" "worker" {
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
+      REVERSE_GEOCODING_ENABLED   = "true"
     }
   }
 

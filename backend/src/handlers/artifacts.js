@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
 import { presignGet, presignPut } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import { artifactKey, checkArtifactPrefix, sitePk } from "./keys.js";
+import {
+  artifactKey,
+  checkArtifactPrefix,
+  checkHeaderKey,
+  sitePk,
+} from "./keys.js";
 
 const sqs = new SQSClient({});
 
@@ -19,25 +24,33 @@ const ALLOWED_CONTENT_TYPES = new Set([
 
 const PRESIGN_EXPIRY_SECONDS = 300;
 const MAX_ARTIFACT_TEXT_LENGTH = 4000;
+// The Street Conditions analysis service rejects text media under 5 characters
+// as an invalid request (permanent, non-retryable) — reject it here instead so
+// the client sees a 400 rather than a dead artifact.
+const MIN_ARTIFACT_TEXT_LENGTH = 5;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
  * presigned PUT can only ever land inside this exact site + check, and
- * `registerArtifact` can reject any key that doesn't.
+ * `registerArtifact` can reject any key that doesn't. Objects written before
+ * ADR 0014 Phase 2 carry an extra `<placeId>` segment; nothing reconstructs a
+ * key from parts, so they stay readable through the stored `s3Key`.
  * @param {string} siteId
  * @param {string} checkId
- * @param {string} placeId
  * @param {string} artifactId
  * @returns {string}
  */
-const mediaKey = (siteId, checkId, placeId, artifactId) =>
-  `checks/${siteId}/${checkId}/${placeId}/${artifactId}`;
+const mediaKey = (siteId, checkId, artifactId) =>
+  `checks/${siteId}/${checkId}/${artifactId}`;
 
 /**
  * POST /v1/checks/{checkId}/artifacts:presign — mint an `artifactId` + S3 key
  * and return a presigned PUT so the device uploads media straight to S3 (bytes
  * never transit our API). No DB write happens here; the artifact becomes real
  * at `registerArtifact`. content-type is pinned into the signature.
+ *
+ * Body: `contentType` (required, one of ALLOWED_CONTENT_TYPES). Legacy
+ * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignUpload = async (event) => {
@@ -53,17 +66,8 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { placeId, placeName, contentType } =
-    /** @type {{ placeId?: unknown, placeName?: unknown, contentType?: unknown }} */ (
-      body ?? {}
-    );
+  const { contentType } = /** @type {{ contentType?: unknown }} */ (body ?? {});
 
-  if (typeof placeId !== "string" || placeId.length === 0) {
-    return jsonResponse(400, { error: "Missing placeId" });
-  }
-  if (typeof placeName !== "string" || placeName.trim().length === 0) {
-    return jsonResponse(400, { error: "Missing placeName" });
-  }
   if (
     typeof contentType !== "string" ||
     !ALLOWED_CONTENT_TYPES.has(contentType)
@@ -72,7 +76,7 @@ export const presignUpload = async (event) => {
   }
 
   const artifactId = randomUUID();
-  const key = mediaKey(siteId, checkId, placeId, artifactId);
+  const key = mediaKey(siteId, checkId, artifactId);
   const uploadUrl = await presignPut({
     bucket: uploadBucket,
     key,
@@ -82,8 +86,6 @@ export const presignUpload = async (event) => {
 
   return jsonResponse(200, {
     artifactId,
-    placeId,
-    placeName: placeName.trim(),
     s3Key: key,
     contentType,
     uploadUrl,
@@ -108,6 +110,10 @@ export const presignUpload = async (event) => {
  * client always awaits createCheck before uploading, and getCheck/completeCheck
  * key off the header (a would-be orphan is simply never read), so "parent exists"
  * is a client-guaranteed invariant rather than one re-proven on every photo.
+ *
+ * Body: `artifactId` (required); one of `s3Key` (from presign) or `text`;
+ * optional `contentType`, `capturedAt`, `latitude` + `longitude`. Legacy
+ * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
@@ -125,8 +131,6 @@ export const registerArtifact = async (event) => {
   }
   const {
     artifactId,
-    placeId,
-    placeName,
     s3Key,
     contentType,
     capturedAt,
@@ -134,26 +138,23 @@ export const registerArtifact = async (event) => {
     longitude,
     text,
   } =
-    /** @type {{ artifactId?: unknown, placeId?: unknown, placeName?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
       body ?? {}
     );
 
   if (typeof artifactId !== "string" || !artifactId) {
     return jsonResponse(400, { error: "Missing artifactId" });
   }
-  if (typeof placeId !== "string" || !placeId) {
-    return jsonResponse(400, { error: "Missing placeId" });
-  }
-  const normalizedPlaceName =
-    typeof placeName === "string" ? placeName.trim() : "";
-  if (!normalizedPlaceName) {
-    return jsonResponse(400, { error: "Missing placeName" });
-  }
   const hasS3Key = typeof s3Key === "string" && s3Key.length > 0;
   const normalizedText = typeof text === "string" ? text.trim() : "";
   const hasText = normalizedText.length > 0;
   if (!hasS3Key && !hasText) {
     return jsonResponse(400, { error: "Missing s3Key or text" });
+  }
+  if (hasText && normalizedText.length < MIN_ARTIFACT_TEXT_LENGTH) {
+    return jsonResponse(400, {
+      error: `text must be at least ${MIN_ARTIFACT_TEXT_LENGTH} characters`,
+    });
   }
   if (normalizedText.length > MAX_ARTIFACT_TEXT_LENGTH) {
     return jsonResponse(400, {
@@ -186,11 +187,9 @@ export const registerArtifact = async (event) => {
   // `reported_at`, so it must describe THIS artifact, not the batch.
   const capturedAtValue = typeof capturedAt === "string" ? capturedAt : now;
   const item = {
-    ...artifactKey(siteId, checkId, placeId, artifactId),
+    ...artifactKey(siteId, checkId, artifactId),
     checkId,
     artifactId,
-    placeId,
-    placeName: normalizedPlaceName,
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     ...(hasCoordinates ? { latitude, longitude } : {}),
@@ -239,8 +238,6 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        placeId,
-        placeName: normalizedPlaceName,
         capturedAt: capturedAtValue,
         ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),
@@ -257,11 +254,86 @@ export const registerArtifact = async (event) => {
 };
 
 /**
+ * DELETE /v1/checks/{checkId}/artifacts/{artifactId} — remove a registered
+ * artifact from its check. The client needs this when a user edits or deletes
+ * a saved description: the old text was already registered (and analyzed), so
+ * leaving the ART# row in place would let completeCheck fold the stale text
+ * into the final scorecard alongside the replacement.
+ *
+ * The route carries only checkId + artifactId. Rows written before ADR 0014
+ * Phase 2 embed a retired place id in the ART# sort key, so we query this
+ * check's ART# items and match on `artifactId` rather than rebuild the key
+ * (same resolution presignMedia uses). Scoped to the derived site, so one
+ * tenant can never delete another's artifact. The ANALYSIS# item is left in
+ * place: completeCheck synthesizes only analyses whose artifact still has an
+ * ART# row, so the orphaned analysis is naturally excluded from the fold, and
+ * the coverage gate never blocks on it.
+ *
+ * Idempotent: deleting an unknown artifact (already deleted, never registered)
+ * 404s. Completed checks are not editable — the scorecard is already folded.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const deleteArtifact = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+
+  const checkId = event.pathParameters?.checkId;
+  if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
+  const artifactId = event.pathParameters?.artifactId;
+  if (!artifactId) return jsonResponse(400, { error: "Missing artifactId" });
+
+  const headerResult = await ddb.send(
+    new QueryCommand({
+      TableName: dynamoTable,
+      KeyConditionExpression: "pk = :pk AND sk = :sk",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":sk": checkHeaderKey(siteId, checkId).sk,
+      },
+      ProjectionExpression: "status",
+    }),
+  );
+  const header = (headerResult.Items ?? [])[0];
+  if (!header) return jsonResponse(404, { error: "Check not found" });
+  if (header.status === "completed") {
+    return jsonResponse(409, { error: "Check already completed" });
+  }
+
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: dynamoTable,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":prefix": checkArtifactPrefix(checkId),
+      },
+    }),
+  );
+  const artifact = (result.Items ?? []).find(
+    (it) => it.artifactId === artifactId,
+  );
+  if (!artifact) return jsonResponse(404, { error: "Artifact not found" });
+
+  await ddb.send(
+    new DeleteCommand({
+      TableName: dynamoTable,
+      Key: {
+        pk: sitePk(siteId),
+        sk: artifact.sk,
+      },
+    }),
+  );
+
+  return jsonResponse(200, { artifactId, status: "deleted" });
+};
+
+/**
  * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — mint a short-lived
  * presigned GET so staff can review the original photo. The route carries only
- * checkId + artifactId, but the sort key embeds `placeId`, so we query this check's
- * ART# items and match on `artifactId` (rather than reconstruct the key). Scoped
- * to the derived site, so one tenant can never sign another's media.
+ * checkId + artifactId; pre-Phase-2 rows embed a retired place id in the sort
+ * key, so we query this check's ART# items and match on `artifactId` (rather
+ * than reconstruct the key). Scoped to the derived site, so one tenant can never
+ * sign another's media.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignMedia = async (event) => {

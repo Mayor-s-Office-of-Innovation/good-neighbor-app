@@ -2,25 +2,14 @@ import { existsSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
-  addPlaceButton,
-  canSubmitTextDescription,
-  orderedPhotoItems,
-  placeRow,
+  descriptionCard,
+  footer,
+  photoGrid,
+  progressLine,
+  shell,
 } from "./perimeter-check.templates.js";
-
-describe("orderedPhotoItems", () => {
-  it("renders captured photos newest-first after the add-photo tile", () => {
-    expect(
-      orderedPhotoItems([
-        { id: "oldest", kind: "photo" },
-        { id: "typed-note", kind: "text" },
-        { id: "middle", kind: "photo" },
-        { id: "newest", kind: "photo" },
-      ]).map((item) => item.id),
-    ).toEqual(["newest", "middle", "oldest"]);
-  });
-});
 
 describe("self-hosted icons", () => {
   it("includes the sparkle asset used by pending-analysis placeholders", () => {
@@ -41,245 +30,102 @@ describe("self-hosted icons", () => {
   });
 });
 
-describe("placeRow", () => {
-  it("renders text-mode save before switching back to photo mode", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [],
-        inputMode: "text",
-        draftText: "Some leaves near the doorway.",
-      },
-      index: 0,
-      expanded: true,
-      isLast: true,
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
+describe("shell", () => {
+  it("renders the photo roll, the describe button, and no place controls", () => {
+    const markup = shell();
 
-    expect(markup).toContain('data-review-text="place-1"');
-    expect(markup).not.toContain(
-      'data-review-text="place-1"\n        disabled',
-    );
-    expect(markup.indexOf("Save note")).toBeLessThan(
-      markup.indexOf("Take a photo instead"),
-    );
-  });
-
-  it("disables text-mode save until text is entered", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [],
-        inputMode: "text",
-        draftText: "   ",
-      },
-      index: 0,
-      expanded: true,
-      isLast: true,
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("Save note");
-    expect(markup).toContain("disabled");
-  });
-
-  it("labels submitted-photo advance with the next place name", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [{ id: "photo-1", kind: "photo" }],
-        inputMode: "photo",
-      },
-      index: 0,
-      expanded: true,
-      isLast: false,
-      nextPlaceName: "Side alley",
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("Continue to Side alley");
-    expect(markup).not.toContain("Next place");
-  });
-
-  it("waits to show the check mark until a place has been continued", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [{ id: "photo-1", kind: "photo" }],
-        reviewed: false,
-      },
-      index: 0,
-      expanded: false,
-      isLast: false,
-      nextPlaceName: "Side alley",
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).not.toContain("place-row__check");
-    expect(markup).not.toContain("place-row__step--done");
-    expect(markup).not.toContain('class="visually-hidden"');
-  });
-
-  it("shows a check mark after submitted evidence is continued", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [{ id: "photo-1", kind: "photo" }],
-        reviewed: true,
-      },
-      index: 0,
-      expanded: false,
-      isLast: false,
-      nextPlaceName: "Side alley",
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("place-row__step--done");
-    expect(markup).toContain("place-row__check");
-    expect(markup).toContain("place-row__line--done");
-    expect(markup).toContain('<span class="visually-hidden">, Reviewed</span>');
-  });
-
-  it("continues a reviewed place with a validated description and no items", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [],
-        description: { validated: true },
-        reviewed: true,
-      },
-      index: 0,
-      expanded: true,
-      isLast: false,
-      nextPlaceName: "Side alley",
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("place-row__step--done");
-    expect(markup).toContain("Continue to Side alley");
-    expect(markup).toContain("btn-pill--continue");
-  });
-
-  it("renders condition labels with flag icons", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [{ id: "photo-1", kind: "photo" }],
-        conditionLabels: ["Waste & Small Debris"],
-      },
-      index: 0,
-      expanded: false,
-      isLast: false,
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain('name="flag"');
-    expect(markup).toContain("Waste &amp; Small Debris");
-    expect(markup).not.toContain('name="sparkles"');
-  });
-
-  it("renders a pending issue skeleton for collapsed places still analyzing", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [
-          {
-            id: "photo-1",
-            kind: "photo",
-            analysis: { status: "analyzing" },
-          },
-        ],
-      },
-      index: 0,
-      expanded: false,
-      isLast: false,
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("place-row__pending-issue");
-    expect(markup).toContain('name="sparkles"');
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain('aria-live="polite"');
-    expect(markup).toContain("Issue-label analysis in progress");
-  });
-
-  it("keeps pending issue skeleton out of the expanded capture controls", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [
-          {
-            id: "photo-1",
-            kind: "photo",
-            analysis: { status: "queued" },
-          },
-        ],
-      },
-      index: 0,
-      expanded: true,
-      isLast: false,
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).not.toContain("place-row__pending-issue");
-  });
-
-  it("shows a minus for skipped places", () => {
-    const markup = placeRow({
-      place: {
-        id: "place-1",
-        name: "Front entrance",
-        items: [],
-        skipped: true,
-      },
-      index: 0,
-      expanded: false,
-      isLast: false,
-      nextPlaceName: "Side alley",
-      openMenuItemId: null,
-      photoMenuAnchor: null,
-    });
-
-    expect(markup).toContain("place-row__step--skipped");
-    expect(markup).toContain("place-row__minus");
-    expect(markup).toContain("place-row__line--done");
-    expect(markup).toContain(
-      '<span class="visually-hidden">, Skipped for now</span>',
-    );
-  });
-
-  it("requires at least five trimmed characters before text can submit", () => {
-    expect(canSubmitTextDescription("abcd")).toBe(false);
-    expect(canSubmitTextDescription(" abc ")).toBe(false);
-    expect(canSubmitTextDescription("abcde")).toBe(true);
-    expect(canSubmitTextDescription("  abcde  ")).toBe(true);
+    expect(markup).toContain('id="shotgrid"');
+    expect(markup).toContain('id="describe-instead"');
+    expect(markup).toContain('id="check-progress"');
+    expect(markup).not.toContain("place-row");
+    expect(markup).not.toContain("Add place");
   });
 });
 
-describe("addPlaceButton", () => {
-  it("renders the visible add-place label", () => {
-    const markup = addPlaceButton();
+describe("progressLine", () => {
+  it("counts photos toward the minimum and offers the text alternative", () => {
+    const markup = progressLine({ photos: 2, texts: 0, complete: false });
 
-    expect(markup).toContain('id="add-place-open"');
-    expect(markup).toContain("Add place");
-    expect(markup).not.toContain("visually-hidden");
+    expect(markup).toContain(`2 of ${MIN_PERIMETER_PHOTOS} photos taken`);
+    expect(markup).toContain("Try to take at least 3-5 photos");
+  });
+
+  it("reads ready once the photo minimum is met", () => {
+    const markup = progressLine({ photos: 3, texts: 0, complete: true });
+
+    expect(markup).toContain("3 of 3 photos taken");
+    expect(markup).toContain("Ready to finish");
+  });
+
+  it("reads ready after one description regardless of photo count", () => {
+    const markup = progressLine({ photos: 0, texts: 1, complete: true });
+
+    expect(markup).toContain("Description saved.");
+    expect(markup).toContain("Ready to finish");
+    expect(markup).toContain("Photos are optional");
+  });
+});
+
+describe("descriptionCard", () => {
+  it("renders nothing without a description", () => {
+    expect(descriptionCard(null)).toBe("");
+    expect(descriptionCard(undefined)).toBe("");
+  });
+
+  it("renders the escaped text with edit and remove controls", () => {
+    const markup = descriptionCard({
+      id: "text-1",
+      text: "Litter <near> the door & sidewalk",
+    });
+
+    expect(markup).toContain("Litter &lt;near&gt; the door &amp; sidewalk");
+    expect(markup).toContain('data-edit-description="text-1"');
+    expect(markup).toContain('data-remove-description="text-1"');
+  });
+});
+
+describe("photoGrid", () => {
+  it("renders the camera first with the newest photo immediately after it", () => {
+    const markup = photoGrid([
+      { id: "first", dataUrl: "data:first" },
+      { id: "second", dataUrl: "data:second" },
+    ]);
+
+    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
+      markup.indexOf('data-del="second"'),
+    );
+    expect(markup.indexOf('data-del="second"')).toBeLessThan(
+      markup.indexOf('data-del="first"'),
+    );
+    expect(markup).not.toContain("addshot--empty");
+  });
+
+  it("renders the empty add tile when there are no photos", () => {
+    const markup = photoGrid([]);
+
+    expect(markup).toContain("addshot--empty");
+    expect(markup).toContain("Take photo");
+    expect(markup).toContain('name="camera"');
+  });
+});
+
+describe("footer", () => {
+  it("disables Finish until the completion rule is met", () => {
+    const markup = footer({ items: [], analyzingOpen: false, complete: false });
+
+    expect(markup).toMatch(/id="done-check"[^>]*disabled/);
+    expect(markup).not.toContain('id="toggle-analyzing"');
+  });
+
+  it("enables Finish once complete and shows the analyzing toggle", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", kind: "photo", analysis: { status: "queued" } }],
+      analyzingOpen: false,
+      complete: true,
+    });
+
+    expect(markup).not.toMatch(/id="done-check"[^>]*disabled/);
+    expect(markup).toContain('id="toggle-analyzing"');
+    expect(markup).toContain("Analyzing...");
   });
 });

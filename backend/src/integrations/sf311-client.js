@@ -309,7 +309,7 @@ function isAbortError(error) {
  * @param {object} options
  * @param {import("../config.js").AppConfig} [options.config]
  * @param {typeof fetch} [options.fetchImpl]
- * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }> }}
+ * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }>, getLatestUpdatesBySourceAgency: (agencyId?: string) => Promise<unknown> }}
  */
 export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   if (!config.sf311CreateSrUrl) {
@@ -321,6 +321,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   const createSrUrl = config.sf311CreateSrUrl;
   const updateSrUrl = config.sf311UpdateSrUrl;
   const agencyLookupUrl = config.sf311AgencyLookupUrl;
+  const latestUpdatesUrl = config.sf311LatestUpdatesUrl;
 
   /**
    * @param {Response} res
@@ -365,6 +366,45 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
   };
 
   return {
+    async getLatestUpdatesBySourceAgency(agencyId = GOOD_NEIGHBOR_AGENCY) {
+      if (!latestUpdatesUrl)
+        throw new Error("SF311_LATEST_UPDATES_URL is required");
+      const auth = await getSf311BasicAuth(config);
+      const url = latestUpdatesUrl.includes("{agencyID}")
+        ? latestUpdatesUrl.replace("{agencyID}", encodeURIComponent(agencyId))
+        : `${latestUpdatesUrl.replace(/\/$/, "")}/${encodeURIComponent(agencyId)}`;
+      const res = await fetchSf311(
+        url,
+        {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: basicAuthHeader(auth),
+          },
+        },
+        "latest updates",
+        { agencyId },
+      );
+      const body = await readJson(res);
+      const data =
+        body && typeof body === "object" && "data" in body
+          ? /** @type {{data?: unknown}} */ (body).data
+          : body;
+      const returnCode =
+        data && typeof data === "object" && "return_code" in data
+          ? String(
+              /** @type {Record<string, unknown>} */ (data).return_code ?? "",
+            )
+          : "";
+      if (!res.ok || (returnCode && returnCode !== "0")) {
+        throw new Sf311Error("SF311 latest updates failed", {
+          status: res.status,
+          code: returnCode || undefined,
+          body,
+        });
+      }
+      return body;
+    },
     /**
      * @param {string} serviceCode
      * @returns {Promise<string>}

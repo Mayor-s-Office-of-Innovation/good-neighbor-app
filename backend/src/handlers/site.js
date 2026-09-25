@@ -1,49 +1,37 @@
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { randomUUID } from "node:crypto";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { jsonResponse, readJsonBody } from "../http.js";
+import { jsonResponse } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { siteMetaKey } from "./keys.js";
 
-const MAX_PLACES = 40;
-const MAX_PLACE_NAME_LENGTH = 120;
+const PROVIDER_SITES_PAGE_SIZE = 25;
+const SITE_METADATA_CONCURRENCY = 5;
 
 /**
- * @param {unknown} places
- * @returns {{ ok: true, places: { id: string, name: string, order: number }[] } | { ok: false, error: string }}
+ * A cursor can select only a later membership in the caller's own provider
+ * partition; the provider key itself is always derived from the bound site.
+ * @param {string} value
+ * @returns {string | null}
  */
-export function normalizePlaces(places) {
-  if (!Array.isArray(places) || places.length === 0) {
-    return { ok: false, error: "places_required" };
+function decodeMembershipCursor(value) {
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  const sk = Buffer.from(value, "base64url").toString("utf8");
+  if (
+    !sk.startsWith("SITE#") ||
+    sk.length > 256 ||
+    Array.from(sk).some((character) => character.charCodeAt(0) < 32) ||
+    Buffer.from(sk).toString("base64url") !== value
+  ) {
+    return null;
   }
-  if (places.length > MAX_PLACES) {
-    return { ok: false, error: "too_many_places" };
-  }
-
-  const seen = new Set();
-  const normalized = [];
-  for (const raw of places) {
-    if (!raw || typeof raw !== "object") {
-      return { ok: false, error: "invalid_place" };
-    }
-    const item = /** @type {{ id?: unknown, name?: unknown }} */ (raw);
-    const id = String(item.id || randomUUID()).trim();
-    const name = String(item.name || "").trim();
-    if (!id) return { ok: false, error: "invalid_place_id" };
-    if (seen.has(id)) return { ok: false, error: "duplicate_place_id" };
-    if (!name) return { ok: false, error: "blank_place_name" };
-    if (name.length > MAX_PLACE_NAME_LENGTH) {
-      return { ok: false, error: "place_name_too_long" };
-    }
-    seen.add(id);
-    normalized.push({ id, name, order: normalized.length });
-  }
-
-  return { ok: true, places: normalized };
+  return sk;
 }
 
 /**
+ * GET /v1/site — the bound site's metadata (`SITE#<id>` / `#META`). Returns a
+ * minimal default record when nothing has been written yet so the client
+ * always has a name to show.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const getSite = async (event) => {
@@ -61,56 +49,101 @@ export const getSite = async (event) => {
     type: "site",
     siteId,
     name: "Your site",
-    places: [],
   };
   return jsonResponse(200, { site });
 };
 
 /**
+ * GET /v1/provider-sites — page through active sites under the caller's provider.
+ * The provider is read from the authenticated site's metadata, never from a
+ * request parameter, so a device cannot enumerate another provider's sites.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
-export const putSitePlaces = async (event) => {
+export const listProviderSites = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
-
-  let body;
-  try {
-    body = readJsonBody(event);
-  } catch {
-    return jsonResponse(400, { error: "invalid_json" });
-  }
-
-  const parsed = normalizePlaces(
-    body && typeof body === "object"
-      ? /** @type {{ places?: unknown }} */ (body).places
-      : undefined,
+  const current = await ddb.send(
+    new GetCommand({ TableName: dynamoTable, Key: siteMetaKey(siteId) }),
   );
-  if (!parsed.ok) {
-    return jsonResponse(400, { error: parsed.error });
+  const site = current.Item;
+  if (!site || site.status === "inactive") {
+    return jsonResponse(404, { error: "site_not_found" });
+  }
+  const providerId = String(site.providerId || "");
+  const rawCursor = event.queryStringParameters?.cursor || "";
+  const cursorSk = rawCursor ? decodeMembershipCursor(rawCursor) : "";
+  if (rawCursor && !cursorSk) {
+    return jsonResponse(400, { error: "invalid_cursor" });
+  }
+  if (!providerId) {
+    return jsonResponse(200, {
+      providerId: "",
+      providerName: String(site.providerName || ""),
+      sites: [{ siteId, name: String(site.name || "Your site") }],
+      nextCursor: null,
+    });
   }
 
-  const now = new Date().toISOString();
-  const key = siteMetaKey(siteId);
-  const result = await ddb.send(
-    new UpdateCommand({
+  const providerKey = `PROVIDER#${providerId}`;
+  const page = await ddb.send(
+    new QueryCommand({
       TableName: dynamoTable,
-      Key: key,
-      UpdateExpression:
-        "SET #type = if_not_exists(#type, :type), siteId = if_not_exists(siteId, :siteId), #name = if_not_exists(#name, :fallbackName), places = :places, placesConfiguredAt = if_not_exists(placesConfiguredAt, :now), updatedAt = :now",
-      ExpressionAttributeNames: {
-        "#type": "type",
-        "#name": "name",
-      },
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
       ExpressionAttributeValues: {
-        ":type": "site",
-        ":siteId": siteId,
-        ":fallbackName": "Your site",
-        ":places": parsed.places,
-        ":now": now,
+        ":pk": providerKey,
+        ":prefix": "SITE#",
       },
-      ReturnValues: "ALL_NEW",
+      Limit: PROVIDER_SITES_PAGE_SIZE,
+      ...(cursorSk
+        ? { ExclusiveStartKey: { pk: providerKey, sk: cursorSk } }
+        : {}),
     }),
   );
 
-  return jsonResponse(200, { site: result.Attributes });
+  const activeMemberships = (page.Items || []).filter(
+    (item) => item.status === "active" && item.siteId,
+  );
+  /** @type {{ siteId: string, name: string }[]} */
+  const verifiedSites = [];
+  for (
+    let index = 0;
+    index < activeMemberships.length;
+    index += SITE_METADATA_CONCURRENCY
+  ) {
+    const group = await Promise.all(
+      activeMemberships
+        .slice(index, index + SITE_METADATA_CONCURRENCY)
+        .map(async (membership) => {
+          const memberSiteId = String(membership.siteId);
+          const result = await ddb.send(
+            new GetCommand({
+              TableName: dynamoTable,
+              Key: siteMetaKey(memberSiteId),
+            }),
+          );
+          const metadata = result.Item;
+          if (
+            !metadata ||
+            metadata.status === "inactive" ||
+            String(metadata.providerId || "") !== providerId
+          ) {
+            return null;
+          }
+          return {
+            siteId: memberSiteId,
+            name: String(metadata.name || membership.siteName || memberSiteId),
+          };
+        }),
+    );
+    verifiedSites.push(...group.filter((member) => member !== null));
+  }
+  const sites = verifiedSites.sort((a, b) => a.name.localeCompare(b.name));
+  return jsonResponse(200, {
+    providerId,
+    providerName: String(site.providerName || providerId),
+    sites,
+    nextCursor: page.LastEvaluatedKey?.sk
+      ? Buffer.from(String(page.LastEvaluatedKey.sk)).toString("base64url")
+      : null,
+  });
 };

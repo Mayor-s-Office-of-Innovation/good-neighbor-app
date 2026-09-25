@@ -40,16 +40,15 @@ import { retryEvidenceItem } from "./photo-analysis.js";
 
 beforeEach(() => vi.resetAllMocks());
 
-// Unique item id per test: photo-analysis dedupes concurrent runs on
-// `${placeId}:${itemId}`, and a previous test's still-pending poll would
-// swallow the next test's run otherwise.
+// Unique item id per test: photo-analysis dedupes concurrent runs on the item
+// id, and a previous test's still-pending poll would swallow the next test's
+// run otherwise.
 let testSeq = 0;
 
 function sessionItem(overrides = {}) {
   return {
     id: `item-${++testSeq}`,
     kind: "photo",
-    placeName: "Sidewalk",
     uploadedAt: "2026-09-15T10:00:00Z",
     analysis: { status: "failed" },
     upload: { status: "failed" },
@@ -60,13 +59,7 @@ function sessionItem(overrides = {}) {
 // Loose fixtures — the mocked module surface is intentionally partial.
 /** @returns {any} */
 function session(checkItem) {
-  return {
-    id: "check",
-    placeOrder: ["sidewalk"],
-    places: {
-      sidewalk: { id: "sidewalk", name: "Sidewalk", items: [checkItem] },
-    },
-  };
+  return { id: "check", items: [checkItem] };
 }
 
 describe("retryEvidenceItem", () => {
@@ -80,7 +73,7 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ analyses: [], artifacts: [] }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       // The poll looks at the backend before its first sleep.
       expect(getCheck).toHaveBeenCalledWith("check");
@@ -88,7 +81,6 @@ describe("retryEvidenceItem", () => {
 
     // Straight back to polling; no re-upload.
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({
         status: "analyzing",
@@ -110,20 +102,18 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ artifactId: "artifact-2", s3Key: "checks/s/c/b" }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(uploadArtifact).toHaveBeenCalled();
     });
 
     expect(updateItem).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({
         upload: expect.objectContaining({ status: "failed" }),
       }),
     );
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({ status: "queued" }),
     );
@@ -137,12 +127,11 @@ describe("retryEvidenceItem", () => {
     );
     vi.mocked(registerTextArtifact).mockResolvedValue("artifact-3");
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(registerTextArtifact).toHaveBeenCalled();
     });
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({ status: "queued" }),
     );
@@ -150,7 +139,7 @@ describe("retryEvidenceItem", () => {
 
   it("ignores unknown items", () => {
     vi.mocked(getCurrentCheck).mockReturnValue(session(sessionItem()));
-    retryEvidenceItem("sidewalk", "ghost");
+    retryEvidenceItem("ghost");
     expect(updateItemAnalysis).not.toHaveBeenCalled();
     expect(getCheck).not.toHaveBeenCalled();
   });
@@ -167,10 +156,9 @@ describe("retryEvidenceItem", () => {
     );
     vi.mocked(uploadArtifact).mockRejectedValue(boom);
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(updateItemAnalysis).toHaveBeenCalledWith(
-        "sidewalk",
         item.id,
         expect.objectContaining({
           status: "failed",
@@ -198,16 +186,16 @@ describe("retryEvidenceItem", () => {
         /** @type {any} */ ({ analyses: [], artifacts: [] }),
       );
 
-      retryEvidenceItem("sidewalk", item.id);
+      retryEvidenceItem(item.id);
       // Drain the poll loop through its 180s deadline; the thrown
       // analyses_pending lands in run()'s failure record.
       await vi.runAllTimersAsync();
 
       const failureCall = vi
         .mocked(updateItemAnalysis)
-        .mock.calls.find(([, , patch]) => patch?.failure?.leg === "analyze");
+        .mock.calls.find(([, patch]) => patch?.failure?.leg === "analyze");
       expect(failureCall).toBeTruthy();
-      const [, , patch] = failureCall;
+      const [, patch] = failureCall;
       expect(patch).toEqual(
         expect.objectContaining({
           status: "failed",
@@ -246,7 +234,7 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ artifactId: "artifact-1", status: "queued" }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(registerArtifact).toHaveBeenCalledWith(
         "check",
@@ -259,7 +247,6 @@ describe("retryEvidenceItem", () => {
     // Same artifact re-driven: no new upload, no new artifact id.
     expect(uploadArtifact).not.toHaveBeenCalled();
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({ status: "analyzing", failure: undefined }),
     );
@@ -282,7 +269,7 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ artifactId: "artifact-1", status: "queued" }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(registerArtifact).toHaveBeenCalledWith(
         "check",
@@ -291,7 +278,6 @@ describe("retryEvidenceItem", () => {
     });
     // upload.artifactId is adopted into analysis so run()/poll can see it.
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({ artifactId: "artifact-1" }),
     );
@@ -313,10 +299,9 @@ describe("retryEvidenceItem", () => {
       }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(updateItemAnalysis).toHaveBeenCalledWith(
-        "sidewalk",
         item.id,
         expect.objectContaining({
           status: "failed",
@@ -346,13 +331,12 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ artifactId: "artifact-5", s3Key: "checks/s/c/e" }),
     );
 
-    retryEvidenceItem("sidewalk", item.id);
+    retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       expect(uploadArtifact).toHaveBeenCalled();
     });
     expect(registerArtifact).not.toHaveBeenCalled();
     expect(updateItemAnalysis).toHaveBeenCalledWith(
-      "sidewalk",
       item.id,
       expect.objectContaining({ status: "queued" }),
     );

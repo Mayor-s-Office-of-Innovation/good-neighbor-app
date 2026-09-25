@@ -12,19 +12,25 @@ import {
   validateSetupCode,
 } from "../services/onboarding.js";
 import { registerDevice } from "../services/devices.js";
-import { requestLocationPermissionEarly } from "../services/device-location.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
 const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 const SITE_SEARCH_DELAY_MS = 250;
 
-class SiteSetup extends HTMLElement {
+export class SiteSetup extends HTMLElement {
   connectedCallback() {
+    this._validationGeneration = 0;
+    this._cancelled = false;
+    this._committingSite = false;
+    this._targetSiteId = this.getAttribute("data-target-site-id") || "";
+    this._targetSiteName = this.getAttribute("data-target-site-name") || "";
+    this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
     this._checking = false;
     this._error = "";
-    this._mode = "code";
+    this._mode =
+      this.getAttribute("data-mode") === "request" ? "request" : "code";
     this._request = {
       query: "",
       email: "",
@@ -39,13 +45,13 @@ class SiteSetup extends HTMLElement {
     this._siteSearchGeneration = 0;
     this._render();
 
-    // Ask when first-run setup appears. The Continue handler retries from a
-    // direct user gesture for browsers that suppress an initial page request.
-    requestLocationPermissionEarly();
-
     if (this._code.length === CODE_LENGTH) {
       this._validate();
     }
+  }
+
+  disconnectedCallback() {
+    this._cancelSiteSearch();
   }
 
   _render() {
@@ -54,7 +60,14 @@ class SiteSetup extends HTMLElement {
       error: this._error,
       checking: this._checking,
       mode: this._mode,
+      targetSiteName: this._targetSiteName,
+      canCancel: this._canCancel,
+      cancelDisabled: this._committingSite,
       request: this._request,
+    });
+
+    this.querySelector("#cancel-site-switch")?.addEventListener("click", () => {
+      this._cancelSwitch();
     });
 
     if (this._mode === "request") {
@@ -75,13 +88,6 @@ class SiteSetup extends HTMLElement {
       e.preventDefault();
       this._validate();
     });
-    // Begin the request from the native button click itself. This keeps the
-    // browser's user-activation context intact for browsers that suppress a
-    // permission prompt once form/custom-element handling has begun.
-    this._continue.addEventListener("click", () => {
-      requestLocationPermissionEarly();
-    });
-
     // <wa-otp-input> owns per-segment typing, arrow-key nav, backspace, and
     // paste internally — we only react to the resulting value. `wa-complete`
     // fires once all six segments are filled.
@@ -91,6 +97,13 @@ class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
+  }
+
+  _cancelSwitch() {
+    if (this._committingSite || this._cancelled) return;
+    this._cancelled = true;
+    this._validationGeneration += 1;
+    this.dispatchEvent(new CustomEvent("sitecancel", { bubbles: true }));
   }
 
   _bindRequestForm() {
@@ -288,10 +301,12 @@ class SiteSetup extends HTMLElement {
     this._code = code;
 
     this._checking = true;
+    const generation = ++this._validationGeneration;
     this._error = "";
     this._render();
 
     const result = await validateSetupCode(code);
+    if (this._cancelled || generation !== this._validationGeneration) return;
     if (!result.ok) {
       this._checking = false;
       this._error =
@@ -302,14 +317,21 @@ class SiteSetup extends HTMLElement {
       return;
     }
 
-    stripCodeFromUrl();
     const providerSite = result.providerSite;
+    if (this._targetSiteId && providerSite.siteId !== this._targetSiteId) {
+      this._checking = false;
+      this._error = `This code is for ${providerSite.name}, not ${this._targetSiteName || "the selected site"}.`;
+      this._render();
+      return;
+    }
+    stripCodeFromUrl();
     // Register the device and mint its session (Option 4 device auth —
     // docs/adr/0010): the token rides the site record; after this point the
     // setup code is never needed again (the refresh flow renews silently).
     let session;
     try {
       session = await registerDevice(result.code);
+      if (this._cancelled || generation !== this._validationGeneration) return;
     } catch (err) {
       if (err instanceof Error && /invalid site code/.test(err.message)) {
         this._checking = false;
@@ -322,18 +344,31 @@ class SiteSetup extends HTMLElement {
       this._render();
       return;
     }
-    const site = await setSite(providerSite.name, {
-      code: result.code,
-      providerSiteId: providerSite.id,
-      siteId: providerSite.siteId,
-      deviceId: session.deviceId,
-      token: session.token,
-      refreshToken: session.refreshToken,
-      tokenExpiresAt: new Date(
-        Date.now() + session.expiresIn * 1000,
-      ).toISOString(),
-      tokenGeneration: session.tokenGeneration,
-    });
+    // Once persistence starts, keep the cancel control disabled until the
+    // binding is committed; otherwise a detached setup could change sites.
+    this._committingSite = true;
+    this._render();
+    let site;
+    try {
+      site = await setSite(providerSite.name, {
+        code: result.code,
+        providerSiteId: providerSite.id,
+        siteId: providerSite.siteId,
+        deviceId: session.deviceId,
+        token: session.token,
+        refreshToken: session.refreshToken,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
+        tokenGeneration: session.tokenGeneration,
+      });
+    } catch {
+      this._committingSite = false;
+      this._checking = false;
+      this._error = "We couldn't save this site. Try again in a moment.";
+      this._render();
+      return;
+    }
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );

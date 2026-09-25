@@ -211,6 +211,12 @@ resource "aws_iam_role" "worker" {
 
 data "aws_iam_policy_document" "worker" {
   statement {
+    sid       = "ReverseGeocodePhoto"
+    effect    = "Allow"
+    actions   = ["geo-places:ReverseGeocode"]
+    resources = ["arn:aws:geo-places:${data.aws_region.current.name}::provider/default"]
+  }
+  statement {
     sid       = "Dynamo"
     effect    = "Allow"
     actions   = local.dynamo_actions

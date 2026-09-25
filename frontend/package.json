@@ -7,19 +7,35 @@
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
-    "lint": "eslint src && bash ../scripts/check-wa-theme.sh",
+    "lint": "eslint src",
+    "size": "size-limit",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json"
   },
+  "size-limit": [
+    {
+      "name": "js",
+      "path": "dist/assets/*.js",
+      "limit": "75 kB"
+    },
+    {
+      "name": "css",
+      "path": "dist/assets/*.css",
+      "limit": "24 kB"
+    }
+  ],
   "dependencies": {
     "@awesome.me/webawesome": "^3.11.0"
   },
   "devDependencies": {
     "@eslint/js": "9.9.1",
+    "@lhci/cli": "^0.15.1",
+    "@size-limit/file": "^14.0.0",
     "@types/node": "^22.20.1",
     "eslint": "9.9.1",
     "eslint-plugin-jsdoc": "50.2.2",
     "globals": "15.9.0",
+    "size-limit": "^14.0.0",
     "typescript": "5.5.4",
     "vite": "8.2.1",
     "vite-plugin-pwa": "1.3.0",

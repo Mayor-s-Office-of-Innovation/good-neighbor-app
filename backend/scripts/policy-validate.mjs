@@ -1,13 +1,14 @@
-import { actionsEscalationsV2Catalog } from "../src/analysis/guidance/actions-escalations-v2.js";
+import { activeCatalog } from "../src/analysis/guidance/catalog-registry.js";
 import { validateCatalog } from "../src/analysis/guidance/rule-catalog.js";
 
-const errors = validateCatalog(actionsEscalationsV2Catalog);
+const catalog = activeCatalog();
+const errors = validateCatalog(catalog);
 
 const report = {
-  policyVersion: actionsEscalationsV2Catalog.policyVersion,
-  metadata: actionsEscalationsV2Catalog.metadata,
-  ruleCount: actionsEscalationsV2Catalog.rules.length,
-  aliasCount: actionsEscalationsV2Catalog.aliases.length,
+  policyVersion: catalog.policyVersion,
+  metadata: catalog.metadata,
+  ruleCount: catalog.rules.length,
+  aliasCount: catalog.aliases.length,
   errors,
 };
 
