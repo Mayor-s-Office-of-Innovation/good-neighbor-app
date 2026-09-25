@@ -7,6 +7,7 @@ import {
 } from "./services/admin-auth.js";
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
+import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
@@ -400,7 +401,14 @@ class AdminApp extends HTMLElement {
     this.innerHTML = `
       <main class="admin">
         <header class="admin__header">
-          <h1>Good Neighbor Admin</h1>
+          <div class="site-title">
+            <h1>Good Neighbor Admin</h1>
+            ${
+              this.state.hasToken
+                ? '<nav class="admin__nav"><a href="/analytics.html">Analytics</a></nav>'
+                : ""
+            }
+          </div>
           ${
             this.state.hasToken
               ? '<button id="clear-token" type="button">Sign out</button>'
@@ -596,61 +604,6 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
-
-/**
- * @param {EventTarget | null} target
- * @returns {HTMLFormElement}
- */
-function asForm(target) {
-  if (target instanceof HTMLFormElement) return target;
-  throw new TypeError("Expected form event target");
-}
-
-/**
- * @param {Element} element
- * @param {string} name
- * @returns {string}
- */
-function dataAttr(element, name) {
-  return element.getAttribute(name) ?? "";
-}
-
-/**
- * @param {unknown} value
- * @returns {string}
- */
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return ch;
-    }
-  });
-}
-
-/**
- * @param {string | undefined} value
- * @returns {string}
- */
-function formatTimestamp(value) {
-  if (!value) return "not available";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "not available";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
 
 /**
  * @param {{ latitude?: number, longitude?: number } | undefined} location

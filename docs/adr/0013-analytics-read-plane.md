@@ -89,6 +89,17 @@ Facts that shaped the choice:
   in 36h" plus convert/report Lambda errors.
 - Raw exports retained 30 days are the re-conversion path for schema changes; older history
   keeps the raw JSON column per row and can be re-derived only from new exports.
-- **Dashboard serving** (an API route running DuckDB on demand vs. a frontend reading
-  materialized `reports/` output) is decided when the dashboard is built; the lake + SQL is
-  the substrate either way.
+- **Dashboard serving (decided 2026-09-25): a dedicated `analytics-query` Lambda runs
+  DuckDB on demand** behind the admin API (`/admin/v1/analytics/*`, admin JWT + central-admin
+  gate), with its own API Gateway integration so the DuckDB binding, 2 GB footprint and query
+  load never touch the app `api` function. It serves a **catalog of canned, parameterized
+  queries** (`backend/src/analytics/catalog.js`; parameters bound through prepared
+  statements) plus a raw-SQL "advanced" route; the scheduled report Lambda materializes the
+  catalog entries flagged `scheduled`, so reports and dashboards share one definition. The
+  admin console's Analytics page (`admin-frontend/analytics.html`) runs the catalog from
+  buttons. Both engines build views from one module (`lake-views.js`, columns from the
+  converter); the query engine additionally **locks DuckDB down** after setup
+  (`disabled_filesystems = 'LocalFileSystem'`, `lock_configuration = true`) and wraps user
+  SQL as `SELECT * FROM (…)`, so the role's read-only lake grant — not SQL parsing — is the
+  security boundary. The hive `date` column is read as VARCHAR and exposed as
+  `TRY_CAST(date AS DATE)` so a `date=unknown` partition can't flip the column type.

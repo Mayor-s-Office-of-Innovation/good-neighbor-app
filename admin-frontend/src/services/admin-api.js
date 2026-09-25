@@ -24,7 +24,12 @@ async function adminFetch(path, init = {}) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || "admin_request_failed");
+    const err = new Error(body.error || "admin_request_failed");
+    // Some routes (analytics) explain the failure; surface it for the UI.
+    if (typeof body.message === "string") {
+      /** @type {any} */ (err).detail = body.message;
+    }
+    throw err;
   }
   return body;
 }
@@ -85,4 +90,28 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/devices/${encodeURIComponent(deviceId)}`,
       { method: "DELETE" },
     ),
+  // Analytics (ADR 0013): the reporting lake, never the app database.
+  /** The canned query catalog. */
+  analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
+  /**
+   * Run one catalog query with parameters.
+   * @param {string} queryId
+   * @param {Record<string, string | number>} params
+   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
+   */
+  analyticsRun: (queryId, params) =>
+    adminFetch(`/admin/v1/analytics/queries/${encodeURIComponent(queryId)}`, {
+      method: "POST",
+      body: JSON.stringify({ params }),
+    }),
+  /**
+   * Run raw read-only SQL (the advanced panel).
+   * @param {string} sql
+   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
+   */
+  analyticsQuery: (sql) =>
+    adminFetch("/admin/v1/analytics/query", {
+      method: "POST",
+      body: JSON.stringify({ sql }),
+    }),
 };

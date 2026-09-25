@@ -9,7 +9,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
-import { jsonResponse, readJsonBody } from "../http.js";
+import { jsonResponse } from "../http.js";
 import {
   GeocodingError,
   geocodeAddress,
@@ -21,55 +21,7 @@ import {
   revokePendingSetupCodes,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-
-/**
- * @param {import("aws-lambda").APIGatewayProxyEventV2} event
- * @returns {boolean}
- */
-function isCentralAdmin(event) {
-  const authorizer =
-    /** @type {any} */ (event.requestContext)?.authorizer ?? {};
-  const groups =
-    authorizer.jwt?.claims?.["cognito:groups"] ??
-    authorizer["claims.cognito:groups"] ??
-    "";
-  if (Array.isArray(groups)) return groups.includes("central-admin");
-  if (typeof groups !== "string") return false;
-  const value = groups.trim();
-  if (value.startsWith("[")) {
-    if (!value.endsWith("]")) return false;
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) && parsed.includes("central-admin");
-    } catch {
-      // HTTP API JWT claims can stringify a group list without JSON quotes.
-      // Match whole comma-delimited names, never substrings or words in a name.
-      return value
-        .slice(1, -1)
-        .split(",")
-        .some((group) => group.trim() === "central-admin");
-    }
-  }
-  return value.split(",").some((group) => group.trim() === "central-admin");
-}
-
-/**
- * @param {import("aws-lambda").APIGatewayProxyEventV2} event
- * @param {(body: Record<string, unknown>) => Promise<any>} fn
- * @returns {Promise<any>}
- */
-async function adminOnly(event, fn) {
-  if (!isCentralAdmin(event)) return jsonResponse(403, { error: "forbidden" });
-  let body = /** @type {Record<string, unknown>} */ ({});
-  if (event.body) {
-    try {
-      body = /** @type {Record<string, unknown>} */ (readJsonBody(event));
-    } catch {
-      return jsonResponse(400, { error: "invalid_json" });
-    }
-  }
-  return fn(body);
-}
+import { adminOnly } from "../lib/admin-auth.js";
 
 /**
  * GET /admin/v1/providers
