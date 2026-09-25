@@ -29,8 +29,9 @@ jobs:
   terraform-apply:
     name: Terraform apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
-    # Gates on the GitHub Environment: role ARN + region come from its
-    # secret/variable, and prod's required-reviewer approval applies here.
+    # Gates on the GitHub Environment: account ID + role ARN come from its
+    # secrets, region comes from its variable, and prod's required-reviewer
+    # approval applies here.
     environment: ${{ inputs.environment }}
     concurrency:
       group: deploy-${{ inputs.environment }}
@@ -42,6 +43,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Validate deployment configuration
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          if [ -z "$EXPECTED_ACCOUNT_ID" ]; then
+            echo "AWS_ACCOUNT_ID is not configured for this GitHub Environment" >&2
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -50,16 +60,16 @@ jobs:
           # Fail closed if a GitHub Environment is accidentally configured with
           # the other environment's role. The Terraform roots contain account-
           # scoped resources and must never be applied across this boundary.
-          allowed-account-ids: ${{ inputs.environment == 'prod' && '701893741736' || '518892333858' }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
 
       - name: Verify AWS account boundary
         env:
-          EXPECTED_ACCOUNT_ID: ${{ inputs.environment == 'prod' && '701893741736' || '518892333858' }}
+          EXPECTED_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           actual_account_id="$(aws sts get-caller-identity --query Account --output text)"
           if [ "$actual_account_id" != "$EXPECTED_ACCOUNT_ID" ]; then
-            echo "Expected AWS account $EXPECTED_ACCOUNT_ID, authenticated to $actual_account_id" >&2
+            echo "Authenticated AWS account does not match the configured environment" >&2
             exit 1
           fi
 
