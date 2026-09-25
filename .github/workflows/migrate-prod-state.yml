@@ -213,14 +213,31 @@ jobs:
       - name: Push repaired state to PROD backend
         run: terraform state push -force "$RUNNER_TEMP/prod-state-migration/prod-terraform.tfstate"
 
-      - name: Verify destination lineage and isolation
+      - name: Verify destination state and isolation
         run: |
           set -euo pipefail
           terraform state pull > "$RUNNER_TEMP/migrated-prod-terraform.tfstate"
-          jq -e --arg lineage "$SOURCE_LINEAGE" '
-            .lineage == $lineage
+          jq -e '
+            .version == 4
+            and (.lineage | type == "string" and length > 0)
             and ([.resources[]? | select(.mode == "managed")] | length == 0)
+            and all(.resources[]?;
+              .mode == "data"
+              and .type == "aws_caller_identity"
+              and (.name == "gn_dns" or .name == "goodneighbor_dns")
+            )
+            and all(.outputs[]?; .sensitive != true)
+            and ((.outputs | keys | sort) == ([
+              "gn_dns_name_servers",
+              "gn_dns_zone_id",
+              "gn_dnssec_ds_record",
+              "goodneighbor_dns_name_servers",
+              "goodneighbor_dns_zone_id",
+              "goodneighbor_dnssec_ds_record"
+            ] | sort))
           ' "$RUNNER_TEMP/migrated-prod-terraform.tfstate"
+          destination_lineage="$(jq -r '.lineage' "$RUNNER_TEMP/migrated-prod-terraform.tfstate")"
+          echo "DESTINATION_LINEAGE=$destination_lineage" >> "$GITHUB_ENV"
           aws s3api head-object \
             --bucket "$TF_STATE_BUCKET" \
             --key app/terraform.tfstate \
@@ -231,7 +248,8 @@ jobs:
           {
             echo '## Production application state migrated'
             echo "Destination: \`s3://$TF_STATE_BUCKET/app/terraform.tfstate\`"
-            echo "Lineage: $SOURCE_LINEAGE"
+            echo "Source lineage: $SOURCE_LINEAGE"
+            echo "Destination lineage: $DESTINATION_LINEAGE"
             echo "Source version: $SOURCE_VERSION_ID"
             echo 'Managed resources: 0'
           } >> "$GITHUB_STEP_SUMMARY"
