@@ -14,6 +14,9 @@ import "@awesome.me/webawesome/dist/components/option/option.js";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 
+// Harness-only styles, kept out of app.css so they never ship in prod.
+import "./guidance-harness.css";
+
 const DEFAULT_FIXTURE = guidanceFixtures[0];
 
 /**

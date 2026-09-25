@@ -35,16 +35,6 @@
   font-weight: 700;
 }
 
-.analysis-card__waiting {
-  margin: 0.5rem 0 0;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-
-.analysis-card__elapsed {
-  font-variant-numeric: tabular-nums;
-}
-
 .analysis-card--failed {
   border-left: 3px solid var(--c-hazard);
 }
@@ -272,11 +262,6 @@ app-root {
   flex-direction: column;
   flex: 1 0 auto;
 }
-.app__main:has(.guidance-harness) {
-  width: 100%;
-  max-width: none;
-}
-
 .app__main:has(.check-timeline) {
   width: min(72rem, 100%);
   max-width: none;
@@ -297,9 +282,6 @@ app-root {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-.stack--tight {
-  gap: 0.5rem;
 }
 
 h1,
@@ -611,35 +593,13 @@ form > wa-button[type="submit"] {
 
 /* ---- First-run setup / onboarding ----
    Onboarding reuses the home-hub card system (.home > .screen > .screen__sec),
-   the brand .sitehead, the centered .hero, and the ink/outline pills — so first
+   the centered .hero, and the ink/outline pills — so first
    run matches the today/flow screens (see site-setup.templates.js). Only two
    setup-specific needs remain here. */
 /* Full-width CTAs — a single dominant action per step, sized for thumb reach. */
 .setup .btn-ink,
 .setup .btn-outline {
   width: 100%;
-}
-/* Stacked confirm actions (primary + "use a different code"). */
-.setup__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-/* "Don't have a code?" disclosure — the manual-picker fallback. */
-.setup__manual {
-  margin-top: 0.25rem;
-}
-.setup__manual summary {
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  padding: 0.35rem 0;
-  width: max-content;
-}
-.setup__manual summary:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* ---- Places setup / edit ---- */
@@ -899,9 +859,6 @@ form > wa-button[type="submit"] {
   border-radius: var(--radius-sm);
   display: block;
 }
-.media-preview audio {
-  width: 100%;
-}
 
 .empty {
   text-align: center;
@@ -922,12 +879,6 @@ theme-toggle {
    is carried by grouping + labels, color only reinforces.
    ================================================================== */
 
-/* Shared bits */
-.eyebrow {
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  margin: 0;
-}
 .center {
   text-align: center;
 }
@@ -1119,16 +1070,6 @@ theme-toggle {
 }
 .screen__sec + .screen__sec {
   border-top: 1px solid var(--c-line);
-}
-
-/* Global site header — centered site name with the section's hairline beneath. */
-.sitehead {
-  text-align: center;
-}
-.sitehead__name {
-  font-size: 1.2rem;
-  font-weight: 600;
-  line-height: 1.2;
 }
 
 /* Home lead section: summary/identity block + CTAs. */
@@ -1514,14 +1455,6 @@ button[data-loading] [data-loading-label] {
   margin: 0;
 }
 
-.home-divider {
-  width: 100%;
-  max-width: 550px;
-  height: 1px;
-  margin: 1.5rem auto 1.15rem;
-  background: var(--c-line);
-}
-
 .home-capture {
   margin-top: 1.5rem;
 }
@@ -1737,97 +1670,6 @@ html.wa-dark .home-results__complete-content img {
   mix-blend-mode: screen;
 }
 
-.assessment-tile {
-  background: color-mix(in srgb, var(--brand-blue) 12%, var(--surface));
-  border-radius: 18px;
-  padding: 0.75rem;
-}
-.assessment-tile__card {
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 1rem 3.25rem 1rem 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  position: relative;
-}
-.assessment-tile__top {
-  display: block;
-}
-.assessment-tile__eyebrow {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: var(--text-faint);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-.assessment-tile__spark {
-  color: var(--brand-blue);
-  font-size: 0.78rem;
-  line-height: 1;
-}
-.assessment-tile__dismiss {
-  color: var(--text-secondary);
-  position: absolute;
-  top: 0.35rem;
-  right: 0.45rem;
-}
-.assessment-tile__headline {
-  margin: 0;
-  color: var(--brand-blue);
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1.45;
-  text-wrap: pretty;
-}
-.assessment-tile__progress {
-  position: relative;
-  overflow: hidden;
-  height: 4px;
-  width: 100%;
-  border-radius: 999px;
-  background: var(--surface-3);
-}
-.assessment-tile__bar {
-  position: absolute;
-  inset-block: 0;
-  width: 34%;
-  border-radius: inherit;
-  background: color-mix(in srgb, var(--text) 78%, var(--surface));
-  animation: assessment-slide 1.8s ease-in-out infinite alternate;
-}
-.assessment-tile--error {
-  background: color-mix(in srgb, var(--danger, #b42318) 12%, var(--surface));
-}
-.assessment-tile--error .assessment-tile__headline {
-  color: var(--danger, #b42318);
-}
-.assessment-tile__actions {
-  display: flex;
-  justify-content: flex-start;
-  margin-top: 0.15rem;
-}
-
-@keyframes assessment-slide {
-  from {
-    transform: translateX(-8%);
-  }
-  to {
-    transform: translateX(205%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .assessment-tile__bar {
-    animation: none;
-    transform: translateX(90%);
-  }
-}
-
 /* ==================================================================
    Home hub — open-tasks worklist (design "D2 boxed groups"). Below the
    .home/.screen card: a "TO DO · N" counter, then boxed groups (SITE ACTIONS,
@@ -1842,16 +1684,7 @@ html.wa-dark .home-results__complete-content img {
   gap: 1rem;
   margin-top: 1.25rem;
 }
-/* "TO DO · N" — total open count, uppercased via text-transform. */
-.worklist__counter {
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin: 0 0 -0.15rem;
-  padding-inline: 0.35rem;
-}
+
 /* A boxed group: a tinted card holding its label + cards. */
 .worklist__group {
   background: var(--surface-2);
@@ -1871,10 +1704,7 @@ html.wa-dark .home-results__complete-content img {
   color: var(--text-secondary);
   padding-inline: 0.15rem;
 }
-/* The escalation lane's label is blue (matches the "Filed 311 ticket" button). */
-.worklist__group--city .worklist__label {
-  color: var(--brand-blue);
-}
+
 .worklist__cards {
   display: flex;
   flex-direction: column;
@@ -1938,31 +1768,6 @@ html.wa-dark .home-results__complete-content img {
   padding-inline: 0.4rem;
 }
 
-/* Status pill — text names the state (EN ROUTE/PENDING/CONFIRM); color only
-   reinforces, so it's never the sole carrier (WCAG 1.4.1). Contrast: brand-blue
-   on brand-blue-bg and text-secondary on surface-3 both clear AA (see tokens). */
-.pill {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.28rem 0.6rem;
-  border-radius: var(--radius-pill);
-  white-space: nowrap;
-}
-.pill--route,
-.pill--confirm {
-  color: var(--brand-blue);
-  background: var(--brand-blue-bg);
-}
-.pill--pending,
-.pill--sev {
-  color: var(--text-secondary);
-  background: var(--surface-3);
-}
-
 /* Outline button — the secondary sibling to .btn-ink (e.g. "Still there").
    Same unlayered reset so WA's native-button chrome can't leak in. */
 .btn-outline {
@@ -2023,237 +1828,6 @@ html.wa-dark .home-results__complete-content img {
 }
 
 /* ==================================================================
-   Dev guidance harness — internal workbench for exercising the rule
-   workflow against the real local API. Dev route only.
-   ================================================================== */
-.guidance-harness {
-  width: min(1180px, 100%);
-  margin: 0 auto;
-  padding: 1rem 0 2rem;
-}
-.guidance-harness__header {
-  display: flex;
-  align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.guidance-harness__back {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-weight: 700;
-  text-decoration: none;
-  padding: 0.35rem 0;
-}
-.guidance-harness__back:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-  border-radius: 6px;
-}
-.guidance-harness__eyebrow {
-  margin: 0 0 0.2rem;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-.guidance-harness h1 {
-  margin: 0;
-  font-size: 1.8rem;
-}
-.guidance-harness__layout {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
-  gap: 1rem;
-  align-items: start;
-}
-.guidance-harness__editor {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-sm);
-  padding: 1rem;
-}
-.guidance-harness__results {
-  min-width: 0;
-}
-.guidance-harness__controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  align-items: end;
-  margin-bottom: 0.85rem;
-}
-.guidance-harness__controls--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.guidance-harness wa-select,
-.guidance-harness wa-input,
-.guidance-harness wa-textarea {
-  width: 100%;
-}
-
-.guidance-harness wa-checkbox {
-  margin-bottom: 0.85rem;
-}
-
-.guidance-harness wa-textarea::part(textarea) {
-  min-height: 430px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.86rem;
-  line-height: 1.45;
-}
-.guidance-harness__actions,
-.guidance-question__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  align-items: center;
-  margin-top: 0.9rem;
-}
-.guidance-harness__error {
-  margin: 0.85rem 0 0;
-  color: var(--c-hazard);
-  font-weight: 700;
-}
-.guidance-harness__empty {
-  border: 1px dashed var(--c-line);
-  border-radius: var(--radius-sm);
-  padding: 1rem;
-  background: var(--surface);
-}
-.guidance-harness__empty h2,
-.guidance-section h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.05rem;
-}
-.guidance-harness__empty p,
-.guidance-harness__muted {
-  color: var(--text-secondary);
-  margin: 0;
-}
-.guidance-section + .guidance-section {
-  margin-top: 1.25rem;
-}
-.guidance-list {
-  display: grid;
-  gap: 0.75rem;
-}
-.guidance-card {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-sm);
-  padding: 0.9rem;
-}
-.guidance-card__top {
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  gap: 0.75rem;
-  margin-bottom: 0.65rem;
-}
-.guidance-card h3 {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.25;
-}
-.guidance-card p {
-  margin: 0.7rem 0 0;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-.guidance-pill {
-  flex: 0 0 auto;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 700;
-  padding: 0.24rem 0.55rem;
-  text-transform: uppercase;
-}
-.guidance-kv {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.65rem;
-  margin: 0;
-}
-.guidance-kv--compact {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.guidance-kv div {
-  min-width: 0;
-}
-.guidance-kv dt {
-  color: var(--text-secondary);
-  font-size: 0.74rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.guidance-kv dd {
-  margin: 0.1rem 0 0;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-.guidance-question {
-  margin-top: 0.85rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--c-line);
-}
-.guidance-question p {
-  color: var(--text);
-  font-weight: 700;
-}
-.guidance-actions {
-  margin: 0.8rem 0 0;
-  padding-left: 1.2rem;
-  color: var(--text-secondary);
-  font-size: 0.86rem;
-}
-.guidance-actions code {
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-.guidance-harness__raw {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  margin-top: 1.25rem;
-}
-.guidance-harness__raw details {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
-}
-.guidance-harness__raw summary {
-  cursor: pointer;
-  font-weight: 700;
-}
-.guidance-harness__raw pre {
-  max-height: 360px;
-  overflow: auto;
-  margin: 0.75rem 0 0;
-  padding: 0.75rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-@media (max-width: 900px) {
-  .guidance-harness__layout,
-  .guidance-harness__raw {
-    grid-template-columns: 1fr;
-  }
-  .guidance-harness__controls,
-  .guidance-harness__controls--three,
-  .guidance-kv,
-  .guidance-kv--compact {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ==================================================================
    Flow screens — the linear check (14 capture / 15 review / 16 results).
    Shared chrome: a centered column (.flow) with a .topbar (back button +
    title/subtitle + right meta), matching the design. Reused by all three,
@@ -2272,116 +1846,6 @@ html.wa-dark .home-results__complete-content img {
   border-bottom: 1px solid var(--c-line);
   margin-bottom: 1.25rem;
 }
-.topbar__back {
-  appearance: none;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 0;
-  cursor: pointer;
-  background: var(--surface-3);
-  color: var(--text);
-  font-size: 1rem;
-  box-shadow: none;
-  margin: 0;
-  padding: 0;
-}
-.topbar__back:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-}
-.topbar__titles {
-  flex: 1;
-  min-width: 0;
-}
-.topbar__title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  line-height: 1.2;
-}
-.topbar__sub {
-  margin: 0.1rem 0 0;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-.topbar__meta {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  white-space: nowrap;
-}
-
-/* A centered hero shared by review/results (eyebrow / big headline / body) */
-.flow-hero {
-  text-align: center;
-  padding: 0.5rem 0 1.4rem;
-}
-.flow-hero__eyebrow {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 1rem;
-}
-.flow-hero__headline {
-  margin: 0.35rem 0 0.6rem;
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.1;
-  text-wrap: balance;
-}
-.flow-hero__body {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 1.05rem;
-  line-height: 1.45;
-  text-wrap: balance;
-}
-
-/* A full-width footer note under a flow CTA (centered, faint) */
-.flow-foot {
-  margin: 0.9rem 0 0;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-}
-/* Submit failure (online-only path): a retryable error shown above the CTA. */
-.flow-error {
-  margin: 0.75rem 0 0;
-  padding: 0.6rem 0.8rem;
-  border-radius: 0.6rem;
-  background: var(--c-hazard-bg);
-  color: var(--c-hazard);
-  font-size: 0.95rem;
-  text-align: center;
-}
-/* A two-part footer: a link on the left, a faint note on the right (screen 14) */
-.flow-foot--split {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  text-align: left;
-}
-.flow-foot__link {
-  color: var(--brand-blue);
-  font-weight: 600;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  padding: 0;
-  font: inherit;
-  font-weight: 600;
-}
-.flow-foot__link:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
 
 /* ==================================================================
    Screen 5c capture — native camera handoff (MVP). A 3-part top bar, a
@@ -2399,75 +1863,6 @@ html.wa-dark .home-results__complete-content img {
      capture region is a plain block. */
   flex: 1 0 auto;
   padding-bottom: 1rem;
-}
-
-/* The check screen owns its own top bar (not the shared .topbar): Cancel /
-   place progress / Skip place. */
-.check__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 1rem 0 0.9rem;
-}
-.check__cancel,
-.check__skip {
-  appearance: none;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--brand-blue);
-  padding: 0.2rem 0;
-  box-shadow: none;
-  margin: 0;
-  height: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
-}
-.check__cancel wa-icon {
-  font-size: 1rem;
-}
-.check__place {
-  font-weight: 700;
-  font-size: 1.05rem;
-}
-.check__spacer {
-  display: inline-block;
-  min-width: 2.5rem;
-}
-.check__cancel:focus-visible,
-.check__skip:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 6px;
-}
-
-/* 4-segment progress pill. Color reinforces; each segment also carries an
-   aria-label state (never color alone — WCAG 1.4.1). */
-.segbar {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 1.1rem;
-}
-.seg {
-  flex: 1;
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-}
-.seg--captured {
-  background: var(--ink);
-}
-.seg--current {
-  background: var(--brand-blue);
-}
-.seg--skipped {
-  background: none;
-  border: 1.5px dashed var(--text-faint);
-  height: 2px;
 }
 
 /* This place's shots as a responsive grid; the ＋ tile is the last cell. The grid
@@ -2497,58 +1892,14 @@ html.wa-dark .home-results__complete-content img {
   overflow: hidden;
   background: var(--surface-3);
 }
-.shot__body {
-  appearance: none;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  display: block;
-  margin: 0;
-  padding: 0;
-  text-align: inherit;
-}
-.shot__body:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: -2px;
-}
+
 .shot__img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.shot--description {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-}
-.shot__body--description {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  padding: 0.85rem;
-  color: var(--ink);
-}
-.shot__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 1.25rem;
-  transform: translateY(-0.2rem);
-}
-.shot__label {
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.15;
-}
+
 .shot__del {
   position: absolute;
   right: 4px;
@@ -2632,16 +1983,7 @@ html.wa-dark .home-results__complete-content img {
   gap: 1rem;
   padding-top: 0.2rem;
 }
-.check__actions--perimeter {
-  align-items: stretch;
-  flex-direction: column;
-}
-.check__nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
+
 .check__describe {
   appearance: none;
   background: none;
@@ -2659,10 +2001,7 @@ html.wa-dark .home-results__complete-content img {
   padding: 0.35rem 0;
   text-align: left;
 }
-.check__actions--perimeter .check__describe {
-  align-self: center;
-  text-align: center;
-}
+
 .check__describe:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
@@ -2684,28 +2023,7 @@ html.wa-dark .home-results__complete-content img {
   box-shadow: none;
   margin: 0;
 }
-.check__previous {
-  flex: 0 0 auto;
-}
-.check__previous::part(base) {
-  min-height: auto;
-  padding: 0.9rem 1.1rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--ink);
-  color: var(--on-ink);
-  box-shadow: none;
-  font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
-}
-.check__previous::part(label) {
-  line-height: 1.2;
-}
-.check__previous[disabled]::part(base) {
-  opacity: 0.4;
-  cursor: default;
-}
+
 .check__next:disabled {
   opacity: 0.4;
   cursor: default;
@@ -2719,12 +2037,9 @@ html.wa-dark .home-results__complete-content img {
     align-items: stretch;
     flex-direction: column;
   }
-  .check__nav {
-    flex-direction: column;
-  }
+
   .check__describe,
-  .check__next,
-  .check__previous {
+  .check__next {
     width: 100%;
   }
   .check__describe {
@@ -2952,10 +2267,6 @@ html.wa-dark .home-results__complete-content img {
 
 .analysis-tray--history .analysis-card {
   background: var(--wa-color-surface-lowered, #f1f2f3);
-}
-
-.analysis-tray--standard .analysis-tray__cards {
-  background: var(--surface-2);
 }
 
 .analysis-tray__empty {
@@ -3236,14 +2547,6 @@ html.wa-dark .analysis-card__clear-copy a {
   margin-top: 0.75rem;
 }
 
-.skeleton-line--wide {
-  width: min(100%, 19rem);
-}
-
-.skeleton-line--mid {
-  width: min(100%, 11.25rem);
-}
-
 .analysis-card__actions {
   display: flex;
   align-items: center;
@@ -3258,17 +2561,8 @@ html.wa-dark .analysis-card__clear-copy a {
   margin-top: 1rem;
 }
 
-.analysis-card__question-category,
 .analysis-card__question-prompt {
   margin: 0;
-}
-
-.analysis-card__question-category {
-  color: var(--muted);
-  font-size: var(--wa-font-size-xs, 0.75rem);
-  font-weight: 700;
-  line-height: 1.2;
-  text-transform: uppercase;
 }
 
 .analysis-card__question-prompt {
@@ -3860,12 +3154,6 @@ html.wa-dark .analysis-card__clear-copy a {
   outline-offset: 3px;
 }
 
-.describe__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-}
-
 .describe__meta {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3917,51 +3205,12 @@ html.wa-dark .analysis-card__clear-copy a {
   border-radius: 0.25rem;
 }
 
-.describe-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1.875rem;
-  padding: 0.328rem 0.75rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: #e4e5e9;
-  color: #9194a2;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.2;
-}
-
-.describe-chip[data-complete="true"] {
-  background: #d9f2e3;
-  color: #276246;
-}
-
 .describe__actions {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   margin-top: auto;
-}
-
-.describe__validation-status {
-  visibility: visible;
-  min-height: 2.75rem;
-  margin: 0 0 0.875rem;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.4;
-  text-align: center;
-  max-width: 22rem;
-}
-
-.describe__validation-status[aria-hidden="true"] {
-  visibility: hidden;
-}
-
-.describe__validation-status[data-kind="error"] {
-  color: var(--c-hazard);
 }
 
 .describe__continue {
@@ -4072,311 +3321,15 @@ html.wa-dark .analysis-card__clear-copy a {
   }
 }
 
-/* ---- Screen (15) review + (16) results: coverage / evidence rows ---- */
-.rowcard {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: 16px;
-  overflow: hidden;
-}
-.rowcard__row {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 0.9rem 1rem;
-  border-top: 1px solid var(--c-line);
-}
-.rowcard__row:first-child {
-  border-top: 0;
-}
-.rowcard__thumb {
-  flex: 0 0 auto;
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
-  background: var(--surface-3);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-faint);
-  font-weight: 700;
-  object-fit: cover;
-}
-.rowcard__body {
-  flex: 1;
-  min-width: 0;
-}
-.rowcard__title {
-  margin: 0;
-  font-weight: 700;
-  font-size: 1.1rem;
-}
-.rowcard__detail {
-  margin: 0.15rem 0 0;
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-  overflow-wrap: anywhere;
-}
-.rowcard__action {
-  flex: 0 0 auto;
-  appearance: none;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  color: var(--brand-blue);
-  font: inherit;
-  font-weight: 600;
-  padding: 0.3rem 0.2rem;
-  box-shadow: none;
-  margin: 0;
-  height: auto;
-}
-.rowcard__action:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 6px;
-}
-
-/* A faint info strip with a trailing link (review "analysis ready", etc.) */
-.infostrip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  background: var(--surface-2);
-  border: 1px solid var(--c-line);
-  border-radius: 12px;
-  padding: 0.85rem 1rem;
-  margin: 1.2rem 0;
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-}
-.infostrip__link {
-  color: var(--brand-blue);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 /* ---- Screen (16) results: analysis hero, evidence strip, buckets ---- */
 .evidence {
   padding-bottom: 1.3rem;
-}
-.evidence__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.7rem;
-}
-.evidence__label {
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-}
-.evidence__link {
-  color: var(--brand-blue);
-  font-weight: 600;
-}
-.evidence__strip {
-  display: flex;
-  gap: 0.55rem;
-  overflow-x: auto;
-}
-.evidence__thumb {
-  flex: 0 0 auto;
-  width: 74px;
-  height: 60px;
-  border-radius: 10px;
-  background: var(--surface-3);
-  object-fit: cover;
-}
-.evidence__thumb--active {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: -2px;
-}
-.evidence__thumb--more {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px dashed var(--c-line);
-  background: none;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  text-align: center;
 }
 
 /* Results buckets sit on the page ground; give them a grey band feel by
    letting cards be white on the faint --bg. Each bucket = head + cards. */
 .bucket {
   margin-top: 1.4rem;
-}
-.bucket__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
-}
-.bucket__title {
-  font-weight: 700;
-  font-size: 1.05rem;
-}
-.bucket__meta {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-}
-
-/* Finding card (city action). Title, source line, provenance foot, FILE 311 pill. */
-.findcard {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: 16px;
-  overflow: hidden;
-}
-.findcard__row {
-  padding: 1rem 1.1rem;
-  border-top: 1px solid var(--c-line);
-  cursor: pointer;
-}
-.findcard__row:first-child {
-  border-top: 0;
-}
-.findcard__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.3rem;
-}
-.findcard__kicker {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-}
-.findcard__title {
-  margin: 0;
-  font-weight: 700;
-  font-size: 1.2rem;
-}
-.findcard__desc {
-  margin: 0.2rem 0 0;
-  color: var(--text-secondary);
-  font-size: 1rem;
-  line-height: 1.4;
-}
-.findcard__prov {
-  margin: 0.5rem 0 0;
-  color: var(--text-faint);
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-
-/* "You can handle" checklist card — title + confidence, trailing check circle */
-.checkcard {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: 16px;
-  overflow: hidden;
-}
-.checkitem {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 1rem 1.1rem;
-  border-top: 1px solid var(--c-line);
-  width: 100%;
-  text-align: left;
-  appearance: none;
-  background: none;
-  border-left: 0;
-  border-right: 0;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  box-shadow: none;
-  margin: 0;
-  height: auto;
-}
-.checkitem:first-child {
-  border-top: 0;
-}
-.checkitem__body {
-  flex: 1;
-  min-width: 0;
-}
-.checkitem__title {
-  margin: 0;
-  font-weight: 700;
-  font-size: 1.15rem;
-}
-.checkitem__detail {
-  margin: 0.15rem 0 0;
-  color: var(--text-secondary);
-  font-size: 0.98rem;
-}
-.checkitem__ring {
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 2px solid var(--c-line);
-}
-.checkitem[aria-pressed="true"] .checkitem__ring {
-  border-color: var(--brand-blue);
-  background: var(--brand-blue);
-  box-shadow: inset 0 0 0 3px var(--surface);
-}
-.checkitem:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: -2px;
-}
-
-/* "Noted, no action" — a quiet card with a table of finding + confidence */
-.noted {
-  background: var(--surface);
-  border: 1px solid var(--c-line);
-  border-radius: 16px;
-  padding: 1rem 1.1rem;
-  margin-top: 1.4rem;
-}
-.noted__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  color: var(--text-secondary);
-  margin-bottom: 0.5rem;
-}
-.noted__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.noted__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.35rem 0;
-}
-.noted__name {
-  color: var(--text);
-}
-.noted__pct {
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Stacked CTAs at the bottom of results */
-.flow-ctas {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  margin-top: 1.5rem;
-}
-.flow-ctas .btn-ink,
-.flow-ctas .btn-outline {
-  width: 100%;
-  padding-left: 0;
-  padding-right: 0;
 }
 
 /* ==================================================================
@@ -4386,144 +3339,11 @@ html.wa-dark .analysis-card__clear-copy a {
    identified condition). Task worklist lives on home, not here.
    ================================================================== */
 
-/* Header variant: title block left, close button pinned top-right, no divider. */
-.topbar--review {
-  align-items: flex-start;
-  border-bottom: 0;
-  margin-bottom: 1rem;
-}
-.topbar--review .topbar__title {
-  font-size: 1.6rem;
-  line-height: 1.15;
-}
-
-/* Display-only strip of the run's photos, above everything (no controls). */
-.thumbstrip {
-  display: flex;
-  gap: 0.6rem;
-  overflow-x: auto;
-  padding-bottom: 1.3rem;
-  scrollbar-width: none;
-  margin: 0;
-  padding-inline-start: 0;
-  list-style: none;
-}
-.thumbstrip::-webkit-scrollbar {
-  display: none;
-}
-.thumbstrip__item {
-  flex: 0 0 auto;
-}
-.thumbstrip__thumb {
-  display: block;
-  width: 150px;
-  height: 150px;
-  border-radius: 14px;
-  background: var(--surface-3);
-  object-fit: cover;
-}
-
-/* Grey assessment panel wrapping the summary + issue cards. */
-.assess {
-  background: var(--surface-2);
-  border-radius: 18px;
-  padding: 1.2rem 1rem 1rem;
-}
-.assess__head {
-  padding: 0 0.2rem 0.2rem;
-}
-.assess__spark {
-  display: block;
-  font-size: 1.4rem;
-  color: var(--text);
-  margin-bottom: 0.5rem;
-}
-.assess__summary {
-  margin: 0;
-  font-size: 1.3rem;
-  font-weight: 700;
-  line-height: 1.25;
-  text-wrap: balance;
-}
-.assess__sub {
-  margin: 0.4rem 0 0;
-  color: var(--text-secondary);
-  font-size: 1rem;
-}
-
-/* The stack of identified-condition cards inside the panel. */
-.assess__list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  margin-top: 1rem;
-}
 .issue {
   background: var(--surface);
   border: 1px solid var(--c-line);
   border-radius: 14px;
   padding: 0.9rem 1.1rem 1rem;
-}
-.issue__title {
-  margin: 0;
-  font-weight: 700;
-  font-size: 1.15rem;
-}
-/* Which places this condition was seen at (e.g. "6th St · Front entrance"). */
-.issue__places {
-  margin: 0.15rem 0 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-}
-.issue__desc {
-  margin: 0.2rem 0 0;
-  color: var(--text-secondary);
-  font-size: 1rem;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-/* Opens the dispute ("Something not right?") modal for this card. Link-styled. */
-.issue__flag {
-  appearance: none;
-  background: none;
-  border: 0;
-  padding: 0.5rem 0 0;
-  margin: 0;
-  box-shadow: none;
-  height: auto;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--brand-blue);
-  text-decoration: underline;
-}
-.issue__flag:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-.assess .rowcard {
-  margin-top: 1rem;
-}
-
-/* ---- Dispute: marked-card state + status line ---- */
-/* When the user disputes a condition, the card's claim is struck through and the
-   trigger is replaced by a status line noting what they marked. */
-.issue--marked .issue__title,
-.issue--marked .issue__desc {
-  text-decoration: line-through;
-  color: var(--text-secondary);
-}
-.issue__status {
-  margin: 0.5rem 0 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(
-    --c-flag
-  ); /* amber "you changed this" — paired with the text label */
 }
 
 /* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
@@ -4584,7 +3404,7 @@ html.wa-dark .analysis-card__clear-copy a {
     opacity: 0;
   }
 }
-/* Reduced motion: fade only — no slide/scale (matches the assessment-tile guard). */
+/* Reduced motion: fade only — no slide/scale (matches the other reduced-motion guards). */
 @media (prefers-reduced-motion: reduce) {
   .sheet:not([open]) {
     translate: 0 0;
