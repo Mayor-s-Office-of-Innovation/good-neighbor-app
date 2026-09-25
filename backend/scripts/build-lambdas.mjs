@@ -6,14 +6,13 @@
 // Run before `terraform plan` in the deploy job — the archive's source_code_hash
 // drives redeploys.
 //
-// `sharp` (native image codec used by the worker's downscale step) is handled
-// specially: esbuild keeps it external (it's a `.node` native addon and must
-// not be bundled), and this script copies `sharp`, its JS runtime dependencies
-// (`detect-libc`, `semver` — imported by sharp's module-load path), and its
-// platform binaries (`@img/*`) from node_modules into `dist/worker/` so the zip
-// is self-contained. Only the worker imports it — api/authorizer bundles are
-// unchanged. On the deploy runner, `npm ci` resolves the linux-x64 binaries via
-// sharp's optionalDependencies.
+// `sharp` (native image codec used by the API and worker downscale steps) is
+// handled specially: esbuild keeps it external (it's a `.node` native addon and
+// must not be bundled), and this script copies `sharp`, its JS runtime
+// dependencies (`detect-libc`, `semver` — imported by sharp's module-load
+// path), and its platform binaries (`@img/*`) from node_modules into both
+// deployment artifacts so their zips are self-contained. On the deploy runner,
+// `npm ci` resolves the linux-x64 binaries via sharp's optionalDependencies.
 //
 // `@duckdb/node-api` (analytics convert + report lambdas) gets the same
 // treatment: native `.node` binding + platform-specific `libduckdb.dylib` in
@@ -55,7 +54,13 @@ const shared = {
 };
 
 const entries = [
-  { name: "api", entry: resolve(backendRoot, "src/lambda/api.js") },
+  {
+    name: "api",
+    entry: resolve(backendRoot, "src/lambda/api.js"),
+    // Native addons can't be bundled — keep the import as a runtime require
+    // resolved against the copied node_modules (see copy step below).
+    external: ["sharp"],
+  },
   {
     name: "authorizer",
     entry: resolve(backendRoot, "src/lambda/authorizer.js"),
@@ -96,12 +101,12 @@ for (const { name, entry, external } of entries) {
   console.log(`[build-lambdas] bundled ${name} → dist/${name}/index.mjs`);
 }
 
-// Copy sharp + its runtime deps + platform binaries into the worker dist so the
-// deploy zip ships them alongside the bundle. npm hoists sharp to the workspace
-// root, so resolve from there (falling back to backend/node_modules if not
-// hoisted). Resolution inside the zip walks up from
-// dist/worker/node_modules/sharp/... — there is no parent node_modules — so
-// every package sharp's module-load path imports must exist in the copy.
+// Copy sharp + its runtime deps + platform binaries into every Lambda that
+// imports it so each deploy zip ships them alongside the bundle. npm hoists
+// sharp to the workspace root, so resolve from there (falling back to
+// backend/node_modules if not hoisted). Resolution inside each zip walks up
+// from dist/<target>/node_modules/sharp/... — there is no parent node_modules —
+// so every package sharp's module-load path imports must exist in the copy.
 //
 // Only the linux-x64 binaries are needed at runtime (Lambda), but the local
 // node_modules only carries this machine's binaries. Copy ALL of @img/*: on the
@@ -109,14 +114,16 @@ for (const { name, entry, external } of entries) {
 // and each platform package self-describes its os/cpu, so extras are inert.
 // The wasm32 fallback (~9 MB) is what sharp loads if no native binary matches,
 // so it doubles as insurance against an os/cpu mismatch in the zip.
-const sharpDist = resolve(distDir, "worker");
+const sharpTargets = ["api", "worker"];
 const roots = [resolve(backendRoot, ".."), backendRoot];
 const findPkg = (pkg) =>
   roots.map((root) => resolve(root, "node_modules", pkg)).find(existsSync);
 
 const sharpSrc = findPkg("sharp");
 if (!sharpSrc) {
-  console.warn("[build-lambdas] sharp not present in node_modules — skipping");
+  throw new Error(
+    "[build-lambdas] sharp not found in node_modules — the api and worker zips would crash on cold start",
+  );
 } else {
   // sharp's runtime `dependencies` (detect-libc, semver) must ride along —
   // libvips.mjs imports them at module load and the zip has no fallback.
@@ -124,29 +131,33 @@ if (!sharpSrc) {
     readFileSync(join(sharpSrc, "package.json"), "utf8"),
   );
   const runDeps = Object.keys(sharpPkg.dependencies ?? {});
-  await cp(sharpSrc, join(sharpDist, "node_modules", "sharp"), {
-    recursive: true,
-  });
   const imgSrc = findPkg("@img");
-  if (imgSrc) {
+  if (!imgSrc) {
+    throw new Error(
+      "[build-lambdas] @img not found in node_modules — the api and worker zips would crash on cold start",
+    );
+  }
+  for (const target of sharpTargets) {
+    const sharpDist = resolve(distDir, target);
+    await cp(sharpSrc, join(sharpDist, "node_modules", "sharp"), {
+      recursive: true,
+    });
     await cp(imgSrc, join(sharpDist, "node_modules", "@img"), {
       recursive: true,
     });
-  } else {
-    console.warn("[build-lambdas] @img not present in node_modules — skipping");
-  }
-  for (const dep of runDeps) {
-    const src = findPkg(dep);
-    if (!src) {
-      throw new Error(
-        `[build-lambdas] sharp runtime dependency '${dep}' not found in node_modules — the worker zip would crash on cold start`,
-      );
+    for (const dep of runDeps) {
+      const src = findPkg(dep);
+      if (!src) {
+        throw new Error(
+          `[build-lambdas] sharp runtime dependency '${dep}' not found in node_modules — the ${target} zip would crash on cold start`,
+        );
+      }
+      await cp(src, join(sharpDist, "node_modules", dep), { recursive: true });
     }
-    await cp(src, join(sharpDist, "node_modules", dep), { recursive: true });
+    console.log(
+      `[build-lambdas] copied sharp + [${runDeps.join(", ")}] + @img/* into dist/${target}/node_modules/`,
+    );
   }
-  console.log(
-    `[build-lambdas] copied sharp + [${runDeps.join(", ")}] + @img/* into dist/worker/node_modules/`,
-  );
 }
 
 // Copy @duckdb/node-api + its native bindings into the two analytics dists.
@@ -239,7 +250,8 @@ if (!duckApiSrc) {
 // fails here instead of in a CI deploy.
 const MAX_ZIP_MB = 45;
 const MAX_UNZIPPED_MB = 240;
-for (const target of duckTargets) {
+const sizeGateTargets = [...new Set([...sharpTargets, ...duckTargets])];
+for (const target of sizeGateTargets) {
   const dist = resolve(distDir, target);
   const { totalBytes } = await walkSize(dist);
   const unzippedMb = totalBytes / (1024 * 1024);

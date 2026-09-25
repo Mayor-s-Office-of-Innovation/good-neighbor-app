@@ -3,12 +3,17 @@ import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const {
   createAnalyzerClient,
+  downscaleImage,
   getAnalyzerApiKey,
   getObjectBytes,
   presignGet,
   send,
 } = vi.hoisted(() => ({
   createAnalyzerClient: vi.fn(),
+  downscaleImage: vi.fn(async (bytes) => ({
+    bytes,
+    contentType: "image/jpeg",
+  })),
   getAnalyzerApiKey: vi.fn(),
   getObjectBytes: vi.fn(),
   presignGet: vi.fn(),
@@ -16,6 +21,7 @@ const {
 }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
 vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
+vi.mock("../../media/downscale.js", () => ({ downscaleImage }));
 vi.mock("../api-key.js", () => ({ getAnalyzerApiKey }));
 vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
 
@@ -312,9 +318,14 @@ describe("app action execution", () => {
       bytes: Buffer.from("image"),
       contentType: "image/jpeg",
     });
+    downscaleImage.mockResolvedValueOnce({
+      bytes: Buffer.from("resized-image"),
+      contentType: "image/jpeg",
+    });
     getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
     createAnalyzerClient.mockReturnValueOnce({
-      classifyImage: vi.fn().mockResolvedValueOnce({ labels: [] }),
+      classifyEvidence,
     });
 
     try {
@@ -354,16 +365,131 @@ describe("app action execution", () => {
         {
           code: "create_311_ticket",
           status: "failed",
-          reason: "no_service_codes",
+          reason: "insufficient_classifier_information",
           payload: { serviceCodeOrAction: "Run graffiti analysis" },
           recordedAt: "2026-08-18T12:00:00.000Z",
         },
       ]);
+      expect(downscaleImage).toHaveBeenCalledWith(
+        Buffer.from("image"),
+        "image/jpeg",
+      );
+      expect(classifyEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          evidence: {
+            type: "image",
+            image: {
+              content_type: "image/jpeg",
+              base64: Buffer.from("resized-image").toString("base64"),
+            },
+          },
+        }),
+      );
     } finally {
       createAnalyzerClient.mockReset();
       getAnalyzerApiKey.mockReset();
       getObjectBytes.mockReset();
       send.mockReset();
+    }
+  });
+
+  it("classifies description-only evidence and files without an attachment", async () => {
+    const textArtifact = {
+      artifactId: "artifact-1",
+      text: "A mattress has been left on the sidewalk.",
+    };
+    send
+      .mockResolvedValueOnce({ Items: [textArtifact] })
+      .mockResolvedValueOnce({ Items: [textArtifact] });
+    getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    const classifyEvidence = vi
+      .fn()
+      .mockResolvedValueOnce({ labels: ["Mattress"] });
+    createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            return_code: "0",
+            error_description: "",
+            SRNum: "2000008106",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    try {
+      const results = await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "Run bulky item analysis",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            ANALYZER_BASE_URL: "https://analyzer.example.test",
+            ANALYZER_API_KEY: "analyzer-key",
+            SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site-1",
+          task: {
+            taskId: "task-1",
+            checkId: "check-1",
+            description: "A mattress has been left on the sidewalk.",
+            sourceArtifactIds: ["artifact-1"],
+            location: { latitude: 37.77, longitude: -122.42 },
+          },
+        },
+      );
+
+      expect(classifyEvidence).toHaveBeenCalledWith({
+        classifierId: "bulky-items",
+        evidence: {
+          type: "text",
+          text: "A mattress has been left on the sidewalk.",
+        },
+        requestId: "task-1",
+        appId: "good-neighbor-app",
+      });
+      expect(results).toMatchObject([
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          payload: {
+            tickets: [
+              {
+                serviceCode: "1.1.4.7.10.0",
+                srNum: "2000008106",
+                attachments: [],
+              },
+            ],
+          },
+        },
+      ]);
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+        NatureofRequest: "1.1.4.7.10.0",
+        ProblemDescription: "A mattress has been left on the sidewalk.",
+      });
+    } finally {
+      createAnalyzerClient.mockReset();
+      getAnalyzerApiKey.mockReset();
+      send.mockReset();
+      vi.unstubAllGlobals();
     }
   });
 
@@ -394,7 +520,7 @@ describe("app action execution", () => {
     });
     getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
     createAnalyzerClient.mockReturnValueOnce({
-      classifyImage: vi.fn().mockResolvedValueOnce({
+      classifyEvidence: vi.fn().mockResolvedValueOnce({
         labels: ["Mattress", "Furniture"],
       }),
     });

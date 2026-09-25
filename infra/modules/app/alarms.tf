@@ -239,6 +239,54 @@ resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
   }
 }
 
+# 311 app actions return a stored failure result rather than throwing. Capture
+# that explicit operational event from both execution paths: automatic filings
+# run in the worker, while user-confirmed filings run in the API Lambda.
+resource "aws_cloudwatch_log_metric_filter" "api_311_action_failures" {
+  name           = "${local.name_prefix}-api-311-action-failures"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
+
+  metric_transformation {
+    name          = "Sf311ActionFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "worker_311_action_failures" {
+  name           = "${local.name_prefix}-worker-311-action-failures"
+  log_group_name = aws_cloudwatch_log_group.worker.name
+  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
+
+  metric_transformation {
+    name          = "Sf311ActionFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "sf311_action_failed" {
+  alarm_name          = "${local.name_prefix}-311-action-failed"
+  alarm_description   = "A 311 filing action failed. Search API and worker logs for eventType=311_app_action_failed and inspect the safe failure reason."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 1
+  period              = 300
+  namespace           = local.error_namespace
+  metric_name         = "Sf311ActionFailed"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
 # Combined "the api or worker is failing now" page.
 resource "aws_cloudwatch_metric_alarm" "server_error_rate" {
   alarm_name          = "${local.name_prefix}-server-errors"
