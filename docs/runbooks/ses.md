@@ -2,8 +2,7 @@
 
 Good Neighbor's setup-code sender is `codes@goodneighborsf.org`.
 SES verifies the entire domain with 2048-bit Easy DKIM in `us-west-2`,
-separately in the dev account (`518892333858`) and prod account
-(`701893741736`). Both accounts have production sending access.
+separately in the DEV and PROD accounts. Both accounts have production sending access.
 
 The authoritative Route 53 zone for `goodneighborsf.org` is
 `Z0308170YNRHEPQH0O3C` in prod. It holds three DKIM CNAME records for

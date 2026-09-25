@@ -9,7 +9,7 @@ identity as `Good Neighbor <codes@goodneighborsf.org>`.
 
 ## Environment configuration
 
-The dev pool is `us-west-2_8d60iAcSL`, in account `518892333858`, region
+The dev pool is `us-west-2_8d60iAcSL`, in the DEV account, region
 `us-west-2`. Its admin app client is `7d1mf2afobpkqs8uu3f3fs1375`, without a
 client secret. Its login domain is
 `https://good-neighbor-app-dev.auth.us-west-2.amazoncognito.com`.

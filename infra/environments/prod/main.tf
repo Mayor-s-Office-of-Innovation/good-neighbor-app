@@ -12,13 +12,7 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket         = "good-neighbor-app-terraform-state"
-    key            = "prod/terraform.tfstate"
-    region         = "us-west-2"
-    dynamodb_table = "good-neighbor-app-terraform-locks"
-    encrypt        = true
-  }
+  backend "s3" {}
 }
 
 provider "aws" {
