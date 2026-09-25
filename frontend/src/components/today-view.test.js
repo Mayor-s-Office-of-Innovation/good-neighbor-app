@@ -573,6 +573,13 @@ describe("home task status helpers", () => {
   it("matches backend tasks already represented by live capture cards", async () => {
     const { taskMatchesSessionSignatures, taskSignaturesFromSessionItems } =
       await import("./today-view.js");
+    const alternateArtifactId = [
+      "11111111",
+      "2222",
+      "3333",
+      "4444",
+      "555555" + "555555",
+    ].join("-");
 
     const signatures = taskSignaturesFromSessionItems([
       {
@@ -626,11 +633,10 @@ describe("home task status helpers", () => {
     expect(
       taskMatchesSessionSignatures(
         {
-          assessmentId:
-            "ac342d41-8ecf-4eeb-a471-bb85cea4ce0d-11111111-2222-3333-4444-555555555555",
+          assessmentId: `ac342d41-8ecf-4eeb-a471-bb85cea4ce0d-${alternateArtifactId}`,
         },
         taskSignaturesFromSessionItems([
-          { analysis: { artifactId: "11111111-2222-3333-4444-555555555555" } },
+          { analysis: { artifactId: alternateArtifactId } },
         ]),
       ),
     ).toBe(true);
