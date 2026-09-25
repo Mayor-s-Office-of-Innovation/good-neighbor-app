@@ -4,6 +4,7 @@
 // shape, resolves the lake bucket, and wraps the query result in JSON.
 import { jsonResponse } from "../http.js";
 import { runQuery, toQueryResponse } from "../analytics/query.js";
+import { logServerError } from "../lib/log-server-error.js";
 
 /**
  * Resolve the analytics lake bucket. Matches how getDynamoTableName works:
@@ -32,7 +33,8 @@ export const runAnalyticsQuery = (event) =>
   adminAnalytics(event, async (body) => {
     const sql = typeof body.sql === "string" ? body.sql.trim() : "";
     if (!sql) return jsonResponse(400, { error: "sql_required" });
-    if (sql.length > 20_000) return jsonResponse(400, { error: "sql_too_long" });
+    if (sql.length > 20_000)
+      return jsonResponse(400, { error: "sql_too_long" });
     if (BLOCKED_SQL.test(sql)) {
       return jsonResponse(400, { error: "sql_not_allowed" });
     }
@@ -40,9 +42,13 @@ export const runAnalyticsQuery = (event) =>
     try {
       result = await runQuery(getLakeBucket(), sql);
     } catch (err) {
-      return jsonResponse(502, {
-        error: /** @type {Error} */ (err).message ?? "query_failed",
+      // Log the detail server-side only; the response carries a generic error
+      // so internals (bucket names, SQL fragments, engine messages) don't leak
+      // back to the caller.
+      logServerError("admin-analytics", /** @type {Error} */ (err), {
+        extra: { sqlLength: sql.length },
       });
+      return jsonResponse(502, { error: "query_failed" });
     }
     return jsonResponse(200, toQueryResponse(result));
   });
@@ -65,7 +71,8 @@ async function adminAnalytics(event, fn) {
   } else if (typeof groups === "string") {
     const value = groups.trim();
     if (value.startsWith("[")) {
-      if (!value.endsWith("]")) return jsonResponse(403, { error: "forbidden" });
+      if (!value.endsWith("]"))
+        return jsonResponse(403, { error: "forbidden" });
       try {
         const parsed = JSON.parse(value);
         groupList = Array.isArray(parsed) ? parsed : [];
