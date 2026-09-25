@@ -8,6 +8,17 @@ variable "environment" {
   type        = string
 }
 
+variable "s3_bucket_name_prefix" {
+  description = "Optional compact prefix for generated S3 bucket names. Empty preserves the application/environment name prefix."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.s3_bucket_name_prefix == "" || can(regex("^[a-z0-9][a-z0-9-]{0,19}[a-z0-9]$", var.s3_bucket_name_prefix))
+    error_message = "S3 bucket name prefix must be empty or 2-21 lowercase letters, digits, and hyphens, beginning and ending with a letter or digit."
+  }
+}
+
 variable "data_classification" {
   description = "Data classification."
   type        = string
@@ -46,6 +57,12 @@ variable "sf311_agency_lookup_url" {
   description = "SF311 HUB agency lookup endpoint URL."
   type        = string
   default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/HUBWEB/1.0/lookup_agency_table"
+}
+
+variable "sf311_latest_updates_url" {
+  description = "SF311 HUB latest status updates endpoint URL; {agencyID} is replaced at runtime."
+  type        = string
+  default     = "https://oicdev-axallnoytkrb-px.integration.us-phoenix-1.ocp.oraclecloud.com/ic/api/integration/v1/flows/rest/GETSTATUSUPDATESBYSOURCEAGENCY/1.0/new_updates_by_source_agency/{agencyID}"
 }
 
 variable "sf311_default_responsible_agency" {

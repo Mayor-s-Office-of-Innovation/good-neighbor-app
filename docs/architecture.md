@@ -134,7 +134,7 @@ system one.
 Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance.js`):
 
 - **Deterministic, point-in-time, auditable:** each task keeps its `ruleId` +
-  `policyVersion` forever; rulebase updates ship as new catalog versions (`actions-escalations-v2.js`),
+  `policyVersion` forever; rulebase updates ship as new catalog versions (`actions-escalations-v3.js`),
   validated in CI (`npm run policy:validate`), diffed semantically with fixture impact
   reports (`npm run policy:diff`). The changelog is
   [guidance-policy-changelog.md](./guidance-policy-changelog.md).
@@ -144,6 +144,15 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   text report and carries it through the condition/task; 311 filing uses that location first,
   then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
   the app action with a retryable `missing_location` result rather than guessing.
+- **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
+  analyzer classifier when one exists, otherwise it sends the original text artifact. Images use
+  the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as
+  the main analysis path before base64 encoding. The classifier returns only approved labels,
+  which the app maps to SF311 service codes. An empty label result is stored explicitly as
+  `insufficient_classifier_information`; the app does not guess a fallback code. Description-only
+  tickets proceed to CreateSR without an attachment once a label maps successfully. This requires
+  the analyzer classifier endpoint to accept the `{text}` request variant alongside its existing
+  `{image}` variant.
 - **Safety ordering:** emergency outcomes (911) always precede routine guidance; the analyzer
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
@@ -156,8 +165,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   richer `kind`/`escalationChannel`/`appActions[]` fields.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
-  `POST /v1/tasks/{id}/cannot-do`. A dev-only harness (`/dev/guidance-harness`, dev builds
-  only) exercises the flow with fixtures.
+  `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
+  `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
+  owns its service-request number and return only the normalized summary and timeline fields used
+  by the client. Card hydration batches visible requests so one handler invocation loads the
+  agency-76 feed once; concurrent detail loads in the same Lambda environment also share an
+  in-flight feed request. The raw HUB response and customer fields are never returned. A dev-only
+  harness (`/dev/guidance-harness`, dev builds only) exercises the flow with fixtures.
 
 ## Single-table data model
 

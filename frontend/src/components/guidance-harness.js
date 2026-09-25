@@ -11,6 +11,8 @@ import { guidanceFixtures } from "../dev/guidance-fixtures.js";
 // production. This module itself is DEV-gated in main.js.
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
+import "@awesome.me/webawesome/dist/components/input/input.js";
+import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 
 const DEFAULT_FIXTURE = guidanceFixtures[0];
 

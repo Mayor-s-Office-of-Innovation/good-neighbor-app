@@ -30,6 +30,26 @@ describe("site proximity", () => {
   });
 });
 
+describe("formatOverdueElapsed", () => {
+  it("uses hours below one day and days thereafter", async () => {
+    const { formatOverdueElapsed } = await import("./today-view.js");
+    const expected = "2026-09-24T09:00:00.000Z";
+
+    expect(formatOverdueElapsed(expected, "2026-09-24T10:00:00.000Z")).toBe(
+      "1 hour",
+    );
+    expect(formatOverdueElapsed(expected, "2026-09-24T14:00:00.000Z")).toBe(
+      "5 hours",
+    );
+    expect(formatOverdueElapsed(expected, "2026-09-25T09:00:00.000Z")).toBe(
+      "1 day",
+    );
+    expect(formatOverdueElapsed(expected, "2026-09-26T10:00:00.000Z")).toBe(
+      "2 days",
+    );
+  });
+});
+
 describe("isStalePendingSession", () => {
   it("keeps a submitted check's local cards until guidance has finished", async () => {
     const { isStalePendingSession } = await import("./today-view.js");

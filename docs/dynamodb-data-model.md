@@ -97,7 +97,8 @@ attribute, so both shapes stay readable with no migration. The analyzer's
 
 Tasks also carry the 311 app-action state as plain attributes (no index, no separate ticket
 item): `appActions` (the structured rule actions), `appActionResults` (one result per executed
-action), and `appActionStatus` (rollup). Result shapes (`code` from
+action), `appActionStatus` (rollup), and `maxAcceptableResponseHours` (the rule-versioned
+response window; zero disables overdue assessment). Result shapes (`code` from
 `backend/src/analysis/guidance/app-actions.js`):
 
 Task `shortId` is the human-facing reference shown on staff cards. New tasks mint it as
