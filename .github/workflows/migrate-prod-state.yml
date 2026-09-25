@@ -74,8 +74,20 @@ jobs:
             .version == 4
             and .lineage == $lineage
             and ([.resources[]? | select(.mode == "managed")] | length == 0)
-            and all(.resources[]?; .mode == "data")
-            and all(.outputs[]?; .sensitive == false)
+            and all(.resources[]?;
+              .mode == "data"
+              and .type == "aws_caller_identity"
+              and (.name == "gn_dns" or .name == "goodneighbor_dns")
+            )
+            and all(.outputs[]?; .sensitive != true)
+            and ((.outputs | keys | sort) == ([
+              "gn_dns_name_servers",
+              "gn_dns_zone_id",
+              "gn_dnssec_ds_record",
+              "goodneighbor_dns_name_servers",
+              "goodneighbor_dns_zone_id",
+              "goodneighbor_dnssec_ds_record"
+            ] | sort))
           ' "$RUNNER_TEMP/prod-terraform.tfstate"
 
       - name: Upload verified state for PROD job
@@ -182,8 +194,20 @@ jobs:
             .version == 4
             and .lineage == $lineage
             and ([.resources[]? | select(.mode == "managed")] | length == 0)
-            and all(.resources[]?; .mode == "data")
-            and all(.outputs[]?; .sensitive == false)
+            and all(.resources[]?;
+              .mode == "data"
+              and .type == "aws_caller_identity"
+              and (.name == "gn_dns" or .name == "goodneighbor_dns")
+            )
+            and all(.outputs[]?; .sensitive != true)
+            and ((.outputs | keys | sort) == ([
+              "gn_dns_name_servers",
+              "gn_dns_zone_id",
+              "gn_dnssec_ds_record",
+              "goodneighbor_dns_name_servers",
+              "goodneighbor_dns_zone_id",
+              "goodneighbor_dnssec_ds_record"
+            ] | sort))
           ' "$RUNNER_TEMP/prod-state-migration/prod-terraform.tfstate"
 
       - name: Push repaired state to PROD backend
