@@ -1,6 +1,6 @@
 # Provisioned ahead of DT delegation. Production application records,
 # certificates, and CloudFront aliases are managed separately in domain.tf.
-# The legacy gn.sf.gov hosted zone remains out of scope here.
+# The retired gn.sf.gov name is not declared in the PROD root.
 resource "aws_route53_zone" "goodneighbor" {
   name    = "goodneighbor.sf.gov"
   comment = "Delegated production DNS zone for the Good Neighbor App."

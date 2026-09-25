@@ -19,7 +19,7 @@ resource "aws_s3_bucket" "analytics_lake" {
   # export service overwrites by export ID; stale versions would double-count in
   # reads since globs match every object). Versioning adds cost/ops with no
   # recovery benefit here; the app-data buckets (frontend/uploads) keep it on.
-  bucket_prefix = "${local.name_prefix}-analytics-lake-"
+  bucket_prefix = "${local.bucket_name_prefix}-analytics-lake-"
   force_destroy = false
 }
 

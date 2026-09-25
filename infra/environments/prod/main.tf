@@ -64,6 +64,7 @@ module "app" {
 
   application              = var.application
   environment              = var.environment
+  s3_bucket_name_prefix    = "gnp-prod"
   data_classification      = var.data_classification
   bedrock_model_id         = var.bedrock_model_id
   tags                     = local.common_tags
