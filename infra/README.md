@@ -51,9 +51,16 @@ delegation and zone signing are confirmed, coordinate publication of
 trust. Signing alone does not establish that parent trust. The workflow summary
 reports both outputs.
 
-The earlier `gn.sf.gov` hosted zone is retained as protected infrastructure until
-its retirement is separately reviewed. Its nameservers are not valid for
+The earlier `gn.sf.gov` hosted zone and its DNS controls remain in the DEV
+account pending a separately reviewed retirement. They are deliberately absent
+from the PROD Terraform root and PROD state: production workflows must not
+recreate or manage them. Their name servers are not valid for
 `goodneighbor.sf.gov`.
+
+The PROD root does not read DEV Terraform state. The public DEV delegation name
+servers and SES Easy DKIM tokens are explicit, validated PROD inputs. When DEV
+rotates either value, update the corresponding PROD input through a reviewed
+handoff before applying the parent-zone records.
 
 The production provider app is served canonically from `goodneighbor.sf.gov`.
 During the hostname transition, `goodneighborsf.org` remains a second alias on

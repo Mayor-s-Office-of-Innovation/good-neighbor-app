@@ -137,6 +137,55 @@ describe("createAnalyzerClient", () => {
     expect(call.init.headers["x-api-key"]).toBeUndefined();
   });
 
+  it("classifyEvidence() sends text to the existing classifier endpoint", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: { labels: ["Mattress"] } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+
+    await expect(
+      client.classifyEvidence({
+        classifierId: "bulky-items",
+        evidence: { type: "text", text: "Mattress on the sidewalk" },
+        requestId: "task-1",
+        appId: "good-neighbor-app",
+      }),
+    ).resolves.toEqual({ labels: ["Mattress"] });
+
+    const [call] = calls;
+    expect(String(call.url)).toBe(
+      "https://analysis.example.org/v1/classifiers/bulky-items",
+    );
+    expect(JSON.parse(call.init.body)).toEqual({
+      text: "Mattress on the sidewalk",
+      caller: { request_id: "task-1", app_id: "good-neighbor-app" },
+    });
+  });
+
+  it("classifyEvidence() preserves the classifier image payload", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: { labels: ["Furniture"] } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+    /** @type {Omit<import("./analyzer-client.js").ImageMedia, "type">} */
+    const image = { content_type: "image/jpeg", base64: "aW1hZ2U=" };
+
+    await client.classifyEvidence({
+      classifierId: "bulky-items",
+      evidence: { type: "image", image },
+    });
+
+    expect(JSON.parse(calls[0].init.body)).toEqual({ image });
+  });
+
   it("maps a non-retryable error body to AnalyzerError and does not retry", async () => {
     const { fetchImpl, calls } = stubFetch([
       {

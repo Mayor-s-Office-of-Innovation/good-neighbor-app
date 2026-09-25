@@ -154,7 +154,7 @@ describe("clear perimeter checks on home", () => {
     expect(overlapMarkup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
-  it("shows the persisted newest clear check in To do and superseded checks in History", async () => {
+  it("shows the active clear check above every filter and superseded checks in History", async () => {
     const view = await mount("?filter=todo");
     const older = new Date();
     older.setHours(9, 0, 0, 0);
@@ -187,16 +187,23 @@ describe("clear perimeter checks on home", () => {
     expect(todoMarkup).toContain("From today&#39;s 10:00 AM check");
     expect(todoMarkup).not.toContain("From today&#39;s 9:00 AM check");
     expect(todoMarkup.match(/Your check was clear!/g)).toHaveLength(1);
+    expect(todoMarkup.indexOf("analysis-tray--new")).toBeLessThan(
+      todoMarkup.indexOf("home-tabs"),
+    );
 
     view._homeFilter = "history";
     const historyMarkup = view._render(model);
+    expect(historyMarkup).toContain("analysis-tray--new");
+    expect(historyMarkup.indexOf("analysis-tray--new")).toBeLessThan(
+      historyMarkup.indexOf("home-tabs"),
+    );
     expect(historyMarkup).toContain("analysis-tray--history");
     expect(historyMarkup).toContain("From today&#39;s 9:00 AM check");
-    expect(historyMarkup).not.toContain("From today&#39;s 10:00 AM check");
-    expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(1);
+    expect(historyMarkup).toContain("From today&#39;s 10:00 AM check");
+    expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(2);
   });
 
-  it("moves a clear check from a previous day into the gray History group", async () => {
+  it("keeps the latest clear check active across days until another check completes", async () => {
     const view = await mount("?filter=todo");
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
@@ -214,11 +221,57 @@ describe("clear perimeter checks on home", () => {
       pendingSession: null,
     };
 
-    expect(view._render(model)).not.toContain("Your check was clear!");
+    const todoMarkup = view._render(model);
+    expect(todoMarkup).toContain("analysis-tray--new");
+    expect(todoMarkup).toContain("Your check was clear!");
     view._homeFilter = "history";
     const markup = view._render(model);
+    expect(markup).toContain("analysis-tray--new");
+    expect(markup).toContain("From yesterday&#39;s");
+    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+
+  it("moves an active clear check to History after a newer check completes", async () => {
+    const view = await mount("?filter=history");
+    const older = new Date();
+    older.setHours(9, 0, 0, 0);
+    const newer = new Date();
+    newer.setHours(10, 0, 0, 0);
+    const checks = [
+      {
+        id: "newer-with-issues",
+        status: "submitted",
+        submittedAt: newer.toISOString(),
+        issueCount: 1,
+      },
+      {
+        id: "older-clear",
+        status: "submitted",
+        submittedAt: older.toISOString(),
+        issueCount: 0,
+      },
+    ];
+
+    const markup = view._render({
+      last: checks[0],
+      checks,
+      tasks: [
+        {
+          taskId: "task-1",
+          checkId: "newer-with-issues",
+          createdAt: newer.toISOString(),
+          status: "completed",
+        },
+      ],
+      captureSession: null,
+      pendingSession: null,
+    });
+
     expect(markup).toContain("analysis-tray--history");
-    expect(markup).toContain("From yesterday&#39;s check");
+    expect(markup).toContain("From today&#39;s 9:00 AM check");
+    expect(markup.indexOf("From today&#39;s 9:00 AM check")).toBeGreaterThan(
+      markup.indexOf("home-tabs"),
+    );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 });

@@ -1,5 +1,6 @@
 locals {
-  name_prefix = lower(replace("${var.application}-${var.environment}", "_", "-"))
+  name_prefix        = lower(replace("${var.application}-${var.environment}", "_", "-"))
+  bucket_name_prefix = var.s3_bucket_name_prefix != "" ? var.s3_bucket_name_prefix : local.name_prefix
 }
 
 data "aws_caller_identity" "current" {}
@@ -95,18 +96,18 @@ resource "aws_kms_alias" "app" {
 }
 
 resource "aws_s3_bucket" "frontend" {
-  bucket_prefix = "${local.name_prefix}-frontend-"
+  bucket_prefix = "${local.bucket_name_prefix}-frontend-"
   force_destroy = false
 }
 
 resource "aws_s3_bucket" "admin_frontend" {
-  bucket_prefix = "${local.name_prefix}-admin-frontend-"
+  bucket_prefix = "${local.bucket_name_prefix}-admin-frontend-"
   force_destroy = false
 }
 
 resource "aws_s3_bucket" "access_logs" {
   #checkov:skip=CKV_AWS_18:Access-log buckets are not access-logged to avoid recursive logging.
-  bucket_prefix = "${local.name_prefix}-access-logs-"
+  bucket_prefix = "${local.bucket_name_prefix}-access-logs-"
   force_destroy = false
 }
 
@@ -269,7 +270,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
 }
 
 resource "aws_s3_bucket" "uploads" {
-  bucket_prefix = "${local.name_prefix}-uploads-"
+  bucket_prefix = "${local.bucket_name_prefix}-uploads-"
   force_destroy = false
 }
 
