@@ -58,9 +58,9 @@ Set `TF_STATE_KMS_KEY_ALIAS` to `alias/good-neighbor-app-prod-terraform-state`.
 
 3. Run **Migrate production application state** with that exact version ID and the expected
    lineage. The DEV job exports only that immutable S3 version. It rejects the file unless it has
-   zero managed resources, contains only data-source resource entries, and has no sensitive
-   outputs. The PROD job refuses to overwrite an existing destination, then writes the verified
-   state to `app/terraform.tfstate` and confirms the lineage and zero-managed-resource invariant.
+   zero managed resources and contains only the known public DNS outputs and caller-identity data.
+   The PROD job refuses to overwrite an existing destination, then writes the verified state to
+   `app/terraform.tfstate` and confirms the lineage and zero-managed-resource invariant.
 4. Run the normal production Terraform plan. Confirm it proposes the PROD application resources,
    including `goodneighbor.sf.gov`, and does not propose `gn.sf.gov` resources before approving an
    apply.
