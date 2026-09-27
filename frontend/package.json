@@ -21,7 +21,7 @@
     {
       "name": "css",
       "path": "dist/assets/*.css",
-      "limit": "24 kB"
+      "limit": "21 kB"
     }
   ],
   "dependencies": {
