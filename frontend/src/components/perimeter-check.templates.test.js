@@ -51,9 +51,9 @@ describe("progressLine", () => {
   });
 
   it("reads ready once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 3, texts: 0, complete: true });
+    const markup = progressLine({ photos: 1, texts: 0, complete: true });
 
-    expect(markup).toContain("3 of 3 photos taken");
+    expect(markup).toContain("1 of 1 photos taken");
     expect(markup).toContain("Ready to finish");
   });
 

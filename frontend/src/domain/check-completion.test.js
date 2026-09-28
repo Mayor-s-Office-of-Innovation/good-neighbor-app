@@ -29,13 +29,13 @@ function makeCheck(photos, texts) {
 }
 
 describe("isPerimeterCheckComplete", () => {
-  it("is incomplete with two photos and no description", () => {
-    expect(isPerimeterCheckComplete(makeCheck(2, 0))).toBe(false);
+  it("is incomplete with no photos and no description", () => {
+    expect(isPerimeterCheckComplete(makeCheck(0, 0))).toBe(false);
   });
 
-  it("is complete with three photos", () => {
-    expect(isPerimeterCheckComplete(makeCheck(3, 0))).toBe(true);
-    expect(MIN_PERIMETER_PHOTOS).toBe(3);
+  it("is complete with one photo", () => {
+    expect(isPerimeterCheckComplete(makeCheck(1, 0))).toBe(true);
+    expect(MIN_PERIMETER_PHOTOS).toBe(1);
   });
 
   it("is complete with zero photos and one description", () => {
@@ -179,13 +179,13 @@ describe("counts and status", () => {
   });
 
   it("reports remaining photos until the minimum is met", () => {
-    expect(completionStatus(makeCheck(2, 0))).toEqual({
-      photos: 2,
+    expect(completionStatus(makeCheck(0, 0))).toEqual({
+      photos: 0,
       texts: 0,
       complete: false,
       remaining: 1,
     });
-    expect(completionStatus(makeCheck(3, 0)).complete).toBe(true);
+    expect(completionStatus(makeCheck(1, 0)).complete).toBe(true);
     expect(completionStatus(makeCheck(7, 0)).remaining).toBe(0);
     expect(completionStatus(makeCheck(0, 1)).complete).toBe(true);
   });
