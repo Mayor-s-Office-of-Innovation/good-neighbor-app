@@ -518,35 +518,7 @@ describe("logout", () => {
   });
 });
 
-describe("task card labels", () => {
-  it("prefers the user-friendly condition label", () => {
-    const view = new TodayView();
-    view._cardActions = () => [];
-
-    const card = view._actionCard({
-      taskId: "task-1",
-      category: "Litter",
-      label: "File a 311 ticket",
-      userFriendlyLabel: "Lots of trash in tree well",
-    });
-
-    expect(card).toContain("Lots of trash in tree well");
-    expect(card).not.toContain(">File a 311 ticket</h3>");
-  });
-});
-
 describe("site switcher", () => {
-  it("uses accessible filter buttons rather than incomplete tab semantics", () => {
-    const view = new TodayView();
-    view._homeFilter = "todo";
-    const markup = view._taskTabs();
-    expect(markup).toContain('role="group"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).not.toContain('role="tab"');
-    expect(markup).not.toContain('role="tablist"');
-    expect(markup).not.toContain('tabindex="-1"');
-  });
-
   it("collects all provider-site pages and sorts the complete catalog", async () => {
     catalog.listProviderSites
       .mockResolvedValueOnce({

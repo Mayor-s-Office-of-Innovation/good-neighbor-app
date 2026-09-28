@@ -8,8 +8,8 @@
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
-  tasks are created. Markup is inline via the `html` tag; split into a
-  .templates.js file if it grows (see CLAUDE.md convention).
+  tasks are created. Markup lives in today-view.templates.js; this file owns
+  state, data loading, and DOM wiring.
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import {
@@ -20,7 +20,6 @@ import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
-import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
   activateSiteBinding,
   clearSiteSession,
@@ -50,7 +49,6 @@ import {
   HOME_TABS,
   captureAnimationFallbackMs,
   displayTaskId,
-  formatOverdueElapsed,
   hasProblemResults,
   homeTabForStatus,
   homeTaskStatus,
@@ -105,17 +103,25 @@ import {
   updateItemAnalysis,
 } from "../state/check-session.js";
 import {
-  analysisResultsTray,
   analysisActionPriority,
-  clearCheckCard,
-  historicalCheckTitle,
-  recentCheckTitle,
   sortAnalysisCards,
   taskAnalysisCard,
   taskMediaUrl,
 } from "./analysis-results.templates.js";
+import {
+  actionButton,
+  captureRegion,
+  errorView,
+  heroBlock,
+  homeResults,
+  homeShell,
+  locationDialog,
+  reasonPicker,
+  siteSwitcher,
+  summaryBlock,
+  ticketDetailDialog,
+} from "./today-view.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
-import { analysisDialogs } from "./perimeter-check.templates.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
   getSiteCheckDeviceLocation,
@@ -123,34 +129,6 @@ import {
   onDeviceLocationChange,
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
-
-function ticketEventDescription(description) {
-  return description ? html`<p>${escapeHtml(description)}</p>` : "";
-}
-
-/** @returns {string} */
-export function homeAllDonePanel() {
-  return html`
-    <section
-      class="home-results__complete"
-      aria-labelledby="home-all-done-title"
-    >
-      <div class="home-results__complete-content">
-        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
-        <h2 id="home-all-done-title">All done!</h2>
-        <p>
-          Your site is in great shape. Nothing needs your attention right now.
-        </p>
-        <p class="home-results__complete-note">
-          <a href="/problem" data-start-capture="single-problem">
-            Add a problem
-          </a>
-          if we missed something.
-        </p>
-      </div>
-    </section>
-  `;
-}
 
 class TodayView extends HTMLElement {
   constructor() {
@@ -741,128 +719,35 @@ class TodayView extends HTMLElement {
     const phaseClass = `home--${this._viewPhase}`;
     const resultsInactive = shouldInertHomeResults(this._viewPhase);
 
-    return html`
-      <div
-        class="home ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
-      >
-        <section class="home-region home-region--header">
-          <div class="home-top-actions">
-            <div class="home-settings-wrap">
-              <button
-                class="home-settings"
-                id="home-settings"
-                type="button"
-                aria-label="Settings"
-                aria-haspopup="menu"
-                aria-expanded="${this._settingsMenuOpen ? "true" : "false"}"
-              >
-                <span class="home-settings__icon" aria-hidden="true"></span>
-              </button>
-              ${this._settingsMenuOpen
-                ? html`<div
-                    class="home-settings-menu"
-                    role="menu"
-                    aria-label="Settings"
-                  >
-                    <button id="settings-logout" type="button" role="menuitem">
-                      <wa-icon
-                        name="arrow-right-from-bracket"
-                        aria-hidden="true"
-                      ></wa-icon>
-                      Logout
-                    </button>
-                    <a
-                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      role="menuitem"
-                      aria-label="Address data attribution (opens in a new tab)"
-                      >Address data attribution</a
-                    >
-                  </div>`
-                : ""}
-            </div>
-            <feedback-dialog class="feedback-dialog"></feedback-dialog>
-          </div>
-          <div
-            class="screen screen--today-hero"
-            role="group"
-            aria-label="Today"
-          >
-            ${showFirstRun
-              ? this._firstRunBlock()
-              : this._activityBlock({
-                  last,
-                  homeTasks,
-                })}
-          </div>
-        </section>
-
-        <section class="home-region home-region--capture" aria-live="polite">
-          ${captureVisible ? this._captureRegion() : ""}
-        </section>
-
-        <section
-          class="home-region home-region--results"
-          aria-label="Task results"
-          ${resultsInactive ? html`inert aria-hidden="true"` : ""}
-        >
-          ${this._homeResults({
-            pendingSession,
-            recentCheckTime:
-              newestCheck.time ||
-              pendingSession?.startedAt ||
-              last?.submittedAt ||
-              "",
-            checks,
-            recentItems: visibleRecentItems,
-            newTaskEntries,
-            visibleTasks,
-            activeClearCheck,
-            hasPendingClearResult,
-            historicalClearChecks,
-          })}
-        </section>
-        ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
-        ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
-        <dialog
-          class="places-modal logout-dialog"
-          id="logout-dialog"
-          aria-labelledby="logout-title"
-          aria-describedby="logout-copy"
-        >
-          <form class="places-modal__card" method="dialog">
-            <div class="places-modal__copy">
-              <h2 class="places-modal__title" id="logout-title">
-                Confirm you'd like to logout
-              </h2>
-              <p class="places-modal__text" id="logout-copy">
-                This will log you out and unlink this device: you'll need to
-                request a new code to access the app
-              </p>
-              ${this._logoutError
-                ? html`<p class="logout-dialog__error" role="alert">
-                    ${this._logoutError}
-                  </p>`
-                : ""}
-            </div>
-            <div class="places-modal__actions logout-dialog__actions">
-              <button
-                class="places-modal__primary logout-dialog__confirm"
-                id="logout-confirm"
-                type="button"
-                ${this._logoutPending ? "disabled" : ""}
-              >
-                ${this._logoutPending ? "Logging out..." : "Log me out"}
-              </button>
-              <button class="logout-dialog__cancel" type="submit">
-                Return to app
-              </button>
-            </div>
-          </form>
-        </dialog>
-      </div>
-    `;
+    return homeShell({
+      phaseClass,
+      captureVisible,
+      resultsInactive,
+      settingsMenuOpen: this._settingsMenuOpen,
+      hero: showFirstRun
+        ? this._firstRunBlock()
+        : this._activityBlock({ last, homeTasks }),
+      capture: captureVisible ? captureRegion({ flow: this._captureFlow }) : "",
+      results: this._homeResults({
+        pendingSession,
+        recentCheckTime:
+          newestCheck.time ||
+          pendingSession?.startedAt ||
+          last?.submittedAt ||
+          "",
+        checks,
+        recentItems: visibleRecentItems,
+        newTaskEntries,
+        visibleTasks,
+        activeClearCheck,
+        hasPendingClearResult,
+        historicalClearChecks,
+      }),
+      showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
+      dialogs: this._locationDialogMarkup() + " " + this._ticketDetailMarkup(),
+      logoutError: this._logoutError,
+      logoutPending: this._logoutPending,
+    });
   }
 
   _toggleSettingsMenu() {
@@ -870,180 +755,11 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _311DialogMarkup() {
-    const detail = this._ticketDetail;
-    const formatDate = (date) =>
-      date
-        ? new Intl.DateTimeFormat(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(new Date(date))
-        : "";
-    const formatRelativeDate = (date) => {
-      if (!date) return "";
-      const days = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
-      );
-      return days === 0
-        ? "today"
-        : days === 1
-          ? "1 day ago"
-          : `${days} days ago`;
-    };
-    return html` <dialog
-      class="ticket-detail"
-      id="ticket-detail-dialog"
-      aria-labelledby="ticket-detail-title"
-    >
-      <div class="ticket-detail__sheet">
-        <header class="ticket-detail__header">
-          <button
-            type="button"
-            class="btn-icon ticket-detail__close wa-plain"
-            data-close-311
-            aria-label="Close request details"
-          >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-          </button>
-        </header>
-        ${this._ticketDetailState === "loading"
-          ? html`<p role="status">Loading request updates…</p>`
-          : ""}
-        ${this._ticketDetailState === "error"
-          ? html`<div role="alert">
-              <p>We couldn't load the latest 311 updates.</p>
-              <button
-                type="button"
-                class="btn-outline btn-outline--sm"
-                data-retry-311
-              >
-                Try again
-              </button>
-            </div>`
-          : ""}
-        ${detail
-          ? html` <section
-                class="ticket-detail__summary"
-                aria-label="Request summary"
-              >
-                <p
-                  class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
-                    ? "overdue"
-                    : detail.status === "Closed"
-                      ? "closed"
-                      : "default"}"
-                >
-                  <span aria-hidden="true"></span>
-                  <span class="ticket-detail__type-label">311 request</span>
-                  <span class="ticket-detail__type-separator" aria-hidden="true"
-                    >·</span
-                  >
-                  <strong
-                    >${escapeHtml(detail.status)}${detail.statusDetail
-                      ? html`: ${escapeHtml(detail.statusDetail)}`
-                      : ""}</strong
-                  >
-                </p>
-                ${detail.location
-                  ? html`<p class="ticket-detail__location">
-                      ${escapeHtml(String(detail.location).split(/\r?\n|,/)[0])}
-                    </p>`
-                  : ""}
-                <h2 id="ticket-detail-title">
-                  ${escapeHtml(
-                    detail.title || detail.problemType || "Request details",
-                  )}
-                </h2>
-                ${detail.description
-                  ? html`<p class="ticket-detail__description">
-                      ${escapeHtml(detail.description)}
-                    </p>`
-                  : ""}
-                ${detail.mediaUrl
-                  ? html`<img
-                      class="ticket-detail__photo"
-                      src="${escapeAttr(detail.mediaUrl)}"
-                      alt="Evidence for ${escapeAttr(
-                        detail.title || detail.problemType || "the 311 request",
-                      )}"
-                    />`
-                  : html`<div
-                      class="ticket-detail__photo photo-placeholder"
-                      role="img"
-                      aria-label="No photo available"
-                    >
-                      <wa-icon name="image" aria-hidden="true"></wa-icon>
-                    </div>`}
-                <dl class="ticket-detail__metadata">
-                  ${detail.assignedAgency
-                    ? html`<div>
-                        <dt>Agency:</dt>
-                        <dd>${escapeHtml(detail.assignedAgency)}</dd>
-                      </div>`
-                    : ""}
-                  ${detail.submittedAt
-                    ? html`<div>
-                        <dt>Submitted:</dt>
-                        <dd>
-                          ${escapeHtml(formatRelativeDate(detail.submittedAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.expectedResponseAt
-                    ? html`<div>
-                        <dt>Response expected:</dt>
-                        <dd>
-                          ${escapeHtml(formatDate(detail.expectedResponseAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.closureReason
-                    ? html`<div>
-                        <dt>Closure reason:</dt>
-                        <dd>${escapeHtml(detail.closureReason)}</dd>
-                      </div>`
-                    : ""}
-                </dl>
-                ${detail.responseOverdue && detail.expectedResponseAt
-                  ? html`<p class="ticket-detail__overdue-message">
-                      The City's expected response time passed
-                      ${escapeHtml(
-                        formatOverdueElapsed(detail.expectedResponseAt),
-                      )}
-                      ago.
-                    </p>`
-                  : ""}
-              </section>
-              <section class="ticket-detail__updates">
-                <h3>Request updates</h3>
-                ${detail.events?.length
-                  ? html`<ol class="ticket-timeline">
-                      ${detail.events
-                        .map(
-                          (event) =>
-                            html`<li class="ticket-timeline__item">
-                              <div class="ticket-timeline__content">
-                                <strong>${escapeHtml(event.title)}</strong
-                                >${ticketEventDescription(event.description)}
-                                <time datetime="${escapeAttr(event.occurredAt)}"
-                                  >${escapeHtml(
-                                    formatDate(event.occurredAt),
-                                  )}</time
-                                >
-                              </div>
-                            </li>`,
-                        )
-                        .join("")}
-                    </ol>`
-                  : html`<p>No updates are available yet.</p>`}
-              </section>
-              <p class="ticket-detail__reference">
-                #${escapeHtml(detail.requestNumber)}
-              </p>`
-          : ""}
-      </div>
-    </dialog>`;
+  _ticketDetailMarkup() {
+    return ticketDetailDialog({
+      detail: this._ticketDetail,
+      state: this._ticketDetailState,
+    });
   }
 
   _wire311Dialog() {
@@ -1146,16 +862,6 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _captureRegion() {
-    return html`
-      <div class="home-capture">
-        ${this._captureFlow === "single-problem"
-          ? html`<problem-report embedded></problem-report>`
-          : html`<perimeter-check embedded></perimeter-check>`}
-      </div>
-    `;
-  }
-
   _homeResults({
     pendingSession,
     recentCheckTime,
@@ -1168,72 +874,35 @@ class TodayView extends HTMLElement {
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
-    const hasVisibleCards =
-      recentItems.length ||
-      newTaskEntries.length ||
-      visibleTasks.length ||
-      Boolean(activeClearCheck) ||
-      historicalClearChecks.length;
-    return html`
-      <div class="home-results">
-        ${hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : activeClearCheck && !recentItems.length && !newTaskEntries.length
-            ? this._clearCheckTray(activeClearCheck, true)
-            : ""}
-        ${this._taskTabs()}
-        ${recentItems.length && !hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : ""}
-        ${newTaskEntries.length && !recentItems.length
-          ? this._newTaskCards(newTaskEntries, recentCheckTime)
-          : ""}
-        ${visibleTasks.length || historicalClearChecks.length
-          ? html`
-              <div class="home-results__cards">
-                ${this._historicalTaskGroups(
-                  visibleTasks,
-                  checks,
-                  historicalClearChecks,
-                )}
-              </div>
-            `
-          : ""}
-        ${!hasVisibleCards
-          ? this._homeFilter === "todo" && !pendingSession
-            ? homeAllDonePanel()
-            : html`<p class="home-results__empty" role="status">
-                ${this._homeFilter === "todo"
-                  ? "No tasks to do."
-                  : this._homeFilter === "in_progress"
-                    ? "No tasks in progress."
-                    : "No task history yet."}
-              </p>`
-          : ""}
-      </div>
-    `;
+    return homeResults({
+      homeFilter: this._homeFilter,
+      siteName: this._site?.name || "",
+      siteAddress: this._site?.address || "",
+      pendingSessionId: pendingSession?.id || "",
+      hasPendingSession: Boolean(pendingSession),
+      recentCheckTime,
+      recentItems,
+      newTaskCards,
+      newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
+        .map((card) => card.markup)
+        .join(""),
+      newTaskCount: newTaskEntries.length,
+      activeClearCheck,
+      hasPendingClearResult,
+      historyGroups: this._historyGroups(
+        visibleTasks,
+        checks,
+        historicalClearChecks,
+      ),
+    });
   }
 
   _newTaskCardEntries(entries) {
-    return entries.map((entry) => ({
+    return entries.map((entry) => this._taskCardEntry(entry, true));
+  }
+
+  _taskCardEntry(entry, isNew) {
+    return {
       markup: taskAnalysisCard({
         task: this._taskWith311CardStatus({
           ...entry.task,
@@ -1248,55 +917,21 @@ class TodayView extends HTMLElement {
                 submitted311Ticket(entry.task)
               ? { kind: "view311", label: "View details", variant: "outline" }
               : null,
-        statusLabel: this._newTaskStatusMeta(entry),
-        isNew: true,
+        statusLabel: isNew
+          ? this._newTaskStatusMeta(entry)
+          : this._taskStatusMeta(entry),
+        isNew,
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
-    }));
+    };
   }
 
-  _newTaskCards(entries, checkTime = "") {
-    return html`
-      <section
-        class="analysis-tray analysis-tray--new analysis-tray--recent"
-        aria-label="New analysis results"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">
-            ${escapeHtml(recentCheckTitle(checkTime))}
-          </h2>
-          ${sortAnalysisCards(this._newTaskCardEntries(entries))
-            .map((card) => card.markup)
-            .join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  _clearCheckTray(check, recent = false) {
-    const checkTime = check.submittedAt || check.startedAt || "";
-    const title = recent
-      ? recentCheckTitle(checkTime)
-      : historicalCheckTitle(checkTime);
-    return html`
-      <section
-        class="analysis-tray ${recent
-          ? "analysis-tray--new analysis-tray--recent"
-          : "analysis-tray--history"}"
-        aria-label="${escapeAttr(title)}"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
-          ${clearCheckCard()}
-        </div>
-      </section>
-    `;
-  }
-
-  _historicalTaskGroups(entries, checks, clearChecks = []) {
+  // One history tray per past check, newest first. A clear check (no
+  // findings) gets an entry with no cards so its tray shows the clear card.
+  _historyGroups(entries, checks, clearChecks = []) {
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
     );
@@ -1315,57 +950,14 @@ class TodayView extends HTMLElement {
         const bTime = checkTimes.get(b[0]) || b[1][0]?.createdAt || "";
         return String(bTime).localeCompare(String(aTime));
       })
-      .map(([checkId, group]) => {
-        const checkTime =
-          checkTimes.get(checkId) || group[0]?.createdAt || new Date();
-        return html`
-          <section
-            class="analysis-tray analysis-tray--history"
-            aria-label="${escapeAttr(historicalCheckTitle(checkTime))}"
-          >
-            <div class="analysis-tray__cards">
-              <h2 class="analysis-tray__check-title">
-                ${escapeHtml(historicalCheckTitle(checkTime))}
-              </h2>
-              ${group.length
-                ? sortAnalysisCards(
-                    group.map((entry) => ({
-                      markup: taskAnalysisCard({
-                        task: this._taskWith311CardStatus({
-                          ...entry.task,
-                          createdAt: entry.createdAt,
-                          siteAddress:
-                            entry.task.siteAddress || this._site?.address || "",
-                        }),
-                        siteName: this._site?.name || "",
-                        action:
-                          entry.homeStatus === "needs_action"
-                            ? this._primaryCardAction(entry.task)
-                            : entry.homeStatus === "in_progress" &&
-                                submitted311Ticket(entry.task)
-                              ? {
-                                  kind: "view311",
-                                  label: "View details",
-                                  variant: "outline",
-                                }
-                              : null,
-                        statusLabel: this._taskStatusMeta(entry),
-                        isNew: false,
-                        includeControls: entry.homeStatus === "needs_action",
-                      }),
-                      createdAt: entry.createdAt,
-                      needsAnswer: Boolean(entry.task.needsAnswer),
-                      actionPriority: analysisActionPriority(entry.task),
-                    })),
-                  )
-                    .map((card) => card.markup)
-                    .join("")
-                : clearCheckCard()}
-            </div>
-          </section>
-        `;
-      })
-      .join("");
+      .map(([checkId, group]) => ({
+        checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        cards: sortAnalysisCards(
+          group.map((entry) => this._taskCardEntry(entry, false)),
+        )
+          .map((card) => card.markup)
+          .join(""),
+      }));
   }
 
   async _startCapture(flowType, launcher = null) {
@@ -1504,36 +1096,17 @@ class TodayView extends HTMLElement {
 
   _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
-    return html`
-      <div class="screen__sec home-lead">
-        ${this._siteSwitcher(identity.org)}
-        <div class="home-identity home-identity--with-summary">
-          <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-          ${this._summaryBlock(last, homeTasks)}
-        </div>
-        ${this._homeActions({
-          checkLabel: this._checkActionLabel(),
-          reportLabel: "Flag a single issue",
-        })}
-      </div>
-    `;
+    return heroBlock({
+      siteSwitcher: this._siteSwitcher(identity.org),
+      siteName: identity.site,
+      summary: this._summaryBlock(last, homeTasks),
+      checkLabel: this._checkActionLabel(),
+      reportLabel: "Flag a single issue",
+    });
   }
 
   _checkActionLabel() {
     return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
-  }
-
-  _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {
-    return html`
-      <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
-        <button id="start-check" class="btn-ink" type="button">
-          ${escapeHtml(checkLabel)}
-        </button>
-        <button id="report-problem" class="btn-outline" type="button">
-          ${escapeHtml(reportLabel)}
-        </button>
-      </div>
-    `;
   }
 
   async _fetchProviderSites() {
@@ -1609,61 +1182,14 @@ class TodayView extends HTMLElement {
     if (!sites.some((site) => site.siteId === this._siteId)) {
       sites.push({ siteId: this._siteId, name: this._site.name });
     }
-    return html`
-      <div class="home-site-switcher">
-        <button
-          id="site-switcher-trigger"
-          class="home-site-switcher__trigger"
-          type="button"
-          aria-expanded="${this._siteSwitcherOpen ? "true" : "false"}"
-          aria-controls="site-switcher-list"
-        >
-          <span>${escapeHtml(providerName || "Your provider")}</span>
-          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-        </button>
-        ${this._siteSwitcherOpen
-          ? html`<div id="site-switcher-list" class="home-site-switcher__menu">
-              ${sites
-                .map(
-                  (site) =>
-                    html`<button
-                      class="home-site-switcher__item ${site.siteId ===
-                      this._siteId
-                        ? "home-site-switcher__item--selected"
-                        : ""}"
-                      type="button"
-                      data-switch-site="${escapeAttr(site.siteId)}"
-                      ${site.siteId === this._siteId
-                        ? 'aria-current="page"'
-                        : ""}
-                    >
-                      <span class="home-site-switcher__check" aria-hidden="true"
-                        >${site.siteId === this._siteId ? "✓" : ""}</span
-                      >
-                      <span>${escapeHtml(site.name)}</span>
-                    </button>`,
-                )
-                .join("")}
-              ${this._siteSwitchError
-                ? html`<p class="home-site-switcher__error" role="alert">
-                    ${escapeHtml(this._siteSwitchError)}
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "loading"
-                ? html`<p class="home-site-switcher__status" role="status">
-                    Loading sites…
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "error"
-                ? html`<div class="home-site-switcher__failure">
-                    <p role="alert">Other sites couldn't load.</p>
-                    <button id="site-catalog-retry" type="button">Retry</button>
-                  </div>`
-                : ""}
-            </div>`
-          : ""}
-      </div>
-    `;
+    return siteSwitcher({
+      providerName,
+      sites,
+      currentSiteId: this._siteId,
+      open: this._siteSwitcherOpen,
+      error: this._siteSwitchError,
+      status: this._providerSitesStatus,
+    });
   }
 
   _setSiteSwitcherOpen(open) {
@@ -1685,69 +1211,11 @@ class TodayView extends HTMLElement {
         name: this._site?.name || "Your site",
       });
     }
-    return html`<dialog
-      class="location-dialog"
-      id="location-dialog"
-      aria-labelledby="location-dialog-title"
-      aria-describedby="location-dialog-copy"
-    >
-      <div class="location-dialog__card">
-        <div class="location-dialog__copy">
-          <h2 id="location-dialog-title">
-            Is your app set to the right location?
-          </h2>
-          <p id="location-dialog-copy">
-            It looks like you're not near
-            ${escapeHtml(this._site?.name || "this site")}. Consider changing
-            your app's site.
-          </p>
-        </div>
-        <div
-          class="location-dialog__sites"
-          role="group"
-          aria-label="Choose a site"
-        >
-          ${sites
-            .map(
-              (site) =>
-                html`<button
-                  class="home-site-switcher__item location-dialog__site"
-                  appearance="plain"
-                  type="button"
-                  data-location-site="${escapeAttr(site.siteId)}"
-                  aria-pressed="${site.siteId === this._siteId
-                    ? "true"
-                    : "false"}"
-                >
-                  <span class="home-site-switcher__check" aria-hidden="true"
-                    >${site.siteId === this._siteId ? "✓" : ""}</span
-                  >
-                  <span>${escapeHtml(site.name)}</span>
-                </button>`,
-            )
-            .join("")}
-        </div>
-        <div class="location-dialog__actions">
-          <button
-            class="location-dialog__confirm"
-            appearance="plain"
-            id="location-confirm"
-            type="button"
-            disabled
-          >
-            Confirm site change
-          </button>
-          <button
-            class="location-dialog__stay"
-            appearance="plain"
-            id="location-stay"
-            type="button"
-          >
-            I'm in the right location
-          </button>
-        </div>
-      </div>
-    </dialog>`;
+    return locationDialog({
+      siteName: this._site?.name || "this site",
+      sites,
+      currentSiteId: this._siteId,
+    });
   }
 
   _wireLocationDialog() {
@@ -1870,30 +1338,14 @@ class TodayView extends HTMLElement {
     }
   }
 
-  // Last submitted check only: its recorded issue count and remaining actions.
   _summaryBlock(last, homeTasks) {
-    if (isOutsideSiteRadius(this._deviceLocation, this._site?.location)) {
-      return html`<div class="lastlog">
-        <p class="lastlog__eyebrow">
-          Looks like you're not near this site.
-          <button
-            id="lastlog-change-site"
-            class="lastlog__switch"
-            type="button"
-            appearance="plain"
-          >
-            Change the site
-          </button>
-        </p>
-      </div>`;
-    }
-    const label = lastLogSummary(last, homeTasks);
-    if (!label) return "";
-    return html`
-      <div class="lastlog">
-        <p class="lastlog__eyebrow">${escapeHtml(label)}</p>
-      </div>
-    `;
+    return summaryBlock({
+      outsideRadius: isOutsideSiteRadius(
+        this._deviceLocation,
+        this._site?.location,
+      ),
+      label: lastLogSummary(last, homeTasks),
+    });
   }
 
   _sessionItems(session) {
@@ -1914,27 +1366,6 @@ class TodayView extends HTMLElement {
         ),
         isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
       }));
-  }
-
-  _taskTabs() {
-    return html`
-      <div class="home-tabs" role="group" aria-label="Filter tasks">
-        ${HOME_TABS.map(
-          (tab) => html`
-            <button
-              class="home-tabs__tab ${tab.id === this._homeFilter
-                ? "home-tabs__tab--active"
-                : ""}"
-              type="button"
-              aria-pressed="${tab.id === this._homeFilter ? "true" : "false"}"
-              data-home-filter="${escapeAttr(tab.id)}"
-            >
-              ${escapeHtml(tab.label)}
-            </button>
-          `,
-        ).join("")}
-      </div>
-    `;
   }
 
   _activateHomeTab(tabId) {
@@ -1987,58 +1418,6 @@ class TodayView extends HTMLElement {
   _newTaskStatusMeta(entry) {
     const id = displayTaskId(entry.task);
     return id ? `NEW • ${id}` : "NEW";
-  }
-
-  // A boxed worklist group (design "D2 boxed groups"). Omitted when empty.
-  _group(title, items, className) {
-    if (!items.length) return "";
-    return html`
-      <section class="worklist__group ${className}">
-        <h2 class="worklist__label">${escapeHtml(title)}</h2>
-        <div class="worklist__cards">
-          ${items.map((t) => this._actionCard(t)).join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  // A single open task, rendered from its real TASK# fields: when it was flagged,
-  // the guidance label, the guidance text, and the task's own action buttons.
-  _actionCard(task) {
-    const when = task.createdAt
-      ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
-      : "";
-    const title =
-      task.userFriendlyLabel ||
-      task.user_friendly_label ||
-      task.label ||
-      task.category ||
-      "Finding";
-    const detail = task.guidance || task.category || "";
-    const category = task.category || "";
-    const actions = this._cardActions(task);
-    return html`
-      <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
-        <div class="actioncard__body">
-          ${when
-            ? html`<span class="actioncard__time">${escapeHtml(when)}</span>`
-            : ""}
-          <h3 class="actioncard__title">${escapeHtml(title)}</h3>
-          ${detail
-            ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
-            : ""}
-          ${category
-            ? html`<p class="actioncard__category">${escapeHtml(category)}</p>`
-            : ""}
-        </div>
-        ${actions.length
-          ? html`<div class="actioncard__actions">
-              ${actions.map((a) => this._actionButton(a)).join("")}
-            </div>`
-          : ""}
-        <p class="actioncard__error" role="alert" hidden></p>
-      </div>
-    `;
   }
 
   // Resolve a task's persisted actions into the concrete controls this screen
@@ -2102,32 +1481,6 @@ class TodayView extends HTMLElement {
     }
     if (l === "done") return { kind: "done", label: "Done", variant: "ink" };
     return null;
-  }
-
-  _actionButton(a) {
-    const cls =
-      a.variant === "ink"
-        ? "btn-ink btn-ink--sm"
-        : a.variant === "blue"
-          ? "btn-blue btn-blue--sm"
-          : "btn-outline btn-outline--sm";
-    // Link-style actions render as native anchors with no data-action, so the
-    // click wiring skips them and the browser handles the URL.
-    if (a.href) {
-      return html`<a class="${cls}" href="${a.href}"
-        >${escapeHtml(a.label)}</a
-      >`;
-    }
-    // An email whose target isn't known yet: surface the instruction but keep
-    // it non-interactive rather than misdialing or opening an empty composer.
-    if (a.kind === "email") {
-      return html`<button type="button" class="${cls}" disabled>
-        ${escapeHtml(a.label)}
-      </button>`;
-    }
-    return html`<button type="button" class="${cls}" data-action="${a.kind}">
-      ${escapeHtml(a.label)}
-    </button>`;
   }
 
   _wireCards() {
@@ -2595,28 +1948,7 @@ class TodayView extends HTMLElement {
     );
     if (!actions) return;
     const reasons = task.cannotDoReasons || [];
-    actions.innerHTML = html`
-      ${reasons
-        .map(
-          (r) =>
-            html`<button
-              type="button"
-              class="btn-outline btn-outline--sm"
-              data-action="cant-reason"
-              data-reason="${escapeHtml(r)}"
-            >
-              ${escapeHtml(r)}
-            </button>`,
-        )
-        .join("")}
-      <button
-        type="button"
-        class="home-cta__link actioncard__cancel"
-        data-action="cant-cancel"
-      >
-        Cancel
-      </button>
-    `;
+    actions.innerHTML = reasonPicker({ reasons });
     this._wireCardButtons(card, task);
   }
 
@@ -2626,7 +1958,7 @@ class TodayView extends HTMLElement {
     );
     if (!actions) return;
     actions.innerHTML = this._cardActions(task)
-      .map((a) => this._actionButton(a))
+      .map((a) => actionButton(a))
       .join("");
     this._wireCardButtons(card, task);
   }
@@ -2682,31 +2014,7 @@ class TodayView extends HTMLElement {
       return;
     }
     const identity = this._siteIdentity();
-    this.innerHTML = html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          <div class="screen__sec home-lead">
-            <div class="home-identity">
-              ${identity.org
-                ? html`<p class="home-identity__org">
-                    ${escapeHtml(identity.org)}
-                  </p>`
-                : ""}
-              <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-            </div>
-            <div class="lastlog">
-              <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
-              <p class="lastlog__summary">Checks are unavailable</p>
-            </div>
-            <div class="home-actions">
-              <button id="retry" class="btn-ink" type="button">
-                Try again
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+    this.innerHTML = errorView({ identity });
     this.querySelector("#retry")?.addEventListener("click", () =>
       this.connectedCallback(),
     );
