@@ -3,6 +3,7 @@
   immediately and renders through the same live result cards as perimeter check.
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
@@ -477,7 +478,7 @@ class ProblemReport extends HTMLElement {
     this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
     const focusUndo = button?.matches(":focus-visible") || false;
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
       await deleteAnalysisCard(
@@ -529,7 +530,7 @@ class ProblemReport extends HTMLElement {
       );
     } finally {
       this._deletingProblem = false;
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -566,7 +567,7 @@ class ProblemReport extends HTMLElement {
     }
 
     const button = this.querySelector("#analysis-edit-save");
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
       if (!problem.conditionId) {
@@ -609,7 +610,7 @@ class ProblemReport extends HTMLElement {
         "Could not save this edit. Please try again.",
       );
     } finally {
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -696,18 +697,7 @@ class ProblemReport extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = /** @type {HTMLElement | null} */ (
-      this.querySelector(`#${id}`)
-    );
-    if (!error) return;
-    error.textContent = message;
-    error.hidden = !message;
-  }
-
-  _setBusy(button, busy) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
+    setDialogError(this, `#${id}`, message);
   }
 
   _showToast(message) {
@@ -732,10 +722,12 @@ class ProblemReport extends HTMLElement {
   }
 
   _requestId(action, problem) {
-    const suffix =
-      globalThis.crypto?.randomUUID?.() ||
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
+    return requestId(
+      this._checkId,
+      problem.itemId,
+      problem.conditionId,
+      action,
+    );
   }
 
   /** @returns {void} */

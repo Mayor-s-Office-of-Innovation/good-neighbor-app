@@ -31,8 +31,6 @@ import {
   listChecks,
   listTasks,
   listProviderSites,
-  getCheck,
-  getMediaUrl,
   ApiError,
   completeTask,
   cannotDoTask,
@@ -48,6 +46,46 @@ import {
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
+import {
+  HOME_TABS,
+  captureAnimationFallbackMs,
+  displayTaskId,
+  formatOverdueElapsed,
+  hasProblemResults,
+  homeTabForStatus,
+  homeTaskStatus,
+  isNewHomeTask,
+  isOutsideSiteRadius,
+  isStalePendingSession,
+  lastLogSummary,
+  newestBlueCheckGroup,
+  newestTaskEntriesFirst,
+  normalizedHomeTab,
+  relativeDay,
+  sessionProblemItemHasBackendCards,
+  shouldDeferSessionRenderDuringCapture,
+  shouldInertHomeResults,
+  shouldShowFirstRunHome,
+  splitSiteIdentity,
+  submitted311Ticket,
+  taskArtifactIdSet,
+  taskArtifactIds,
+  taskCheckGroupId,
+  taskCreatedAt,
+  timeOf,
+  uniqueTasks,
+  visibleTaskEntriesForHydration,
+} from "../domain/home-tasks.js";
+import {
+  hydrateTaskEvidence,
+  mergeHydratedTasks,
+  needsTaskEvidenceHydration,
+} from "../services/task-evidence.js";
+import {
+  readTaskStatusOverrides,
+  writeTaskStatusOverrides,
+} from "../state/task-status-overrides.js";
+import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {
   appActionFailureMessage,
   isFiled311Completion,
@@ -86,225 +124,8 @@ import {
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
 
-const HOME_TABS = [
-  { id: "todo", label: "To do" },
-  { id: "in_progress", label: "In progress" },
-  { id: "history", label: "History" },
-];
-const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
-const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
-const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
-const CHECK_ARTIFACTS_CACHE = new Map();
-const MEDIA_URL_CACHE = new Map();
-const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
-
-/**
- * @param {string | number | Date} expectedAt
- * @param {string | number | Date} [now]
- */
-export function formatOverdueElapsed(expectedAt, now = Date.now()) {
-  const elapsedHours = Math.max(
-    1,
-    Math.floor(
-      (new Date(now).getTime() - new Date(expectedAt).getTime()) / 3_600_000,
-    ),
-  );
-  if (elapsedHours < 24) {
-    return `${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"}`;
-  }
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  return `${elapsedDays} ${elapsedDays === 1 ? "day" : "days"}`;
-}
-
 function ticketEventDescription(description) {
   return description ? html`<p>${escapeHtml(description)}</p>` : "";
-}
-
-function submitted311Ticket(task) {
-  for (const result of task?.appActionResults || []) {
-    if (result?.code !== "create_311_ticket") continue;
-    const ticket = result?.payload?.tickets?.find((item) => item?.srNum);
-    if (ticket) return ticket;
-  }
-  return null;
-}
-
-/**
- * @param {{latitude: number, longitude: number} | null | undefined} position
- * @param {{latitude: number, longitude: number} | null | undefined} site
- * @returns {boolean}
- */
-export function isOutsideSiteRadius(position, site) {
-  if (!position || !site) return false;
-  const { latitude: lat1, longitude: lon1 } = position;
-  const { latitude: lat2, longitude: lon2 } = site;
-  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return false;
-  if (
-    Math.abs(lat1) > 90 ||
-    Math.abs(lat2) > 90 ||
-    Math.abs(lon1) > 180 ||
-    Math.abs(lon2) > 180
-  )
-    return false;
-  const radians = Math.PI / 180;
-  const deltaLat = (lat2 - lat1) * radians;
-  const deltaLon = (lon2 - lon1) * radians;
-  const arc =
-    Math.sin(deltaLat / 2) ** 2 +
-    Math.cos(lat1 * radians) *
-      Math.cos(lat2 * radians) *
-      Math.sin(deltaLon / 2) ** 2;
-  return (
-    6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(arc))) > SITE_RADIUS_METERS
-  );
-}
-
-/**
- * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
- * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
- * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
- * @returns {boolean}
- */
-export function isStalePendingSession(session, submitted, tasks = []) {
-  if (!session) return false;
-  if (session.status === "capture-complete") {
-    // The backend check can be submitted before per-artifact guidance has
-    // finished. Keep the local results alive until every captured item has
-    // settled; otherwise its last analysis update cannot refresh home.
-    const items = Array.isArray(session.items) ? session.items : [];
-    if (items.some((item) => item.analysis?.status !== "analyzed")) {
-      return false;
-    }
-    if (
-      items.some(
-        (item) =>
-          hasProblemResults(item) &&
-          !sessionProblemItemHasBackendCards(item, tasks),
-      )
-    ) {
-      return false;
-    }
-    return submitted.some((check) => check.id === session.id);
-  }
-  if (submitted.some((check) => check.id === session.id)) return false;
-  if (!session.submittedAt || !submitted.length) return false;
-  return submitted.some(
-    (check) =>
-      check.submittedAt &&
-      check.submittedAt.localeCompare(session.submittedAt) >= 0,
-  );
-}
-
-/**
- * Sort task records by creation time without mutating the caller's array.
- * @template {{ createdAt?: string }} T
- * @param {T[]} tasks
- * @returns {T[]}
- */
-export function newestTasksFirst(tasks) {
-  return [...tasks].sort((a, b) =>
-    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
-  );
-}
-
-export function activeHomeFilterLabel(filterId, counts) {
-  const tab =
-    HOME_TABS.find((candidate) => candidate.id === filterId) || HOME_TABS[0];
-  return `${tab.label} • ${counts[filterId] || 0}`;
-}
-
-/**
- * @param {string} status
- * @returns {"todo" | "in_progress" | "history"}
- */
-export function homeTabForStatus(status) {
-  if (status === "needs_action") return "todo";
-  if (status === "in_progress") return "in_progress";
-  return "history";
-}
-
-function normalizedHomeTab(value) {
-  if (value === "needs_action") return "todo";
-  if (value === "resolved" || value === "archived") return "history";
-  return HOME_TABS.some((tab) => tab.id === value) ? value : "todo";
-}
-
-export function homeTaskStatus(task, override, now = new Date()) {
-  const status = String(task.status || "open");
-  if (status === "completing" || status === "in_progress") {
-    return "in_progress";
-  }
-  if (status === "completed" || status === "cannot_do") {
-    if (
-      status === "completed" &&
-      task.completionMethod === "311_filed" &&
-      !hasCompleted311Ticket(task)
-    ) {
-      return "in_progress";
-    }
-    const resolvedAt =
-      task.completedAt ||
-      task.completed_at ||
-      task.resolvedAt ||
-      task.resolved_at ||
-      task.updatedAt ||
-      task.updated_at ||
-      taskCreatedAt(task);
-    return ageMs(resolvedAt, now) >= ARCHIVE_AFTER_MS ? "archived" : "resolved";
-  }
-  if (override?.status === "in_progress") return "in_progress";
-  if (override?.status === "resolved") {
-    return ageMs(override.updatedAt, now) >= ARCHIVE_AFTER_MS
-      ? "archived"
-      : "resolved";
-  }
-  return "needs_action";
-}
-
-function hasCompleted311Ticket(task) {
-  const terminalStatuses = new Set(["closed", "completed", "resolved"]);
-  return (task.appActionResults || []).some(
-    (result) =>
-      result?.code === "create_311_ticket" &&
-      terminalStatuses.has(String(result.status || "").toLowerCase()),
-  );
-}
-
-export function isNewHomeTask(task, override, now = new Date()) {
-  return (
-    homeTaskStatus(task, override, now) === "needs_action" &&
-    ageMs(taskCreatedAt(task), now) < NEW_TASK_WINDOW_MS
-  );
-}
-
-export function taskCreatedAt(task) {
-  if (task.createdAt) return task.createdAt;
-  if (task.created_at) return task.created_at;
-  if (task.updatedAt) return task.updatedAt;
-  if (task.updated_at) return task.updated_at;
-  const gsiDate = /^([^#]+)#/.exec(String(task.gsi2sk || ""));
-  return gsiDate?.[1] || "";
-}
-
-export function displayTaskId(task) {
-  return String(
-    task.shortId ||
-      task.displayId ||
-      task.display_id ||
-      task.assessmentId ||
-      task.taskId ||
-      "",
-  );
-}
-
-export function shouldShowFirstRunHome({
-  captureVisible,
-  last,
-  taskCount,
-  hasResultCards,
-}) {
-  return !captureVisible && !last && taskCount === 0 && !hasResultCards;
 }
 
 /** @returns {string} */
@@ -329,425 +150,6 @@ export function homeAllDonePanel() {
       </div>
     </section>
   `;
-}
-
-export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
-  if (!["entering-capture", "capture", "leaving-capture"].includes(viewPhase)) {
-    return false;
-  }
-  return !session || session.status === "capture-complete";
-}
-
-export function shouldInertHomeResults(viewPhase) {
-  return ["entering-capture", "capture"].includes(viewPhase);
-}
-
-export function captureAnimationFallbackMs(style) {
-  const durations = cssTimeListMs(style.animationDuration);
-  const delays = cssTimeListMs(style.animationDelay);
-  const count = Math.max(durations.length, delays.length, 1);
-  let max = 0;
-  for (let i = 0; i < count; i++) {
-    max = Math.max(
-      max,
-      (durations[i % durations.length] || 0) + (delays[i % delays.length] || 0),
-    );
-  }
-  return max > 0 ? max + 50 : 1;
-}
-
-export function issueCountLabel(count) {
-  if (!count) return "";
-  return `${count} ${count === 1 ? "issue" : "issues"} found`;
-}
-
-/**
- * @param {{ id?: string, submittedAt?: string | null, issueCount?: number } | null | undefined} last
- * @param {Array<{ task: { checkId?: string }, homeStatus: string }>} entries
- * @param {Date} [now]
- * @returns {string}
- */
-export function lastLogSummary(last, entries, now = new Date()) {
-  if (!last?.submittedAt) return "";
-  const date = new Date(last.submittedAt);
-  if (Number.isNaN(date.getTime())) return "";
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const day =
-    date.toDateString() === now.toDateString()
-      ? "today"
-      : date.toDateString() === yesterday.toDateString()
-        ? "yesterday"
-        : new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-  const count = Number(last.issueCount) || 0;
-  const needsAction = entries.some(
-    (entry) =>
-      entry.task.checkId === last.id && entry.homeStatus === "needs_action",
-  );
-  const outcome =
-    count === 0
-      ? "No issues found"
-      : last.id && !needsAction
-        ? "All issues handled"
-        : issueCountLabel(count);
-  return `Last log: ${day} at ${time} · ${outcome}`;
-}
-
-export function taskSignaturesFromSessionItems(items) {
-  const signatures = {
-    taskIds: new Set(),
-    conditionIds: new Set(),
-    assessmentIds: new Set(),
-    artifactIds: new Set(),
-  };
-  for (const item of items || []) {
-    const artifactId = item?.analysis?.artifactId || item?.upload?.artifactId;
-    if (artifactId) signatures.artifactIds.add(artifactId);
-    const assessmentId = item?.analysis?.assessment?.assessmentId;
-    if (assessmentId) signatures.assessmentIds.add(assessmentId);
-    for (const condition of item?.analysis?.conditions || []) {
-      if (condition?.conditionId) {
-        signatures.conditionIds.add(condition.conditionId);
-      }
-    }
-    for (const task of item?.analysis?.tasks || []) {
-      if (task?.taskId) signatures.taskIds.add(task.taskId);
-      if (task?.conditionId) signatures.conditionIds.add(task.conditionId);
-      if (task?.assessmentId) signatures.assessmentIds.add(task.assessmentId);
-      for (const artifact of task?.sourceArtifactIds || []) {
-        if (artifact) signatures.artifactIds.add(artifact);
-      }
-    }
-  }
-  return signatures;
-}
-
-export function taskMatchesSessionSignatures(task, signatures) {
-  if (!task || !signatures) return false;
-  if (task.taskId && signatures.taskIds.has(task.taskId)) return true;
-  if (task.conditionId && signatures.conditionIds.has(task.conditionId)) {
-    return true;
-  }
-  if (task.assessmentId && signatures.assessmentIds.has(task.assessmentId)) {
-    return true;
-  }
-  return taskArtifactIds(task).some((artifactId) =>
-    signatures.artifactIds.has(artifactId),
-  );
-}
-
-function ageMs(iso, now) {
-  if (!iso) return 0;
-  const timestamp = new Date(iso).getTime();
-  if (!Number.isFinite(timestamp)) return 0;
-  return Math.max(0, now.getTime() - timestamp);
-}
-
-function uniqueTasks(tasks) {
-  const byId = new Map();
-  for (const task of tasks) {
-    if (!task?.taskId || byId.has(task.taskId)) continue;
-    byId.set(task.taskId, task);
-  }
-  return [...byId.values()];
-}
-
-function taskArtifactIdSet(tasks) {
-  const artifactIds = new Set();
-  for (const task of tasks || []) {
-    for (const artifactId of taskArtifactIds(task)) {
-      if (artifactId) artifactIds.add(artifactId);
-    }
-  }
-  return artifactIds;
-}
-
-function taskArtifactIds(task) {
-  const explicitIds = Array.isArray(task?.sourceArtifactIds)
-    ? task.sourceArtifactIds
-    : [];
-  const assessmentArtifactId = artifactIdFromAssessmentId(task?.assessmentId);
-  return [...explicitIds, assessmentArtifactId].filter(Boolean);
-}
-
-function hasProblemResults(item) {
-  return Boolean(
-    (item.analysis?.tasks || []).length ||
-      (item.analysis?.conditions || []).length,
-  );
-}
-
-export function sessionProblemItemHasBackendCards(item, tasks) {
-  const backendTasks = Array.isArray(tasks) ? tasks : [];
-  const localTasks = item?.analysis?.tasks || [];
-  if (localTasks.length) {
-    return localTasks.every((localTask) =>
-      backendTasks.some((backendTask) =>
-        sameProblemCard(localTask, backendTask),
-      ),
-    );
-  }
-  const localConditions = item?.analysis?.conditions || [];
-  if (localConditions.length) {
-    return localConditions.every((condition) =>
-      backendTasks.some(
-        (backendTask) =>
-          condition.conditionId &&
-          condition.conditionId === backendTask.conditionId,
-      ),
-    );
-  }
-  return false;
-}
-
-function sameProblemCard(localTask, backendTask) {
-  return Boolean(
-    (localTask.taskId && localTask.taskId === backendTask.taskId) ||
-      (localTask.conditionId &&
-        localTask.conditionId === backendTask.conditionId) ||
-      (localTask.assessmentId &&
-        localTask.assessmentId === backendTask.assessmentId),
-  );
-}
-
-async function hydrateTaskEvidence(tasks) {
-  const checkIds = [
-    ...new Set(tasks.map((task) => task?.checkId).filter(Boolean)),
-  ];
-  if (!checkIds.length) return tasks;
-
-  const artifactsByCheck = new Map();
-  await Promise.all(
-    checkIds.map(async (checkId) => {
-      artifactsByCheck.set(checkId, await cachedCheckArtifacts(checkId));
-    }),
-  );
-
-  return Promise.all(
-    tasks.map(async (task) => {
-      const artifact = firstTaskArtifact(task, artifactsByCheck);
-      if (!artifact) return task;
-      // `positionDescriptor` is not a fallback here: since ADR 0014 it is a
-      // fixed literal, not a location. Only pre-Phase-2 rows carry a place
-      // name; the card falls back to the site name otherwise.
-      const evidence = {
-        artifactId: artifact.artifactId || "",
-        placeName: artifact.placeName || task.placeName || task.location || "",
-        georeferencedAddress: artifact.georeferencedAddress || "",
-        text: artifact.text || "",
-      };
-      if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
-        try {
-          const downloadUrl = await cachedMediaUrl(
-            task.checkId,
-            artifact.artifactId,
-          );
-          return {
-            ...task,
-            evidence,
-            mediaUrl: downloadUrl,
-            thumbnailUrl: downloadUrl,
-          };
-        } catch (err) {
-          console.warn("Could not hydrate task media", {
-            checkId: task.checkId,
-            artifactId: artifact.artifactId,
-            err,
-          });
-        }
-      }
-      return { ...task, evidence };
-    }),
-  );
-}
-
-async function cachedCheckArtifacts(checkId) {
-  if (!CHECK_ARTIFACTS_CACHE.has(checkId)) {
-    CHECK_ARTIFACTS_CACHE.set(
-      checkId,
-      getCheck(checkId)
-        .then((result) => {
-          const addresses = new Map(
-            (result.analyses || []).map((analysis) => [
-              analysis.artifactId,
-              analysis.georeferencedAddress || "",
-            ]),
-          );
-          return (result.artifacts || []).map((artifact) => ({
-            ...artifact,
-            georeferencedAddress:
-              addresses.get(artifact.artifactId) ||
-              artifact.georeferencedAddress ||
-              "",
-          }));
-        })
-        .catch((err) => {
-          console.warn("Could not hydrate task evidence", { checkId, err });
-          CHECK_ARTIFACTS_CACHE.delete(checkId);
-          return [];
-        }),
-    );
-  }
-  return CHECK_ARTIFACTS_CACHE.get(checkId);
-}
-
-async function cachedMediaUrl(checkId, artifactId) {
-  const key = `${checkId}:${artifactId}`;
-  if (!MEDIA_URL_CACHE.has(key)) {
-    MEDIA_URL_CACHE.set(
-      key,
-      getMediaUrl(checkId, artifactId)
-        .then((media) => media.downloadUrl)
-        .catch((err) => {
-          MEDIA_URL_CACHE.delete(key);
-          throw err;
-        }),
-    );
-  }
-  return MEDIA_URL_CACHE.get(key);
-}
-
-function firstTaskArtifact(task, artifactsByCheck) {
-  const artifacts = artifactsByCheck.get(task?.checkId) || [];
-  const sourceIds = new Set(taskArtifactIds(task));
-  return (
-    artifacts.find((artifact) =>
-      sourceIds.has(String(artifact.artifactId || "")),
-    ) || null
-  );
-}
-
-function artifactIdFromAssessmentId(assessmentId) {
-  const value = String(assessmentId || "");
-  const uuidPair =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
-      value,
-    );
-  return uuidPair?.[1] || "";
-}
-
-function newestTaskEntriesFirst(entries) {
-  return [...entries].sort((a, b) =>
-    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
-  );
-}
-
-function taskCheckGroupId(task) {
-  return task?.checkId || "unknown";
-}
-
-/**
- * @param {Array<{task: {checkId?: string}, createdAt?: string}>} entries
- * @param {Array<{id: string, submittedAt?: string, startedAt?: string, issueCount?: number}>} checks
- * @param {{id?: string, startedAt?: string, submittedAt?: string} | null} pendingSession
- * @param {Date} [now]
- * @returns {{id: string, time: string}}
- */
-export function newestBlueCheckGroup(
-  entries,
-  checks,
-  pendingSession,
-  now = new Date(),
-) {
-  const checkTimes = new Map(
-    (checks || []).map((check) => [
-      check.id,
-      check.submittedAt || check.startedAt || "",
-    ]),
-  );
-  const candidates = new Map();
-  for (const entry of entries || []) {
-    const id = taskCheckGroupId(entry.task);
-    const timestamp = checkTimes.get(id) || entry.createdAt || "";
-    const previous = candidates.get(id) || "";
-    if (String(timestamp).localeCompare(String(previous)) > 0) {
-      candidates.set(id, timestamp);
-    }
-  }
-  for (const check of checks || []) {
-    if (Number(check.issueCount) !== 0 || !check.id) continue;
-    candidates.set(
-      check.id,
-      check.submittedAt || check.startedAt || candidates.get(check.id) || "",
-    );
-  }
-  if (pendingSession?.id) {
-    candidates.set(
-      pendingSession.id,
-      pendingSession.startedAt || pendingSession.submittedAt || "",
-    );
-  }
-  const newest = [...candidates.entries()].sort((a, b) =>
-    String(b[1]).localeCompare(String(a[1])),
-  )[0];
-  if (!newest) return { id: "", time: "" };
-  const date = new Date(newest[1]);
-  if (
-    Number.isNaN(date.getTime()) ||
-    date.toDateString() !== now.toDateString()
-  ) {
-    return { id: "", time: "" };
-  }
-  return { id: newest[0], time: newest[1] };
-}
-
-export function visibleTaskEntriesForHydration(entries, homeFilter) {
-  return entries.filter(
-    (entry) => homeTabForStatus(entry.homeStatus) === homeFilter,
-  );
-}
-
-function needsTaskEvidenceHydration(task) {
-  return Boolean(
-    task?.checkId &&
-      taskArtifactIds(task).length &&
-      !task?.evidence?.artifactId &&
-      !task?.mediaUrl &&
-      !task?.thumbnailUrl,
-  );
-}
-
-function mergeHydratedTasks(tasks, hydratedTasks) {
-  const hydratedById = new Map(
-    hydratedTasks
-      .filter((task) => task?.taskId)
-      .map((task) => [task.taskId, task]),
-  );
-  return tasks.map((task) => hydratedById.get(task.taskId) || task);
-}
-
-function readTaskStatusOverrides() {
-  try {
-    const raw = localStorage.getItem(TASK_STATUS_OVERRIDES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeTaskStatusOverrides(overrides) {
-  try {
-    localStorage.setItem(TASK_STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
-  } catch {
-    // Losing this overlay only affects the temporary home bucket assignment.
-  }
-}
-
-function cssTimeListMs(value) {
-  return String(value || "0s")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const numeric = Number.parseFloat(part);
-      if (!Number.isFinite(numeric)) return 0;
-      return part.endsWith("ms") ? numeric : numeric * 1000;
-    });
 }
 
 class TodayView extends HTMLElement {
@@ -2848,7 +2250,7 @@ class TodayView extends HTMLElement {
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     );
     const focusUndo = button?.matches(":focus-visible") || false;
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
       await deleteAnalysisCard(
@@ -2901,7 +2303,7 @@ class TodayView extends HTMLElement {
       );
     } finally {
       this._deletingProblem = false;
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -2932,7 +2334,7 @@ class TodayView extends HTMLElement {
       const button = this.querySelector(
         ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
       );
-      this._setBusy(button, true);
+      setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
         await analyzeNoIssueDescriptionEdit(problem.itemId, description);
@@ -2946,7 +2348,7 @@ class TodayView extends HTMLElement {
           "Could not analyze this description. Please try again.",
         );
       } finally {
-        this._setBusy(button, false);
+        setBusy(button, false);
       }
       return;
     }
@@ -2961,7 +2363,7 @@ class TodayView extends HTMLElement {
     const button = this.querySelector(
       ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
     );
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
       const result = await editAnalysisCondition(
@@ -2986,7 +2388,7 @@ class TodayView extends HTMLElement {
         "Could not save this edit. Please try again.",
       );
     } finally {
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -3119,25 +2521,17 @@ class TodayView extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = this.querySelector(
-      `:scope > .home > .analysis-dialog #${id}`,
-    );
-    if (!(error instanceof HTMLElement)) return;
-    error.textContent = message;
-    error.hidden = !message;
-  }
-
-  _setBusy(button, busy) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
+    // Scoped past the embedded <perimeter-check>, which renders the same dialog ids.
+    setDialogError(this, `:scope > .home > .analysis-dialog #${id}`, message);
   }
 
   _requestId(action, problem) {
-    const suffix =
-      globalThis.crypto?.randomUUID?.() ||
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${problem.checkId}:${problem.artifactId}:${problem.conditionId}:${action}:${suffix}`;
+    return requestId(
+      problem.checkId,
+      problem.artifactId,
+      problem.conditionId,
+      action,
+    );
   }
 
   _onAction(card, task, btn) {
@@ -3317,37 +2711,6 @@ class TodayView extends HTMLElement {
       this.connectedCallback(),
     );
   }
-}
-
-function timeOf(iso) {
-  return new Date(iso)
-    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    .replace(/\s/g, "")
-    .toUpperCase();
-}
-
-// "TODAY" / "YESTERDAY" for the last 2 days, else the uppercase weekday.
-function relativeDay(iso) {
-  const d = new Date(iso);
-  const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const ago = Math.round((todayStart.getTime() - dStart.getTime()) / 86400000);
-  if (ago <= 0) return "TODAY";
-  if (ago === 1) return "YESTERDAY";
-  return d.toLocaleDateString([], { weekday: "long" }).toUpperCase();
-}
-
-function splitSiteIdentity(name) {
-  for (const delimiter of [" · ", " — ", " – ", " - ", ": "]) {
-    if (!name.includes(delimiter)) continue;
-    const [org, ...rest] = name.split(delimiter);
-    const site = rest.join(delimiter).trim();
-    if (org.trim() && site) {
-      return { org: org.trim(), site };
-    }
-  }
-  return null;
 }
 
 customElements.define("today-view", TodayView);
