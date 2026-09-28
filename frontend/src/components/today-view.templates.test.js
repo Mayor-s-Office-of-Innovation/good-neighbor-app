@@ -41,6 +41,15 @@ describe("logoutDialog", () => {
     expect(pending).toMatch(/id="logout-confirm"[^>]*disabled/);
     expect(pending).toContain('class="logout-dialog__error" role="alert"');
   });
+
+  it("escapes the error text", () => {
+    const markup = logoutDialog({
+      error: "<img src=x onerror=1>",
+      pending: false,
+    });
+    expect(markup).toContain("&lt;img src=x onerror=1&gt;");
+    expect(markup).not.toContain("<img");
+  });
 });
 
 describe("siteSwitcher", () => {
@@ -204,7 +213,7 @@ describe("actionButton", () => {
         href: "mailto:a@b.c",
       }),
     ).toMatch(
-      /^<a class="btn-blue btn-blue--sm" href="mailto:a@b.c">Email<\/a>$/,
+      /^<a class="btn-blue btn-blue--sm" href="mailto:a@b.c"\s*>Email<\/a\s*>$/,
     );
     expect(
       actionButton({
@@ -217,6 +226,19 @@ describe("actionButton", () => {
     expect(
       actionButton({ kind: "done", label: "Done", variant: "ink" }),
     ).toContain('data-action="done"');
+  });
+
+  it("escapes the link target so a payload cannot break out of the attribute", () => {
+    const markup = actionButton({
+      kind: "email",
+      label: "Email",
+      variant: "blue",
+      href: 'mailto:a@b.c" onmouseover="alert(1)',
+    });
+    expect(markup).toContain(
+      'href="mailto:a@b.c&quot; onmouseover=&quot;alert(1)"',
+    );
+    expect(markup).not.toContain('" onmouseover="');
   });
 });
 

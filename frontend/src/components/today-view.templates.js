@@ -137,7 +137,9 @@ export function logoutDialog({ error, pending }) {
             a new code to access the app
           </p>
           ${error
-            ? html`<p class="logout-dialog__error" role="alert">${error}</p>`
+            ? html`<p class="logout-dialog__error" role="alert">
+                ${escapeHtml(error)}
+              </p>`
             : ""}
         </div>
         <div class="places-modal__actions logout-dialog__actions">
@@ -526,7 +528,9 @@ export function actionButton(a) {
   // Link-style actions render as native anchors with no data-action, so the
   // click wiring skips them and the browser handles the URL.
   if (a.href) {
-    return html`<a class="${cls}" href="${a.href}">${escapeHtml(a.label)}</a>`;
+    return html`<a class="${cls}" href="${escapeAttr(a.href)}"
+      >${escapeHtml(a.label)}</a
+    >`;
   }
   // An email whose target isn't known yet: surface the instruction but keep
   // it non-interactive rather than misdialing or opening an empty composer.
