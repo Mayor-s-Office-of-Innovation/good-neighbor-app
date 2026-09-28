@@ -96,7 +96,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
     ).toBe(true);
   });
 
-  it("three failed uploads do NOT satisfy the three-photo rule", () => {
+  it("failed uploads do not satisfy the one-photo rule", () => {
     const check = makeCheck(0, 0);
     check.items = Array.from({ length: 3 }, (_, i) => ({
       ...DEAD_PHOTO,
@@ -108,11 +108,11 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
       photos: 0,
       texts: 0,
       complete: false,
-      remaining: 3,
+      remaining: 1,
     });
   });
 
-  it("three failed uploads plus two live photos count only two", () => {
+  it("failed uploads are ignored when one live photo satisfies the rule", () => {
     const check = makeCheck(0, 0);
     check.items = [
       ...Array.from({ length: 3 }, (_, i) => ({
@@ -122,14 +122,14 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
         upload: { status: "failed" },
         analysis: { status: "failed" },
       })),
-      ...Array.from({ length: 2 }, (_, i) => ({
+      ...Array.from({ length: 1 }, (_, i) => ({
         id: `live-${i}`,
         kind: "photo",
         dataUrl: "data:,",
       })),
     ];
-    expect(photoCount(check)).toBe(2);
-    expect(isPerimeterCheckComplete(check)).toBe(false);
+    expect(photoCount(check)).toBe(1);
+    expect(isPerimeterCheckComplete(check)).toBe(true);
   });
 
   it("a failed description with no artifact does not satisfy the one-description rule", () => {

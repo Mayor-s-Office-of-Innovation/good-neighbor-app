@@ -11,16 +11,15 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
   Perimeter check, end to end, against the local harness with the analyzer
-  stub. One spec, three photos into the flat photo roll, plus the post-check
-  cleanup pass:
+  stub. One issue photo into the flat photo roll, plus the post-check cleanup
+  pass:
 
   - input-1.jpg → stub returns the multi-concern fixture → task / condition
     cards for temporary shelters / litter / graffiti appear in the
     "Analyzing evidence" tray on the capture view.
-  - input-2.jpg × 2 → stub returns the clean fixture. Since photo 1 has issues,
-    no clear-check card should appear. Finish stays disabled until the third
-    photo lands (the completion rule in frontend/src/domain/check-completion.js:
-    three photos, or one description — see describe-instead.e2e.spec.js).
+  - The first live photo satisfies the completion rule in
+    frontend/src/domain/check-completion.js; a description is the alternative
+    covered by describe-instead.e2e.spec.js.
   - Finish check → back home, NEW task cards appear in the results tray →
     dismiss every generated card via its delete (trash) button + confirm.
 
@@ -29,7 +28,7 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
   prod.
 */
 
-const MIN_PHOTOS = 3;
+const MIN_PHOTOS = 1;
 
 test.describe("perimeter check", () => {
   test("an all-clear check remains visible on home after finishing", async ({
@@ -60,7 +59,7 @@ test.describe("perimeter check", () => {
     await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
   });
 
-  test("issue photo generates task guidance; Finish unlocks at three photos", async ({
+  test("issue photo generates task guidance; Finish unlocks at one photo", async ({
     page,
   }) => {
     await startCheck(page);
@@ -82,7 +81,8 @@ test.describe("perimeter check", () => {
     // Upload leg: the photo tile lands in the roll.
     await expect(shots).toHaveCount(1, { timeout: 30_000 });
     await expect(photoCount).toHaveText(`1 of ${MIN_PHOTOS} photos taken`);
-    await expect(done).toBeDisabled();
+    await expect(progress).toContainText("Ready to finish.");
+    await expect(done).toBeEnabled();
 
     // Analyzer + guidance legs: the multi fixture's three conditions resolve
     // into completed cards in the analyzing tray (tents → immediate 311
@@ -95,32 +95,13 @@ test.describe("perimeter check", () => {
     expect(await issueCards.count()).toBeGreaterThan(0);
     await expect(analyzingTray.locator(".analysis-card--clear")).toHaveCount(0);
 
-    // --- Photos 2–3: the clean scene, twice -------------------------------
-    // Photo 1's analysis has landed, so switching the fixture now cannot leak
-    // into it. Reusing the same file is fine: each upload is its own artifact.
-    await setAnalyzerFixture("excellent");
-    for (let n = 2; n <= MIN_PHOTOS; n += 1) {
-      await addPhoto(page, PHOTO_CLEAR);
-      await expect(shots).toHaveCount(n, { timeout: 30_000 });
-      if (n < MIN_PHOTOS) {
-        await expect(photoCount).toHaveText(
-          `${n} of ${MIN_PHOTOS} photos taken`,
-        );
-        await expect(done).toBeDisabled();
-      }
-    }
-
-    // The third photo satisfies the completion rule: readiness appears
-    // alongside the count and Finish enables.
+    // The first photo satisfies the completion rule.
     await expect(photoCount).toHaveText(
       `${MIN_PHOTOS} of ${MIN_PHOTOS} photos taken`,
     );
-    await expect(progress).toContainText("Ready to finish.");
-    await expect(done).toBeEnabled();
 
-    // Wait for every photo's analysis to finish. A clear-check card is shown
-    // only when the entire check has no issues, so these two clean photos
-    // must not add one alongside photo 1's issue cards.
+    // Wait for the photo's analysis to finish. An issue check must not add a
+    // clear-check card alongside its issue cards.
     await expect(page.locator("#toggle-analyzing")).not.toContainText(
       "Analyzing...",
       { timeout: 90_000 },
@@ -139,8 +120,8 @@ test.describe("perimeter check", () => {
     await finishCheck(page);
 
     // The NEW results tray holds this check's fresh cards. The multi fixture
-    // guarantees at least one NEW card for the issues photo; the clean photos
-    // add none. Dismiss every generated card via its trash button.
+    // guarantees at least one NEW card for the issues photo. Dismiss every
+    // generated card via its trash button.
     const cardCount = await dismissAllNewResults(page);
     expect(cardCount).toBeGreaterThan(0);
   });
