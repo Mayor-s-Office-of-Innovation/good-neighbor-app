@@ -174,18 +174,14 @@ export function captureRegion({ flow }) {
 /* ---- Hero: site identity, switcher, summary, CTAs ---- */
 
 /**
- * @param {{ siteSwitcher: string, siteName: string, summary: string, checkLabel: string, reportLabel: string }} vm
+ * The <site-switcher> placeholder is replaced by the host's persistent
+ * element after render (see today-view._mountSiteSwitcher).
+ * @param {{ siteName: string, summary: string, checkLabel: string, reportLabel: string }} vm
  */
-export function heroBlock({
-  siteSwitcher,
-  siteName,
-  summary,
-  checkLabel,
-  reportLabel,
-}) {
+export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
   return html`
     <div class="screen__sec home-lead">
-      ${siteSwitcher}
+      <site-switcher></site-switcher>
       <div class="home-identity home-identity--with-summary">
         <h1 class="home-identity__site">${escapeHtml(siteName)}</h1>
         ${summary}
@@ -210,81 +206,6 @@ export function homeActions({ checkLabel, reportLabel }) {
 }
 
 /**
- * @param {{
- *   providerName: string,
- *   sites: Array<{ siteId: string, name: string }>,
- *   currentSiteId: string,
- *   open: boolean,
- *   error: string,
- *   status: string,
- * }} vm
- */
-export function siteSwitcher({
-  providerName,
-  sites,
-  currentSiteId,
-  open,
-  error,
-  status,
-}) {
-  return html`
-    <div class="home-site-switcher">
-      <button
-        id="site-switcher-trigger"
-        class="home-site-switcher__trigger"
-        type="button"
-        aria-expanded="${open ? "true" : "false"}"
-        aria-controls="site-switcher-list"
-      >
-        <span>${escapeHtml(providerName || "Your provider")}</span>
-        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-      </button>
-      ${open
-        ? html`<div id="site-switcher-list" class="home-site-switcher__menu">
-            ${sites
-              .map(
-                (site) =>
-                  html`<button
-                    class="home-site-switcher__item ${site.siteId ===
-                    currentSiteId
-                      ? "home-site-switcher__item--selected"
-                      : ""}"
-                    type="button"
-                    data-switch-site="${escapeAttr(site.siteId)}"
-                    ${site.siteId === currentSiteId
-                      ? 'aria-current="page"'
-                      : ""}
-                  >
-                    <span class="home-site-switcher__check" aria-hidden="true"
-                      >${site.siteId === currentSiteId ? "✓" : ""}</span
-                    >
-                    <span>${escapeHtml(site.name)}</span>
-                  </button>`,
-              )
-              .join("")}
-            ${error
-              ? html`<p class="home-site-switcher__error" role="alert">
-                  ${escapeHtml(error)}
-                </p>`
-              : ""}
-            ${status === "loading"
-              ? html`<p class="home-site-switcher__status" role="status">
-                  Loading sites…
-                </p>`
-              : ""}
-            ${status === "error"
-              ? html`<div class="home-site-switcher__failure">
-                  <p role="alert">Other sites couldn't load.</p>
-                  <button id="site-catalog-retry" type="button">Retry</button>
-                </div>`
-              : ""}
-          </div>`
-        : ""}
-    </div>
-  `;
-}
-
-/**
  * Last submitted check only: its recorded issue count and remaining actions,
  * or a nudge to switch sites when the device is not near this one.
  * @param {{ outsideRadius: boolean, label: string }} vm
@@ -299,6 +220,7 @@ export function summaryBlock({ outsideRadius, label }) {
           class="lastlog__switch"
           type="button"
           appearance="plain"
+          data-opens-site-switcher
         >
           Change the site
         </button>

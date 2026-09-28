@@ -10,7 +10,6 @@ import {
   logoutDialog,
   reasonPicker,
   settingsMenu,
-  siteSwitcher,
   summaryBlock,
   taskTabs,
 } from "./today-view.templates.js";
@@ -48,54 +47,6 @@ describe("logoutDialog", () => {
     });
     expect(markup).toContain("&lt;img src=x onerror=1&gt;");
     expect(markup).not.toContain("<img");
-  });
-});
-
-describe("siteSwitcher", () => {
-  it("lists sites with the current one marked only while open", () => {
-    const closed = siteSwitcher({
-      providerName: "Provider One",
-      sites,
-      currentSiteId: "site-a",
-      open: false,
-      error: "",
-      status: "loaded",
-    });
-    expect(closed).toContain("Provider One");
-    expect(closed).toContain('aria-expanded="false"');
-    expect(closed).not.toContain('id="site-switcher-list"');
-
-    const open = siteSwitcher({
-      providerName: "",
-      sites,
-      currentSiteId: "site-a",
-      open: true,
-      error: "",
-      status: "loaded",
-    });
-    expect(open).toContain("Your provider");
-    expect(open).toContain('data-switch-site="site-a"');
-    expect(open).toContain('aria-current="page"');
-    expect(open).toContain("Beta &lt;Hall&gt;");
-    expect(open).not.toContain("Beta <Hall>");
-  });
-
-  it("shows the loading, failure, and error rows", () => {
-    const base = {
-      providerName: "P",
-      sites,
-      currentSiteId: "site-a",
-      open: true,
-    };
-    expect(siteSwitcher({ ...base, error: "", status: "loading" })).toContain(
-      "Loading sites…",
-    );
-    expect(siteSwitcher({ ...base, error: "", status: "error" })).toContain(
-      'id="site-catalog-retry"',
-    );
-    expect(siteSwitcher({ ...base, error: "Bad", status: "loaded" })).toContain(
-      'class="home-site-switcher__error" role="alert"',
-    );
   });
 });
 

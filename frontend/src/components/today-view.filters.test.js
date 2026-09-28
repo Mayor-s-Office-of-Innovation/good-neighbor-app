@@ -554,12 +554,7 @@ describe("site switcher", () => {
     view._siteSwitcherOpen = true;
 
     expect(view._providerSitesStatus).toBe("error");
-    expect(view._siteSwitcher("Provider One")).toContain(
-      'id="site-catalog-retry"',
-    );
-    expect(view._siteSwitcher("Provider One")).toContain(
-      "Other sites couldn't load.",
-    );
+    expect(view._providerSites).toEqual([]);
 
     catalog.listProviderSites.mockResolvedValueOnce({
       providerId: "provider-1",
@@ -573,49 +568,6 @@ describe("site switcher", () => {
     expect(view._providerSites).toEqual([
       { siteId: "site-2", name: "Second site" },
     ]);
-    expect(view._siteSwitcher("Provider One")).not.toContain(
-      "Other sites couldn't load.",
-    );
     errorLog.mockRestore();
-  });
-
-  it("stays open when the location-summary link click reaches the outside-click listener", async () => {
-    const view = await mount("?filter=todo");
-    const originalElement = globalThis.Element;
-    class SiteChangeLink {
-      matches(selector) {
-        return selector.includes("#lastlog-change-site");
-      }
-    }
-    try {
-      vi.stubGlobal("Element", SiteChangeLink);
-      view._siteSwitcherOpen = true;
-      view._siteDocumentClick({ composedPath: () => [new SiteChangeLink()] });
-      expect(view._siteSwitcherOpen).toBe(true);
-
-      view._siteDocumentClick({ composedPath: () => [] });
-      expect(view._siteSwitcherOpen).toBe(false);
-    } finally {
-      vi.stubGlobal("Element", originalElement);
-    }
-  });
-
-  it("lists provider sites without add-site or generic login actions", () => {
-    const view = new TodayView();
-    view._site = { name: "730 Polk" };
-    view._siteId = "chc-730-polk";
-    view._providerSites = [
-      { siteId: "chc-640-jones", name: "640 Jones" },
-      { siteId: "chc-730-polk", name: "730 Polk" },
-    ];
-    view._siteSwitcherOpen = true;
-
-    const menu = view._siteSwitcher("CHC");
-
-    expect(menu).toContain("640 Jones");
-    expect(menu).toContain("730 Polk");
-    expect(menu).toContain("home-site-switcher__item--selected");
-    expect(menu).not.toContain("Add another site");
-    expect(menu).not.toContain("Login to another site");
   });
 });

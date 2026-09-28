@@ -29,7 +29,6 @@ import {
 import {
   listChecks,
   listTasks,
-  listProviderSites,
   ApiError,
   completeTask,
   cannotDoTask,
@@ -114,10 +113,11 @@ import {
   homeShell,
   locationDialog,
   reasonPicker,
-  siteSwitcher,
   summaryBlock,
 } from "./today-view.templates.js";
 import "./ticket-detail-dialog.js";
+import "./site-switcher.js";
+import { fetchProviderSites } from "../services/provider-sites.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
@@ -155,13 +155,12 @@ class TodayView extends HTMLElement {
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
-    this._siteSwitcherOpen = false;
-    this._siteDocumentClick = null;
+    /** @type {any} the persistent <site-switcher>, created on first render */
+    this._siteSwitcher = null;
     this._providerSites = [];
     this._providerSitesStatus = "idle";
     this._boundSites = [];
     this._providerName = "";
-    this._siteSwitchError = "";
     this._logoutDialog = null;
     this._logoutDialogOpen = false;
     this._logoutPending = false;
@@ -187,8 +186,6 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
-    document.removeEventListener("click", this._siteDocumentClick);
-    this._siteDocumentClick = null;
     this._captureFinishedListening = false;
     this._locationUnsub?.();
     this._locationUnsub = null;
@@ -244,30 +241,13 @@ class TodayView extends HTMLElement {
       };
       document.addEventListener("click", this._settingsDocumentClick);
     }
-    if (!this._siteDocumentClick) {
-      this._siteDocumentClick = (event) => {
-        if (!this._siteSwitcherOpen) return;
-        const path = event.composedPath?.() || [];
-        if (
-          !path.some(
-            (node) =>
-              node instanceof Element &&
-              node.matches(".home-site-switcher, #lastlog-change-site"),
-          )
-        ) {
-          this._siteSwitcherOpen = false;
-          if (this._homeModel) this._renderHome(this._homeModel);
-        }
-      };
-      document.addEventListener("click", this._siteDocumentClick);
-    }
 
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
-      this._fetchProviderSites().catch((error) => {
+      fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
         return null;
       }),
@@ -465,37 +445,13 @@ class TodayView extends HTMLElement {
     this.querySelector("#home-settings")?.addEventListener("click", () =>
       this._toggleSettingsMenu(),
     );
-    this.querySelector("#site-switcher-trigger")?.addEventListener(
-      "click",
-      () => {
-        this._setSiteSwitcherOpen(!this._siteSwitcherOpen);
-      },
-    );
+    this._mountSiteSwitcher();
     this.querySelector("#lastlog-change-site")?.addEventListener(
       "click",
       () => {
-        this._setSiteSwitcherOpen(true);
+        this._siteSwitcher?.setOpen(true);
       },
     );
-    this.querySelector(".home-site-switcher")?.addEventListener(
-      "keydown",
-      (event) => {
-        if (/** @type {KeyboardEvent} */ (event).key !== "Escape") return;
-        this._siteSwitcherOpen = false;
-        this._renderHome(this._homeModel);
-        /** @type {HTMLElement | null} */ (
-          this.querySelector("#site-switcher-trigger")
-        )?.focus();
-      },
-    );
-    this.querySelectorAll("[data-switch-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        void this._switchToSite(button.getAttribute("data-switch-site") || "");
-      });
-    });
-    this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
-      void this._retryProviderSites();
-    });
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
@@ -1033,7 +989,6 @@ class TodayView extends HTMLElement {
   _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
     return heroBlock({
-      siteSwitcher: this._siteSwitcher(identity.org),
       siteName: identity.site,
       summary: this._summaryBlock(last, homeTasks),
       checkLabel: this._checkActionLabel(),
@@ -1045,44 +1000,13 @@ class TodayView extends HTMLElement {
     return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
   }
 
-  async _fetchProviderSites() {
-    const sites = new Map();
-    const seenCursors = new Set();
-    let cursor = "";
-    let providerId = "";
-    let providerName = "";
-    do {
-      const page = await listProviderSites(cursor);
-      if (!page || !Array.isArray(page.sites)) {
-        throw new Error("Invalid provider sites response");
-      }
-      if (providerId && page.providerId !== providerId) {
-        throw new Error("Provider changed during site listing");
-      }
-      providerId = String(page.providerId || "");
-      providerName = String(page.providerName || providerName);
-      for (const site of page.sites) {
-        if (site?.siteId) sites.set(site.siteId, site);
-      }
-      cursor = page.nextCursor || "";
-      if (cursor && seenCursors.has(cursor)) {
-        throw new Error("Repeated provider sites cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    return {
-      providerName,
-      sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    };
-  }
-
   async _retryProviderSites() {
     if (this._providerSitesStatus === "loading") return;
     const requestedSiteId = this._siteId;
     this._providerSitesStatus = "loading";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
-      const catalog = await this._fetchProviderSites();
+      const catalog = await fetchProviderSites();
       if (requestedSiteId !== this._siteId) return;
       this._providerSites = catalog.sites;
       this._providerName =
@@ -1111,30 +1035,27 @@ class TodayView extends HTMLElement {
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
-  _siteSwitcher(providerName) {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site.name }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.push({ siteId: this._siteId, name: this._site.name });
+  _mountSiteSwitcher() {
+    if (!this._siteSwitcher) {
+      const switcher = document.createElement("site-switcher");
+      switcher.addEventListener("switchsite", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
+        );
+      });
+      switcher.addEventListener("retrysites", () => {
+        void this._retryProviderSites();
+      });
+      this._siteSwitcher = switcher;
     }
-    return siteSwitcher({
-      providerName,
-      sites,
-      currentSiteId: this._siteId,
-      open: this._siteSwitcherOpen,
-      error: this._siteSwitchError,
-      status: this._providerSitesStatus,
-    });
-  }
-
-  _setSiteSwitcherOpen(open) {
-    this._siteSwitcherOpen = open;
-    this._siteSwitchError = "";
-    this._renderHome(this._homeModel);
-    /** @type {HTMLElement | null} */ (
-      this.querySelector("#site-switcher-trigger")
-    )?.focus();
+    const switcher = this._siteSwitcher;
+    switcher.providerName = this._siteIdentity().org;
+    switcher.sites = this._providerSites;
+    switcher.currentSite = { siteId: this._siteId, name: this._site?.name };
+    switcher.status = this._providerSitesStatus;
+    // Swapping the same instance in for the placeholder keeps its open state
+    // across innerHTML replacement.
+    this.querySelector(":scope > .home site-switcher")?.replaceWith(switcher);
   }
 
   _locationDialogMarkup() {
@@ -1214,15 +1135,15 @@ class TodayView extends HTMLElement {
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "Wait for this check to finish analyzing before switching sites.",
+      );
       return;
     }
     try {
       if (active) await pauseCheck();
       discardInMemorySession();
-      this._siteSwitcherOpen = false;
+      this._siteSwitcher?.close();
       this.dispatchEvent(
         new CustomEvent("siterequested", {
           bubbles: true,
@@ -1231,16 +1152,15 @@ class TodayView extends HTMLElement {
       );
     } catch (error) {
       console.error("site switch preparation failed", error);
-      this._siteSwitchError =
-        "We couldn't save this check before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "We couldn't save this check before switching sites.",
+      );
     }
   }
 
   async _switchToSite(siteId) {
     if (!siteId || siteId === this._siteId) {
-      this._siteSwitcherOpen = false;
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.close();
       return;
     }
     const target = this._providerSites.find((site) => site.siteId === siteId);
@@ -1253,9 +1173,9 @@ class TodayView extends HTMLElement {
     }
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "Wait for this check to finish analyzing before switching sites.",
+      );
       return;
     }
     try {
@@ -1269,8 +1189,7 @@ class TodayView extends HTMLElement {
       window.location.assign("/today");
     } catch (error) {
       console.error("site switch failed", error);
-      this._siteSwitchError = "We couldn't switch sites. Try again.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError("We couldn't switch sites. Try again.");
     }
   }
 
