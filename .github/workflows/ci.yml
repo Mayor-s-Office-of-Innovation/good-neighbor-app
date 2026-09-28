@@ -107,9 +107,9 @@ jobs:
     name: Performance budgets
     # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
     # size-budget's primary target. size-limit is the hard gate — raising a
-    # limit is a deliberate, reviewable package.json edit. lhci runs warn-only
-    # (see frontend/lighthouserc.json) until its noise floor is measured;
-    # promotion to hard gate is a separate change.
+    # limit is a deliberate, reviewable package.json edit. Lighthouse runs
+    # warn-only (see frontend/lighthouse-budgets.json) until its noise floor is
+    # measured; promotion to hard gate is a separate change.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -132,15 +132,13 @@ jobs:
         working-directory: frontend
 
       - name: Lighthouse (lab metrics, warn-only)
-        run: npx lhci autorun
-        working-directory: frontend
-
-      # LHCI's assert output only prints rows for warn/fail assertions, so a
-      # clean run logs nothing. This script prints a per-run metrics table into
-      # the step log AND the run's Summary tab. Reads .lighthouseci/ (which the
-      # step above leaves relative to THIS working-directory: frontend).
-      - name: Print Lighthouse results
-        run: node scripts/print-lighthouse.mjs
+        # scripts/run-lighthouse.mjs serves dist/ via `vite preview` and runs
+        # the lighthouse CLI 3x into .lighthouseci/; print-lighthouse.mjs then
+        # evaluates the warn-only budgets in lighthouse-budgets.json (median
+        # across runs) and prints a per-run metrics table into the step log
+        # AND the run's Summary tab. All paths are relative to THIS
+        # working-directory: frontend.
+        run: npm run perf
         working-directory: frontend
 
       # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and

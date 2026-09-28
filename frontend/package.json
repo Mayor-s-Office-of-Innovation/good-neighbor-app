@@ -8,6 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
     "lint": "eslint src",
+    "perf": "node scripts/run-lighthouse.mjs && node scripts/print-lighthouse.mjs",
     "size": "size-limit",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json"
@@ -29,12 +30,12 @@
   },
   "devDependencies": {
     "@eslint/js": "9.9.1",
-    "@lhci/cli": "^0.15.1",
     "@size-limit/file": "^14.0.0",
     "@types/node": "^22.20.1",
     "eslint": "9.9.1",
     "eslint-plugin-jsdoc": "50.2.2",
     "globals": "15.9.0",
+    "lighthouse": "^13.5.0",
     "size-limit": "^14.0.0",
     "typescript": "5.5.4",
     "vite": "8.2.1",
