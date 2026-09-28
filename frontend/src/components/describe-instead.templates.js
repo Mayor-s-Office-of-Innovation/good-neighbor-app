@@ -102,10 +102,17 @@ export const shell = ({
         </button>
       </div>
 
-      <dialog class="describe-modal" id="describe-exit-modal">
+      <dialog
+        class="describe-modal"
+        id="describe-exit-modal"
+        aria-labelledby="describe-modal-title"
+        aria-describedby="describe-modal-text"
+      >
         <form class="describe-modal__card" method="dialog">
-          <h2 class="describe-modal__title">Discard this description?</h2>
-          <p class="describe-modal__text">
+          <h2 class="describe-modal__title" id="describe-modal-title">
+            Discard this description?
+          </h2>
+          <p class="describe-modal__text" id="describe-modal-text">
             Your typed changes have not been saved yet.
           </p>
           <div class="describe-modal__actions">

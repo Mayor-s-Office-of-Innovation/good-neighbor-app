@@ -240,6 +240,9 @@ export function analysisResultsTray(
   } = {},
 ) {
   const summary = problemSummary(items);
+  const allEvidenceAnalyzed =
+    items.length > 0 &&
+    items.every((item) => item.analysis?.status === "analyzed");
   let clearCardRendered = false;
   const cards = sortAnalysisCards([
     ...items.flatMap((item) =>
@@ -249,6 +252,7 @@ export function analysisResultsTray(
       }).filter((card) => {
         if (!card.isClear) return true;
         if (
+          !allEvidenceAnalyzed ||
           summary.visible > 0 ||
           summary.hidden > 0 ||
           extraCards.length > 0 ||

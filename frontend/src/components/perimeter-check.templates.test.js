@@ -51,18 +51,19 @@ describe("progressLine", () => {
   });
 
   it("reads ready once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 3, texts: 0, complete: true });
+    const markup = progressLine({ photos: 1, texts: 0, complete: true });
 
-    expect(markup).toContain("3 of 3 photos taken");
+    expect(markup).toContain("1 of 1 photos taken");
     expect(markup).toContain("Ready to finish");
   });
 
-  it("reads ready after one description regardless of photo count", () => {
+  it("keeps the photo guidance without a saved-description status", () => {
     const markup = progressLine({ photos: 0, texts: 1, complete: true });
 
-    expect(markup).toContain("Description saved.");
-    expect(markup).toContain("Ready to finish");
-    expect(markup).toContain("Photos are optional");
+    expect(markup).toContain(`0 of ${MIN_PERIMETER_PHOTOS} photos taken`);
+    expect(markup).toContain("Try to take at least 3-5 photos");
+    expect(markup).not.toContain("Description saved");
+    expect(markup).not.toContain("Ready to finish");
   });
 });
 
@@ -79,6 +80,11 @@ describe("descriptionCard", () => {
     });
 
     expect(markup).toContain("Litter &lt;near&gt; the door &amp; sidewalk");
+    expect(markup).toContain('class="shot shot--description"');
+    expect(markup).toContain('class="shot__del shot__edit"');
+    expect(markup).toContain('class="shot__del"');
+    expect(markup).toContain('aria-label="Edit description"');
+    expect(markup).toContain('aria-label="Delete description"');
     expect(markup).toContain('data-edit-description="text-1"');
     expect(markup).toContain('data-remove-description="text-1"');
   });
@@ -106,6 +112,21 @@ describe("photoGrid", () => {
     expect(markup).toContain("addshot--empty");
     expect(markup).toContain("Take photo");
     expect(markup).toContain('name="camera"');
+  });
+
+  it("renders a description immediately after the camera tile", () => {
+    const markup = photoGrid([{ id: "photo-1", dataUrl: "data:photo" }], {
+      id: "text-1",
+      text: "Litter near the entrance",
+    });
+
+    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
+      markup.indexOf('data-edit-description="text-1"'),
+    );
+    expect(markup.indexOf('data-edit-description="text-1"')).toBeLessThan(
+      markup.indexOf('data-del="photo-1"'),
+    );
+    expect(markup).not.toContain("addshot--empty");
   });
 });
 

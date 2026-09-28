@@ -94,7 +94,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: playwright-report
           path: |
@@ -147,7 +147,7 @@ jobs:
       # "No files were found" on the first runs, twice).
       - name: Upload Lighthouse reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: lighthouse-reports
           path: frontend/.lighthouseci/

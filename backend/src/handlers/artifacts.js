@@ -290,7 +290,8 @@ export const deleteArtifact = async (event) => {
         ":pk": sitePk(siteId),
         ":sk": checkHeaderKey(siteId, checkId).sk,
       },
-      ProjectionExpression: "status",
+      ProjectionExpression: "#status",
+      ExpressionAttributeNames: { "#status": "status" },
     }),
   );
   const header = (headerResult.Items ?? [])[0];

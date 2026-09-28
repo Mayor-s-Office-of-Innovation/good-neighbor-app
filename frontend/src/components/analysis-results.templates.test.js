@@ -524,13 +524,9 @@ describe("analysis result summaries", () => {
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
-  it("removes the clear card as soon as any issue is present", () => {
+  it("does not show a clear card after an issue is already in the stack", () => {
     const markup = analysisResultsTray(
       [
-        {
-          id: "clear_photo",
-          analysis: { status: "analyzed", tasks: [], conditions: [] },
-        },
         {
           id: "issue_photo",
           analysis: {
@@ -547,12 +543,35 @@ describe("analysis result summaries", () => {
             conditions: [],
           },
         },
+        {
+          id: "clear_photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
       ],
       "check_1",
     );
 
     expect(markup).not.toContain("Your check was clear!");
     expect(markup).toContain("Litter");
+  });
+
+  it("waits for every item before showing the stack-level clear card", () => {
+    const markup = analysisResultsTray(
+      [
+        {
+          id: "pending_issue_photo",
+          analysis: { status: "analyzing" },
+        },
+        {
+          id: "clear_photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+      ],
+      "check_1",
+    );
+
+    expect(markup).not.toContain("Your check was clear!");
+    expect(markup).toContain("analysis-card--pending");
   });
 });
 

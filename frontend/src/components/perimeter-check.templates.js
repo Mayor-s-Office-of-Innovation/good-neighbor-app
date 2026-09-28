@@ -40,12 +40,10 @@ export const shell = ({ embedded = false } = {}) => html`
       aria-live="polite"
     ></p>
 
-    <div class="check-roll__description" id="check-description"></div>
-
     <div
       class="shotgrid check-roll__grid"
       id="shotgrid"
-      aria-label="Perimeter photos"
+      aria-label="Perimeter evidence"
     ></div>
 
     <button
@@ -225,13 +223,10 @@ export const analysisDialogs = () => html`
  * @returns {string}
  */
 export function progressLine({ photos, texts, complete }) {
-  if (texts > 0) {
-    return "<strong>Description saved.</strong> Ready to finish. Photos are optional.";
-  }
   return (
     `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
     `<span>Try to take at least 3-5 photos</span>` +
-    (complete ? `<span>Ready to finish.</span>` : "")
+    (complete && texts === 0 ? `<span>Ready to finish.</span>` : "")
   );
 }
 
@@ -243,26 +238,24 @@ export function progressLine({ photos, texts, complete }) {
 export function descriptionCard(item) {
   if (!item) return "";
   return html`
-    <section class="check-description" aria-label="Your description">
-      <p class="check-description__text">${escapeHtml(item.text || "")}</p>
-      <div class="check-description__actions">
-        <button
-          class="check-description__button"
-          type="button"
-          data-edit-description="${escapeAttr(item.id)}"
-        >
-          <wa-icon name="pen" aria-hidden="true"></wa-icon>
-          Edit
-        </button>
-        <button
-          class="check-description__button check-description__button--danger"
-          type="button"
-          data-remove-description="${escapeAttr(item.id)}"
-        >
-          <wa-icon name="trash" aria-hidden="true"></wa-icon>
-          Remove
-        </button>
-      </div>
+    <section class="shot shot--description" aria-label="Saved description">
+      <p class="shot__description">${escapeHtml(item.text || "")}</p>
+      <button
+        class="shot__del shot__edit"
+        type="button"
+        aria-label="Edit description"
+        data-edit-description="${escapeAttr(item.id)}"
+      >
+        <wa-icon name="pen" aria-hidden="true"></wa-icon>
+      </button>
+      <button
+        class="shot__del"
+        type="button"
+        aria-label="Delete description"
+        data-remove-description="${escapeAttr(item.id)}"
+      >
+        <wa-icon name="trash" aria-hidden="true"></wa-icon>
+      </button>
     </section>
   `;
 }
@@ -270,11 +263,13 @@ export function descriptionCard(item) {
 /**
  * The photo roll: camera first, then captured tiles from newest to oldest.
  * @param {Array<{ id: string, dataUrl?: string }>} photos
+ * @param {{ id: string, text?: string } | null | undefined} description
  * @returns {string}
  */
-export function photoGrid(photos) {
+export function photoGrid(photos, description = null) {
   return (
-    addTile(photos.length === 0) +
+    addTile(photos.length === 0 && !description) +
+    descriptionCard(description) +
     photos
       .map((item, index) => shotTile(item, index))
       .reverse()

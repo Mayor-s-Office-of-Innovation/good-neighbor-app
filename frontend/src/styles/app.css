@@ -3244,10 +3244,14 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .describe-modal {
-  width: min(100%, 28rem);
+  width: min(28rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
   border: 0;
+  border-radius: 1.5rem;
   padding: 0;
   background: transparent;
+  color: var(--text);
+  box-shadow: none;
 }
 
 .describe-modal::backdrop {
@@ -3259,10 +3263,11 @@ html.wa-dark .analysis-card__clear-copy a {
   flex-direction: column;
   gap: 0.9rem;
   margin: 0;
-  padding: 1.3rem;
-  border-radius: 22px;
-  background: var(--surface-1);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.18);
+  padding: 1.5rem;
+  border-radius: inherit;
+  background: var(--wa-color-surface-default, var(--surface));
+  color: var(--wa-color-text-normal, var(--text));
+  box-shadow: var(--shadow-lift);
 }
 
 .describe-modal__title {
@@ -3297,7 +3302,7 @@ html.wa-dark .analysis-card__clear-copy a {
 
 .describe-modal__secondary {
   border: 1px solid var(--c-line);
-  background: var(--surface-1);
+  background: var(--wa-color-surface-default, var(--surface));
   color: var(--text);
 }
 
@@ -3753,9 +3758,9 @@ connection-status {
   outline-offset: 3px;
 }
 
-/* ---- Perimeter check: flat photo roll (docs/plan-remove-places.md) ----
-   One grid of photos for the whole perimeter, a one-line completion status,
-   and the saved description card that stands in for photos. Reuses the
+/* ---- Perimeter check: flat evidence roll (docs/plan-remove-places.md) ----
+   One grid of photos and the saved description, plus a one-line completion
+   status. Reuses the
    .check-timeline chrome (topbar, title, footer buttons) and the .shotgrid /
    .shot / .addshot tiles shared with the single-issue flow. */
 .check-roll__progress {
@@ -3798,59 +3803,29 @@ connection-status {
   font-weight: 500;
   line-height: 1.2;
 }
-.check-roll__describe[hidden] {
-  display: none;
-}
 .check-roll .check-timeline__footer {
   margin-top: 1rem;
 }
-.check-roll__description:empty {
-  display: none;
-}
-.check-description {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+.shot--description {
   border: 1px solid var(--c-line);
-  border-radius: var(--radius);
   background: var(--surface);
-  padding: 1rem;
 }
-.check-description__text {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-.check-description__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.check-description__button {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 2.25rem;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
+.shot__description {
+  display: -webkit-box;
+  margin: 1rem 1rem 4rem;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
   font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.2;
-  margin: 0;
-  padding: 0.5rem 1rem;
-  box-shadow: none;
-  text-shadow: none;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
 }
-.check-description__button--danger {
-  color: var(--wa-color-danger-on-quiet, #b42318);
-  border-color: currentColor;
+.shot__edit {
+  right: 44px;
 }
 .check-timeline__done:disabled {
   opacity: 0.45;
