@@ -66,7 +66,6 @@ import {
 import {
   shell,
   progressLine,
-  descriptionCard,
   photoGrid,
   footer,
   analyzingSection,
@@ -145,9 +144,6 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#shotgrid").addEventListener("click", (e) =>
       this._onGridClick(e),
     );
-    this.querySelector("#check-description").addEventListener("click", (e) =>
-      this._onDescriptionClick(e),
-    );
     this.querySelector("#describe-instead").addEventListener("click", () =>
       this._describeInstead(),
     );
@@ -209,16 +205,6 @@ class PerimeterCheck extends HTMLElement {
       this._openCamera();
       return;
     }
-    const del = target.closest("[data-del]");
-    if (del) {
-      removeItem(del.getAttribute("data-del"));
-      this._render();
-    }
-  }
-
-  _onDescriptionClick(e) {
-    const target = e.target;
-    if (!(target instanceof Element)) return;
     if (target.closest("[data-edit-description]")) {
       this._describeInstead();
       return;
@@ -229,11 +215,17 @@ class PerimeterCheck extends HTMLElement {
       if (findItem(itemId)) {
         // The description may already be a registered artifact — delete it
         // server-side too, or completeCheck folds the stale text into the
-        // scorecard even though the card is gone locally.
+        // scorecard even though the tile is gone locally.
         void removeEvidenceItem(itemId).catch((err) => {
           console.error("Removing the description failed", err);
         });
       }
+      this._render();
+      return;
+    }
+    const del = target.closest("[data-del]");
+    if (del) {
+      removeItem(del.getAttribute("data-del"));
       this._render();
     }
   }
@@ -754,13 +746,12 @@ class PerimeterCheck extends HTMLElement {
     const description = textItems(check)[0] || null;
 
     this.querySelector("#check-progress").innerHTML = progressLine(status);
-    this.querySelector("#check-description").innerHTML =
-      descriptionCard(description);
     const grid = this.querySelector("#shotgrid");
-    grid.classList.toggle("shotgrid--empty", photos.length === 0);
-    grid.innerHTML = photoGrid(photos);
-    // One description per check: once saved, the card's Edit replaces it.
-    this.querySelector("#describe-instead").hidden = Boolean(description);
+    grid.classList.toggle(
+      "shotgrid--empty",
+      photos.length === 0 && !description,
+    );
+    grid.innerHTML = photoGrid(photos, description);
 
     const evidence = getItems();
     this.querySelector("#check-footer").innerHTML = footer({
