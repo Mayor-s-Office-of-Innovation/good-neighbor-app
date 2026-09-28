@@ -86,7 +86,7 @@ test.describe("site admin access", () => {
     const lastName = page.locator("#admin-last-name input");
     await lastName.fill("Unsaved change");
     await expect(page.locator("#site-admin-save")).toBeEnabled();
-    await page.evaluate(() => history.back());
+    await page.evaluate(() => window.history.back());
 
     const discard = page.locator("#site-admin-discard-dialog");
     await expect(discard).toBeVisible();

@@ -237,24 +237,24 @@ class SiteAdminEdit extends HTMLElement {
           class="places-modal site-admin-discard-dialog"
           id="site-admin-discard-dialog"
         >
-          <div class="places-modal__card">
+          <form class="places-modal__card" method="dialog">
             <div class="places-modal__copy">
               <h2 class="places-modal__title">Discard your changes?</h2>
               <p class="places-modal__text">Your edits haven't been saved.</p>
             </div>
             <div class="places-modal__actions">
-              <button class="btn-outline" id="site-admin-keep" type="button">
+              <button class="btn-outline" id="site-admin-keep" value="keep">
                 Keep editing
               </button>
               <button
                 class="places-modal__danger"
                 id="site-admin-discard"
-                type="button"
+                value="discard"
               >
                 Discard changes
               </button>
             </div>
-          </div>
+          </form>
         </dialog>
       </div>
     `;
@@ -276,16 +276,6 @@ class SiteAdminEdit extends HTMLElement {
       "click",
       () => void this._attemptBack(),
     );
-    this.querySelector("#site-admin-keep")?.addEventListener("click", () =>
-      this._resolveDiscard(false),
-    );
-    this.querySelector("#site-admin-discard")?.addEventListener("click", () =>
-      this._resolveDiscard(true),
-    );
-    this._dialog()?.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      this._resolveDiscard(false);
-    });
   }
 
   _value() {
@@ -353,21 +343,19 @@ class SiteAdminEdit extends HTMLElement {
 
   _confirmDiscard() {
     if (this._discardPromise) return this._discardPromise;
-    this._dialog()?.showModal();
+    const dialog = this._dialog();
+    dialog?.showModal();
     this._discardPromise = new Promise((resolve) => {
-      this._discardResolver = resolve;
-    }).finally(() => {
-      this._discardPromise = null;
+      dialog?.addEventListener(
+        "close",
+        () => {
+          this._discardPromise = null;
+          resolve(dialog.returnValue === "discard");
+        },
+        { once: true },
+      );
     });
     return this._discardPromise;
-  }
-
-  /** @param {boolean} discard */
-  _resolveDiscard(discard) {
-    const resolve = this._discardResolver;
-    this._discardResolver = null;
-    this._dialog()?.close();
-    resolve?.(discard);
   }
 
   _dialog() {

@@ -228,8 +228,7 @@ export function accessLevelFromToken(token) {
  */
 export function hasAdminAccess(binding) {
   return (
-    binding?.accessLevel === "admin" ||
-    accessLevelFromToken(binding?.token) === "admin"
+    (binding?.accessLevel || accessLevelFromToken(binding?.token)) === "admin"
   );
 }
 

@@ -80,7 +80,7 @@ window.addEventListener("popstate", async () => {
   }
   if (popstateGuard && !(await popstateGuard(currentRoute()))) {
     const restoreBy = activeDepth - targetDepth;
-    if (restoreBy !== 0) {
+    if (restoreBy) {
       restoringPopstate = true;
       history.go(restoreBy);
     }

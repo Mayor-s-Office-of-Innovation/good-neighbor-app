@@ -26,5 +26,11 @@ describe("hasAdminAccess", () => {
     expect(hasAdminAccess({ token: token({ accessLevel: "general" }) })).toBe(
       false,
     );
+    expect(
+      hasAdminAccess({
+        accessLevel: "general",
+        token: token({ accessLevel: "admin" }),
+      }),
+    ).toBe(false);
   });
 });
