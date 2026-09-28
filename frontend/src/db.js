@@ -220,6 +220,19 @@ export function accessLevelFromToken(token) {
   return claim === "admin" || claim === "general" ? claim : "";
 }
 
+/**
+ * Use the persisted binding when available and the signed token claim as the
+ * migration fallback. The backend remains the authorization authority.
+ * @param {Record<string, any> | null | undefined} binding
+ * @returns {boolean}
+ */
+export function hasAdminAccess(binding) {
+  return (
+    binding?.accessLevel === "admin" ||
+    accessLevelFromToken(binding?.token) === "admin"
+  );
+}
+
 /** @param {unknown} token @returns {Record<string, unknown> | null} */
 function tokenClaims(token) {
   if (typeof token !== "string") return null;

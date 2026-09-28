@@ -10,6 +10,13 @@
 */
 const listeners = new Set();
 const APP_HISTORY_STATE = "goodNeighborAppNavigation";
+let activeDepth =
+  typeof history === "undefined"
+    ? 0
+    : Number(history.state?.[APP_HISTORY_STATE] || 0);
+let restoringPopstate = false;
+/** @type {null | ((route: string) => boolean | Promise<boolean>)} */
+let popstateGuard = null;
 
 export function currentRoute() {
   const path = location.pathname;
@@ -22,6 +29,7 @@ export function navigate(route) {
   } else {
     const depth = Number(history.state?.[APP_HISTORY_STATE] || 0) + 1;
     history.pushState({ [APP_HISTORY_STATE]: depth }, "", route);
+    activeDepth = depth;
     emit();
   }
 }
@@ -38,6 +46,7 @@ export function backOrNavigate(fallbackRoute) {
     return;
   }
   history.replaceState({ [APP_HISTORY_STATE]: 0 }, "", fallbackRoute);
+  activeDepth = 0;
   emit();
 }
 
@@ -51,7 +60,35 @@ export function onRouteChange(fn) {
   return () => listeners.delete(fn);
 }
 
-window.addEventListener("popstate", emit);
+/**
+ * Install the single active view's browser-history leave guard.
+ * @param {(route: string) => boolean | Promise<boolean>} guard
+ * @returns {() => void}
+ */
+export function setPopstateGuard(guard) {
+  popstateGuard = guard;
+  return () => {
+    if (popstateGuard === guard) popstateGuard = null;
+  };
+}
+
+window.addEventListener("popstate", async () => {
+  const targetDepth = Number(history.state?.[APP_HISTORY_STATE] || 0);
+  if (restoringPopstate) {
+    restoringPopstate = false;
+    return;
+  }
+  if (popstateGuard && !(await popstateGuard(currentRoute()))) {
+    const restoreBy = activeDepth - targetDepth;
+    if (restoreBy !== 0) {
+      restoringPopstate = true;
+      history.go(restoreBy);
+    }
+    return;
+  }
+  activeDepth = targetDepth;
+  emit();
+});
 
 /*
   Delegated link interception: plain left-clicks on same-origin absolute-path

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const listeners = vi.hoisted(
+  () => /** @type {Record<string, (...args: any[]) => any>} */ ({}),
+);
+
 const browser = vi.hoisted(() => ({
   location: { pathname: "/today" },
   history: {
@@ -7,15 +11,21 @@ const browser = vi.hoisted(() => ({
     pushState: vi.fn(),
     replaceState: vi.fn(),
     back: vi.fn(),
+    go: vi.fn(),
   },
 }));
 
 vi.stubGlobal("location", browser.location);
 vi.stubGlobal("history", browser.history);
-vi.stubGlobal("window", { addEventListener: vi.fn() });
+vi.stubGlobal("window", {
+  addEventListener: vi.fn((type, listener) => {
+    listeners[type] = listener;
+  }),
+});
 vi.stubGlobal("document", { addEventListener: vi.fn() });
 
-const { backOrNavigate, currentRoute, navigate } = await import("./router.js");
+const { backOrNavigate, currentRoute, navigate, setPopstateGuard } =
+  await import("./router.js");
 
 describe("router history", () => {
   beforeEach(() => {
@@ -24,6 +34,7 @@ describe("router history", () => {
     browser.history.pushState.mockReset();
     browser.history.replaceState.mockReset();
     browser.history.back.mockReset();
+    browser.history.go.mockReset();
     browser.history.pushState.mockImplementation((state, _title, route) => {
       browser.history.state = state;
       browser.location.pathname = route;
@@ -70,5 +81,17 @@ describe("router history", () => {
       "",
       "/site-admin",
     );
+  });
+
+  it("restores browser history when a route-leave guard declines Back", async () => {
+    navigate("/site-admin/edit/site");
+    const removeGuard = setPopstateGuard(() => false);
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    browser.location.pathname = "/today";
+
+    await listeners.popstate();
+
+    expect(browser.history.go).toHaveBeenCalledWith(1);
+    removeGuard();
   });
 });

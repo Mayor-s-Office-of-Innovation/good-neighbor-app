@@ -1,19 +1,41 @@
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  QueryCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, presignGet } = vi.hoisted(() => ({
+const { send, geocodeAddress, presignGet } = vi.hoisted(() => ({
   send: vi.fn(),
+  geocodeAddress: vi.fn(),
   presignGet: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../s3.js", () => ({ presignGet }));
+vi.mock("../integrations/census-geocoder.js", () => ({
+  GeocodingError: class GeocodingError extends Error {
+    /** @param {string} code */
+    constructor(code) {
+      super(code);
+      this.code = code;
+    }
+  },
+  geocodeAddress,
+}));
 
 const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
   await import("./site.js");
 
 beforeEach(() => {
   send.mockReset();
+  geocodeAddress.mockReset();
   presignGet.mockReset();
+  geocodeAddress.mockResolvedValue({
+    latitude: 37.75,
+    longitude: -122.42,
+    matchedAddress: "2 NEW ST, SAN FRANCISCO, CA 94103",
+  });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "test-bucket");
   vi.stubEnv("SQS_QUEUE_URL", "test-queue");
@@ -333,6 +355,68 @@ describe("site admin", () => {
       lastName: "Anand",
       email: "priya@example.org",
       phone: "(415) 555-0148",
+    });
+  });
+
+  it("atomically reindexes and geocodes edited site details", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Old Name",
+          address: "1 Old St, San Francisco, CA 94103",
+          providerId: "provider-1",
+          providerName: "Provider One",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const request = accessEvent("site-1", "admin");
+    request.body = JSON.stringify({
+      section: "siteDetails",
+      values: {
+        name: "New Name",
+        address: {
+          streetNumber: "2",
+          streetAddress: "New St",
+          secondLine: "",
+          city: "San Francisco",
+          state: "CA",
+          zip: "94103",
+        },
+      },
+    });
+
+    const response = await /** @type {any} */ (updateSiteAdmin)(request);
+
+    expect(response.statusCode).toBe(200);
+    expect(geocodeAddress).toHaveBeenCalledWith(
+      "2 New St, San Francisco, CA 94103",
+    );
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems?.[0]?.Update).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "#META" },
+      ExpressionAttributeValues: {
+        ":name": "New Name",
+        ":location": { latitude: 37.75, longitude: -122.42 },
+        ":geocodedAddress": "2 NEW ST, SAN FRANCISCO, CA 94103",
+      },
+    });
+    expect(tx.input.TransactItems?.[1]?.Update?.Key).toEqual({
+      pk: "PROVIDER#provider-1",
+      sk: "SITE#site-1",
+    });
+    expect(tx.input.TransactItems?.[2]?.Delete?.Key).toEqual({
+      pk: "SITE_SEARCH#ACTIVE",
+      sk: "old name#site-1",
+    });
+    expect(tx.input.TransactItems?.[3]?.Put?.Item).toMatchObject({
+      pk: "SITE_SEARCH#ACTIVE",
+      sk: "new name#site-1",
+      siteName: "New Name",
+      searchText: "new name provider one",
     });
   });
 });

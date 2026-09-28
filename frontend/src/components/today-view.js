@@ -23,10 +23,10 @@ import {
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { navigate } from "../router.js";
 import {
-  accessLevelFromToken,
   activateSiteBinding,
   clearSiteSession,
   getSite,
+  hasAdminAccess,
   listBoundSites,
 } from "../db.js";
 import {
@@ -1461,8 +1461,7 @@ class TodayView extends HTMLElement {
                       <wa-icon name="comment" aria-hidden="true"></wa-icon>
                       Send feedback
                     </button>
-                    ${this._site?.accessLevel === "admin" ||
-                    accessLevelFromToken(this._site?.token) === "admin"
+                    ${hasAdminAccess(this._site)
                       ? html`<button
                           id="settings-site-admin"
                           type="button"

@@ -11,7 +11,7 @@
 */
 import { requestLocationPermissionEarly } from "../services/device-location.js";
 import {
-  accessLevelFromToken,
+  hasAdminAccess,
   getSite,
   resetLocalAppState,
   saveSiteSettings,
@@ -232,11 +232,7 @@ class AppRoot extends HTMLElement {
       void this._resetFirstLaunch();
       return;
     }
-    if (
-      route.startsWith("/site-admin") &&
-      this._site?.accessLevel !== "admin" &&
-      accessLevelFromToken(this._site?.token) !== "admin"
-    ) {
+    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
       navigate("/today");
       return;
     }

@@ -10,11 +10,14 @@ import { randomUUID } from "node:crypto";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { presignPut } from "../s3.js";
+import { deleteObject, headObject, presignPut, setObjectTags } from "../s3.js";
+import { GeocodingError } from "../integrations/census-geocoder.js";
 import {
-  GeocodingError,
-  geocodeAddress,
-} from "../integrations/census-geocoder.js";
+  geocodeSiteAddress,
+  locationFromSite,
+  siteSearchItem,
+  siteSearchSk,
+} from "../domain/site-metadata.js";
 import {
   emailHash,
   issueSetupCode,
@@ -331,6 +334,7 @@ export const presignComplianceLetter = (event) =>
       bucket: getConfig().uploadBucket,
       key: s3Key,
       contentType: COMPLIANCE_LETTER_CONTENT_TYPE,
+      tagging: "state=pending",
       expiresIn: 300,
     });
     return jsonResponse(200, {
@@ -369,8 +373,15 @@ export const updateSite = (event) =>
     }
     const address = addressParts
       ? formatAddressParts(addressParts)
-      : normalizeAddress(body.address ?? site.address);
-    if (!address) return jsonResponse(400, { error: "address_required" });
+      : normalizeAddress(
+          body.address === undefined ? site.address : body.address,
+        );
+    if (
+      (body.addressParts !== undefined || body.address !== undefined) &&
+      !address
+    ) {
+      return jsonResponse(400, { error: "address_required" });
+    }
 
     const contactPerson =
       body.contactPerson === undefined
@@ -407,50 +418,80 @@ export const updateSite = (event) =>
     if (body.complianceLetter !== undefined && !complianceLetters) {
       return jsonResponse(400, { error: "invalid_compliance_letter" });
     }
-    const existingLocation = locationFromSite(site);
-    const geocoded =
-      address !== site.address || existingLocation instanceof GeocodingError
-        ? await geocodeSiteAddress(address)
-        : existingLocation;
-    if (geocoded instanceof GeocodingError) {
-      return jsonResponse(422, { error: geocoded.code });
+    const currentLetterKey = site.complianceLetters?.current?.s3Key;
+    const nextLetterKey = complianceLetters?.current?.s3Key;
+    const uploadedLetterKey =
+      nextLetterKey && nextLetterKey !== currentLetterKey
+        ? String(nextLetterKey)
+        : null;
+    let geocoded = null;
+    if (address) {
+      const existingLocation = locationFromSite(site);
+      geocoded =
+        address !== site.address || existingLocation instanceof GeocodingError
+          ? await geocodeSiteAddress(address)
+          : existingLocation;
+      if (geocoded instanceof GeocodingError) {
+        if (uploadedLetterKey) {
+          await deleteComplianceLetterUpload(uploadedLetterKey);
+        }
+        return jsonResponse(422, { error: geocoded.code });
+      }
+    }
+    if (uploadedLetterKey) {
+      const validUpload =
+        await validateComplianceLetterUpload(uploadedLetterKey);
+      if (!validUpload) {
+        await deleteComplianceLetterUpload(uploadedLetterKey);
+        return jsonResponse(400, { error: "invalid_compliance_letter" });
+      }
+      await setObjectTags({
+        bucket: getConfig().uploadBucket,
+        key: uploadedLetterKey,
+        tags: { state: "active" },
+      });
     }
 
     const nextSite = {
       ...site,
       name,
-      address,
+      ...(address ? { address } : {}),
       ...(addressParts ? { addressParts } : {}),
       ...(contactPerson ? { contactPerson } : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
       ...(perimeter !== null ? { perimeter } : {}),
       ...(complianceLetters ? { complianceLetters } : {}),
-      location: {
-        latitude: geocoded.latitude,
-        longitude: geocoded.longitude,
-      },
-      geocodedAddress: geocoded.matchedAddress,
+      ...(geocoded
+        ? {
+            location: {
+              latitude: geocoded.latitude,
+              longitude: geocoded.longitude,
+            },
+            geocodedAddress: geocoded.matchedAddress,
+          }
+        : {}),
       updatedAt: now,
     };
-    const setExpressions = [
-      "#name = :name",
-      "address = :address",
-      "#location = :location",
-      "geocodedAddress = :geocodedAddress",
-      "updatedAt = :now",
-    ];
+    const setExpressions = ["#name = :name", "updatedAt = :now"];
     /** @type {Record<string, unknown>} */
     const expressionAttributeValues = {
       ":name": name,
-      ":address": address,
-      ":location": {
-        latitude: geocoded.latitude,
-        longitude: geocoded.longitude,
-      },
-      ":geocodedAddress": geocoded.matchedAddress,
       ":now": now,
     };
+    if (address && geocoded) {
+      setExpressions.push(
+        "address = :address",
+        "#location = :location",
+        "geocodedAddress = :geocodedAddress",
+      );
+      expressionAttributeValues[":address"] = address;
+      expressionAttributeValues[":location"] = {
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+      };
+      expressionAttributeValues[":geocodedAddress"] = geocoded.matchedAddress;
+    }
     if (addressParts) {
       setExpressions.push("addressParts = :addressParts");
       expressionAttributeValues[":addressParts"] = addressParts;
@@ -482,10 +523,12 @@ export const updateSite = (event) =>
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression: `SET ${setExpressions.join(", ")}`,
-          ConditionExpression: "attribute_exists(pk)",
+          ConditionExpression: site.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
+            : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
           ExpressionAttributeNames: {
             "#name": "name",
-            "#location": "location",
+            ...(geocoded ? { "#location": "location" } : {}),
           },
           ExpressionAttributeValues: expressionAttributeValues,
         },
@@ -527,9 +570,63 @@ export const updateSite = (event) =>
         },
       });
     }
-    await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
+    if (site.updatedAt) {
+      expressionAttributeValues[":expectedUpdatedAt"] = site.updatedAt;
+    }
+    try {
+      await ddb.send(
+        new TransactWriteCommand({ TransactItems: transactItems }),
+      );
+    } catch (error) {
+      if (uploadedLetterKey) {
+        await deleteComplianceLetterUpload(uploadedLetterKey);
+      }
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "site_update_conflict" });
+      }
+      throw error;
+    }
     return jsonResponse(200, { site: nextSite });
   });
+
+/**
+ * @param {string} key
+ * @returns {Promise<boolean>}
+ */
+async function validateComplianceLetterUpload(key) {
+  try {
+    const object = await headObject({
+      bucket: getConfig().uploadBucket,
+      key,
+    });
+    return (
+      object.contentType === COMPLIANCE_LETTER_CONTENT_TYPE &&
+      Number.isInteger(object.contentLength) &&
+      Number(object.contentLength) > 0 &&
+      Number(object.contentLength) <= MAX_COMPLIANCE_LETTER_BYTES
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} key
+ * @returns {Promise<void>}
+ */
+async function deleteComplianceLetterUpload(key) {
+  try {
+    await deleteObject({ bucket: getConfig().uploadBucket, key });
+  } catch (error) {
+    console.error("Failed to clean up compliance-letter upload", {
+      key,
+      error,
+    });
+  }
+}
 
 /**
  * DELETE /admin/v1/sites/{siteId}
@@ -867,6 +964,7 @@ function supersedeComplianceLetter(siteId, existing, value) {
     existing && typeof existing === "object"
       ? /** @type {Record<string, any>} */ (existing)
       : {};
+  if (letters.current?.s3Key === s3Key) return letters;
   const past = Array.isArray(letters.past) ? [...letters.past] : [];
   if (letters.current) {
     past.unshift({
@@ -916,50 +1014,6 @@ function normalizeAddress(value) {
   const address =
     typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
   return address.length >= 3 && address.length <= 240 ? address : "";
-}
-
-/**
- * @param {string} address
- * @returns {Promise<{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError>}
- */
-async function geocodeSiteAddress(address) {
-  try {
-    return await geocodeAddress(address);
-  } catch (error) {
-    return error instanceof GeocodingError
-      ? error
-      : new GeocodingError("geocoding_unavailable");
-  }
-}
-
-/**
- * @param {Record<string, unknown>} site
- * @returns {{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError}
- */
-function locationFromSite(site) {
-  const location =
-    site.location && typeof site.location === "object"
-      ? /** @type {Record<string, unknown>} */ (site.location)
-      : {};
-  const latitude = location.latitude;
-  const longitude = location.longitude;
-  if (
-    typeof latitude === "number" &&
-    typeof longitude === "number" &&
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    longitude >= -180 &&
-    longitude <= 180
-  ) {
-    return {
-      latitude,
-      longitude,
-      matchedAddress: String(site.geocodedAddress ?? site.address ?? ""),
-    };
-  }
-  return new GeocodingError("address_not_found");
 }
 
 /**
@@ -1193,48 +1247,6 @@ function putProviderSearch(providerId, name, now) {
       },
     }),
   );
-}
-
-/**
- * @param {string} siteId
- * @param {string} name
- * @param {string} providerId
- * @param {string} providerName
- * @param {string} providerSiteId
- * @param {string} now
- * @returns {Record<string, unknown>}
- */
-function siteSearchItem(
-  siteId,
-  name,
-  providerId,
-  providerName,
-  providerSiteId,
-  now,
-) {
-  return {
-    pk: "SITE_SEARCH#ACTIVE",
-    sk: siteSearchSk(name, siteId),
-    type: "siteSearch",
-    siteId,
-    siteName: name,
-    providerId,
-    providerName,
-    providerSiteId,
-    label: `${name} (${providerName})`,
-    searchText: `${name} ${providerName}`.toLowerCase(),
-    status: "active",
-    updatedAt: now,
-  };
-}
-
-/**
- * @param {string} name
- * @param {string} siteId
- * @returns {string}
- */
-function siteSearchSk(name, siteId) {
-  return `${name.toLowerCase()}#${siteId}`;
 }
 
 /**

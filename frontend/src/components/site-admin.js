@@ -1,7 +1,12 @@
 import "@awesome.me/webawesome/dist/components/input/input.js";
-import { getSite, saveSiteSettings } from "../db.js";
+import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import { backOrNavigate, currentRoute, navigate } from "../router.js";
+import {
+  backOrNavigate,
+  currentRoute,
+  navigate,
+  setPopstateGuard,
+} from "../router.js";
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
 import {
   formatAdminDate,
@@ -24,7 +29,7 @@ function display(value) {
 class SiteAdminView extends HTMLElement {
   async connectedCallback() {
     const binding = await getSite();
-    if (binding?.accessLevel !== "admin") {
+    if (!hasAdminAccess(binding)) {
       navigate("/today");
       return;
     }
@@ -141,7 +146,7 @@ class SiteAdminView extends HTMLElement {
 class SiteAdminEdit extends HTMLElement {
   async connectedCallback() {
     const binding = await getSite();
-    if (binding?.accessLevel !== "admin") {
+    if (!hasAdminAccess(binding)) {
       navigate("/today");
       return;
     }
@@ -151,11 +156,19 @@ class SiteAdminEdit extends HTMLElement {
       this._site = (await getSiteAdmin()).site;
       this._original = this._sectionValue();
       this._render();
+      this._installLeaveGuards();
     } catch {
       this.innerHTML = errorView("We couldn't load this form.");
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
         backOrNavigate("/site-admin"),
       );
+    }
+  }
+
+  disconnectedCallback() {
+    this._removePopstateGuard?.();
+    if (this._beforeUnload) {
+      window.removeEventListener("beforeunload", this._beforeUnload);
     }
   }
 
@@ -255,18 +268,24 @@ class SiteAdminEdit extends HTMLElement {
         void this._save();
       },
     );
-    this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
-      this._attemptBack(),
+    this.querySelector("[data-admin-back]")?.addEventListener(
+      "click",
+      () => void this._attemptBack(),
     );
-    this.querySelector("#site-admin-cancel")?.addEventListener("click", () =>
-      this._attemptBack(),
+    this.querySelector("#site-admin-cancel")?.addEventListener(
+      "click",
+      () => void this._attemptBack(),
     );
     this.querySelector("#site-admin-keep")?.addEventListener("click", () =>
-      this._dialog()?.close(),
+      this._resolveDiscard(false),
     );
     this.querySelector("#site-admin-discard")?.addEventListener("click", () =>
-      backOrNavigate("/site-admin"),
+      this._resolveDiscard(true),
     );
+    this._dialog()?.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      this._resolveDiscard(false);
+    });
   }
 
   _value() {
@@ -302,12 +321,53 @@ class SiteAdminEdit extends HTMLElement {
     if (error) error.textContent = "";
   }
 
-  _attemptBack() {
-    if (!valuesChanged(this._original, this._value())) {
+  _isDirty() {
+    return valuesChanged(this._original, this._value());
+  }
+
+  _installLeaveGuards() {
+    this._removePopstateGuard = setPopstateGuard(async () => {
+      if (this._allowLeave || !this._isDirty()) return true;
+      const discard = await this._confirmDiscard();
+      if (discard) this._allowLeave = true;
+      return discard;
+    });
+    this._beforeUnload = (event) => {
+      if (this._allowLeave || !this._isDirty()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", this._beforeUnload);
+  }
+
+  async _attemptBack() {
+    if (!this._isDirty()) {
       backOrNavigate("/site-admin");
       return;
     }
+    if (await this._confirmDiscard()) {
+      this._allowLeave = true;
+      backOrNavigate("/site-admin");
+    }
+  }
+
+  _confirmDiscard() {
+    if (this._discardPromise) return this._discardPromise;
     this._dialog()?.showModal();
+    this._discardPromise = new Promise((resolve) => {
+      this._discardResolver = resolve;
+    }).finally(() => {
+      this._discardPromise = null;
+    });
+    return this._discardPromise;
+  }
+
+  /** @param {boolean} discard */
+  _resolveDiscard(discard) {
+    const resolve = this._discardResolver;
+    this._discardResolver = null;
+    this._dialog()?.close();
+    resolve?.(discard);
   }
 
   _dialog() {
@@ -344,6 +404,7 @@ class SiteAdminEdit extends HTMLElement {
       if (this._kind === "site") {
         await saveSiteSettings({ name: value.name });
       }
+      this._allowLeave = true;
       backOrNavigate("/site-admin");
     } catch {
       if (error) error.textContent = "We couldn't save the changes. Try again.";

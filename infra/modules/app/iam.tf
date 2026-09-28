@@ -64,9 +64,14 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
-    sid       = "UploadsObjects"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject"]
+    sid    = "UploadsObjects"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+    ]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 

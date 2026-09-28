@@ -1,8 +1,20 @@
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  QueryCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
+import {
+  geocodeSiteAddress,
+  locationFromSite,
+  siteSearchItem,
+  siteSearchSk,
+} from "../domain/site-metadata.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { presignGet } from "../s3.js";
+import { GeocodingError } from "../integrations/census-geocoder.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
 import { siteMetaKey } from "./keys.js";
 
@@ -104,27 +116,97 @@ export const updateSiteAdmin = async (event) => {
   const values = /** @type {Record<string, unknown>} */ (body.values ?? {});
   const now = new Date().toISOString();
   let update;
+  /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+  const relatedWrites = [];
   if (section === "siteDetails") {
     const validation = validateSiteDetails(values);
     if (!validation.ok || !validation.value) {
       return jsonResponse(400, { error: validation.error });
     }
     const validated = validation.value;
+    const previousName = String(site.name || "");
     const address = validated.address;
+    const formattedAddress = formatAddress(address);
+    const existingLocation = locationFromSite(site);
+    const geocoded =
+      formattedAddress !== site.address ||
+      existingLocation instanceof GeocodingError
+        ? await geocodeSiteAddress(formattedAddress)
+        : existingLocation;
+    if (geocoded instanceof GeocodingError) {
+      return jsonResponse(422, { error: geocoded.code });
+    }
     update = {
       UpdateExpression:
-        "SET #name = :name, #address = :address, addressParts = :parts, updatedAt = :now",
-      ExpressionAttributeNames: { "#name": "name", "#address": "address" },
+        "SET #name = :name, #address = :address, addressParts = :parts, #location = :location, geocodedAddress = :geocodedAddress, updatedAt = :now",
+      ExpressionAttributeNames: {
+        "#name": "name",
+        "#address": "address",
+        "#location": "location",
+      },
       ExpressionAttributeValues: {
         ":name": validated.name,
-        ":address": formatAddress(address),
+        ":address": formattedAddress,
         ":parts": address,
+        ":location": {
+          latitude: geocoded.latitude,
+          longitude: geocoded.longitude,
+        },
+        ":geocodedAddress": geocoded.matchedAddress,
         ":now": now,
       },
     };
     site.name = validated.name;
-    site.address = formatAddress(address);
+    site.address = formattedAddress;
     site.addressParts = address;
+    site.location = {
+      latitude: geocoded.latitude,
+      longitude: geocoded.longitude,
+    };
+    site.geocodedAddress = geocoded.matchedAddress;
+
+    if (site.providerId) {
+      relatedWrites.push({
+        Update: {
+          TableName: getConfig().dynamoTable,
+          Key: {
+            pk: `PROVIDER#${site.providerId}`,
+            sk: `SITE#${siteId}`,
+          },
+          UpdateExpression: "SET siteName = :name, updatedAt = :now",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeValues: {
+            ":name": validated.name,
+            ":now": now,
+          },
+        },
+      });
+    }
+    if (site.status !== "inactive") {
+      const oldSearchSk = siteSearchSk(previousName, siteId);
+      const nextSearchSk = siteSearchSk(validated.name, siteId);
+      if (oldSearchSk !== nextSearchSk) {
+        relatedWrites.push({
+          Delete: {
+            TableName: getConfig().dynamoTable,
+            Key: { pk: "SITE_SEARCH#ACTIVE", sk: oldSearchSk },
+          },
+        });
+      }
+      relatedWrites.push({
+        Put: {
+          TableName: getConfig().dynamoTable,
+          Item: siteSearchItem(
+            siteId,
+            validated.name,
+            String(site.providerId || ""),
+            String(site.providerName || ""),
+            String(site.providerSiteId || ""),
+            now,
+          ),
+        },
+      });
+    }
   } else if (section === "contactPerson") {
     const validation = validateContactPerson(values);
     if (!validation.ok || !validation.value) {
@@ -142,14 +224,39 @@ export const updateSiteAdmin = async (event) => {
     return jsonResponse(400, { error: "invalid_section" });
   }
 
-  await ddb.send(
-    new UpdateCommand({
-      TableName: getConfig().dynamoTable,
-      Key: siteMetaKey(siteId),
-      ConditionExpression: "attribute_exists(pk)",
-      ...update,
-    }),
-  );
+  const siteUpdate = {
+    TableName: getConfig().dynamoTable,
+    Key: siteMetaKey(siteId),
+    ConditionExpression: site.updatedAt
+      ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
+      : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
+    ...update,
+  };
+  if (site.updatedAt) {
+    /** @type {Record<string, unknown>} */ (
+      siteUpdate.ExpressionAttributeValues
+    )[":expectedUpdatedAt"] = site.updatedAt;
+  }
+  try {
+    if (relatedWrites.length) {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [{ Update: siteUpdate }, ...relatedWrites],
+        }),
+      );
+    } else {
+      await ddb.send(new UpdateCommand(siteUpdate));
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TransactionCanceledException" ||
+        error.name === "ConditionalCheckFailedException")
+    ) {
+      return jsonResponse(409, { error: "site_update_conflict" });
+    }
+    throw error;
+  }
   return jsonResponse(200, { site: await siteAdminView(site) });
 };
 

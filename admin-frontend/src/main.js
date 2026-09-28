@@ -173,35 +173,50 @@ class AdminApp extends HTMLElement {
       state: formValue(data, "state"),
       zip: formValue(data, "zip"),
     };
-    const values = {
-      name,
-      addressParts,
-      contactPerson: {
-        firstName: formValue(data, "contact-first-name"),
-        lastName: formValue(data, "contact-last-name"),
-        email: formValue(data, "contact-email"),
-        phone: formValue(data, "contact-phone"),
-      },
-      oversight: {
-        managingCityDepartment: formValue(data, "managing-city-department"),
-        managingSystemOfCare: formValue(data, "managing-system-of-care"),
-        cityProgramManagerFirstName: formValue(
-          data,
-          "program-manager-first-name",
-        ),
-        cityProgramManagerLastName: formValue(
-          data,
-          "program-manager-last-name",
-        ),
-      },
-      compliance: {
-        currentTier: Number(data.get("current-tier")),
-        periodStart: formValue(data, "tier-period-start"),
-        periodEnd: formValue(data, "tier-period-end"),
-        requiredChecksPerDay: Number(data.get("required-checks-per-day")),
-      },
-      perimeter: formValue(data, "perimeter"),
+    const contactPerson = {
+      firstName: formValue(data, "contact-first-name"),
+      lastName: formValue(data, "contact-last-name"),
+      email: formValue(data, "contact-email"),
+      phone: formValue(data, "contact-phone"),
     };
+    const oversight = {
+      managingCityDepartment: formValue(data, "managing-city-department"),
+      managingSystemOfCare: formValue(data, "managing-system-of-care"),
+      cityProgramManagerFirstName: formValue(
+        data,
+        "program-manager-first-name",
+      ),
+      cityProgramManagerLastName: formValue(data, "program-manager-last-name"),
+    };
+    const complianceValues = {
+      currentTier: formValue(data, "current-tier"),
+      periodStart: formValue(data, "tier-period-start"),
+      periodEnd: formValue(data, "tier-period-end"),
+      requiredChecksPerDay: formValue(data, "required-checks-per-day"),
+    };
+    const perimeter = formValue(data, "perimeter");
+    /** @type {Record<string, unknown>} */
+    const values = { name };
+    if (this.state.site.addressParts || hasEnteredValues(addressParts)) {
+      values.addressParts = addressParts;
+    }
+    if (this.state.site.contactPerson || hasEnteredValues(contactPerson)) {
+      values.contactPerson = contactPerson;
+    }
+    if (this.state.site.oversight || hasEnteredValues(oversight)) {
+      values.oversight = oversight;
+    }
+    if (this.state.site.compliance || hasEnteredValues(complianceValues)) {
+      values.compliance = {
+        currentTier: Number(complianceValues.currentTier),
+        periodStart: complianceValues.periodStart,
+        periodEnd: complianceValues.periodEnd,
+        requiredChecksPerDay: Number(complianceValues.requiredChecksPerDay),
+      };
+    }
+    if (this.state.site.perimeter !== undefined || perimeter) {
+      values.perimeter = perimeter;
+    }
     const letter = data.get("compliance-letter");
     this.state.siteSaving = true;
     this.state.siteSaveMessage = "";
@@ -236,7 +251,7 @@ class AdminApp extends HTMLElement {
         name,
         location,
       };
-      if (!hasSiteCoordinates(location)) {
+      if (values.addressParts && !hasSiteCoordinates(location)) {
         this.state.siteSaveError =
           "The address was saved, but geocoding did not return coordinates. Try saving it again.";
         return;
@@ -672,27 +687,31 @@ function siteEditor(site, saving, saveError) {
   const manager = splitPersonName(oversight.cityProgramManager);
   const department = normalizeDepartment(oversight.managingCityDepartment);
   const currentLetter = site.complianceLetters?.current;
+  const hasAddress = Boolean(site.addressParts);
+  const hasContact = Boolean(site.contactPerson);
+  const hasOversight = Boolean(site.oversight);
+  const hasCompliance = Boolean(site.compliance);
   return `<form id="site-details-form" class="site-details-form">
     <fieldset>
       <legend>Site details</legend>
       <div class="form-grid form-grid--two">
         ${formInput("site-name", "Site name", site.name, { required: true, autocomplete: "organization" })}
-        ${formInput("street-number", "Street number", address.streetNumber, { required: true, autocomplete: "address-line1" })}
-        ${formInput("street-address", "Street address", address.streetAddress, { required: true, autocomplete: "address-line1" })}
+        ${formInput("street-number", "Street number", address.streetNumber, { required: hasAddress, autocomplete: "address-line1" })}
+        ${formInput("street-address", "Street address", address.streetAddress, { required: hasAddress, autocomplete: "address-line1" })}
         ${formInput("address-second-line", "Second line", address.secondLine, { autocomplete: "address-line2" })}
-        ${formInput("city", "City", address.city, { required: true, autocomplete: "address-level2" })}
-        ${formInput("state", "State", address.state, { required: true, autocomplete: "address-level1", maxlength: 2 })}
-        ${formInput("zip", "ZIP", address.zip, { required: true, autocomplete: "postal-code", pattern: "[0-9]{5}(-[0-9]{4})?" })}
+        ${formInput("city", "City", address.city, { required: hasAddress, autocomplete: "address-level2" })}
+        ${formInput("state", "State", address.state, { required: hasAddress, autocomplete: "address-level1", maxlength: 2 })}
+        ${formInput("zip", "ZIP", address.zip, { required: hasAddress, autocomplete: "postal-code", pattern: "[0-9]{5}(-[0-9]{4})?" })}
       </div>
       ${formatSiteCoordinates(site.location)}
     </fieldset>
     <fieldset>
       <legend>Contact person</legend>
       <div class="form-grid form-grid--two">
-        ${formInput("contact-first-name", "First name", contact.firstName, { required: true, autocomplete: "given-name" })}
-        ${formInput("contact-last-name", "Last name", contact.lastName, { required: true, autocomplete: "family-name" })}
-        ${formInput("contact-email", "Email", contact.email, { required: true, type: "email", autocomplete: "email" })}
-        ${formInput("contact-phone", "Phone", contact.phone, { required: true, type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" })}
+        ${formInput("contact-first-name", "First name", contact.firstName, { required: hasContact, autocomplete: "given-name" })}
+        ${formInput("contact-last-name", "Last name", contact.lastName, { required: hasContact, autocomplete: "family-name" })}
+        ${formInput("contact-email", "Email", contact.email, { required: hasContact, type: "email", autocomplete: "email" })}
+        ${formInput("contact-phone", "Phone", contact.phone, { required: hasContact, type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" })}
       </div>
     </fieldset>
     <fieldset>
@@ -700,7 +719,8 @@ function siteEditor(site, saving, saveError) {
       <div class="form-grid form-grid--two">
         <label>
           <span>Managing City department</span>
-          <select name="managing-city-department" required>
+          <select name="managing-city-department" ${hasOversight ? "required" : ""}>
+            <option value="" ${department ? "" : "selected"}>Choose department</option>
             <option value="DPH" ${department === "DPH" ? "selected" : ""}>DPH</option>
             <option value="HSH" ${department === "HSH" ? "selected" : ""}>HSH</option>
           </select>
@@ -715,7 +735,8 @@ function siteEditor(site, saving, saveError) {
       <div class="form-grid form-grid--two">
         <label>
           <span>Current tier</span>
-          <select name="current-tier" required>
+          <select name="current-tier" ${hasCompliance ? "required" : ""}>
+            <option value="" ${compliance.currentTier ? "" : "selected"}>Choose tier</option>
             ${[1, 2, 3, 4]
               .map(
                 (tier) =>
@@ -724,9 +745,9 @@ function siteEditor(site, saving, saveError) {
               .join("")}
           </select>
         </label>
-        ${formInput("tier-period-start", "Tier period start", compliance.periodStart, { required: true, type: "date" })}
+        ${formInput("tier-period-start", "Tier period start", compliance.periodStart, { required: hasCompliance, type: "date" })}
         ${formInput("tier-period-end", "Tier period end (leave blank for present)", compliance.periodEnd, { type: "date" })}
-        ${formInput("required-checks-per-day", "Required checks per day", compliance.requiredChecksPerDay ?? 0, { required: true, type: "number", min: 0, max: 100, step: 1 })}
+        ${formInput("required-checks-per-day", "Required checks per day", compliance.requiredChecksPerDay ?? "", { required: hasCompliance, type: "number", min: 0, max: 100, step: 1 })}
       </div>
     </fieldset>
     <fieldset>
@@ -790,9 +811,15 @@ function splitPersonName(value) {
 /** @param {unknown} value */
 function normalizeDepartment(value) {
   const department = String(value || "").toUpperCase();
+  if (!department) return "";
   return department === "HSH" || department.includes("HOMELESS")
     ? "HSH"
     : "DPH";
+}
+
+/** @param {Record<string, unknown>} values */
+function hasEnteredValues(values) {
+  return Object.values(values).some((value) => String(value || "").trim());
 }
 
 /** @param {FormData} data @param {string} name */
@@ -862,6 +889,9 @@ function siteSaveErrorMessage(error) {
   }
   if (code === "compliance_letter_upload_failed") {
     return "The compliance letter upload failed. Try again.";
+  }
+  if (code === "site_update_conflict") {
+    return "Someone else updated this site. Reload it before saving your changes.";
   }
   return "The site couldn't be saved. Try again.";
 }
