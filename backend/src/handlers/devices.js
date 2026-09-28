@@ -295,8 +295,9 @@ async function mintSession({
   ]);
 
   // The CAS condition and its expected-state bindings (:eg/:ej) ride the SAME
-  // command as the SET bindings (:g/:jti/:seen) — one object, so neither side
-  // can clobber the other.
+  // command as the SET bindings (:g/:jti/:seen/:accessLevel) — one object, so
+  // neither side can clobber the other. Persisting accessLevel also migrates
+  // pre-access-level DEVICE# records as soon as their session refreshes.
   const conditional = expectGeneration !== undefined;
   try {
     await ddb.send(
@@ -304,7 +305,7 @@ async function mintSession({
         TableName: dynamoTable,
         Key: { ...deviceKey(siteId, deviceId) },
         UpdateExpression:
-          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen",
+          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen, accessLevel = :accessLevel",
         ...(conditional && {
           ConditionExpression: "tokenGeneration = :eg AND refreshJti = :ej",
         }),
@@ -312,6 +313,7 @@ async function mintSession({
           ":g": generation,
           ":jti": refresh.jti,
           ":seen": now,
+          ":accessLevel": accessLevel,
           ...(conditional && {
             ":eg": expectGeneration,
             ":ej": expectJti,

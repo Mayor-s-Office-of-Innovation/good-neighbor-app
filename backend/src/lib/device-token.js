@@ -207,13 +207,21 @@ export async function verifyDeviceToken(token, opts = {}) {
   if (claims.typ !== "access" && claims.typ !== "refresh") {
     throw new DeviceTokenError("malformed", "unknown token type");
   }
-  if (claims.accessLevel !== "general" && claims.accessLevel !== "admin") {
+  // Compatibility bridge for sessions minted before access-level claims were
+  // introduced. A missing claim is always least-privilege general access; an
+  // explicitly invalid claim still fails closed. Successful refreshes mint a
+  // replacement token with the normalized claim, so this path naturally ages
+  // out after the legacy refresh-token lifetime.
+  const accessLevel =
+    claims.accessLevel === undefined ? "general" : claims.accessLevel;
+  if (accessLevel !== "general" && accessLevel !== "admin") {
     throw new DeviceTokenError("malformed", "unknown access level");
   }
   // Project the wire shape (Cognito's `custom:siteId`) onto the typed view.
   return /** @type {DeviceClaims} */ ({
     ...claims,
     siteId: claims["custom:siteId"],
+    accessLevel,
   });
 }
 

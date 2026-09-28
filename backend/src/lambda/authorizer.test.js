@@ -1,4 +1,5 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the authorizer's device lookup hits a spy.
@@ -27,6 +28,23 @@ const event = (authorization) => ({
  * @returns {Promise<any>}
  */
 const invoke = (e) => handler(e);
+
+/**
+ * Sign the access-token shape issued before accessLevel was introduced.
+ * @param {Record<string, unknown>} claims
+ * @returns {string}
+ */
+function legacyToken(claims) {
+  /** @param {unknown} value @returns {string} */
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode(claims);
+  const signature = createHmac("sha256", "test-secret-0123456789abcdef")
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
 
 beforeEach(() => {
   send.mockReset();
@@ -145,6 +163,31 @@ describe("authorizer", () => {
       const cmd = send.mock.calls[0][0];
       expect(cmd).toBeInstanceOf(GetCommand);
       expect(cmd.input.Key).toEqual({ pk: "SITE#site-1", sk: "DEVICE#dev-1" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows a legacy token only as general access", async () => {
+    const token = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 7,
+      typ: "access",
+      iat: 1000,
+      exp: 3000,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2000 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
+        .mockResolvedValueOnce({ Item: { status: "active" } });
+
+      const res = await invoke(event(`Bearer ${token}`));
+
+      expect(res.isAuthorized).toBe(true);
+      expect(res.context["claims.accessLevel"]).toBe("general");
     } finally {
       vi.useRealTimers();
     }

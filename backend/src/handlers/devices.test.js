@@ -1,4 +1,5 @@
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handlers' writes hit a spy, not AWS.
@@ -79,6 +80,23 @@ const callRefresh = (body) =>
       )
     )
   );
+
+/**
+ * Sign the refresh-token shape issued before accessLevel was introduced.
+ * @param {Record<string, unknown>} claims
+ * @returns {string}
+ */
+function legacyToken(claims) {
+  /** @param {unknown} value @returns {string} */
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode(claims);
+  const signature = createHmac("sha256", "test-secret-0123456789abcdef")
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
 
 /**
  * Read back the DeviceItem the handler wrote (the PutCommand input).
@@ -369,6 +387,61 @@ describe("refreshDeviceToken", () => {
       const claims = await verifyDeviceToken(body.token);
       expect(claims.ver).toBe(3);
       expect(claims.typ).toBe("access");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("migrates a legacy refresh token and device to general access", async () => {
+    const refreshToken = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "refresh",
+      jti: "legacy-jti",
+      iat: 1000,
+      exp: 3000,
+    });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          deviceId: "dev-1",
+          siteId: "site-1",
+          siteName: "City Hall",
+          tokenGeneration: 2,
+          refreshJti: "legacy-jti",
+        },
+      })
+      .mockResolvedValueOnce({});
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2000 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.accessLevel).toBe("general");
+
+      const { verifyDeviceToken } = await import("../lib/device-token.js");
+      await expect(verifyDeviceToken(body.token)).resolves.toMatchObject({
+        accessLevel: "general",
+        typ: "access",
+      });
+      await expect(verifyDeviceToken(body.refreshToken)).resolves.toMatchObject(
+        {
+          accessLevel: "general",
+          typ: "refresh",
+        },
+      );
+
+      const update = send.mock.calls
+        .map(([cmd]) => cmd)
+        .find((cmd) => cmd instanceof UpdateCommand);
+      expect(
+        /** @type {any} */ (update)?.input.ExpressionAttributeValues[
+          ":accessLevel"
+        ],
+      ).toBe("general");
     } finally {
       vi.useRealTimers();
     }
