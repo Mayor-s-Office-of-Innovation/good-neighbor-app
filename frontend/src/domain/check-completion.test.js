@@ -29,13 +29,13 @@ function makeCheck(photos, texts) {
 }
 
 describe("isPerimeterCheckComplete", () => {
-  it("is incomplete with two photos and no description", () => {
-    expect(isPerimeterCheckComplete(makeCheck(2, 0))).toBe(false);
+  it("is incomplete with no photos and no description", () => {
+    expect(isPerimeterCheckComplete(makeCheck(0, 0))).toBe(false);
   });
 
-  it("is complete with three photos", () => {
-    expect(isPerimeterCheckComplete(makeCheck(3, 0))).toBe(true);
-    expect(MIN_PERIMETER_PHOTOS).toBe(3);
+  it("is complete with one photo", () => {
+    expect(isPerimeterCheckComplete(makeCheck(1, 0))).toBe(true);
+    expect(MIN_PERIMETER_PHOTOS).toBe(1);
   });
 
   it("is complete with zero photos and one description", () => {
@@ -96,7 +96,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
     ).toBe(true);
   });
 
-  it("three failed uploads do NOT satisfy the three-photo rule", () => {
+  it("failed uploads do not satisfy the one-photo rule", () => {
     const check = makeCheck(0, 0);
     check.items = Array.from({ length: 3 }, (_, i) => ({
       ...DEAD_PHOTO,
@@ -108,11 +108,11 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
       photos: 0,
       texts: 0,
       complete: false,
-      remaining: 3,
+      remaining: 1,
     });
   });
 
-  it("three failed uploads plus two live photos count only two", () => {
+  it("failed uploads are ignored when one live photo satisfies the rule", () => {
     const check = makeCheck(0, 0);
     check.items = [
       ...Array.from({ length: 3 }, (_, i) => ({
@@ -122,14 +122,14 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
         upload: { status: "failed" },
         analysis: { status: "failed" },
       })),
-      ...Array.from({ length: 2 }, (_, i) => ({
+      ...Array.from({ length: 1 }, (_, i) => ({
         id: `live-${i}`,
         kind: "photo",
         dataUrl: "data:,",
       })),
     ];
-    expect(photoCount(check)).toBe(2);
-    expect(isPerimeterCheckComplete(check)).toBe(false);
+    expect(photoCount(check)).toBe(1);
+    expect(isPerimeterCheckComplete(check)).toBe(true);
   });
 
   it("a failed description with no artifact does not satisfy the one-description rule", () => {
@@ -179,13 +179,13 @@ describe("counts and status", () => {
   });
 
   it("reports remaining photos until the minimum is met", () => {
-    expect(completionStatus(makeCheck(2, 0))).toEqual({
-      photos: 2,
+    expect(completionStatus(makeCheck(0, 0))).toEqual({
+      photos: 0,
       texts: 0,
       complete: false,
       remaining: 1,
     });
-    expect(completionStatus(makeCheck(3, 0)).complete).toBe(true);
+    expect(completionStatus(makeCheck(1, 0)).complete).toBe(true);
     expect(completionStatus(makeCheck(7, 0)).remaining).toBe(0);
     expect(completionStatus(makeCheck(0, 1)).complete).toBe(true);
   });
