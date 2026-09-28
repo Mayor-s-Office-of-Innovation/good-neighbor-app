@@ -16,6 +16,8 @@ locals {
     "POST /v1/setup-codes:request",
     # Site config
     "GET /v1/site",
+    "GET /v1/site-admin",
+    "PATCH /v1/site-admin",
     "GET /v1/provider-sites",
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
@@ -47,6 +49,7 @@ locals {
     "POST /admin/v1/providers/{providerId}/sites",
     "GET /admin/v1/sites/{siteId}",
     "PATCH /admin/v1/sites/{siteId}",
+    "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",
     "GET /admin/v1/sites/{siteId}/master-contacts",
     "POST /admin/v1/sites/{siteId}/master-contacts",

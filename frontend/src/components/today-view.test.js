@@ -50,6 +50,20 @@ describe("formatOverdueElapsed", () => {
   });
 });
 
+describe("attributionDialogMarkup", () => {
+  it("lists every address-data attribution in an accessible dialog", async () => {
+    const { attributionDialogMarkup } = await import("./today-view.js");
+    const markup = attributionDialogMarkup();
+
+    expect(markup).toContain('id="attributions-dialog"');
+    expect(markup).toContain('aria-labelledby="attributions-title"');
+    expect(markup).toContain("Amazon Location Service data attribution");
+    expect(markup).toContain("U.S. Census Bureau Geocoder");
+    expect(markup.match(/target="_blank"/g)).toHaveLength(2);
+    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(2);
+  });
+});
+
 describe("isStalePendingSession", () => {
   it("keeps a submitted check's local cards until guidance has finished", async () => {
     const { isStalePendingSession } = await import("./today-view.js");

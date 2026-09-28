@@ -8,9 +8,10 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, geocodeAddress } = vi.hoisted(() => ({
+const { send, geocodeAddress, presignPut } = vi.hoisted(() => ({
   send: vi.fn(),
   geocodeAddress: vi.fn(),
+  presignPut: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../integrations/census-geocoder.js", () => ({
@@ -23,6 +24,7 @@ vi.mock("../integrations/census-geocoder.js", () => ({
   },
   geocodeAddress,
 }));
+vi.mock("../s3.js", () => ({ presignPut }));
 
 const {
   createMasterContact,
@@ -33,6 +35,7 @@ const {
   deactivateMasterContact,
   issueAdminSetupCode,
   listProviders,
+  presignComplianceLetter,
   revokeDevice,
   updateSite,
 } = await import("./admin.js");
@@ -40,12 +43,15 @@ const {
 beforeEach(() => {
   send.mockReset();
   geocodeAddress.mockReset();
+  presignPut.mockReset();
   geocodeAddress.mockResolvedValue({
     latitude: 37.7793,
     longitude: -122.4192,
     matchedAddress: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
   });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/queue");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
 
@@ -684,6 +690,140 @@ describe("provider and site management", () => {
           ":location": { latitude: 37.7793, longitude: -122.4192 },
         },
       },
+    });
+  });
+
+  it("updates all site information fields and supersedes the current letter", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Old Site",
+          address: "1 Old St",
+          providerId: "provider-one",
+          status: "active",
+          complianceLetters: {
+            current: {
+              effectiveStart: "2026-01-01",
+              url: "/old-letter.pdf",
+            },
+            past: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "Updated Site",
+          addressParts: {
+            streetNumber: "1661",
+            streetAddress: "15th St",
+            secondLine: "Suite 2",
+            city: "San Francisco",
+            state: "CA",
+            zip: "94103",
+          },
+          contactPerson: {
+            firstName: "Priya",
+            lastName: "Anand",
+            email: "PRIYA@EXAMPLE.ORG",
+            phone: "(415) 555-0148",
+          },
+          oversight: {
+            managingCityDepartment: "DPH",
+            managingSystemOfCare: "BHS-PBH",
+            cityProgramManagerFirstName: "Rob",
+            cityProgramManagerLastName: "Hoffman",
+          },
+          compliance: {
+            currentTier: 2,
+            periodStart: "2026-01-15",
+            periodEnd: "",
+            requiredChecksPerDay: 3,
+          },
+          perimeter: "Around the full block.",
+          complianceLetter: {
+            s3Key: "compliance-letters/site-1/new.pdf",
+            fileName: "new.pdf",
+            effectiveStart: "2026-02-01",
+          },
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues,
+    ).toMatchObject({
+      ":address": "1661 15th St, Suite 2, San Francisco, CA 94103",
+      ":contactPerson": {
+        firstName: "Priya",
+        lastName: "Anand",
+        email: "priya@example.org",
+        phone: "415-555-0148",
+      },
+      ":oversight": {
+        managingCityDepartment: "DPH",
+        managingSystemOfCare: "BHS-PBH",
+        cityProgramManager: "Rob Hoffman",
+      },
+      ":compliance": {
+        currentTier: 2,
+        periodStart: "2026-01-15",
+        periodEnd: "",
+        requiredChecksPerDay: 3,
+      },
+      ":perimeter": "Around the full block.",
+      ":complianceLetters": {
+        current: {
+          s3Key: "compliance-letters/site-1/new.pdf",
+          fileName: "new.pdf",
+          effectiveStart: "2026-02-01",
+        },
+        past: [
+          {
+            effectiveStart: "2026-01-01",
+            effectiveEnd: "2026-01-31",
+            url: "/old-letter.pdf",
+          },
+        ],
+      },
+    });
+  });
+
+  it("presigns only a site-scoped PDF compliance letter upload", async () => {
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", status: "active" },
+    });
+    presignPut.mockResolvedValueOnce("https://uploads.example/signed");
+
+    const res = await call(
+      presignComplianceLetter,
+      event(
+        {
+          contentType: "application/pdf",
+          size: 1024,
+          fileName: "letter.pdf",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.s3Key).toMatch(/^compliance-letters\/site-1\/[0-9a-f-]+\.pdf$/);
+    expect(presignPut).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: body.s3Key,
+      contentType: "application/pdf",
+      expiresIn: 300,
     });
   });
 });

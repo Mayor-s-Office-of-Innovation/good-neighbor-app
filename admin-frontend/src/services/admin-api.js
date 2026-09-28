@@ -54,11 +54,31 @@ export const adminApi = {
     }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
-  updateSite: (siteId, { name, address }) =>
+  updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "PATCH",
-      body: JSON.stringify({ name, address }),
+      body: JSON.stringify(values),
     }),
+  presignComplianceLetter: (siteId, file) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-letters:presign`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contentType: "application/pdf",
+          size: file.size,
+          fileName: file.name,
+        }),
+      },
+    ),
+  uploadComplianceLetter: async (uploadUrl, file) => {
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": "application/pdf" },
+      body: file,
+    });
+    if (!response.ok) throw new Error("compliance_letter_upload_failed");
+  },
   deactivateSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "DELETE",
@@ -78,10 +98,10 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts/${encodeURIComponent(emailHash)}`,
       { method: "DELETE" },
     ),
-  issueSetupCode: (siteId, email) =>
+  issueSetupCode: (siteId, email, accessLevel = "general") =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/setup-codes`, {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, accessLevel }),
     }),
   listDevices: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/devices`),

@@ -73,9 +73,9 @@ without a separate timestamp in the key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | name, address, timezone, setup state, `providerShortCode`, `siteShortCode` |
+| Site config | `SITE#<siteId>` | `#META` | name, display address + `addressParts`, `contactPerson`, centrally managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, timezone, setup state, `providerShortCode`, `siteShortCode`. Uploaded compliance letters retain a private S3 key; client-facing admin responses mint short-lived download URLs. |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
-| Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, registeredBy, lastSeenAt |
+| Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, lastSeenAt, token generation, and `accessLevel` (`general` or `admin`) copied from the setup code |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, issueCount, maxSeverity; **+ synthesized scorecard and `photoCount` / `textCount` / `evidenceKind` at `complete`** (see note) |
 | **Artifact** (per photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType (see note on pre-ADR-0014 rows) |
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |

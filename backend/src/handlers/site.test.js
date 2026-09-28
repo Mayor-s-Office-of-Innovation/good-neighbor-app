@@ -1,13 +1,19 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, presignGet } = vi.hoisted(() => ({
+  send: vi.fn(),
+  presignGet: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../s3.js", () => ({ presignGet }));
 
-const { listProviderSites } = await import("./site.js");
+const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
+  await import("./site.js");
 
 beforeEach(() => {
   send.mockReset();
+  presignGet.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "test-bucket");
   vi.stubEnv("SQS_QUEUE_URL", "test-queue");
@@ -21,6 +27,21 @@ function event(siteId) {
   return /** @type {any} */ ({
     requestContext: {
       authorizer: { jwt: { claims: { "custom:siteId": siteId } } },
+    },
+  });
+}
+
+/**
+ * @param {string} siteId
+ * @param {"general"|"admin"} accessLevel
+ * @returns {any}
+ */
+function accessEvent(siteId, accessLevel) {
+  return /** @type {any} */ ({
+    requestContext: {
+      authorizer: {
+        jwt: { claims: { "custom:siteId": siteId, accessLevel } },
+      },
     },
   });
 }
@@ -209,5 +230,109 @@ describe("listProviderSites", () => {
     expect(body(response).sites).toHaveLength(12);
     expect(peak).toBeLessThanOrEqual(5);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("site admin", () => {
+  it("keeps admin-only fields out of the general site response", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        contactPerson: { email: "private@example.org" },
+        oversight: { managingCityDepartment: "DPH" },
+        complianceLetters: { current: { url: "/letter.pdf" } },
+      },
+    });
+    const response = await /** @type {any} */ (getSite)(event("site-1"));
+    expect(body(response).site).toEqual({ siteId: "site-1", name: "Mission" });
+  });
+
+  it("denies general-access devices without reading site data", async () => {
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "general"),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns the admin information to an admin-access device", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        addressParts: { streetNumber: "1", streetAddress: "Main St" },
+        contactPerson: { firstName: "Priya", lastName: "Anand" },
+        perimeter: "The block",
+      },
+    });
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(body(response).site).toMatchObject({
+      siteId: "site-1",
+      name: "Mission",
+      perimeter: "The block",
+    });
+  });
+
+  it("returns a fresh download URL for an uploaded compliance letter", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        complianceLetters: {
+          current: {
+            s3Key: "compliance-letters/site-1/current.pdf",
+            fileName: "current.pdf",
+            effectiveStart: "2026-02-01",
+          },
+          past: [],
+        },
+      },
+    });
+    presignGet.mockResolvedValueOnce("https://uploads.example/current");
+
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+
+    expect(body(response).site.complianceLetters.current.url).toBe(
+      "https://uploads.example/current",
+    );
+    expect(presignGet).toHaveBeenCalledWith({
+      bucket: "test-bucket",
+      key: "compliance-letters/site-1/current.pdf",
+      expiresIn: 300,
+    });
+  });
+
+  it("validates and updates the contact person", async () => {
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", name: "Mission", status: "active" },
+    });
+    send.mockResolvedValueOnce({});
+    const request = accessEvent("site-1", "admin");
+    request.body = JSON.stringify({
+      section: "contactPerson",
+      values: {
+        firstName: "Priya",
+        lastName: "Anand",
+        email: "priya@example.org",
+        phone: "(415) 555-0148",
+      },
+    });
+    const response = await /** @type {any} */ (updateSiteAdmin)(request);
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(
+      send.mock.calls[1][0].input.ExpressionAttributeValues[":contact"],
+    ).toEqual({
+      firstName: "Priya",
+      lastName: "Anand",
+      email: "priya@example.org",
+      phone: "(415) 555-0148",
+    });
   });
 });

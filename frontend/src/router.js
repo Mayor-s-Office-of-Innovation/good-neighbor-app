@@ -5,10 +5,11 @@
   deep links / refreshes don't 404 (that fallback is provisioned with the deploy
   stage; Vite's dev/preview server already serves the SPA fallback locally).
 
-  Routes: /today (home), /check (capture), /problem (single-issue capture).
-  First-run site setup is enforced by app-root, not by a route.
+  Routes include /today (home), capture flows, /site-admin, and the site-admin
+  edit paths. First-run site setup is enforced by app-root, not by a route.
 */
 const listeners = new Set();
+const APP_HISTORY_STATE = "goodNeighborAppNavigation";
 
 export function currentRoute() {
   const path = location.pathname;
@@ -19,9 +20,25 @@ export function navigate(route) {
   if (location.pathname === route) {
     emit();
   } else {
-    history.pushState({}, "", route);
+    const depth = Number(history.state?.[APP_HISTORY_STATE] || 0) + 1;
+    history.pushState({ [APP_HISTORY_STATE]: depth }, "", route);
     emit();
   }
+}
+
+/**
+ * Return to the preceding in-app route without adding a duplicate history
+ * entry. A directly loaded deep link has no app-created predecessor, so it
+ * uses the supplied parent route instead.
+ * @param {string} fallbackRoute
+ */
+export function backOrNavigate(fallbackRoute) {
+  if (Number(history.state?.[APP_HISTORY_STATE] || 0) > 0) {
+    history.back();
+    return;
+  }
+  history.replaceState({ [APP_HISTORY_STATE]: 0 }, "", fallbackRoute);
+  emit();
 }
 
 function emit() {

@@ -133,6 +133,17 @@ test.describe("bound app", () => {
         await settle(page);
         assertClean(await scan(page), `capture view (${scheme})`);
       });
+
+      harnessTest(`a11y: site admin (${scheme})`, async ({ page }) => {
+        await page.locator("#home-settings").click();
+        await page.getByRole("menuitem", { name: "Site admin" }).click();
+        await expect(page).toHaveURL(/\/site-admin$/);
+        await expect(
+          page.getByRole("heading", { name: "Site information" }),
+        ).toBeVisible();
+        await settle(page);
+        assertClean(await scan(page), `site admin (${scheme})`);
+      });
     });
   }
 });

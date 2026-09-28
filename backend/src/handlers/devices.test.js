@@ -155,6 +155,7 @@ describe("registerDevice", () => {
     expect(item.pk).toBe("SITE#site-1");
     expect(item.sk).toBe(`DEVICE#${body.deviceId}`);
     expect(item.tokenGeneration).toBe(1);
+    expect(item.accessLevel).toBe("general");
 
     // Access token claims carry the Cognito-shaped claim the handlers read.
     const claims = JSON.parse(
@@ -164,6 +165,7 @@ describe("registerDevice", () => {
     expect(claims.sub).toBe(body.deviceId);
     expect(claims.ver).toBe(1);
     expect(claims.typ).toBe("access");
+    expect(claims.accessLevel).toBe("general");
 
     const refreshClaims = JSON.parse(
       Buffer.from(body.refreshToken.split(".")[1], "base64").toString("utf8"),

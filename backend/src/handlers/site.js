@@ -1,8 +1,9 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { jsonResponse } from "../http.js";
-import { deriveSiteId } from "../lib/principal.js";
+import { jsonResponse, readJsonBody } from "../http.js";
+import { presignGet } from "../s3.js";
+import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
 import { siteMetaKey } from "./keys.js";
 
 const PROVIDER_SITES_PAGE_SIZE = 25;
@@ -50,8 +51,249 @@ export const getSite = async (event) => {
     siteId,
     name: "Your site",
   };
-  return jsonResponse(200, { site });
+  const publicSite = { ...site };
+  for (const field of [
+    "contactPerson",
+    "oversight",
+    "compliance",
+    "perimeter",
+    "complianceLetters",
+    "addressParts",
+  ]) {
+    delete publicSite[field];
+  }
+  return jsonResponse(200, { site: publicSite });
 };
+
+/**
+ * GET /v1/site-admin — full site information for admin-access devices.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const getSiteAdmin = async (event) => {
+  if (deriveAccessLevel(event) !== "admin") {
+    return jsonResponse(403, { error: "admin_access_required" });
+  }
+  const site = await loadSite(deriveSiteId(event));
+  if (!site || site.status === "inactive") {
+    return jsonResponse(404, { error: "site_not_found" });
+  }
+  return jsonResponse(200, { site: await siteAdminView(site) });
+};
+
+/**
+ * PATCH /v1/site-admin — update only the two staff-editable sections.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const updateSiteAdmin = async (event) => {
+  if (deriveAccessLevel(event) !== "admin") {
+    return jsonResponse(403, { error: "admin_access_required" });
+  }
+  let body;
+  try {
+    body = /** @type {Record<string, unknown>} */ (readJsonBody(event) ?? {});
+  } catch {
+    return jsonResponse(400, { error: "invalid_json" });
+  }
+  const siteId = deriveSiteId(event);
+  const site = await loadSite(siteId);
+  if (!site || site.status === "inactive") {
+    return jsonResponse(404, { error: "site_not_found" });
+  }
+
+  const section = body.section;
+  const values = /** @type {Record<string, unknown>} */ (body.values ?? {});
+  const now = new Date().toISOString();
+  let update;
+  if (section === "siteDetails") {
+    const validation = validateSiteDetails(values);
+    if (!validation.ok || !validation.value) {
+      return jsonResponse(400, { error: validation.error });
+    }
+    const validated = validation.value;
+    const address = validated.address;
+    update = {
+      UpdateExpression:
+        "SET #name = :name, #address = :address, addressParts = :parts, updatedAt = :now",
+      ExpressionAttributeNames: { "#name": "name", "#address": "address" },
+      ExpressionAttributeValues: {
+        ":name": validated.name,
+        ":address": formatAddress(address),
+        ":parts": address,
+        ":now": now,
+      },
+    };
+    site.name = validated.name;
+    site.address = formatAddress(address);
+    site.addressParts = address;
+  } else if (section === "contactPerson") {
+    const validation = validateContactPerson(values);
+    if (!validation.ok || !validation.value) {
+      return jsonResponse(400, { error: validation.error });
+    }
+    update = {
+      UpdateExpression: "SET contactPerson = :contact, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":contact": validation.value,
+        ":now": now,
+      },
+    };
+    site.contactPerson = validation.value;
+  } else {
+    return jsonResponse(400, { error: "invalid_section" });
+  }
+
+  await ddb.send(
+    new UpdateCommand({
+      TableName: getConfig().dynamoTable,
+      Key: siteMetaKey(siteId),
+      ConditionExpression: "attribute_exists(pk)",
+      ...update,
+    }),
+  );
+  return jsonResponse(200, { site: await siteAdminView(site) });
+};
+
+/**
+ * @param {string} siteId
+ * @returns {Promise<Record<string, any> | undefined>}
+ */
+async function loadSite(siteId) {
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: getConfig().dynamoTable,
+      Key: siteMetaKey(siteId),
+    }),
+  );
+  return /** @type {Record<string, any> | undefined} */ (result.Item);
+}
+
+/**
+ * @param {Record<string, any>} site
+ * @returns {Promise<Record<string, any>>}
+ */
+async function siteAdminView(site) {
+  return {
+    siteId: site.siteId,
+    name: String(site.name || "Your site"),
+    address: site.addressParts || {
+      streetNumber: "",
+      streetAddress: "",
+      secondLine: "",
+      city: "",
+      state: "",
+      zip: "",
+    },
+    contactPerson: site.contactPerson || {
+      firstName: "",
+      lastName: "",
+      email: "",
+      phone: "",
+    },
+    oversight: site.oversight || {},
+    compliance: site.compliance || {},
+    perimeter: String(site.perimeter || ""),
+    complianceLetters: await complianceLetterLinks(
+      site.complianceLetters || { current: null, past: [] },
+    ),
+  };
+}
+
+/** @param {Record<string, any>} letters */
+async function complianceLetterLinks(letters) {
+  /** @param {Record<string, any> | null | undefined} letter */
+  const link = async (letter) => {
+    if (!letter || !letter.s3Key) return letter;
+    return {
+      ...letter,
+      url: await presignGet({
+        bucket: getConfig().uploadBucket,
+        key: letter.s3Key,
+        expiresIn: 300,
+      }),
+    };
+  };
+  return {
+    current: await link(letters.current),
+    past: await Promise.all((letters.past || []).map(link)),
+  };
+}
+
+/**
+ * @param {Record<string, unknown>} values
+ * @returns {{ ok: boolean, error?: string, value?: { name: string, address: Record<string, string> } }}
+ */
+function validateSiteDetails(values) {
+  const name = clean(values.name);
+  const address = /** @type {Record<string, unknown>} */ (values.address ?? {});
+  const value = {
+    name,
+    address: {
+      streetNumber: clean(address.streetNumber),
+      streetAddress: clean(address.streetAddress),
+      secondLine: clean(address.secondLine),
+      city: clean(address.city),
+      state: clean(address.state).toUpperCase(),
+      zip: clean(address.zip),
+    },
+  };
+  if (!name) return { ok: false, error: "site_name_required" };
+  if (
+    !value.address.streetNumber ||
+    !value.address.streetAddress ||
+    !value.address.city ||
+    !/^[A-Z]{2}$/.test(value.address.state) ||
+    !/^\d{5}(?:-\d{4})?$/.test(value.address.zip)
+  ) {
+    return { ok: false, error: "invalid_address" };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * @param {Record<string, unknown>} values
+ * @returns {{ ok: boolean, error?: string, value?: { firstName: string, lastName: string, email: string, phone: string } }}
+ */
+function validateContactPerson(values) {
+  const value = {
+    firstName: clean(values.firstName),
+    lastName: clean(values.lastName),
+    email: clean(values.email).toLowerCase(),
+    phone: clean(values.phone),
+  };
+  if (!value.firstName || !value.lastName) {
+    return { ok: false, error: "contact_name_required" };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email)) {
+    return { ok: false, error: "invalid_email" };
+  }
+  const digits = value.phone.replace(/\D/g, "");
+  if (!(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))) {
+    return { ok: false, error: "invalid_phone" };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function clean(value) {
+  return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+
+/**
+ * @param {Record<string, string>} address
+ * @returns {string}
+ */
+function formatAddress(address) {
+  return [
+    `${address.streetNumber} ${address.streetAddress}`.trim(),
+    address.secondLine,
+    `${address.city}, ${address.state} ${address.zip}`.trim(),
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
 
 /**
  * GET /v1/provider-sites — page through active sites under the caller's provider.

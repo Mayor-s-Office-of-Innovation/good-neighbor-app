@@ -294,6 +294,22 @@ export function getSiteSettings() {
   return request("GET", "/v1/site");
 }
 
+/** Get the admin-only site information payload. */
+export function getSiteAdmin() {
+  return request("GET", "/v1/site-admin");
+}
+
+/**
+ * Update one editable site-information section.
+ * @param {"siteDetails"|"contactPerson"} section
+ * @param {Record<string, unknown>} values
+ */
+export function updateSiteAdmin(section, values) {
+  return request("PATCH", "/v1/site-admin", {
+    body: { section, values },
+  });
+}
+
 /**
  * List one bounded page of the current provider's active sites.
  * @param {string} [cursor]

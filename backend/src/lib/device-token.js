@@ -71,6 +71,7 @@ export function resetDeviceTokenSecretCache() {
  * @property {string} siteId
  * @property {string} deviceId
  * @property {number} tokenGeneration
+ * @property {"general"|"admin"} [accessLevel]
  */
 
 /**
@@ -86,7 +87,7 @@ export function resetDeviceTokenSecretCache() {
  * @returns {Promise<MintedToken>}
  */
 export async function mintAccessToken(
-  { siteId, deviceId, tokenGeneration },
+  { siteId, deviceId, tokenGeneration, accessLevel },
   opts = {},
 ) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
@@ -96,6 +97,7 @@ export async function mintAccessToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
+      accessLevel: accessLevel === "admin" ? "admin" : "general",
       typ: "access",
       iat: now,
       exp: now + expiresIn,
@@ -112,7 +114,7 @@ export async function mintAccessToken(
  * @returns {Promise<MintedToken & { jti: string }>}
  */
 export async function mintRefreshToken(
-  { siteId, deviceId, tokenGeneration },
+  { siteId, deviceId, tokenGeneration, accessLevel },
   opts = {},
 ) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
@@ -123,6 +125,7 @@ export async function mintRefreshToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
+      accessLevel: accessLevel === "admin" ? "admin" : "general",
       typ: "refresh",
       jti,
       iat: now,
@@ -144,6 +147,7 @@ export async function mintRefreshToken(
  * @property {"access" | "refresh"} typ
  * @property {number} iat
  * @property {number} exp
+ * @property {"general"|"admin"} accessLevel
  * @property {string} [jti]         refresh tokens only
  */
 
@@ -202,6 +206,9 @@ export async function verifyDeviceToken(token, opts = {}) {
   }
   if (claims.typ !== "access" && claims.typ !== "refresh") {
     throw new DeviceTokenError("malformed", "unknown token type");
+  }
+  if (claims.accessLevel !== "general" && claims.accessLevel !== "admin") {
+    throw new DeviceTokenError("malformed", "unknown access level");
   }
   // Project the wire shape (Cognito's `custom:siteId`) onto the typed view.
   return /** @type {DeviceClaims} */ ({

@@ -651,14 +651,14 @@ form > wa-button[type="submit"] {
 .places-modal__title {
   margin: 0;
   color: var(--text);
-  font-size: var(--wa-font-size-xl, 1.5625rem);
-  line-height: 1.2;
+  font-size: var(--wa-font-size-xl);
+  line-height: var(--wa-line-height-condensed);
 }
 .places-modal__text {
   margin: 0;
   color: var(--text-secondary);
-  font-size: var(--wa-font-size-m, 1rem);
-  line-height: 1.6;
+  font-size: var(--wa-font-size-m);
+  line-height: var(--wa-line-height-normal);
 }
 .places-modal__actions {
   display: flex;
@@ -705,7 +705,7 @@ form > wa-button[type="submit"] {
   padding-inline: 0.25rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   box-sizing: border-box;
   position: relative;
   z-index: 5;
@@ -723,7 +723,7 @@ form > wa-button[type="submit"] {
 .home-settings-menu {
   position: absolute;
   top: calc(100% + 0.25rem);
-  left: 0;
+  right: 0;
   z-index: 5;
   width: max-content;
   max-width: min(17.5rem, calc(100vw - 2rem));
@@ -766,7 +766,7 @@ form > wa-button[type="submit"] {
   background: var(--surface-3);
 }
 
-.home-settings-menu button:first-child {
+.home-settings-menu #settings-logout {
   color: var(--wa-color-danger-on-quiet, #b30532);
 }
 
@@ -785,6 +785,29 @@ form > wa-button[type="submit"] {
   outline-offset: 2px;
 }
 
+.attributions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attributions-list a {
+  color: var(--brand-blue);
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.attributions-list a:focus-visible {
+  border-radius: 0.125rem;
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
 .home-settings__icon {
   width: 1.25rem;
   height: 1.25rem;
@@ -792,6 +815,284 @@ form > wa-button[type="submit"] {
   background: currentColor;
   -webkit-mask: url("/icons/gear.svg") center / contain no-repeat;
   mask: url("/icons/gear.svg") center / contain no-repeat;
+}
+
+/* ---- Site administration ---- */
+.site-admin-page {
+  min-height: 100dvh;
+  color: var(--text);
+  background: var(--surface);
+  font-family: var(--wa-font-family-body);
+  font-size: var(--wa-font-size-m);
+  font-weight: var(--wa-font-weight-body);
+  line-height: var(--wa-line-height-normal);
+}
+
+.site-admin-header {
+  position: sticky;
+  /* The chromeless shell keeps a safe-area-aware inset above routed views.
+     Match that inset here so the header is pinned from its initial position
+     instead of scrolling through the shell padding before becoming sticky. */
+  top: max(1rem, env(safe-area-inset-top));
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  min-height: 72px;
+  padding: 0.25rem max(1rem, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.site-admin-header h1 {
+  margin: 0;
+  font-family: var(--wa-font-family-heading);
+  font-size: var(--wa-font-size-l);
+  font-weight: var(--wa-font-weight-heading);
+  line-height: var(--wa-line-height-condensed);
+  text-align: center;
+}
+
+.site-admin-header button,
+.site-admin-section-heading button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--brand-blue);
+  cursor: pointer;
+  font: inherit;
+}
+
+.site-admin-header button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font-size: var(--wa-font-size-l);
+}
+
+.site-admin-header button:focus-visible,
+.site-admin-section-heading button:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+.site-admin-content,
+.site-admin-edit {
+  width: min(100%, 600px);
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 1.5rem 1.25rem max(3rem, env(safe-area-inset-bottom));
+}
+
+.site-admin-section {
+  margin: 0 0 1.75rem;
+}
+
+.site-admin-section > h2,
+.site-admin-section-heading h2 {
+  margin: 0 0 0.65rem;
+  color: var(--text-secondary);
+  font-family: var(--wa-font-family-heading);
+  font-size: var(--wa-font-size-s);
+  font-weight: var(--wa-font-weight-heading);
+  line-height: var(--wa-line-height-condensed);
+  text-transform: uppercase;
+}
+
+.site-admin-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.site-admin-section-heading button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.65rem;
+  padding: 0.25rem;
+  font-weight: var(--wa-font-weight-action);
+}
+
+.site-admin-card {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 1.4rem;
+  background: var(--surface-2);
+}
+
+.site-admin-rows {
+  margin: 0;
+  padding: 0 1.15rem;
+}
+
+.site-admin-rows > div {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 0.85fr) minmax(0, 1.35fr);
+  gap: 1rem;
+  align-items: start;
+  box-sizing: border-box;
+  min-height: 52px;
+  padding-block: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.site-admin-rows > div:last-child,
+.site-admin-letter-row:last-child {
+  border-bottom: 0;
+}
+
+.site-admin-rows dt {
+  color: var(--text-secondary);
+  line-height: var(--wa-line-height-normal);
+}
+
+.site-admin-discard-dialog {
+  width: min(360px, calc(100vw - 2rem));
+}
+
+.site-admin-discard-dialog .places-modal__card {
+  box-sizing: border-box;
+  width: 100%;
+  gap: 1rem;
+  padding: 1.25rem;
+  align-items: stretch;
+}
+
+.site-admin-discard-dialog .places-modal__copy,
+.site-admin-discard-dialog .places-modal__actions {
+  box-sizing: border-box;
+  width: 100%;
+  align-items: center;
+  text-align: center;
+}
+
+.site-admin-discard-dialog :is(.places-modal__title, .places-modal__text) {
+  width: 100%;
+}
+
+.site-admin-discard-dialog .places-modal__actions > button {
+  width: 100%;
+}
+
+.site-admin-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--wa-font-weight-semibold);
+  text-align: right;
+}
+
+.site-admin-card--prose {
+  padding: 1.2rem;
+  line-height: var(--wa-line-height-normal);
+}
+
+.site-admin-letter-current {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 1rem;
+}
+
+.site-admin-letter-current > wa-icon {
+  font-size: var(--wa-font-size-l);
+  color: var(--brand-blue);
+}
+
+.site-admin-letter-current div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.site-admin-letter-current span {
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s);
+}
+
+.site-admin-letter-current a,
+.site-admin-letter-row a {
+  color: var(--brand-blue);
+  font-weight: var(--wa-font-weight-action);
+  text-decoration: none;
+}
+
+.site-admin-letters {
+  padding: 0 1.15rem;
+}
+
+.site-admin-letter-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  border-bottom: 1px solid var(--border);
+}
+
+.site-admin-empty {
+  color: var(--text-secondary);
+}
+
+.site-admin-loading,
+.site-admin-load-error {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  padding: 4rem 1.25rem;
+  color: var(--text-secondary);
+}
+
+.site-admin-fields {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.site-admin-fields wa-input::part(input-wrapper) {
+  min-height: 58px;
+  border-radius: 1rem;
+}
+
+.site-admin-form-error {
+  min-height: 1.5rem;
+  margin: 0.75rem 0 0;
+  color: var(--c-hazard);
+  font-weight: var(--wa-font-weight-semibold);
+}
+
+.site-admin-edit-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.site-admin-edit-actions button {
+  min-height: 54px;
+}
+
+@media (max-width: 410px) {
+  .site-admin-rows > div {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+    padding: 0.8rem 0;
+  }
+
+  .site-admin-rows dd {
+    text-align: left;
+  }
+
+  .site-admin-letter-current {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .site-admin-letter-current a {
+    grid-column: 2;
+  }
 }
 
 .logout-dialog__actions {

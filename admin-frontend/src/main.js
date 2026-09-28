@@ -12,7 +12,7 @@ import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, status?: string, updatedAt?: string }} AdminSite
+ * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number>, perimeter?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ email: string, emailHash: string, name?: string, status?: string }} AdminContact
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
@@ -164,24 +164,76 @@ class AdminApp extends HTMLElement {
   async updateSite(form) {
     if (!this.state.site) return;
     const data = new FormData(form);
-    const name = String(data.get("site-name") || "");
-    const address = String(data.get("site-address") || "");
+    const name = formValue(data, "site-name");
+    const addressParts = {
+      streetNumber: formValue(data, "street-number"),
+      streetAddress: formValue(data, "street-address"),
+      secondLine: formValue(data, "address-second-line"),
+      city: formValue(data, "city"),
+      state: formValue(data, "state"),
+      zip: formValue(data, "zip"),
+    };
+    const values = {
+      name,
+      addressParts,
+      contactPerson: {
+        firstName: formValue(data, "contact-first-name"),
+        lastName: formValue(data, "contact-last-name"),
+        email: formValue(data, "contact-email"),
+        phone: formValue(data, "contact-phone"),
+      },
+      oversight: {
+        managingCityDepartment: formValue(data, "managing-city-department"),
+        managingSystemOfCare: formValue(data, "managing-system-of-care"),
+        cityProgramManagerFirstName: formValue(
+          data,
+          "program-manager-first-name",
+        ),
+        cityProgramManagerLastName: formValue(
+          data,
+          "program-manager-last-name",
+        ),
+      },
+      compliance: {
+        currentTier: Number(data.get("current-tier")),
+        periodStart: formValue(data, "tier-period-start"),
+        periodEnd: formValue(data, "tier-period-end"),
+        requiredChecksPerDay: Number(data.get("required-checks-per-day")),
+      },
+      perimeter: formValue(data, "perimeter"),
+    };
+    const letter = data.get("compliance-letter");
     this.state.siteSaving = true;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.state.error = "";
     this.render();
     try {
-      const result = await adminApi.updateSite(this.state.site.siteId, {
-        name,
-        address,
-      });
+      if (letter instanceof File && letter.size > 0) {
+        if (
+          (letter.type && letter.type !== "application/pdf") ||
+          !letter.name.toLowerCase().endsWith(".pdf") ||
+          letter.size > 10 * 1024 * 1024
+        ) {
+          throw new Error("invalid_compliance_letter");
+        }
+        const upload = await adminApi.presignComplianceLetter(
+          this.state.site.siteId,
+          letter,
+        );
+        await adminApi.uploadComplianceLetter(upload.uploadUrl, letter);
+        values.complianceLetter = {
+          s3Key: upload.s3Key,
+          fileName: letter.name,
+          effectiveStart: todayIsoDate(),
+        };
+      }
+      const result = await adminApi.updateSite(this.state.site.siteId, values);
       const location = result.site?.location;
       this.state.site = {
         ...this.state.site,
         ...result.site,
         name,
-        address,
         location,
       };
       if (!hasSiteCoordinates(location)) {
@@ -266,8 +318,13 @@ class AdminApp extends HTMLElement {
    */
   async issueSetupCode(form) {
     if (!this.state.site) return;
-    const email = new FormData(form).get("setup-email");
-    await this.issueSetupCodeForEmail(String(email || ""));
+    const data = new FormData(form);
+    const email = data.get("setup-email");
+    const accessLevel = data.get("setup-access");
+    await this.issueSetupCodeForEmail(
+      String(email || ""),
+      accessLevel === "admin" ? "admin" : "general",
+    );
     form.reset();
   }
 
@@ -276,9 +333,13 @@ class AdminApp extends HTMLElement {
    * @param {string} email
    * @returns {Promise<void>}
    */
-  async issueSetupCodeForEmail(email) {
+  async issueSetupCodeForEmail(email, accessLevel = "general") {
     if (!this.state.site || !email.trim()) return;
-    const result = await adminApi.issueSetupCode(this.state.site.siteId, email);
+    const result = await adminApi.issueSetupCode(
+      this.state.site.siteId,
+      email,
+      accessLevel,
+    );
     this.state.issuedCode = result.setupCode;
     this.render();
   }
@@ -521,21 +582,7 @@ class AdminApp extends HTMLElement {
                     Deactivate site
                   </button>
                 </div>
-                <form id="site-details-form" class="site-details-form">
-                  <label>
-                    <span>Site name</span>
-                    <input name="site-name" value="${escapeHtml(site.name)}" required />
-                  </label>
-                  <label>
-                    <span>Site address</span>
-                    <input name="site-address" autocomplete="street-address" value="${escapeHtml(site.address || "")}" required />
-                  </label>
-                  ${formatSiteCoordinates(site.location)}
-                  ${this.state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(this.state.siteSaveError)}</p>` : ""}
-                  <button type="submit" ${this.state.siteSaving ? "disabled" : ""}>
-                    ${this.state.siteSaving ? "Saving..." : "Save site"}
-                  </button>
-                </form>
+                ${siteEditor(site, this.state.siteSaving, this.state.siteSaveError)}
                 ${this.state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(this.state.siteSaveMessage)}</p>` : ""}
                 ${site.geocodedAddress ? `<p class="muted">Mapped to ${escapeHtml(site.geocodedAddress)}</p>` : ""}
                 <form id="contact-form" class="inline-form">
@@ -571,11 +618,18 @@ class AdminApp extends HTMLElement {
                     <span>Email setup code to</span>
                     <input name="setup-email" type="email" required />
                   </label>
+                  <label>
+                    <span>Access</span>
+                    <select name="setup-access">
+                      <option value="general">General access</option>
+                      <option value="admin">Admin access</option>
+                    </select>
+                  </label>
                   <button type="submit">Issue setup code</button>
                 </form>
                 ${
                   this.state.issuedCode
-                    ? `<p class="success">Code ${escapeHtml(this.state.issuedCode.code)} for ${escapeHtml(this.state.issuedCode.issuedTo)} expires ${escapeHtml(this.state.issuedCode.expiresAt)}</p>`
+                    ? `<p class="success">Code ${escapeHtml(this.state.issuedCode.code)} for ${escapeHtml(this.state.issuedCode.issuedTo)} (${escapeHtml(this.state.issuedCode.accessLevel || "general")} access) expires ${escapeHtml(this.state.issuedCode.expiresAt)}</p>`
                     : ""
                 }
                 <h3>Devices</h3>
@@ -604,6 +658,153 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
+
+/**
+ * @param {AdminSite} site
+ * @param {boolean} saving
+ * @param {string} saveError
+ */
+function siteEditor(site, saving, saveError) {
+  const address = site.addressParts || {};
+  const contact = site.contactPerson || {};
+  const oversight = site.oversight || {};
+  const compliance = site.compliance || {};
+  const manager = splitPersonName(oversight.cityProgramManager);
+  const department = normalizeDepartment(oversight.managingCityDepartment);
+  const currentLetter = site.complianceLetters?.current;
+  return `<form id="site-details-form" class="site-details-form">
+    <fieldset>
+      <legend>Site details</legend>
+      <div class="form-grid form-grid--two">
+        ${formInput("site-name", "Site name", site.name, { required: true, autocomplete: "organization" })}
+        ${formInput("street-number", "Street number", address.streetNumber, { required: true, autocomplete: "address-line1" })}
+        ${formInput("street-address", "Street address", address.streetAddress, { required: true, autocomplete: "address-line1" })}
+        ${formInput("address-second-line", "Second line", address.secondLine, { autocomplete: "address-line2" })}
+        ${formInput("city", "City", address.city, { required: true, autocomplete: "address-level2" })}
+        ${formInput("state", "State", address.state, { required: true, autocomplete: "address-level1", maxlength: 2 })}
+        ${formInput("zip", "ZIP", address.zip, { required: true, autocomplete: "postal-code", pattern: "[0-9]{5}(-[0-9]{4})?" })}
+      </div>
+      ${formatSiteCoordinates(site.location)}
+    </fieldset>
+    <fieldset>
+      <legend>Contact person</legend>
+      <div class="form-grid form-grid--two">
+        ${formInput("contact-first-name", "First name", contact.firstName, { required: true, autocomplete: "given-name" })}
+        ${formInput("contact-last-name", "Last name", contact.lastName, { required: true, autocomplete: "family-name" })}
+        ${formInput("contact-email", "Email", contact.email, { required: true, type: "email", autocomplete: "email" })}
+        ${formInput("contact-phone", "Phone", contact.phone, { required: true, type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" })}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Oversight</legend>
+      <div class="form-grid form-grid--two">
+        <label>
+          <span>Managing City department</span>
+          <select name="managing-city-department" required>
+            <option value="DPH" ${department === "DPH" ? "selected" : ""}>DPH</option>
+            <option value="HSH" ${department === "HSH" ? "selected" : ""}>HSH</option>
+          </select>
+        </label>
+        ${formInput("managing-system-of-care", "Managing system of care", oversight.managingSystemOfCare)}
+        ${formInput("program-manager-first-name", "City program manager first name", manager.firstName, { autocomplete: "given-name" })}
+        ${formInput("program-manager-last-name", "City program manager last name", manager.lastName, { autocomplete: "family-name" })}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Compliance</legend>
+      <div class="form-grid form-grid--two">
+        <label>
+          <span>Current tier</span>
+          <select name="current-tier" required>
+            ${[1, 2, 3, 4]
+              .map(
+                (tier) =>
+                  `<option value="${tier}" ${Number(compliance.currentTier) === tier ? "selected" : ""}>Tier ${tier}</option>`,
+              )
+              .join("")}
+          </select>
+        </label>
+        ${formInput("tier-period-start", "Tier period start", compliance.periodStart, { required: true, type: "date" })}
+        ${formInput("tier-period-end", "Tier period end (leave blank for present)", compliance.periodEnd, { type: "date" })}
+        ${formInput("required-checks-per-day", "Required checks per day", compliance.requiredChecksPerDay ?? 0, { required: true, type: "number", min: 0, max: 100, step: 1 })}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Perimeter</legend>
+      <label>
+        <span>Perimeter description</span>
+        <textarea name="perimeter" rows="5" maxlength="4000">${escapeHtml(site.perimeter || "")}</textarea>
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Compliance letter</legend>
+      ${currentLetter ? `<p class="muted current-letter">Current: ${escapeHtml(currentLetter.fileName || "compliance letter")}</p>` : '<p class="muted current-letter">No current compliance letter.</p>'}
+      <label>
+        <span>Upload a new PDF to supersede the current letter</span>
+        <input name="compliance-letter" type="file" accept="application/pdf,.pdf" />
+      </label>
+      <p class="muted field-help">PDF only, up to 10 MB. The previous current letter will move to past letters.</p>
+    </fieldset>
+    ${saveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(saveError)}</p>` : ""}
+    <button type="submit" ${saving ? "disabled" : ""}>
+      ${saving ? "Saving..." : "Save site"}
+    </button>
+  </form>`;
+}
+
+/**
+ * @param {string} name
+ * @param {string} label
+ * @param {unknown} value
+ * @param {{ required?: boolean, type?: string, autocomplete?: string, pattern?: string, maxlength?: number, min?: number, max?: number, step?: number }} [options]
+ */
+function formInput(name, label, value, options = {}) {
+  const attributes = [
+    options.required ? "required" : "",
+    options.autocomplete
+      ? `autocomplete="${escapeHtml(options.autocomplete)}"`
+      : "",
+    options.pattern ? `pattern="${escapeHtml(options.pattern)}"` : "",
+    options.maxlength !== undefined ? `maxlength="${options.maxlength}"` : "",
+    options.min !== undefined ? `min="${options.min}"` : "",
+    options.max !== undefined ? `max="${options.max}"` : "",
+    options.step !== undefined ? `step="${options.step}"` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `<label>
+    <span>${escapeHtml(label)}</span>
+    <input name="${escapeHtml(name)}" type="${escapeHtml(options.type || "text")}" value="${escapeHtml(value ?? "")}" ${attributes} />
+  </label>`;
+}
+
+/** @param {unknown} value */
+function splitPersonName(value) {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return { firstName: parts.shift() || "", lastName: parts.join(" ") };
+}
+
+/** @param {unknown} value */
+function normalizeDepartment(value) {
+  const department = String(value || "").toUpperCase();
+  return department === "HSH" || department.includes("HOMELESS")
+    ? "HSH"
+    : "DPH";
+}
+
+/** @param {FormData} data @param {string} name */
+function formValue(data, name) {
+  return String(data.get(name) || "").trim();
+}
+
+function todayIsoDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
 
 /**
  * @param {{ latitude?: number, longitude?: number } | undefined} location
@@ -639,6 +840,28 @@ function siteSaveErrorMessage(error) {
   }
   if (code === "address_required") {
     return "Enter an address before saving the site.";
+  }
+  if (code === "invalid_address") {
+    return "Enter a complete address with a two-letter state and valid ZIP code.";
+  }
+  if (code === "invalid_contact_person") {
+    return "Enter the contact's first and last name, a valid email, and a valid US phone number.";
+  }
+  if (code === "invalid_oversight") {
+    return "Choose DPH or HSH for the managing City department.";
+  }
+  if (code === "invalid_compliance") {
+    return "Check the compliance tier, dates, and required checks per day.";
+  }
+  if (
+    code === "invalid_compliance_letter" ||
+    code === "pdf_required" ||
+    code === "invalid_file_size"
+  ) {
+    return "Choose a PDF compliance letter no larger than 10 MB.";
+  }
+  if (code === "compliance_letter_upload_failed") {
+    return "The compliance letter upload failed. Try again.";
   }
   return "The site couldn't be saved. Try again.";
 }

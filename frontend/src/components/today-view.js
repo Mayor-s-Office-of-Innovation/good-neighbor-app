@@ -21,7 +21,9 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { navigate } from "../router.js";
 import {
+  accessLevelFromToken,
   activateSiteBinding,
   clearSiteSession,
   getSite,
@@ -212,6 +214,53 @@ export function activeHomeFilterLabel(filterId, counts) {
   const tab =
     HOME_TABS.find((candidate) => candidate.id === filterId) || HOME_TABS[0];
   return `${tab.label} • ${counts[filterId] || 0}`;
+}
+
+export function attributionDialogMarkup() {
+  return html`<dialog
+    class="places-modal attributions-dialog"
+    id="attributions-dialog"
+    aria-labelledby="attributions-title"
+    aria-describedby="attributions-copy"
+  >
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="attributions-title">
+          Attributions
+        </h2>
+        <p class="places-modal__text" id="attributions-copy">
+          Address information used by this app is provided by these services.
+        </p>
+        <ul class="attributions-list">
+          <li>
+            <a
+              href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Amazon Location Service data attribution (opens in a new tab)"
+            >
+              Amazon Location Service data attribution
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://geocoding.geo.census.gov/geocoder/"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="U.S. Census Bureau Geocoder (opens in a new tab)"
+            >
+              U.S. Census Bureau Geocoder
+            </a>
+          </li>
+        </ul>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-ink places-modal__primary" type="submit">
+          Close
+        </button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 /**
@@ -778,6 +827,8 @@ class TodayView extends HTMLElement {
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
+    this._attributionsDialog = null;
+    this._attributionsDialogOpen = false;
     this._siteSwitcherOpen = false;
     this._siteDocumentClick = null;
     this._providerSites = [];
@@ -1127,6 +1178,45 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
     });
+    this.querySelector("#settings-feedback")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      feedbackDialog?.open();
+    });
+    this.querySelector("#settings-attributions")?.addEventListener(
+      "click",
+      () => {
+        this._settingsMenuOpen = false;
+        this.querySelector(".home-settings-menu")?.remove();
+        this.querySelector("#home-settings")?.setAttribute(
+          "aria-expanded",
+          "false",
+        );
+        this._attributionsDialogOpen = true;
+        this._attributionsDialog?.showModal();
+      },
+    );
+    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
+      navigate("/site-admin"),
+    );
+    this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #attributions-dialog")
+    );
+    this._attributionsDialog?.addEventListener("click", (event) => {
+      if (event.target === this._attributionsDialog) {
+        this._attributionsDialog.close();
+      }
+    });
+    this._attributionsDialog?.addEventListener("close", () => {
+      this._attributionsDialogOpen = false;
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
     );
@@ -1137,6 +1227,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._restoreAttributionsDialog();
     this._wire311Dialog();
     this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
@@ -1362,6 +1453,36 @@ class TodayView extends HTMLElement {
                     role="menu"
                     aria-label="Settings"
                   >
+                    <button
+                      id="settings-feedback"
+                      type="button"
+                      role="menuitem"
+                    >
+                      <wa-icon name="comment" aria-hidden="true"></wa-icon>
+                      Send feedback
+                    </button>
+                    ${this._site?.accessLevel === "admin" ||
+                    accessLevelFromToken(this._site?.token) === "admin"
+                      ? html`<button
+                          id="settings-site-admin"
+                          type="button"
+                          role="menuitem"
+                        >
+                          <wa-icon
+                            name="location-dot"
+                            aria-hidden="true"
+                          ></wa-icon>
+                          Site admin
+                        </button>`
+                      : ""}
+                    <button
+                      id="settings-attributions"
+                      type="button"
+                      role="menuitem"
+                    >
+                      <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
+                      Attributions
+                    </button>
                     <button id="settings-logout" type="button" role="menuitem">
                       <wa-icon
                         name="arrow-right-from-bracket"
@@ -1369,18 +1490,13 @@ class TodayView extends HTMLElement {
                       ></wa-icon>
                       Logout
                     </button>
-                    <a
-                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      role="menuitem"
-                      aria-label="Address data attribution (opens in a new tab)"
-                      >Address data attribution</a
-                    >
                   </div>`
                 : ""}
             </div>
-            <feedback-dialog class="feedback-dialog"></feedback-dialog>
+            <feedback-dialog
+              class="feedback-dialog"
+              hide-trigger
+            ></feedback-dialog>
           </div>
           <div
             class="screen screen--today-hero"
@@ -1423,6 +1539,7 @@ class TodayView extends HTMLElement {
         </section>
         ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
         ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
+        ${attributionDialogMarkup()}
         <dialog
           class="places-modal logout-dialog"
           id="logout-dialog"
@@ -1725,6 +1842,11 @@ class TodayView extends HTMLElement {
   _restoreLogoutDialog() {
     if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
     this._logoutDialog?.showModal();
+  }
+
+  _restoreAttributionsDialog() {
+    if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
+    this._attributionsDialog?.showModal();
   }
 
   async _logout() {

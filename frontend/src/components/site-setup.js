@@ -361,6 +361,7 @@ export class SiteSetup extends HTMLElement {
           Date.now() + session.expiresIn * 1000,
         ).toISOString(),
         tokenGeneration: session.tokenGeneration,
+        accessLevel: session.accessLevel,
       });
     } catch {
       this._committingSite = false;
