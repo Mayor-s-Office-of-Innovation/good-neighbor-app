@@ -10,6 +10,7 @@
   (ADR 0014); the pipeline and the result cards key on the item id alone.
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
@@ -332,7 +333,7 @@ class PerimeterCheck extends HTMLElement {
     this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
     const focusUndo = button?.matches(":focus-visible") || false;
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
       await deleteAnalysisCard(
@@ -383,7 +384,7 @@ class PerimeterCheck extends HTMLElement {
       );
     } finally {
       this._deletingProblem = false;
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -421,7 +422,7 @@ class PerimeterCheck extends HTMLElement {
     }
     if (!problem.conditionId) {
       const button = this.querySelector("#analysis-edit-save");
-      this._setBusy(button, true);
+      setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
         await analyzeNoIssueDescriptionEdit(problem.itemId, description);
@@ -435,7 +436,7 @@ class PerimeterCheck extends HTMLElement {
           "Could not analyze this description. Please try again.",
         );
       } finally {
-        this._setBusy(button, false);
+        setBusy(button, false);
       }
       return;
     }
@@ -448,7 +449,7 @@ class PerimeterCheck extends HTMLElement {
     }
 
     const button = this.querySelector("#analysis-edit-save");
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
       const result = await editAnalysisCondition(
@@ -471,7 +472,7 @@ class PerimeterCheck extends HTMLElement {
         "Could not save this edit. Please try again.",
       );
     } finally {
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -596,16 +597,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = this.querySelector(`#${id}`);
-    if (!error) return;
-    error.textContent = message;
-    error.hidden = !message;
-  }
-
-  _setBusy(button, busy) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
+    setDialogError(this, `#${id}`, message);
   }
 
   _missingConditionMessage(problem, action) {
@@ -616,10 +608,12 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _requestId(action, problem) {
-    const suffix =
-      globalThis.crypto?.randomUUID?.() ||
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
+    return requestId(
+      this._checkId,
+      problem.itemId,
+      problem.conditionId,
+      action,
+    );
   }
 
   /** Finish is disabled until the completion rule is met; this is the backstop. */
