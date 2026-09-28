@@ -1,11 +1,41 @@
 {
   "$comment": "Warn-only perf budgets evaluated by scripts/print-lighthouse.mjs (median across runs). Thresholds carried over verbatim from the old lighthouserc.json LHCI assertions.",
   "budgets": [
-    { "id": "categories:performance", "label": "Perf score", "operator": ">=", "threshold": 0.8 },
-    { "id": "largest-contentful-paint", "label": "LCP", "operator": "<=", "threshold": 4000 },
-    { "id": "total-blocking-time", "label": "TBT", "operator": "<=", "threshold": 500 },
-    { "id": "cumulative-layout-shift", "label": "CLS", "operator": "<=", "threshold": 0.1 },
-    { "id": "resource-summary:script", "label": "Script transfer", "operator": "<=", "threshold": 400000 },
-    { "id": "resource-summary:stylesheet", "label": "CSS transfer", "operator": "<=", "threshold": 250000 }
+    {
+      "id": "categories:performance",
+      "label": "Perf score",
+      "operator": ">=",
+      "threshold": 0.8
+    },
+    {
+      "id": "largest-contentful-paint",
+      "label": "LCP",
+      "operator": "<=",
+      "threshold": 4000
+    },
+    {
+      "id": "total-blocking-time",
+      "label": "TBT",
+      "operator": "<=",
+      "threshold": 500
+    },
+    {
+      "id": "cumulative-layout-shift",
+      "label": "CLS",
+      "operator": "<=",
+      "threshold": 0.1
+    },
+    {
+      "id": "resource-summary:script",
+      "label": "Script transfer",
+      "operator": "<=",
+      "threshold": 400000
+    },
+    {
+      "id": "resource-summary:stylesheet",
+      "label": "CSS transfer",
+      "operator": "<=",
+      "threshold": 250000
+    }
   ]
 }

@@ -74,18 +74,26 @@ for (const f of lhrFiles) {
     if (value != null) (valuesByAudit[id] ??= []).push(value);
   };
   collect("categories:performance", lhr.categories.performance.score);
-  collect("largest-contentful-paint", a["largest-contentful-paint"]?.numericValue);
+  collect(
+    "largest-contentful-paint",
+    a["largest-contentful-paint"]?.numericValue,
+  );
   collect("total-blocking-time", a["total-blocking-time"]?.numericValue);
-  collect("cumulative-layout-shift", a["cumulative-layout-shift"]?.numericValue);
+  collect(
+    "cumulative-layout-shift",
+    a["cumulative-layout-shift"]?.numericValue,
+  );
   collect(
     "resource-summary:script",
-    a["resource-summary"]?.details?.items?.find((i) => i.resourceType === "script")
-      ?.transferSize,
+    a["resource-summary"]?.details?.items?.find(
+      (i) => i.resourceType === "script",
+    )?.transferSize,
   );
   collect(
     "resource-summary:stylesheet",
-    a["resource-summary"]?.details?.items?.find((i) => i.resourceType === "stylesheet")
-      ?.transferSize,
+    a["resource-summary"]?.details?.items?.find(
+      (i) => i.resourceType === "stylesheet",
+    )?.transferSize,
   );
 }
 

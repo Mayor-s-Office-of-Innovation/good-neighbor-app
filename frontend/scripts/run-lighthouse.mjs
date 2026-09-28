@@ -35,11 +35,23 @@ const chromeDataDir = mkdtempSync(join(tmpdir(), "lighthouse-chrome-"));
 rmSync(REPORT_DIR, { recursive: true, force: true });
 mkdirSync(REPORT_DIR, { recursive: true });
 
-const preview = spawn("npx", ["vite", "preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
-  cwd: ROOT,
-  stdio: ["ignore", "pipe", "pipe"],
-  detached: true, // own process group, so the kill below takes its children too
-});
+const preview = spawn(
+  "npx",
+  [
+    "vite",
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(PORT),
+    "--strictPort",
+  ],
+  {
+    cwd: ROOT,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true, // own process group, so the kill below takes its children too
+  },
+);
 const previewLog = [];
 preview.stdout.on("data", (c) => previewLog.push(c));
 preview.stderr.on("data", (c) => previewLog.push(c));
@@ -68,7 +80,9 @@ async function waitForServer() {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(URL_UNDER_TEST, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(URL_UNDER_TEST, {
+        signal: AbortSignal.timeout(2000),
+      });
       if (res.ok) return;
     } catch {
       /* not up yet */
@@ -101,4 +115,6 @@ for (let i = 1; i <= RUNS; i++) {
 }
 
 killPreview();
-console.log(`\n${RUNS} Lighthouse reports written to .lighthouseci/ — run 'npm run perf' for the summary table.`);
+console.log(
+  `\n${RUNS} Lighthouse reports written to .lighthouseci/ — run 'npm run perf' for the summary table.`,
+);
