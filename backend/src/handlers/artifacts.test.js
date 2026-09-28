@@ -495,6 +495,10 @@ describe("deleteArtifact", () => {
     const headerQ = ddbSend.mock.calls[0][0];
     expect(headerQ.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
     expect(headerQ.input.ExpressionAttributeValues[":sk"]).toBe("CHECK#chk_01");
+    expect(headerQ.input.ProjectionExpression).toBe("#status");
+    expect(headerQ.input.ExpressionAttributeNames).toEqual({
+      "#status": "status",
+    });
     // The artifact lookup is the same ART#-prefix query presignMedia uses.
     const artQ = ddbSend.mock.calls[1][0];
     expect(artQ.input.ExpressionAttributeValues[":prefix"]).toBe(

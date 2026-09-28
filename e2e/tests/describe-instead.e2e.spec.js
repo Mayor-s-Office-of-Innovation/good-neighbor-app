@@ -19,8 +19,10 @@ import { setAnalyzerFixture } from "../helpers/analyzer-control.js";
   - "Describe instead" → /check/describe; Continue stays disabled until the
     text reaches the perimeter minimum (MIN_DESCRIPTION_LENGTH = 20 trimmed
     characters).
-  - Continue → back on the capture screen with the description card, the
-    "Describe instead" button hidden, and Finish enabled with zero photos.
+  - Unsaved close → an opaque, labeled discard dialog; keep editing returns to
+    the draft.
+  - Continue → back on the capture screen with the description tile and Finish
+    enabled with zero photos; "Describe instead" remains available.
   - The description registers as a text artifact (no S3 leg) and the worker
     sends it to the stub as text media; the stub serves the selected fixture
     for every /v1/analyses call regardless of media kind, so "multi" yields
@@ -63,20 +65,41 @@ test.describe("describe instead", () => {
 
     await field.fill(DESCRIPTION);
     await expect(cont).toBeEnabled();
+
+    // Unsaved changes are protected by an opaque modal that does not visually
+    // merge with the editor underneath it.
+    await page.locator("#describe-dismiss").click();
+    const discardDialog = page.locator("#describe-exit-modal");
+    await expect(discardDialog).toBeVisible();
+    await expect(discardDialog).toHaveAttribute(
+      "aria-labelledby",
+      "describe-modal-title",
+    );
+    await expect(discardDialog.locator(".describe-modal__card")).not.toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await discardDialog.locator(".describe-modal__secondary").click();
+    await expect(discardDialog).not.toBeVisible();
+    await expect(field).toHaveValue(DESCRIPTION);
+
     await cont.click();
 
     // --- Back on the capture screen ----------------------------------------
     await expect(page).toHaveURL(/\/check$/);
-    const card = page.locator(".check-description");
-    await expect(card).toBeVisible();
-    await expect(card).toContainText(DESCRIPTION);
-    await expect(card.locator("[data-edit-description]")).toBeVisible();
-    await expect(card.locator("[data-remove-description]")).toBeVisible();
-    await expect(page.locator("#describe-instead")).toBeHidden();
+    const tile = page.locator(".shot--description");
+    await expect(tile).toBeVisible();
+    await expect(tile).toContainText(DESCRIPTION);
+    await expect(tile.locator("[data-edit-description]")).toBeVisible();
+    await expect(tile.locator("[data-remove-description]")).toBeVisible();
+    await expect(page.locator("#describe-instead")).toBeVisible();
 
     // One description satisfies the rule with zero photos.
     await expect(page.locator(".shot img")).toHaveCount(0);
-    await expect(progress).toContainText("Description saved. Ready to finish.");
+    await expect(progress).toContainText("0 of 3 photos taken");
+    await expect(progress).toContainText("Try to take at least 3-5 photos");
+    await expect(progress).not.toContainText("Description saved");
+    await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
 
     // --- Finish check → home ----------------------------------------------
