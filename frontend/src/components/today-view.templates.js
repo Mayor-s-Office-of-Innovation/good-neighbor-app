@@ -11,7 +11,7 @@ import {
   historicalCheckTitle,
   recentCheckTitle,
 } from "./analysis-results.templates.js";
-import { analysisDialogs } from "./perimeter-check.templates.js";
+import { analysisDialogs } from "./analysis-results.templates.js";
 
 /* ---- Shell ---- */
 

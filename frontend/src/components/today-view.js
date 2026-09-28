@@ -29,11 +29,9 @@ import {
 import {
   listChecks,
   listTasks,
-  ApiError,
   completeTask,
   cannotDoTask,
   editAnalysisCondition,
-  rejectAnalysisCondition,
   get311RequestDetails,
 } from "../services/api.js";
 import {
@@ -83,6 +81,11 @@ import {
 } from "../state/task-status-overrides.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {
+  missingConditionMessage,
+  problemFromCard,
+  rejectProblemCondition,
+} from "./analysis-problem-actions.js";
+import {
   appActionFailureMessage,
   isFiled311Completion,
 } from "../domain/task-actions.js";
@@ -97,7 +100,8 @@ import {
   resumeOrStartCheck,
   resumeOrStartProblemReport,
   removeItem,
-  updateItemAnalysis,
+  rejectConditionLocally,
+  resolveConditionLocally,
 } from "../state/check-session.js";
 import {
   analysisActionPriority,
@@ -1377,18 +1381,18 @@ class TodayView extends HTMLElement {
     removeItem(problem.itemId);
   }
 
+  // Home cards may be backed by a backend task; fill any coordinates the
+  // card markup lacks from the task record.
   _problemFromCard(card, task = null) {
+    const base = problemFromCard(card);
     return {
-      itemId: card.getAttribute("data-item-id") || "",
-      checkId: card.getAttribute("data-check-id") || task?.checkId || "",
+      ...base,
+      checkId: base.checkId || task?.checkId || "",
       artifactId:
-        card.getAttribute("data-artifact-id") ||
-        (task ? taskArtifactIds(task)[0] : "") ||
-        "",
-      taskId: card.getAttribute("data-task-id") || task?.taskId || "",
-      conditionId:
-        card.getAttribute("data-condition-id") || task?.conditionId || "",
-      actionKind: card.getAttribute("data-action-kind") || task?.kind || "",
+        base.artifactId || (task ? taskArtifactIds(task)[0] : "") || "",
+      taskId: base.taskId || task?.taskId || "",
+      conditionId: base.conditionId || task?.conditionId || "",
+      actionKind: base.actionKind || task?.kind || "",
       title:
         card.getAttribute("data-card-title") || task?.category || "problem",
       description:
@@ -1425,7 +1429,7 @@ class TodayView extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
-        "This result is missing its original evidence coordinates, so it cannot be deleted. Take a new photo and try again.",
+        missingConditionMessage(problem, "deleted"),
       );
       return;
     }
@@ -1441,39 +1445,15 @@ class TodayView extends HTMLElement {
       await deleteAnalysisCard(
         this,
         problem,
-        async () => {
-          let result;
-          try {
-            result = await rejectAnalysisCondition(
-              problem.checkId,
-              problem.artifactId,
-              problem.conditionId,
-              {
-                reason: { key: "not_a_problem" },
-                ...(problem.taskId ? { taskId: problem.taskId } : {}),
-                caller: { request_id: this._requestId("delete", problem) },
-              },
-            );
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            if (getCurrentCheck()?.id === problem.checkId)
-              this._deleteProblemLocally(problem);
-            return;
-          }
-          if (!result?.assessment) {
-            this._deleteProblemLocally(problem);
-            return;
-          }
-          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
-            await refreshEvidenceAnalysis(problem.itemId, result, {
-              rejectedConditionId: problem.conditionId,
-            }).catch((error) => {
-              console.error("refresh after saved deletion failed", error);
+        () =>
+          rejectProblemCondition(problem, {
+            requestId: this._requestId("delete", problem),
+            deleteLocally: () => this._deleteProblemLocally(problem),
+            onRefreshFailure: () => {
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
-            });
-          }
-        },
+            },
+          }),
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
@@ -1512,7 +1492,7 @@ class TodayView extends HTMLElement {
       if (!problem.itemId) {
         this._setDialogError(
           "analysis-edit-error",
-          "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+          missingConditionMessage(problem, "edited"),
         );
         return;
       }
@@ -1540,7 +1520,7 @@ class TodayView extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-edit-error",
-        "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+        missingConditionMessage(problem, "edited"),
       );
       return;
     }
@@ -1578,17 +1558,7 @@ class TodayView extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    if (!problem.itemId) return;
-    const item = this._sessionItem(problem);
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item?.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      rejectedConditionIds: [
-        ...(item?.analysis?.rejectedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
+    rejectConditionLocally(problem);
   }
 
   async _resolveAnalysisProblem(problem) {
@@ -1665,18 +1635,7 @@ class TodayView extends HTMLElement {
   }
 
   _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
-    if (problem.itemId) {
-      const item = this._sessionItem(problem);
-      updateItemAnalysis(problem.itemId, {
-        tasks: (item?.analysis?.tasks || []).filter(
-          (task) => task.taskId !== problem.taskId,
-        ),
-        resolvedConditionIds: [
-          ...(item?.analysis?.resolvedConditionIds || []),
-          problem.conditionId,
-        ].filter(Boolean),
-      });
-    }
+    if (problem.itemId) resolveConditionLocally(problem);
     if (problem.taskId && taskStatus) {
       this._setTaskOverride(problem.taskId, taskStatus);
     }

@@ -11,6 +11,11 @@
 */
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
+import {
+  missingConditionMessage,
+  problemFromCard,
+  rejectProblemCondition,
+} from "./analysis-problem-actions.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
@@ -27,12 +32,7 @@ import {
   refreshEvidenceAnalysis,
   removeEvidenceItem,
 } from "../services/photo-analysis.js";
-import {
-  ApiError,
-  completeTask,
-  editAnalysisCondition,
-  rejectAnalysisCondition,
-} from "../services/api.js";
+import { completeTask, editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -59,7 +59,8 @@ import {
   isCurrentSession,
   getAnalyzingOpen,
   setAnalyzingOpen,
-  updateItemAnalysis,
+  rejectConditionLocally,
+  resolveConditionLocally,
   markCaptureComplete,
   onCheckSessionChange,
   pauseCheck,
@@ -288,17 +289,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _problemFromCard(card) {
-    return {
-      itemId: card.getAttribute("data-item-id") || "",
-      checkId: card.getAttribute("data-check-id") || "",
-      artifactId: card.getAttribute("data-artifact-id") || "",
-      taskId: card.getAttribute("data-task-id") || "",
-      analysisId: card.getAttribute("data-analysis-id") || "",
-      conditionId: card.getAttribute("data-condition-id") || "",
-      actionKind: card.getAttribute("data-action-kind") || "",
-      title: card.getAttribute("data-card-title") || "problem",
-      description: card.getAttribute("data-card-description") || "",
-    };
+    return problemFromCard(card);
   }
 
   _openDeleteProblem(problem) {
@@ -325,7 +316,7 @@ class PerimeterCheck extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
-        this._missingConditionMessage(problem, "deleted"),
+        missingConditionMessage(problem, "deleted"),
       );
       return;
     }
@@ -339,39 +330,15 @@ class PerimeterCheck extends HTMLElement {
       await deleteAnalysisCard(
         this,
         problem,
-        async () => {
-          let result;
-          try {
-            result = await rejectAnalysisCondition(
-              problem.checkId,
-              problem.artifactId,
-              problem.conditionId,
-              {
-                reason: { key: "not_a_problem" },
-                ...(problem.taskId ? { taskId: problem.taskId } : {}),
-                caller: { request_id: this._requestId("delete", problem) },
-              },
-            );
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            if (getCurrentCheck()?.id === problem.checkId)
-              this._deleteProblemLocally(problem);
-            return;
-          }
-          if (!result?.assessment) {
-            this._deleteProblemLocally(problem);
-            return;
-          }
-          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
-            await refreshEvidenceAnalysis(problem.itemId, result, {
-              rejectedConditionId: problem.conditionId,
-            }).catch((error) => {
-              console.error("refresh after saved deletion failed", error);
+        () =>
+          rejectProblemCondition(problem, {
+            requestId: this._requestId("delete", problem),
+            deleteLocally: () => this._deleteProblemLocally(problem),
+            onRefreshFailure: () => {
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
-            });
-          }
-        },
+            },
+          }),
         () => this._render(),
         { focusUndo },
       );
@@ -389,19 +356,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    const item = findItem(problem.itemId);
-    if (!item) return;
-
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      rejectedConditionIds: [
-        ...(item.analysis?.rejectedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
-    if (this.isConnected) this._render();
+    if (rejectConditionLocally(problem) && this.isConnected) this._render();
   }
 
   async _saveProblemEdit() {
@@ -443,7 +398,7 @@ class PerimeterCheck extends HTMLElement {
     if (!problem.checkId || !problem.artifactId) {
       this._setDialogError(
         "analysis-edit-error",
-        this._missingConditionMessage(problem, "edited"),
+        missingConditionMessage(problem, "edited"),
       );
       return;
     }
@@ -543,18 +498,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _markProblemResolved(problem) {
-    const item = findItem(problem.itemId);
-    if (!item) return;
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      resolvedConditionIds: [
-        ...(item.analysis?.resolvedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
-    this._render();
+    if (resolveConditionLocally(problem)) this._render();
   }
 
   /** Drop a failed, never-uploaded photo from the session entirely. */
@@ -598,13 +542,6 @@ class PerimeterCheck extends HTMLElement {
 
   _setDialogError(id, message) {
     setDialogError(this, `#${id}`, message);
-  }
-
-  _missingConditionMessage(problem, action) {
-    if (!problem.conditionId) {
-      return `This card does not have a problem condition that can be ${action}.`;
-    }
-    return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
   }
 
   _requestId(action, problem) {
