@@ -16,8 +16,9 @@ import { analysisDialogs } from "./perimeter-check.templates.js";
 /* ---- Shell ---- */
 
 /**
- * The whole home screen. `hero`, `capture`, `results`, and `dialogs` are
- * already-rendered markup strings from the templates below.
+ * The whole home screen. `hero`, `capture`, and `results` are already-rendered
+ * markup strings from the templates below. The <location-dialog> placeholder is
+ * replaced by the host's persistent element after render.
  * @param {{
  *   phaseClass: string,
  *   captureVisible: boolean,
@@ -27,7 +28,6 @@ import { analysisDialogs } from "./perimeter-check.templates.js";
  *   capture: string,
  *   results: string,
  *   showAnalysisDialogs: boolean,
- *   dialogs: string,
  *   logoutError: string,
  *   logoutPending: boolean,
  * }} vm
@@ -42,7 +42,6 @@ export function homeShell({
   capture,
   results,
   showAnalysisDialogs,
-  dialogs,
   logoutError,
   logoutPending,
 }) {
@@ -71,7 +70,8 @@ export function homeShell({
       >
         ${results}
       </section>
-      ${showAnalysisDialogs ? analysisDialogs() : ""} ${dialogs}
+      ${showAnalysisDialogs ? analysisDialogs() : ""}
+      <location-dialog></location-dialog>
       ${logoutDialog({ error: logoutError, pending: logoutPending })}
     </div>
   `;
@@ -494,80 +494,6 @@ export function reasonPicker({ reasons }) {
       Cancel
     </button>
   `;
-}
-
-/* ---- Dialogs ---- */
-
-/**
- * @param {{
- *   siteName: string,
- *   sites: Array<{ siteId: string, name: string }>,
- *   currentSiteId: string,
- * }} vm
- */
-export function locationDialog({ siteName, sites, currentSiteId }) {
-  return html`<dialog
-    class="location-dialog"
-    id="location-dialog"
-    aria-labelledby="location-dialog-title"
-    aria-describedby="location-dialog-copy"
-  >
-    <div class="location-dialog__card">
-      <div class="location-dialog__copy">
-        <h2 id="location-dialog-title">
-          Is your app set to the right location?
-        </h2>
-        <p id="location-dialog-copy">
-          It looks like you're not near ${escapeHtml(siteName)}. Consider
-          changing your app's site.
-        </p>
-      </div>
-      <div
-        class="location-dialog__sites"
-        role="group"
-        aria-label="Choose a site"
-      >
-        ${sites
-          .map(
-            (site) =>
-              html`<button
-                class="home-site-switcher__item location-dialog__site"
-                appearance="plain"
-                type="button"
-                data-location-site="${escapeAttr(site.siteId)}"
-                aria-pressed="${site.siteId === currentSiteId
-                  ? "true"
-                  : "false"}"
-              >
-                <span class="home-site-switcher__check" aria-hidden="true"
-                  >${site.siteId === currentSiteId ? "✓" : ""}</span
-                >
-                <span>${escapeHtml(site.name)}</span>
-              </button>`,
-          )
-          .join("")}
-      </div>
-      <div class="location-dialog__actions">
-        <button
-          class="location-dialog__confirm"
-          appearance="plain"
-          id="location-confirm"
-          type="button"
-          disabled
-        >
-          Confirm site change
-        </button>
-        <button
-          class="location-dialog__stay"
-          appearance="plain"
-          id="location-stay"
-          type="button"
-        >
-          I'm in the right location
-        </button>
-      </div>
-    </div>
-  </dialog>`;
 }
 
 /* ---- Error view ---- */

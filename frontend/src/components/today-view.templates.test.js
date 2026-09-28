@@ -6,18 +6,12 @@ import {
   errorView,
   homeAllDonePanel,
   homeResults,
-  locationDialog,
   logoutDialog,
   reasonPicker,
   settingsMenu,
   summaryBlock,
   taskTabs,
 } from "./today-view.templates.js";
-
-const sites = [
-  { siteId: "site-a", name: "Alpha Center" },
-  { siteId: "site-b", name: "Beta <Hall>" },
-];
 
 describe("settingsMenu", () => {
   it("renders the menu only while open", () => {
@@ -47,22 +41,6 @@ describe("logoutDialog", () => {
     });
     expect(markup).toContain("&lt;img src=x onerror=1&gt;");
     expect(markup).not.toContain("<img");
-  });
-});
-
-describe("locationDialog", () => {
-  it("names the site and presses the current option", () => {
-    const markup = locationDialog({
-      siteName: "Alpha Center",
-      sites,
-      currentSiteId: "site-b",
-    });
-    expect(markup).toContain("not near Alpha Center");
-    expect(markup).toMatch(/data-location-site="site-b"\s+aria-pressed="true"/);
-    expect(markup).toMatch(
-      /data-location-site="site-a"\s+aria-pressed="false"/,
-    );
-    expect(markup).toMatch(/id="location-confirm"[^>]*disabled/);
   });
 });
 

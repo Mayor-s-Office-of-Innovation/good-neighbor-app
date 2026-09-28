@@ -111,12 +111,12 @@ import {
   heroBlock,
   homeResults,
   homeShell,
-  locationDialog,
   reasonPicker,
   summaryBlock,
 } from "./today-view.templates.js";
 import "./ticket-detail-dialog.js";
 import "./site-switcher.js";
+import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
@@ -167,8 +167,10 @@ class TodayView extends HTMLElement {
     this._logoutError = "";
     this._deviceLocation = getLastDeviceLocation();
     this._locationUnsub = null;
+    /** @type {any} the persistent <location-dialog>, created on first render */
+    this._locationDialog = null;
+    /** @type {{ flowType: string, launcher: EventTarget | null } | null} capture waiting on the prompt */
     this._locationPrompt = null;
-    this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
     /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
@@ -468,7 +470,7 @@ class TodayView extends HTMLElement {
     });
     this._restoreLogoutDialog();
     this._mountTicketDetailDialog();
-    this._wireLocationDialog();
+    this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -685,7 +687,6 @@ class TodayView extends HTMLElement {
         historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
-      dialogs: this._locationDialogMarkup(),
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
     });
@@ -864,7 +865,6 @@ class TodayView extends HTMLElement {
       }
       if (isOutsideSiteRadius(position, this._site?.location)) {
         this._locationPrompt = { flowType, launcher };
-        this._locationSelectedSiteId = this._siteId;
         this._showLocationDialog();
         return;
       }
@@ -1058,78 +1058,55 @@ class TodayView extends HTMLElement {
     this.querySelector(":scope > .home site-switcher")?.replaceWith(switcher);
   }
 
-  _locationDialogMarkup() {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site?.name || "Your site" }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.unshift({
-        siteId: this._siteId,
-        name: this._site?.name || "Your site",
-      });
-    }
-    return locationDialog({
-      siteName: this._site?.name || "this site",
-      sites,
-      currentSiteId: this._siteId,
-    });
-  }
-
-  _wireLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    if (!dialog) return;
-    dialog.addEventListener("close", () => {
-      const changingSite = this._locationSelectedSiteId !== this._siteId;
-      this._locationPrompt = null;
-      if (this._pendingLocationRender) {
-        this._pendingLocationRender = false;
-        if (!changingSite && this._viewPhase === "home" && this._homeModel) {
-          this._renderHome(this._homeModel);
-        }
-      }
-    });
-    dialog.querySelectorAll("[data-location-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this._locationSelectedSiteId =
-          button.getAttribute("data-location-site") || this._siteId;
-        dialog.querySelectorAll("[data-location-site]").forEach((option) => {
-          const selected =
-            option.getAttribute("data-location-site") ===
-            this._locationSelectedSiteId;
-          option.setAttribute("aria-pressed", String(selected));
-          const check = option.querySelector(".home-site-switcher__check");
-          if (check) check.textContent = selected ? "✓" : "";
-        });
-        const confirm = /** @type {HTMLButtonElement | null} */ (
-          dialog.querySelector("#location-confirm")
+  _mountLocationDialog() {
+    if (!this._locationDialog) {
+      const dialog = document.createElement("location-dialog");
+      dialog.addEventListener("locationclosed", (event) =>
+        this._onLocationDialogClosed(/** @type {CustomEvent} */ (event).detail),
+      );
+      dialog.addEventListener("locationconfirm", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
         );
-        if (confirm)
-          confirm.disabled = this._locationSelectedSiteId === this._siteId;
       });
-    });
-    dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
-      if (this._locationSelectedSiteId === this._siteId) return;
-      dialog.close();
-      void this._switchToSite(this._locationSelectedSiteId);
-    });
-    dialog.querySelector("#location-stay")?.addEventListener("click", () => {
-      const prompt = this._locationPrompt;
-      dialog.close();
-      if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
-    });
+      dialog.addEventListener("locationstay", (event) =>
+        this._onLocationStay(/** @type {CustomEvent} */ (event).detail),
+      );
+      this._locationDialog = dialog;
+    }
+    const dialog = this._locationDialog;
+    dialog.siteName = this._site?.name || "this site";
+    dialog.sites = this._providerSites;
+    dialog.currentSite = {
+      siteId: this._siteId,
+      name: this._site?.name || "Your site",
+    };
+    this.querySelector(":scope > .home location-dialog")?.replaceWith(dialog);
   }
 
   _showLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    dialog?.showModal();
-    /** @type {HTMLButtonElement | null} */ (
-      dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
-        null
-    )?.focus();
+    this._locationDialog?.open(this._locationPrompt);
+  }
+
+  /**
+   * The prompt closed (Stay, Confirm, Escape, backdrop). A home render that
+   * was deferred while it was open runs now, unless a site switch is about
+   * to replace the page anyway.
+   * @param {{ changingSite: boolean }} detail
+   */
+  _onLocationDialogClosed({ changingSite }) {
+    this._locationPrompt = null;
+    if (this._pendingLocationRender) {
+      this._pendingLocationRender = false;
+      if (!changingSite && this._viewPhase === "home" && this._homeModel) {
+        this._renderHome(this._homeModel);
+      }
+    }
+  }
+
+  /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
+  _onLocationStay({ prompt }) {
+    if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {

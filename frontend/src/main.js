@@ -61,6 +61,7 @@ import "./components/theme-toggle.js";
 import "./components/today-view.js";
 import "./components/ticket-detail-dialog.js";
 import "./components/site-switcher.js";
+import "./components/location-dialog.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";
