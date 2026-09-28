@@ -340,7 +340,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
     allowed_origins = distinct(concat(
       ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
       [for name in var.frontend_domain_names : "https://${name}"],
-      ["https://${aws_cloudfront_distribution.admin_frontend.domain_name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
       [for name in var.admin_domain_names : "https://${name}"],
     ))
     allowed_headers = ["*"]
