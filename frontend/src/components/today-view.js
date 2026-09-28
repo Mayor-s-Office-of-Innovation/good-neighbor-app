@@ -35,7 +35,6 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   rejectAnalysisCondition,
-  get311RequestDetail,
   get311RequestDetails,
 } from "../services/api.js";
 import {
@@ -88,7 +87,6 @@ import {
   appActionFailureMessage,
   isFiled311Completion,
 } from "../domain/task-actions.js";
-import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import {
   getCurrentCheck,
   hasDraft,
@@ -106,7 +104,6 @@ import {
   analysisActionPriority,
   sortAnalysisCards,
   taskAnalysisCard,
-  taskMediaUrl,
 } from "./analysis-results.templates.js";
 import {
   actionButton,
@@ -119,8 +116,8 @@ import {
   reasonPicker,
   siteSwitcher,
   summaryBlock,
-  ticketDetailDialog,
 } from "./today-view.templates.js";
+import "./ticket-detail-dialog.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
@@ -175,13 +172,10 @@ class TodayView extends HTMLElement {
     this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
-    this._ticketDetail = null;
-    this._ticketDetailState = "idle";
-    this._ticketDetailOpen = false;
-    this._ticketDetailTrigger = null;
+    /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
+    this._ticketDetailDialog = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
-    this._311DetailGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -517,7 +511,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
-    this._wire311Dialog();
+    this._mountTicketDetailDialog();
     this._wireLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -625,18 +619,9 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
-    const activeTask = tasks.find(
-      (task) => task.taskId === this._ticketDetailTask?.taskId,
+    this._ticketDetailDialog?.updateTask(
+      tasks.find((task) => task.taskId === this._ticketDetailDialog.taskId),
     );
-    if (activeTask) {
-      this._ticketDetailTask = activeTask;
-      if (this._ticketDetail) {
-        this._ticketDetail = {
-          ...this._ticketDetail,
-          mediaUrl: taskMediaUrl(activeTask),
-        };
-      }
-    }
     this._renderHome({ ...model, tasks });
   }
 
@@ -744,7 +729,7 @@ class TodayView extends HTMLElement {
         historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
-      dialogs: this._locationDialogMarkup() + " " + this._ticketDetailMarkup(),
+      dialogs: this._locationDialogMarkup(),
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
     });
@@ -755,83 +740,34 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _ticketDetailMarkup() {
-    return ticketDetailDialog({
-      detail: this._ticketDetail,
-      state: this._ticketDetailState,
-    });
-  }
-
-  _wire311Dialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#ticket-detail-dialog")
-    );
-    if (!dialog) return;
-    this._ticketDetailDialog = dialog;
-    dialog
-      .querySelector("[data-close-311]")
-      ?.addEventListener("click", () => dialog.close());
-    dialog.querySelector("[data-retry-311]")?.addEventListener("click", () => {
-      if (this._ticketDetailTask)
-        void this._load311Detail(this._ticketDetailTask);
-    });
-    dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) dialog.close();
-    });
-    dialog.addEventListener("close", () => {
-      this._ticketDetailOpen = false;
-      this._311DetailGeneration += 1;
-      const taskId = this._ticketDetailTask?.taskId;
-      const currentTrigger = taskId
-        ? this.querySelector(
-            `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
-          )
-        : null;
-      (currentTrigger || this._ticketDetailTrigger)?.focus?.();
-    });
-    if (this._ticketDetailOpen) dialog.showModal();
-  }
-
-  async _open311Detail(task, trigger) {
-    this._ticketDetailTask = this._tasksById.get(task.taskId) || task;
-    this._ticketDetailTrigger = trigger;
-    this._ticketDetailOpen = true;
-    this._ticketDetail = null;
-    await this._load311Detail(this._ticketDetailTask);
-  }
-
-  async _load311Detail(task) {
-    const ticket = submitted311Ticket(task);
-    if (!ticket) return;
-    const generation = ++this._311DetailGeneration;
-    const isCurrent = () =>
-      generation === this._311DetailGeneration &&
-      task.taskId === this._ticketDetailTask?.taskId &&
-      ticket.srNum === submitted311Ticket(this._ticketDetailTask)?.srNum;
-    this._ticketDetailState = "loading";
-    if (this._homeModel) this._renderHome(this._homeModel);
-    try {
-      const response = await get311RequestDetail(task.taskId, ticket.srNum);
-      if (!isCurrent()) return;
-      const request = response.request;
-      this._ticketDetail = {
-        ...request,
-        title:
-          task.userFriendlyLabel ||
-          task.user_friendly_label ||
-          task.category ||
-          task.analyzerCategory ||
-          request.problemType,
-        description: task.description || request.description || "",
-        location: ticketDetailLocation(task, this._site || {}, request),
-        mediaUrl: taskMediaUrl(task),
-      };
-      this._ticketDetailState = "ready";
-    } catch {
-      if (!isCurrent()) return;
-      this._ticketDetailState = "error";
+  _mountTicketDetailDialog() {
+    if (!this._ticketDetailDialog) {
+      const dialog = document.createElement("ticket-detail-dialog");
+      dialog.addEventListener("ticketdetailclosed", (event) => {
+        const { taskId, trigger } = /** @type {CustomEvent} */ (event).detail;
+        // The card that opened the sheet was re-rendered since; find its
+        // current button and fall back to the original trigger.
+        const current = taskId
+          ? this.querySelector(
+              `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
+            )
+          : null;
+        (current || trigger)?.focus?.();
+      });
+      this._ticketDetailDialog = dialog;
     }
-    if (this._homeModel) this._renderHome(this._homeModel);
+    this._ticketDetailDialog.site = this._site;
+    // Re-appending the same element keeps its state across innerHTML
+    // replacement; it restores its open state on reconnect.
+    this.querySelector(":scope > .home")?.append(this._ticketDetailDialog);
+  }
+
+  _open311Detail(task, trigger) {
+    this._mountTicketDetailDialog();
+    void this._ticketDetailDialog.open(
+      this._tasksById.get(task.taskId) || task,
+      trigger,
+    );
   }
 
   _closeSettingsMenu() {

@@ -59,6 +59,7 @@ import "./styles/app.css";
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
 import "./components/today-view.js";
+import "./components/ticket-detail-dialog.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";
