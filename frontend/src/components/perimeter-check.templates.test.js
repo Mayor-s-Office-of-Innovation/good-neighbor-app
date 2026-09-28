@@ -115,10 +115,10 @@ describe("photoGrid", () => {
   });
 
   it("renders a description immediately after the camera tile", () => {
-    const markup = photoGrid(
-      [{ id: "photo-1", dataUrl: "data:photo" }],
-      { id: "text-1", text: "Litter near the entrance" },
-    );
+    const markup = photoGrid([{ id: "photo-1", dataUrl: "data:photo" }], {
+      id: "text-1",
+      text: "Litter near the entrance",
+    });
 
     expect(markup.indexOf('id="add-photo"')).toBeLessThan(
       markup.indexOf('data-edit-description="text-1"'),
