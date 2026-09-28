@@ -1,6 +1,6 @@
 import { html, escapeHtml } from "../lib/html.js";
 import { analysisResultsTray } from "./analysis-results.templates.js";
-import { analysisDialogs } from "./perimeter-check.templates.js";
+import { analysisDialogs } from "./analysis-results.templates.js";
 
 export const shell = ({
   embedded = false,

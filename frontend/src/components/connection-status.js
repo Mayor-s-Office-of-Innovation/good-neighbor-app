@@ -16,6 +16,7 @@
   Rendered by app-root alongside app-toasts.
 */
 
+import "./connection-status.css";
 import { getHealthState, onHealthChange } from "../services/backend-health.js";
 import { clearSiteSession } from "../db.js";
 import { discardInMemorySession } from "../state/check-session.js";

@@ -1,7 +1,7 @@
 /*
   Styles for the dev guidance harness (guidance-harness.js). Imported from that
   module — which main.js only loads under import.meta.env.DEV — so none of this
-  ships in the production CSS bundle. Unlayered, like app.css, so it wins over
+  ships in the production CSS bundle. Unlayered, like base.css, so it wins over
   Web Awesome's @layer-ed native styles.
 */
 

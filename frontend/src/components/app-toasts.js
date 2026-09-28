@@ -1,3 +1,4 @@
+import "./app-toasts.css";
 import { getToasts, onToastsChange } from "../state/toasts.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 

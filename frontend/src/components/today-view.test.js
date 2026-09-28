@@ -144,7 +144,7 @@ describe("legacy review records", () => {
 
 describe("home task status helpers", () => {
   it("renders the empty To do panel with the single-issue action", async () => {
-    const { homeAllDonePanel } = await import("./today-view.js");
+    const { homeAllDonePanel } = await import("./today-view.templates.js");
     const markup = homeAllDonePanel();
 
     expect(markup).toContain("All done!");

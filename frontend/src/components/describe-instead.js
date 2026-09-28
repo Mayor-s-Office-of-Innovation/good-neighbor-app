@@ -8,6 +8,7 @@
  * description per check (docs/plan-remove-places.md): opening this screen
  * again edits the saved description, and saving a change replaces it.
  */
+import "./describe-instead.css";
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
 import {

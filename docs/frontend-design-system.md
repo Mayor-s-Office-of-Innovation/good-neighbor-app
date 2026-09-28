@@ -7,8 +7,10 @@
   and shadow, plus the light/dark values. **Never hard-code a hex; always use a token.**
   The full value table (light/dark, plus the WA-layer values) is in
   [design-tokens.md](./design-tokens.md) — the Figma ↔ code mapping.
-- [frontend/src/styles/app.css](../frontend/src/styles/app.css) — the component classes below,
-  grouped by screen with comments.
+- [frontend/src/styles/base.css](../frontend/src/styles/base.css) — the shared vocabulary
+  below (shell, `.screen`, buttons, forms, `.sheet`), with comments.
+- `frontend/src/components/<name>.css` — the classes one component renders, next to that
+  component and imported from its module. Add a new screen's classes there, not to base.css.
 - [frontend/design-system.html](../frontend/design-system.html) — the visual reference:
   every button state, live token swatches (light/dark), and our WA divergences, rendered
   with the real styles. Dev-only — run `npm run dev:frontend` and open
@@ -25,7 +27,7 @@ links, status, and active states. **Severity/status is never carried by color al
 and a text label lead, color only reinforces (WCAG 1.4.1). **Dark mode** is a token swap: light
 values live in `:root`, dark overrides in `html.wa-dark`. Web Awesome (WA) components re-theme
 off the same `.wa-dark`/`.wa-light` class, so one toggle re-themes our CSS and WA together
-(`app.css` is unlayered and WA's styles are `@layer`-ed, so our rules win the cascade).
+(`base.css` and the component sheets are unlayered and WA's styles are `@layer`-ed, so our rules win the cascade).
 
 ## Tokens you'll use most (from tokens.css)
 
@@ -103,7 +105,7 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 `data-loading` + `aria-busy="true"` + `disabled`, and snapshot the button's
 `offsetWidth` into an inline `--btn-loading-min-width` custom property; show a
 `<wa-spinner>` inside the label while loading; remove the attributes after. The
-`button[data-loading]` rule in `app.css` pins the width so the button never shifts.
+`button[data-loading]` rule in `base.css` pins the width so the button never shifts.
 (First instance: the login continue button.)
 
 ## Surfaces, text, status
@@ -150,7 +152,7 @@ component graph to production even when only a dev screen uses it.
 from the pieces above and adds **no new visual vocabulary**: hub-card archetype (`.home` >
 `.screen` > `.screen__sec`), a brand `.sitehead`, a `.hero` heading, `.btn-ink`/`.btn-outline`
 actions, and WA controls for the code field. The only setup-specific CSS is full-width CTAs and
-the "Don't have a code?" disclosure (`app.css`, "First-run setup"). That's the target shape for
+the "Don't have a code?" disclosure (`site-setup.css`, "First-run setup"). That's the target shape for
 a screen matched to the design without a mockup.
 
 ## Action notifications

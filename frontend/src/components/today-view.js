@@ -8,9 +8,10 @@
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
-  tasks are created. Markup is inline via the `html` tag; split into a
-  .templates.js file if it grows (see CLAUDE.md convention).
+  tasks are created. Markup lives in today-view.templates.js; this file owns
+  state, data loading, and DOM wiring.
 */
+import "./today-view.css";
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -20,7 +21,6 @@ import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
-import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
   activateSiteBinding,
   clearSiteSession,
@@ -30,13 +30,9 @@ import {
 import {
   listChecks,
   listTasks,
-  listProviderSites,
-  ApiError,
   completeTask,
   cannotDoTask,
   editAnalysisCondition,
-  rejectAnalysisCondition,
-  get311RequestDetail,
   get311RequestDetails,
 } from "../services/api.js";
 import {
@@ -50,7 +46,6 @@ import {
   HOME_TABS,
   captureAnimationFallbackMs,
   displayTaskId,
-  formatOverdueElapsed,
   hasProblemResults,
   homeTabForStatus,
   homeTaskStatus,
@@ -87,10 +82,14 @@ import {
 } from "../state/task-status-overrides.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {
+  missingConditionMessage,
+  problemFromCard,
+  rejectProblemCondition,
+} from "./analysis-problem-actions.js";
+import {
   appActionFailureMessage,
   isFiled311Completion,
 } from "../domain/task-actions.js";
-import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import {
   getCurrentCheck,
   hasDraft,
@@ -102,20 +101,29 @@ import {
   resumeOrStartCheck,
   resumeOrStartProblemReport,
   removeItem,
-  updateItemAnalysis,
+  rejectConditionLocally,
+  resolveConditionLocally,
 } from "../state/check-session.js";
 import {
-  analysisResultsTray,
   analysisActionPriority,
-  clearCheckCard,
-  historicalCheckTitle,
-  recentCheckTitle,
   sortAnalysisCards,
   taskAnalysisCard,
-  taskMediaUrl,
 } from "./analysis-results.templates.js";
+import {
+  actionButton,
+  captureRegion,
+  errorView,
+  heroBlock,
+  homeResults,
+  homeShell,
+  reasonPicker,
+  summaryBlock,
+} from "./today-view.templates.js";
+import "./ticket-detail-dialog.js";
+import "./site-switcher.js";
+import "./location-dialog.js";
+import { fetchProviderSites } from "../services/provider-sites.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
-import { analysisDialogs } from "./perimeter-check.templates.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
   getSiteCheckDeviceLocation,
@@ -123,34 +131,6 @@ import {
   onDeviceLocationChange,
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
-
-function ticketEventDescription(description) {
-  return description ? html`<p>${escapeHtml(description)}</p>` : "";
-}
-
-/** @returns {string} */
-export function homeAllDonePanel() {
-  return html`
-    <section
-      class="home-results__complete"
-      aria-labelledby="home-all-done-title"
-    >
-      <div class="home-results__complete-content">
-        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
-        <h2 id="home-all-done-title">All done!</h2>
-        <p>
-          Your site is in great shape. Nothing needs your attention right now.
-        </p>
-        <p class="home-results__complete-note">
-          <a href="/problem" data-start-capture="single-problem">
-            Add a problem
-          </a>
-          if we missed something.
-        </p>
-      </div>
-    </section>
-  `;
-}
 
 class TodayView extends HTMLElement {
   constructor() {
@@ -180,30 +160,28 @@ class TodayView extends HTMLElement {
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
-    this._siteSwitcherOpen = false;
-    this._siteDocumentClick = null;
+    /** @type {any} the persistent <site-switcher>, created on first render */
+    this._siteSwitcher = null;
     this._providerSites = [];
     this._providerSitesStatus = "idle";
     this._boundSites = [];
     this._providerName = "";
-    this._siteSwitchError = "";
     this._logoutDialog = null;
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
     this._deviceLocation = getLastDeviceLocation();
     this._locationUnsub = null;
+    /** @type {any} the persistent <location-dialog>, created on first render */
+    this._locationDialog = null;
+    /** @type {{ flowType: string, launcher: EventTarget | null } | null} capture waiting on the prompt */
     this._locationPrompt = null;
-    this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
-    this._ticketDetail = null;
-    this._ticketDetailState = "idle";
-    this._ticketDetailOpen = false;
-    this._ticketDetailTrigger = null;
+    /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
+    this._ticketDetailDialog = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
-    this._311DetailGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -215,8 +193,6 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
-    document.removeEventListener("click", this._siteDocumentClick);
-    this._siteDocumentClick = null;
     this._captureFinishedListening = false;
     this._locationUnsub?.();
     this._locationUnsub = null;
@@ -272,30 +248,13 @@ class TodayView extends HTMLElement {
       };
       document.addEventListener("click", this._settingsDocumentClick);
     }
-    if (!this._siteDocumentClick) {
-      this._siteDocumentClick = (event) => {
-        if (!this._siteSwitcherOpen) return;
-        const path = event.composedPath?.() || [];
-        if (
-          !path.some(
-            (node) =>
-              node instanceof Element &&
-              node.matches(".home-site-switcher, #lastlog-change-site"),
-          )
-        ) {
-          this._siteSwitcherOpen = false;
-          if (this._homeModel) this._renderHome(this._homeModel);
-        }
-      };
-      document.addEventListener("click", this._siteDocumentClick);
-    }
 
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
-      this._fetchProviderSites().catch((error) => {
+      fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
         return null;
       }),
@@ -493,37 +452,13 @@ class TodayView extends HTMLElement {
     this.querySelector("#home-settings")?.addEventListener("click", () =>
       this._toggleSettingsMenu(),
     );
-    this.querySelector("#site-switcher-trigger")?.addEventListener(
-      "click",
-      () => {
-        this._setSiteSwitcherOpen(!this._siteSwitcherOpen);
-      },
-    );
+    this._mountSiteSwitcher();
     this.querySelector("#lastlog-change-site")?.addEventListener(
       "click",
       () => {
-        this._setSiteSwitcherOpen(true);
+        this._siteSwitcher?.setOpen(true);
       },
     );
-    this.querySelector(".home-site-switcher")?.addEventListener(
-      "keydown",
-      (event) => {
-        if (/** @type {KeyboardEvent} */ (event).key !== "Escape") return;
-        this._siteSwitcherOpen = false;
-        this._renderHome(this._homeModel);
-        /** @type {HTMLElement | null} */ (
-          this.querySelector("#site-switcher-trigger")
-        )?.focus();
-      },
-    );
-    this.querySelectorAll("[data-switch-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        void this._switchToSite(button.getAttribute("data-switch-site") || "");
-      });
-    });
-    this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
-      void this._retryProviderSites();
-    });
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
@@ -539,8 +474,8 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
-    this._wire311Dialog();
-    this._wireLocationDialog();
+    this._mountTicketDetailDialog();
+    this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -647,18 +582,9 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
-    const activeTask = tasks.find(
-      (task) => task.taskId === this._ticketDetailTask?.taskId,
+    this._ticketDetailDialog?.updateTask(
+      tasks.find((task) => task.taskId === this._ticketDetailDialog.taskId),
     );
-    if (activeTask) {
-      this._ticketDetailTask = activeTask;
-      if (this._ticketDetail) {
-        this._ticketDetail = {
-          ...this._ticketDetail,
-          mediaUrl: taskMediaUrl(activeTask),
-        };
-      }
-    }
     this._renderHome({ ...model, tasks });
   }
 
@@ -741,128 +667,34 @@ class TodayView extends HTMLElement {
     const phaseClass = `home--${this._viewPhase}`;
     const resultsInactive = shouldInertHomeResults(this._viewPhase);
 
-    return html`
-      <div
-        class="home ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
-      >
-        <section class="home-region home-region--header">
-          <div class="home-top-actions">
-            <div class="home-settings-wrap">
-              <button
-                class="home-settings"
-                id="home-settings"
-                type="button"
-                aria-label="Settings"
-                aria-haspopup="menu"
-                aria-expanded="${this._settingsMenuOpen ? "true" : "false"}"
-              >
-                <span class="home-settings__icon" aria-hidden="true"></span>
-              </button>
-              ${this._settingsMenuOpen
-                ? html`<div
-                    class="home-settings-menu"
-                    role="menu"
-                    aria-label="Settings"
-                  >
-                    <button id="settings-logout" type="button" role="menuitem">
-                      <wa-icon
-                        name="arrow-right-from-bracket"
-                        aria-hidden="true"
-                      ></wa-icon>
-                      Logout
-                    </button>
-                    <a
-                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      role="menuitem"
-                      aria-label="Address data attribution (opens in a new tab)"
-                      >Address data attribution</a
-                    >
-                  </div>`
-                : ""}
-            </div>
-            <feedback-dialog class="feedback-dialog"></feedback-dialog>
-          </div>
-          <div
-            class="screen screen--today-hero"
-            role="group"
-            aria-label="Today"
-          >
-            ${showFirstRun
-              ? this._firstRunBlock()
-              : this._activityBlock({
-                  last,
-                  homeTasks,
-                })}
-          </div>
-        </section>
-
-        <section class="home-region home-region--capture" aria-live="polite">
-          ${captureVisible ? this._captureRegion() : ""}
-        </section>
-
-        <section
-          class="home-region home-region--results"
-          aria-label="Task results"
-          ${resultsInactive ? html`inert aria-hidden="true"` : ""}
-        >
-          ${this._homeResults({
-            pendingSession,
-            recentCheckTime:
-              newestCheck.time ||
-              pendingSession?.startedAt ||
-              last?.submittedAt ||
-              "",
-            checks,
-            recentItems: visibleRecentItems,
-            newTaskEntries,
-            visibleTasks,
-            activeClearCheck,
-            hasPendingClearResult,
-            historicalClearChecks,
-          })}
-        </section>
-        ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
-        ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
-        <dialog
-          class="places-modal logout-dialog"
-          id="logout-dialog"
-          aria-labelledby="logout-title"
-          aria-describedby="logout-copy"
-        >
-          <form class="places-modal__card" method="dialog">
-            <div class="places-modal__copy">
-              <h2 class="places-modal__title" id="logout-title">
-                Confirm you'd like to logout
-              </h2>
-              <p class="places-modal__text" id="logout-copy">
-                This will log you out and unlink this device: you'll need to
-                request a new code to access the app
-              </p>
-              ${this._logoutError
-                ? html`<p class="logout-dialog__error" role="alert">
-                    ${this._logoutError}
-                  </p>`
-                : ""}
-            </div>
-            <div class="places-modal__actions logout-dialog__actions">
-              <button
-                class="places-modal__primary logout-dialog__confirm"
-                id="logout-confirm"
-                type="button"
-                ${this._logoutPending ? "disabled" : ""}
-              >
-                ${this._logoutPending ? "Logging out..." : "Log me out"}
-              </button>
-              <button class="logout-dialog__cancel" type="submit">
-                Return to app
-              </button>
-            </div>
-          </form>
-        </dialog>
-      </div>
-    `;
+    return homeShell({
+      phaseClass,
+      captureVisible,
+      resultsInactive,
+      settingsMenuOpen: this._settingsMenuOpen,
+      hero: showFirstRun
+        ? this._firstRunBlock()
+        : this._activityBlock({ last, homeTasks }),
+      capture: captureVisible ? captureRegion({ flow: this._captureFlow }) : "",
+      results: this._homeResults({
+        pendingSession,
+        recentCheckTime:
+          newestCheck.time ||
+          pendingSession?.startedAt ||
+          last?.submittedAt ||
+          "",
+        checks,
+        recentItems: visibleRecentItems,
+        newTaskEntries,
+        visibleTasks,
+        activeClearCheck,
+        hasPendingClearResult,
+        historicalClearChecks,
+      }),
+      showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
+      logoutError: this._logoutError,
+      logoutPending: this._logoutPending,
+    });
   }
 
   _toggleSettingsMenu() {
@@ -870,252 +702,34 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _311DialogMarkup() {
-    const detail = this._ticketDetail;
-    const formatDate = (date) =>
-      date
-        ? new Intl.DateTimeFormat(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(new Date(date))
-        : "";
-    const formatRelativeDate = (date) => {
-      if (!date) return "";
-      const days = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
-      );
-      return days === 0
-        ? "today"
-        : days === 1
-          ? "1 day ago"
-          : `${days} days ago`;
-    };
-    return html` <dialog
-      class="ticket-detail"
-      id="ticket-detail-dialog"
-      aria-labelledby="ticket-detail-title"
-    >
-      <div class="ticket-detail__sheet">
-        <header class="ticket-detail__header">
-          <button
-            type="button"
-            class="btn-icon ticket-detail__close wa-plain"
-            data-close-311
-            aria-label="Close request details"
-          >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-          </button>
-        </header>
-        ${this._ticketDetailState === "loading"
-          ? html`<p role="status">Loading request updates…</p>`
-          : ""}
-        ${this._ticketDetailState === "error"
-          ? html`<div role="alert">
-              <p>We couldn't load the latest 311 updates.</p>
-              <button
-                type="button"
-                class="btn-outline btn-outline--sm"
-                data-retry-311
-              >
-                Try again
-              </button>
-            </div>`
-          : ""}
-        ${detail
-          ? html` <section
-                class="ticket-detail__summary"
-                aria-label="Request summary"
-              >
-                <p
-                  class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
-                    ? "overdue"
-                    : detail.status === "Closed"
-                      ? "closed"
-                      : "default"}"
-                >
-                  <span aria-hidden="true"></span>
-                  <span class="ticket-detail__type-label">311 request</span>
-                  <span class="ticket-detail__type-separator" aria-hidden="true"
-                    >·</span
-                  >
-                  <strong
-                    >${escapeHtml(detail.status)}${detail.statusDetail
-                      ? html`: ${escapeHtml(detail.statusDetail)}`
-                      : ""}</strong
-                  >
-                </p>
-                ${detail.location
-                  ? html`<p class="ticket-detail__location">
-                      ${escapeHtml(String(detail.location).split(/\r?\n|,/)[0])}
-                    </p>`
-                  : ""}
-                <h2 id="ticket-detail-title">
-                  ${escapeHtml(
-                    detail.title || detail.problemType || "Request details",
-                  )}
-                </h2>
-                ${detail.description
-                  ? html`<p class="ticket-detail__description">
-                      ${escapeHtml(detail.description)}
-                    </p>`
-                  : ""}
-                ${detail.mediaUrl
-                  ? html`<img
-                      class="ticket-detail__photo"
-                      src="${escapeAttr(detail.mediaUrl)}"
-                      alt="Evidence for ${escapeAttr(
-                        detail.title || detail.problemType || "the 311 request",
-                      )}"
-                    />`
-                  : html`<div
-                      class="ticket-detail__photo photo-placeholder"
-                      role="img"
-                      aria-label="No photo available"
-                    >
-                      <wa-icon name="image" aria-hidden="true"></wa-icon>
-                    </div>`}
-                <dl class="ticket-detail__metadata">
-                  ${detail.assignedAgency
-                    ? html`<div>
-                        <dt>Agency:</dt>
-                        <dd>${escapeHtml(detail.assignedAgency)}</dd>
-                      </div>`
-                    : ""}
-                  ${detail.submittedAt
-                    ? html`<div>
-                        <dt>Submitted:</dt>
-                        <dd>
-                          ${escapeHtml(formatRelativeDate(detail.submittedAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.expectedResponseAt
-                    ? html`<div>
-                        <dt>Response expected:</dt>
-                        <dd>
-                          ${escapeHtml(formatDate(detail.expectedResponseAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.closureReason
-                    ? html`<div>
-                        <dt>Closure reason:</dt>
-                        <dd>${escapeHtml(detail.closureReason)}</dd>
-                      </div>`
-                    : ""}
-                </dl>
-                ${detail.responseOverdue && detail.expectedResponseAt
-                  ? html`<p class="ticket-detail__overdue-message">
-                      The City's expected response time passed
-                      ${escapeHtml(
-                        formatOverdueElapsed(detail.expectedResponseAt),
-                      )}
-                      ago.
-                    </p>`
-                  : ""}
-              </section>
-              <section class="ticket-detail__updates">
-                <h3>Request updates</h3>
-                ${detail.events?.length
-                  ? html`<ol class="ticket-timeline">
-                      ${detail.events
-                        .map(
-                          (event) =>
-                            html`<li class="ticket-timeline__item">
-                              <div class="ticket-timeline__content">
-                                <strong>${escapeHtml(event.title)}</strong
-                                >${ticketEventDescription(event.description)}
-                                <time datetime="${escapeAttr(event.occurredAt)}"
-                                  >${escapeHtml(
-                                    formatDate(event.occurredAt),
-                                  )}</time
-                                >
-                              </div>
-                            </li>`,
-                        )
-                        .join("")}
-                    </ol>`
-                  : html`<p>No updates are available yet.</p>`}
-              </section>
-              <p class="ticket-detail__reference">
-                #${escapeHtml(detail.requestNumber)}
-              </p>`
-          : ""}
-      </div>
-    </dialog>`;
-  }
-
-  _wire311Dialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#ticket-detail-dialog")
-    );
-    if (!dialog) return;
-    this._ticketDetailDialog = dialog;
-    dialog
-      .querySelector("[data-close-311]")
-      ?.addEventListener("click", () => dialog.close());
-    dialog.querySelector("[data-retry-311]")?.addEventListener("click", () => {
-      if (this._ticketDetailTask)
-        void this._load311Detail(this._ticketDetailTask);
-    });
-    dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) dialog.close();
-    });
-    dialog.addEventListener("close", () => {
-      this._ticketDetailOpen = false;
-      this._311DetailGeneration += 1;
-      const taskId = this._ticketDetailTask?.taskId;
-      const currentTrigger = taskId
-        ? this.querySelector(
-            `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
-          )
-        : null;
-      (currentTrigger || this._ticketDetailTrigger)?.focus?.();
-    });
-    if (this._ticketDetailOpen) dialog.showModal();
-  }
-
-  async _open311Detail(task, trigger) {
-    this._ticketDetailTask = this._tasksById.get(task.taskId) || task;
-    this._ticketDetailTrigger = trigger;
-    this._ticketDetailOpen = true;
-    this._ticketDetail = null;
-    await this._load311Detail(this._ticketDetailTask);
-  }
-
-  async _load311Detail(task) {
-    const ticket = submitted311Ticket(task);
-    if (!ticket) return;
-    const generation = ++this._311DetailGeneration;
-    const isCurrent = () =>
-      generation === this._311DetailGeneration &&
-      task.taskId === this._ticketDetailTask?.taskId &&
-      ticket.srNum === submitted311Ticket(this._ticketDetailTask)?.srNum;
-    this._ticketDetailState = "loading";
-    if (this._homeModel) this._renderHome(this._homeModel);
-    try {
-      const response = await get311RequestDetail(task.taskId, ticket.srNum);
-      if (!isCurrent()) return;
-      const request = response.request;
-      this._ticketDetail = {
-        ...request,
-        title:
-          task.userFriendlyLabel ||
-          task.user_friendly_label ||
-          task.category ||
-          task.analyzerCategory ||
-          request.problemType,
-        description: task.description || request.description || "",
-        location: ticketDetailLocation(task, this._site || {}, request),
-        mediaUrl: taskMediaUrl(task),
-      };
-      this._ticketDetailState = "ready";
-    } catch {
-      if (!isCurrent()) return;
-      this._ticketDetailState = "error";
+  _mountTicketDetailDialog() {
+    if (!this._ticketDetailDialog) {
+      const dialog = document.createElement("ticket-detail-dialog");
+      dialog.addEventListener("ticketdetailclosed", (event) => {
+        const { taskId, trigger } = /** @type {CustomEvent} */ (event).detail;
+        // The card that opened the sheet was re-rendered since; find its
+        // current button and fall back to the original trigger.
+        const current = taskId
+          ? this.querySelector(
+              `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
+            )
+          : null;
+        (current || trigger)?.focus?.();
+      });
+      this._ticketDetailDialog = dialog;
     }
-    if (this._homeModel) this._renderHome(this._homeModel);
+    this._ticketDetailDialog.site = this._site;
+    // Re-appending the same element keeps its state across innerHTML
+    // replacement; it restores its open state on reconnect.
+    this.querySelector(":scope > .home")?.append(this._ticketDetailDialog);
+  }
+
+  _open311Detail(task, trigger) {
+    this._mountTicketDetailDialog();
+    void this._ticketDetailDialog.open(
+      this._tasksById.get(task.taskId) || task,
+      trigger,
+    );
   }
 
   _closeSettingsMenu() {
@@ -1146,16 +760,6 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _captureRegion() {
-    return html`
-      <div class="home-capture">
-        ${this._captureFlow === "single-problem"
-          ? html`<problem-report embedded></problem-report>`
-          : html`<perimeter-check embedded></perimeter-check>`}
-      </div>
-    `;
-  }
-
   _homeResults({
     pendingSession,
     recentCheckTime,
@@ -1168,72 +772,35 @@ class TodayView extends HTMLElement {
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
-    const hasVisibleCards =
-      recentItems.length ||
-      newTaskEntries.length ||
-      visibleTasks.length ||
-      Boolean(activeClearCheck) ||
-      historicalClearChecks.length;
-    return html`
-      <div class="home-results">
-        ${hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : activeClearCheck && !recentItems.length && !newTaskEntries.length
-            ? this._clearCheckTray(activeClearCheck, true)
-            : ""}
-        ${this._taskTabs()}
-        ${recentItems.length && !hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : ""}
-        ${newTaskEntries.length && !recentItems.length
-          ? this._newTaskCards(newTaskEntries, recentCheckTime)
-          : ""}
-        ${visibleTasks.length || historicalClearChecks.length
-          ? html`
-              <div class="home-results__cards">
-                ${this._historicalTaskGroups(
-                  visibleTasks,
-                  checks,
-                  historicalClearChecks,
-                )}
-              </div>
-            `
-          : ""}
-        ${!hasVisibleCards
-          ? this._homeFilter === "todo" && !pendingSession
-            ? homeAllDonePanel()
-            : html`<p class="home-results__empty" role="status">
-                ${this._homeFilter === "todo"
-                  ? "No tasks to do."
-                  : this._homeFilter === "in_progress"
-                    ? "No tasks in progress."
-                    : "No task history yet."}
-              </p>`
-          : ""}
-      </div>
-    `;
+    return homeResults({
+      homeFilter: this._homeFilter,
+      siteName: this._site?.name || "",
+      siteAddress: this._site?.address || "",
+      pendingSessionId: pendingSession?.id || "",
+      hasPendingSession: Boolean(pendingSession),
+      recentCheckTime,
+      recentItems,
+      newTaskCards,
+      newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
+        .map((card) => card.markup)
+        .join(""),
+      newTaskCount: newTaskEntries.length,
+      activeClearCheck,
+      hasPendingClearResult,
+      historyGroups: this._historyGroups(
+        visibleTasks,
+        checks,
+        historicalClearChecks,
+      ),
+    });
   }
 
   _newTaskCardEntries(entries) {
-    return entries.map((entry) => ({
+    return entries.map((entry) => this._taskCardEntry(entry, true));
+  }
+
+  _taskCardEntry(entry, isNew) {
+    return {
       markup: taskAnalysisCard({
         task: this._taskWith311CardStatus({
           ...entry.task,
@@ -1248,55 +815,21 @@ class TodayView extends HTMLElement {
                 submitted311Ticket(entry.task)
               ? { kind: "view311", label: "View details", variant: "outline" }
               : null,
-        statusLabel: this._newTaskStatusMeta(entry),
-        isNew: true,
+        statusLabel: isNew
+          ? this._newTaskStatusMeta(entry)
+          : this._taskStatusMeta(entry),
+        isNew,
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
-    }));
+    };
   }
 
-  _newTaskCards(entries, checkTime = "") {
-    return html`
-      <section
-        class="analysis-tray analysis-tray--new analysis-tray--recent"
-        aria-label="New analysis results"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">
-            ${escapeHtml(recentCheckTitle(checkTime))}
-          </h2>
-          ${sortAnalysisCards(this._newTaskCardEntries(entries))
-            .map((card) => card.markup)
-            .join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  _clearCheckTray(check, recent = false) {
-    const checkTime = check.submittedAt || check.startedAt || "";
-    const title = recent
-      ? recentCheckTitle(checkTime)
-      : historicalCheckTitle(checkTime);
-    return html`
-      <section
-        class="analysis-tray ${recent
-          ? "analysis-tray--new analysis-tray--recent"
-          : "analysis-tray--history"}"
-        aria-label="${escapeAttr(title)}"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
-          ${clearCheckCard()}
-        </div>
-      </section>
-    `;
-  }
-
-  _historicalTaskGroups(entries, checks, clearChecks = []) {
+  // One history tray per past check, newest first. A clear check (no
+  // findings) gets an entry with no cards so its tray shows the clear card.
+  _historyGroups(entries, checks, clearChecks = []) {
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
     );
@@ -1315,57 +848,14 @@ class TodayView extends HTMLElement {
         const bTime = checkTimes.get(b[0]) || b[1][0]?.createdAt || "";
         return String(bTime).localeCompare(String(aTime));
       })
-      .map(([checkId, group]) => {
-        const checkTime =
-          checkTimes.get(checkId) || group[0]?.createdAt || new Date();
-        return html`
-          <section
-            class="analysis-tray analysis-tray--history"
-            aria-label="${escapeAttr(historicalCheckTitle(checkTime))}"
-          >
-            <div class="analysis-tray__cards">
-              <h2 class="analysis-tray__check-title">
-                ${escapeHtml(historicalCheckTitle(checkTime))}
-              </h2>
-              ${group.length
-                ? sortAnalysisCards(
-                    group.map((entry) => ({
-                      markup: taskAnalysisCard({
-                        task: this._taskWith311CardStatus({
-                          ...entry.task,
-                          createdAt: entry.createdAt,
-                          siteAddress:
-                            entry.task.siteAddress || this._site?.address || "",
-                        }),
-                        siteName: this._site?.name || "",
-                        action:
-                          entry.homeStatus === "needs_action"
-                            ? this._primaryCardAction(entry.task)
-                            : entry.homeStatus === "in_progress" &&
-                                submitted311Ticket(entry.task)
-                              ? {
-                                  kind: "view311",
-                                  label: "View details",
-                                  variant: "outline",
-                                }
-                              : null,
-                        statusLabel: this._taskStatusMeta(entry),
-                        isNew: false,
-                        includeControls: entry.homeStatus === "needs_action",
-                      }),
-                      createdAt: entry.createdAt,
-                      needsAnswer: Boolean(entry.task.needsAnswer),
-                      actionPriority: analysisActionPriority(entry.task),
-                    })),
-                  )
-                    .map((card) => card.markup)
-                    .join("")
-                : clearCheckCard()}
-            </div>
-          </section>
-        `;
-      })
-      .join("");
+      .map(([checkId, group]) => ({
+        checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        cards: sortAnalysisCards(
+          group.map((entry) => this._taskCardEntry(entry, false)),
+        )
+          .map((card) => card.markup)
+          .join(""),
+      }));
   }
 
   async _startCapture(flowType, launcher = null) {
@@ -1380,7 +870,6 @@ class TodayView extends HTMLElement {
       }
       if (isOutsideSiteRadius(position, this._site?.location)) {
         this._locationPrompt = { flowType, launcher };
-        this._locationSelectedSiteId = this._siteId;
         this._showLocationDialog();
         return;
       }
@@ -1504,67 +993,16 @@ class TodayView extends HTMLElement {
 
   _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
-    return html`
-      <div class="screen__sec home-lead">
-        ${this._siteSwitcher(identity.org)}
-        <div class="home-identity home-identity--with-summary">
-          <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-          ${this._summaryBlock(last, homeTasks)}
-        </div>
-        ${this._homeActions({
-          checkLabel: this._checkActionLabel(),
-          reportLabel: "Flag a single issue",
-        })}
-      </div>
-    `;
+    return heroBlock({
+      siteName: identity.site,
+      summary: this._summaryBlock(last, homeTasks),
+      checkLabel: this._checkActionLabel(),
+      reportLabel: "Flag a single issue",
+    });
   }
 
   _checkActionLabel() {
     return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
-  }
-
-  _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {
-    return html`
-      <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
-        <button id="start-check" class="btn-ink" type="button">
-          ${escapeHtml(checkLabel)}
-        </button>
-        <button id="report-problem" class="btn-outline" type="button">
-          ${escapeHtml(reportLabel)}
-        </button>
-      </div>
-    `;
-  }
-
-  async _fetchProviderSites() {
-    const sites = new Map();
-    const seenCursors = new Set();
-    let cursor = "";
-    let providerId = "";
-    let providerName = "";
-    do {
-      const page = await listProviderSites(cursor);
-      if (!page || !Array.isArray(page.sites)) {
-        throw new Error("Invalid provider sites response");
-      }
-      if (providerId && page.providerId !== providerId) {
-        throw new Error("Provider changed during site listing");
-      }
-      providerId = String(page.providerId || "");
-      providerName = String(page.providerName || providerName);
-      for (const site of page.sites) {
-        if (site?.siteId) sites.set(site.siteId, site);
-      }
-      cursor = page.nextCursor || "";
-      if (cursor && seenCursors.has(cursor)) {
-        throw new Error("Repeated provider sites cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    return {
-      providerName,
-      sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    };
   }
 
   async _retryProviderSites() {
@@ -1573,7 +1011,7 @@ class TodayView extends HTMLElement {
     this._providerSitesStatus = "loading";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
-      const catalog = await this._fetchProviderSites();
+      const catalog = await fetchProviderSites();
       if (requestedSiteId !== this._siteId) return;
       this._providerSites = catalog.sites;
       this._providerName =
@@ -1602,223 +1040,92 @@ class TodayView extends HTMLElement {
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
-  _siteSwitcher(providerName) {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site.name }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.push({ siteId: this._siteId, name: this._site.name });
-    }
-    return html`
-      <div class="home-site-switcher">
-        <button
-          id="site-switcher-trigger"
-          class="home-site-switcher__trigger"
-          type="button"
-          aria-expanded="${this._siteSwitcherOpen ? "true" : "false"}"
-          aria-controls="site-switcher-list"
-        >
-          <span>${escapeHtml(providerName || "Your provider")}</span>
-          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-        </button>
-        ${this._siteSwitcherOpen
-          ? html`<div id="site-switcher-list" class="home-site-switcher__menu">
-              ${sites
-                .map(
-                  (site) =>
-                    html`<button
-                      class="home-site-switcher__item ${site.siteId ===
-                      this._siteId
-                        ? "home-site-switcher__item--selected"
-                        : ""}"
-                      type="button"
-                      data-switch-site="${escapeAttr(site.siteId)}"
-                      ${site.siteId === this._siteId
-                        ? 'aria-current="page"'
-                        : ""}
-                    >
-                      <span class="home-site-switcher__check" aria-hidden="true"
-                        >${site.siteId === this._siteId ? "✓" : ""}</span
-                      >
-                      <span>${escapeHtml(site.name)}</span>
-                    </button>`,
-                )
-                .join("")}
-              ${this._siteSwitchError
-                ? html`<p class="home-site-switcher__error" role="alert">
-                    ${escapeHtml(this._siteSwitchError)}
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "loading"
-                ? html`<p class="home-site-switcher__status" role="status">
-                    Loading sites…
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "error"
-                ? html`<div class="home-site-switcher__failure">
-                    <p role="alert">Other sites couldn't load.</p>
-                    <button id="site-catalog-retry" type="button">Retry</button>
-                  </div>`
-                : ""}
-            </div>`
-          : ""}
-      </div>
-    `;
-  }
-
-  _setSiteSwitcherOpen(open) {
-    this._siteSwitcherOpen = open;
-    this._siteSwitchError = "";
-    this._renderHome(this._homeModel);
-    /** @type {HTMLElement | null} */ (
-      this.querySelector("#site-switcher-trigger")
-    )?.focus();
-  }
-
-  _locationDialogMarkup() {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site?.name || "Your site" }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.unshift({
-        siteId: this._siteId,
-        name: this._site?.name || "Your site",
-      });
-    }
-    return html`<dialog
-      class="location-dialog"
-      id="location-dialog"
-      aria-labelledby="location-dialog-title"
-      aria-describedby="location-dialog-copy"
-    >
-      <div class="location-dialog__card">
-        <div class="location-dialog__copy">
-          <h2 id="location-dialog-title">
-            Is your app set to the right location?
-          </h2>
-          <p id="location-dialog-copy">
-            It looks like you're not near
-            ${escapeHtml(this._site?.name || "this site")}. Consider changing
-            your app's site.
-          </p>
-        </div>
-        <div
-          class="location-dialog__sites"
-          role="group"
-          aria-label="Choose a site"
-        >
-          ${sites
-            .map(
-              (site) =>
-                html`<button
-                  class="home-site-switcher__item location-dialog__site"
-                  appearance="plain"
-                  type="button"
-                  data-location-site="${escapeAttr(site.siteId)}"
-                  aria-pressed="${site.siteId === this._siteId
-                    ? "true"
-                    : "false"}"
-                >
-                  <span class="home-site-switcher__check" aria-hidden="true"
-                    >${site.siteId === this._siteId ? "✓" : ""}</span
-                  >
-                  <span>${escapeHtml(site.name)}</span>
-                </button>`,
-            )
-            .join("")}
-        </div>
-        <div class="location-dialog__actions">
-          <button
-            class="location-dialog__confirm"
-            appearance="plain"
-            id="location-confirm"
-            type="button"
-            disabled
-          >
-            Confirm site change
-          </button>
-          <button
-            class="location-dialog__stay"
-            appearance="plain"
-            id="location-stay"
-            type="button"
-          >
-            I'm in the right location
-          </button>
-        </div>
-      </div>
-    </dialog>`;
-  }
-
-  _wireLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    if (!dialog) return;
-    dialog.addEventListener("close", () => {
-      const changingSite = this._locationSelectedSiteId !== this._siteId;
-      this._locationPrompt = null;
-      if (this._pendingLocationRender) {
-        this._pendingLocationRender = false;
-        if (!changingSite && this._viewPhase === "home" && this._homeModel) {
-          this._renderHome(this._homeModel);
-        }
-      }
-    });
-    dialog.querySelectorAll("[data-location-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this._locationSelectedSiteId =
-          button.getAttribute("data-location-site") || this._siteId;
-        dialog.querySelectorAll("[data-location-site]").forEach((option) => {
-          const selected =
-            option.getAttribute("data-location-site") ===
-            this._locationSelectedSiteId;
-          option.setAttribute("aria-pressed", String(selected));
-          const check = option.querySelector(".home-site-switcher__check");
-          if (check) check.textContent = selected ? "✓" : "";
-        });
-        const confirm = /** @type {HTMLButtonElement | null} */ (
-          dialog.querySelector("#location-confirm")
+  _mountSiteSwitcher() {
+    if (!this._siteSwitcher) {
+      const switcher = document.createElement("site-switcher");
+      switcher.addEventListener("switchsite", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
         );
-        if (confirm)
-          confirm.disabled = this._locationSelectedSiteId === this._siteId;
       });
-    });
-    dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
-      if (this._locationSelectedSiteId === this._siteId) return;
-      dialog.close();
-      void this._switchToSite(this._locationSelectedSiteId);
-    });
-    dialog.querySelector("#location-stay")?.addEventListener("click", () => {
-      const prompt = this._locationPrompt;
-      dialog.close();
-      if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
-    });
+      switcher.addEventListener("retrysites", () => {
+        void this._retryProviderSites();
+      });
+      this._siteSwitcher = switcher;
+    }
+    const switcher = this._siteSwitcher;
+    switcher.providerName = this._siteIdentity().org;
+    switcher.sites = this._providerSites;
+    switcher.currentSite = { siteId: this._siteId, name: this._site?.name };
+    switcher.status = this._providerSitesStatus;
+    // Swapping the same instance in for the placeholder keeps its open state
+    // across innerHTML replacement.
+    this.querySelector(":scope > .home site-switcher")?.replaceWith(switcher);
+  }
+
+  _mountLocationDialog() {
+    if (!this._locationDialog) {
+      const dialog = document.createElement("location-dialog");
+      dialog.addEventListener("locationclosed", (event) =>
+        this._onLocationDialogClosed(/** @type {CustomEvent} */ (event).detail),
+      );
+      dialog.addEventListener("locationconfirm", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
+        );
+      });
+      dialog.addEventListener("locationstay", (event) =>
+        this._onLocationStay(/** @type {CustomEvent} */ (event).detail),
+      );
+      this._locationDialog = dialog;
+    }
+    const dialog = this._locationDialog;
+    dialog.siteName = this._site?.name || "this site";
+    dialog.sites = this._providerSites;
+    dialog.currentSite = {
+      siteId: this._siteId,
+      name: this._site?.name || "Your site",
+    };
+    this.querySelector(":scope > .home location-dialog")?.replaceWith(dialog);
   }
 
   _showLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    dialog?.showModal();
-    /** @type {HTMLButtonElement | null} */ (
-      dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
-        null
-    )?.focus();
+    this._locationDialog?.open(this._locationPrompt);
+  }
+
+  /**
+   * The prompt closed (Stay, Confirm, Escape, backdrop). A home render that
+   * was deferred while it was open runs now, unless a site switch is about
+   * to replace the page anyway.
+   * @param {{ changingSite: boolean }} detail
+   */
+  _onLocationDialogClosed({ changingSite }) {
+    this._locationPrompt = null;
+    if (this._pendingLocationRender) {
+      this._pendingLocationRender = false;
+      if (!changingSite && this._viewPhase === "home" && this._homeModel) {
+        this._renderHome(this._homeModel);
+      }
+    }
+  }
+
+  /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
+  _onLocationStay({ prompt }) {
+    if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "Wait for this check to finish analyzing before switching sites.",
+      );
       return;
     }
     try {
       if (active) await pauseCheck();
       discardInMemorySession();
-      this._siteSwitcherOpen = false;
+      this._siteSwitcher?.close();
       this.dispatchEvent(
         new CustomEvent("siterequested", {
           bubbles: true,
@@ -1827,16 +1134,15 @@ class TodayView extends HTMLElement {
       );
     } catch (error) {
       console.error("site switch preparation failed", error);
-      this._siteSwitchError =
-        "We couldn't save this check before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "We couldn't save this check before switching sites.",
+      );
     }
   }
 
   async _switchToSite(siteId) {
     if (!siteId || siteId === this._siteId) {
-      this._siteSwitcherOpen = false;
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.close();
       return;
     }
     const target = this._providerSites.find((site) => site.siteId === siteId);
@@ -1849,9 +1155,9 @@ class TodayView extends HTMLElement {
     }
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError(
+        "Wait for this check to finish analyzing before switching sites.",
+      );
       return;
     }
     try {
@@ -1865,35 +1171,18 @@ class TodayView extends HTMLElement {
       window.location.assign("/today");
     } catch (error) {
       console.error("site switch failed", error);
-      this._siteSwitchError = "We couldn't switch sites. Try again.";
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.showError("We couldn't switch sites. Try again.");
     }
   }
 
-  // Last submitted check only: its recorded issue count and remaining actions.
   _summaryBlock(last, homeTasks) {
-    if (isOutsideSiteRadius(this._deviceLocation, this._site?.location)) {
-      return html`<div class="lastlog">
-        <p class="lastlog__eyebrow">
-          Looks like you're not near this site.
-          <button
-            id="lastlog-change-site"
-            class="lastlog__switch"
-            type="button"
-            appearance="plain"
-          >
-            Change the site
-          </button>
-        </p>
-      </div>`;
-    }
-    const label = lastLogSummary(last, homeTasks);
-    if (!label) return "";
-    return html`
-      <div class="lastlog">
-        <p class="lastlog__eyebrow">${escapeHtml(label)}</p>
-      </div>
-    `;
+    return summaryBlock({
+      outsideRadius: isOutsideSiteRadius(
+        this._deviceLocation,
+        this._site?.location,
+      ),
+      label: lastLogSummary(last, homeTasks),
+    });
   }
 
   _sessionItems(session) {
@@ -1914,27 +1203,6 @@ class TodayView extends HTMLElement {
         ),
         isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
       }));
-  }
-
-  _taskTabs() {
-    return html`
-      <div class="home-tabs" role="group" aria-label="Filter tasks">
-        ${HOME_TABS.map(
-          (tab) => html`
-            <button
-              class="home-tabs__tab ${tab.id === this._homeFilter
-                ? "home-tabs__tab--active"
-                : ""}"
-              type="button"
-              aria-pressed="${tab.id === this._homeFilter ? "true" : "false"}"
-              data-home-filter="${escapeAttr(tab.id)}"
-            >
-              ${escapeHtml(tab.label)}
-            </button>
-          `,
-        ).join("")}
-      </div>
-    `;
   }
 
   _activateHomeTab(tabId) {
@@ -1987,58 +1255,6 @@ class TodayView extends HTMLElement {
   _newTaskStatusMeta(entry) {
     const id = displayTaskId(entry.task);
     return id ? `NEW • ${id}` : "NEW";
-  }
-
-  // A boxed worklist group (design "D2 boxed groups"). Omitted when empty.
-  _group(title, items, className) {
-    if (!items.length) return "";
-    return html`
-      <section class="worklist__group ${className}">
-        <h2 class="worklist__label">${escapeHtml(title)}</h2>
-        <div class="worklist__cards">
-          ${items.map((t) => this._actionCard(t)).join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  // A single open task, rendered from its real TASK# fields: when it was flagged,
-  // the guidance label, the guidance text, and the task's own action buttons.
-  _actionCard(task) {
-    const when = task.createdAt
-      ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
-      : "";
-    const title =
-      task.userFriendlyLabel ||
-      task.user_friendly_label ||
-      task.label ||
-      task.category ||
-      "Finding";
-    const detail = task.guidance || task.category || "";
-    const category = task.category || "";
-    const actions = this._cardActions(task);
-    return html`
-      <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
-        <div class="actioncard__body">
-          ${when
-            ? html`<span class="actioncard__time">${escapeHtml(when)}</span>`
-            : ""}
-          <h3 class="actioncard__title">${escapeHtml(title)}</h3>
-          ${detail
-            ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
-            : ""}
-          ${category
-            ? html`<p class="actioncard__category">${escapeHtml(category)}</p>`
-            : ""}
-        </div>
-        ${actions.length
-          ? html`<div class="actioncard__actions">
-              ${actions.map((a) => this._actionButton(a)).join("")}
-            </div>`
-          : ""}
-        <p class="actioncard__error" role="alert" hidden></p>
-      </div>
-    `;
   }
 
   // Resolve a task's persisted actions into the concrete controls this screen
@@ -2104,32 +1320,6 @@ class TodayView extends HTMLElement {
     return null;
   }
 
-  _actionButton(a) {
-    const cls =
-      a.variant === "ink"
-        ? "btn-ink btn-ink--sm"
-        : a.variant === "blue"
-          ? "btn-blue btn-blue--sm"
-          : "btn-outline btn-outline--sm";
-    // Link-style actions render as native anchors with no data-action, so the
-    // click wiring skips them and the browser handles the URL.
-    if (a.href) {
-      return html`<a class="${cls}" href="${a.href}"
-        >${escapeHtml(a.label)}</a
-      >`;
-    }
-    // An email whose target isn't known yet: surface the instruction but keep
-    // it non-interactive rather than misdialing or opening an empty composer.
-    if (a.kind === "email") {
-      return html`<button type="button" class="${cls}" disabled>
-        ${escapeHtml(a.label)}
-      </button>`;
-    }
-    return html`<button type="button" class="${cls}" data-action="${a.kind}">
-      ${escapeHtml(a.label)}
-    </button>`;
-  }
-
   _wireCards() {
     this.querySelectorAll(
       ":scope > .home > .home-region--results [data-task-id]",
@@ -2192,18 +1382,18 @@ class TodayView extends HTMLElement {
     removeItem(problem.itemId);
   }
 
+  // Home cards may be backed by a backend task; fill any coordinates the
+  // card markup lacks from the task record.
   _problemFromCard(card, task = null) {
+    const base = problemFromCard(card);
     return {
-      itemId: card.getAttribute("data-item-id") || "",
-      checkId: card.getAttribute("data-check-id") || task?.checkId || "",
+      ...base,
+      checkId: base.checkId || task?.checkId || "",
       artifactId:
-        card.getAttribute("data-artifact-id") ||
-        (task ? taskArtifactIds(task)[0] : "") ||
-        "",
-      taskId: card.getAttribute("data-task-id") || task?.taskId || "",
-      conditionId:
-        card.getAttribute("data-condition-id") || task?.conditionId || "",
-      actionKind: card.getAttribute("data-action-kind") || task?.kind || "",
+        base.artifactId || (task ? taskArtifactIds(task)[0] : "") || "",
+      taskId: base.taskId || task?.taskId || "",
+      conditionId: base.conditionId || task?.conditionId || "",
+      actionKind: base.actionKind || task?.kind || "",
       title:
         card.getAttribute("data-card-title") || task?.category || "problem",
       description:
@@ -2240,7 +1430,7 @@ class TodayView extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
-        "This result is missing its original evidence coordinates, so it cannot be deleted. Take a new photo and try again.",
+        missingConditionMessage(problem, "deleted"),
       );
       return;
     }
@@ -2256,39 +1446,15 @@ class TodayView extends HTMLElement {
       await deleteAnalysisCard(
         this,
         problem,
-        async () => {
-          let result;
-          try {
-            result = await rejectAnalysisCondition(
-              problem.checkId,
-              problem.artifactId,
-              problem.conditionId,
-              {
-                reason: { key: "not_a_problem" },
-                ...(problem.taskId ? { taskId: problem.taskId } : {}),
-                caller: { request_id: this._requestId("delete", problem) },
-              },
-            );
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            if (getCurrentCheck()?.id === problem.checkId)
-              this._deleteProblemLocally(problem);
-            return;
-          }
-          if (!result?.assessment) {
-            this._deleteProblemLocally(problem);
-            return;
-          }
-          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
-            await refreshEvidenceAnalysis(problem.itemId, result, {
-              rejectedConditionId: problem.conditionId,
-            }).catch((error) => {
-              console.error("refresh after saved deletion failed", error);
+        () =>
+          rejectProblemCondition(problem, {
+            requestId: this._requestId("delete", problem),
+            deleteLocally: () => this._deleteProblemLocally(problem),
+            onRefreshFailure: () => {
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
-            });
-          }
-        },
+            },
+          }),
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
@@ -2327,7 +1493,7 @@ class TodayView extends HTMLElement {
       if (!problem.itemId) {
         this._setDialogError(
           "analysis-edit-error",
-          "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+          missingConditionMessage(problem, "edited"),
         );
         return;
       }
@@ -2355,7 +1521,7 @@ class TodayView extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-edit-error",
-        "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+        missingConditionMessage(problem, "edited"),
       );
       return;
     }
@@ -2393,17 +1559,7 @@ class TodayView extends HTMLElement {
   }
 
   _deleteProblemLocally(problem) {
-    if (!problem.itemId) return;
-    const item = this._sessionItem(problem);
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item?.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      rejectedConditionIds: [
-        ...(item?.analysis?.rejectedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
+    rejectConditionLocally(problem);
   }
 
   async _resolveAnalysisProblem(problem) {
@@ -2480,18 +1636,7 @@ class TodayView extends HTMLElement {
   }
 
   _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
-    if (problem.itemId) {
-      const item = this._sessionItem(problem);
-      updateItemAnalysis(problem.itemId, {
-        tasks: (item?.analysis?.tasks || []).filter(
-          (task) => task.taskId !== problem.taskId,
-        ),
-        resolvedConditionIds: [
-          ...(item?.analysis?.resolvedConditionIds || []),
-          problem.conditionId,
-        ].filter(Boolean),
-      });
-    }
+    if (problem.itemId) resolveConditionLocally(problem);
     if (problem.taskId && taskStatus) {
       this._setTaskOverride(problem.taskId, taskStatus);
     }
@@ -2595,28 +1740,7 @@ class TodayView extends HTMLElement {
     );
     if (!actions) return;
     const reasons = task.cannotDoReasons || [];
-    actions.innerHTML = html`
-      ${reasons
-        .map(
-          (r) =>
-            html`<button
-              type="button"
-              class="btn-outline btn-outline--sm"
-              data-action="cant-reason"
-              data-reason="${escapeHtml(r)}"
-            >
-              ${escapeHtml(r)}
-            </button>`,
-        )
-        .join("")}
-      <button
-        type="button"
-        class="home-cta__link actioncard__cancel"
-        data-action="cant-cancel"
-      >
-        Cancel
-      </button>
-    `;
+    actions.innerHTML = reasonPicker({ reasons });
     this._wireCardButtons(card, task);
   }
 
@@ -2626,7 +1750,7 @@ class TodayView extends HTMLElement {
     );
     if (!actions) return;
     actions.innerHTML = this._cardActions(task)
-      .map((a) => this._actionButton(a))
+      .map((a) => actionButton(a))
       .join("");
     this._wireCardButtons(card, task);
   }
@@ -2682,31 +1806,7 @@ class TodayView extends HTMLElement {
       return;
     }
     const identity = this._siteIdentity();
-    this.innerHTML = html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          <div class="screen__sec home-lead">
-            <div class="home-identity">
-              ${identity.org
-                ? html`<p class="home-identity__org">
-                    ${escapeHtml(identity.org)}
-                  </p>`
-                : ""}
-              <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-            </div>
-            <div class="lastlog">
-              <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
-              <p class="lastlog__summary">Checks are unavailable</p>
-            </div>
-            <div class="home-actions">
-              <button id="retry" class="btn-ink" type="button">
-                Try again
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+    this.innerHTML = errorView({ identity });
     this.querySelector("#retry")?.addEventListener("click", () =>
       this.connectedCallback(),
     );

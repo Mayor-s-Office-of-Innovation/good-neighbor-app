@@ -1,0 +1,237 @@
+/*
+  Styles for <site-setup> (site-setup.js): the code-entry / request-a-code login
+  screen and first-run setup.
+  Imported from that module; main.js loads tokens.css and base.css first, so
+  these rules follow the shared base in the bundle. Unlayered, like base.css.
+*/
+
+.login {
+  flex: 1 0 auto;
+  display: grid;
+  align-items: safe center;
+  justify-items: center;
+  background: var(--surface);
+  color: var(--text);
+  padding: 2rem 1rem;
+}
+
+.login__panel {
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  text-align: center;
+}
+
+.login__mark {
+  width: 160px;
+  height: 160px;
+  border-radius: 4px;
+  background-color: var(--surface-2);
+  background-image: linear-gradient(
+      45deg,
+      var(--surface-3) 25%,
+      transparent 25%
+    ),
+    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+
+.login__copy h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 40px;
+}
+
+.login__copy p {
+  max-width: 100%;
+  margin: 0;
+  color: var(--text);
+  font-size: 32px;
+  line-height: 40px;
+  text-wrap: balance;
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 0;
+}
+
+.login__otp::part(segments) {
+  padding: 1rem;
+  justify-content: center;
+}
+
+/* Visually hide the field's label — the visible "Enter a site code" copy above
+   already labels it (the label is kept for assistive tech). */
+.login__otp::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* App-level "wrong code" error state (distinct from native validation). */
+.login__otp--error::part(segment) {
+  border-color: var(--c-hazard);
+  color: var(--c-hazard);
+}
+
+.login__error {
+  margin: 32px 0 0;
+  color: var(--c-hazard);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.login__error[hidden] {
+  display: none;
+}
+
+.login__form--error .btn-ink.login__continue {
+  margin-top: 16px;
+}
+
+.login__request {
+  width: min(100%, 360px);
+  display: grid;
+  gap: 16px;
+  text-align: left;
+}
+
+.login__field {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.429;
+}
+
+.login__field input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 10px 12px;
+}
+
+.login__results {
+  display: grid;
+  gap: 8px;
+}
+
+.login__result {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.login__result--selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--surface-3);
+}
+
+.login__result small,
+.login__hint {
+  color: var(--text-secondary);
+}
+
+.login__message {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .login {
+    padding-inline: 0;
+  }
+  .login__panel {
+    transition:
+      transform 260ms ease,
+      gap 260ms ease;
+  }
+  .login__mark {
+    width: 132px;
+    height: 132px;
+    transition:
+      width 260ms ease,
+      height 260ms ease;
+  }
+  .login__copy h1,
+  .login__copy p {
+    font-size: 1.65rem;
+    transition:
+      font-size 260ms ease,
+      line-height 260ms ease;
+  }
+
+  /* Mobile keyboards and their password/formatting accessory bars can cover
+     nearly half the screen without changing the layout viewport. Once a login
+     field has focus, stop centering the full-height composition and compact it
+     into the unobscured upper portion instead. */
+  .login:has(.login__otp:focus-within) {
+    padding-block: max(1rem, env(safe-area-inset-top))
+      max(2rem, env(safe-area-inset-bottom));
+  }
+
+  .login:has(.login__otp:focus-within) .login__panel {
+    gap: 1rem;
+  }
+
+  .login:has(.login__otp:focus-within) .login__mark {
+    width: 80px;
+    height: 80px;
+  }
+
+  .login:has(.login__otp:focus-within) .login__copy h1,
+  .login:has(.login__otp:focus-within) .login__copy p {
+    font-size: 1.35rem;
+    line-height: 1.4;
+  }
+
+  .login:has(.login__otp:focus-within) .login__otp::part(segments) {
+    padding-block: 0.5rem;
+  }
+}
+
+/* ---- First-run setup / onboarding ----
+   Onboarding reuses the home-hub card system (.home > .screen > .screen__sec),
+   the centered .hero, and the ink/outline pills — so first
+   run matches the today/flow screens (see site-setup.templates.js). Only two
+   setup-specific needs remain here. */
+/* Full-width CTAs — a single dominant action per step, sized for thumb reach. */
+.setup .btn-ink,
+.setup .btn-outline {
+  width: 100%;
+}
