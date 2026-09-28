@@ -54,7 +54,7 @@ import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
 // Our tokens + layout. Unlayered, so they win over WA's @layer-ed native styles.
 import "./styles/tokens.css";
-import "./styles/app.css";
+import "./styles/base.css";
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";

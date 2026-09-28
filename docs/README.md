@@ -53,8 +53,8 @@
   described in [architecture.md](./architecture.md); the rule catalog lives in
   `backend/src/analysis/guidance/`.
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for
-  building a screen to spec from the token/class system (`tokens.css` / `app.css` are the
-  source of truth).
+  building a screen to spec from the token/class system (`tokens.css` / `base.css` plus each
+  component's `.css` are the source of truth).
 - **[design-tokens.md](./design-tokens.md)** — the token values (light/dark) as a
   Figma ↔ code mapping: theme stack, swatches, button metrics, and the WCAG rules
   the palette encodes.
@@ -62,7 +62,7 @@
   reference (dev-only: `npm run dev:frontend` → http://127.0.0.1:5173/design-system.html).
   Renders every button state, all tokens with live values (light + dark), and the
   deliberate divergences from off-the-shelf Web Awesome — using the real `tokens.css` /
-  `app.css`, so it can't drift from the app.
+  `base.css` and component sheets, so it can't drift from the app.
 
 ## Process & security
 

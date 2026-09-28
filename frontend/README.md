@@ -20,7 +20,7 @@ First run shows the site-setup screen. To get it back after binding a site you c
 `npm run dev -w frontend`, then open **http://127.0.0.1:5173/design-system.html** — a
 self-demonstrating page rendering every button state, the tokens (live values, light +
 dark), and where we deliberately diverge from off-the-shelf Web Awesome. It imports the
-real `tokens.css`/`app.css`, so it can't drift. Dev-only: `vite build` ships only the app's
+real `tokens.css`/`base.css` plus the component sheets, so it can't drift. Dev-only: `vite build` ships only the app's
 `index.html`.
 
 ## Routes
@@ -40,8 +40,8 @@ places setup: a bound device lands straight on `/today`
 
 ```text
 src/
-  components/   web components — one <thing>.js (+ optional <thing>.templates.js for markup)
-  styles/       tokens.css (design tokens) · app.css (component classes)
+  components/   web components — one <thing>.js (+ <thing>.templates.js for markup, <thing>.css for styles)
+  styles/       tokens.css (design tokens) · base.css (shared vocabulary: shell, screen, buttons, forms, sheet)
   services/     backend API calls (services/api.js is the seam)
   state/        check-session and other app state
   domain/       read-model adapters (backend items → UI records) · check-completion.js (the perimeter completion rule)
@@ -50,8 +50,15 @@ src/
   router.js     tiny History-API router
 ```
 
-Convention: a component's logic lives in `<name>.js`; if its markup grows, split the pure
-`(data) → HTML string` templates into `<name>.templates.js` (see `site-setup`, `today-view`).
+Convention: a component's logic lives in `<name>.js`; its pure `(data) → HTML string`
+templates live in `<name>.templates.js`; its styles live in `<name>.css`, imported as the
+first import of `<name>.js` (see `site-switcher`, `ticket-detail-dialog`, `today-view`).
+`styles/base.css` holds only the shared vocabulary every screen uses; a class that one
+component renders belongs in that component's sheet. Vite bundles every imported sheet into
+one CSS file, so this is about ownership, not delivery; `main.js` imports `base.css` before
+any component, so component rules always follow the base in the cascade. Child elements that
+must survive a parent's `innerHTML` re-render (dialogs, menus) are created once by the parent
+and re-attached after each render (see `today-view._mountSiteSwitcher`).
 
 ## Additional docs
 
@@ -62,5 +69,6 @@ Convention: a component's logic lives in `<name>.js`; if its markup grows, split
 - [GitHub issue tracker](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues) —
   open work and what's left on the way to a deployed MVP.
 
-Design tokens and component classes themselves are documented inline in
-[src/styles/tokens.css](./src/styles/tokens.css) and [src/styles/app.css](./src/styles/app.css).
+Design tokens and the shared classes are documented inline in
+[src/styles/tokens.css](./src/styles/tokens.css) and [src/styles/base.css](./src/styles/base.css);
+component classes are documented in each component's `.css`.

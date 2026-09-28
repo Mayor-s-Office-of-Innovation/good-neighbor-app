@@ -1,7 +1,7 @@
 /*
   Styles for <site-switcher> (site-switcher.js). Imported from that module;
-  main.js loads tokens.css and app.css first, so these rules always follow the
-  shared base in the bundle. Unlayered, like app.css.
+  main.js loads tokens.css and base.css first, so these rules always follow the
+  shared base in the bundle. Unlayered, like base.css.
 
   .home-site-switcher__item and __check are also used by the location dialog's
   site list (today-view.templates.js).

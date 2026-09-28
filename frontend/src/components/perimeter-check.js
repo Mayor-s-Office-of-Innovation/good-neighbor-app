@@ -9,6 +9,7 @@
   description). Every capture is one item in the session's flat `items[]`
   (ADR 0014); the pipeline and the result cards key on the item id alone.
 */
+import "./perimeter-check.css";
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {

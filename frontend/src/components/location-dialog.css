@@ -1,8 +1,8 @@
 /*
   Styles for <location-dialog> (location-dialog.js). Imported from that
-  module; main.js loads tokens.css, app.css, and site-switcher.css (whose
+  module; main.js loads tokens.css, base.css, and site-switcher.css (whose
   __item / __check rules this dialog's site list reuses) first, so these rules
-  keep their original position after both. Unlayered, like app.css.
+  keep their original position after both. Unlayered, like base.css.
 */
 
 .location-dialog {

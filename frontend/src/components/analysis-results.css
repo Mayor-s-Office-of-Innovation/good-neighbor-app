@@ -2,8 +2,8 @@
   Styles for the analysis result cards, trays, and the shared delete / edit /
   progress / success dialogs (analysis-results.templates.js). Rendered by
   today-view, perimeter-check, and problem-report. Imported from the templates
-  module; main.js loads tokens.css and app.css first, so these rules follow
-  the shared base in the bundle. Unlayered, like app.css.
+  module; main.js loads tokens.css and base.css first, so these rules follow
+  the shared base in the bundle. Unlayered, like base.css.
 
   Two generic classes are defined in grouped rules here and reused elsewhere:
   .btn-icon (ticket-detail-dialog) and .photo-placeholder (ticket-detail-dialog).
@@ -806,4 +806,11 @@ html.wa-dark .analysis-card__clear-copy a {
     white-space: normal;
     text-align: center;
   }
+}
+
+/* Inline, non-destructive failure notice on a card (task action failed). */
+.actioncard__error {
+  margin: 0.6rem 0 0;
+  color: var(--danger, #b42318);
+  font-size: 0.9rem;
 }

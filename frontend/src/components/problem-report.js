@@ -2,6 +2,7 @@
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
 */
+import "./problem-report.css";
 import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {

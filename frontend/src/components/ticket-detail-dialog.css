@@ -1,7 +1,7 @@
 /*
   Styles for <ticket-detail-dialog> (ticket-detail-dialog.js). Imported from
-  that module; main.js loads tokens.css and app.css first, so these rules
-  always follow the shared base in the bundle. Unlayered, like app.css.
+  that module; main.js loads tokens.css and base.css first, so these rules
+  always follow the shared base in the bundle. Unlayered, like base.css.
 */
 
 .ticket-detail {

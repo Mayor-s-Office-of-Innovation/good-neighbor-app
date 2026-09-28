@@ -4,6 +4,7 @@
   were given; the backend verifies the code is active and returns the provider
   site this shared device should operate as.
 */
+import "./site-setup.css";
 import { setSite } from "../db.js";
 import {
   formatSiteCode,
