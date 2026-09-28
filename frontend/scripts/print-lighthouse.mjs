@@ -1,11 +1,13 @@
 /*
-  Print Lighthouse CI results into the CI job itself: a plain-text table in the
+  Print Lighthouse results into the CI job itself: a plain-text table in the
   step log plus GitHub Step Summary ($GITHUB_STEP_SUMMARY) so the numbers show
   on the run's Summary tab without opening artifacts.
 
-  Reads the assertion-results.json + lhr-*.json files that `lhci autorun`
-  leaves in <frontend>/.lighthouseci/ (run right after `npx lhci autorun` with
-  the same working-directory, so the relative path matches).
+  Reads the lhr-*.json reports that scripts/run-lighthouse.mjs leaves in
+  <frontend>/.lighthouseci/ (same working-directory, so the relative path
+  matches), evaluates the warn-only budgets in lighthouse-budgets.json against
+  the median of runs, and reports WARN/OK rows. Always exits 0: budgets are
+  warn-only, non-gating (size-limit is the hard gate).
 
   Plain Node, no deps — runs in CI with nothing but the frontend workspace's
   devDependencies.
@@ -16,7 +18,7 @@ import { join } from "node:path";
 const dir = join(process.cwd(), ".lighthouseci");
 if (!existsSync(dir)) {
   console.error(
-    `No .lighthouseci/ directory at ${dir} — did lhci autorun run?`,
+    `No .lighthouseci/ directory at ${dir} — did scripts/run-lighthouse.mjs run?`,
   );
   process.exit(0); // report absence, never break the (non-gating) step
 }
@@ -44,12 +46,11 @@ const fmt = (audit) =>
   (audit.score != null ? `${audit.score * 100}/100` : "n/a");
 
 const rows = [];
-let worstScore = 1;
+const valuesByAudit = {}; // auditId -> numeric values across runs, for medians
 
 for (const f of lhrFiles) {
   const lhr = JSON.parse(readFileSync(join(dir, f), "utf8"));
   const a = lhr.audits;
-  worstScore = Math.min(worstScore, lhr.categories.performance.score ?? 1);
   rows.push({
     run: lhrFiles.indexOf(f) + 1,
     perf: (lhr.categories.performance.score * 100).toFixed(0),
@@ -68,6 +69,24 @@ for (const f of lhrFiles) {
       )?.transferSize ?? 0) / 1024 || 0,
     ),
   });
+
+  const collect = (id, value) => {
+    if (value != null) (valuesByAudit[id] ??= []).push(value);
+  };
+  collect("categories:performance", lhr.categories.performance.score);
+  collect("largest-contentful-paint", a["largest-contentful-paint"]?.numericValue);
+  collect("total-blocking-time", a["total-blocking-time"]?.numericValue);
+  collect("cumulative-layout-shift", a["cumulative-layout-shift"]?.numericValue);
+  collect(
+    "resource-summary:script",
+    a["resource-summary"]?.details?.items?.find((i) => i.resourceType === "script")
+      ?.transferSize,
+  );
+  collect(
+    "resource-summary:stylesheet",
+    a["resource-summary"]?.details?.items?.find((i) => i.resourceType === "stylesheet")
+      ?.transferSize,
+  );
 }
 
 const head = ["Run", "Perf", "LCP", "TBT", "CLS", "FCP", "JS kB", "CSS kB"];
@@ -79,6 +98,31 @@ const line = (cells) =>
   cells.map((c, i) => String(c).padEnd(width[i])).join("");
 const rule = "-".repeat(width.reduce((a, b) => a + b, 0));
 
+// Warn-only budget evaluation: median across runs vs lighthouse-budgets.json.
+let budgets = [];
+const budgetsPath = join(process.cwd(), "lighthouse-budgets.json");
+if (existsSync(budgetsPath)) {
+  budgets = JSON.parse(readFileSync(budgetsPath, "utf8")).budgets ?? [];
+}
+const budgetLines = budgets.map((b) => {
+  const vals = valuesByAudit[b.id];
+  const med = median(vals ?? []);
+  const ok =
+    vals?.length > 0 &&
+    (b.operator === ">=" ? med >= b.threshold : med <= b.threshold);
+  return { ...b, median: med, ok };
+});
+const budgetTable = budgetLines.length
+  ? [
+      "",
+      `Budget check (median of ${rows.length} runs, warn-only — from lighthouse-budgets.json):`,
+      ...budgetLines.map(
+        ({ label, median: med, threshold, operator, ok }) =>
+          `  ${ok ? "OK  " : "WARN"} ${label}: ${med} (threshold ${operator} ${threshold})`,
+      ),
+    ]
+  : [];
+
 const table = [
   "",
   `Lighthouse (median of ${rows.length} run${rows.length > 1 ? "s" : ""} shown per column; per-run rows below)`,
@@ -89,7 +133,8 @@ const table = [
     line([r.run, r.perf, r.lcp, r.tbt, r.cls, r.fcp, r.jsKb, r.cssKb]),
   ),
   "",
-  `Worst performance score: ${worstScore * 100}/100 (warn-only gate: >=80, LCP<=4s, TBT<=500ms, CLS<=0.1)`,
+  `Worst performance score: ${Math.min(...rows.map((r) => r.perf))}/100`,
+  ...budgetTable,
   "",
 ].join("\n");
 
@@ -108,6 +153,19 @@ if (summaryPath) {
         `| ${r.run} | ${r.perf} | ${r.lcp} | ${r.tbt} | ${r.cls} | ${r.fcp} | ${r.jsKb} | ${r.cssKb} |`,
     ),
     "",
+    ...(budgetLines.length
+      ? [
+          "### Budgets (median, warn-only)",
+          "",
+          "| Budget | Median | Threshold | Status |",
+          "|---|---|---|---|",
+          ...budgetLines.map(
+            ({ label, median: med, threshold, operator, ok }) =>
+              `| ${label} | ${med} | ${operator} ${threshold} | ${ok ? "OK" : "WARN"} |`,
+          ),
+          "",
+        ]
+      : []),
     `_Warn-only, non-gating. Full HTML reports in the lighthouse-reports artifact._`,
     "",
   ].join("\n");
