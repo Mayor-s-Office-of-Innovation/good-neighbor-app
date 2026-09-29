@@ -114,9 +114,7 @@ const KNOWN_VIOLATION_PREFIXES = ["landmark-unique: .analysis-tray"];
 function assertClean(s, label) {
   const failing = s.failing.filter(
     (violation) =>
-      !KNOWN_VIOLATION_PREFIXES.some((prefix) =>
-        violation.startsWith(prefix),
-      ),
+      !KNOWN_VIOLATION_PREFIXES.some((prefix) => violation.startsWith(prefix)),
   );
   expect(failing, `${label} violations`).toEqual([]);
 }

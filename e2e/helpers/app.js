@@ -235,8 +235,6 @@ export async function openHistoryWithTrays(page) {
   // exist — .first() keeps the assertion strict-mode-safe.)
   await page.locator('.home-tabs [data-home-filter="history"]').click();
   await expect(
-    page
-      .locator(".analysis-tray--history .analysis-tray__check-title")
-      .first(),
+    page.locator(".analysis-tray--history .analysis-tray__check-title").first(),
   ).toBeVisible({ timeout: 30_000 });
 }
