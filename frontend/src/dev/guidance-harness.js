@@ -2,17 +2,21 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
   evaluateAssessment,
   getAssessmentGuidance,
+  setDebugSite,
   submitConditionAnswers,
-} from "../services/api.js";
-import { guidanceFixtures } from "../dev/guidance-fixtures.js";
+} from "./guidance-api.js";
+import { guidanceFixtures } from "./guidance-fixtures.js";
 
-// Dev-harness-only WA form controls: imported here, not in main.js, so the
-// select/option graph (which drags the wa-button chunk with it) never ships to
-// production. This module itself is DEV-gated in main.js.
+// Dev-harness-only WA form controls, self-registered by this dev-only module.
+// The page below (frontend/dev/guidance-harness.html) is the only entry point;
+// nothing here imports from the app graph (no app-root, router, services/api).
+// Select/option drag the wa-button chunk with them — which is fine: this graph
+// never ships to production (vite build emits only index.html).
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
+import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
 
 // Harness-only styles, kept out of base.css so they never ship in prod.
 import "./guidance-harness.css";
@@ -113,6 +117,8 @@ class GuidanceHarness extends HTMLElement {
     this._fixture = DEFAULT_FIXTURE;
     /** @type {string} */
     this._json = pretty(DEFAULT_FIXTURE.assessment);
+    /** @type {string} */
+    this._debugSite = "";
     /** @type {boolean} */
     this._freshOnEvaluate = true;
     /** @type {Record<string, unknown> | null} */
@@ -135,7 +141,7 @@ class GuidanceHarness extends HTMLElement {
     this.innerHTML = html`
       <section class="guidance-harness" aria-labelledby="guidance-title">
         <header class="guidance-harness__header">
-          <a href="/today" class="guidance-harness__back">&larr; Today</a>
+          <a href="/today" class="guidance-harness__back">&larr; Open app</a>
           <div>
             <p class="guidance-harness__eyebrow">DEV HARNESS</p>
             <h1 id="guidance-title">Guidance workflow</h1>
@@ -194,6 +200,21 @@ class GuidanceHarness extends HTMLElement {
                 autocomplete="off"
               ></wa-input>
             </div>
+
+            <wa-input
+              id="x-debug-site"
+              label="X-Debug-Site (local partition)"
+              placeholder="demo-site"
+              value="${escapeAttr(this._debugSite)}"
+              autocomplete="off"
+            >
+              <span slot="help">
+                Optional. Aim unauthenticated writes/reads at one local site
+                partition; empty = DEBUG_SITE / demo-site. Set it to the same
+                siteId the app is bound to (e.g. city-hall) to see minted tasks
+                in that app's Today view.
+              </span>
+            </wa-input>
 
             <wa-textarea
               id="assessment-json"
@@ -262,6 +283,11 @@ class GuidanceHarness extends HTMLElement {
         );
       },
     );
+
+    this.querySelector("#x-debug-site")?.addEventListener("input", (event) => {
+      this._debugSite = elementValue(/** @type {Element} */ (event.target));
+      setDebugSite(this._debugSite);
+    });
 
     this.querySelector("#freshen")?.addEventListener("click", () => {
       const parsed = parseJson(

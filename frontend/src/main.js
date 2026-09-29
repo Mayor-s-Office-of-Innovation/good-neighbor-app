@@ -44,9 +44,10 @@ import "@awesome.me/webawesome/dist/styles/utilities.css";
 // stylesheet imports the palette and uses only local/system font stacks.
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 
-// Cherry-picked WA components (tree-shaken — only what we use). Any component
-// used only by a dev screen is imported in that module instead (see
-// guidance-harness.js), so the prod bundle carries only production components.
+// Cherry-picked WA components (tree-shaken — only what we use). Dev-only
+// screens live outside the app graph on standalone pages (e.g.
+// frontend/dev/guidance-harness.html), so the prod bundle carries only
+// production components.
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/otp-input/otp-input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
@@ -69,7 +70,3 @@ import "./components/describe-instead.js";
 import "./components/site-setup.js";
 import "./components/app-toasts.js";
 import "./components/app-root.js";
-
-if (import.meta.env.DEV) {
-  await import("./components/guidance-harness.js");
-}

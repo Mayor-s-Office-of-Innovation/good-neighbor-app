@@ -47,27 +47,6 @@ localStorage.removeItem("theme-override"); // or: window.__theme.set("os")
 re-applies on live OS changes while no override is set. DevTools alternative: Rendering tab →
 "Emulate CSS media feature prefers-color-scheme" emulates the OS itself.)
 
-### In-app browser camera (`?webcam`)
-
-Photo capture defaults to the **native camera** handoff (a hidden `<input type="file"
-capture="environment">` — the device's own camera app). An opt-in **in-app browser camera** can be
-enabled instead: an inline live camera becomes the main element on the perimeter-check screen, with
-the shutter below it and thumbnails accumulating underneath (`getUserMedia` + canvas snapshot, with
-pinch-to-zoom).
-
-| URL param | Effect |
-|---|---|
-| `?webcam` or `?webcam=1` | Enable the in-app browser camera |
-| `?webcam=0` (also `false`/`off`/`no`) | Disable it (back to native) |
-
-Unlike `?themeToggle`, this preference is **persisted per-device** (localStorage key
-`gnp.captureMode`), so it survives reloads and later checks without re-passing the param — the
-param is consumed once and stripped from the URL (e.g. `http://localhost:5173/today?webcam`).
-Zoom uses the camera's **hardware** zoom where the track exposes it (Android Chrome) and falls
-back to a **digital** canvas center-crop elsewhere (incl. iOS Safari). If the camera is denied or
-unavailable, capture falls back to the native file input so the flow never dead-ends. To clear the
-preference manually: `localStorage.removeItem('gnp.captureMode')` (or just load `?webcam=0`).
-
 ### Web Awesome AI agent skill
 
 The UI uses [Web Awesome](https://webawesome.com) (`@awesome.me/webawesome`) for `<wa-*>` components.
@@ -97,33 +76,39 @@ these active dev/test codes are seeded:
 Local also keeps `123-456` as an active legacy alias for St. John the
 Evangelist / The Gubbio Project, and `000-000` is seeded inactive.
 
-### Clearing the local site binding
+### Guidance harness (dev-only page)
 
-First run shows the site-setup ("code") screen and, once you confirm a site, writes a single
-binding record to IndexedDB (database `conditions-reporter`, store `site`, key `current` — the
-site name plus the setup code). To get the setup screen back:
+A standalone workbench for the assessment guidance workflow (evaluate fixtures, answer
+condition questions, mint tasks against the real local backend):
 
-- **Dev reset route (easiest):** open **`/dev/reset-first-launch`** (dev builds only, e.g.
-  `http://localhost:5173/dev/reset-first-launch`). It clears the site binding **and** any
-  in-progress draft, rewrites the URL to `/today`, and shows the setup screen immediately —
-  no DevTools, no reload. After re-binding, the device lands straight on `/today`.
-- **Surgical (leaves any saved checks intact):**
-  - **DevTools:** Application → Storage → IndexedDB → `conditions-reporter` → `site` →
-    right-click the `current` row → Delete, then reload.
-  - **Console:**
-    ```js
-    indexedDB.open('conditions-reporter').onsuccess = e =>
-      e.target.result.transaction('site', 'readwrite').objectStore('site').delete('current');
-    ```
-    then reload.
+```bash
+npm run dev -w backend    # local API :3001 + DynamoDB Local (real Lambda handlers)
+npm run dev -w frontend   # dev server
+```
 
-To wipe everything (binding **and** saved checks) instead: `indexedDB.deleteDatabase('conditions-reporter')`
-then reload. (The app holds an open connection, so a full delete may block until you reload or
-close the tab — the dev reset route and the surgical per-record delete above do not.)
+open **http://127.0.0.1:5173/dev/guidance-harness.html**.
 
-> Note: `localStorage` holds other dev prefs — the theme override (`theme-override`) and the
-> camera mode (`gnp.captureMode`) — which IndexedDB deletes do **not** touch. See
-> [Theme toggle](#theme-toggle-darklight) and the webcam section above.
+- **Standalone by design** — a separate HTML entry point, not an app route and not part of
+  the production build (`vite build` emits only `index.html`). It imports the real
+  `tokens.css`/`base.css` so its buttons can't drift from the app, but no app code: no
+  router, no site binding, no device-token auth, no health monitoring. The in-app
+  `/dev/guidance-harness` route of earlier builds is gone.
+- **No app session needed.** Requests go out unauthenticated; the local API's stub
+  authorizer resolves the site partition server-side (`backend/src/lib/principal.js`):
+  the harness's optional **X-Debug-Site** field → the `DEBUG_SITE` env → `"demo-site"`.
+  (Same stub-posture model as the curl loop's `X-Debug-Sub` below; the deployed API's
+  routes are authorizer-gated and unreachable by design from this page.)
+- **Targeting a specific site:** enter that site's `siteId` in the X-Debug-Site field
+  (e.g. `city-hall`, `st-john-the-evangelist` — the seeded sites behind the codes above).
+  Empty leaves writes in the stub partition.
+- **Seeing minted tasks in the app:** tasks are site-partitioned. To review them in the
+  app's Today view, bind the app to the same site (site code from the table above) and set
+  the harness's X-Debug-Site to that same `siteId`. With the fields left unset, harness
+  output stays in `demo-site`, which no bound app will show.
+- The harness loads its own fixtures (`frontend/src/dev/guidance-fixtures.js`); the
+  "← Open app" link is a plain full-page navigation into the app. API client:
+  `frontend/src/dev/guidance-api.js` (raw same-origin fetch via the Vite `/v1` proxy
+  against the real handlers — nothing mocked).
 
 ## Backend local harness (Docker-free)
 
