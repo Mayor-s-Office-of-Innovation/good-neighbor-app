@@ -193,6 +193,7 @@ const SITE_BINDING_FIELDS = [
   "refreshToken",
   "tokenExpiresAt",
   "tokenGeneration",
+  "accessLevel",
   "boundAt",
 ];
 
@@ -204,15 +205,42 @@ const SITE_BINDING_FIELDS = [
  * @returns {string} the claim, or "" when the token is absent or unreadable
  */
 export function siteIdFromToken(token) {
-  if (typeof token !== "string") return "";
+  const claim = tokenClaims(token)?.["custom:siteId"];
+  return typeof claim === "string" ? claim : "";
+}
+
+/**
+ * Read the signed session's access level for client-side navigation decisions.
+ * The backend remains authoritative and independently enforces admin access.
+ * @param {unknown} token
+ * @returns {"general"|"admin"|""}
+ */
+export function accessLevelFromToken(token) {
+  const claim = tokenClaims(token)?.accessLevel;
+  return claim === "admin" || claim === "general" ? claim : "";
+}
+
+/**
+ * Use the persisted binding when available and the signed token claim as the
+ * migration fallback. The backend remains the authorization authority.
+ * @param {Record<string, any> | null | undefined} binding
+ * @returns {boolean}
+ */
+export function hasAdminAccess(binding) {
+  return (
+    (binding?.accessLevel || accessLevelFromToken(binding?.token)) === "admin"
+  );
+}
+
+/** @param {unknown} token @returns {Record<string, unknown> | null} */
+function tokenClaims(token) {
+  if (typeof token !== "string") return null;
   const payload = token.split(".")[1];
-  if (!payload) return "";
+  if (!payload) return null;
   try {
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const claim = JSON.parse(json)?.["custom:siteId"];
-    return typeof claim === "string" ? claim : "";
+    return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -267,10 +295,10 @@ export async function clearSiteSession() {
  * Persist a refreshed device session onto the existing site record (Option 4
  * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
  * only the token fields are replaced. Returns the updated record.
- * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number }} session
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: "general"|"admin" }} session
  */
 export async function updateSiteSession(
-  { deviceId, token, refreshToken, expiresIn, tokenGeneration },
+  { deviceId, token, refreshToken, expiresIn, tokenGeneration, accessLevel },
   expectedSiteId,
 ) {
   // Read and write in one transaction: a site switch must not let a late
@@ -284,6 +312,7 @@ export async function updateSiteSession(
         token,
         refreshToken,
         tokenGeneration,
+        accessLevel: accessLevel || current.accessLevel || "general",
         tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       };
       os.put(record);

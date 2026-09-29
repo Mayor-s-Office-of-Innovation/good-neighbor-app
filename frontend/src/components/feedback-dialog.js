@@ -56,14 +56,7 @@ class FeedbackDialog extends HTMLElement {
     );
 
     this.querySelector("#feedback-open")?.addEventListener("click", () => {
-      this._setState("form");
-      this._dialog?.showModal();
-      const textarea = /** @type {HTMLElement | null} */ (
-        this.querySelector("#feedback-text")
-      );
-      // wa-textarea renders its input in the shadow DOM; focus the host and
-      // let it forward focus to the inner control.
-      textarea?.focus();
+      this.open();
     });
 
     this.querySelector("#feedback-cancel")?.addEventListener("click", () =>
@@ -80,6 +73,15 @@ class FeedbackDialog extends HTMLElement {
     this._dialog?.addEventListener("click", (e) => {
       if (e.target === this._dialog) this._dialog.close();
     });
+  }
+
+  /** Open the sheet from an external menu item. */
+  open() {
+    this._setState("form");
+    this._dialog?.showModal();
+    /** @type {HTMLElement | null} */ (
+      this.querySelector("#feedback-text")
+    )?.focus();
   }
 
   disconnectedCallback() {
@@ -147,15 +149,17 @@ class FeedbackDialog extends HTMLElement {
 
   _renderForm() {
     this.innerHTML = html`
-      <button
-        class="feedback__open"
-        id="feedback-open"
-        type="button"
-        aria-label="Send feedback about this app"
-        title="Send feedback"
-      >
-        <wa-icon name="comment" aria-hidden="true"></wa-icon>
-      </button>
+      ${this.hasAttribute("hide-trigger")
+        ? ""
+        : html`<button
+            class="feedback__open"
+            id="feedback-open"
+            type="button"
+            aria-label="Send feedback about this app"
+            title="Send feedback"
+          >
+            <wa-icon name="comment" aria-hidden="true"></wa-icon>
+          </button>`}
 
       <dialog
         class="sheet"

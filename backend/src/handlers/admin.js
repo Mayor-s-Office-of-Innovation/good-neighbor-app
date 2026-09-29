@@ -7,13 +7,17 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
-import { getDynamoTableName } from "../config.js";
+import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
+import { deleteObject, headObject, presignPut, setObjectTags } from "../s3.js";
+import { GeocodingError } from "../integrations/census-geocoder.js";
 import {
-  GeocodingError,
-  geocodeAddress,
-} from "../integrations/census-geocoder.js";
+  geocodeSiteAddress,
+  locationFromSite,
+  siteSearchItem,
+  siteSearchSk,
+} from "../domain/site-metadata.js";
 import {
   emailHash,
   issueSetupCode,
@@ -294,6 +298,52 @@ export const getAdminSite = (event) =>
     return jsonResponse(200, { items: res.Items });
   });
 
+const COMPLIANCE_LETTER_CONTENT_TYPE = "application/pdf";
+const MAX_COMPLIANCE_LETTER_BYTES = 10 * 1024 * 1024;
+
+/**
+ * POST /admin/v1/sites/{siteId}/compliance-letters:presign
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const presignComplianceLetter = (event) =>
+  adminOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const contentType = String(body.contentType ?? "").toLowerCase();
+    const size = Number(body.size);
+    if (contentType !== COMPLIANCE_LETTER_CONTENT_TYPE) {
+      return jsonResponse(400, { error: "pdf_required" });
+    }
+    if (
+      !Number.isInteger(size) ||
+      size < 1 ||
+      size > MAX_COMPLIANCE_LETTER_BYTES
+    ) {
+      return jsonResponse(400, { error: "invalid_file_size" });
+    }
+    const site = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `SITE#${siteId}`, sk: "#META" },
+      }),
+    );
+    if (!site.Item || site.Item.status === "inactive") {
+      return jsonResponse(404, { error: "site_not_found" });
+    }
+    const s3Key = `compliance-letters/${siteId}/${randomUUID()}.pdf`;
+    const uploadUrl = await presignPut({
+      bucket: getConfig().uploadBucket,
+      key: s3Key,
+      contentType: COMPLIANCE_LETTER_CONTENT_TYPE,
+      tagging: "state=pending",
+      expiresIn: 300,
+    });
+    return jsonResponse(200, {
+      s3Key,
+      uploadUrl,
+      expiresIn: 300,
+    });
+  });
+
 /**
  * PATCH /admin/v1/sites/{siteId}
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
@@ -314,51 +364,173 @@ export const updateSite = (event) =>
     const site = /** @type {any} */ (siteRes.Item);
     if (!site?.siteId) return jsonResponse(404, { error: "not_found" });
 
-    const address = normalizeAddress(body.address ?? site.address);
-    if (!address) return jsonResponse(400, { error: "address_required" });
-    const existingLocation = locationFromSite(site);
-    const geocoded =
-      address !== site.address || existingLocation instanceof GeocodingError
-        ? await geocodeSiteAddress(address)
-        : existingLocation;
-    if (geocoded instanceof GeocodingError) {
-      return jsonResponse(422, { error: geocoded.code });
+    const addressParts =
+      body.addressParts === undefined
+        ? null
+        : normalizeAddressParts(body.addressParts);
+    if (body.addressParts !== undefined && !addressParts) {
+      return jsonResponse(400, { error: "invalid_address" });
+    }
+    const address = addressParts
+      ? formatAddressParts(addressParts)
+      : normalizeAddress(
+          body.address === undefined ? site.address : body.address,
+        );
+    if (
+      (body.addressParts !== undefined || body.address !== undefined) &&
+      !address
+    ) {
+      return jsonResponse(400, { error: "address_required" });
+    }
+
+    const contactPerson =
+      body.contactPerson === undefined
+        ? null
+        : normalizeContactPerson(body.contactPerson);
+    if (body.contactPerson !== undefined && !contactPerson) {
+      return jsonResponse(400, { error: "invalid_contact_person" });
+    }
+    const oversight =
+      body.oversight === undefined ? null : normalizeOversight(body.oversight);
+    if (body.oversight !== undefined && !oversight) {
+      return jsonResponse(400, { error: "invalid_oversight" });
+    }
+    const compliance =
+      body.compliance === undefined
+        ? null
+        : normalizeCompliance(body.compliance);
+    if (body.compliance !== undefined && !compliance) {
+      return jsonResponse(400, { error: "invalid_compliance" });
+    }
+    const perimeter =
+      body.perimeter === undefined ? null : cleanLongText(body.perimeter);
+    if (body.perimeter !== undefined && perimeter === null) {
+      return jsonResponse(400, { error: "invalid_perimeter" });
+    }
+    const complianceLetters =
+      body.complianceLetter === undefined
+        ? null
+        : supersedeComplianceLetter(
+            siteId,
+            site.complianceLetters,
+            body.complianceLetter,
+          );
+    if (body.complianceLetter !== undefined && !complianceLetters) {
+      return jsonResponse(400, { error: "invalid_compliance_letter" });
+    }
+    const currentLetterKey = site.complianceLetters?.current?.s3Key;
+    const nextLetterKey = complianceLetters?.current?.s3Key;
+    const uploadedLetterKey =
+      nextLetterKey && nextLetterKey !== currentLetterKey
+        ? String(nextLetterKey)
+        : null;
+    let geocoded = null;
+    if (address) {
+      const existingLocation = locationFromSite(site);
+      geocoded =
+        address !== site.address || existingLocation instanceof GeocodingError
+          ? await geocodeSiteAddress(address)
+          : existingLocation;
+      if (geocoded instanceof GeocodingError) {
+        if (uploadedLetterKey) {
+          await deleteComplianceLetterUpload(uploadedLetterKey);
+        }
+        return jsonResponse(422, { error: geocoded.code });
+      }
+    }
+    if (uploadedLetterKey) {
+      const validUpload =
+        await validateComplianceLetterUpload(uploadedLetterKey);
+      if (!validUpload) {
+        await deleteComplianceLetterUpload(uploadedLetterKey);
+        return jsonResponse(400, { error: "invalid_compliance_letter" });
+      }
+      await setObjectTags({
+        bucket: getConfig().uploadBucket,
+        key: uploadedLetterKey,
+        tags: { state: "active" },
+      });
     }
 
     const nextSite = {
       ...site,
       name,
-      address,
-      location: {
-        latitude: geocoded.latitude,
-        longitude: geocoded.longitude,
-      },
-      geocodedAddress: geocoded.matchedAddress,
+      ...(address ? { address } : {}),
+      ...(addressParts ? { addressParts } : {}),
+      ...(contactPerson ? { contactPerson } : {}),
+      ...(oversight ? { oversight } : {}),
+      ...(compliance ? { compliance } : {}),
+      ...(perimeter !== null ? { perimeter } : {}),
+      ...(complianceLetters ? { complianceLetters } : {}),
+      ...(geocoded
+        ? {
+            location: {
+              latitude: geocoded.latitude,
+              longitude: geocoded.longitude,
+            },
+            geocodedAddress: geocoded.matchedAddress,
+          }
+        : {}),
       updatedAt: now,
     };
+    const setExpressions = ["#name = :name", "updatedAt = :now"];
+    /** @type {Record<string, unknown>} */
+    const expressionAttributeValues = {
+      ":name": name,
+      ":now": now,
+    };
+    if (address && geocoded) {
+      setExpressions.push(
+        "address = :address",
+        "#location = :location",
+        "geocodedAddress = :geocodedAddress",
+      );
+      expressionAttributeValues[":address"] = address;
+      expressionAttributeValues[":location"] = {
+        latitude: geocoded.latitude,
+        longitude: geocoded.longitude,
+      };
+      expressionAttributeValues[":geocodedAddress"] = geocoded.matchedAddress;
+    }
+    if (addressParts) {
+      setExpressions.push("addressParts = :addressParts");
+      expressionAttributeValues[":addressParts"] = addressParts;
+    }
+    if (contactPerson) {
+      setExpressions.push("contactPerson = :contactPerson");
+      expressionAttributeValues[":contactPerson"] = contactPerson;
+    }
+    if (oversight) {
+      setExpressions.push("oversight = :oversight");
+      expressionAttributeValues[":oversight"] = oversight;
+    }
+    if (compliance) {
+      setExpressions.push("compliance = :compliance");
+      expressionAttributeValues[":compliance"] = compliance;
+    }
+    if (perimeter !== null) {
+      setExpressions.push("perimeter = :perimeter");
+      expressionAttributeValues[":perimeter"] = perimeter;
+    }
+    if (complianceLetters) {
+      setExpressions.push("complianceLetters = :complianceLetters");
+      expressionAttributeValues[":complianceLetters"] = complianceLetters;
+    }
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const transactItems = [
       {
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression:
-            "SET #name = :name, address = :address, #location = :location, geocodedAddress = :geocodedAddress, updatedAt = :now",
-          ConditionExpression: "attribute_exists(pk)",
+          UpdateExpression: `SET ${setExpressions.join(", ")}`,
+          ConditionExpression: site.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
+            : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
           ExpressionAttributeNames: {
             "#name": "name",
-            "#location": "location",
+            ...(geocoded ? { "#location": "location" } : {}),
           },
-          ExpressionAttributeValues: {
-            ":name": name,
-            ":address": address,
-            ":location": {
-              latitude: geocoded.latitude,
-              longitude: geocoded.longitude,
-            },
-            ":geocodedAddress": geocoded.matchedAddress,
-            ":now": now,
-          },
+          ExpressionAttributeValues: expressionAttributeValues,
         },
       },
     ];
@@ -398,9 +570,63 @@ export const updateSite = (event) =>
         },
       });
     }
-    await ddb.send(new TransactWriteCommand({ TransactItems: transactItems }));
+    if (site.updatedAt) {
+      expressionAttributeValues[":expectedUpdatedAt"] = site.updatedAt;
+    }
+    try {
+      await ddb.send(
+        new TransactWriteCommand({ TransactItems: transactItems }),
+      );
+    } catch (error) {
+      if (uploadedLetterKey) {
+        await deleteComplianceLetterUpload(uploadedLetterKey);
+      }
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "site_update_conflict" });
+      }
+      throw error;
+    }
     return jsonResponse(200, { site: nextSite });
   });
+
+/**
+ * @param {string} key
+ * @returns {Promise<boolean>}
+ */
+async function validateComplianceLetterUpload(key) {
+  try {
+    const object = await headObject({
+      bucket: getConfig().uploadBucket,
+      key,
+    });
+    return (
+      object.contentType === COMPLIANCE_LETTER_CONTENT_TYPE &&
+      Number.isInteger(object.contentLength) &&
+      Number(object.contentLength) > 0 &&
+      Number(object.contentLength) <= MAX_COMPLIANCE_LETTER_BYTES
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} key
+ * @returns {Promise<void>}
+ */
+async function deleteComplianceLetterUpload(key) {
+  try {
+    await deleteObject({ bucket: getConfig().uploadBucket, key });
+  } catch (error) {
+    console.error("Failed to clean up compliance-letter upload", {
+      key,
+      error,
+    });
+  }
+}
 
 /**
  * DELETE /admin/v1/sites/{siteId}
@@ -497,6 +723,7 @@ export const issueAdminSetupCode = (event) =>
   adminOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const email = normalizeEmail(String(body.email ?? ""));
+    const accessLevel = body.accessLevel === "admin" ? "admin" : "general";
     if (!email) return jsonResponse(400, { error: "email_required" });
     const siteRes = await ddb.send(
       new GetCommand({
@@ -516,6 +743,7 @@ export const issueAdminSetupCode = (event) =>
       providerSiteId: site.providerSiteId,
       issuedTo: email,
       issuedBy: "central-admin",
+      accessLevel,
     });
     return jsonResponse(201, {
       setupCode: {
@@ -526,6 +754,7 @@ export const issueAdminSetupCode = (event) =>
         siteId,
         siteName: issued.item.siteName,
         issuedTo: issued.item.issuedTo,
+        accessLevel: issued.item.accessLevel,
       },
     });
   });
@@ -603,6 +832,180 @@ function contactLister(prefix) {
   );
 }
 
+/** @param {unknown} value */
+function normalizeAddressParts(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const parts = {
+    streetNumber: cleanText(input.streetNumber),
+    streetAddress: cleanText(input.streetAddress),
+    secondLine: cleanText(input.secondLine),
+    city: cleanText(input.city),
+    state: cleanText(input.state).toUpperCase(),
+    zip: cleanText(input.zip),
+  };
+  if (
+    !parts.streetNumber ||
+    !parts.streetAddress ||
+    !parts.city ||
+    !/^[A-Z]{2}$/.test(parts.state) ||
+    !/^\d{5}(?:-\d{4})?$/.test(parts.zip)
+  ) {
+    return null;
+  }
+  return parts;
+}
+
+/** @param {Record<string, string>} parts */
+function formatAddressParts(parts) {
+  return [
+    `${parts.streetNumber} ${parts.streetAddress}`,
+    parts.secondLine,
+    `${parts.city}, ${parts.state} ${parts.zip}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** @param {unknown} value */
+function normalizeContactPerson(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const firstName = cleanText(input.firstName);
+  const lastName = cleanText(input.lastName);
+  const email = cleanText(input.email).toLowerCase();
+  const phoneDigits = cleanText(input.phone).replace(/\D/g, "");
+  const nationalPhone =
+    phoneDigits.length === 11 && phoneDigits.startsWith("1")
+      ? phoneDigits.slice(1)
+      : phoneDigits;
+  if (
+    !firstName ||
+    !lastName ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    nationalPhone.length !== 10
+  ) {
+    return null;
+  }
+  return {
+    firstName,
+    lastName,
+    email,
+    phone: `${nationalPhone.slice(0, 3)}-${nationalPhone.slice(3, 6)}-${nationalPhone.slice(6)}`,
+  };
+}
+
+/** @param {unknown} value */
+function normalizeOversight(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const managingCityDepartment = cleanText(input.managingCityDepartment);
+  if (!new Set(["DPH", "HSH"]).has(managingCityDepartment)) return null;
+  return {
+    managingCityDepartment,
+    managingSystemOfCare: cleanText(input.managingSystemOfCare),
+    cityProgramManager: [
+      cleanText(input.cityProgramManagerFirstName),
+      cleanText(input.cityProgramManagerLastName),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
+/** @param {unknown} value */
+function normalizeCompliance(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const currentTier = Number(input.currentTier);
+  const periodStart = cleanText(input.periodStart);
+  const periodEnd = cleanText(input.periodEnd);
+  const requiredChecksPerDay = Number(input.requiredChecksPerDay);
+  if (
+    !Number.isInteger(currentTier) ||
+    currentTier < 1 ||
+    currentTier > 4 ||
+    !isIsoDate(periodStart) ||
+    (periodEnd && (!isIsoDate(periodEnd) || periodEnd < periodStart)) ||
+    !Number.isInteger(requiredChecksPerDay) ||
+    requiredChecksPerDay < 0 ||
+    requiredChecksPerDay > 100
+  ) {
+    return null;
+  }
+  return {
+    currentTier,
+    periodStart,
+    periodEnd,
+    requiredChecksPerDay,
+  };
+}
+
+/**
+ * @param {string} siteId
+ * @param {unknown} existing
+ * @param {unknown} value
+ */
+function supersedeComplianceLetter(siteId, existing, value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const s3Key = cleanText(input.s3Key);
+  const effectiveStart = cleanText(input.effectiveStart);
+  const fileName = cleanText(input.fileName);
+  if (
+    !s3Key.startsWith(`compliance-letters/${siteId}/`) ||
+    !s3Key.endsWith(".pdf") ||
+    !isIsoDate(effectiveStart) ||
+    !fileName.toLowerCase().endsWith(".pdf")
+  ) {
+    return null;
+  }
+  const letters =
+    existing && typeof existing === "object"
+      ? /** @type {Record<string, any>} */ (existing)
+      : {};
+  if (letters.current?.s3Key === s3Key) return letters;
+  const past = Array.isArray(letters.past) ? [...letters.past] : [];
+  if (letters.current) {
+    past.unshift({
+      ...letters.current,
+      effectiveEnd: previousIsoDate(effectiveStart),
+    });
+  }
+  return {
+    current: { s3Key, effectiveStart, fileName },
+    past,
+  };
+}
+
+/** @param {unknown} value */
+function cleanText(value) {
+  return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+
+/** @param {unknown} value */
+function cleanLongText(value) {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim();
+  return cleaned.length <= 4000 ? cleaned : null;
+}
+
+/** @param {string} value */
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
+}
+
+/** @param {string} value */
+function previousIsoDate(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 /**
  * @param {unknown} value
  * @returns {string}
@@ -611,50 +1014,6 @@ function normalizeAddress(value) {
   const address =
     typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
   return address.length >= 3 && address.length <= 240 ? address : "";
-}
-
-/**
- * @param {string} address
- * @returns {Promise<{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError>}
- */
-async function geocodeSiteAddress(address) {
-  try {
-    return await geocodeAddress(address);
-  } catch (error) {
-    return error instanceof GeocodingError
-      ? error
-      : new GeocodingError("geocoding_unavailable");
-  }
-}
-
-/**
- * @param {Record<string, unknown>} site
- * @returns {{ latitude: number, longitude: number, matchedAddress: string } | GeocodingError}
- */
-function locationFromSite(site) {
-  const location =
-    site.location && typeof site.location === "object"
-      ? /** @type {Record<string, unknown>} */ (site.location)
-      : {};
-  const latitude = location.latitude;
-  const longitude = location.longitude;
-  if (
-    typeof latitude === "number" &&
-    typeof longitude === "number" &&
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    longitude >= -180 &&
-    longitude <= 180
-  ) {
-    return {
-      latitude,
-      longitude,
-      matchedAddress: String(site.geocodedAddress ?? site.address ?? ""),
-    };
-  }
-  return new GeocodingError("address_not_found");
 }
 
 /**
@@ -888,48 +1247,6 @@ function putProviderSearch(providerId, name, now) {
       },
     }),
   );
-}
-
-/**
- * @param {string} siteId
- * @param {string} name
- * @param {string} providerId
- * @param {string} providerName
- * @param {string} providerSiteId
- * @param {string} now
- * @returns {Record<string, unknown>}
- */
-function siteSearchItem(
-  siteId,
-  name,
-  providerId,
-  providerName,
-  providerSiteId,
-  now,
-) {
-  return {
-    pk: "SITE_SEARCH#ACTIVE",
-    sk: siteSearchSk(name, siteId),
-    type: "siteSearch",
-    siteId,
-    siteName: name,
-    providerId,
-    providerName,
-    providerSiteId,
-    label: `${name} (${providerName})`,
-    searchText: `${name} ${providerName}`.toLowerCase(),
-    status: "active",
-    updatedAt: now,
-  };
-}
-
-/**
- * @param {string} name
- * @param {string} siteId
- * @returns {string}
- */
-function siteSearchSk(name, siteId) {
-  return `${name.toLowerCase()}#${siteId}`;
 }
 
 /**

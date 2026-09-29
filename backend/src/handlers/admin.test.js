@@ -8,9 +8,20 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, geocodeAddress } = vi.hoisted(() => ({
+const {
+  send,
+  deleteObject,
+  geocodeAddress,
+  headObject,
+  presignPut,
+  setObjectTags,
+} = vi.hoisted(() => ({
   send: vi.fn(),
+  deleteObject: vi.fn(),
   geocodeAddress: vi.fn(),
+  headObject: vi.fn(),
+  presignPut: vi.fn(),
+  setObjectTags: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../integrations/census-geocoder.js", () => ({
@@ -23,6 +34,12 @@ vi.mock("../integrations/census-geocoder.js", () => ({
   },
   geocodeAddress,
 }));
+vi.mock("../s3.js", () => ({
+  deleteObject,
+  headObject,
+  presignPut,
+  setObjectTags,
+}));
 
 const {
   createMasterContact,
@@ -33,19 +50,32 @@ const {
   deactivateMasterContact,
   issueAdminSetupCode,
   listProviders,
+  presignComplianceLetter,
   revokeDevice,
   updateSite,
 } = await import("./admin.js");
 
 beforeEach(() => {
   send.mockReset();
+  deleteObject.mockReset();
   geocodeAddress.mockReset();
+  headObject.mockReset();
+  presignPut.mockReset();
+  setObjectTags.mockReset();
   geocodeAddress.mockResolvedValue({
     latitude: 37.7793,
     longitude: -122.4192,
     matchedAddress: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
   });
+  headObject.mockResolvedValue({
+    contentType: "application/pdf",
+    contentLength: 1024,
+  });
+  setObjectTags.mockResolvedValue({});
+  deleteObject.mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/queue");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
 
@@ -684,6 +714,268 @@ describe("provider and site management", () => {
           ":location": { latitude: 37.7793, longitude: -122.4192 },
         },
       },
+    });
+  });
+
+  it("updates a legacy site's name without requiring newly introduced sections", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Legacy Site",
+          status: "active",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event({ name: "Renamed Legacy Site" }, "central-admin", {
+        siteId: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(geocodeAddress).not.toHaveBeenCalled();
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx.input.TransactItems?.[0]?.Update?.UpdateExpression).toBe(
+      "SET #name = :name, updatedAt = :now",
+    );
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues,
+    ).not.toHaveProperty(":contactPerson");
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues,
+    ).not.toHaveProperty(":compliance");
+  });
+
+  it("updates all site information fields and supersedes the current letter", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Old Site",
+          address: "1 Old St",
+          providerId: "provider-one",
+          status: "active",
+          complianceLetters: {
+            current: {
+              effectiveStart: "2026-01-01",
+              url: "/old-letter.pdf",
+            },
+            past: [],
+          },
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "Updated Site",
+          addressParts: {
+            streetNumber: "1661",
+            streetAddress: "15th St",
+            secondLine: "Suite 2",
+            city: "San Francisco",
+            state: "CA",
+            zip: "94103",
+          },
+          contactPerson: {
+            firstName: "Priya",
+            lastName: "Anand",
+            email: "PRIYA@EXAMPLE.ORG",
+            phone: "(415) 555-0148",
+          },
+          oversight: {
+            managingCityDepartment: "DPH",
+            managingSystemOfCare: "BHS-PBH",
+            cityProgramManagerFirstName: "Rob",
+            cityProgramManagerLastName: "Hoffman",
+          },
+          compliance: {
+            currentTier: 2,
+            periodStart: "2026-01-15",
+            periodEnd: "",
+            requiredChecksPerDay: 3,
+          },
+          perimeter: "Around the full block.",
+          complianceLetter: {
+            s3Key: "compliance-letters/site-1/new.pdf",
+            fileName: "new.pdf",
+            effectiveStart: "2026-02-01",
+          },
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(headObject).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: "compliance-letters/site-1/new.pdf",
+    });
+    expect(setObjectTags).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: "compliance-letters/site-1/new.pdf",
+      tags: { state: "active" },
+    });
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues,
+    ).toMatchObject({
+      ":address": "1661 15th St, Suite 2, San Francisco, CA 94103",
+      ":contactPerson": {
+        firstName: "Priya",
+        lastName: "Anand",
+        email: "priya@example.org",
+        phone: "415-555-0148",
+      },
+      ":oversight": {
+        managingCityDepartment: "DPH",
+        managingSystemOfCare: "BHS-PBH",
+        cityProgramManager: "Rob Hoffman",
+      },
+      ":compliance": {
+        currentTier: 2,
+        periodStart: "2026-01-15",
+        periodEnd: "",
+        requiredChecksPerDay: 3,
+      },
+      ":perimeter": "Around the full block.",
+      ":complianceLetters": {
+        current: {
+          s3Key: "compliance-letters/site-1/new.pdf",
+          fileName: "new.pdf",
+          effectiveStart: "2026-02-01",
+        },
+        past: [
+          {
+            effectiveStart: "2026-01-01",
+            effectiveEnd: "2026-01-31",
+            url: "/old-letter.pdf",
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects and deletes a compliance letter whose stored size exceeds the limit", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "City Hall",
+        address: "1 Main St",
+        location: { latitude: 37.7, longitude: -122.4 },
+        status: "active",
+      },
+    });
+    headObject.mockResolvedValueOnce({
+      contentType: "application/pdf",
+      contentLength: 10 * 1024 * 1024 + 1,
+    });
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "City Hall",
+          complianceLetter: {
+            s3Key: "compliance-letters/site-1/too-large.pdf",
+            fileName: "too-large.pdf",
+            effectiveStart: "2026-02-01",
+          },
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toBe("invalid_compliance_letter");
+    expect(deleteObject).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: "compliance-letters/site-1/too-large.pdf",
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a conflict and removes the upload when the site changed concurrently", async () => {
+    const conflict = new Error("site changed");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          address: "1 Main St",
+          location: { latitude: 37.7, longitude: -122.4 },
+          status: "active",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          complianceLetters: { current: null, past: [] },
+        },
+      })
+      .mockRejectedValueOnce(conflict);
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "City Hall",
+          complianceLetter: {
+            s3Key: "compliance-letters/site-1/concurrent.pdf",
+            fileName: "concurrent.pdf",
+            effectiveStart: "2026-02-01",
+          },
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("site_update_conflict");
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx.input.TransactItems?.[0]?.Update?.ConditionExpression).toContain(
+      "updatedAt = :expectedUpdatedAt",
+    );
+    expect(deleteObject).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: "compliance-letters/site-1/concurrent.pdf",
+    });
+  });
+
+  it("presigns only a site-scoped PDF compliance letter upload", async () => {
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", status: "active" },
+    });
+    presignPut.mockResolvedValueOnce("https://uploads.example/signed");
+
+    const res = await call(
+      presignComplianceLetter,
+      event(
+        {
+          contentType: "application/pdf",
+          size: 1024,
+          fileName: "letter.pdf",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.s3Key).toMatch(/^compliance-letters\/site-1\/[0-9a-f-]+\.pdf$/);
+    expect(presignPut).toHaveBeenCalledWith({
+      bucket: "gnp-test-uploads",
+      key: body.s3Key,
+      contentType: "application/pdf",
+      tagging: "state=pending",
+      expiresIn: 300,
     });
   });
 });

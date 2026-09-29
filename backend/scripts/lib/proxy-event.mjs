@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
  * @param {string} [args.body]    Raw request body
  * @param {string} args.defaultSub  Fallback `sub` when no X-Debug-Sub header is present
  * @param {string} [args.defaultSite]  Fallback `custom:siteId` when no X-Debug-Site header is present
- * @param {{ sub: string, siteId: string, ver: number }} [args.deviceClaims]  Verified device-token claims; when present the event carries the deployed REQUEST-authorizer (`authorizer.lambda`) shape and the X-Debug stubs are ignored
+ * @param {{ sub: string, siteId: string, ver: number, accessLevel: "general"|"admin" }} [args.deviceClaims]  Verified device-token claims; when present the event carries the deployed REQUEST-authorizer (`authorizer.lambda`) shape and the X-Debug stubs are ignored
  * @param {Record<string, string>} [args.pathParameters]  Path params extracted by the router (e.g. `{ checkId }`)
  * @param {Record<string, string>} [args.queryStringParameters]  Parsed query string (undefined when empty)
  * @param {string} [args.rawQueryString]  The raw query string (without the leading "?")
@@ -95,6 +95,7 @@ export function buildProxyEvent({
               "claims.sub": deviceClaims.sub,
               "claims.custom:siteId": deviceClaims.siteId,
               "claims.ver": deviceClaims.ver,
+              "claims.accessLevel": deviceClaims.accessLevel,
             },
           }
         : // The stub Cognito authorizer. `sub` (X-Debug-Sub) and `custom:siteId`
@@ -104,6 +105,7 @@ export function buildProxyEvent({
               claims: {
                 sub,
                 ...(siteId ? { "custom:siteId": siteId } : {}),
+                accessLevel: flatHeaders["x-debug-access"] || "general",
                 ...(groups ? { "cognito:groups": groups } : {}),
               },
               scopes: [],

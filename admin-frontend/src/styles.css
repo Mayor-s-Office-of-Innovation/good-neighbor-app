@@ -98,8 +98,8 @@ h3 {
 
 .site-details-form {
   display: grid;
-  gap: 12px;
-  max-width: 640px;
+  gap: 20px;
+  max-width: 860px;
 }
 
 .site-details-form button {
@@ -123,12 +123,49 @@ label {
   font-size: 0.875rem;
 }
 
-input {
+input,
+textarea {
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 10px;
   font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-help,
+.current-letter {
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+}
+
+input[type="file"] {
+  padding: 6px;
 }
 
 button {
@@ -325,5 +362,9 @@ tbody tr:last-child td {
 
   .panel__head {
     align-items: flex-start;
+  }
+
+  .form-grid--two {
+    grid-template-columns: 1fr;
   }
 }

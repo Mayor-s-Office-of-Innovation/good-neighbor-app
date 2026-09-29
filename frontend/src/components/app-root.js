@@ -10,7 +10,12 @@
   lands straight on home.
 */
 import { requestLocationPermissionEarly } from "../services/device-location.js";
-import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
+import {
+  hasAdminAccess,
+  getSite,
+  resetLocalAppState,
+  saveSiteSettings,
+} from "../db.js";
 import { getSiteSettings } from "../services/api.js";
 import {
   startHealthMonitoring,
@@ -32,6 +37,8 @@ import {
 } from "../services/keyboard-viewport.js";
 
 const ROUTE_VIEW = [
+  ["/site-admin/edit", "site-admin-edit"],
+  ["/site-admin", "site-admin-view"],
   ["/problem/describe", "describe-instead"],
   ["/problem", "problem-report"],
   ["/check/describe", "describe-instead"],
@@ -223,6 +230,20 @@ class AppRoot extends HTMLElement {
     const route = currentRoute();
     if (this._isDevResetRoute(route)) {
       void this._resetFirstLaunch();
+      return;
+    }
+    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
+      navigate("/today");
+      return;
+    }
+    if (
+      route.startsWith("/site-admin") &&
+      !customElements.get("site-admin-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./site-admin.js").then(() => {
+        if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
       return;
     }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));

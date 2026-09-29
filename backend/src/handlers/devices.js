@@ -46,6 +46,7 @@ import {
  * @property {string} deviceId
  * @property {string} siteId
  * @property {string} siteName
+ * @property {"general"|"admin"} accessLevel
  * @property {string} label
  * @property {string} registeredAt
  * @property {string} lastSeenAt
@@ -90,16 +91,19 @@ export const registerDevice = async (event) => {
   const existing = await getDevice(validCode.siteId, raw.deviceId);
   const deviceId = existing ? existing.deviceId : newDeviceId(raw.deviceId);
   const generation = (existing?.tokenGeneration ?? 0) + 1;
+  const accessLevel = validCode.accessLevel === "admin" ? "admin" : "general";
   const [access, refresh] = await Promise.all([
     mintAccessToken({
       siteId: validCode.siteId,
       deviceId,
       tokenGeneration: generation,
+      accessLevel,
     }),
     mintRefreshToken({
       siteId: validCode.siteId,
       deviceId,
       tokenGeneration: generation,
+      accessLevel,
     }),
   ]);
 
@@ -109,6 +113,7 @@ export const registerDevice = async (event) => {
     deviceId,
     siteId: validCode.siteId,
     siteName: validCode.siteName,
+    accessLevel,
     label:
       typeof raw.label === "string" && raw.label.trim()
         ? raw.label.trim().slice(0, 100)
@@ -153,6 +158,7 @@ export const registerDevice = async (event) => {
     expiresIn: access.expiresIn,
     refreshExpiresIn: refresh.expiresIn,
     tokenGeneration: generation,
+    accessLevel,
   });
 };
 
@@ -208,6 +214,8 @@ export const refreshDeviceToken = async (event) => {
   if (
     !device ||
     device.tokenGeneration !== claims.ver || // revoked (generation bumped)
+    (device.accessLevel === "admin" ? "admin" : "general") !==
+      claims.accessLevel ||
     !claims.jti ||
     device.refreshJti !== claims.jti // already used / superseded
   ) {
@@ -225,6 +233,7 @@ export const refreshDeviceToken = async (event) => {
     siteId,
     deviceId,
     generation: device.tokenGeneration + 1,
+    accessLevel: device.accessLevel === "admin" ? "admin" : "general",
     dynamoTable,
     now,
     expectGeneration: device.tokenGeneration,
@@ -240,6 +249,7 @@ export const refreshDeviceToken = async (event) => {
   return jsonResponse(200, {
     deviceId,
     site: { siteId, name: device.siteName },
+    accessLevel: device.accessLevel === "admin" ? "admin" : "general",
     ...session,
   });
 };
@@ -256,26 +266,38 @@ export const refreshDeviceToken = async (event) => {
  *   → the caller retries from a fresh read.
  * - fresh registration passes no expected state: the row was just Put, so the
  *   write is unconditional (nothing to race).
- * @param {{ siteId: string, deviceId: string, generation: number, dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
+ * @param {{ siteId: string, deviceId: string, generation: number, accessLevel: "general"|"admin", dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
  * @returns {Promise<{ token: string, refreshToken: string, expiresIn: number, refreshExpiresIn: number, tokenGeneration: number } | null>} null when the CAS lost
  */
 async function mintSession({
   siteId,
   deviceId,
   generation,
+  accessLevel,
   dynamoTable,
   now,
   expectGeneration,
   expectJti,
 }) {
   const [access, refresh] = await Promise.all([
-    mintAccessToken({ siteId, deviceId, tokenGeneration: generation }),
-    mintRefreshToken({ siteId, deviceId, tokenGeneration: generation }),
+    mintAccessToken({
+      siteId,
+      deviceId,
+      tokenGeneration: generation,
+      accessLevel,
+    }),
+    mintRefreshToken({
+      siteId,
+      deviceId,
+      tokenGeneration: generation,
+      accessLevel,
+    }),
   ]);
 
   // The CAS condition and its expected-state bindings (:eg/:ej) ride the SAME
-  // command as the SET bindings (:g/:jti/:seen) — one object, so neither side
-  // can clobber the other.
+  // command as the SET bindings (:g/:jti/:seen/:accessLevel) — one object, so
+  // neither side can clobber the other. Persisting accessLevel also migrates
+  // pre-access-level DEVICE# records as soon as their session refreshes.
   const conditional = expectGeneration !== undefined;
   try {
     await ddb.send(
@@ -283,7 +305,7 @@ async function mintSession({
         TableName: dynamoTable,
         Key: { ...deviceKey(siteId, deviceId) },
         UpdateExpression:
-          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen",
+          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen, accessLevel = :accessLevel",
         ...(conditional && {
           ConditionExpression: "tokenGeneration = :eg AND refreshJti = :ej",
         }),
@@ -291,6 +313,7 @@ async function mintSession({
           ":g": generation,
           ":jti": refresh.jti,
           ":seen": now,
+          ":accessLevel": accessLevel,
           ...(conditional && {
             ":eg": expectGeneration,
             ":ej": expectJti,

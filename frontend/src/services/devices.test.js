@@ -22,6 +22,7 @@ const session = {
   expiresIn: 100,
   refreshExpiresIn: 200,
   tokenGeneration: 2,
+  accessLevel: "general",
 };
 
 describe("refreshDeviceToken", () => {

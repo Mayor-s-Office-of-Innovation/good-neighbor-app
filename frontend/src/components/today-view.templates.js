@@ -24,6 +24,7 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  *   captureVisible: boolean,
  *   resultsInactive: boolean,
  *   settingsMenuOpen: boolean,
+ *   adminAccess: boolean,
  *   hero: string,
  *   capture: string,
  *   results: string,
@@ -38,6 +39,7 @@ export function homeShell({
   captureVisible,
   resultsInactive,
   settingsMenuOpen,
+  adminAccess,
   hero,
   capture,
   results,
@@ -51,8 +53,11 @@ export function homeShell({
     >
       <section class="home-region home-region--header">
         <div class="home-top-actions">
-          ${settingsMenu({ open: settingsMenuOpen })}
-          <feedback-dialog class="feedback-dialog"></feedback-dialog>
+          ${settingsMenu({ open: settingsMenuOpen, adminAccess })}
+          <feedback-dialog
+            class="feedback-dialog"
+            hide-trigger
+          ></feedback-dialog>
         </div>
         <div class="screen screen--today-hero" role="group" aria-label="Today">
           ${hero}
@@ -72,13 +77,14 @@ export function homeShell({
       </section>
       ${showAnalysisDialogs ? analysisDialogs() : ""}
       <location-dialog></location-dialog>
+      ${attributionDialog()}
       ${logoutDialog({ error: logoutError, pending: logoutPending })}
     </div>
   `;
 }
 
-/** @param {{ open: boolean }} state */
-export function settingsMenu({ open }) {
+/** @param {{ open: boolean, adminAccess?: boolean }} state */
+export function settingsMenu({ open, adminAccess = false }) {
   return html`
     <div class="home-settings-wrap">
       <button
@@ -97,6 +103,24 @@ export function settingsMenu({ open }) {
             role="menu"
             aria-label="Settings"
           >
+            <button id="settings-feedback" type="button" role="menuitem">
+              <wa-icon name="comment" aria-hidden="true"></wa-icon>
+              Send feedback
+            </button>
+            ${adminAccess
+              ? html`<button
+                  id="settings-site-admin"
+                  type="button"
+                  role="menuitem"
+                >
+                  <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
+                  Site admin
+                </button>`
+              : ""}
+            <button id="settings-attributions" type="button" role="menuitem">
+              <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
+              Attributions
+            </button>
             <button id="settings-logout" type="button" role="menuitem">
               <wa-icon
                 name="arrow-right-from-bracket"
@@ -104,18 +128,57 @@ export function settingsMenu({ open }) {
               ></wa-icon>
               Logout
             </button>
-            <a
-              href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
-              target="_blank"
-              rel="noopener noreferrer"
-              role="menuitem"
-              aria-label="Address data attribution (opens in a new tab)"
-              >Address data attribution</a
-            >
           </div>`
         : ""}
     </div>
   `;
+}
+
+export function attributionDialog() {
+  return html`<dialog
+    class="places-modal attributions-dialog"
+    id="attributions-dialog"
+    aria-labelledby="attributions-title"
+    aria-describedby="attributions-copy"
+  >
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="attributions-title">
+          Attributions
+        </h2>
+        <p class="places-modal__text" id="attributions-copy">
+          Address information used by this app is provided by these services.
+        </p>
+        <ul class="attributions-list">
+          <li>
+            <a
+              href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Amazon Location Service data attribution (opens in a new tab)"
+            >
+              Amazon Location Service data attribution
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://geocoding.geo.census.gov/geocoder/"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="U.S. Census Bureau Geocoder (opens in a new tab)"
+            >
+              U.S. Census Bureau Geocoder
+            </a>
+          </li>
+        </ul>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-ink places-modal__primary" type="submit">
+          Close
+        </button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 /** @param {{ error: string, pending: boolean }} state */

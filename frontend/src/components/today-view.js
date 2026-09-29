@@ -21,10 +21,12 @@ import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
+import { navigate } from "../router.js";
 import {
   activateSiteBinding,
   clearSiteSession,
   getSite,
+  hasAdminAccess,
   listBoundSites,
 } from "../db.js";
 import {
@@ -160,6 +162,8 @@ class TodayView extends HTMLElement {
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
+    this._attributionsDialog = null;
+    this._attributionsDialogOpen = false;
     /** @type {any} the persistent <site-switcher>, created on first render */
     this._siteSwitcher = null;
     this._providerSites = [];
@@ -464,6 +468,45 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
     });
+    this.querySelector("#settings-feedback")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      feedbackDialog?.open();
+    });
+    this.querySelector("#settings-attributions")?.addEventListener(
+      "click",
+      () => {
+        this._settingsMenuOpen = false;
+        this.querySelector(".home-settings-menu")?.remove();
+        this.querySelector("#home-settings")?.setAttribute(
+          "aria-expanded",
+          "false",
+        );
+        this._attributionsDialogOpen = true;
+        this._attributionsDialog?.showModal();
+      },
+    );
+    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
+      navigate("/site-admin"),
+    );
+    this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #attributions-dialog")
+    );
+    this._attributionsDialog?.addEventListener("click", (event) => {
+      if (event.target === this._attributionsDialog) {
+        this._attributionsDialog.close();
+      }
+    });
+    this._attributionsDialog?.addEventListener("close", () => {
+      this._attributionsDialogOpen = false;
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
     );
@@ -474,6 +517,7 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
+    this._restoreAttributionsDialog();
     this._mountTicketDetailDialog();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
@@ -672,6 +716,7 @@ class TodayView extends HTMLElement {
       captureVisible,
       resultsInactive,
       settingsMenuOpen: this._settingsMenuOpen,
+      adminAccess: hasAdminAccess(this._site),
       hero: showFirstRun
         ? this._firstRunBlock()
         : this._activityBlock({ last, homeTasks }),
@@ -741,6 +786,11 @@ class TodayView extends HTMLElement {
   _restoreLogoutDialog() {
     if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
     this._logoutDialog?.showModal();
+  }
+
+  _restoreAttributionsDialog() {
+    if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
+    this._attributionsDialog?.showModal();
   }
 
   async _logout() {

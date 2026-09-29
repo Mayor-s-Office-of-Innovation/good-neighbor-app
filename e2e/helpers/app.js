@@ -14,22 +14,25 @@ import { typeDelay, isSlowMo } from "./pace.js";
  * POST /site-code → POST /v1/devices then binds the device session and the
  * app lands on /today (there is no places gate any more).
  * @param {import("@playwright/test").Page} page
+ * @param {{ siteCode?: string, siteName?: string }} [options]
  */
-export async function bindSite(page) {
+export async function bindSite(page, options = {}) {
+  const siteCode = options.siteCode || SITE_CODE;
+  const siteName = options.siteName || SITE_NAME;
   await page.goto("/");
   const otp = page.locator("wa-otp-input#code-input");
   await expect(otp).toBeVisible();
   // wa-otp-input renders a real text input in its shadow root; Playwright CSS
   // pierces it. Typing exercises the component's own input pipeline (paste and
   // fill also work, but typing is closest to a real device).
-  await otp.locator("#hidden-input").pressSequentially(SITE_CODE, {
+  await otp.locator("#hidden-input").pressSequentially(siteCode, {
     ...(typeDelay > 0 ? { delay: typeDelay } : {}),
   });
   await page.locator("#continue").click();
   // The bound site's name is always in the app header; the home heading is
   // "Start your first check" until the site has a completed check (a fresh
   // table, as in CI), so it is not a reliable binding signal.
-  await expect(page.locator(".app__title")).toHaveText(SITE_NAME, {
+  await expect(page.locator(".app__title")).toHaveText(siteName, {
     timeout: 30_000,
   });
   await expect(page.locator("#start-check")).toBeVisible();

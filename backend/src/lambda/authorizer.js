@@ -65,10 +65,16 @@ export const handler = async (event) => {
       Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
     }),
   );
-  const device = /** @type {{ tokenGeneration?: number } | undefined} */ (
-    res.Item
-  );
-  if (!device || device.tokenGeneration !== claims.ver) {
+  const device =
+    /** @type {{ tokenGeneration?: number, accessLevel?: string } | undefined} */ (
+      res.Item
+    );
+  if (
+    !device ||
+    device.tokenGeneration !== claims.ver ||
+    (device.accessLevel === "admin" ? "admin" : "general") !==
+      claims.accessLevel
+  ) {
     return DENY({ reason: "revoked" });
   }
 
@@ -95,6 +101,7 @@ export const handler = async (event) => {
       "claims.sub": claims.sub,
       "claims.custom:siteId": claims.siteId,
       "claims.ver": claims.ver,
+      "claims.accessLevel": claims.accessLevel,
     },
   };
 };

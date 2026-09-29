@@ -28,6 +28,7 @@ const logout = vi.hoisted(() => ({
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
+  hasAdminAccess: () => false,
   listBoundSites: async () => [],
   clearSiteSession: logout.clearSiteSession,
 }));

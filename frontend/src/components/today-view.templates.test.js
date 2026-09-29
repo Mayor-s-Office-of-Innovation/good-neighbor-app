@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   actionButton,
+  attributionDialog,
   emptyResults,
   errorView,
   homeAllDonePanel,
@@ -16,9 +17,31 @@ import {
 describe("settingsMenu", () => {
   it("renders the menu only while open", () => {
     expect(settingsMenu({ open: false })).not.toContain('role="menu"');
-    const open = settingsMenu({ open: true });
+    const open = settingsMenu({ open: true, adminAccess: true });
     expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('id="settings-feedback"');
+    expect(open).toContain('id="settings-site-admin"');
+    expect(open).toContain('id="settings-attributions"');
     expect(open).toContain('id="settings-logout"');
+  });
+
+  it("hides Site admin without admin access", () => {
+    expect(settingsMenu({ open: true, adminAccess: false })).not.toContain(
+      'id="settings-site-admin"',
+    );
+  });
+});
+
+describe("attributionDialog", () => {
+  it("lists every address-data attribution in an accessible dialog", () => {
+    const markup = attributionDialog();
+
+    expect(markup).toContain('id="attributions-dialog"');
+    expect(markup).toContain('aria-labelledby="attributions-title"');
+    expect(markup).toContain("Amazon Location Service data attribution");
+    expect(markup).toContain("U.S. Census Bureau Geocoder");
+    expect(markup.match(/target="_blank"/g)).toHaveLength(2);
+    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(2);
   });
 });
 

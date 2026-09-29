@@ -1,7 +1,7 @@
 # Good Neighbor Admin Frontend
 
-Static central-admin console for managing providers, sites, contacts, setup
-codes, and devices (`index.html`), plus an Analytics page (`analytics.html`)
+Static central-admin console for managing providers, full site information,
+compliance-letter PDFs, contacts, setup codes, and devices (`index.html`), plus an Analytics page (`analytics.html`)
 that runs canned queries over the reporting lake (ADR 0013).
 
 ## Analytics page

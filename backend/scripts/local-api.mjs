@@ -42,7 +42,12 @@ import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
-import { getSite, listProviderSites } from "../src/handlers/site.js";
+import {
+  getSite,
+  getSiteAdmin,
+  listProviderSites,
+  updateSiteAdmin,
+} from "../src/handlers/site.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
@@ -65,6 +70,7 @@ import {
   listDevices,
   listMasterContacts,
   listProviders,
+  presignComplianceLetter,
   revokeDevice,
   updateProvider,
   updateSite,
@@ -84,7 +90,7 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
 };
 
 // Local device-token verification (mirrors lambda/authorizer.js): when a
@@ -105,6 +111,7 @@ async function resolveClaims(flatHeaders) {
         sub: claims.sub,
         siteId: claims.siteId,
         ver: claims.ver,
+        accessLevel: claims.accessLevel,
       };
     } catch (err) {
       return { error: /** @type {Error} */ (err).message };
@@ -157,6 +164,8 @@ const routes = [
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config
   route("GET", "/v1/site", getSite),
+  route("GET", "/v1/site-admin", getSiteAdmin),
+  route("PATCH", "/v1/site-admin", updateSiteAdmin),
   route("GET", "/v1/provider-sites", listProviderSites),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
@@ -214,6 +223,11 @@ const routes = [
   route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
   route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/compliance-letters:presign",
+    presignComplianceLetter,
+  ),
   route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
   route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
   route(

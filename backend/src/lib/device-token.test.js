@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Test fixture, not a secret — the local/CI token-signing key for unit tests.
@@ -15,6 +16,23 @@ const {
  * @returns {number} epoch milliseconds
  */
 const at = (seconds) => seconds * 1000;
+
+/**
+ * Sign the pre-access-level claim shape used by already-deployed sessions.
+ * @param {Record<string, unknown>} claims
+ * @returns {string}
+ */
+function legacyToken(claims) {
+  /** @param {unknown} value @returns {string} */
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode(claims);
+  const signature = createHmac("sha256", "test-secret-0123456789abcdef")
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
 
 describe("mint + verify round-trip", () => {
   beforeEach(() => {
@@ -47,6 +65,40 @@ describe("mint + verify round-trip", () => {
     expect(claims.typ).toBe("refresh");
     expect(claims.jti).toBe(jti);
   });
+
+  it("treats a signed legacy token without accessLevel as general", async () => {
+    const token = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "access",
+      iat: at(1000),
+      exp: at(3000),
+    });
+
+    const claims = await verifyDeviceToken(token, { now: at(2000) });
+
+    expect(claims.accessLevel).toBe("general");
+  });
+
+  it.each([null, "", "owner"])(
+    "rejects an explicit invalid access level: %j",
+    async (accessLevel) => {
+      const token = legacyToken({
+        sub: "dev-1",
+        "custom:siteId": "site-1",
+        ver: 2,
+        typ: "access",
+        accessLevel,
+        iat: at(1000),
+        exp: at(3000),
+      });
+
+      await expect(
+        verifyDeviceToken(token, { now: at(2000) }),
+      ).rejects.toMatchObject({ code: "malformed" });
+    },
+  );
 
   it("rejects a token after expiry", async () => {
     const { token } = await mintAccessToken(

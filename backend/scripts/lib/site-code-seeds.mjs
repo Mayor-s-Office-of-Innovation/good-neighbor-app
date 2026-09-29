@@ -15,6 +15,7 @@ export const devSiteCodeSeeds = [
     siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
     contactEmail: "cityhall@example.org",
+    accessLevel: "admin",
   },
   {
     code: "MOIMIS",
@@ -37,7 +38,55 @@ export const devSiteCodeSeeds = [
     siteShortCode: "STJ",
     providerSiteId: "provider-site-st-john-the-evangelist",
     contactEmail: "stjohn@example.org",
+    accessLevel: "admin",
     address: "1661 15th St, San Francisco, CA",
+    adminData: {
+      addressParts: {
+        streetNumber: "1661",
+        streetAddress: "15th St",
+        secondLine: "",
+        city: "San Francisco",
+        state: "CA",
+        zip: "94103",
+      },
+      contactPerson: {
+        firstName: "Priya",
+        lastName: "Anand",
+        email: "priya.anand@sfgov.org",
+        phone: "(415) 555-0148",
+      },
+      oversight: {
+        managingCityDepartment: "Department of Public Health",
+        managingSystemOfCare: "BHS-PBH",
+        cityProgramManager: "Rob Hoffman",
+      },
+      compliance: {
+        currentTier: 2,
+        periodStart: "2026-01-15",
+        periodEnd: "",
+        requiredChecksPerDay: 3,
+      },
+      perimeter:
+        "15th St from Valencia St to Mission St, including the sidewalks and alleys around the site.",
+      complianceLetters: {
+        current: {
+          effectiveStart: "2026-01-15",
+          url: "/sample-compliance-letter.pdf",
+        },
+        past: [
+          {
+            effectiveStart: "2025-07-01",
+            effectiveEnd: "2026-01-14",
+            url: "/sample-compliance-letter.pdf",
+          },
+          {
+            effectiveStart: "2024-02-01",
+            effectiveEnd: "2025-06-30",
+            url: "/sample-compliance-letter.pdf",
+          },
+        ],
+      },
+    },
     location: {
       latitude: 37.76656393517443,
       longitude: -122.4213267021692,
@@ -261,6 +310,7 @@ async function putProvider(docDdb, tableName, seed, now) {
  * @param {string} now
  */
 async function upsertSite(docDdb, tableName, seed, now) {
+  const admin = seed.adminData;
   await docDdb.send(
     new UpdateCommand({
       TableName: tableName,
@@ -273,6 +323,9 @@ async function upsertSite(docDdb, tableName, seed, now) {
           : "") +
         (seed.location
           ? ", #location = if_not_exists(#location, :location)"
+          : "") +
+        (admin
+          ? ", addressParts = if_not_exists(addressParts, :addressParts), contactPerson = if_not_exists(contactPerson, :contactPerson), oversight = if_not_exists(oversight, :oversight), compliance = if_not_exists(compliance, :compliance), perimeter = if_not_exists(perimeter, :perimeter), complianceLetters = if_not_exists(complianceLetters, :complianceLetters)"
           : ""),
       ExpressionAttributeNames: {
         "#type": "type",
@@ -301,6 +354,16 @@ async function upsertSite(docDdb, tableName, seed, now) {
           ? { ":geocodedAddress": seed.geocodedAddress }
           : {}),
         ...(seed.location ? { ":location": seed.location } : {}),
+        ...(admin
+          ? {
+              ":addressParts": admin.addressParts,
+              ":contactPerson": admin.contactPerson,
+              ":oversight": admin.oversight,
+              ":compliance": admin.compliance,
+              ":perimeter": admin.perimeter,
+              ":complianceLetters": admin.complianceLetters,
+            }
+          : {}),
       },
     }),
   );
@@ -442,6 +505,7 @@ async function putDynamicSetupCode(docDdb, tableName, seed, now) {
           uses: 0,
           siteId: seed.siteId,
           siteName: seed.siteName,
+          accessLevel: seed.accessLevel === "admin" ? "admin" : "general",
           providerId: seed.providerId,
           providerName: seed.providerName,
           providerSiteId: seed.providerSiteId,
@@ -462,6 +526,16 @@ async function putDynamicSetupCode(docDdb, tableName, seed, now) {
       throw err;
     }
   }
+  await docDdb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { pk: `SETUP_CODE#${verifier}`, sk: "#META" },
+      UpdateExpression: "SET accessLevel = :accessLevel",
+      ExpressionAttributeValues: {
+        ":accessLevel": seed.accessLevel === "admin" ? "admin" : "general",
+      },
+    }),
+  );
 
   // The current-code reference validateSetupCode requires (setup-codes.js
   // isCurrentSetupCode): without it the seed's SETUP_CODE# item exists but
@@ -517,6 +591,7 @@ async function putSiteCode(docDdb, tableName, seed, now) {
         providerSiteId: seed.providerSiteId,
         siteId: seed.siteId,
         siteName: seed.siteName,
+        accessLevel: seed.accessLevel === "admin" ? "admin" : "general",
         siteShortCode: seed.siteShortCode,
         seededAt: now,
         updatedAt: now,

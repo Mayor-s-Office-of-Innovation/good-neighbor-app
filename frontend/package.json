@@ -15,9 +15,14 @@
   },
   "size-limit": [
     {
-      "name": "js",
-      "path": "dist/assets/*.js",
+      "name": "main js",
+      "path": "dist/assets/index-*.js",
       "limit": "75 kB"
+    },
+    {
+      "name": "site admin js",
+      "path": "dist/assets/site-admin-*.js",
+      "limit": "7 kB"
     },
     {
       "name": "css",

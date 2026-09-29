@@ -27,6 +27,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
  * @property {number} expiresIn    access-token TTL in seconds
  * @property {number} refreshExpiresIn refresh-token TTL in seconds
  * @property {number} tokenGeneration revocation counter this session was minted against
+ * @property {"general"|"admin"} [accessLevel]
  */
 
 /**
@@ -112,6 +113,7 @@ function assertSession(body) {
     typeof body.token !== "string" ||
     typeof body.refreshToken !== "string" ||
     typeof body.expiresIn !== "number" ||
+    (body.accessLevel !== "general" && body.accessLevel !== "admin") ||
     !body.site?.siteId
   ) {
     throw new ApiError("malformed device session response", { status: 0 });

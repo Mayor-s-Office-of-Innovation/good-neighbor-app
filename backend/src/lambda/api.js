@@ -37,7 +37,12 @@ import {
   requestSetupCode,
   searchSites,
 } from "../handlers/setup-code-requests.js";
-import { getSite, listProviderSites } from "../handlers/site.js";
+import {
+  getSite,
+  getSiteAdmin,
+  listProviderSites,
+  updateSiteAdmin,
+} from "../handlers/site.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
 import {
@@ -60,6 +65,7 @@ import {
   listDevices,
   listMasterContacts,
   listProviders,
+  presignComplianceLetter,
   revokeDevice,
   updateProvider,
   updateSite,
@@ -80,6 +86,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/setup-codes:request": requestSetupCode,
   // Site config
   "GET /v1/site": getSite,
+  "GET /v1/site-admin": getSiteAdmin,
+  "PATCH /v1/site-admin": updateSiteAdmin,
   "GET /v1/provider-sites": listProviderSites,
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
@@ -120,6 +128,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
   "PATCH /admin/v1/sites/{siteId}": updateSite,
+  "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
+    presignComplianceLetter,
   "DELETE /admin/v1/sites/{siteId}": deactivateSite,
   "GET /admin/v1/sites/{siteId}/master-contacts": listMasterContacts,
   "POST /admin/v1/sites/{siteId}/master-contacts": createMasterContact,

@@ -327,6 +327,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
       noncurrent_days = 90
     }
   }
+
+  rule {
+    id     = "expire-pending-compliance-letters"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "pending"
+      }
+    }
+
+    expiration {
+      days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
 }
 
 resource "aws_s3_bucket_cors_configuration" "uploads" {
@@ -340,6 +360,8 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
     allowed_origins = distinct(concat(
       ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
       [for name in var.frontend_domain_names : "https://${name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
+      [for name in var.admin_domain_names : "https://${name}"],
     ))
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
