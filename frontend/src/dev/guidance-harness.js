@@ -6,6 +6,9 @@ import {
   submitConditionAnswers,
 } from "./guidance-api.js";
 import { guidanceFixtures } from "./guidance-fixtures.js";
+// theme-toggle renders over window.__theme (defined by the page's inline
+// script) — no other app imports; see index.html's same component.
+import "../components/theme-toggle.js";
 
 // Dev-harness-only WA form controls, self-registered by this dev-only module.
 // The page below (frontend/dev/guidance-harness.html) is the only entry point;
@@ -140,6 +143,7 @@ class GuidanceHarness extends HTMLElement {
   _render() {
     this.innerHTML = html`
       <section class="guidance-harness" aria-labelledby="guidance-title">
+        <theme-toggle></theme-toggle>
         <header class="guidance-harness__header">
           <a href="/today" class="guidance-harness__back">&larr; Open app</a>
           <div>
