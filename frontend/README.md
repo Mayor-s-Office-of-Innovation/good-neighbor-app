@@ -23,6 +23,16 @@ dark), and where we deliberately diverge from off-the-shelf Web Awesome. It impo
 real `tokens.css`/`base.css` plus the component sheets, so it can't drift. Dev-only: `vite build` ships only the app's
 `index.html`.
 
+## Guidance harness (dev-only)
+
+Same dev server, **http://127.0.0.1:5173/dev/guidance-harness.html** — a standalone page
+(exercise the guidance workflow with fixtures against the real local backend; needs
+`npm run dev -w backend`). No app imports: no router, no site binding, no auth — requests
+go out unauthenticated and the local API's stub authorizer picks the partition
+(see the [harness section in dev-commands.md](../docs/dev-commands.md#guidance-harness-dev-only-page)
+for the X-Debug-Site field and the app cross-check recipe). Lives in `src/dev/`.
+Dev-only, like `design-system.html`: `vite build` ships only the app's `index.html`.
+
 ## Routes
 
 - `/today` — the home hub (worklist, last log, Start/Flag CTAs)
@@ -45,6 +55,7 @@ src/
   services/     backend API calls (services/api.js is the seam)
   state/        check-session and other app state
   domain/       read-model adapters (backend items → UI records) · check-completion.js (the perimeter completion rule)
+  dev/          dev-only page modules (guidance harness: guidance-harness.js + guidance-fixtures.js + raw-fetch guidance-api.js)
   lib/          html tag helper, escaping
   db.js         IndexedDB (site binding + resumable draft + review-backed session)
   router.js     tiny History-API router

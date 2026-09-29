@@ -171,7 +171,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   by the client. Card hydration batches visible requests so one handler invocation loads the
   agency-76 feed once; concurrent detail loads in the same Lambda environment also share an
   in-flight feed request. The raw HUB response and customer fields are never returned. A dev-only
-  harness (`/dev/guidance-harness`, dev builds only) exercises the flow with fixtures.
+  harness page (`frontend/dev/guidance-harness.html` — a standalone entry point outside the app
+  build, served only by the dev server) exercises the flow with fixtures against the real local
+  API; see [dev-commands.md](./dev-commands.md#guidance-harness-dev-only-page).
 
 ## Single-table data model
 

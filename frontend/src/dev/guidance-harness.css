@@ -1,19 +1,15 @@
 /*
-  Styles for the dev guidance harness (guidance-harness.js). Imported from that
-  module — which main.js only loads under import.meta.env.DEV — so none of this
-  ships in the production CSS bundle. Unlayered, like base.css, so it wins over
-  Web Awesome's @layer-ed native styles.
+  Styles for the dev guidance harness (src/dev/guidance-harness.js), owned by
+  the standalone page frontend/dev/guidance-harness.html — which only exists
+  under the dev server (vite build emits only index.html), so none of this
+  ships in the production CSS bundle. Unlayered, like base.css, so it wins
+  over Web Awesome's @layer-ed native styles.
 */
 
 /* ==================================================================
    Dev guidance harness — internal workbench for exercising the rule
-   workflow against the real local API. Dev route only.
+   workflow against the real local API. Standalone page only.
    ================================================================== */
-/* The harness is a wide workbench: let the shell host span the full width. */
-.app__main:has(.guidance-harness) {
-  width: 100%;
-  max-width: none;
-}
 
 .guidance-harness {
   width: min(1180px, 100%);
