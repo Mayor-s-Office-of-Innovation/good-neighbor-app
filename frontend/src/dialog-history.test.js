@@ -1,0 +1,172 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const listeners = vi.hoisted(
+  () => /** @type {Record<string, (...args: any[]) => any>} */ ({}),
+);
+
+const browser = vi.hoisted(() => ({
+  location: { pathname: "/today" },
+  history: {
+    state: null,
+    pushState: vi.fn(),
+    replaceState: vi.fn(),
+    back: vi.fn(),
+    go: vi.fn(),
+  },
+}));
+
+vi.stubGlobal("location", browser.location);
+vi.stubGlobal("history", browser.history);
+vi.stubGlobal("window", {
+  addEventListener: vi.fn((type, listener) => {
+    listeners[type] = listener;
+  }),
+});
+vi.stubGlobal("document", { addEventListener: vi.fn() });
+
+/**
+ * A minimal <dialog> double: tracks open state, records close() calls, and —
+ * like a real <dialog> — dispatches a `close` event from close() so the
+ * helper's native-close wiring runs.
+ * @returns {HTMLDialogElement}
+ */
+function fakeDialog() {
+  const dialog = /** @type {any} */ ({
+    open: false,
+    dataset: {},
+    listeners: {},
+    showModal() {
+      this.open = true;
+    },
+    close() {
+      this.open = false;
+      (this.listeners.close || []).forEach((fn) => fn());
+    },
+    addEventListener(type, fn) {
+      this.listeners[type] = this.listeners[type] || [];
+      this.listeners[type].push(fn);
+    },
+  });
+  return /** @type {HTMLDialogElement} */ (/** @type {unknown} */ (dialog));
+}
+
+async function popWithBack() {
+  // Simulate the engine: history.back() swaps the state, popstate catches up.
+  browser.history.back.mockImplementationOnce(() => {
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+  });
+  await listeners.popstate();
+}
+
+describe("dialog-history", () => {
+  /** @type {Record<string, any>} */
+  let dialogHistory;
+  /** @type {Record<string, any>} */
+  let router;
+
+  beforeEach(async () => {
+    browser.location.pathname = "/today";
+    browser.history.state = null;
+    browser.history.pushState.mockReset();
+    browser.history.replaceState.mockReset();
+    browser.history.back.mockReset();
+    browser.history.go.mockReset();
+    browser.history.pushState.mockImplementation((state, _t, route) => {
+      browser.history.state = state;
+      if (route) browser.location.pathname = route;
+    });
+    browser.history.replaceState.mockImplementation((state, _t, route) => {
+      browser.history.state = state;
+      if (route) browser.location.pathname = route;
+    });
+    browser.history.back.mockImplementation(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.pathname = "/today";
+    });
+    vi.resetModules();
+    router = await import("./router.js");
+    dialogHistory = await import("./dialog-history.js");
+  });
+
+  it("openOverlayDialog shows the dialog and pushes one sentinel per id", () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "logout");
+
+    expect(dialog.open).toBe(true);
+    expect(browser.history.pushState).toHaveBeenCalledOnce();
+  });
+
+  it("re-opening the same id does not push a duplicate entry", () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "logout");
+    dialog.close();
+    dialogHistory.openOverlayDialog(dialog, "logout");
+
+    expect(browser.history.pushState).toHaveBeenCalledTimes(2);
+    expect(dialog.open).toBe(true);
+    expect(browser.history.state?.goodNeighborOverlay).toBe("logout");
+  });
+
+  it("two different ids push two sentinels", () => {
+    const a = fakeDialog();
+    const b = fakeDialog();
+    dialogHistory.openOverlayDialog(a, "analysis-delete");
+    dialogHistory.openOverlayDialog(b, "analysis-edit");
+
+    expect(browser.history.pushState).toHaveBeenCalledTimes(2);
+    // Top of the stack is the last id opened.
+    expect(browser.history.state?.goodNeighborOverlay).toBe("analysis-edit");
+  });
+
+  it("native close unwinds the sentinel via closeOverlay", async () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "logout");
+    expect(browser.history.state?.goodNeighborOverlay).toBe("logout");
+
+    await popWithBack();
+
+    expect(browser.history.state?.goodNeighborOverlay).toBeUndefined();
+  });
+
+  it("system back closes the registered dialog without a route re-render", async () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "ticket-detail");
+    const routeListener = vi.fn();
+    const removeRoute = router.onRouteChange(routeListener);
+
+    // System back: the sentinel is already gone from history.state.
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    await popWithBack();
+
+    expect(dialog.open).toBe(false);
+    expect(routeListener).not.toHaveBeenCalled();
+    expect(browser.location.pathname).toBe("/today");
+    removeRoute();
+  });
+
+  it("system back closes the live dialog a re-render registered, not a dead one", async () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "logout");
+    // Simulate a host re-render handing over a FRESH dialog element bound
+    // only through registerOverlayDialog.
+    const fresh = fakeDialog();
+    fresh.open = true;
+    dialogHistory.registerOverlayDialog("logout", fresh);
+
+    await popWithBack();
+
+    // Only the live registry entry closes; the pre-re-render element is kept.
+    expect(fresh.open).toBe(false);
+    expect(dialog.open).toBe(true);
+  });
+
+  it("pops are idempotent: closing an already-closed dialog is a no-op", async () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "attributions");
+    dialog.close();
+
+    await popWithBack();
+
+    expect(browser.location.pathname).toBe("/today");
+  });
+});

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listeners = vi.hoisted(
   () => /** @type {Record<string, (...args: any[]) => any>} */ ({}),
@@ -26,6 +26,14 @@ vi.stubGlobal("document", { addEventListener: vi.fn() });
 
 const { backOrNavigate, currentRoute, navigate, setPopstateGuard } =
   await import("./router.js");
+
+/**
+ * Fire a synthetic popstate after applying the history mutation the browser
+ * would have performed for `back`/`go` (mock helpers stand in for the engine).
+ */
+async function pop() {
+  await listeners.popstate();
+}
 
 describe("router history", () => {
   beforeEach(() => {
@@ -89,9 +97,126 @@ describe("router history", () => {
     browser.history.state = { goodNeighborAppNavigation: 0 };
     browser.location.pathname = "/today";
 
-    await listeners.popstate();
+    await pop();
 
     expect(browser.history.go).toHaveBeenCalledWith(1);
     removeGuard();
+  });
+});
+
+describe("router overlays", () => {
+  /** @type {string[]} */
+  let popped;
+  /** @type {() => void} */
+  let removeOverlayListener;
+  /** @type {Record<string, any>} */
+  let router;
+
+  beforeEach(async () => {
+    browser.location.pathname = "/today";
+    browser.history.state = null;
+    browser.history.pushState.mockReset();
+    browser.history.replaceState.mockReset();
+    browser.history.back.mockReset();
+    browser.history.go.mockReset();
+    browser.history.pushState.mockImplementation((state, _title, route) => {
+      browser.history.state = state;
+      if (route) browser.location.pathname = route;
+    });
+    browser.history.replaceState.mockImplementation((state, _title, route) => {
+      browser.history.state = state;
+      if (route) browser.location.pathname = route;
+    });
+    browser.history.back.mockImplementation(() => {
+      // Stand-in for the engine: an app-close unwind lands on the prior entry.
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.pathname = "/today";
+    });
+    // Fresh module per test: the router keeps overlay state in module scope.
+    vi.resetModules();
+    router = await import("./router.js");
+    popped = [];
+    removeOverlayListener = router.onOverlayPop((id) => popped.push(id));
+  });
+
+  afterEach(() => {
+    removeOverlayListener();
+  });
+
+  it("pushes an overlay sentinel without changing the URL", () => {
+    router.pushOverlay("logout");
+
+    expect(browser.history.pushState).toHaveBeenCalledWith(
+      { goodNeighborAppNavigation: 1, goodNeighborOverlay: "logout" },
+      "",
+    );
+    expect(browser.location.pathname).toBe("/today");
+  });
+
+  it("does not push a duplicate sentinel for an already-open id", () => {
+    router.pushOverlay("logout");
+    router.pushOverlay("logout");
+
+    expect(browser.history.pushState).toHaveBeenCalledOnce();
+  });
+
+  it("notifies overlay closers on system back without re-rendering", async () => {
+    router.pushOverlay("capture");
+    const routeListener = vi.fn();
+    const removeRoute = router.onRouteChange(routeListener);
+    // Simulate the engine: back lands on the entry beneath the sentinel
+    // (depth 0), then popstate catches up.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.pathname = "/today";
+    });
+    await pop();
+
+    router.closeOverlay("capture");
+
+    expect(popped).toEqual(["capture"]);
+    expect(routeListener).not.toHaveBeenCalled();
+    removeRoute();
+  });
+
+  it("ignores closeOverlay when the id is not on top (system back won it)", () => {
+    router.pushOverlay("capture");
+
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    browser.location.pathname = "/today";
+    router.closeOverlay("capture");
+
+    expect(browser.history.back).not.toHaveBeenCalled();
+  });
+
+  it("re-renders on a popstate that changes the route even with overlays open", async () => {
+    router.pushOverlay("capture");
+    router.navigate("/check");
+    const routeListener = vi.fn();
+    const removeRoute = router.onRouteChange(routeListener);
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    browser.location.pathname = "/today";
+
+    await pop();
+
+    expect(routeListener).toHaveBeenCalled();
+    expect(popped).toEqual([]);
+    removeRoute();
+  });
+
+  it("strips a stale overlay marker left by a refresh mid-overlay", async () => {
+    // Fresh module whose load-time strip branch sees the stale state.
+    vi.resetModules();
+    browser.history.state = {
+      goodNeighborAppNavigation: 1,
+      goodNeighborOverlay: "capture",
+    };
+    await import("./router.js");
+
+    expect(browser.history.replaceState).toHaveBeenCalledWith(
+      { goodNeighborAppNavigation: 1 },
+      "",
+    );
+    expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 1 });
   });
 });

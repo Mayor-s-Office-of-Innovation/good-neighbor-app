@@ -11,6 +11,7 @@
 import "./describe-instead.css";
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
+import { openOverlayDialog } from "../dialog-history.js";
 import {
   addItem,
   getFlowType,
@@ -144,7 +145,10 @@ class DescribeInstead extends HTMLElement {
       navigate(this._routeBase);
       return;
     }
-    this._dialog.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._dialog),
+      "discard-confirm",
+    );
   }
 
   _discardAndExit() {

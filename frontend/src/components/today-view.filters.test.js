@@ -427,6 +427,8 @@ describe("logout", () => {
     const view = new TodayView();
     const dialog = {
       open: false,
+      dataset: {},
+      addEventListener: vi.fn(),
       showModal: vi.fn(function () {
         this.open = true;
       }),

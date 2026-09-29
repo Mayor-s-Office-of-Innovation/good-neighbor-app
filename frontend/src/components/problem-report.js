@@ -16,7 +16,8 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { navigate, replaceRoute } from "../router.js";
+import { openOverlayDialog } from "../dialog-history.js";
 import {
   answerAnalysisQuestion,
   analyzeEvidenceItem,
@@ -284,7 +285,10 @@ class ProblemReport extends HTMLElement {
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
-    this._cancelDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._cancelDialog),
+      "cancel-confirm",
+    );
   }
 
   /** @returns {void} */
@@ -388,7 +392,7 @@ class ProblemReport extends HTMLElement {
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-    navigate("/today");
+    replaceRoute("/today");
   }
 
   _exitCapture({ discarded = false } = {}) {
@@ -404,7 +408,7 @@ class ProblemReport extends HTMLElement {
       );
       return;
     }
-    navigate("/today");
+    replaceRoute("/today");
   }
 
   _wireAnalysisCards() {
@@ -445,7 +449,10 @@ class ProblemReport extends HTMLElement {
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
     if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -454,7 +461,10 @@ class ProblemReport extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -575,12 +585,18 @@ class ProblemReport extends HTMLElement {
   async _resolveProblem(problem) {
     if (!problem.taskId) {
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
     if (problem.actionKind === "escalation") {
-      this._analysisProgressDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
+        "analysis-progress",
+      );
       try {
         const result = await completeTask(problem.taskId, {
           completionMethod: "311_filed",
@@ -603,7 +619,10 @@ class ProblemReport extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
     } catch (err) {
       console.error("resolve task failed", err);
       this._showToast("Could not save that action. Please try again.");

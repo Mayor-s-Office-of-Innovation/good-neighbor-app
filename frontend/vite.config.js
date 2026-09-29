@@ -6,10 +6,10 @@ const releaseSha =
 
 /*
   Served from the site root (S3/CloudFront), so base is "/" — paired with the
-  History-API router (src/router.js). Deep-link/refresh 404s are handled by a
-  CloudFront custom-error-response → index.html fallback provisioned with the
-  deploy stage (infra I1); Vite's dev/preview server already serves that SPA
-  fallback locally.
+  History-API router (src/router.js). Deep-link/refresh 404s are handled by the
+  frontend_spa_rewrite viewer-request CloudFront Function rewriting non-asset
+  paths to /index.html before the S3 origin (infra/modules/app/cloudfront.tf);
+  Vite's dev/preview server serves the same SPA fallback locally.
 
   TODO(offline pass): the PWA is intentionally OFF for the MVP — no service
   worker is generated or registered while we finalize screens. When we do the

@@ -16,6 +16,7 @@
   matching the original inline handler.
 */
 import "./location-dialog.css";
+import { openOverlayDialog } from "../dialog-history.js";
 import {
   locationDialog,
   locationDialogSites,
@@ -54,7 +55,7 @@ class LocationDialog extends HTMLElement {
     const dialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#location-dialog")
     );
-    dialog?.showModal();
+    dialog?.showModal && openOverlayDialog(dialog, "location");
     /** @type {HTMLButtonElement | null} */ (
       dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
         null

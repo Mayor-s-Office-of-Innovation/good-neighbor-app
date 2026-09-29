@@ -22,6 +22,8 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { navigate } from "../router.js";
+import { pushOverlay, closeOverlay, onOverlayPop } from "../router.js";
+import { openOverlayDialog } from "../dialog-history.js";
 import {
   activateSiteBinding,
   clearSiteSession,
@@ -155,6 +157,7 @@ class TodayView extends HTMLElement {
     };
     this._captureFinishedListening = false;
     this._capturePhaseTimer = 0;
+    this._overlayPopUnsub = null;
     this._focusAfterRender = null;
     this._captureLauncherSelector = null;
     this._homeModel = null;
@@ -198,6 +201,8 @@ class TodayView extends HTMLElement {
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
     this._captureFinishedListening = false;
+    this._overlayPopUnsub?.();
+    this._overlayPopUnsub = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
     window.clearTimeout(this._capturePhaseTimer);
@@ -239,6 +244,17 @@ class TodayView extends HTMLElement {
       this.addEventListener("capturefinished", this._captureFinishedHandler);
       this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
       this._captureFinishedListening = true;
+    }
+    if (!this._overlayPopUnsub) {
+      // System back with the capture phase open unwinds its sentinel; route
+      // through the same leaving-capture animation as the in-app Finish.
+      // (Dialog overlays are closed by dialog-history's own pop bridge.)
+      this._overlayPopUnsub = onOverlayPop((overlayId) => {
+        if (overlayId !== "capture") return;
+        if (this._viewPhase === "home" || this._viewPhase === "leaving-capture")
+          return;
+        this._finishCapture(new CustomEvent("capturefinished", { detail: {} }));
+      });
     }
     if (!this._settingsDocumentClick) {
       this._settingsDocumentClick = (event) => {
@@ -487,7 +503,10 @@ class TodayView extends HTMLElement {
           "false",
         );
         this._attributionsDialogOpen = true;
-        this._attributionsDialog?.showModal();
+        openOverlayDialog(
+          /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+          "attributions",
+        );
       },
     );
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
@@ -785,12 +804,18 @@ class TodayView extends HTMLElement {
 
   _restoreLogoutDialog() {
     if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
-    this._logoutDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._logoutDialog),
+      "logout",
+    );
   }
 
   _restoreAttributionsDialog() {
     if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
-    this._attributionsDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+      "attributions",
+    );
   }
 
   async _logout() {
@@ -949,6 +974,9 @@ class TodayView extends HTMLElement {
       this._viewPhase = "capture";
       this._syncPhaseClass();
     });
+    // History sentinel for the capture phase: system back unwinds it to the
+    // home phase (same as the in-app cancel), instead of leaving the app.
+    pushOverlay("capture");
   }
 
   /** @param {CustomEvent<{ discarded?: boolean }>} event */
@@ -959,6 +987,8 @@ class TodayView extends HTMLElement {
     this._focusAfterRender =
       this._captureLauncherSelector || "home-primary-control";
     this._syncPhaseClass();
+    // Unwind the capture sentinel (a no-op if system back already did).
+    closeOverlay("capture");
     this._afterCaptureAnimation("leaving-capture", async () => {
       this._viewPhase = "home";
       this._captureFlow = null;
@@ -1462,7 +1492,10 @@ class TodayView extends HTMLElement {
       ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
     );
     if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -1471,7 +1504,10 @@ class TodayView extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -1615,7 +1651,10 @@ class TodayView extends HTMLElement {
   async _resolveAnalysisProblem(problem) {
     if (!problem.taskId) {
       this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
@@ -1639,7 +1678,10 @@ class TodayView extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       await this.connectedCallback();
     } catch (err) {
       console.error("resolve task failed", err);
