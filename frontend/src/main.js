@@ -54,11 +54,14 @@ import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
 // Our tokens + layout. Unlayered, so they win over WA's @layer-ed native styles.
 import "./styles/tokens.css";
-import "./styles/app.css";
+import "./styles/base.css";
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
 import "./components/today-view.js";
+import "./components/ticket-detail-dialog.js";
+import "./components/site-switcher.js";
+import "./components/location-dialog.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";

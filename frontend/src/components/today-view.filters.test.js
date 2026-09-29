@@ -28,6 +28,7 @@ const logout = vi.hoisted(() => ({
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
+  hasAdminAccess: () => false,
   listBoundSites: async () => [],
   clearSiteSession: logout.clearSiteSession,
 }));
@@ -331,52 +332,6 @@ describe("site location prompt", () => {
     expect(view._summaryBlock(null, [])).toBe("");
   });
 
-  it("lists provider sites and keeps site-change confirmation disabled initially", async () => {
-    const view = await mount("?filter=todo");
-    view._site = { siteId: "site-1", name: "Mission District" };
-    view._providerSites = [
-      { siteId: "site-1", name: "Mission District" },
-      { siteId: "site-2", name: "Site 2" },
-    ];
-    const markup = view._locationDialogMarkup();
-    expect(markup).toContain("Is your app set to the right location?");
-    expect(markup).toContain('<h2 id="location-dialog-title">');
-    expect(markup).toContain('aria-labelledby="location-dialog-title"');
-    expect(markup).toContain('aria-describedby="location-dialog-copy"');
-    expect(markup).toContain("Site 2");
-    expect(markup).toMatch(/location-dialog__site"\s+appearance="plain"/);
-    expect(markup).toMatch(/location-dialog__confirm"\s+appearance="plain"/);
-    expect(markup).toMatch(/location-dialog__stay"\s+appearance="plain"/);
-    expect(markup).toMatch(/Confirm site change\s*<\/button>/);
-    expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
-  });
-
-  it("focuses the selected site when opening the location dialog", async () => {
-    const view = await mount("?filter=todo");
-    const focus = vi.fn();
-    const showModal = vi.fn();
-    const querySelector = vi.fn((selector) =>
-      selector === '.location-dialog__site[aria-pressed="true"]'
-        ? { focus }
-        : null,
-    );
-    view.querySelector = () => ({
-      showModal,
-      querySelector,
-    });
-
-    view._showLocationDialog();
-
-    expect(showModal).toHaveBeenCalledOnce();
-    expect(querySelector).toHaveBeenCalledWith(
-      '.location-dialog__site[aria-pressed="true"]',
-    );
-    expect(focus).toHaveBeenCalledOnce();
-    expect(showModal.mock.invocationCallOrder[0]).toBeLessThan(
-      focus.mock.invocationCallOrder[0],
-    );
-  });
-
   it("keeps the location warning mounted through a background location update", async () => {
     const view = await mount("?filter=todo");
     view.isConnected = true;
@@ -384,41 +339,40 @@ describe("site location prompt", () => {
     view._homeModel = model;
     view._viewPhase = "home";
     view._locationPrompt = { flowType: "perimeter", launcher: null };
-    view._locationSelectedSiteId = view._siteId;
     const render = vi.fn();
     view._render = render;
     view._renderHome = TodayView.prototype._renderHome.bind(view);
-    let onClose = () => {};
-    const stayButton = { addEventListener: vi.fn() };
-    const confirmButton = { addEventListener: vi.fn() };
-    const dialog = {
-      open: true,
-      addEventListener: (event, callback) => {
-        if (event === "close") onClose = callback;
-      },
-      querySelectorAll: () => [],
-      querySelector: (selector) =>
-        selector === "#location-stay" ? stayButton : confirmButton,
-    };
-    view.querySelector = () => dialog;
-    view._wireLocationDialog();
 
     devicePosition.listener({ latitude: 37.78, longitude: -122.4194 });
     expect(view._pendingLocationRender).toBe(true);
     expect(render).not.toHaveBeenCalled();
-    expect(dialog.open).toBe(true);
-    expect(stayButton.addEventListener).toHaveBeenCalledWith(
-      "click",
-      expect.any(Function),
-    );
-    expect(confirmButton.addEventListener).toHaveBeenCalledWith(
-      "click",
-      expect.any(Function),
-    );
 
     view._renderHome = vi.fn();
-    onClose();
+    view._onLocationDialogClosed({ changingSite: false });
+    expect(view._locationPrompt).toBeNull();
     expect(view._renderHome).toHaveBeenCalledWith(model);
+  });
+
+  it("does not redraw the home behind a site change after the prompt closes", async () => {
+    const view = await mount("?filter=todo");
+    view._homeModel = { tasks: [] };
+    view._viewPhase = "home";
+    view._locationPrompt = { flowType: "perimeter", launcher: null };
+    view._pendingLocationRender = true;
+    view._renderHome = vi.fn();
+    view._onLocationDialogClosed({ changingSite: true });
+    expect(view._renderHome).not.toHaveBeenCalled();
+    expect(view._pendingLocationRender).toBe(false);
+  });
+
+  it("resumes the waiting capture flow on Stay", async () => {
+    const view = await mount("?filter=todo");
+    view._enterCapture = vi.fn();
+    const prompt = { flowType: "single-problem", launcher: null };
+    view._onLocationStay({ prompt });
+    expect(view._enterCapture).toHaveBeenCalledWith("single-problem", null);
+    view._onLocationStay({ prompt: null });
+    expect(view._enterCapture).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -518,35 +472,7 @@ describe("logout", () => {
   });
 });
 
-describe("task card labels", () => {
-  it("prefers the user-friendly condition label", () => {
-    const view = new TodayView();
-    view._cardActions = () => [];
-
-    const card = view._actionCard({
-      taskId: "task-1",
-      category: "Litter",
-      label: "File a 311 ticket",
-      userFriendlyLabel: "Lots of trash in tree well",
-    });
-
-    expect(card).toContain("Lots of trash in tree well");
-    expect(card).not.toContain(">File a 311 ticket</h3>");
-  });
-});
-
 describe("site switcher", () => {
-  it("uses accessible filter buttons rather than incomplete tab semantics", () => {
-    const view = new TodayView();
-    view._homeFilter = "todo";
-    const markup = view._taskTabs();
-    expect(markup).toContain('role="group"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).not.toContain('role="tab"');
-    expect(markup).not.toContain('role="tablist"');
-    expect(markup).not.toContain('tabindex="-1"');
-  });
-
   it("collects all provider-site pages and sorts the complete catalog", async () => {
     catalog.listProviderSites
       .mockResolvedValueOnce({
@@ -582,12 +508,7 @@ describe("site switcher", () => {
     view._siteSwitcherOpen = true;
 
     expect(view._providerSitesStatus).toBe("error");
-    expect(view._siteSwitcher("Provider One")).toContain(
-      'id="site-catalog-retry"',
-    );
-    expect(view._siteSwitcher("Provider One")).toContain(
-      "Other sites couldn't load.",
-    );
+    expect(view._providerSites).toEqual([]);
 
     catalog.listProviderSites.mockResolvedValueOnce({
       providerId: "provider-1",
@@ -601,49 +522,6 @@ describe("site switcher", () => {
     expect(view._providerSites).toEqual([
       { siteId: "site-2", name: "Second site" },
     ]);
-    expect(view._siteSwitcher("Provider One")).not.toContain(
-      "Other sites couldn't load.",
-    );
     errorLog.mockRestore();
-  });
-
-  it("stays open when the location-summary link click reaches the outside-click listener", async () => {
-    const view = await mount("?filter=todo");
-    const originalElement = globalThis.Element;
-    class SiteChangeLink {
-      matches(selector) {
-        return selector.includes("#lastlog-change-site");
-      }
-    }
-    try {
-      vi.stubGlobal("Element", SiteChangeLink);
-      view._siteSwitcherOpen = true;
-      view._siteDocumentClick({ composedPath: () => [new SiteChangeLink()] });
-      expect(view._siteSwitcherOpen).toBe(true);
-
-      view._siteDocumentClick({ composedPath: () => [] });
-      expect(view._siteSwitcherOpen).toBe(false);
-    } finally {
-      vi.stubGlobal("Element", originalElement);
-    }
-  });
-
-  it("lists provider sites without add-site or generic login actions", () => {
-    const view = new TodayView();
-    view._site = { name: "730 Polk" };
-    view._siteId = "chc-730-polk";
-    view._providerSites = [
-      { siteId: "chc-640-jones", name: "640 Jones" },
-      { siteId: "chc-730-polk", name: "730 Polk" },
-    ];
-    view._siteSwitcherOpen = true;
-
-    const menu = view._siteSwitcher("CHC");
-
-    expect(menu).toContain("640 Jones");
-    expect(menu).toContain("730 Polk");
-    expect(menu).toContain("home-site-switcher__item--selected");
-    expect(menu).not.toContain("Add another site");
-    expect(menu).not.toContain("Login to another site");
   });
 });

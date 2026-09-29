@@ -1,0 +1,816 @@
+/*
+  Styles for the analysis result cards, trays, and the shared delete / edit /
+  progress / success dialogs (analysis-results.templates.js). Rendered by
+  today-view, perimeter-check, and problem-report. Imported from the templates
+  module; main.js loads tokens.css and base.css first, so these rules follow
+  the shared base in the bundle. Unlayered, like base.css.
+
+  Two generic classes are defined in grouped rules here and reused elsewhere:
+  .btn-icon (ticket-detail-dialog) and .photo-placeholder (ticket-detail-dialog).
+*/
+
+/* ---- Analysis card progress stages + failure state ---- */
+.analysis-card__stages {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.analysis-card__stage {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-faint);
+}
+
+.analysis-card__stage.is-active {
+  color: var(--text-secondary);
+}
+
+.analysis-card__stage.is-done {
+  color: var(--text);
+}
+
+.analysis-card__stage-mark {
+  flex: 0 0 1em;
+  width: 1em;
+  text-align: center;
+}
+
+.analysis-card__stage.is-done .analysis-card__stage-mark {
+  color: var(--toast-success, #00883c);
+  font-weight: 700;
+}
+
+.analysis-card--failed {
+  border-left: 3px solid var(--c-hazard);
+}
+
+.analysis-card__failure-reason {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.analysis-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.analysis-tray h2 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--wa-font-family-heading, var(--font-sans));
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+}
+
+.analysis-tray__cards {
+  --analysis-card-gap: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--analysis-card-gap);
+  padding: 0.75rem;
+  border-radius: 1.125rem;
+  background: var(--brand-blue-bg);
+}
+
+.analysis-tray--recent .analysis-tray__cards {
+  gap: var(--wa-space-m, 1rem);
+  padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
+    var(--wa-space-xs, 0.5rem);
+  border-radius: 2rem;
+  background: var(--wa-color-brand-fill-quiet, #e8f3ff);
+}
+
+.analysis-tray h2.analysis-tray__check-title {
+  width: 100%;
+  margin: 0;
+  color: var(--wa-color-text-normal, #1b1d26);
+  font-size: var(--wa-font-size-l, 1.25rem);
+  line-height: 1.2;
+  text-align: center;
+}
+
+.analysis-tray--recent .analysis-card {
+  background: var(--wa-color-surface-default, #fff);
+}
+
+.analysis-tray--history .analysis-tray__cards {
+  gap: var(--wa-space-m, 1rem);
+  padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
+    var(--wa-space-xs, 0.5rem);
+  border-radius: 2rem;
+  background: var(--wa-color-neutral-90, #e4e5e9);
+}
+
+.analysis-tray--history .analysis-card {
+  background: var(--wa-color-surface-lowered, #f1f2f3);
+}
+
+.analysis-tray__empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.4;
+}
+
+.analysis-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background: var(--wa-color-surface-lowered, #f1f2f3);
+}
+
+.analysis-card__panel {
+  width: 100%;
+  padding: 1.25rem 1.5rem;
+  border-radius: 1.5rem;
+  background: var(--wa-color-surface-default, #fff);
+}
+
+.analysis-tray--recent .analysis-card__panel,
+.analysis-tray--history .analysis-card__panel {
+  border: 1px solid var(--wa-color-neutral-90, #e4e5e9);
+}
+
+html.wa-dark .analysis-tray--recent .analysis-card__panel,
+html.wa-dark .analysis-tray--history .analysis-card__panel {
+  border-color: var(--wa-color-neutral-border-quiet, #545868);
+}
+
+.analysis-card__layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.analysis-card--clear .analysis-card__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.analysis-card__clear-title {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
+
+.analysis-card__clear-title img {
+  width: 1.875rem;
+  height: 1.875rem;
+  object-fit: contain;
+}
+
+.analysis-card__clear-title h3 {
+  margin: 0;
+  color: var(--wa-color-neutral-fill-loud, #2f323f);
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  font-size: var(--wa-font-size-l, 1.25rem);
+  font-weight: var(--wa-font-weight-bold, 600);
+  line-height: 1.2;
+}
+
+.analysis-card__clear-copy {
+  margin: 0;
+  color: #424554;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+}
+
+.analysis-card__clear-copy a {
+  color: #0053c0;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-position: from-font;
+}
+
+html.wa-dark .analysis-card__clear-copy {
+  color: var(--text-secondary);
+}
+
+html.wa-dark .analysis-card__clear-copy a {
+  color: var(--wa-color-text-link, #6ba7f0);
+}
+
+/* Keep the top edge fixed while the card and its list spacing collapse. */
+.analysis-card--deleting {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: clip;
+  min-height: 0;
+  flex-shrink: 0;
+  pointer-events: none;
+  animation: analysis-card-collapse 220ms ease-out forwards;
+}
+
+.analysis-card__deletion-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.analysis-card--deleting:only-child {
+  --analysis-card-gap: 0px;
+}
+
+@keyframes analysis-card-collapse {
+  from {
+    grid-template-rows: 1fr;
+    margin-bottom: 0;
+  }
+  to {
+    grid-template-rows: 0fr;
+    margin-bottom: calc(-1 * var(--analysis-card-gap, 0px));
+  }
+}
+
+.analysis-card--pending {
+  background: transparent;
+}
+
+.analysis-card--failed {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--wa-color-neutral-border-quiet, #e4e5e9);
+  background: var(--wa-color-surface-default, #fff);
+}
+
+.analysis-card__content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.analysis-card__route {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  color: var(--wa-color-text-normal, #1b1d26);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.2;
+}
+
+.analysis-card__route > .analysis-card__route-dot {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  border-radius: 50%;
+  background: var(--wa-color-neutral-60, #9194a2);
+}
+
+.analysis-card__route--311 > .analysis-card__route-dot {
+  background: var(--wa-color-blue-60, #0071ec);
+}
+
+.analysis-card__route--non-emergency > .analysis-card__route-dot {
+  background: var(--wa-color-warning-70, #ef9d00);
+}
+
+.analysis-card__route--emergency > .analysis-card__route-dot {
+  background: var(--wa-color-danger-60, #f3676c);
+}
+
+.analysis-card__route-separator {
+  color: var(--wa-color-neutral-70, #abaeb9);
+}
+
+.analysis-card__ticket-status--closed {
+  color: var(--wa-color-success-50, #00883c);
+}
+
+.analysis-card__ticket-status--overdue {
+  color: var(--wa-color-warning-on-quiet, #8c4602);
+}
+
+.analysis-card .analysis-card__place {
+  margin: 0 0 0.5rem;
+  color: var(--wa-color-text-quiet, #545868);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+}
+
+.analysis-card .analysis-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.53125rem;
+  color: var(--text-secondary);
+  font-family: Roboto, var(--font-sans);
+  font-size: 0.625rem;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 0.75rem;
+  text-transform: uppercase;
+}
+
+.analysis-card__star {
+  display: block;
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: 0 0 auto;
+}
+
+.analysis-card h3 {
+  margin: 0 0 0.125rem;
+  color: var(--wa-color-text-normal, #1b1d26);
+  font-size: var(--wa-font-size-l, 1.25rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+}
+
+.analysis-card--standard h3 {
+  color: var(--text);
+}
+
+.analysis-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-m, 1rem);
+  line-height: 1.6;
+}
+
+.analysis-card__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.25rem 1.5rem 0.5rem;
+  color: var(--wa-color-gray-30, #424554);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+}
+
+.analysis-card__footer span + span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.analysis-card__skeleton {
+  display: block;
+  height: 1rem;
+  border-radius: var(--wa-border-radius-pill, 9999px);
+  background: var(--wa-color-neutral-fill-normal, #e4e5e9);
+}
+
+.analysis-card__skeleton--route {
+  width: 6.25rem;
+  margin-bottom: 1rem;
+}
+
+.analysis-card__skeleton-copy {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.analysis-card__skeleton--wide {
+  width: min(100%, 15rem);
+}
+.analysis-card__skeleton--mid {
+  width: min(84%, 12.5rem);
+}
+.analysis-card__skeleton--button {
+  width: 6.25rem;
+  height: 2.5625rem;
+  margin-top: 1rem;
+}
+
+.analysis-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.analysis-card__question {
+  display: grid;
+  gap: 0.625rem;
+  margin-top: 1rem;
+}
+
+.analysis-card__question-prompt {
+  margin: 0;
+}
+
+.analysis-card__question-prompt {
+  color: var(--text);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.analysis-card__question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.analysis-card__primary,
+.btn-icon,
+.analysis-card__icon {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  margin: 0;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.analysis-card__primary {
+  height: 2.6875rem;
+  min-height: 2.6875rem;
+  padding: 0 var(--wa-form-control-padding-inline, 1rem);
+  background: var(--wa-color-neutral-fill-loud, var(--ink));
+  color: var(--wa-color-neutral-on-loud, var(--on-ink));
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.analysis-card__primary--escalation {
+  background: var(--wa-color-brand-fill-normal, #d1e8ff);
+  color: var(--wa-color-brand-on-normal, #003f9c);
+}
+
+.analysis-card__primary--outline {
+  border: var(--wa-border-width-s, 1px) solid
+    var(--wa-color-neutral-border-loud, #9194a2);
+  background: transparent;
+  color: var(--wa-color-neutral-on-quiet, #545868);
+}
+
+.analysis-card__primary wa-icon {
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1;
+}
+
+.btn-icon,
+.analysis-card__icon {
+  width: 2.6875rem;
+  height: 2.6875rem;
+  flex: 0 0 2.6875rem;
+  min-width: 2.6875rem;
+  min-height: 2.6875rem;
+  border-radius: var(--radius-pill);
+  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+  color: var(--wa-color-neutral-on-normal, #424554);
+  padding: 0;
+}
+
+.analysis-card__icon--danger {
+  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+  color: var(--wa-color-neutral-on-normal, #424554);
+}
+
+.btn-icon wa-icon,
+.analysis-card__icon wa-icon {
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1;
+}
+
+.analysis-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  border: 0;
+  border-radius: 1.5rem;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  box-shadow: none;
+}
+
+.analysis-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.analysis-dialog__card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--wa-space-xl, 2rem);
+  width: 100%;
+  border: 0;
+  border-radius: 1.5rem;
+  background: var(--wa-color-surface-default, var(--surface));
+  color: var(--wa-color-text-normal, var(--text));
+  padding: var(--wa-space-l, 1.5rem);
+  box-shadow: var(--shadow-lift);
+}
+
+.analysis-dialog__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.analysis-dialog__title {
+  margin: 0;
+  color: var(--wa-color-text-normal, var(--text));
+  font-family: var(--wa-font-family-heading, var(--font-sans));
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+}
+
+.analysis-dialog__text {
+  margin: 0;
+  color: var(--wa-color-text-quiet, var(--text-secondary));
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: var(--wa-font-weight-body, 400);
+  line-height: 1.6;
+}
+
+.analysis-dialog__text span {
+  color: #0053c0;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-position: from-font;
+}
+
+.analysis-dialog__error {
+  margin: 0.5rem 0 0;
+  color: var(--wa-color-danger-on-quiet, #b30532);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.4;
+}
+
+.analysis-dialog__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.analysis-dialog__button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 3.375rem;
+  min-height: 3.375rem;
+  border: 0;
+  border-radius: var(--wa-border-radius-pill, var(--radius-pill));
+  background: transparent;
+  color: var(--wa-color-neutral-on-quiet, var(--text-secondary));
+  cursor: pointer;
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  font-size: var(--wa-font-size-l, 1.25rem);
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  line-height: 1.2;
+  padding: 0 var(--wa-form-control-padding-inline, 1.25rem);
+  box-shadow: none;
+}
+
+.analysis-dialog__button:focus,
+.analysis-dialog__button:focus-visible {
+  outline: none;
+}
+
+.analysis-dialog__button:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.analysis-dialog__button--danger {
+  background: var(--wa-color-danger-fill-normal, #ffdedc);
+  color: var(--wa-color-danger-on-normal, #8a132c);
+}
+
+.analysis-dialog__button--success {
+  background: var(--wa-color-success-fill-normal, #c2f2c1);
+  color: var(--wa-color-success-on-normal, #0a5027);
+}
+
+.analysis-dialog__button--ink {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+.analysis-dialog__button--danger-text {
+  color: var(--wa-color-danger-on-quiet, #b30532);
+}
+
+.analysis-dialog__card--progress {
+  align-items: center;
+}
+
+.analysis-dialog__card--progress .analysis-dialog__title {
+  align-self: stretch;
+}
+
+.analysis-progress-ring {
+  width: 8rem;
+  height: 8rem;
+  border: 0.25rem solid var(--wa-color-neutral-border-quiet, #e4e5e9);
+  border-top-color: #0071ec;
+  border-radius: 50%;
+  animation: analysis-progress-spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-progress-ring {
+    animation: none;
+  }
+}
+
+.analysis-edit-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: var(--wa-form-control-label-color, var(--text));
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  line-height: 1.2;
+}
+
+.analysis-edit-dialog__field textarea {
+  width: 100%;
+  min-height: 7.4375rem;
+  resize: vertical;
+  border: 1px solid var(--wa-color-neutral-border-quiet, var(--c-line));
+  border-radius: var(--wa-border-radius-l, var(--radius));
+  background: var(--wa-form-control-background-color, var(--surface));
+  color: var(--wa-color-text-normal, var(--text));
+  font: inherit;
+  font-weight: var(--wa-font-weight-body, 400);
+  line-height: 1.6;
+  padding: 0.5rem var(--wa-form-control-padding-inline, 1rem);
+  box-shadow: none;
+}
+
+@keyframes analysis-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.analysis-card__media {
+  position: relative;
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
+  height: 7.5rem;
+  overflow: hidden;
+  border-radius: var(--wa-border-radius-l, 0.75rem);
+  background: var(--surface-2);
+}
+
+.analysis-card__media img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.analysis-card__media span {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  max-width: calc(100% - 1rem);
+  overflow: hidden;
+  border: 1px solid var(--c-line);
+  border-radius: 0.25rem;
+  background: var(--surface-3);
+  color: #0a5027;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.25rem 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-card__media--text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 2rem;
+}
+
+.photo-placeholder,
+.analysis-card__media--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wa-color-neutral-80, #c7c9d0);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+}
+
+.analysis-edit-dialog__field textarea:focus-visible {
+  outline: none;
+}
+
+@media (max-width: 520px) {
+  .analysis-card {
+    align-items: stretch;
+  }
+
+  .analysis-card__panel {
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem 1.5rem;
+  }
+
+  .analysis-card__layout {
+    display: contents;
+  }
+
+  .analysis-card__media {
+    width: 7.5rem;
+    height: 7.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .analysis-card__content {
+    display: contents;
+  }
+
+  .analysis-card__content > * {
+    order: 3;
+  }
+
+  .analysis-card__route,
+  .analysis-card__skeleton--route {
+    order: 1;
+  }
+
+  .analysis-card .analysis-card__route {
+    margin-bottom: 1rem;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status) {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    column-gap: 0.5rem;
+    row-gap: 0.25rem;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-dot {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-label,
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__ticket-status {
+    grid-column: 2;
+  }
+
+  .analysis-card__route--311:has(.analysis-card__ticket-status)
+    .analysis-card__route-separator {
+    display: none;
+  }
+
+  .analysis-card__media {
+    order: 2;
+  }
+
+  .analysis-card__actions {
+    align-items: stretch;
+  }
+
+  .analysis-card__primary {
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+}
+
+/* Inline, non-destructive failure notice on a card (task action failed). */
+.actioncard__error {
+  margin: 0.6rem 0 0;
+  color: var(--danger, #b42318);
+  font-size: 0.9rem;
+}

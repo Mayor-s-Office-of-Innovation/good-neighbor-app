@@ -10,6 +10,7 @@
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
+  analysisDialogs,
   analysisResultsTray,
   problemSummary,
   problemSummaryLabel,
@@ -93,127 +94,6 @@ export const shell = ({ embedded = false } = {}) => html`
       capture="environment"
     />
   </div>
-`;
-
-export const analysisDialogs = () => html`
-  <dialog
-    class="analysis-dialog"
-    id="analysis-delete-dialog"
-    aria-labelledby="analysis-delete-title"
-    aria-describedby="analysis-delete-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
-        <p class="analysis-dialog__text" id="analysis-delete-copy">
-          This action can't be undone. The issue details won't be saved.
-        </p>
-        <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
-      </div>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--danger"
-          id="analysis-delete-confirm"
-          type="button"
-        >
-          Delete
-        </button>
-        <button class="analysis-dialog__button" type="submit">Cancel</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog"
-    id="analysis-success-dialog"
-    aria-labelledby="analysis-success-title"
-    aria-describedby="analysis-success-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-success-title">
-          Great work!
-        </h2>
-        <p class="analysis-dialog__text" id="analysis-success-copy">
-          We've recorded your action. This item is now
-          <span>marked as resolved.</span>
-        </p>
-      </div>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--success"
-          type="submit"
-        >
-          Continue
-        </button>
-        <button
-          class="analysis-dialog__button"
-          id="analysis-success-undo"
-          type="button"
-        >
-          Undo
-        </button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog"
-    id="analysis-progress-dialog"
-    aria-labelledby="analysis-progress-title"
-  >
-    <div class="analysis-dialog__card analysis-dialog__card--progress">
-      <h2 class="analysis-dialog__title" id="analysis-progress-title">
-        Filing ticket...
-      </h2>
-      <div class="analysis-progress-ring" aria-hidden="true"></div>
-      <button
-        class="analysis-dialog__button"
-        id="analysis-progress-cancel"
-        type="button"
-      >
-        Cancel
-      </button>
-    </div>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog analysis-edit-dialog"
-    id="analysis-edit-dialog"
-    aria-labelledby="analysis-edit-title"
-    aria-describedby="analysis-edit-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-edit-title">
-          Edit problem
-        </h2>
-        <p class="analysis-dialog__text" id="analysis-edit-copy">
-          Change the description to match what you see
-        </p>
-        <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
-      </div>
-      <label class="analysis-edit-dialog__field">
-        <span>Description</span>
-        <textarea id="analysis-edit-description" rows="5"></textarea>
-      </label>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--ink"
-          id="analysis-edit-save"
-          type="button"
-        >
-          Save
-        </button>
-        <button
-          class="analysis-dialog__button analysis-dialog__button--danger-text"
-          type="submit"
-        >
-          Discard
-        </button>
-      </div>
-    </form>
-  </dialog>
 `;
 
 /**

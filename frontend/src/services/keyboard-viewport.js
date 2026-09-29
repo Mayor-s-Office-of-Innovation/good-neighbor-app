@@ -10,7 +10,7 @@
 
   <app-root> mirrors the visual viewport into two custom properties while an
   editable control has focus, so the shell's flex chain composes into the
-  visible area instead (see app.css, "App shell"). Engines that resize the
+  visible area instead (see styles/base.css, "App shell"). Engines that resize the
   layout viewport report equal heights and the sync is a no-op there.
 */
 

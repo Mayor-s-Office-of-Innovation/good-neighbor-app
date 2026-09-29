@@ -1,0 +1,43 @@
+/*
+  Styles for <problem-report> (problem-report.js): the single-issue capture layout
+  embedded in the home hub (tiles and dialogs come from perimeter-check.css
+  and analysis-results.css).
+  Imported from that module; main.js loads tokens.css and base.css first, so
+  these rules follow the shared base in the bundle. Unlayered, like base.css.
+*/
+
+.single-issue {
+  gap: 1.25rem;
+}
+
+.single-issue__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--wa-font-family-heading, var(--font-sans));
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.single-issue .shotgrid {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.single-issue .shotgrid--empty {
+  justify-content: flex-start;
+}
+
+.single-issue__describe {
+  align-self: flex-start;
+  margin-top: -0.5rem;
+}
+
+.single-issue .check__actions {
+  justify-content: flex-start;
+}
+
+.single-issue__analysis {
+  width: 100%;
+}

@@ -1,3 +1,4 @@
+import "./site-admin.css";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";

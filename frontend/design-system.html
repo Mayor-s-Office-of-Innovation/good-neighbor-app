@@ -10,7 +10,7 @@
     <!--
       SELF-DEMONSTRATING design-system reference (dev-only; vite build emits only
       index.html — see frontend/README.md). Every example below renders with the
-      REAL tokens.css + app.css + Web Awesome styles, so it cannot drift from the
+      REAL tokens.css + base.css (+ the component sheets it demos) + Web Awesome styles, so it cannot drift from the
       app. Theme toggle flips .wa-dark on <html> — the same mechanism the app uses.
 
       Prose companions: docs/design-tokens.md (Figma mapping),
@@ -163,8 +163,8 @@
       <h1>Good Neighbor — design system reference</h1>
       <p class="ds-lede">
         Self-demonstrating: every example on this page renders with the real
-        <code>tokens.css</code> + <code>app.css</code> + Web Awesome styles — it
-        can't drift from the app. Dev-only (Vite serves it,
+        <code>tokens.css</code> + <code>base.css</code> + Web Awesome styles —
+        it can't drift from the app. Dev-only (Vite serves it,
         <code>vite build</code> doesn't ship it).
       </p>
       <div class="ds-toolbar">
@@ -567,7 +567,8 @@
         <p style="margin-top: 0.35rem">
           This page is generated from the same CSS the app ships — if something
           here looks wrong, the fix belongs in
-          <code>tokens.css</code>/<code>app.css</code>, not here.
+          <code>tokens.css</code>/<code>base.css</code> (or the owning
+          component's <code>.css</code>), not here.
         </p>
       </footer>
     </main>
@@ -581,7 +582,7 @@
       import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
       import "/src/styles/tokens.css";
-      import "/src/styles/app.css";
+      import "/src/styles/base.css";
 
       // Theme toggle — the app's own mechanism (one class on <html>).
       const root = document.documentElement;

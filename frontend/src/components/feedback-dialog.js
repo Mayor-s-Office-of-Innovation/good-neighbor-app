@@ -16,6 +16,7 @@
   The thanks auto-close timer is cleared on every close, so Done/Escape/
   backdrop followed by a quick reopen can't be dismissed by the stale timer.
 */
+import "./feedback-dialog.css";
 import { html } from "../lib/html.js";
 import { sendFeedback } from "../services/feedback.js";
 

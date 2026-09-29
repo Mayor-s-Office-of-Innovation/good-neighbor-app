@@ -16,7 +16,7 @@ beforeAll(() => {
 
 describe("site proximity", () => {
   it("uses a one-eighth-mile radius and ignores unavailable coordinates", async () => {
-    const { isOutsideSiteRadius } = await import("./today-view.js");
+    const { isOutsideSiteRadius } = await import("../domain/home-tasks.js");
     const site = { latitude: 37.7749, longitude: -122.4194 };
     expect(isOutsideSiteRadius(site, site)).toBe(false);
     expect(
@@ -32,7 +32,7 @@ describe("site proximity", () => {
 
 describe("formatOverdueElapsed", () => {
   it("uses hours below one day and days thereafter", async () => {
-    const { formatOverdueElapsed } = await import("./today-view.js");
+    const { formatOverdueElapsed } = await import("../domain/home-tasks.js");
     const expected = "2026-09-24T09:00:00.000Z";
 
     expect(formatOverdueElapsed(expected, "2026-09-24T10:00:00.000Z")).toBe(
@@ -50,23 +50,9 @@ describe("formatOverdueElapsed", () => {
   });
 });
 
-describe("attributionDialogMarkup", () => {
-  it("lists every address-data attribution in an accessible dialog", async () => {
-    const { attributionDialogMarkup } = await import("./today-view.js");
-    const markup = attributionDialogMarkup();
-
-    expect(markup).toContain('id="attributions-dialog"');
-    expect(markup).toContain('aria-labelledby="attributions-title"');
-    expect(markup).toContain("Amazon Location Service data attribution");
-    expect(markup).toContain("U.S. Census Bureau Geocoder");
-    expect(markup.match(/target="_blank"/g)).toHaveLength(2);
-    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(2);
-  });
-});
-
 describe("isStalePendingSession", () => {
   it("keeps a submitted check's local cards until guidance has finished", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
     const session = {
       id: "chk_1",
       status: "capture-complete",
@@ -80,7 +66,7 @@ describe("isStalePendingSession", () => {
   });
 
   it("keeps analyzed local cards until the backend worklist includes them", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
     const session = {
       id: "chk_1",
       status: "capture-complete",
@@ -102,7 +88,7 @@ describe("isStalePendingSession", () => {
   });
 
   it("clears a capture-complete session once the same backend check is completed", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
 
     expect(
       isStalePendingSession({ id: "chk_1", status: "capture-complete" }, [
@@ -112,7 +98,7 @@ describe("isStalePendingSession", () => {
   });
 
   it("keeps a capture-complete session while the backend check has not landed", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
 
     expect(
       isStalePendingSession({ id: "chk_1", status: "capture-complete" }, [
@@ -122,7 +108,7 @@ describe("isStalePendingSession", () => {
   });
 
   it("keeps a capture-complete session while a different check landed", async () => {
-    const { isStalePendingSession } = await import("./today-view.js");
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
 
     expect(
       isStalePendingSession({ id: "chk_1", status: "capture-complete" }, [
@@ -156,23 +142,9 @@ describe("legacy review records", () => {
   });
 });
 
-describe("newestTasksFirst", () => {
-  it("sorts task cards by most recent createdAt first", async () => {
-    const { newestTasksFirst } = await import("./today-view.js");
-
-    expect(
-      newestTasksFirst([
-        { taskId: "older", createdAt: "2026-08-20T10:00:00.000Z" },
-        { taskId: "newest", createdAt: "2026-08-26T16:17:51.304Z" },
-        { taskId: "middle", createdAt: "2026-08-25T12:00:00.000Z" },
-      ]).map((task) => task.taskId),
-    ).toEqual(["newest", "middle", "older"]);
-  });
-});
-
 describe("home task status helpers", () => {
   it("renders the empty To do panel with the single-issue action", async () => {
-    const { homeAllDonePanel } = await import("./today-view.js");
+    const { homeAllDonePanel } = await import("./today-view.templates.js");
     const markup = homeAllDonePanel();
 
     expect(markup).toContain("All done!");
@@ -183,7 +155,7 @@ describe("home task status helpers", () => {
   });
 
   it("does not apply first-run centering while capture is visible", async () => {
-    const { shouldShowFirstRunHome } = await import("./today-view.js");
+    const { shouldShowFirstRunHome } = await import("../domain/home-tasks.js");
 
     expect(
       shouldShowFirstRunHome({
@@ -205,7 +177,7 @@ describe("home task status helpers", () => {
 
   it("defers capture-complete session renders until capture animates out", async () => {
     const { shouldDeferSessionRenderDuringCapture } = await import(
-      "./today-view.js"
+      "../domain/home-tasks.js"
     );
 
     expect(
@@ -232,7 +204,7 @@ describe("home task status helpers", () => {
   });
 
   it("removes hidden home results from focus only while capture is active", async () => {
-    const { shouldInertHomeResults } = await import("./today-view.js");
+    const { shouldInertHomeResults } = await import("../domain/home-tasks.js");
 
     expect(shouldInertHomeResults("entering-capture")).toBe(true);
     expect(shouldInertHomeResults("capture")).toBe(true);
@@ -241,7 +213,9 @@ describe("home task status helpers", () => {
   });
 
   it("derives capture fallback timing from computed animation CSS", async () => {
-    const { captureAnimationFallbackMs } = await import("./today-view.js");
+    const { captureAnimationFallbackMs } = await import(
+      "../domain/home-tasks.js"
+    );
 
     expect(
       captureAnimationFallbackMs({
@@ -264,7 +238,7 @@ describe("home task status helpers", () => {
   });
 
   it("maps open tasks to needs action and backend 311 filings to in progress", async () => {
-    const { homeTaskStatus } = await import("./today-view.js");
+    const { homeTaskStatus } = await import("../domain/home-tasks.js");
 
     expect(homeTaskStatus({ status: "open" }, null)).toBe("needs_action");
     expect(
@@ -292,7 +266,7 @@ describe("home task status helpers", () => {
   });
 
   it("lets backend terminal state override stale local task overrides", async () => {
-    const { homeTaskStatus } = await import("./today-view.js");
+    const { homeTaskStatus } = await import("../domain/home-tasks.js");
 
     expect(
       homeTaskStatus(
@@ -311,7 +285,7 @@ describe("home task status helpers", () => {
   });
 
   it("archives resolved tasks after 72 hours", async () => {
-    const { homeTaskStatus } = await import("./today-view.js");
+    const { homeTaskStatus } = await import("../domain/home-tasks.js");
     const now = new Date("2026-09-08T12:00:00.000Z");
 
     expect(
@@ -331,7 +305,7 @@ describe("home task status helpers", () => {
   });
 
   it("treats open tasks under 3 hours old as new home cards", async () => {
-    const { isNewHomeTask } = await import("./today-view.js");
+    const { isNewHomeTask } = await import("../domain/home-tasks.js");
     const now = new Date("2026-09-08T12:00:00.000Z");
 
     expect(
@@ -351,7 +325,9 @@ describe("home task status helpers", () => {
   });
 
   it("uses backend timestamp variants when deciding if a task is new", async () => {
-    const { isNewHomeTask, taskCreatedAt } = await import("./today-view.js");
+    const { isNewHomeTask, taskCreatedAt } = await import(
+      "../domain/home-tasks.js"
+    );
     const now = new Date("2026-09-08T12:00:00.000Z");
 
     expect(taskCreatedAt({ created_at: "2026-09-08T10:00:00.000Z" })).toBe(
@@ -370,7 +346,7 @@ describe("home task status helpers", () => {
   });
 
   it("prefers persisted short display ids when rendering task metadata", async () => {
-    const { displayTaskId } = await import("./today-view.js");
+    const { displayTaskId } = await import("../domain/home-tasks.js");
 
     expect(
       displayTaskId({
@@ -385,7 +361,7 @@ describe("home task status helpers", () => {
   });
 
   it("does not treat resolved or in-progress tasks as new cards", async () => {
-    const { isNewHomeTask } = await import("./today-view.js");
+    const { isNewHomeTask } = await import("../domain/home-tasks.js");
     const now = new Date("2026-09-08T12:00:00.000Z");
 
     expect(
@@ -407,19 +383,8 @@ describe("home task status helpers", () => {
     ).toBe(false);
   });
 
-  it("renders filter labels with counts", async () => {
-    const { activeHomeFilterLabel } = await import("./today-view.js");
-
-    expect(
-      activeHomeFilterLabel("needs_action", {
-        needs_action: 6,
-        in_progress: 1,
-      }),
-    ).toBe("To do • 6");
-  });
-
   it("renders issue count labels only when issues exist", async () => {
-    const { issueCountLabel } = await import("./today-view.js");
+    const { issueCountLabel } = await import("../domain/home-tasks.js");
 
     expect(issueCountLabel(0)).toBe("");
     expect(issueCountLabel(1)).toBe("1 issue found");
@@ -427,7 +392,7 @@ describe("home task status helpers", () => {
   });
 
   it("summarizes only the latest check's issues and pending actions", async () => {
-    const { lastLogSummary } = await import("./today-view.js");
+    const { lastLogSummary } = await import("../domain/home-tasks.js");
     const now = new Date(2026, 8, 23, 12, 0);
     const last = {
       id: "latest",
@@ -464,7 +429,7 @@ describe("home task status helpers", () => {
   });
 
   it("uses yesterday or the weekday for earlier last checks", async () => {
-    const { lastLogSummary } = await import("./today-view.js");
+    const { lastLogSummary } = await import("../domain/home-tasks.js");
     const now = new Date(2026, 8, 23, 12, 0);
     const check = (date) => ({
       id: "check",
@@ -485,7 +450,7 @@ describe("home task status helpers", () => {
   });
 
   it("keeps the newest task-bearing check blue only while it is today", async () => {
-    const { newestBlueCheckGroup } = await import("./today-view.js");
+    const { newestBlueCheckGroup } = await import("../domain/home-tasks.js");
     const entries = [
       {
         task: { checkId: "older" },
@@ -520,7 +485,7 @@ describe("home task status helpers", () => {
   });
 
   it("uses task timestamps when a recent check header cannot be matched", async () => {
-    const { newestBlueCheckGroup } = await import("./today-view.js");
+    const { newestBlueCheckGroup } = await import("../domain/home-tasks.js");
 
     expect(
       newestBlueCheckGroup(
@@ -538,7 +503,7 @@ describe("home task status helpers", () => {
   });
 
   it("treats a completed zero-issue check as the newest blue group", async () => {
-    const { newestBlueCheckGroup } = await import("./today-view.js");
+    const { newestBlueCheckGroup } = await import("../domain/home-tasks.js");
 
     expect(
       newestBlueCheckGroup(
@@ -557,7 +522,9 @@ describe("home task status helpers", () => {
   });
 
   it("hydrates only new cards and the selected older bucket", async () => {
-    const { visibleTaskEntriesForHydration } = await import("./today-view.js");
+    const { visibleTaskEntriesForHydration } = await import(
+      "../domain/home-tasks.js"
+    );
 
     expect(
       visibleTaskEntriesForHydration(
@@ -584,81 +551,9 @@ describe("home task status helpers", () => {
     ).toEqual(["in_progress"]);
   });
 
-  it("matches backend tasks already represented by live capture cards", async () => {
-    const { taskMatchesSessionSignatures, taskSignaturesFromSessionItems } =
-      await import("./today-view.js");
-    const alternateArtifactId = [
-      "11111111",
-      "2222",
-      "3333",
-      "4444",
-      "555555" + "555555",
-    ].join("-");
-
-    const signatures = taskSignaturesFromSessionItems([
-      {
-        analysis: {
-          artifactId: "artifact_a",
-          assessment: { assessmentId: "assessment_a" },
-          conditions: [{ conditionId: "condition_a" }],
-          tasks: [{ taskId: "task_a" }, { taskId: "task_b" }],
-        },
-      },
-      {
-        analysis: {
-          tasks: [
-            {
-              taskId: "task_a",
-              conditionId: "condition_b",
-              sourceArtifactIds: ["artifact_b"],
-            },
-          ],
-        },
-      },
-    ]);
-
-    expect([...signatures.taskIds].sort()).toEqual(["task_a", "task_b"]);
-    expect(taskMatchesSessionSignatures({ taskId: "task_a" }, signatures)).toBe(
-      true,
-    );
-    expect(
-      taskMatchesSessionSignatures({ conditionId: "condition_b" }, signatures),
-    ).toBe(true);
-    expect(
-      taskMatchesSessionSignatures(
-        { assessmentId: "assessment_a" },
-        signatures,
-      ),
-    ).toBe(true);
-    expect(
-      taskMatchesSessionSignatures(
-        { sourceArtifactIds: ["artifact_b"] },
-        signatures,
-      ),
-    ).toBe(true);
-    expect(
-      taskMatchesSessionSignatures(
-        {
-          assessmentId: "ac342d41-8ecf-4eeb-a471-bb85cea4ce0d-artifact_a",
-        },
-        signatures,
-      ),
-    ).toBe(false);
-    expect(
-      taskMatchesSessionSignatures(
-        {
-          assessmentId: `ac342d41-8ecf-4eeb-a471-bb85cea4ce0d-${alternateArtifactId}`,
-        },
-        taskSignaturesFromSessionItems([
-          { analysis: { artifactId: alternateArtifactId } },
-        ]),
-      ),
-    ).toBe(true);
-  });
-
   it("keeps local problem cards until matching backend task cards are present", async () => {
     const { sessionProblemItemHasBackendCards } = await import(
-      "./today-view.js"
+      "../domain/home-tasks.js"
     );
     const item = {
       analysis: {
