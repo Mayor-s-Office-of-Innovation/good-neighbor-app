@@ -45,7 +45,9 @@ if (
 ) {
   const rest = { ...history.state };
   delete rest[OVERLAY_STATE];
-  history.replaceState(rest, "");
+  // A refresh mid-dialog re-loads on `#<dialogId>`; the hash is
+  // live-only (no deep-link contract) — drop it too.
+  history.replaceState(rest, "", location.pathname + location.search);
 }
 
 function stateDepth(state) {
@@ -64,6 +66,17 @@ function nextDepth() {
 export function currentRoute() {
   const path = location.pathname;
   return !path || path === "/" ? "/today" : path;
+}
+
+/**
+ * Open dialog sub-state, mirrored in the URL as `#<dialogId>` so the history
+ * entry is visible and forward/back is self-describing. Stripped when the
+ * dialog closes. NOT a deep-link contract: refresh restores the view but
+ * re-opens only dialogs flagged restorable (see dialog-history.js).
+ * @param {string} overlayId
+ */
+function overlayHash(overlayId) {
+  return `#${overlayId}`;
 }
 
 export function navigate(route) {
@@ -94,9 +107,10 @@ export function replaceRoute(route) {
 }
 
 /**
- * Push a sentinel entry for a transient overlay (dialog / capture phase).
- * The URL is unchanged; the id rides in history.state so popstate can tell
- * "close the overlay" apart from "change the view". Idempotent per id:
+ * Push a sentinel entry for a transient overlay (dialog). The route is
+ * unchanged; the URL gains a short-lived `#<dialogId>` hash and the id rides
+ * in history.state, so popstate can tell "close the overlay" apart from
+ * "change the view" AND the entry is visible in the URL. Idempotent per id:
  * re-showing an already-open id (a dialog re-shown after today-view
  * re-rendered) must not push a duplicate entry.
  * @param {string} overlayId
@@ -108,6 +122,7 @@ export function pushOverlay(overlayId) {
   history.pushState(
     { [APP_HISTORY_STATE]: depth, [OVERLAY_STATE]: overlayId },
     "",
+    overlayHash(overlayId),
   );
   overlayDepths.set(overlayId, depth);
   activeDepth = depth;

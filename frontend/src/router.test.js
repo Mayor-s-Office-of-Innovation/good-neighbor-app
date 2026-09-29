@@ -5,7 +5,7 @@ const listeners = vi.hoisted(
 );
 
 const browser = vi.hoisted(() => ({
-  location: { pathname: "/today" },
+  location: { pathname: "/today", search: "", hash: "" },
   history: {
     state: null,
     pushState: vi.fn(),
@@ -121,16 +121,26 @@ describe("router overlays", () => {
     browser.history.go.mockReset();
     browser.history.pushState.mockImplementation((state, _title, route) => {
       browser.history.state = state;
-      if (route) browser.location.pathname = route;
+      if (route) {
+        if (route.startsWith("#")) browser.location.hash = route;
+        else {
+          browser.location.pathname = route;
+          browser.location.hash = "";
+        }
+      }
     });
     browser.history.replaceState.mockImplementation((state, _title, route) => {
       browser.history.state = state;
-      if (route) browser.location.pathname = route;
+      if (route && !route.startsWith("#")) {
+        browser.location.pathname = route;
+        browser.location.hash = "";
+      }
     });
     browser.history.back.mockImplementation(() => {
       // Stand-in for the engine: an app-close unwind lands on the prior entry.
       browser.history.state = { goodNeighborAppNavigation: 0 };
       browser.location.pathname = "/today";
+      browser.location.hash = "";
     });
     // Fresh module per test: the router keeps overlay state in module scope.
     vi.resetModules();
@@ -143,12 +153,13 @@ describe("router overlays", () => {
     removeOverlayListener();
   });
 
-  it("pushes an overlay sentinel without changing the URL", () => {
+  it("pushes an overlay sentinel with a #dialog hash and keeps the path", () => {
     router.pushOverlay("logout");
 
     expect(browser.history.pushState).toHaveBeenCalledWith(
       { goodNeighborAppNavigation: 1, goodNeighborOverlay: "logout" },
       "",
+      "#logout",
     );
     expect(browser.location.pathname).toBe("/today");
   });
@@ -165,10 +176,11 @@ describe("router overlays", () => {
     const routeListener = vi.fn();
     const removeRoute = router.onRouteChange(routeListener);
     // Simulate the engine: back lands on the entry beneath the sentinel
-    // (depth 0), then popstate catches up.
+    // (depth 0), dropping the hash; popstate catches up.
     browser.history.back.mockImplementationOnce(() => {
       browser.history.state = { goodNeighborAppNavigation: 0 };
       browser.location.pathname = "/today";
+      browser.location.hash = "";
     });
     await pop();
 
@@ -204,19 +216,22 @@ describe("router overlays", () => {
     removeRoute();
   });
 
-  it("strips a stale overlay marker left by a refresh mid-overlay", async () => {
+  it("strips a stale overlay marker AND #hash left by a refresh mid-dialog", async () => {
     // Fresh module whose load-time strip branch sees the stale state.
     vi.resetModules();
     browser.history.state = {
       goodNeighborAppNavigation: 1,
-      goodNeighborOverlay: "capture",
+      goodNeighborOverlay: "logout",
     };
+    browser.location.hash = "#logout";
     await import("./router.js");
 
     expect(browser.history.replaceState).toHaveBeenCalledWith(
       { goodNeighborAppNavigation: 1 },
       "",
+      "/today",
     );
     expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 1 });
+    expect(browser.location.hash).toBe("");
   });
 });

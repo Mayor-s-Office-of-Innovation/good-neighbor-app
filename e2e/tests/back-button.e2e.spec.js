@@ -4,67 +4,83 @@ import { bindSite, startCheck } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
-  Browser-back handling for transient states, end to end:
+  Browser-back handling, end to end (routed-capture model):
 
-  - System back closes an open dialog without leaving the app or re-rendering
-    the route behind it.
-  - System back mid-embedded-capture (home hub capture phase in /today) plays
-    the leaving-capture animation and returns to the home phase — same as the
-    in-app cancel — instead of exiting the app.
-  - Browser back after finishing a routed capture flow (/check, /problem)
-    never revisits the finished screen (replace-at-completion).
+  - Home CTAs navigate to real URLs (/check, /problem); system back from a
+    capture screen is a normal route pop back to /today, with the draft kept
+    for resume.
+  - System back closes an open dialog (its #dialog hash sentinel) without
+    leaving the app.
+  - A refresh mid-dialog re-lands on the route WITHOUT re-opening the dialog
+    (hash is live-only; decision/informational state is not resurrected).
+  - Browser back after finishing a capture flow never revisits the finished
+    screen (replace-at-completion).
 
   System back is driven the same way the site-admin spec drives it:
   page.evaluate(() => window.history.back()) — the same popstate path as
   hardware back / iOS swipe-back.
 */
 
-test.describe("back button overlay handling", () => {
+test.describe("back button handling", () => {
   test.beforeEach(async ({ page }) => {
     await bindSite(page);
   });
 
-  test("system back closes an open dialog and stays in the app", async ({
+  test("home CTA navigates to /check; back returns home with draft kept", async ({
     page,
   }) => {
-    await page.locator("#home-settings").click();
-    await page.getByRole("menuitem", { name: "Attributions" }).click();
-    const attributions = page.locator("#attributions-dialog");
-    await expect(attributions).toBeVisible();
-    await expect(page).toHaveURL(/\/today$/);
+    await page.locator("#start-check").click();
 
-    // System back: the sentinel unwinds and the dialog closes; the app stays
-    // on /today with the home phase intact.
+    // Routed capture: real URL, standalone screen.
+    await expect(page).toHaveURL(/\/check$/);
+    await expect(page.locator("#add-photo")).toBeVisible({ timeout: 30_000 });
+
+    // System back: a normal route pop to home.
     await page.evaluate(() => window.history.back());
-    await expect(attributions).not.toBeVisible({ timeout: 5_000 });
     await expect(page).toHaveURL(/\/today$/);
-    await expect(page.locator("#start-check")).toBeVisible();
-  });
-
-  test("system back mid-embedded-capture returns to the home phase", async ({
-    page,
-  }) => {
-    await startCheck(page);
-    await expect(
-      page.locator(".home--capture, .home--entering-capture"),
-    ).toBeVisible();
-    await expect(page.locator("#add-photo")).toBeVisible();
-
-    // System back: the capture sentinel unwinds, the leave animation runs,
-    // and the home phase (with the Start CTA) comes back — no app exit.
-    await page.evaluate(() => window.history.back());
     await expect(page.locator("#start-check")).toBeVisible({ timeout: 30_000 });
-    await expect(page).toHaveURL(/\/today$/);
     // The draft survives for later resume.
     await expect(
       page.getByRole("button", { name: /Resume a check/i }),
     ).toBeVisible();
   });
 
+  test("system back closes an open dialog and strips its #hash", async ({
+    page,
+  }) => {
+    await page.locator("#home-settings").click();
+    await page.getByRole("menuitem", { name: "Attributions" }).click();
+    const attributions = page.locator("#attributions-dialog");
+    await expect(attributions).toBeVisible();
+    // The dialog sub-state is visible in the URL as a short-lived hash.
+    await expect(page).toHaveURL(/\/today#attributions$/);
+
+    // System back: the sentinel unwinds, the dialog closes, the hash is gone.
+    await page.evaluate(() => window.history.back());
+    await expect(attributions).not.toBeVisible({ timeout: 5_000 });
+    await expect(page).toHaveURL(/\/today$/);
+    await expect(page.locator("#start-check")).toBeVisible();
+  });
+
+  test("refresh mid-dialog does not re-open the dialog", async ({ page }) => {
+    await page.locator("#home-settings").click();
+    await page.getByRole("menuitem", { name: "Attributions" }).click();
+    await expect(page.locator("#attributions-dialog")).toBeVisible();
+
+    await page.reload();
+
+    // The view restores from the URL; the dialog state is live-only and
+    // stays closed — no decision or sheet is resurrected by a refresh.
+    await expect(page.locator("#attributions-dialog")).not.toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.locator("#start-check")).toBeVisible();
+    await expect(page).toHaveURL(/\/today$/);
+  });
+
   test("browser back after finishing a routed flow never revisits it", async ({
     page,
   }) => {
-    // Routed variant: /check is the standalone perimeter-check screen.
     await page.goto("/check");
     await expect(page.locator("#add-photo")).toBeVisible({ timeout: 30_000 });
 

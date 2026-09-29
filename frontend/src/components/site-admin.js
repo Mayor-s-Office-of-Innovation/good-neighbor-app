@@ -411,7 +411,7 @@ function adminHeader(title) {
     <button data-admin-back type="button" aria-label="Back">
       <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
     </button>
-    <h1>${escapeHtml(title)}</h1>
+    <h1 tabindex="-1">${escapeHtml(title)}</h1>
     <span aria-hidden="true"></span>
   </header>`;
 }

@@ -2,15 +2,8 @@ import { html, escapeHtml } from "../lib/html.js";
 import { analysisResultsTray } from "./analysis-results.templates.js";
 import { analysisDialogs } from "./analysis-results.templates.js";
 
-export const shell = ({
-  embedded = false,
-  title = "Flag a single issue",
-} = {}) => html`
-  <div
-    class="flow view-check check single-issue ${embedded
-      ? "check--embedded"
-      : ""}"
-  >
+export const shell = ({ title = "Flag a single issue" } = {}) => html`
+  <div class="flow view-check check single-issue">
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">

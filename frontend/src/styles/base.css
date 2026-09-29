@@ -210,6 +210,9 @@ app-root {
   margin-inline: auto;
   padding: 1rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  /* Focus target for route changes only (tabindex="-1"); it is never an
+     interactive control, so it must never draw a focus ring. */
+  outline: none;
 }
 
 /* Each route mounts one custom element here. Custom elements are inline by

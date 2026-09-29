@@ -18,6 +18,8 @@
   font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.2;
   letter-spacing: 0;
+  /* Programmatic focus target (route announcement) — never a ring. */
+  outline: none;
 }
 
 .single-issue .shotgrid {

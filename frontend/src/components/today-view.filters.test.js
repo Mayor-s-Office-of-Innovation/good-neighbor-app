@@ -25,6 +25,7 @@ const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),
   discardInMemorySession: vi.fn(),
 }));
+const navigateMock = vi.hoisted(() => vi.fn());
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
@@ -43,6 +44,13 @@ vi.mock("../state/check-session.js", () => ({
   loadSubmitted: async () => null,
   onCheckSessionChange: () => () => {},
   discardInMemorySession: logout.discardInMemorySession,
+}));
+vi.mock("../router.js", () => ({
+  navigate: navigateMock,
+  pushOverlay: vi.fn(),
+  closeOverlay: vi.fn(),
+  onOverlayPop: () => () => {},
+  currentRoute: () => "/today",
 }));
 
 let TodayView;
@@ -98,6 +106,7 @@ afterEach(() => {
 
 async function mount(search) {
   window.location.search = search;
+  navigateMock.mockClear();
   const view = new TodayView();
   view._renderHome = vi.fn();
   view._hydrateVisibleHomeTasks = vi.fn();
@@ -287,28 +296,28 @@ describe("site location prompt", () => {
     };
     view._siteId = "site-1";
     view._showLocationDialog = vi.fn();
-    view._enterCapture = vi.fn();
     devicePosition.current = { latitude: 37.78, longitude: -122.4194 };
     await view._startCapture("perimeter");
     expect(view._showLocationDialog).toHaveBeenCalledOnce();
-    expect(view._enterCapture).not.toHaveBeenCalled();
+    // Paused mid-flight: no navigation until the radius question is settled.
+    expect(navigateMock).not.toHaveBeenCalled();
     await view._startCapture("single-problem");
     expect(view._locationPrompt.flowType).toBe("single-problem");
     devicePosition.current = { latitude: 37.7749, longitude: -122.4194 };
     await view._startCapture("perimeter");
-    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+    // Routed capture: a successful radius check navigates to the flow's URL.
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
   });
 
   it("logs when a check starts without a usable location and still continues", async () => {
     const view = await mount("?filter=todo");
-    view._enterCapture = vi.fn();
     devicePosition.current = null;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await view._startCapture("perimeter");
     expect(warn).toHaveBeenCalledWith(
       "[location] No usable device location when starting a full check; site proximity check skipped.",
     );
-    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
     warn.mockRestore();
   });
 
@@ -337,7 +346,6 @@ describe("site location prompt", () => {
     view.isConnected = true;
     const model = { tasks: [] };
     view._homeModel = model;
-    view._viewPhase = "home";
     view._locationPrompt = { flowType: "perimeter", launcher: null };
     const render = vi.fn();
     view._render = render;
@@ -356,7 +364,6 @@ describe("site location prompt", () => {
   it("does not redraw the home behind a site change after the prompt closes", async () => {
     const view = await mount("?filter=todo");
     view._homeModel = { tasks: [] };
-    view._viewPhase = "home";
     view._locationPrompt = { flowType: "perimeter", launcher: null };
     view._pendingLocationRender = true;
     view._renderHome = vi.fn();
@@ -366,13 +373,19 @@ describe("site location prompt", () => {
   });
 
   it("resumes the waiting capture flow on Stay", async () => {
+    devicePosition.current = { latitude: 37.7749, longitude: -122.4194 };
     const view = await mount("?filter=todo");
-    view._enterCapture = vi.fn();
+    view._site = {
+      siteId: "site-1",
+      name: "Mission District",
+      location: { latitude: 37.7749, longitude: -122.4194 },
+    };
     const prompt = { flowType: "single-problem", launcher: null };
-    view._onLocationStay({ prompt });
-    expect(view._enterCapture).toHaveBeenCalledWith("single-problem", null);
-    view._onLocationStay({ prompt: null });
-    expect(view._enterCapture).toHaveBeenCalledTimes(1);
+    await view._onLocationStay({ prompt });
+    expect(navigateMock).toHaveBeenLastCalledWith("/problem");
+    navigateMock.mockClear();
+    await view._onLocationStay({ prompt: null });
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -396,11 +409,12 @@ describe("worklist URL initialization", () => {
       for (let remount = 0; remount < 2; remount++) {
         const view = await mount(`?filter=${filter}`);
         expect(view._homeFilter).toBe(expectedTab);
-        expect(view._viewPhase).toBe("home");
         expect(view._renderHome).toHaveBeenCalledWith(
-          expect.objectContaining({ captureSession: null }),
+          expect.objectContaining({ pendingSession: null }),
         );
         expect(session.current).toBe(draft);
+        // Routed capture: home never navigates on its own.
+        expect(navigateMock).not.toHaveBeenCalled();
         view.disconnectedCallback();
       }
     },
@@ -410,14 +424,14 @@ describe("worklist URL initialization", () => {
     expect(view._homeFilter).toBe("todo");
     view.disconnectedCallback();
   });
-  it("still resumes capture when no recognized worklist filter was requested", async () => {
+  it("keeps an in-progress draft off home: no capture re-entry, worklist unchanged", async () => {
     session.current = {
       id: "draft-1",
       status: "in-progress",
       flowType: "perimeter",
     };
     const view = await mount("?filter=unknown");
-    expect(view._viewPhase).toBe("capture");
+    expect(navigateMock).not.toHaveBeenCalled();
     view.disconnectedCallback();
   });
 });

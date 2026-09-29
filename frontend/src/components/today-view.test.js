@@ -154,89 +154,6 @@ describe("home task status helpers", () => {
     expect(markup).toContain('data-start-capture="single-problem"');
   });
 
-  it("does not apply first-run centering while capture is visible", async () => {
-    const { shouldShowFirstRunHome } = await import("../domain/home-tasks.js");
-
-    expect(
-      shouldShowFirstRunHome({
-        captureVisible: true,
-        last: null,
-        taskCount: 0,
-        hasResultCards: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldShowFirstRunHome({
-        captureVisible: false,
-        last: null,
-        taskCount: 0,
-        hasResultCards: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("defers capture-complete session renders until capture animates out", async () => {
-    const { shouldDeferSessionRenderDuringCapture } = await import(
-      "../domain/home-tasks.js"
-    );
-
-    expect(
-      shouldDeferSessionRenderDuringCapture("capture", {
-        status: "capture-complete",
-      }),
-    ).toBe(true);
-    expect(
-      shouldDeferSessionRenderDuringCapture("leaving-capture", {
-        status: "capture-complete",
-      }),
-    ).toBe(true);
-    expect(shouldDeferSessionRenderDuringCapture("capture", null)).toBe(true);
-    expect(
-      shouldDeferSessionRenderDuringCapture("home", {
-        status: "capture-complete",
-      }),
-    ).toBe(false);
-    expect(
-      shouldDeferSessionRenderDuringCapture("capture", {
-        status: "submitted",
-      }),
-    ).toBe(false);
-  });
-
-  it("removes hidden home results from focus only while capture is active", async () => {
-    const { shouldInertHomeResults } = await import("../domain/home-tasks.js");
-
-    expect(shouldInertHomeResults("entering-capture")).toBe(true);
-    expect(shouldInertHomeResults("capture")).toBe(true);
-    expect(shouldInertHomeResults("leaving-capture")).toBe(false);
-    expect(shouldInertHomeResults("home")).toBe(false);
-  });
-
-  it("derives capture fallback timing from computed animation CSS", async () => {
-    const { captureAnimationFallbackMs } = await import(
-      "../domain/home-tasks.js"
-    );
-
-    expect(
-      captureAnimationFallbackMs({
-        animationDuration: "260ms",
-        animationDelay: "0s",
-      }),
-    ).toBe(310);
-    expect(
-      captureAnimationFallbackMs({
-        animationDuration: "0.3s",
-        animationDelay: "50ms",
-      }),
-    ).toBe(400);
-    expect(
-      captureAnimationFallbackMs({
-        animationDuration: "1ms",
-        animationDelay: "0s",
-      }),
-    ).toBe(51);
-  });
-
   it("maps open tasks to needs action and backend 311 filings to in progress", async () => {
     const { homeTaskStatus } = await import("../domain/home-tasks.js");
 
@@ -599,13 +516,16 @@ describe("card deletion events", () => {
         .mock.calls.find(([name]) => name === "today-view");
       const View = /** @type {any} */ (registration[1]);
       const view = new View();
-      view._viewPhase = "capture";
       view._deferredDeletionRender = true;
       view.connectedCallback = vi.fn();
       view._cardDeletedHandler({ target: fromChild ? {} : view });
       expect(view._deferredDeletionRender).toBe(false);
       expect(view.connectedCallback).toHaveBeenCalledTimes(fromChild ? 1 : 0);
-      expect(view._focusAfterRender).toBe(fromChild ? "capture-heading" : null);
+      // Capture lives on its own route now; a home-originated deletion always
+      // focuses the home control after the re-render.
+      expect(view._focusAfterRender).toBe(
+        fromChild ? "home-primary-control" : null,
+      );
     },
   );
 });

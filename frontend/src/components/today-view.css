@@ -286,142 +286,14 @@
   will-change: opacity, transform;
 }
 
-.home-region--header {
-  position: relative;
-  z-index: 20;
-  transform: translateY(0);
-  opacity: 1;
-}
-
-.home-region--capture {
-  display: none;
-  transform: translateY(-2rem);
-  opacity: 0;
-}
-
 .home-region--results {
   transform: translateY(0);
   opacity: 1;
 }
 
-.home--entering-capture .home-region--header,
-.home--capture .home-region--header {
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline: 0;
-  pointer-events: none;
-  transform: translateY(-0.75rem);
-  opacity: 0;
-}
-
-.home--capture .home-region--header {
-  display: none;
-}
-
-.home--entering-capture .home-region--capture,
-.home--capture .home-region--capture,
-.home--leaving-capture .home-region--capture {
-  display: block;
-}
-
-.home--entering-capture .home-region--capture,
-.home--capture .home-region--capture {
-  animation: home-capture-in 260ms ease both;
-}
-
-.home--leaving-capture .home-region--capture {
-  animation: home-capture-out 260ms ease both;
-  inset-block-start: 0;
-  inset-inline: 0;
-  pointer-events: none;
-  position: absolute;
-  z-index: 2;
-}
-
-.home--entering-capture .home-region--results,
-.home--capture .home-region--results {
-  pointer-events: none;
-  transform: translateY(2rem);
-  opacity: 0;
-}
-
-/* Once the entry animation settles, take the hidden results out of flow (as
-   the header already is). Faded-but-present results kept the page as tall as
-   the home list, so a short capture screen could scroll into empty space. */
-.home--capture .home-region--results {
-  display: none;
-}
-
-.home--leaving-capture .home-region--header {
-  animation: home-fade-in 260ms ease both;
-}
-
-/* An empty/discarded capture has no resumable state. Its background header was
-   rendered while the session was active, so keep that stale header hidden
-   until Home rerenders the true first-run state after the exit animation. */
-.home--leaving-capture.home--discarding-capture .home-region--header {
-  animation: none;
-  pointer-events: none;
-  opacity: 0;
-}
-
-.home--leaving-capture .home-region--results {
-  animation: home-results-up 260ms ease both;
-}
-
-@keyframes home-capture-in {
-  from {
-    transform: translateY(-2rem);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes home-capture-out {
-  from {
-    transform: translateY(0);
-    opacity: 1;
-  }
-  to {
-    transform: translateY(-2rem);
-    opacity: 0;
-  }
-}
-
-@keyframes home-results-up {
-  from {
-    transform: translateY(2rem);
-    opacity: 1;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes home-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .home-region {
     transition-duration: 1ms;
-  }
-
-  .home--entering-capture .home-region--capture,
-  .home--capture .home-region--capture,
-  .home--leaving-capture .home-region--capture,
-  .home--leaving-capture .home-region--header,
-  .home--leaving-capture .home-region--results {
-    animation-duration: 1ms;
   }
 }
 
@@ -556,27 +428,6 @@
   font-size: var(--wa-font-size-s, 0.875rem);
   font-weight: 400;
   margin: 0;
-}
-
-.home-capture {
-  margin-top: 1.5rem;
-}
-
-.home--has-capture .home-capture {
-  margin-top: 0;
-}
-
-.home-capture .check-timeline {
-  width: 100%;
-  min-height: auto;
-  padding: 0;
-}
-
-.home-capture .single-issue {
-  width: 100%;
-  max-width: none;
-  min-height: auto;
-  padding: 0;
 }
 
 .home-results {

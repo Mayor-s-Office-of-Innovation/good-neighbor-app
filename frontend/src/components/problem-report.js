@@ -90,7 +90,6 @@ class ProblemReport extends HTMLElement {
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
-    this._embedded = this.hasAttribute("embedded");
     /** @type {SiteRecord | null} */
     this._site = await getSite();
     if (!this._isCurrentInit(initGeneration)) return;
@@ -122,10 +121,7 @@ class ProblemReport extends HTMLElement {
       if (this.isConnected && !this._finishing) this._render();
     });
 
-    this.innerHTML = shell({
-      embedded: this._embedded,
-      title: this._titleText(),
-    });
+    this.innerHTML = shell({ title: this._titleText() });
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -152,7 +148,7 @@ class ProblemReport extends HTMLElement {
       "click",
       () => {
         this._cancelDialog?.close();
-        this._exitCapture({ discarded: true });
+        this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -281,7 +277,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
@@ -362,52 +358,25 @@ class ProblemReport extends HTMLElement {
     const check = getCurrentCheck();
     if (!hasEvidence(getCurrentCheck())) {
       clearCheck();
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       return;
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem" },
-        }),
-      );
-      window.setTimeout(() => {
-        markCaptureComplete({
-          checkId: check?.id,
-          submissionKind: "problem_report",
-          expectedArtifacts,
-        });
-        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-      }, 0);
-      return;
-    }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "problem_report",
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+    // Replace-at-completion: back can never revisit the finished flow.
     replaceRoute("/today");
   }
 
-  _exitCapture({ discarded = false } = {}) {
+  _exitCapture() {
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem", discarded },
-        }),
-      );
-      return;
-    }
     replaceRoute("/today");
   }
 

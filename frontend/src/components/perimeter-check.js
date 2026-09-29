@@ -84,7 +84,6 @@ class PerimeterCheck extends HTMLElement {
 
   async connectedCallback() {
     this._finishing = false;
-    this._embedded = this.hasAttribute("embedded");
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -107,7 +106,7 @@ class PerimeterCheck extends HTMLElement {
     this._unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
-    this.innerHTML = shell({ embedded: this._embedded });
+    this.innerHTML = shell();
     this._fileInput = this.querySelector("#file-input");
     this._cancelDialog = this.querySelector("#cancel-check-dialog");
     this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
@@ -137,7 +136,7 @@ class PerimeterCheck extends HTMLElement {
       "click",
       () => {
         this._cancelDialog?.close();
-        this._exitCapture({ discarded: true });
+        this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -187,7 +186,7 @@ class PerimeterCheck extends HTMLElement {
 
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
@@ -586,44 +585,21 @@ class PerimeterCheck extends HTMLElement {
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
-      );
-      window.setTimeout(() => {
-        markCaptureComplete({
-          checkId: check?.id,
-          submissionKind: "check",
-          expectedArtifacts,
-        });
-        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-      }, 0);
-      return;
-    }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "check",
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
+    // Replace-at-completion: back can never revisit the finished flow.
     replaceRoute("/today");
   }
 
-  _exitCapture({ discarded = false } = {}) {
+  _exitCapture() {
     this._finishing = true;
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "perimeter", discarded },
-        }),
-      );
-      return;
-    }
     replaceRoute("/today");
   }
 

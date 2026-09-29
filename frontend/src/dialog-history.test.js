@@ -5,13 +5,18 @@ const listeners = vi.hoisted(
 );
 
 const browser = vi.hoisted(() => ({
-  location: { pathname: "/today" },
+  location: { pathname: "/today", hash: "", search: "" },
   history: {
     state: null,
     pushState: vi.fn(),
     replaceState: vi.fn(),
     back: vi.fn(),
     go: vi.fn(),
+  },
+  /** Record the URL a push/replace handed to the engine. */
+  pushedUrl: "",
+  historyPushedUrl() {
+    return this.pushedUrl;
   },
 }));
 
@@ -54,6 +59,7 @@ async function popWithBack() {
   // Simulate the engine: history.back() swaps the state, popstate catches up.
   browser.history.back.mockImplementationOnce(() => {
     browser.history.state = { goodNeighborAppNavigation: 0 };
+    browser.location.hash = "";
   });
   await listeners.popstate();
 }
@@ -73,15 +79,24 @@ describe("dialog-history", () => {
     browser.history.go.mockReset();
     browser.history.pushState.mockImplementation((state, _t, route) => {
       browser.history.state = state;
-      if (route) browser.location.pathname = route;
+      browser.pushedUrl = route || "";
+      if (route) {
+        if (route.startsWith("#")) browser.location.hash = route;
+        else browser.location.pathname = route;
+      }
     });
     browser.history.replaceState.mockImplementation((state, _t, route) => {
       browser.history.state = state;
-      if (route) browser.location.pathname = route;
+      browser.pushedUrl = route || "";
+      if (route && !route.startsWith("#")) {
+        browser.location.pathname = route;
+      }
     });
     browser.history.back.mockImplementation(() => {
       browser.history.state = { goodNeighborAppNavigation: 0 };
       browser.location.pathname = "/today";
+      browser.location.hash = "";
+      browser.pushedUrl = "";
     });
     vi.resetModules();
     router = await import("./router.js");
@@ -122,8 +137,10 @@ describe("dialog-history", () => {
     const dialog = fakeDialog();
     dialogHistory.openOverlayDialog(dialog, "logout");
     expect(browser.history.state?.goodNeighborOverlay).toBe("logout");
+    expect(browser.historyPushedUrl()).toBe("#logout");
 
-    await popWithBack();
+    dialog.close();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(browser.history.state?.goodNeighborOverlay).toBeUndefined();
   });
@@ -134,9 +151,13 @@ describe("dialog-history", () => {
     const routeListener = vi.fn();
     const removeRoute = router.onRouteChange(routeListener);
 
-    // System back: the sentinel is already gone from history.state.
+    // Simulate the ENGINE's back fully: state swap + hash strip + popstate.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
     browser.history.state = { goodNeighborAppNavigation: 0 };
-    await popWithBack();
+    await listeners.popstate();
 
     expect(dialog.open).toBe(false);
     expect(routeListener).not.toHaveBeenCalled();
@@ -153,7 +174,13 @@ describe("dialog-history", () => {
     fresh.open = true;
     dialogHistory.registerOverlayDialog("logout", fresh);
 
-    await popWithBack();
+    // The engine's back: sentinel gone, popstate fires.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    await listeners.popstate();
 
     // Only the live registry entry closes; the pre-re-render element is kept.
     expect(fresh.open).toBe(false);

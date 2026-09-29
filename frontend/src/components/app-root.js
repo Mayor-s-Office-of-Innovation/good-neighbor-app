@@ -254,9 +254,52 @@ class AppRoot extends HTMLElement {
     if (this._shell) {
       this._shell.classList.add("app--chromeless");
     }
-    // Always mount a fresh element (each screen reads current state on connect).
-    this._view.replaceChildren(document.createElement(tag));
-    this._view.focus();
+    const swap = () => {
+      // Always mount a fresh element (each screen reads current state on
+      // connect).
+      this._view.replaceChildren(document.createElement(tag));
+      this._restateScreenFocus();
+    };
+    // Same-document View Transition: cross-fades the route swap (full-blown
+    // zoom animations could re-use this hook later). No-op where unsupported;
+    // reduced-motion users get the hard swap (the API skips automatically).
+    if (typeof document.startViewTransition === "function") {
+      document.startViewTransition(swap);
+    } else {
+      swap();
+    }
+  }
+
+  /**
+   * Hand focus to the new screen's programmatic focus point (title or a
+   * screen-declared target): routing is a page-level event, so the screen's
+   * own heading should receive focus — not <main>. <main> (tabindex="-1")
+   * remains the silent fallback target and never draws a ring (outline:
+   * none). Screens may still move focus onward to a meaningful control
+   * after async setup (e.g. describe-instead focuses its text field).
+   */
+  _restateScreenFocus() {
+    const view = this._view;
+    if (!view) return;
+    this._afterMount(() => {
+      const viewFocusPoint =
+        view.querySelector("[data-screen-focus]") ||
+        view.querySelector("h1[tabindex='-1']");
+      if (viewFocusPoint instanceof HTMLElement) {
+        viewFocusPoint.focus();
+      } else {
+        view.focus();
+      }
+    });
+  }
+
+  /** @param {() => void} fn */
+  _afterMount(fn) {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(fn);
+    } else {
+      fn();
+    }
   }
 
   /**
