@@ -109,7 +109,7 @@
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-neutral-90, #e4e5e9);
+  background: var(--wa-color-neutral-fill-normal, #e4e5e9);
 }
 
 .analysis-tray--history .analysis-card {

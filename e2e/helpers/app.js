@@ -5,7 +5,8 @@
   proxy on :5173).
 */
 import { expect } from "@playwright/test";
-import { SITE_CODE, SITE_NAME } from "./fixtures.js";
+import { SITE_CODE, SITE_NAME, PHOTO_CLEAR } from "./fixtures.js";
+import { setAnalyzerFixture } from "./analyzer-control.js";
 import { typeDelay, isSlowMo } from "./pace.js";
 
 /**
@@ -174,4 +175,66 @@ export async function dismissAllNewResults(page) {
   }
   await expect(cards).toHaveCount(0);
   return seen;
+}
+
+/**
+ * Run one perimeter check end to end: start, one clear-scene photo through
+ * the analyzer stub, wait for the issue-free verdict, Finish. The analyzing
+ * tray's clear card proves the full pipeline (upload → SQS → worker →
+ * analyzer → assessment) landed before checking.
+ * @param {import("@playwright/test").Page} page
+ */
+async function runClearCheck(page) {
+  await startCheck(page);
+  await setAnalyzerFixture("excellent");
+  await addPhoto(page, PHOTO_CLEAR);
+  await expect(page.locator(".shot img")).toHaveCount(1, { timeout: 30_000 });
+  await expect(
+    page
+      .locator('section[aria-label="Analyzing evidence"]')
+      .locator(".analysis-card--clear")
+      .first(),
+  ).toBeVisible({ timeout: 90_000 });
+  await finishCheck(page);
+}
+
+/**
+ * Reach the home History tab with a rendered historical check tray: run two
+ * real clear checks. Home only groups a check into History when a NEWER check
+ * exists (today-view.js: activeClearCheck keeps the newest on the To do tab
+ * and pushes older clear checks to historicalClearChecks), so two runs are
+ * needed for the first check's tray to render as .analysis-tray--history.
+ *
+ * Between checks, wait for the CTA to read "Start a full check" again —
+ * Finish clears the draft asynchronously and clicking #start-check while it
+ * still reads "Resume a check" silently resumes the finished session instead
+ * of starting a new one (the new photo is dropped by isCurrentSession).
+ *
+ * The caller gets the History tab showing the older check's tray — the
+ * surface whose dark-mode tray panel previously failed contrast (see
+ * analysis-results.css).
+ * @param {import("@playwright/test").Page} page
+ */
+export async function openHistoryWithTrays(page) {
+  await runClearCheck(page);
+  // The Finish click clears the draft store asynchronously (markCaptureComplete
+  // voids clearDraft), so the CTA can briefly render "Resume a check" and a
+  // click during that window resumes the stale capture-complete session
+  // instead of starting fresh (the new photo is then dropped by
+  // isCurrentSession). Wait until the CTA reads "Start a full check" again —
+  // the draft is fully drained.
+  await expect(page.locator("#start-check")).toContainText(
+    "Start a full check",
+    { timeout: 30_000 },
+  );
+
+  await runClearCheck(page);
+
+  // Open History via its real tab button; the older check's tray must render.
+  // (Local DDB persists earlier runs' checks too, so several history trays can
+  // exist — .first() keeps the assertion strict-mode-safe.)
+  await page.locator('.home-tabs [data-home-filter="history"]').click();
+  await expect(
+    page.locator(".analysis-tray--history .analysis-tray__check-title").first(),
+  ).toBeVisible({ timeout: 30_000 });
 }
