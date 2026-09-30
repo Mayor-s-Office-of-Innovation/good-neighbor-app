@@ -636,6 +636,36 @@ describe("presignMedia", () => {
     expect(presignGet).not.toHaveBeenCalled();
   });
 
+  it("presigns task-update media through its check-scoped pointer", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Item: { mediaSk: "TASK#task-1#MEDIA#art_1" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          sk: "TASK#task-1#MEDIA#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+        },
+      });
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(presignGet).toHaveBeenCalledWith({
+      bucket: "bucket",
+      key: "checks/site-1/chk_01/art_1",
+      expiresIn: 300,
+    });
+  });
+
   it("requires an artifactId", async () => {
     const res = await callMedia(
       mediaEvent({ checkId: "chk_01", siteClaim: "site-1" }),

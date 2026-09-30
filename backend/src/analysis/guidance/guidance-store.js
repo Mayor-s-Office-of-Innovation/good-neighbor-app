@@ -17,6 +17,8 @@ import {
   siteMetaKey,
   taskDisplayCounterKey,
   taskKey,
+  taskUpdateKey,
+  taskUpdatePointerKey,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -953,22 +955,22 @@ async function executeTaskCreatedAppActions({
       appActionStatus: summarizeAppActionResults(appActionResults),
       updatedAt: (now ?? new Date()).toISOString(),
     };
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: tableName,
-              Item: updatedTask,
-              ConditionExpression: "#status = :open",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: { ":open": "open" },
-            },
-          },
-        ],
+    const persisted = await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: taskKey(siteId, String(task.taskId ?? "")),
+        UpdateExpression:
+          "SET appActionResults = :results, appActionStatus = :actionStatus, updatedAt = :updatedAt",
+        ConditionExpression: "attribute_exists(sk)",
+        ExpressionAttributeValues: {
+          ":results": appActionResults,
+          ":actionStatus": updatedTask.appActionStatus,
+          ":updatedAt": updatedTask.updatedAt,
+        },
+        ReturnValues: "ALL_NEW",
       }),
     );
-    updatedTasks.push(updatedTask);
+    updatedTasks.push(persisted.Attributes || updatedTask);
   }
   return updatedTasks;
 }
@@ -1535,6 +1537,8 @@ export async function completeTaskWithAppActions(opts) {
     summarizeAppActionResults(executedAppActionResults) === "failed" ||
     (opts.completionMethod === "311_filed" &&
       !hasSubmitted311ActionResult(executedAppActionResults));
+  const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
+  const filingUpdateId = filed311 ? randomUUID() : "";
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1570,6 +1574,14 @@ export async function completeTaskWithAppActions(opts) {
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
     appActionStatus,
     appActionResults,
+    ...(filed311
+      ? {
+          agency: "311",
+          notifiedAt: now,
+          latestUpdateId: filingUpdateId,
+          latestUpdateLabel: "311 ticket filed",
+        }
+      : {}),
     completionLeaseExpiresAt: null,
     updatedAt: now,
     ...taskWorklistDateGsi(
@@ -1601,6 +1613,54 @@ export async function completeTaskWithAppActions(opts) {
             },
           },
         },
+        ...(filed311
+          ? [
+              {
+                Put: {
+                  TableName: opts.tableName,
+                  Item: {
+                    ...taskUpdateKey(
+                      opts.siteId,
+                      opts.taskId,
+                      now,
+                      filingUpdateId,
+                    ),
+                    entityType: "task_update",
+                    taskId: opts.taskId,
+                    updateId: filingUpdateId,
+                    type: "311_ticket_filed",
+                    label: "311 ticket filed",
+                    occurredAt: now,
+                    actorId: "site-team",
+                    documentationState: "closed",
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+              {
+                Put: {
+                  TableName: opts.tableName,
+                  Item: {
+                    ...taskUpdatePointerKey(
+                      opts.siteId,
+                      opts.taskId,
+                      filingUpdateId,
+                    ),
+                    entityType: "task_update_pointer",
+                    taskId: opts.taskId,
+                    updateId: filingUpdateId,
+                    updateSk: taskUpdateKey(
+                      opts.siteId,
+                      opts.taskId,
+                      now,
+                      filingUpdateId,
+                    ).sk,
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+            ]
+          : []),
       ],
     }),
   );

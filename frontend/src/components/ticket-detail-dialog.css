@@ -133,10 +133,6 @@
   border-radius: 999px;
   background: #eceef2;
 }
-.ticket-timeline__content {
-  display: grid;
-  gap: 0.2rem;
-}
 .ticket-detail__updates time {
   color: var(--wa-color-text-quiet, #545868);
   font-size: 0.875rem;

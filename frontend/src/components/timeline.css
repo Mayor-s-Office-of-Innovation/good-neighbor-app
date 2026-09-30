@@ -1,0 +1,38 @@
+.ticket-timeline {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.ticket-timeline__item {
+  position: relative;
+  min-height: 5.4rem;
+  padding: 0 0 1.25rem 3.75rem;
+}
+
+.ticket-timeline__item::before {
+  content: "";
+  position: absolute;
+  left: 0.65rem;
+  top: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--wa-color-neutral-60, #c9cdd5);
+}
+
+.ticket-timeline__item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 1.3rem;
+  top: 2rem;
+  bottom: 0.45rem;
+  width: 0.25rem;
+  border-radius: 999px;
+  background: var(--wa-color-neutral-90, #eceef2);
+}
+
+.ticket-timeline__content {
+  display: grid;
+  gap: 0.2rem;
+}

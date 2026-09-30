@@ -36,6 +36,7 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
+  startTaskProgress,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -184,6 +185,10 @@ class TodayView extends HTMLElement {
     this._startingCapture = false;
     /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
     this._ticketDetailDialog = null;
+    /** @type {any} */
+    this._taskUpdateDialog = null;
+    /** @type {{ taskId: string, trigger: HTMLElement } | null} */
+    this._taskUpdateReturnFocus = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
   }
@@ -312,18 +317,21 @@ class TodayView extends HTMLElement {
         completingTasksResult,
         completedTasksResult,
         cannotDoTasksResult,
+        inProgressTasksResult,
       ] = await Promise.all([
         listChecks({ limit: 30 }),
         listTasks({ status: "open", limit: 50 }),
         listTasks({ status: "completing", limit: 50 }),
         listTasks({ status: "completed", limit: 50 }),
         listTasks({ status: "cannot_do", limit: 50 }),
+        listTasks({ status: "in_progress", limit: 50 }),
       ]);
       tasks = uniqueTasks([
         ...(openTasksResult.tasks || []),
         ...(completingTasksResult.tasks || []),
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
+        ...(inProgressTasksResult.tasks || []),
       ]);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
@@ -519,6 +527,7 @@ class TodayView extends HTMLElement {
     this._restoreLogoutDialog();
     this._restoreAttributionsDialog();
     this._mountTicketDetailDialog();
+    this._mountTaskUpdateDialog();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -777,6 +786,42 @@ class TodayView extends HTMLElement {
     );
   }
 
+  async _mountTaskUpdateDialog() {
+    await import("./task-update-dialog.js");
+    if (!this._taskUpdateDialog) {
+      const dialog = document.createElement("task-update-dialog");
+      dialog.addEventListener("taskupdated", () => {
+        void this.connectedCallback();
+      });
+      dialog.addEventListener("taskupdateclosed", () => {
+        const returnFocus = this._taskUpdateReturnFocus;
+        this._taskUpdateReturnFocus = null;
+        void this.connectedCallback().then(() => {
+          const current = returnFocus?.taskId
+            ? this.querySelector(
+                `[data-task-id="${CSS.escape(returnFocus.taskId)}"] [data-action="update"]`,
+              )
+            : null;
+          const fallback = returnFocus?.trigger?.isConnected
+            ? returnFocus.trigger
+            : this.querySelector(".home-tabs__tab--active");
+          const target = /** @type {HTMLElement | null | undefined} */ (
+            current || fallback
+          );
+          target?.focus();
+        });
+      });
+      this._taskUpdateDialog = dialog;
+    }
+    this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
+  }
+
+  async _openTaskUpdate(task, trigger) {
+    this._taskUpdateReturnFocus = { taskId: task.taskId, trigger };
+    await this._mountTaskUpdateDialog();
+    await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
+  }
+
   _closeSettingsMenu() {
     if (!this._settingsMenuOpen) return;
     this._settingsMenuOpen = false;
@@ -861,9 +906,15 @@ class TodayView extends HTMLElement {
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
-            : entry.homeStatus === "in_progress" &&
-                submitted311Ticket(entry.task)
-              ? { kind: "view311", label: "View details", variant: "outline" }
+            : entry.homeStatus === "in_progress"
+              ? {
+                  kind: "update",
+                  label:
+                    entry.task.kind === "escalation"
+                      ? "View details"
+                      : "Update",
+                  variant: "outline",
+                }
               : null,
         statusLabel: isNew
           ? this._newTaskStatusMeta(entry)
@@ -1731,7 +1782,22 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "view311") {
+    const label = btn.textContent?.trim() || "";
+    const startsProgress = [
+      "We called SFPD non-emergency",
+      "We called 911",
+      "We called SFACC",
+      "We called 311",
+    ].includes(label);
+    if (startsProgress) {
+      this._run(card, () => startTaskProgress(task.taskId, label)).then(
+        (ok) => {
+          if (ok) this.connectedCallback();
+        },
+      );
+    } else if (action === "update") {
+      void this._openTaskUpdate(task, btn);
+    } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
       this._run(card, () =>

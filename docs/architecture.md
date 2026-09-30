@@ -163,6 +163,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   recovery then carries the durable `closed` record forward instead of re-closing the SR.
 - **Task compatibility:** tasks keep `type: "onsite" | "city_escalation"` alongside the
   richer `kind`/`escalationChannel`/`appActions[]` fields.
+- **In-progress issue updates:** confirming one of the four configured call
+  actions moves the task from `open` to `in_progress` and appends an immutable
+  task-update event. The issue timeline derives non-stacking presence prompts
+  from fixed four-hour periods beginning at `inProgressAt`; resolving moves the
+  task irreversibly to `completed`. Notes, actions, and update photos append to
+  that timeline. Update-photo registration reuses the private artifact/S3 read
+  path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and

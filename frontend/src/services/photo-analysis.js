@@ -127,7 +127,7 @@ async function withLeg(leg, work) {
 
 async function ensureRemoteCheck(check) {
   if (check.remoteStarted) return;
-  await createCheck(check.id);
+  await createCheck(check.id, { flowType: check.flowType });
   check.remoteStarted = true;
 }
 
