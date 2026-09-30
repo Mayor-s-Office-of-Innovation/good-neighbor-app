@@ -16,12 +16,8 @@ import {
   problemSummaryLabel,
 } from "./analysis-results.templates.js";
 
-export const shell = ({ embedded = false } = {}) => html`
-  <div
-    class="flow view-check check check-timeline check-roll ${embedded
-      ? "check-timeline--embedded"
-      : ""}"
-  >
+export const shell = () => html`
+  <div class="flow view-check check check-timeline check-roll">
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">

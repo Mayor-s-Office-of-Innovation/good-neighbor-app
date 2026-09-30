@@ -35,6 +35,8 @@
   font-weight: var(--wa-font-weight-heading);
   line-height: var(--wa-line-height-condensed);
   text-align: center;
+  /* Programmatic focus target (route announcement) — never a ring. */
+  outline: none;
 }
 
 .site-admin-header button,

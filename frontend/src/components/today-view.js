@@ -22,6 +22,8 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { navigate } from "../router.js";
+import { openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   activateSiteBinding,
   clearSiteSession,
@@ -47,7 +49,6 @@ import {
 import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
   HOME_TABS,
-  captureAnimationFallbackMs,
   displayTaskId,
   hasProblemResults,
   homeTabForStatus,
@@ -61,9 +62,6 @@ import {
   normalizedHomeTab,
   relativeDay,
   sessionProblemItemHasBackendCards,
-  shouldDeferSessionRenderDuringCapture,
-  shouldInertHomeResults,
-  shouldShowFirstRunHome,
   splitSiteIdentity,
   submitted311Ticket,
   taskArtifactIdSet,
@@ -101,8 +99,6 @@ import {
   clearSubmittedSession,
   discardInMemorySession,
   pauseCheck,
-  resumeOrStartCheck,
-  resumeOrStartProblemReport,
   removeItem,
   rejectConditionLocally,
   resolveConditionLocally,
@@ -114,7 +110,6 @@ import {
 } from "./analysis-results.templates.js";
 import {
   actionButton,
-  captureRegion,
   errorView,
   heroBlock,
   homeResults,
@@ -138,26 +133,14 @@ import {
 class TodayView extends HTMLElement {
   constructor() {
     super();
-    this._viewPhase = "home";
-    this._captureFlow = null;
-    /** @param {CustomEvent<{ discarded?: boolean }>} event */
-    this._captureFinishedHandler = (event) => this._finishCapture(event);
-    this._discardingCapture = false;
     this._cardDeletedHandler = (event) => {
       if (!this._deferredDeletionRender) return;
       this._deferredDeletionRender = false;
       if (event.target === this) return;
-      this._focusAfterRender = ["capture", "entering-capture"].includes(
-        this._viewPhase,
-      )
-        ? "capture-heading"
-        : "home-primary-control";
+      this._focusAfterRender = "home-primary-control";
       void this.connectedCallback();
     };
-    this._captureFinishedListening = false;
-    this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
-    this._captureLauncherSelector = null;
     this._homeModel = null;
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
@@ -198,14 +181,11 @@ class TodayView extends HTMLElement {
     this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
-    this.removeEventListener("capturefinished", this._captureFinishedHandler);
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
-    this._captureFinishedListening = false;
     this._locationUnsub?.();
     this._locationUnsub = null;
-    window.clearTimeout(this._capturePhaseTimer);
   }
 
   async connectedCallback() {
@@ -223,7 +203,7 @@ class TodayView extends HTMLElement {
     if (!this._locationUnsub) {
       this._locationUnsub = onDeviceLocationChange((location) => {
         this._deviceLocation = location;
-        if (this.isConnected && this._homeModel && this._viewPhase === "home") {
+        if (this.isConnected && this._homeModel) {
           this._renderHome(this._homeModel);
         }
       });
@@ -234,16 +214,8 @@ class TodayView extends HTMLElement {
         if (session?.status === "in-progress") {
           return;
         }
-        if (shouldDeferSessionRenderDuringCapture(this._viewPhase, session)) {
-          return;
-        }
         this.connectedCallback();
       });
-    }
-    if (!this._captureFinishedListening) {
-      this.addEventListener("capturefinished", this._captureFinishedHandler);
-      this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
-      this._captureFinishedListening = true;
     }
     if (!this._settingsDocumentClick) {
       this._settingsDocumentClick = (event) => {
@@ -278,23 +250,8 @@ class TodayView extends HTMLElement {
     const requestedFilter = new URLSearchParams(window.location.search).get(
       "filter",
     );
-    const recognizedFilter = [
-      ...HOME_TABS.map(({ id }) => id),
-      "needs_action",
-      "resolved",
-      "archived",
-    ].includes(requestedFilter || "");
-    // Explicit worklist links retain the resumable draft without reopening it.
-    const showRequestedWorklist =
-      recognizedFilter && this._viewPhase === "home";
-    const captureSession =
-      active?.status === "in-progress" && !showRequestedWorklist
-        ? active
-        : null;
-    if (captureSession) {
-      this._captureFlow = captureSession.flowType || "perimeter";
-      if (this._viewPhase === "home") this._viewPhase = "capture";
-    }
+    // An in-progress draft no longer re-enters capture from home: capture
+    // lives on its own route (/check, /problem) and home stays the worklist.
     let pendingSession =
       active && active.status === "capture-complete"
         ? active
@@ -362,8 +319,6 @@ class TodayView extends HTMLElement {
       });
     }
 
-    // A resumable in-progress walk (Cancel from /check keeps it) still reopens
-    // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
@@ -373,11 +328,11 @@ class TodayView extends HTMLElement {
       last,
       checks: submitted,
       tasks,
-      captureSession,
       pendingSession: effectivePendingSession,
     });
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+    announceScreenHeading(this, ".home-identity__site");
   }
 
   _taskWith311CardStatus(task) {
@@ -457,6 +412,8 @@ class TodayView extends HTMLElement {
 
     const start = this.querySelector("#start-check");
     if (start) {
+      // Routed capture: the check screen (routed variant) owns the flow from
+      // here; the draft session machinery is unchanged.
       start.addEventListener("click", (event) =>
         this._startCapture("perimeter", event.currentTarget),
       );
@@ -495,7 +452,10 @@ class TodayView extends HTMLElement {
           "false",
         );
         this._attributionsDialogOpen = true;
-        this._attributionsDialog?.showModal();
+        openOverlayDialog(
+          /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+          "attributions",
+        );
       },
     );
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
@@ -641,7 +601,7 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, captureSession, pendingSession }) {
+  _render({ last, checks = [], tasks, pendingSession }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -709,27 +669,16 @@ class TodayView extends HTMLElement {
       );
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
-    const captureVisible =
-      Boolean(captureSession) || this._viewPhase === "leaving-capture";
-    const showFirstRun = shouldShowFirstRunHome({
-      captureVisible,
-      last,
-      taskCount: tasks.length,
-      hasResultCards,
-    });
-    const phaseClass = `home--${this._viewPhase}`;
-    const resultsInactive = shouldInertHomeResults(this._viewPhase);
+    // First-run hero only for a truly empty account: no submitted check, no
+    // worklist, no in-review session results.
+    const showFirstRun = !last && tasks.length === 0 && !hasResultCards;
 
     return homeShell({
-      phaseClass,
-      captureVisible,
-      resultsInactive,
       settingsMenuOpen: this._settingsMenuOpen,
       adminAccess: hasAdminAccess(this._site),
       hero: showFirstRun
         ? this._firstRunBlock()
         : this._activityBlock({ last, homeTasks }),
-      capture: captureVisible ? captureRegion({ flow: this._captureFlow }) : "",
       results: this._homeResults({
         pendingSession,
         recentCheckTime:
@@ -830,12 +779,18 @@ class TodayView extends HTMLElement {
 
   _restoreLogoutDialog() {
     if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
-    this._logoutDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._logoutDialog),
+      "logout",
+    );
   }
 
   _restoreAttributionsDialog() {
     if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
-    this._attributionsDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+      "attributions",
+    );
   }
 
   async _logout() {
@@ -974,100 +929,17 @@ class TodayView extends HTMLElement {
         this._showLocationDialog();
         return;
       }
-      await this._enterCapture(flowType, launcher);
+      // Routed capture: navigate so the flow has a real URL. The routed
+      // component bootstraps itself (resume-or-start) from IndexedDB on
+      // connect; today-view keeps no capture phase state.
+      if (flowType === "single-problem") {
+        navigate("/problem");
+      } else {
+        navigate("/check");
+      }
     } finally {
       this._startingCapture = false;
     }
-  }
-
-  async _enterCapture(flowType, launcher = null) {
-    this._captureFlow = flowType;
-    this._viewPhase = "entering-capture";
-    this._captureLauncherSelector =
-      launcher instanceof HTMLElement && launcher.id
-        ? `#${CSS.escape(launcher.id)}`
-        : null;
-    this._focusAfterRender = "capture-heading";
-    this._scrollCaptureStartIntoView();
-    if (flowType === "single-problem") {
-      await resumeOrStartProblemReport(this._siteId);
-    } else {
-      await resumeOrStartCheck(this._siteId);
-    }
-    await this.connectedCallback();
-    this._scrollCaptureStartIntoView();
-    this._afterCaptureAnimation("entering-capture", () => {
-      this._viewPhase = "capture";
-      this._syncPhaseClass();
-    });
-  }
-
-  /** @param {CustomEvent<{ discarded?: boolean }>} event */
-  async _finishCapture(event) {
-    if (this._viewPhase === "leaving-capture") return;
-    this._discardingCapture = Boolean(event.detail?.discarded);
-    this._viewPhase = "leaving-capture";
-    this._focusAfterRender =
-      this._captureLauncherSelector || "home-primary-control";
-    this._syncPhaseClass();
-    this._afterCaptureAnimation("leaving-capture", async () => {
-      this._viewPhase = "home";
-      this._captureFlow = null;
-      this._discardingCapture = false;
-      await this.connectedCallback();
-      this._captureLauncherSelector = null;
-    });
-  }
-
-  _syncPhaseClass() {
-    const root = this.querySelector(".home");
-    if (!root) return;
-    root.classList.toggle("home--home", this._viewPhase === "home");
-    root.classList.toggle(
-      "home--entering-capture",
-      this._viewPhase === "entering-capture",
-    );
-    root.classList.toggle("home--capture", this._viewPhase === "capture");
-    root.classList.toggle(
-      "home--leaving-capture",
-      this._viewPhase === "leaving-capture",
-    );
-    root.classList.toggle("home--discarding-capture", this._discardingCapture);
-    const results = this.querySelector(".home-region--results");
-    if (results) {
-      const inactive = shouldInertHomeResults(this._viewPhase);
-      results.toggleAttribute("inert", inactive);
-      if (inactive) {
-        results.setAttribute("aria-hidden", "true");
-      } else {
-        results.removeAttribute("aria-hidden");
-      }
-    }
-  }
-
-  _afterCaptureAnimation(expectedPhase, callback) {
-    window.clearTimeout(this._capturePhaseTimer);
-    const capture = this.querySelector(".home-region--capture");
-    if (!capture) {
-      void callback();
-      return;
-    }
-    let completed = false;
-    const finish = () => {
-      if (completed || this._viewPhase !== expectedPhase) return;
-      completed = true;
-      capture.removeEventListener("animationend", onAnimationEnd);
-      window.clearTimeout(this._capturePhaseTimer);
-      void callback();
-    };
-    const onAnimationEnd = (event) => {
-      if (event.target === capture) finish();
-    };
-    const fallbackMs = captureAnimationFallbackMs(
-      window.getComputedStyle(capture),
-    );
-    capture.addEventListener("animationend", onAnimationEnd);
-    this._capturePhaseTimer = window.setTimeout(finish, fallbackMs);
   }
 
   _scrollCaptureStartIntoView() {
@@ -1204,7 +1076,7 @@ class TodayView extends HTMLElement {
     this._locationPrompt = null;
     if (this._pendingLocationRender) {
       this._pendingLocationRender = false;
-      if (!changingSite && this._viewPhase === "home" && this._homeModel) {
+      if (!changingSite && this._homeModel) {
         this._renderHome(this._homeModel);
       }
     }
@@ -1212,7 +1084,7 @@ class TodayView extends HTMLElement {
 
   /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
   _onLocationStay({ prompt }) {
-    if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
+    if (prompt) void this._startCapture(prompt.flowType, prompt.launcher);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
@@ -1513,7 +1385,10 @@ class TodayView extends HTMLElement {
       ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
     );
     if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -1522,7 +1397,10 @@ class TodayView extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -1666,7 +1544,10 @@ class TodayView extends HTMLElement {
   async _resolveAnalysisProblem(problem) {
     if (!problem.taskId) {
       this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
@@ -1690,7 +1571,10 @@ class TodayView extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       await this.connectedCallback();
     } catch (err) {
       console.error("resolve task failed", err);

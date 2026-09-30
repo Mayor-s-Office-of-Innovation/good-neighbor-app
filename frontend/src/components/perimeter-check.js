@@ -23,7 +23,9 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { navigate, replaceRoute } from "../router.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
   answerAnalysisQuestion,
@@ -83,7 +85,6 @@ class PerimeterCheck extends HTMLElement {
 
   async connectedCallback() {
     this._finishing = false;
-    this._embedded = this.hasAttribute("embedded");
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -106,7 +107,7 @@ class PerimeterCheck extends HTMLElement {
     this._unsubscribe = onCheckSessionChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
-    this.innerHTML = shell({ embedded: this._embedded });
+    this.innerHTML = shell();
     this._fileInput = this.querySelector("#file-input");
     this._cancelDialog = this.querySelector("#cancel-check-dialog");
     this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
@@ -127,16 +128,19 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#cancel-check-save")?.addEventListener(
       "click",
       async () => {
-        this._cancelDialog?.close();
+        // Close → WAIT for the history unwind → then mutate history again
+        // (_exitCapture replaces the entry). Without the await, the queued
+        // back() lands on the replaced entry and the user re-enters the flow.
+        await awaitOverlayUnwind("cancel-confirm");
         await pauseCheck();
         this._exitCapture();
       },
     );
     this.querySelector("#cancel-check-discard")?.addEventListener(
       "click",
-      () => {
-        this._cancelDialog?.close();
-        this._exitCapture({ discarded: true });
+      async () => {
+        await awaitOverlayUnwind("cancel-confirm");
+        this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -182,15 +186,20 @@ class PerimeterCheck extends HTMLElement {
 
     this._render();
     this._resumePendingEvidence();
+    // Async-init announcement: the heading may not exist at route-mount time.
+    announceScreenHeading(this, ".check-timeline__title");
   }
 
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
-    this._cancelDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._cancelDialog),
+      "cancel-confirm",
+    );
   }
 
   _resumePendingEvidence() {
@@ -299,7 +308,10 @@ class PerimeterCheck extends HTMLElement {
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
     if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -308,7 +320,10 @@ class PerimeterCheck extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -434,12 +449,18 @@ class PerimeterCheck extends HTMLElement {
 
   async _resolveProblem(problem) {
     if (!problem.taskId) {
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
     if (problem.actionKind === "escalation") {
-      this._analysisProgressDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
+        "analysis-progress",
+      );
       try {
         const result = await completeTask(problem.taskId, {
           completionMethod: "311_filed",
@@ -462,7 +483,10 @@ class PerimeterCheck extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
     } catch (err) {
       console.error("resolve task failed", err);
       this._showToast("Could not save that action. Please try again.");
@@ -567,45 +591,22 @@ class PerimeterCheck extends HTMLElement {
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", { bubbles: true, composed: true }),
-      );
-      window.setTimeout(() => {
-        markCaptureComplete({
-          checkId: check?.id,
-          submissionKind: "check",
-          expectedArtifacts,
-        });
-        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-      }, 0);
-      return;
-    }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "check",
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-    navigate("/today");
+    // Replace-at-completion: back can never revisit the finished flow.
+    replaceRoute("/today");
   }
 
-  _exitCapture({ discarded = false } = {}) {
+  _exitCapture() {
     this._finishing = true;
     this._deletionUnsub?.();
     this._unsubscribe?.();
     this._unsubscribe = null;
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "perimeter", discarded },
-        }),
-      );
-      return;
-    }
-    navigate("/today");
+    replaceRoute("/today");
   }
 
   _openCamera() {

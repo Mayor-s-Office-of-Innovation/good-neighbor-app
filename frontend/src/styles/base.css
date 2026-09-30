@@ -102,15 +102,34 @@ body:has(dialog:modal) {
   overflow: hidden;
 }
 
-/* Respect reduced-motion globally: kill non-essential transitions/animation */
+/* Respect reduced-motion globally: kill non-essential transitions/animation.
+   Policy and the list of sites this rule can't reach: docs/frontend-design-system.md
+   "Motion". */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
+  }
+  /* View Transitions (app-root's route cross-fade) animate on pseudo-elements
+     the `*` rule above never matches, and the API itself does NOT skip under
+     reduced motion — this rule is what makes the route swap instant. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+  /* Web Awesome controls transition inside their shadow roots, out of reach
+     of the `*` rule, but their durations come from these inherited tokens. */
+  :root {
+    --wa-transition-slow: 0ms;
+    --wa-transition-normal: 0ms;
+    --wa-transition-fast: 0ms;
   }
 }
 
@@ -210,6 +229,9 @@ app-root {
   margin-inline: auto;
   padding: 1rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  /* Focus target for route changes only (tabindex="-1"); it is never an
+     interactive control, so it must never draw a focus ring. */
+  outline: none;
 }
 
 /* Each route mounts one custom element here. Custom elements are inline by

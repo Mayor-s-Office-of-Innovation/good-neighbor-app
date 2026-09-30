@@ -194,40 +194,6 @@ export function displayTaskId(task) {
   );
 }
 
-export function shouldShowFirstRunHome({
-  captureVisible,
-  last,
-  taskCount,
-  hasResultCards,
-}) {
-  return !captureVisible && !last && taskCount === 0 && !hasResultCards;
-}
-
-export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
-  if (!["entering-capture", "capture", "leaving-capture"].includes(viewPhase)) {
-    return false;
-  }
-  return !session || session.status === "capture-complete";
-}
-
-export function shouldInertHomeResults(viewPhase) {
-  return ["entering-capture", "capture"].includes(viewPhase);
-}
-
-export function captureAnimationFallbackMs(style) {
-  const durations = cssTimeListMs(style.animationDuration);
-  const delays = cssTimeListMs(style.animationDelay);
-  const count = Math.max(durations.length, delays.length, 1);
-  let max = 0;
-  for (let i = 0; i < count; i++) {
-    max = Math.max(
-      max,
-      (durations[i % durations.length] || 0) + (delays[i % delays.length] || 0),
-    );
-  }
-  return max > 0 ? max + 50 : 1;
-}
-
 export function issueCountLabel(count) {
   if (!count) return "";
   return `${count} ${count === 1 ? "issue" : "issues"} found`;
@@ -421,18 +387,6 @@ export function visibleTaskEntriesForHydration(entries, homeFilter) {
   return entries.filter(
     (entry) => homeTabForStatus(entry.homeStatus) === homeFilter,
   );
-}
-
-function cssTimeListMs(value) {
-  return String(value || "0s")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const numeric = Number.parseFloat(part);
-      if (!Number.isFinite(numeric)) return 0;
-      return part.endsWith("ms") ? numeric : numeric * 1000;
-    });
 }
 
 export function timeOf(iso) {

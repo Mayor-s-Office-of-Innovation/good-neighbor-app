@@ -155,6 +155,37 @@ actions, and WA controls for the code field. The only setup-specific CSS is full
 the "Don't have a code?" disclosure (`site-setup.css`, "First-run setup"). That's the target shape for
 a screen matched to the design without a mockup.
 
+## Motion
+
+Everything animated must be instant when the OS asks for reduced motion
+(`prefers-reduced-motion: reduce`). axe-core has no rule for this, so the e2e
+accessibility scan will not catch a regression — the rules below are the guard.
+
+1. **base.css covers light DOM.** Its global `@media (prefers-reduced-motion: reduce)`
+   block zeroes every animation and transition duration/delay, forces
+   `scroll-behavior: auto`, and zeroes the `--wa-transition-*` tokens that Web Awesome
+   controls read inside their shadow roots. Do not add per-component reduced-motion
+   blocks for ordinary light-DOM transitions; the global rule already handles them.
+2. **Shadow roots and view-transition pseudo-elements need their own guard.** The `*`
+   selector stops at shadow boundaries and never matches `::view-transition-*`. Known
+   sites: the route cross-fade in `app-root.js` (guarded in base.css and skipped in JS
+   when the media query matches), `theme-toggle.js`'s own shadow stylesheet, and
+   `wa-spinner` (see below). Anything new that animates inside a shadow root, or uses
+   `document.startViewTransition`, must add its own `prefers-reduced-motion` rule.
+3. **JS never asks for smooth scrolling.** `scrollTo`/`scrollIntoView` with
+   `behavior: "smooth"` ignores the CSS `scroll-behavior` override; use `behavior: "auto"`
+   (or plain CSS) so the global rule stays in charge.
+
+`wa-spinner` keeps spinning under reduced motion on purpose: it is the only loading
+indicator inside the setup buttons, it carries an `aria-label`, and its animations live
+on inner elements the exposed `::part(spinner)` wrapper can't stop. WCAG treats
+essential status motion as exempt. Our own `.analysis-progress-ring` does stop; if that
+inconsistency ever matters, swap the spinner for a static "Loading…" label rather than
+fighting the shadow root.
+
+To check by hand: Playwright `reducedMotion: "reduce"`, or the DevTools Rendering panel's
+"Emulate CSS media feature prefers-reduced-motion".
+
 ## Action notifications
 
 `app-toasts` lives outside the routed view. `show311SuccessToast()` uses the

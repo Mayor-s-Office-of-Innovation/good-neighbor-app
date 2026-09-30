@@ -42,8 +42,13 @@ function stubbedDialog() {
   const focus = vi.fn();
   const showModal = vi.fn();
   const dialog = {
+    open: false,
+    dataset: {},
     showModal,
-    close: vi.fn(),
+    close: vi.fn(() => {
+      dialog.open = false;
+    }),
+    addEventListener: vi.fn(),
     querySelector: vi.fn((selector) =>
       selector === '.location-dialog__site[aria-pressed="true"]'
         ? { focus }

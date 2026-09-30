@@ -12,6 +12,7 @@
 */
 import "./timeline.css";
 import "./ticket-detail-dialog.css";
+import { openOverlayDialog } from "../dialog-history.js";
 import { get311RequestDetail } from "../services/api.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";
 import { ticketDetailLocation } from "../domain/ticket-detail.js";
@@ -141,7 +142,7 @@ class TicketDetailDialog extends HTMLElement {
         }),
       );
     });
-    if (this._open) dialog.showModal();
+    if (this._open) openOverlayDialog(dialog, "ticket-detail");
   }
 }
 

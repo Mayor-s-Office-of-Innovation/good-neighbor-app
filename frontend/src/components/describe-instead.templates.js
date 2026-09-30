@@ -52,7 +52,7 @@ export const shell = ({
 
       <div class="describe__main">
         <div class="describe__heading">
-          <h1 class="describe__title">Describe what you see</h1>
+          <h1 class="describe__title" tabindex="-1">Describe what you see</h1>
           <p class="describe__subtitle">${copy.subtitle}</p>
         </div>
 

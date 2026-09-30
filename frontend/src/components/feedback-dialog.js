@@ -18,6 +18,7 @@
 */
 import "./feedback-dialog.css";
 import { html } from "../lib/html.js";
+import { openOverlayDialog } from "../dialog-history.js";
 import { sendFeedback } from "../services/feedback.js";
 
 const THANKS_MS = 2200;
@@ -78,7 +79,10 @@ class FeedbackDialog extends HTMLElement {
   /** Open the sheet from an external menu item. */
   open() {
     this._setState("form");
-    this._dialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._dialog),
+      "feedback",
+    );
     /** @type {HTMLElement | null} */ (
       this.querySelector("#feedback-text")
     )?.focus();

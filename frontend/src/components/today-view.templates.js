@@ -16,17 +16,15 @@ import { analysisDialogs } from "./analysis-results.templates.js";
 /* ---- Shell ---- */
 
 /**
- * The whole home screen. `hero`, `capture`, and `results` are already-rendered
- * markup strings from the templates below. The <location-dialog> placeholder is
- * replaced by the host's persistent element after render.
+ * The whole home screen. `hero` and `results` are already-rendered markup
+ * strings from the templates below. Capture lives on its own route
+ * (/check, /problem) — the home screen has no capture region anymore. The
+ * <location-dialog> placeholder is replaced by the host's persistent element
+ * after render.
  * @param {{
- *   phaseClass: string,
- *   captureVisible: boolean,
- *   resultsInactive: boolean,
  *   settingsMenuOpen: boolean,
  *   adminAccess: boolean,
  *   hero: string,
- *   capture: string,
  *   results: string,
  *   showAnalysisDialogs: boolean,
  *   logoutError: string,
@@ -35,22 +33,16 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  * @returns {string}
  */
 export function homeShell({
-  phaseClass,
-  captureVisible,
-  resultsInactive,
   settingsMenuOpen,
   adminAccess,
   hero,
-  capture,
   results,
   showAnalysisDialogs,
   logoutError,
   logoutPending,
 }) {
   return html`
-    <div
-      class="home ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
-    >
+    <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
           ${settingsMenu({ open: settingsMenuOpen, adminAccess })}
@@ -64,14 +56,9 @@ export function homeShell({
         </div>
       </section>
 
-      <section class="home-region home-region--capture" aria-live="polite">
-        ${capture}
-      </section>
-
       <section
         class="home-region home-region--results"
         aria-label="Task results"
-        ${resultsInactive ? html`inert aria-hidden="true"` : ""}
       >
         ${results}
       </section>
@@ -223,17 +210,6 @@ export function logoutDialog({ error, pending }) {
   `;
 }
 
-/** @param {{ flow: string | null }} state */
-export function captureRegion({ flow }) {
-  return html`
-    <div class="home-capture">
-      ${flow === "single-problem"
-        ? html`<problem-report embedded></problem-report>`
-        : html`<perimeter-check embedded></perimeter-check>`}
-    </div>
-  `;
-}
-
 /* ---- Hero: site identity, switcher, summary, CTAs ---- */
 
 /**
@@ -246,7 +222,9 @@ export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
     <div class="screen__sec home-lead">
       <site-switcher></site-switcher>
       <div class="home-identity home-identity--with-summary">
-        <h1 class="home-identity__site">${escapeHtml(siteName)}</h1>
+        <h1 class="home-identity__site" tabindex="-1">
+          ${escapeHtml(siteName)}
+        </h1>
         ${summary}
       </div>
       ${homeActions({ checkLabel, reportLabel })}
@@ -576,7 +554,9 @@ export function errorView({ identity }) {
                   ${escapeHtml(identity.org)}
                 </p>`
               : ""}
-            <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+            <h1 class="home-identity__site" tabindex="-1">
+              ${escapeHtml(identity.site)}
+            </h1>
           </div>
           <div class="lastlog">
             <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>

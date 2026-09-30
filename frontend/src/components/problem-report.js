@@ -16,7 +16,9 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { navigate, replaceRoute } from "../router.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   answerAnalysisQuestion,
   analyzeEvidenceItem,
@@ -89,7 +91,6 @@ class ProblemReport extends HTMLElement {
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
-    this._embedded = this.hasAttribute("embedded");
     /** @type {SiteRecord | null} */
     this._site = await getSite();
     if (!this._isCurrentInit(initGeneration)) return;
@@ -121,10 +122,7 @@ class ProblemReport extends HTMLElement {
       if (this.isConnected && !this._finishing) this._render();
     });
 
-    this.innerHTML = shell({
-      embedded: this._embedded,
-      title: this._titleText(),
-    });
+    this.innerHTML = shell({ title: this._titleText() });
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -142,16 +140,18 @@ class ProblemReport extends HTMLElement {
     this.querySelector("#cancel-report-save")?.addEventListener(
       "click",
       async () => {
-        this._cancelDialog?.close();
+        // Close → await the history unwind → then replace the entry (see
+        // perimeter-check's cancel handlers for the race this avoids).
+        await awaitOverlayUnwind("cancel-confirm");
         await pauseCheck();
         this._exitCapture();
       },
     );
     this.querySelector("#cancel-report-discard")?.addEventListener(
       "click",
-      () => {
-        this._cancelDialog?.close();
-        this._exitCapture({ discarded: true });
+      async () => {
+        await awaitOverlayUnwind("cancel-confirm");
+        this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
     );
@@ -200,6 +200,8 @@ class ProblemReport extends HTMLElement {
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._render();
+    // Async-init announcement: the heading may not exist at route-mount time.
+    announceScreenHeading(this, ".single-issue__title");
   }
 
   _isCurrentInit(initGeneration) {
@@ -280,11 +282,14 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
-    this._cancelDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._cancelDialog),
+      "cancel-confirm",
+    );
   }
 
   /** @returns {void} */
@@ -358,53 +363,26 @@ class ProblemReport extends HTMLElement {
     const check = getCurrentCheck();
     if (!hasEvidence(getCurrentCheck())) {
       clearCheck();
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       return;
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem" },
-        }),
-      );
-      window.setTimeout(() => {
-        markCaptureComplete({
-          checkId: check?.id,
-          submissionKind: "problem_report",
-          expectedArtifacts,
-        });
-        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-      }, 0);
-      return;
-    }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "problem_report",
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-    navigate("/today");
+    // Replace-at-completion: back can never revisit the finished flow.
+    replaceRoute("/today");
   }
 
-  _exitCapture({ discarded = false } = {}) {
+  _exitCapture() {
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem", discarded },
-        }),
-      );
-      return;
-    }
-    navigate("/today");
+    replaceRoute("/today");
   }
 
   _wireAnalysisCards() {
@@ -445,7 +423,10 @@ class ProblemReport extends HTMLElement {
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
     if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -454,7 +435,10 @@ class ProblemReport extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -575,12 +559,18 @@ class ProblemReport extends HTMLElement {
   async _resolveProblem(problem) {
     if (!problem.taskId) {
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
     if (problem.actionKind === "escalation") {
-      this._analysisProgressDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
+        "analysis-progress",
+      );
       try {
         const result = await completeTask(problem.taskId, {
           completionMethod: "311_filed",
@@ -603,7 +593,10 @@ class ProblemReport extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
     } catch (err) {
       console.error("resolve task failed", err);
       this._showToast("Could not save that action. Please try again.");

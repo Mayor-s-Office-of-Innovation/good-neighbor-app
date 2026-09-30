@@ -7,17 +7,12 @@
   these rules follow the shared base in the bundle. Unlayered, like base.css.
 */
 
-.check-timeline--embedded {
-  background: transparent;
-}
-
 /* The screen is a full-height column: fixed top bar + pill, then the camera
    flex-grows to fill everything above the shot strip + shutter row. */
 .view-check.check {
   display: flex;
   flex-direction: column;
-  /* Fills the routed screen host. No effect when embedded in Home, whose
-     capture region is a plain block. */
+  /* Fills the routed screen host. */
   flex: 1 0 auto;
   padding-bottom: 1rem;
 }
@@ -218,17 +213,14 @@
   --check-flow-ink: #2f323f;
   --check-flow-on-ink: #fff;
   --check-flow-text: var(--wa-color-text-normal, #1b1d26);
-  width: min(100%, 64rem);
+  /* Routed capture is the primary flow: keep the phone-app column width
+     (today-view's content width), not the stale desktop 64rem. */
+  width: min(100%, 34.375rem);
   max-width: none;
   margin-inline: auto;
   padding-top: 4rem;
   padding-bottom: 4rem;
   gap: 1.5rem;
-}
-
-/* Embedded capture sizes to its content inside Home. */
-.check-timeline.check-timeline--embedded {
-  padding-bottom: 0;
 }
 
 .check-timeline button {
@@ -286,6 +278,16 @@
   font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.2;
   letter-spacing: 0;
+}
+
+/*
+  Programmatic focus targets (route announcements). They receive focus()
+  from app-root's routing; they are not interactive and never draw a ring —
+  :focus-visible can light up on a hard load (initial-document
+  keyboard-interaction state), so the suppression is explicit here.
+*/
+.check-timeline__title:focus {
+  outline: none;
 }
 
 .check-timeline__footer {
