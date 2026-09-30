@@ -1,6 +1,6 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
-import { bindSite, startCheck } from "../helpers/app.js";
+import { bindSite } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
