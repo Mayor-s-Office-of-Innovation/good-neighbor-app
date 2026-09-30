@@ -23,6 +23,7 @@ import {
 } from "./analysis-card-deletion.js";
 import { navigate } from "../router.js";
 import { openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   activateSiteBinding,
   clearSiteSession,
@@ -323,6 +324,7 @@ class TodayView extends HTMLElement {
     });
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+    announceScreenHeading(this, ".home-identity__site");
   }
 
   _taskWith311CardStatus(task) {

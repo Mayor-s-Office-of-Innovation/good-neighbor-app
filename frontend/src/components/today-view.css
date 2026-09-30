@@ -366,6 +366,7 @@
   font-weight: 700;
   line-height: 1.12;
   text-wrap: balance;
+  outline: none; /* programmatic focus target (route announcement) */
 }
 
 .home-actions {

@@ -12,6 +12,7 @@ import "./describe-instead.css";
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
 import { openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   addItem,
   getFlowType,
@@ -62,6 +63,7 @@ class DescribeInstead extends HTMLElement {
 
     this._render();
     this._bind();
+    announceScreenHeading(this, ".describe__title");
   }
 
   _bind() {

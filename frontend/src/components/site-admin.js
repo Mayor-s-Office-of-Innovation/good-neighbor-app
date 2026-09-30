@@ -9,6 +9,7 @@ import {
   setPopstateGuard,
 } from "../router.js";
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   formatAdminDate,
   formatAdminPhone,
@@ -38,6 +39,7 @@ class SiteAdminView extends HTMLElement {
     try {
       this._site = (await getSiteAdmin()).site;
       this._render();
+      announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView("We couldn't load the site information.");
       this._wireBack();
@@ -158,6 +160,7 @@ class SiteAdminEdit extends HTMLElement {
       this._original = this._sectionValue();
       this._render();
       this._installLeaveGuards();
+      announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView("We couldn't load this form.");
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>

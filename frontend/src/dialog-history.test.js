@@ -122,6 +122,34 @@ describe("dialog-history", () => {
     expect(browser.history.state?.goodNeighborOverlay).toBe("logout");
   });
 
+  it("a reused dialog's SECOND open→native-close still unwinds (regression #4)", async () => {
+    const dialog = fakeDialog(); // reused element, like the feedback sheet
+    dialogHistory.openOverlayDialog(dialog, "feedback");
+    // First close: the native listener calls closeOverlay → engine back() →
+    // popstate catches up (clears the pending marker).
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
+    dialog.close();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await listeners.popstate();
+    expect(browser.history.state?.goodNeighborOverlay).toBeUndefined();
+
+    dialogHistory.openOverlayDialog(dialog, "feedback");
+    expect(browser.history.state?.goodNeighborOverlay).toBe("feedback");
+
+    // Second close must ALSO unwind — this is what the once-only listener broke.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
+    dialog.close();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await listeners.popstate();
+    expect(browser.history.state?.goodNeighborOverlay).toBeUndefined();
+  });
+
   it("two different ids push two sentinels", () => {
     const a = fakeDialog();
     const b = fakeDialog();

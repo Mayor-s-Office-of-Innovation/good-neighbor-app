@@ -234,4 +234,63 @@ describe("router overlays", () => {
     expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 1 });
     expect(browser.location.hash).toBe("");
   });
+
+  it("retires a popped id so a reopen pushes a fresh sentinel (regression)", async () => {
+    router.pushOverlay("analysis-edit");
+
+    // System back: sentinel gone from state, popstate delivers, closer runs.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
+    await pop();
+    expect(popped).toEqual(["analysis-edit"]);
+
+    // Reopen the same id: a NEW sentinel must be pushed (previously the id
+    // lingered in overlayDepths and pushOverlay short-circuited).
+    router.pushOverlay("analysis-edit");
+
+    expect(browser.history.pushState).toHaveBeenCalledTimes(2);
+    expect(browser.history.state).toEqual({
+      goodNeighborAppNavigation: 2,
+      goodNeighborOverlay: "analysis-edit",
+    });
+  });
+
+  it("forward back onto a dismissed sentinel is normalized (no stuck step)", async () => {
+    router.pushOverlay("attributions");
+
+    // Back: engine swaps to the entry beneath, popstate delivers the close.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+    });
+    browser.history.back();
+    await pop();
+    expect(popped).toEqual(["attributions"]);
+
+    // Forward re-lands ON the old sentinel entry (browser restores its
+    // state and hash). Nothing should reopen; the entry is normalized.
+    const routeListener = vi.fn();
+    const removeRoute = router.onRouteChange(routeListener);
+    browser.history.state = {
+      goodNeighborAppNavigation: 1,
+      goodNeighborOverlay: "attributions",
+    };
+    browser.location.hash = "#attributions";
+
+    await pop();
+
+    // The first close's emit stays in `popped`; forward must NOT emit.
+    expect(popped).toEqual(["attributions"]);
+    expect(routeListener).not.toHaveBeenCalled();
+    expect(browser.history.replaceState).toHaveBeenCalledWith(
+      { goodNeighborAppNavigation: 1 },
+      "",
+      "/today",
+    );
+    expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 1 });
+    expect(browser.location.hash).toBe("");
+    removeRoute();
+  });
 });

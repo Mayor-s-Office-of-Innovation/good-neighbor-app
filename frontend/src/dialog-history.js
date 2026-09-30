@@ -31,11 +31,13 @@ export function openOverlayDialog(dialog, overlayId) {
   pushOverlay(overlayId);
   // The native `close` event fires for X, backdrop, Escape, programmatic
   // close, AND for the popstate bridge's own close — closeOverlay is
-  // idempotent, so all paths converge on one unwind.
+  // idempotent, so all paths converge on one unwind. The listener is
+  // deliberately NOT once-only: a reused dialog element (feedback sheet)
+  // closes and re-opens repeatedly, and each open must keep its native
+  // close → unwind wiring. The overlayBound dataset check below prevents
+  // stacking duplicate listeners for the same id.
   if (dialog.dataset?.overlayBound !== overlayId) {
-    dialog.addEventListener("close", () => closeOverlay(overlayId), {
-      once: true,
-    });
+    dialog.addEventListener("close", () => closeOverlay(overlayId));
     if (dialog.dataset) dialog.dataset.overlayBound = overlayId;
   }
 }

@@ -18,6 +18,7 @@ import {
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
 import { openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   answerAnalysisQuestion,
   analyzeEvidenceItem,
@@ -197,6 +198,8 @@ class ProblemReport extends HTMLElement {
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._render();
+    // Async-init announcement: the heading may not exist at route-mount time.
+    announceScreenHeading(this, ".single-issue__title");
   }
 
   _isCurrentInit(initGeneration) {

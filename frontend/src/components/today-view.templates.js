@@ -222,7 +222,9 @@ export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
     <div class="screen__sec home-lead">
       <site-switcher></site-switcher>
       <div class="home-identity home-identity--with-summary">
-        <h1 class="home-identity__site">${escapeHtml(siteName)}</h1>
+        <h1 class="home-identity__site" tabindex="-1">
+          ${escapeHtml(siteName)}
+        </h1>
         ${summary}
       </div>
       ${homeActions({ checkLabel, reportLabel })}
@@ -552,7 +554,9 @@ export function errorView({ identity }) {
                   ${escapeHtml(identity.org)}
                 </p>`
               : ""}
-            <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
+            <h1 class="home-identity__site" tabindex="-1">
+              ${escapeHtml(identity.site)}
+            </h1>
           </div>
           <div class="lastlog">
             <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>

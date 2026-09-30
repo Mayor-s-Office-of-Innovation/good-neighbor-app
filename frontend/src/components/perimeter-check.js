@@ -25,6 +25,7 @@ import {
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
 import { openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
   answerAnalysisQuestion,
@@ -182,6 +183,8 @@ class PerimeterCheck extends HTMLElement {
 
     this._render();
     this._resumePendingEvidence();
+    // Async-init announcement: the heading may not exist at route-mount time.
+    announceScreenHeading(this, ".check-timeline__title");
   }
 
   _cancel() {

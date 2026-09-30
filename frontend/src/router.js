@@ -226,10 +226,27 @@ if (typeof window !== "undefined") {
     if (!routeChanged) {
       /*
         Overlay unwind (or a forward-land on a sentinel): same pathname, so
-        the view must NOT re-render — notify closers instead. After the pop
-        the entry beneath may itself be a sentinel (nested overlay), so
-        adopt it.
+        the view must NOT re-render. After the pop the entry beneath may
+        itself be a sentinel (nested overlay), so adopt it.
       */
+      if (stateDepth(state) > activeDepth) {
+        /*
+          Forward-land on a sentinel whose dialog already dismissed (Back
+          closed it; Forward re-enters the entry). Re-opening would surprise;
+          the mobile convention is that Forward through a dismissed sheet is
+          a no-op — normalize the entry (strip marker + hash) and keep going.
+        */
+        const staleId = /** @type {string} */ (state?.[OVERLAY_STATE]) || null;
+        if (staleId) overlayDepths.delete(staleId);
+        activeDepth = stateDepth(state);
+        topOverlayId = null;
+        history.replaceState(
+          { [APP_HISTORY_STATE]: activeDepth },
+          "",
+          location.pathname + location.search,
+        );
+        return;
+      }
       const poppedId = pendingId || topOverlayId;
       // Depth guard: if the entry landed on is NOT the sentinel beneath the
       // popped overlay (a re-open pushed a new sentinel between back() and
@@ -242,6 +259,10 @@ if (typeof window !== "undefined") {
       activeDepth = stateDepth(state);
       topOverlayId = /** @type {string} */ (state?.[OVERLAY_STATE]) || null;
       if (poppedId && isTopSentinel) {
+        // Retire the popped id BEFORE notifying closers: bookkeeping must be
+        // consistent by the time consumer code runs, or a close handler that
+        // re-opens another dialog on top of this id would short-circuit.
+        overlayDepths.delete(poppedId);
         emitOverlay(poppedId);
       }
       return;
