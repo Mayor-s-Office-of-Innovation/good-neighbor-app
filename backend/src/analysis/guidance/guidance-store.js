@@ -955,22 +955,22 @@ async function executeTaskCreatedAppActions({
       appActionStatus: summarizeAppActionResults(appActionResults),
       updatedAt: (now ?? new Date()).toISOString(),
     };
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: tableName,
-              Item: updatedTask,
-              ConditionExpression: "#status = :open",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: { ":open": "open" },
-            },
-          },
-        ],
+    const persisted = await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: taskKey(siteId, String(task.taskId ?? "")),
+        UpdateExpression:
+          "SET appActionResults = :results, appActionStatus = :actionStatus, updatedAt = :updatedAt",
+        ConditionExpression: "attribute_exists(sk)",
+        ExpressionAttributeValues: {
+          ":results": appActionResults,
+          ":actionStatus": updatedTask.appActionStatus,
+          ":updatedAt": updatedTask.updatedAt,
+        },
+        ReturnValues: "ALL_NEW",
       }),
     );
-    updatedTasks.push(updatedTask);
+    updatedTasks.push(persisted.Attributes || updatedTask);
   }
   return updatedTasks;
 }

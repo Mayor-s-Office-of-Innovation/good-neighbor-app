@@ -45,6 +45,8 @@ class TaskUpdateDialog extends HTMLElement {
     this._open = false;
     this._state = "idle";
     this._nextToken = null;
+    /** @type {Map<File, Promise<string>>} */
+    this._fileUploads = new Map();
     /** @type {Map<string, string>} */
     this._mediaUrls = new Map();
   }
@@ -322,15 +324,7 @@ class TaskUpdateDialog extends HTMLElement {
     try {
       if (!this._task) return null;
       return await Promise.all(
-        this._files.map(async (file) => {
-          const dataUrl = await this._readFile(file);
-          const uploaded = await uploadTaskUpdatePhoto(
-            this._task.taskId,
-            this._task.checkId,
-            { dataUrl, capturedAt: new Date().toISOString() },
-          );
-          return uploaded.artifactId;
-        }),
+        this._files.map((file) => this._uploadFile(file)),
       );
     } catch {
       if (error) {
@@ -339,6 +333,27 @@ class TaskUpdateDialog extends HTMLElement {
       }
       return null;
     }
+  }
+
+  /** @param {File} file @returns {Promise<string>} */
+  _uploadFile(file) {
+    const cached = this._fileUploads.get(file);
+    if (cached) return cached;
+    const upload = this._readFile(file)
+      .then((dataUrl) => {
+        if (!this._task) throw new Error("Task is no longer available");
+        return uploadTaskUpdatePhoto(this._task.taskId, this._task.checkId, {
+          dataUrl,
+          capturedAt: new Date().toISOString(),
+        });
+      })
+      .then((uploaded) => uploaded.artifactId)
+      .catch((error) => {
+        this._fileUploads.delete(file);
+        throw error;
+      });
+    this._fileUploads.set(file, upload);
+    return upload;
   }
 
   /** @param {File} file @returns {Promise<string>} */
@@ -355,6 +370,7 @@ class TaskUpdateDialog extends HTMLElement {
     this._filePreviews.forEach((url) => URL.revokeObjectURL(url));
     this._filePreviews = [];
     this._files = [];
+    this._fileUploads.clear();
   }
 
   /** @param {HTMLElement} root */
@@ -379,6 +395,7 @@ class TaskUpdateDialog extends HTMLElement {
         "Could not save this update. Please try again.",
       );
       if (!response) return;
+      this._resetFiles();
       this._mode = "timeline";
       await this._load();
       this._notifyUpdated();
@@ -401,6 +418,7 @@ class TaskUpdateDialog extends HTMLElement {
     if (!response) return;
     this._pendingEvent = null;
     this._noteDrafts = emptyTaskUpdateNotes();
+    this._resetFiles();
     this._mode = "timeline";
     await this._load();
   }
@@ -448,6 +466,7 @@ class TaskUpdateDialog extends HTMLElement {
     if (!response) return;
     this._pendingEvent = null;
     this._actionText = "";
+    this._resetFiles();
     this._mode = "timeline";
     await this._load();
     this._notifyUpdated();

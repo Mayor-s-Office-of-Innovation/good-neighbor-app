@@ -1,15 +1,15 @@
 import {
   GetCommand,
-  PutCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import {
-  artifactKey,
   checkHeaderKey,
   taskKey,
   taskUpdateKey,
+  taskUpdateMediaKey,
+  taskUpdateMediaPointerKey,
   taskUpdatePointerKey,
   taskUpdatePrefix,
   taskWorklistDateGsi,
@@ -80,25 +80,25 @@ export async function readTimeline(
 
 /** @param {string} tableName @param {string} siteId @param {string} taskId @param {string} updateId */
 export async function readUpdateById(tableName, siteId, taskId, updateId) {
-  const pointer = await ddb.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: taskUpdatePointerKey(siteId, taskId, updateId),
-      ConsistentRead: true,
-    }),
-  );
-  if (pointer.Item?.updateSk) {
-    const direct = await ddb.send(
-      new GetCommand({
-        TableName: tableName,
-        Key: { pk: `SITE#${siteId}`, sk: pointer.Item.updateSk },
-        ConsistentRead: true,
-      }),
-    );
-    return direct.Item || null;
-  }
+  const direct = await readUpdatePointer(tableName, siteId, taskId, updateId);
+  if (direct) return direct;
+  return readLegacyUpdateById(tableName, siteId, taskId, updateId);
+}
 
-  // Compatibility for events written before direct lookup pointers existed.
+/**
+ * Compatibility lookup for events written before direct pointers existed.
+ *
+ * @param {string} tableName
+ * @param {string} siteId
+ * @param {string} taskId
+ * @param {string} updateId
+ */
+export async function readLegacyUpdateById(
+  tableName,
+  siteId,
+  taskId,
+  updateId,
+) {
   /** @type {Record<string, any> | undefined} */
   let exclusiveStartKey;
   do {
@@ -124,6 +124,104 @@ export async function readUpdateById(tableName, siteId, taskId, updateId) {
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (exclusiveStartKey);
   return null;
+}
+
+/**
+ * Direct pointer lookup without the legacy timeline fallback.
+ * @param {string} tableName @param {string} siteId @param {string} taskId @param {string} updateId
+ */
+export async function readUpdatePointer(tableName, siteId, taskId, updateId) {
+  const pointer = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: taskUpdatePointerKey(siteId, taskId, updateId),
+      ConsistentRead: true,
+    }),
+  );
+  if (pointer.Item?.updateSk) {
+    const direct = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `SITE#${siteId}`, sk: pointer.Item.updateSk },
+        ConsistentRead: true,
+      }),
+    );
+    return direct.Item || null;
+  }
+  return null;
+}
+
+/**
+ * Start progress without replacing unrelated fields written concurrently.
+ * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any> }} input
+ */
+export async function writeStartProgressTransition(input) {
+  const updateKey = taskUpdateKey(
+    input.siteId,
+    input.taskId,
+    input.occurredAt,
+    input.update.updateId,
+  );
+  const worklist = taskWorklistDateGsi(
+    input.siteId,
+    "in_progress",
+    String(input.task.kind || ""),
+    Number(input.task.severity || 0),
+    String(input.task.updatedAt || input.occurredAt),
+    input.taskId,
+  );
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: input.tableName,
+            Item: { ...updateKey, ...input.update },
+            ConditionExpression: "attribute_not_exists(pk)",
+          },
+        },
+        {
+          Put: {
+            TableName: input.tableName,
+            Item: {
+              ...taskUpdatePointerKey(
+                input.siteId,
+                input.taskId,
+                input.update.updateId,
+              ),
+              entityType: "task_update_pointer",
+              taskId: input.taskId,
+              updateId: input.update.updateId,
+              updateSk: updateKey.sk,
+            },
+            ConditionExpression: "attribute_not_exists(pk)",
+          },
+        },
+        {
+          Update: {
+            TableName: input.tableName,
+            Key: taskKey(input.siteId, input.taskId),
+            UpdateExpression:
+              "SET #status = :inProgress, inProgressAt = :at, notifiedAt = :at, agency = :agency, inProgressActionKind = :kind, latestUpdateId = :updateId, latestUpdateLabel = :label, lastAnsweredPresencePeriod = :period, updatedAt = :at, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk",
+            ConditionExpression: "#status = :open",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":open": "open",
+              ":inProgress": "in_progress",
+              ":at": input.occurredAt,
+              ":agency": input.task.agency,
+              ":kind": input.task.inProgressActionKind,
+              ":updateId": input.update.updateId,
+              ":label": input.task.latestUpdateLabel,
+              ":period": 0,
+              ":gsi2pk": worklist.gsi2pk,
+              ":gsi2sk": worklist.gsi2sk,
+            },
+          },
+        },
+      ],
+    }),
+  );
 }
 
 /**
@@ -217,20 +315,50 @@ export async function writeDocumentedUpdate(tableName, update) {
 
 /** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, capturedAt: string }} input */
 export async function writeTaskUpdateMedia(input) {
+  const mediaKey = taskUpdateMediaKey(
+    input.siteId,
+    input.taskId,
+    input.artifactId,
+  );
   await ddb.send(
-    new PutCommand({
-      TableName: input.tableName,
-      Item: {
-        ...artifactKey(input.siteId, input.checkId, input.artifactId),
-        checkId: input.checkId,
-        artifactId: input.artifactId,
-        s3Key: input.s3Key,
-        contentType: input.contentType,
-        capturedAt: input.capturedAt,
-        purpose: "task_update",
-        taskId: input.taskId,
-      },
-      ConditionExpression: "attribute_not_exists(sk)",
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          Put: {
+            TableName: input.tableName,
+            Item: {
+              ...mediaKey,
+              entityType: "task_update_media",
+              checkId: input.checkId,
+              artifactId: input.artifactId,
+              s3Key: input.s3Key,
+              contentType: input.contentType,
+              capturedAt: input.capturedAt,
+              purpose: "task_update",
+              taskId: input.taskId,
+            },
+            ConditionExpression: "attribute_not_exists(sk)",
+          },
+        },
+        {
+          Put: {
+            TableName: input.tableName,
+            Item: {
+              ...taskUpdateMediaPointerKey(
+                input.siteId,
+                input.checkId,
+                input.artifactId,
+              ),
+              entityType: "task_update_media_pointer",
+              checkId: input.checkId,
+              taskId: input.taskId,
+              artifactId: input.artifactId,
+              mediaSk: mediaKey.sk,
+            },
+            ConditionExpression: "attribute_not_exists(sk)",
+          },
+        },
+      ],
     }),
   );
 }

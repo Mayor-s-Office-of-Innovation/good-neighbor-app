@@ -274,15 +274,15 @@ describe("storeEvaluatedAssessment", () => {
       ],
     });
 
-    const updateTx = send.mock.calls[3][0];
-    expect(updateTx).toBeInstanceOf(TransactWriteCommand);
-    expect(updateTx.input.TransactItems[0].Put).toMatchObject({
-      ConditionExpression: "#status = :open",
-      ExpressionAttributeValues: { ":open": "open" },
-    });
-    expect(updateTx.input.TransactItems[0].Put.Item).toMatchObject({
-      taskId: "task-silent",
-      appActionStatus: "failed",
+    const update = send.mock.calls[3][0];
+    expect(update).toBeInstanceOf(UpdateCommand);
+    expect(update.input).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "TASK#task-silent" },
+      ConditionExpression: "attribute_exists(sk)",
+      ReturnValues: "ALL_NEW",
+      ExpressionAttributeValues: {
+        ":actionStatus": "failed",
+      },
     });
     expect(errorLog).toHaveBeenCalledTimes(1);
     expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({

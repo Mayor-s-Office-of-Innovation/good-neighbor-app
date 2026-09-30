@@ -1,5 +1,17 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+const api = vi.hoisted(() => ({
+  uploadTaskUpdatePhoto: vi.fn(),
+}));
+vi.mock("../services/api.js", () => ({
+  ApiError: class ApiError extends Error {},
+  createTaskUpdate: vi.fn(),
+  documentTaskUpdate: vi.fn(),
+  getMediaUrl: vi.fn(),
+  getTaskUpdates: vi.fn(),
+  uploadTaskUpdatePhoto: api.uploadTaskUpdatePhoto,
+}));
+
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("customElements", { define: vi.fn() });
@@ -84,5 +96,22 @@ describe("task-update-dialog controller", () => {
     ).resolves.toBeNull();
     expect(button.disabled).toBe(false);
     expect(error).toEqual({ hidden: false, textContent: "Please try again." });
+  });
+
+  it("reuses a successful per-file upload throughout the draft", async () => {
+    await import("./task-update-dialog.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "task-update-dialog");
+    const Dialog = /** @type {any} */ (registration[1]);
+    const dialog = new Dialog();
+    const file = /** @type {File} */ ({});
+    dialog._task = { taskId: "task-1", checkId: "check-1" };
+    dialog._readFile = vi.fn().mockResolvedValue("data:image/jpeg;base64,AA==");
+    api.uploadTaskUpdatePhoto.mockResolvedValue({ artifactId: "photo-1" });
+
+    await expect(dialog._uploadFile(file)).resolves.toBe("photo-1");
+    await expect(dialog._uploadFile(file)).resolves.toBe("photo-1");
+    expect(api.uploadTaskUpdatePhoto).toHaveBeenCalledTimes(1);
   });
 });

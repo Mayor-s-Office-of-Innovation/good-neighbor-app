@@ -127,6 +127,26 @@ export const taskUpdatePointerKey = (siteId, taskId, updateId) => ({
 });
 
 /**
+ * Task-owned media attached to an update rather than analyzer input.
+ * @param {string} siteId @param {string} taskId @param {string} artifactId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdateMediaKey = (siteId, taskId, artifactId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#MEDIA#${artifactId}`,
+});
+
+/**
+ * Check-scoped pointer used by the existing authorized media route.
+ * @param {string} siteId @param {string} checkId @param {string} artifactId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdateMediaPointerKey = (siteId, checkId, artifactId) => ({
+  pk: sitePk(siteId),
+  sk: `CHECK#${checkId}#UPDATE_MEDIA#${artifactId}`,
+});
+
+/**
  * Site-scoped monotonic counter for human-facing task short IDs.
  * @param {string} siteId
  * @returns {PrimaryKey}

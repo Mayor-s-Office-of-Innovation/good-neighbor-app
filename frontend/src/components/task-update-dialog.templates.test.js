@@ -27,9 +27,9 @@ describe("task update dialog templates", () => {
       now: new Date("2026-09-30T17:00:00.000Z"),
     });
 
-    expect(markup).toContain("Issue added as a single issue");
     expect(markup).toContain("Add a note or photo");
     expect(markup).toContain("Load older updates");
+    expect(markup).not.toContain("Issue added as a single issue");
     expect(markup).toContain("#GUB-STJ-001");
   });
 
@@ -45,6 +45,27 @@ describe("task update dialog templates", () => {
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',
+    );
+  });
+
+  it("renders issue creation only after the oldest update page is loaded", () => {
+    const base = {
+      task: {
+        taskId: "task-1",
+        status: "in_progress",
+        createdAt: "2026-09-30T16:00:00.000Z",
+      },
+      updates: [],
+      issueOrigin: "perimeter",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+      now: new Date("2026-09-30T17:00:00.000Z"),
+    };
+    expect(taskUpdateTimeline({ ...base, nextToken: "older" })).not.toContain(
+      "Issue added during a perimeter check",
+    );
+    expect(taskUpdateTimeline(base)).toContain(
+      "Issue added during a perimeter check",
     );
   });
 

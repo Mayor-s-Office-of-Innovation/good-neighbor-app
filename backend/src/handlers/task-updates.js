@@ -11,10 +11,13 @@ import {
 } from "../domain/task-updates.js";
 import {
   readCheckHeader,
+  readLegacyUpdateById,
   readTask,
   readTimeline,
   readUpdateById,
+  readUpdatePointer,
   writeDocumentedUpdate,
+  writeStartProgressTransition,
   writeTaskTransition,
   writeTaskUpdateMedia,
 } from "../task-updates/task-update-store.js";
@@ -173,14 +176,13 @@ export const startTaskProgress = async (event) => {
     updatedAt: now,
   };
   try {
-    await writeTaskTransition({
+    await writeStartProgressTransition({
       tableName: dynamoTable,
       siteId,
       taskId,
       occurredAt: now,
       update,
       task: updated,
-      expectedStatus: "open",
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TransactionCanceledException")
@@ -200,7 +202,7 @@ export const createTaskUpdate = async (event) => {
   const task = await readTask(dynamoTable, siteId, taskId);
   if (!task) return jsonResponse(404, { error: "Task not found" });
   const updateId = idempotencyId(event);
-  const priorUpdate = await readUpdateById(
+  const priorUpdate = await readUpdatePointer(
     dynamoTable,
     siteId,
     taskId,
@@ -211,8 +213,20 @@ export const createTaskUpdate = async (event) => {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
     });
-  if (task.status !== "in_progress")
+  if (task.status !== "in_progress") {
+    const legacyRetry = await readLegacyUpdateById(
+      dynamoTable,
+      siteId,
+      taskId,
+      updateId,
+    );
+    if (legacyRetry)
+      return jsonResponse(200, {
+        task: detail(task, [legacyRetry]).task,
+        update: legacyRetry,
+      });
     return jsonResponse(409, { error: "Task is not in progress" });
+  }
 
   const transition = buildTaskUpdateTransition(task, input, {
     taskId,
@@ -235,8 +249,23 @@ export const createTaskUpdate = async (event) => {
       expectedUpdatedAt: task.updatedAt,
     });
   } catch (error) {
-    if (error instanceof Error && error.name === "TransactionCanceledException")
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException"
+    ) {
+      const legacyRetry = await readLegacyUpdateById(
+        dynamoTable,
+        siteId,
+        taskId,
+        updateId,
+      );
+      if (legacyRetry)
+        return jsonResponse(200, {
+          task: detail(task, [legacyRetry]).task,
+          update: legacyRetry,
+        });
       return jsonResponse(409, { error: "Task update conflict" });
+    }
     throw error;
   }
   return jsonResponse(201, { task: detail(updated, [update]).task, update });
@@ -313,7 +342,10 @@ export const registerTaskUpdateMedia = async (event) => {
   } catch (error) {
     if (
       error instanceof Error &&
-      error.name === "ConditionalCheckFailedException"
+      [
+        "ConditionalCheckFailedException",
+        "TransactionCanceledException",
+      ].includes(error.name)
     )
       return jsonResponse(200, { artifactId, status: "registered" });
     throw error;

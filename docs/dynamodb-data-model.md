@@ -84,6 +84,7 @@ without a separate timestamp in the key.
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only in-progress timeline event: type, label, actorId, notes/text, photo artifact IDs, optional presence period, documentation state |
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | direct addressability for documentation and idempotent retries; stores the event's full sort key |
+| Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | update documentation stored outside analyzer input; a `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer preserves the authorized media route |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
 

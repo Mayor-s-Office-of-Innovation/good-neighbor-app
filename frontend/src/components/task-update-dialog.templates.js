@@ -94,17 +94,17 @@ export function taskUpdateTimeline({
     : null;
   const overdue = expected && expected.getTime() < now.getTime();
   const latestUpdateLabel = String(task.latestUpdateLabel || "").trim();
-  const timeline = [
-    ...updates,
-    {
-      type: "issue_created",
-      label:
-        issueOrigin === "single-problem"
-          ? "Issue added as a single issue"
-          : "Issue added during a perimeter check",
-      occurredAt: task.createdAt || task.created_at || task.notifiedAt,
-    },
-  ].filter((update) => update.occurredAt);
+  const creation = /** @type {Record<string, any>} */ ({
+    type: "issue_created",
+    label:
+      issueOrigin === "single-problem"
+        ? "Issue added as a single issue"
+        : "Issue added during a perimeter check",
+    occurredAt: task.createdAt || task.created_at || task.notifiedAt,
+  });
+  const timeline = [...updates, ...(nextToken ? [] : [creation])].filter(
+    (update) => update.occurredAt,
+  );
   const title = task.userFriendlyLabel || task.category || "Issue update";
   return html`<section class="task-update__summary">
       <p

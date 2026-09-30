@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
 import { presignGet, presignPut } from "../s3.js";
@@ -11,6 +16,7 @@ import {
   checkArtifactPrefix,
   checkHeaderKey,
   sitePk,
+  taskUpdateMediaPointerKey,
 } from "./keys.js";
 
 const sqs = new SQSClient({});
@@ -357,9 +363,28 @@ export const presignMedia = async (event) => {
     }),
   );
 
-  const artifact = (result.Items ?? []).find(
+  let artifact = (result.Items ?? []).find(
     (it) => it.artifactId === artifactId,
   );
+  if (!artifact) {
+    const pointer = await ddb.send(
+      new GetCommand({
+        TableName: dynamoTable,
+        Key: taskUpdateMediaPointerKey(siteId, checkId, artifactId),
+        ConsistentRead: true,
+      }),
+    );
+    if (pointer?.Item?.mediaSk) {
+      const media = await ddb.send(
+        new GetCommand({
+          TableName: dynamoTable,
+          Key: { pk: sitePk(siteId), sk: pointer.Item.mediaSk },
+          ConsistentRead: true,
+        }),
+      );
+      artifact = media.Item;
+    }
+  }
   if (!artifact || typeof artifact.s3Key !== "string") {
     return jsonResponse(404, { error: "Artifact not found" });
   }

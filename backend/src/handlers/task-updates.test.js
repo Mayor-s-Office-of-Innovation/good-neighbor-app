@@ -1,9 +1,4 @@
-import {
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  TransactWriteCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -62,7 +57,7 @@ describe("task update handlers", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    const [eventPut, pointerPut, taskPut] = transaction.input.TransactItems;
+    const [eventPut, pointerPut, taskUpdate] = transaction.input.TransactItems;
     expect(eventPut.Put.Item).toMatchObject({
       type: "escalation_action_taken",
       label: "Called non-emergency line",
@@ -74,10 +69,14 @@ describe("task update handlers", () => {
       updateId: "request-1",
       updateSk: eventPut.Put.Item.sk,
     });
-    expect(taskPut.Put.Item).toMatchObject({
-      status: "in_progress",
-      latestUpdateLabel: "Called non-emergency line",
-      gsi2pk: "SITE#site-1#TASK#in_progress",
+    expect(taskUpdate.Update).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "TASK#task-1" },
+      ConditionExpression: "#status = :open",
+    });
+    expect(taskUpdate.Update.ExpressionAttributeValues).toMatchObject({
+      ":inProgress": "in_progress",
+      ":label": "Called non-emergency line",
+      ":gsi2pk": "SITE#site-1#TASK#in_progress",
     });
   });
 
@@ -104,11 +103,17 @@ describe("task update handlers", () => {
     );
 
     expect(response.statusCode).toBe(201);
-    expect(send.mock.calls[1][0]).toBeInstanceOf(PutCommand);
-    expect(send.mock.calls[1][0].input.Item).toMatchObject({
+    expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
+    const [mediaPut, pointerPut] = send.mock.calls[1][0].input.TransactItems;
+    expect(mediaPut.Put.Item).toMatchObject({
+      sk: "TASK#task-1#MEDIA#photo-1",
       purpose: "task_update",
       taskId: "task-1",
       artifactId: "photo-1",
+    });
+    expect(pointerPut.Put.Item).toMatchObject({
+      sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",
+      mediaSk: "TASK#task-1#MEDIA#photo-1",
     });
     expect(send).toHaveBeenCalledTimes(2);
   });
@@ -159,8 +164,7 @@ describe("task update handlers", () => {
             updatedAt: "2026-09-30T16:00:00.000Z",
           },
         })
-        .mockResolvedValueOnce({ Items: [] })
-        .mockResolvedValueOnce({ Items: [] })
+        .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});
 
       const response = await /** @type {any} */ (
@@ -169,8 +173,7 @@ describe("task update handlers", () => {
 
       expect(response.statusCode).toBe(201);
       expect(send.mock.calls[1][0]).toBeInstanceOf(GetCommand);
-      expect(send.mock.calls[2][0]).toBeInstanceOf(QueryCommand);
-      const transaction = send.mock.calls[3][0];
+      const transaction = send.mock.calls[2][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       const [eventPut, pointerPut, taskPut] = transaction.input.TransactItems;
       expect(eventPut.Put.Item).toMatchObject({
@@ -187,4 +190,41 @@ describe("task update handlers", () => {
         });
     },
   );
+
+  it("scans legacy history only after a conflicting pointerless retry", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "TransactionCanceledException";
+    const legacy = {
+      updateId: "request-1",
+      type: "note_photo_update",
+      documentationState: "closed",
+    };
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "task-1",
+          status: "in_progress",
+          updatedAt: "2026-09-30T16:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ Items: [legacy] });
+
+    const response = await /** @type {any} */ (
+      createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Still there"],
+          photoKeys: [],
+        }),
+      )
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).update).toEqual(legacy);
+    expect(send.mock.calls[3][0].input.FilterExpression).toBe(
+      "updateId = :updateId",
+    );
+  });
 });

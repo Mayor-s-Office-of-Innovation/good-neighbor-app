@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { readTimeline, readUpdateById } = await import("./task-update-store.js");
+const { readTimeline, readUpdateById, readUpdatePointer } = await import(
+  "./task-update-store.js"
+);
 
 describe("task update store", () => {
   beforeEach(() => send.mockReset());
@@ -67,5 +69,15 @@ describe("task update store", () => {
       pk: "SITE#site-1",
       sk: "TASK#task-1#UPDATE#cursor",
     });
+  });
+
+  it("does not scan history when a direct pointer is absent", async () => {
+    send.mockResolvedValueOnce({});
+
+    await expect(
+      readUpdatePointer("tasks", "site-1", "task-1", "new-update"),
+    ).resolves.toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
   });
 });

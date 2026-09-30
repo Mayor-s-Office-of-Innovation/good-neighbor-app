@@ -187,6 +187,8 @@ class TodayView extends HTMLElement {
     this._ticketDetailDialog = null;
     /** @type {any} */
     this._taskUpdateDialog = null;
+    /** @type {{ taskId: string, trigger: HTMLElement } | null} */
+    this._taskUpdateReturnFocus = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
   }
@@ -792,14 +794,30 @@ class TodayView extends HTMLElement {
         void this.connectedCallback();
       });
       dialog.addEventListener("taskupdateclosed", () => {
-        void this.connectedCallback();
+        const returnFocus = this._taskUpdateReturnFocus;
+        this._taskUpdateReturnFocus = null;
+        void this.connectedCallback().then(() => {
+          const current = returnFocus?.taskId
+            ? this.querySelector(
+                `[data-task-id="${CSS.escape(returnFocus.taskId)}"] [data-action="update"]`,
+              )
+            : null;
+          const fallback = returnFocus?.trigger?.isConnected
+            ? returnFocus.trigger
+            : this.querySelector(".home-tabs__tab--active");
+          const target = /** @type {HTMLElement | null | undefined} */ (
+            current || fallback
+          );
+          target?.focus();
+        });
       });
       this._taskUpdateDialog = dialog;
     }
     this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
   }
 
-  async _openTaskUpdate(task) {
+  async _openTaskUpdate(task, trigger) {
+    this._taskUpdateReturnFocus = { taskId: task.taskId, trigger };
     await this._mountTaskUpdateDialog();
     await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
   }
@@ -1778,7 +1796,7 @@ class TodayView extends HTMLElement {
         },
       );
     } else if (action === "update") {
-      void this._openTaskUpdate(task);
+      void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
