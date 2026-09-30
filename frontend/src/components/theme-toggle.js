@@ -30,6 +30,11 @@ class ThemeToggle extends HTMLElement {
         button:hover { opacity: 1; transform: translateY(-1px); }
         button:focus-visible { opacity: 1; outline: 2px solid var(--c-blue); outline-offset: 2px; }
         wa-icon { display: block; }
+        /* Shadow root: base.css's global reduced-motion guard can't reach in. */
+        @media (prefers-reduced-motion: reduce) {
+          button { transition: none; }
+          button:hover { transform: none; }
+        }
       </style>
       <button type="button" part="button"><wa-icon></wa-icon></button>
     `;

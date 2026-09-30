@@ -261,9 +261,14 @@ class AppRoot extends HTMLElement {
       this._restateScreenFocus();
     };
     // Same-document View Transition: cross-fades the route swap (full-blown
-    // zoom animations could re-use this hook later). No-op where unsupported;
-    // reduced-motion users get the hard swap (the API skips automatically).
-    if (typeof document.startViewTransition === "function") {
+    // zoom animations could re-use this hook later). No-op where unsupported.
+    // The API does NOT honor prefers-reduced-motion on its own: base.css
+    // zeroes the ::view-transition-* animations as the safety net, and we skip
+    // the call entirely here so those users also avoid the snapshot pause.
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduceMotion && typeof document.startViewTransition === "function") {
       document.startViewTransition(swap);
     } else {
       swap();
