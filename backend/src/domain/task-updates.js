@@ -69,7 +69,8 @@ export function responseExpectedAt(task) {
     task?.notifiedAt || task?.inProgressAt || "",
   ).getTime();
   const hours = Number(task?.maxAcceptableResponseHours);
-  if (!Number.isFinite(start) || !Number.isFinite(hours)) return null;
+  if (!Number.isFinite(start) || !Number.isFinite(hours) || hours <= 0)
+    return null;
   return new Date(start + hours * 3_600_000).toISOString();
 }
 

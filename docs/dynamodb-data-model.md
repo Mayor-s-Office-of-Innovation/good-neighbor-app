@@ -83,6 +83,7 @@ without a separate timestamp in the key.
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only in-progress timeline event: type, label, actorId, notes/text, photo artifact IDs, optional presence period, documentation state |
+| Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | direct addressability for documentation and idempotent retries; stores the event's full sort key |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
 
@@ -178,7 +179,7 @@ header, every artifact, and every analysis together.
 | AP15 | Conditions of one assessment | `Query` base `SITE#x`, `begins_with(sk,"ASSESSMENT#<id>#COND#")` |
 | AP16 | Unresolved conditions | `Query` **GSI5** `SITE#x#CONDITION#UNRESOLVED` |
 | AP17 | Guidance read / answers | `GetItem` assessment + condition, `UpdateItem` on answer |
-| AP18 | Read one task's update timeline | `GetItem` task + `Query` base `SITE#x`, `begins_with(sk,"TASK#<taskId>#UPDATE#")`, newest-first |
+| AP18 | Read one task's update timeline | `GetItem` task + bounded/cursor-paged `Query` base `SITE#x`, `begins_with(sk,"TASK#<taskId>#UPDATE#")`, newest-first; update mutations resolve through the `UPDATE_ID` pointer |
 
 ### Task ownership & escalation — scope (decided 2026-08-12)
 

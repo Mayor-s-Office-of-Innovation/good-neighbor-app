@@ -59,4 +59,30 @@ describe("task-update-dialog controller", () => {
       expect.objectContaining({ type: "taskupdated" }),
     );
   });
+
+  it("restores controls and exposes retry feedback after a failed mutation", async () => {
+    await import("./task-update-dialog.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "task-update-dialog");
+    const Dialog = /** @type {any} */ (registration[1]);
+    const dialog = new Dialog();
+    const button = { disabled: false };
+    const error = { hidden: true, textContent: "" };
+    const root = {
+      querySelectorAll: vi.fn(() => [button]),
+      querySelector: vi.fn(() => error),
+    };
+
+    await expect(
+      dialog._runMutation(
+        root,
+        "button",
+        () => Promise.reject(new Error("offline")),
+        "Please try again.",
+      ),
+    ).resolves.toBeNull();
+    expect(button.disabled).toBe(false);
+    expect(error).toEqual({ hidden: false, textContent: "Please try again." });
+  });
 });

@@ -551,8 +551,11 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
-export function getTaskUpdates(taskId) {
-  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/updates`);
+export function getTaskUpdates(taskId, nextToken) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/updates${qs({ nextToken })}`,
+  );
 }
 
 export function startTaskProgress(taskId, actionLabel) {

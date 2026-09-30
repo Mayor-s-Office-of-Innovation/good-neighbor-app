@@ -1,6 +1,7 @@
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
+  ApiError,
   createTaskUpdate,
   documentTaskUpdate,
   getMediaUrl,
@@ -43,6 +44,7 @@ class TaskUpdateDialog extends HTMLElement {
     this._filePreviews = [];
     this._open = false;
     this._state = "idle";
+    this._nextToken = null;
     /** @type {Map<string, string>} */
     this._mediaUrls = new Map();
   }
@@ -59,12 +61,26 @@ class TaskUpdateDialog extends HTMLElement {
     await this._load();
   }
 
-  async _load() {
+  /** @param {string} [nextToken] */
+  async _load(nextToken = "") {
     if (!this._task) return;
     this._state = "loading";
     this._render();
     try {
-      this._detail = await getTaskUpdates(this._task.taskId);
+      const page = await getTaskUpdates(
+        this._task.taskId,
+        nextToken || undefined,
+      );
+      this._detail = nextToken
+        ? {
+            ...page,
+            updates: [
+              ...(this._detail?.updates || []),
+              ...(page.updates || []),
+            ],
+          }
+        : page;
+      this._nextToken = page.nextToken || null;
       this._task = this._detail.task;
       const photoIds = [
         ...new Set(
@@ -120,6 +136,7 @@ class TaskUpdateDialog extends HTMLElement {
       issueOrigin: this._detail?.issueOrigin || "perimeter",
       originalMediaUrl: this._originalMediaUrl(task),
       mediaUrls: this._mediaUrls,
+      nextToken: this._nextToken,
     });
   }
 
@@ -191,10 +208,17 @@ class TaskUpdateDialog extends HTMLElement {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", async () => {
         if (!this._task) return;
-        button.disabled = true;
-        const response = await createTaskUpdate(this._task.taskId, {
-          type: button.dataset.presence,
-        });
+        const response = await this._runMutation(
+          root,
+          "[data-presence]",
+          () =>
+            createTaskUpdate(this._task.taskId, {
+              type: button.dataset.presence,
+            }),
+          "Could not record your answer. Please try again.",
+          true,
+        );
+        if (!response) return;
         this._pendingEvent = response.update;
         this._task = response.task;
         this._mode = "document";
@@ -203,6 +227,9 @@ class TaskUpdateDialog extends HTMLElement {
         this._render();
         this._notifyUpdated();
       });
+    });
+    root.querySelector("[data-load-older]")?.addEventListener("click", () => {
+      if (this._nextToken) void this._load(this._nextToken);
     });
     root.querySelector("[data-photos]")?.addEventListener("change", (event) => {
       const input = /** @type {HTMLInputElement} */ (event.currentTarget);
@@ -275,7 +302,10 @@ class TaskUpdateDialog extends HTMLElement {
       ?.addEventListener("click", () => void this._saveNotes(root));
     root
       .querySelector("[data-skip]")
-      ?.addEventListener("click", () => void this._finishDocumentation([], []));
+      ?.addEventListener(
+        "click",
+        () => void this._finishDocumentation(root, [], []),
+      );
     root
       .querySelector("[data-save-action]")
       ?.addEventListener("click", () => void this._saveAction(root));
@@ -334,26 +364,41 @@ class TaskUpdateDialog extends HTMLElement {
     const photos = await this._uploadFiles(root);
     if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
       return;
-    if (this._pendingEvent) await this._finishDocumentation(notes, photos);
+    if (this._pendingEvent)
+      await this._finishDocumentation(root, notes, photos);
     else {
-      await createTaskUpdate(this._task.taskId, {
-        type: "note_photo_update",
-        notes,
-        photoKeys: photos,
-      });
+      const response = await this._runMutation(
+        root,
+        "[data-save-notes]",
+        () =>
+          createTaskUpdate(this._task.taskId, {
+            type: "note_photo_update",
+            notes,
+            photoKeys: photos,
+          }),
+        "Could not save this update. Please try again.",
+      );
+      if (!response) return;
       this._mode = "timeline";
       await this._load();
       this._notifyUpdated();
     }
   }
 
-  /** @param {string[]} notes @param {string[]} photos */
-  async _finishDocumentation(notes, photos) {
+  /** @param {HTMLElement} root @param {string[]} notes @param {string[]} photos */
+  async _finishDocumentation(root, notes, photos) {
     if (!this._task || !this._pendingEvent) return;
-    await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-      notes,
-      photoKeys: photos,
-    });
+    const response = await this._runMutation(
+      root,
+      "[data-save-notes], [data-skip]",
+      () =>
+        documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
+          notes,
+          photoKeys: photos,
+        }),
+      "Could not save this documentation. Please try again.",
+    );
+    if (!response) return;
     this._pendingEvent = null;
     this._noteDrafts = emptyTaskUpdateNotes();
     this._mode = "timeline";
@@ -364,31 +409,19 @@ class TaskUpdateDialog extends HTMLElement {
   async _recordActionOutcome(root, type) {
     const text = this._actionText.trim();
     if (!text || !this._task) return;
-    const buttons = [...root.querySelectorAll("[data-action-outcome]")].map(
-      (element) => /** @type {HTMLButtonElement} */ (element),
+    const response = await this._runMutation(
+      root,
+      "[data-action-outcome]",
+      () => createTaskUpdate(this._task.taskId, { type, text }),
+      "Could not record the action. Please try again.",
     );
-    buttons.forEach((button) => (button.disabled = true));
-    try {
-      const response = await createTaskUpdate(this._task.taskId, {
-        type,
-        text,
-      });
-      this._pendingEvent = response.update;
-      this._task = response.task;
-      this._mode = "action-photos";
-      this._resetFiles();
-      this._render();
-      this._notifyUpdated();
-    } catch {
-      const error = /** @type {HTMLElement | null} */ (
-        root.querySelector(".task-update__error")
-      );
-      if (error) {
-        error.hidden = false;
-        error.textContent = "Could not record the action. Please try again.";
-      }
-      buttons.forEach((button) => (button.disabled = false));
-    }
+    if (!response) return;
+    this._pendingEvent = response.update;
+    this._task = response.task;
+    this._mode = "action-photos";
+    this._resetFiles();
+    this._render();
+    this._notifyUpdated();
   }
 
   /** @param {HTMLElement} root @param {boolean} [skipPhotos] */
@@ -396,22 +429,72 @@ class TaskUpdateDialog extends HTMLElement {
     if (!this._task) return;
     const photos = skipPhotos ? [] : await this._uploadFiles(root);
     if (!photos) return;
-    if (this._pendingEvent)
-      await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-        notes: [],
-        photoKeys: photos,
-      });
-    else
-      await createTaskUpdate(this._task.taskId, {
-        type: "additional_action",
-        text: this._actionText.trim(),
-        photoKeys: photos,
-      });
+    const response = await this._runMutation(
+      root,
+      "[data-save-action], [data-skip-action]",
+      () =>
+        this._pendingEvent
+          ? documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
+              notes: [],
+              photoKeys: photos,
+            })
+          : createTaskUpdate(this._task.taskId, {
+              type: "additional_action",
+              text: this._actionText.trim(),
+              photoKeys: photos,
+            }),
+      "Could not save this action. Please try again.",
+    );
+    if (!response) return;
     this._pendingEvent = null;
     this._actionText = "";
     this._mode = "timeline";
     await this._load();
     this._notifyUpdated();
+  }
+
+  /**
+   * Run one dialog mutation with consistent busy and retry feedback.
+   * @param {HTMLElement} root
+   * @param {string} buttonSelector
+   * @param {() => Promise<any>} action
+   * @param {string} message
+   * @param {boolean} [reloadOnConflict]
+   */
+  async _runMutation(
+    root,
+    buttonSelector,
+    action,
+    message,
+    reloadOnConflict = false,
+  ) {
+    const buttons = [...root.querySelectorAll(buttonSelector)].map(
+      (element) => /** @type {HTMLButtonElement} */ (element),
+    );
+    const error = /** @type {HTMLElement | null} */ (
+      root.querySelector(".task-update__error")
+    );
+    buttons.forEach((button) => (button.disabled = true));
+    if (error) error.hidden = true;
+    try {
+      return await action();
+    } catch (caught) {
+      if (
+        reloadOnConflict &&
+        caught instanceof ApiError &&
+        caught.status === 409
+      ) {
+        await this._load();
+        return null;
+      }
+      if (error) {
+        error.hidden = false;
+        error.textContent = message;
+      }
+      return null;
+    } finally {
+      buttons.forEach((button) => (button.disabled = false));
+    }
   }
 
   _hasUnsavedDraft() {

@@ -9,8 +9,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { createTaskUpdate, registerTaskUpdateMedia, startTaskProgress } =
-  await import("./task-updates.js");
+const {
+  createTaskUpdate,
+  getTaskUpdates,
+  registerTaskUpdateMedia,
+  startTaskProgress,
+} = await import("./task-updates.js");
 
 /** @param {Record<string, unknown>} body @param {Record<string, string>} [pathParameters] */
 function event(body, pathParameters = { taskId: "task-1" }) {
@@ -58,12 +62,17 @@ describe("task update handlers", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    const [eventPut, taskPut] = transaction.input.TransactItems;
+    const [eventPut, pointerPut, taskPut] = transaction.input.TransactItems;
     expect(eventPut.Put.Item).toMatchObject({
       type: "escalation_action_taken",
       label: "Called non-emergency line",
       agency: "SFPD",
       actorId: "device-1",
+    });
+    expect(pointerPut.Put.Item).toMatchObject({
+      entityType: "task_update_pointer",
+      updateId: "request-1",
+      updateSk: eventPut.Put.Item.sk,
     });
     expect(taskPut.Put.Item).toMatchObject({
       status: "in_progress",
@@ -104,6 +113,34 @@ describe("task update handlers", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("reads a bounded timeline without sealing open documentation events", async () => {
+    const openUpdate = {
+      updateId: "update-1",
+      documentationState: "open_for_documentation",
+    };
+    send
+      .mockResolvedValueOnce({
+        Item: { taskId: "task-1", status: "in_progress" },
+      })
+      .mockResolvedValueOnce({
+        Items: [openUpdate],
+        LastEvaluatedKey: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1#UPDATE#2026-09-30T12:00:00Z#update-1",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { flowType: "perimeter" } });
+
+    const response = await /** @type {any} */ (getTaskUpdates(event({})));
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.updates).toEqual([openUpdate]);
+    expect(body.nextToken).toBeTruthy();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].input.Limit).toBe(50);
+  });
+
   it.each([
     ["additional_action_resolved", "completed", "Resolved"],
     ["additional_action_still_present", "in_progress", "Still present"],
@@ -123,6 +160,7 @@ describe("task update handlers", () => {
           },
         })
         .mockResolvedValueOnce({ Items: [] })
+        .mockResolvedValueOnce({ Items: [] })
         .mockResolvedValueOnce({});
 
       const response = await /** @type {any} */ (
@@ -130,10 +168,11 @@ describe("task update handlers", () => {
       );
 
       expect(response.statusCode).toBe(201);
-      expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
-      const transaction = send.mock.calls[2][0];
+      expect(send.mock.calls[1][0]).toBeInstanceOf(GetCommand);
+      expect(send.mock.calls[2][0]).toBeInstanceOf(QueryCommand);
+      const transaction = send.mock.calls[3][0];
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
-      const [eventPut, taskPut] = transaction.input.TransactItems;
+      const [eventPut, pointerPut, taskPut] = transaction.input.TransactItems;
       expect(eventPut.Put.Item).toMatchObject({
         type,
         label: "Additional action taken",
@@ -141,6 +180,7 @@ describe("task update handlers", () => {
         documentationState: "open_for_documentation",
       });
       expect(taskPut.Put.Item).toMatchObject({ status, latestUpdateLabel });
+      expect(pointerPut.Put.Item.updateSk).toBe(eventPut.Put.Item.sk);
       if (status === "completed")
         expect(taskPut.Put.Item).toMatchObject({
           completionMethod: "site_team_resolved",

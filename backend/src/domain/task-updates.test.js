@@ -48,6 +48,18 @@ describe("task updates", () => {
     ).toBe("2026-09-30T00:00:00.000Z");
   });
 
+  it.each([undefined, null, 0, -1, "not-a-number"])(
+    "does not derive a response deadline from %s hours",
+    (maxAcceptableResponseHours) => {
+      expect(
+        responseExpectedAt({
+          notifiedAt: "2026-09-29T20:00:00.000Z",
+          maxAcceptableResponseHours,
+        }),
+      ).toBeNull();
+    },
+  );
+
   it("builds task and timeline snapshots without persistence concerns", () => {
     const result = buildTaskUpdateTransition(
       {

@@ -23,11 +23,13 @@ describe("task update dialog templates", () => {
       issueOrigin: "single-problem",
       originalMediaUrl: "",
       mediaUrls: new Map(),
+      nextToken: "next-page",
       now: new Date("2026-09-30T17:00:00.000Z"),
     });
 
     expect(markup).toContain("Issue added as a single issue");
     expect(markup).toContain("Add a note or photo");
+    expect(markup).toContain("Load older updates");
     expect(markup).toContain("#GUB-STJ-001");
   });
 
@@ -46,14 +48,42 @@ describe("task update dialog templates", () => {
     );
   });
 
-  it("keeps shell navigation and timeline tones explicit", () => {
+  it("shows overdue filed requests until they are explicitly resolved", () => {
+    const task = {
+      taskId: "task-1",
+      kind: "escalation",
+      status: "completed",
+      responseExpectedAt: "2026-09-29T12:00:00.000Z",
+      createdAt: "2026-09-29T10:00:00.000Z",
+    };
+    const view = {
+      task,
+      updates: [],
+      issueOrigin: "perimeter",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+      now: new Date("2026-09-30T12:00:00.000Z"),
+    };
+    expect(taskUpdateTimeline(view)).toContain(
+      "Expected response time has passed",
+    );
     expect(
-      taskUpdateDialogShell({
-        mode: "note-text",
-        state: "ready",
-        content: "x",
+      taskUpdateTimeline({
+        ...view,
+        task: { ...task, resolvedAt: "2026-09-30T11:00:00.000Z" },
       }),
-    ).toContain('aria-label="Back"');
+    ).not.toContain("Expected response time has passed");
+  });
+
+  it("keeps shell navigation and timeline tones explicit", () => {
+    const shell = taskUpdateDialogShell({
+      mode: "note-text",
+      state: "ready",
+      content: "x",
+    });
+    expect(shell).toContain('aria-label="Back"');
+    expect(shell).toContain("Discard changes");
+    expect(shell).not.toContain("Discard and close");
     expect(taskUpdateTimelineTone("presence_resolved")).toBe("resolved");
     expect(taskUpdateTimelineTone("note_photo_update")).toBe("general");
   });

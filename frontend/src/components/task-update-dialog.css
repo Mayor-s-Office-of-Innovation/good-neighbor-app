@@ -222,7 +222,7 @@
   gap: 2rem;
   border-radius: var(--wa-border-radius-l, 1rem);
   background: var(--wa-color-neutral-95, #f1f2f3);
-  color: var(--wa-color-neutral-70, #abaeb9);
+  color: var(--wa-color-text-normal, #24262b);
   cursor: pointer;
 }
 .task-update__photo-picker:focus-within {

@@ -69,7 +69,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
             class="task-update__discard-confirm"
             data-confirm-discard
           >
-            Discard and close
+            Discard changes
           </button>
           <button type="button" class="btn-outline" data-continue-editing>
             Back to editing
@@ -79,13 +79,14 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     </dialog>`;
 }
 
-/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, mediaUrls: Map<string, string>, now?: Date }} view */
+/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, mediaUrls: Map<string, string>, nextToken?: string | null, now?: Date }} view */
 export function taskUpdateTimeline({
   task,
   updates,
   issueOrigin,
   originalMediaUrl,
   mediaUrls,
+  nextToken,
   now = new Date(),
 }) {
   const expected = task.responseExpectedAt
@@ -161,7 +162,7 @@ export function taskUpdateTimeline({
             </div>`
           : ""}
       </dl>
-      ${overdue && task.status !== "completed" && !task.resolvedAt
+      ${overdue && !task.resolvedAt
         ? html`<p class="task-update__overdue">
             <strong>Expected response time has passed</strong>
           </p>`
@@ -186,6 +187,7 @@ export function taskUpdateTimeline({
               Still there
             </button>
           </div>
+          <p class="task-update__error" role="alert" hidden></p>
         </section>`
       : ""}
     ${task.status === "in_progress"
@@ -247,6 +249,11 @@ export function taskUpdateTimeline({
         )
         .join("")}
     </ol>
+    ${nextToken
+      ? html`<button type="button" class="btn-outline" data-load-older>
+          Load older updates
+        </button>`
+      : ""}
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 

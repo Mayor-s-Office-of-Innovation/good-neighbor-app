@@ -10,6 +10,7 @@ import {
   checkHeaderKey,
   taskKey,
   taskUpdateKey,
+  taskUpdatePointerKey,
   taskUpdatePrefix,
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
@@ -40,7 +41,22 @@ export async function readCheckHeader(tableName, siteId, checkId) {
 }
 
 /** @param {string} tableName @param {string} siteId @param {string} taskId */
-export async function readTimeline(tableName, siteId, taskId) {
+export async function readTimeline(
+  tableName,
+  siteId,
+  taskId,
+  { limit = 50, cursor = "" } = {},
+) {
+  let exclusiveStartKey;
+  if (cursor) {
+    try {
+      const sk = Buffer.from(cursor, "base64url").toString("utf8");
+      if (!sk.startsWith(taskUpdatePrefix(taskId))) throw new Error();
+      exclusiveStartKey = { pk: `SITE#${siteId}`, sk };
+    } catch {
+      return null;
+    }
+  }
   const result = await ddb.send(
     new QueryCommand({
       TableName: tableName,
@@ -50,67 +66,64 @@ export async function readTimeline(tableName, siteId, taskId) {
         ":prefix": taskUpdatePrefix(taskId),
       },
       ScanIndexForward: false,
+      Limit: Math.min(Math.max(Number(limit) || 50, 1), 100),
+      ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
     }),
   );
-  return result.Items || [];
+  return {
+    items: result.Items || [],
+    nextToken: result.LastEvaluatedKey?.sk
+      ? Buffer.from(String(result.LastEvaluatedKey.sk)).toString("base64url")
+      : null,
+  };
 }
 
 /** @param {string} tableName @param {string} siteId @param {string} taskId @param {string} updateId */
 export async function readUpdateById(tableName, siteId, taskId, updateId) {
-  const result = await ddb.send(
-    new QueryCommand({
+  const pointer = await ddb.send(
+    new GetCommand({
       TableName: tableName,
+      Key: taskUpdatePointerKey(siteId, taskId, updateId),
       ConsistentRead: true,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      FilterExpression: "updateId = :updateId",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": taskUpdatePrefix(taskId),
-        ":updateId": updateId,
-      },
     }),
   );
-  return result.Items?.[0] || null;
-}
+  if (pointer.Item?.updateSk) {
+    const direct = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `SITE#${siteId}`, sk: pointer.Item.updateSk },
+        ConsistentRead: true,
+      }),
+    );
+    return direct.Item || null;
+  }
 
-/** @param {string} tableName @param {Record<string, any>[]} updates */
-export async function sealOpenUpdates(tableName, updates) {
-  return Promise.all(
-    updates.map(async (update) => {
-      if (update.documentationState !== "open_for_documentation") return update;
-      const sealed = {
-        ...update,
-        documentationState: "closed",
-        documentedAt: new Date().toISOString(),
-      };
-      try {
-        await ddb.send(
-          new TransactWriteCommand({
-            TransactItems: [
-              {
-                Put: {
-                  TableName: tableName,
-                  Item: sealed,
-                  ConditionExpression: "documentationState = :open",
-                  ExpressionAttributeValues: {
-                    ":open": "open_for_documentation",
-                  },
-                },
-              },
-            ],
-          }),
-        );
-        return sealed;
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.name === "TransactionCanceledException"
-        )
-          return update;
-        throw error;
-      }
-    }),
-  );
+  // Compatibility for events written before direct lookup pointers existed.
+  /** @type {Record<string, any> | undefined} */
+  let exclusiveStartKey;
+  do {
+    const result = /** @type {any} */ (
+      await ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          ConsistentRead: true,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          FilterExpression: "updateId = :updateId",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": taskUpdatePrefix(taskId),
+            ":updateId": updateId,
+          },
+          ...(exclusiveStartKey
+            ? { ExclusiveStartKey: exclusiveStartKey }
+            : {}),
+        }),
+      )
+    );
+    if (result.Items?.[0]) return result.Items[0];
+    exclusiveStartKey = result.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return null;
 }
 
 /**
@@ -119,6 +132,12 @@ export async function sealOpenUpdates(tableName, updates) {
  */
 export async function writeTaskTransition(input) {
   const statusOnly = input.expectedUpdatedAt === undefined;
+  const updateKey = taskUpdateKey(
+    input.siteId,
+    input.taskId,
+    input.occurredAt,
+    input.update.updateId,
+  );
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
@@ -126,13 +145,25 @@ export async function writeTaskTransition(input) {
           Put: {
             TableName: input.tableName,
             Item: {
-              ...taskUpdateKey(
+              ...updateKey,
+              ...input.update,
+            },
+            ConditionExpression: "attribute_not_exists(pk)",
+          },
+        },
+        {
+          Put: {
+            TableName: input.tableName,
+            Item: {
+              ...taskUpdatePointerKey(
                 input.siteId,
                 input.taskId,
-                input.occurredAt,
                 input.update.updateId,
               ),
-              ...input.update,
+              entityType: "task_update_pointer",
+              taskId: input.taskId,
+              updateId: input.update.updateId,
+              updateSk: updateKey.sk,
             },
             ConditionExpression: "attribute_not_exists(pk)",
           },

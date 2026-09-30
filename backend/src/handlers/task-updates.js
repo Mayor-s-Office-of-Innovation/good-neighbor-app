@@ -14,7 +14,6 @@ import {
   readTask,
   readTimeline,
   readUpdateById,
-  sealOpenUpdates,
   writeDocumentedUpdate,
   writeTaskTransition,
   writeTaskUpdateMedia,
@@ -98,19 +97,22 @@ export const getTaskUpdates = async (event) => {
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
   if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
-  const [task, timeline] = await Promise.all([
+  const [task, timelinePage] = await Promise.all([
     readTask(dynamoTable, siteId, taskId),
-    readTimeline(dynamoTable, siteId, taskId),
+    readTimeline(dynamoTable, siteId, taskId, {
+      cursor: String(event.queryStringParameters?.nextToken || ""),
+    }),
   ]);
+  if (!timelinePage) return jsonResponse(400, { error: "Invalid nextToken" });
   if (!task) return jsonResponse(404, { error: "Task not found" });
   const check = await readCheckHeader(
     dynamoTable,
     siteId,
     String(task.checkId || ""),
   );
-  const updates = await sealOpenUpdates(dynamoTable, timeline);
   return jsonResponse(200, {
-    ...detail(task, updates),
+    ...detail(task, timelinePage.items),
+    nextToken: timelinePage.nextToken,
     issueOrigin:
       check?.flowType === "single-problem" ? "single-problem" : "perimeter",
   });

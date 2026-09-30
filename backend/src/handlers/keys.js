@@ -117,6 +117,16 @@ export const taskUpdateKey = (siteId, taskId, occurredAt, updateId) => ({
 export const taskUpdatePrefix = (taskId) => `TASK#${taskId}#UPDATE#`;
 
 /**
+ * Direct lookup pointer for a task update whose timeline key includes time.
+ * @param {string} siteId @param {string} taskId @param {string} updateId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdatePointerKey = (siteId, taskId, updateId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#UPDATE_ID#${updateId}`,
+});
+
+/**
  * Site-scoped monotonic counter for human-facing task short IDs.
  * @param {string} siteId
  * @returns {PrimaryKey}

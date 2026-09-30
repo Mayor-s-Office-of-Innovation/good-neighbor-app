@@ -18,6 +18,7 @@ import {
   taskDisplayCounterKey,
   taskKey,
   taskUpdateKey,
+  taskUpdatePointerKey,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -1632,6 +1633,28 @@ export async function completeTaskWithAppActions(opts) {
                     occurredAt: now,
                     actorId: "site-team",
                     documentationState: "closed",
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+              {
+                Put: {
+                  TableName: opts.tableName,
+                  Item: {
+                    ...taskUpdatePointerKey(
+                      opts.siteId,
+                      opts.taskId,
+                      filingUpdateId,
+                    ),
+                    entityType: "task_update_pointer",
+                    taskId: opts.taskId,
+                    updateId: filingUpdateId,
+                    updateSk: taskUpdateKey(
+                      opts.siteId,
+                      opts.taskId,
+                      now,
+                      filingUpdateId,
+                    ).sk,
                   },
                   ConditionExpression: "attribute_not_exists(pk)",
                 },
