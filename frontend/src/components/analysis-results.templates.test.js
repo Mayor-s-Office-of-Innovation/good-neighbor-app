@@ -796,14 +796,14 @@ describe("taskAnalysisCard", () => {
   });
 
   it("formats latest 311 update timestamps for card footers", () => {
-    const now = new Date(2026, 8, 24, 12, 0);
-    expect(updatedCardTime(new Date(2026, 8, 24, 9, 15), now)).toBe(
+    const now = new Date("2026-09-24T12:00:00-07:00");
+    expect(updatedCardTime("2026-09-24T09:15:00-07:00", now)).toBe(
       "Updated today, 9:15 AM",
     );
-    expect(updatedCardTime(new Date(2026, 8, 22, 9, 15), now)).toBe(
+    expect(updatedCardTime("2026-09-22T09:15:00-07:00", now)).toBe(
       "Updated Tuesday, 9:15 AM",
     );
-    expect(updatedCardTime(new Date(2026, 8, 17, 9, 15), now)).toBe(
+    expect(updatedCardTime("2026-09-17T09:15:00-07:00", now)).toBe(
       "Updated 09/17/2026, 9:15 AM",
     );
   });
