@@ -17,7 +17,7 @@ import {
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
-import { openOverlayDialog } from "../dialog-history.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   answerAnalysisQuestion,
@@ -140,15 +140,17 @@ class ProblemReport extends HTMLElement {
     this.querySelector("#cancel-report-save")?.addEventListener(
       "click",
       async () => {
-        this._cancelDialog?.close();
+        // Close → await the history unwind → then replace the entry (see
+        // perimeter-check's cancel handlers for the race this avoids).
+        await awaitOverlayUnwind("cancel-confirm");
         await pauseCheck();
         this._exitCapture();
       },
     );
     this.querySelector("#cancel-report-discard")?.addEventListener(
       "click",
-      () => {
-        this._cancelDialog?.close();
+      async () => {
+        await awaitOverlayUnwind("cancel-confirm");
         this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },

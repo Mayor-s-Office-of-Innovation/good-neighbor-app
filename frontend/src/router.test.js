@@ -257,6 +257,49 @@ describe("router overlays", () => {
     });
   });
 
+  it("closeOverlay resolves after the unwind lands; replace-before-land is safe (regression)", async () => {
+    router.pushOverlay("cancel-confirm");
+    /** Set once the awaited close has resolved. */
+    let landed = false;
+
+    // The fake engine: traversal + popstate delivery, as the real one.
+    browser.history.back.mockImplementationOnce(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+      browser.location.pathname = "/today";
+      void listeners.popstate().then(() => {});
+    });
+
+    const closing = router.closeOverlay("cancel-confirm");
+    void closing.then(() => {
+      landed = true;
+    });
+
+    // The racing caller's continuation runs only after the land resolves.
+    await closing;
+
+    // The racing caller: flow exit replaces the entry AFTER the land.
+    router.replaceRoute("/today");
+
+    expect(landed).toBe(true);
+    expect(browser.location.pathname).toBe("/today");
+    expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 0 });
+  });
+
+  it("awaiting a close whose unwind was beaten by system back resolves", async () => {
+    router.pushOverlay("attributions");
+    // System back wins the race: state swap WITHOUT closeOverlay running.
+    browser.history.state = { goodNeighborAppNavigation: 0 };
+    browser.location.hash = "";
+    await pop();
+    expect(popped).toEqual(["attributions"]);
+    browser.history.back.mockClear();
+
+    // Now the app-side close arrives late: idempotent + resolved.
+    await router.closeOverlay("attributions");
+    expect(browser.history.back).not.toHaveBeenCalled(); // nothing left to pop
+  });
+
   it("forward back onto a dismissed sentinel is normalized (no stuck step)", async () => {
     router.pushOverlay("attributions");
 

@@ -11,7 +11,7 @@
 import "./describe-instead.css";
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
-import { openOverlayDialog } from "../dialog-history.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   addItem,
@@ -153,8 +153,11 @@ class DescribeInstead extends HTMLElement {
     );
   }
 
-  _discardAndExit() {
-    this._dialog.close();
+  async _discardAndExit() {
+    // Discard from the confirm dialog → wait for its sentinel to unwind →
+    // then leave, so the queued back() can't land on the navigated-away
+    // entry or leave a stale #discard-confirm hash.
+    await awaitOverlayUnwind("discard-confirm");
     navigate(this._routeBase);
   }
 

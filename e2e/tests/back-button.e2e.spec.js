@@ -103,4 +103,40 @@ test.describe("back button handling", () => {
     });
     await expect(page).not.toHaveURL(/\/check$/);
   });
+
+  test("discarding an evidenced routed check via the cancel dialog lands home (regression)", async ({
+    page,
+  }) => {
+    await page.goto("/check");
+    await expect(page.locator("#add-photo")).toBeVisible({ timeout: 30_000 });
+
+    // Give the check evidence so the cancel button opens the confirm dialog
+    // (an empty check cancels straight through).
+    await page.locator("#file-input").setInputFiles(PHOTO_CLEAR, {
+      timeout: 5_000,
+    });
+    await expect(page.locator(".shot img")).toHaveCount(1, {
+      timeout: 30_000,
+    });
+
+    // Cancel → confirm dialog → discard ("End the check and exit").
+    await page.locator("#cancel").click();
+    const confirm = page.locator("#cancel-check-dialog");
+    await expect(confirm).toBeVisible();
+    await confirm.locator("#cancel-check-discard").click();
+
+    // The discard must land on home — NOT re-enter a fresh /check (the
+    // unwind/replace race). Draft machinery is discarded with it.
+    await expect(page).toHaveURL(/\/today$/, { timeout: 30_000 });
+    await expect(page.locator("#start-check")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // And Back can NEVER revisit the discarded flow.
+    await page.evaluate(() => window.history.back());
+    await expect(page.locator("#add-photo")).not.toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page).not.toHaveURL(/\/check$/);
+  });
 });

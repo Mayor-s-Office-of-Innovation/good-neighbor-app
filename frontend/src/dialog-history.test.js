@@ -150,6 +150,33 @@ describe("dialog-history", () => {
     expect(browser.history.state?.goodNeighborOverlay).toBeUndefined();
   });
 
+  it("awaitOverlayUnwind resolves after close lands (regression: the discard race)", async () => {
+    const dialog = fakeDialog();
+    dialogHistory.openOverlayDialog(dialog, "cancel-confirm");
+    // Engine: traversal completes inside back(); popstate follows on the
+    // microtask queue exactly like a real browser.
+    browser.history.back.mockImplementation(() => {
+      browser.history.state = { goodNeighborAppNavigation: 0 };
+      browser.location.hash = "";
+      void Promise.resolve().then(() => listeners.popstate());
+    });
+
+    // The handler pattern under test: close + await + continue. (The native
+    // close event → closeOverlay → queued traversal → popstate resolves it.)
+    dialog.close();
+    await dialogHistory.awaitOverlayUnwind("cancel-confirm");
+
+    // NOW the caller's continuation is safe: replaceRoute lands correctly.
+    router.replaceRoute("/today");
+    expect(browser.location.pathname).toBe("/today");
+    expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 0 });
+  });
+
+  it("awaitOverlayUnwind resolves immediately when nothing is open", async () => {
+    await dialogHistory.awaitOverlayUnwind("never-opened");
+    expect(browser.history.back).not.toHaveBeenCalled();
+  });
+
   it("two different ids push two sentinels", () => {
     const a = fakeDialog();
     const b = fakeDialog();

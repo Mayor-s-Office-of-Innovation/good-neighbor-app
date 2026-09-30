@@ -26,6 +26,11 @@ const OVERLAY_STATE = "goodNeighborOverlay";
 const overlayDepths = new Map();
 let topOverlayId = null;
 let pendingOverlayPop = null;
+let pendingOverlayDepth = 0;
+/** Resolved when the pending unwind lands; awaited by closeOverlay callers. */
+let landedOverlayPop = null;
+/** @type {null | (() => void)} resolves landedOverlayPop (popstate side). */
+let pendingOverlayResolve = null;
 let activeDepth =
   typeof history === "undefined"
     ? 0
@@ -34,6 +39,13 @@ let lastRoute = typeof location === "undefined" ? "/today" : currentRoute();
 let restoringPopstate = false;
 /** @type {null | ((route: string) => boolean | Promise<boolean>)} */
 let popstateGuard = null;
+
+/** Resolve (and drop) the awaited unwind promise, if one is pending. */
+function landResolvePending() {
+  const resolve = pendingOverlayResolve;
+  pendingOverlayResolve = null;
+  resolve?.();
+}
 
 // A refresh while an overlay was open re-loads on its sentinel entry. The
 // overlay is live-only (dialogs aren't restored), so strip the marker —
@@ -135,25 +147,43 @@ export function pushOverlay(overlayId) {
  * / backdrop / finish) all funnel through here so the history stack and the
  * open overlays unwind together. Guard-internal dialogs (site-admin discard
  * confirm) never push a sentinel, so they never call this.
+ *
+ * Returns a Promise resolved once the unwind has LANDED in history (popstate
+ * delivered) — a traversal is asynchronous, so callers that continue with
+ * further history mutations (flow exits replacing the entry with /today)
+ * MUST await it first; mutating history beneath a queued traversal replaces
+ * the wrong entry.
  * @param {string} [overlayId]
+ * @returns {Promise<void>}
  */
 export function closeOverlay(overlayId) {
-  if (!hasHistory()) return;
+  if (!hasHistory()) return Promise.resolve();
   const id = overlayId ?? topOverlayId;
-  if (!id || pendingOverlayPop) return;
+  if (!id || pendingOverlayPop) {
+    // System back already unwound it (or an unwind is in flight); the pop's
+    // resolution covers that in-flight case too.
+    return landedOverlayPop ?? Promise.resolve();
+  }
   if (history.state?.[OVERLAY_STATE] !== id) {
     // Authoritative check: the sentinel is on top iff the current entry
     // carries its marker. System back already unwound it (popstate may still
     // be in flight); nothing to do.
     topOverlayId = null;
-    return;
+    return landedOverlayPop ?? Promise.resolve();
   }
   // Optimistic bookkeeping: retire the id NOW so an immediate re-open pushes
-  // a fresh sentinel even before popstate delivers.
+  // a fresh sentinel even before popstate delivers. Record the sentinel's
+  // own depth so popstate's stale-guard can verify the landing position.
+  const unwoundDepth = /** @type {number} */ (overlayDepths.get(id) ?? 0);
   overlayDepths.delete(id);
   pendingOverlayPop = id;
+  pendingOverlayDepth = unwoundDepth;
   topOverlayId = null;
+  landedOverlayPop = new Promise((resolve) => {
+    pendingOverlayResolve = resolve;
+  });
   history.back();
+  return landedOverlayPop;
 }
 
 /**
@@ -245,17 +275,19 @@ if (typeof window !== "undefined") {
           "",
           location.pathname + location.search,
         );
+        landResolvePending();
         return;
       }
       const poppedId = pendingId || topOverlayId;
-      // Depth guard: if the entry landed on is NOT the sentinel beneath the
-      // popped overlay (a re-open pushed a new sentinel between back() and
-      // popstate), the pop is stale — closers must not fire.
-      const beneathDepth = pendingId
-        ? /** @type {number} */ (overlayDepths.get(pendingId) ?? 0)
-        : null;
+      // Stale-pop guard: an app-side unwind recorded the sentinel's depth;
+      // the landing must sit exactly beneath it. (A re-open between back()
+      // and popstate would shift the stack — such a pop is stale and closers
+      // must not fire.)
       const isTopSentinel =
-        pendingId === null || stateDepth(state) === beneathDepth - 1;
+        pendingId === null ||
+        (pendingOverlayDepth > 0 &&
+          stateDepth(state) === pendingOverlayDepth - 1);
+      pendingOverlayDepth = 0;
       activeDepth = stateDepth(state);
       topOverlayId = /** @type {string} */ (state?.[OVERLAY_STATE]) || null;
       if (poppedId && isTopSentinel) {
@@ -263,12 +295,16 @@ if (typeof window !== "undefined") {
         // consistent by the time consumer code runs, or a close handler that
         // re-opens another dialog on top of this id would short-circuit.
         overlayDepths.delete(poppedId);
+        landResolvePending();
         emitOverlay(poppedId);
+        return;
       }
+      landResolvePending();
       return;
     }
     topOverlayId = /** @type {string} */ (state?.[OVERLAY_STATE]) || null;
     if (popstateGuard && !(await popstateGuard(route))) {
+      landResolvePending();
       const restoreBy = activeDepth - stateDepth(state);
       if (restoreBy) {
         restoringPopstate = true;
@@ -280,6 +316,7 @@ if (typeof window !== "undefined") {
     // DOM dies with the old view anyway).
     overlayDepths.clear();
     activeDepth = stateDepth(state);
+    landResolvePending();
     emit();
   });
 }

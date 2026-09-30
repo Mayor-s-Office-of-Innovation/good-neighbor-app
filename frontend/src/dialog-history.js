@@ -11,6 +11,12 @@
   pops the sentinel instead — the popstate bridge closes the registered
   dialog, whose `close` handler then finds nothing to unwind. Both orders
   converge because push/close are idempotent per id.
+
+  awaitOverlayUnwind(overlayId) resolves once the id's sentinel has fully
+  unwound from history: flow-exit handlers (discard, cancel-confirm) await
+  it BEFORE mutating history again (replaceRoute), otherwise the queued
+  history.back() lands on a REPLACED entry and the user ends up re-entering
+  the flow they just left.
 */
 import { closeOverlay, onOverlayPop, pushOverlay } from "./router.js";
 
@@ -40,6 +46,31 @@ export function openOverlayDialog(dialog, overlayId) {
     dialog.addEventListener("close", () => closeOverlay(overlayId));
     if (dialog.dataset) dialog.dataset.overlayBound = overlayId;
   }
+}
+
+/**
+ * Resolve once the overlay id's history unwind is complete — after an
+ * app-side dialog close (native `close` → closeOverlay → async history
+ * traversal → popstate). Safe to await even when the dialog was closed
+ * differently (system back): the promise resolves on the pop's landing of
+ * the same id, or immediately when no unwind is in flight.
+ * @param {string} overlayId
+ * @returns {Promise<void>}
+ */
+export function awaitOverlayUnwind(overlayId) {
+  // The id's sentinel is gone: system back already unwound it, or nothing
+  // was ever pushed (guard-internal dialogs). Nothing to wait for.
+  const dialog = registry.get(overlayId);
+  if (dialog && dialog.open) {
+    // Still open: force the native-close path, whose promise we return.
+    return new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(closeOverlay(overlayId)), {
+        once: true,
+      });
+      dialog.close();
+    });
+  }
+  return closeOverlay(overlayId);
 }
 
 /**

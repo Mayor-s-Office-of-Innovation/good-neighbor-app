@@ -24,7 +24,7 @@ import {
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
-import { openOverlayDialog } from "../dialog-history.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
@@ -128,15 +128,18 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#cancel-check-save")?.addEventListener(
       "click",
       async () => {
-        this._cancelDialog?.close();
+        // Close → WAIT for the history unwind → then mutate history again
+        // (_exitCapture replaces the entry). Without the await, the queued
+        // back() lands on the replaced entry and the user re-enters the flow.
+        await awaitOverlayUnwind("cancel-confirm");
         await pauseCheck();
         this._exitCapture();
       },
     );
     this.querySelector("#cancel-check-discard")?.addEventListener(
       "click",
-      () => {
-        this._cancelDialog?.close();
+      async () => {
+        await awaitOverlayUnwind("cancel-confirm");
         this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
