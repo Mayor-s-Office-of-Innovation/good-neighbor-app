@@ -20,7 +20,9 @@ function parts(value) {
 
 function pacificDayNumber(value) {
   const p = parts(value);
-  return Math.floor(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86_400_000);
+  return Math.floor(
+    Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86_400_000,
+  );
 }
 
 export function formatPacificUpdated(value, now = new Date()) {
@@ -29,7 +31,15 @@ export function formatPacificUpdated(value, now = new Date()) {
   const p = parts(date);
   const current = parts(now);
   const daysAgo = pacificDayNumber(now) - pacificDayNumber(date);
-  const weekdayIndex = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].indexOf(current.weekday);
+  const weekdayIndex = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ].indexOf(current.weekday);
   const daysSinceMonday = (weekdayIndex + 6) % 7;
   const day =
     daysAgo === 0

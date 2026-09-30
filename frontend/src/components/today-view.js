@@ -123,7 +123,6 @@ import {
   summaryBlock,
 } from "./today-view.templates.js";
 import "./ticket-detail-dialog.js";
-import "./task-update-dialog.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
@@ -785,7 +784,8 @@ class TodayView extends HTMLElement {
     );
   }
 
-  _mountTaskUpdateDialog() {
+  async _mountTaskUpdateDialog() {
+    await import("./task-update-dialog.js");
     if (!this._taskUpdateDialog) {
       const dialog = document.createElement("task-update-dialog");
       dialog.addEventListener("taskupdated", () => {
@@ -799,9 +799,9 @@ class TodayView extends HTMLElement {
     this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
   }
 
-  _openTaskUpdate(task) {
-    this._mountTaskUpdateDialog();
-    void this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
+  async _openTaskUpdate(task) {
+    await this._mountTaskUpdateDialog();
+    await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
   }
 
   _closeSettingsMenu() {
@@ -1772,11 +1772,13 @@ class TodayView extends HTMLElement {
       "We called 311",
     ].includes(label);
     if (startsProgress) {
-      this._run(card, () => startTaskProgress(task.taskId, label)).then((ok) => {
-        if (ok) this.connectedCallback();
-      });
+      this._run(card, () => startTaskProgress(task.taskId, label)).then(
+        (ok) => {
+          if (ok) this.connectedCallback();
+        },
+      );
     } else if (action === "update") {
-      this._openTaskUpdate(task);
+      void this._openTaskUpdate(task);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {

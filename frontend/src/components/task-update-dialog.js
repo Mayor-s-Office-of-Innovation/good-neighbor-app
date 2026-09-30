@@ -1,4 +1,3 @@
-// @ts-nocheck -- custom-element DOM state is runtime-validated at each boundary.
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
@@ -8,28 +7,43 @@ import {
   getTaskUpdates,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
-import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import { formatPacificDateTime } from "../domain/task-updates.js";
 import { taskArtifactIds } from "../domain/home-tasks.js";
-import { taskMediaUrl } from "./analysis-results.templates.js";
-
-const MAX_PHOTOS = 6;
-const MAX_NOTES = 3;
-const MAX_TEXT = 4000;
+import { taskMediaUrl } from "../domain/task-media.js";
+import {
+  emptyTaskUpdateNotes,
+  hasUnsavedTaskUpdateDraft,
+  MAX_TASK_UPDATE_PHOTOS,
+  MAX_TASK_UPDATE_TEXT,
+} from "../domain/task-update-draft.js";
+import {
+  taskUpdateActionEditor,
+  taskUpdateActionPhotos,
+  taskUpdateCapture,
+  taskUpdateDialogShell,
+  taskUpdateNoteEditor,
+  taskUpdateTimeline,
+} from "./task-update-dialog.templates.js";
 
 class TaskUpdateDialog extends HTMLElement {
   constructor() {
     super();
+    /** @type {Record<string, any> | null} */
     this._task = null;
+    /** @type {Record<string, any> | null} */
     this._detail = null;
     this._mode = "timeline";
+    /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
+    /** @type {File[]} */
     this._files = [];
     this._actionText = "";
-    this._noteDrafts = ["", "", ""];
+    this._noteDrafts = emptyTaskUpdateNotes();
     this._noteIndex = 0;
+    /** @type {string[]} */
     this._filePreviews = [];
     this._open = false;
+    this._state = "idle";
+    /** @type {Map<string, string>} */
     this._mediaUrls = new Map();
   }
 
@@ -37,6 +51,7 @@ class TaskUpdateDialog extends HTMLElement {
     this._render();
   }
 
+  /** @param {Record<string, any>} task */
   async open(task) {
     this._task = task;
     this._open = true;
@@ -45,6 +60,7 @@ class TaskUpdateDialog extends HTMLElement {
   }
 
   async _load() {
+    if (!this._task) return;
     this._state = "loading";
     this._render();
     try {
@@ -66,9 +82,12 @@ class TaskUpdateDialog extends HTMLElement {
           photoIds.map(async (artifactId) => {
             try {
               const media = await getMediaUrl(this._task.checkId, artifactId);
-              return [artifactId, media.downloadUrl || ""];
+              return /** @type {[string, string]} */ ([
+                artifactId,
+                media.downloadUrl || "",
+              ]);
             } catch {
-              return [artifactId, ""];
+              return /** @type {[string, string]} */ ([artifactId, ""]);
             }
           }),
         ),
@@ -80,76 +99,43 @@ class TaskUpdateDialog extends HTMLElement {
     this._render();
   }
 
-  _render() {
+  _content() {
+    if (this._mode === "notes" || this._mode === "document")
+      return taskUpdateCapture({
+        pendingEvent: this._pendingEvent,
+        files: this._files,
+        notes: this._noteDrafts,
+        previews: this._filePreviews,
+      });
+    if (this._mode === "note-text")
+      return taskUpdateNoteEditor({ note: this._noteDrafts[this._noteIndex] });
+    if (this._mode === "action")
+      return taskUpdateActionEditor({ text: this._actionText });
+    if (this._mode === "action-photos")
+      return taskUpdateActionPhotos(this._filePreviews);
     const task = this._task || {};
-    const detail = this._detail || { updates: [] };
-    this.innerHTML = html`<dialog
-        class="task-update"
-        aria-labelledby="task-update-title"
-      >
-        <div class="task-update__sheet">
-          <header class="task-update__header">
-            ${this._mode === "note-text" ||
-            (this._mode === "action-photos" && !this._pendingEvent)
-              ? html`<button
-                  type="button"
-                  class="btn-icon wa-plain"
-                  data-back
-                  aria-label="Back"
-                >
-                  <wa-icon name="chevron-left"></wa-icon>
-                </button>`
-              : html`<span></span>`}
-            <button
-              type="button"
-              class="btn-icon wa-plain"
-              data-close
-              aria-label="Close"
-            >
-              <wa-icon name="xmark"></wa-icon>
-            </button>
-          </header>
-          ${this._state === "loading"
-            ? html`<p role="status">Loading updates…</p>`
-            : ""}
-          ${this._state === "error"
-            ? html`<p role="alert">
-                We couldn't load this issue. Please try again.
-              </p>`
-            : ""}
-          ${this._state === "ready"
-            ? this._content(task, detail.updates || [])
-            : ""}
-        </div>
-      </dialog>
-      <dialog
-        class="task-update__discard-dialog"
-        aria-labelledby="task-update-discard-title"
-        data-discard-dialog
-      >
-        <div class="task-update__discard-card">
-          <h2 id="task-update-discard-title">
-            Closing will discard what you've added
-          </h2>
-          <div class="task-update__discard-actions">
-            <button
-              type="button"
-              class="task-update__discard-confirm"
-              data-confirm-discard
-            >
-              Discard and close
-            </button>
-            <button type="button" class="btn-outline" data-continue-editing>
-              Back to editing
-            </button>
-          </div>
-        </div>
-      </dialog>`;
-    const dialog = this.querySelector("dialog");
+    return taskUpdateTimeline({
+      task,
+      updates: this._detail?.updates || [],
+      issueOrigin: this._detail?.issueOrigin || "perimeter",
+      originalMediaUrl: this._originalMediaUrl(task),
+      mediaUrls: this._mediaUrls,
+    });
+  }
+
+  _render() {
+    this.innerHTML = taskUpdateDialogShell({
+      mode: this._mode,
+      state: this._state,
+      content: this._state === "ready" ? this._content() : "",
+    });
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.task-update")
+    );
     if (!dialog) return;
     dialog
       .querySelector("[data-close]")
-      ?.addEventListener("click", () => this._close());
+      ?.addEventListener("click", () => void this._close());
     dialog.querySelector("[data-back]")?.addEventListener("click", () => {
       this._mode =
         this._mode === "note-text"
@@ -161,17 +147,19 @@ class TaskUpdateDialog extends HTMLElement {
     });
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
-      this._close();
+      void this._close();
     });
     dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) this._close();
+      if (event.target === dialog) void this._close();
     });
-    const discardDialog = this.querySelector("[data-discard-dialog]");
+    const discardDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("[data-discard-dialog]")
+    );
     discardDialog
       ?.querySelector("[data-confirm-discard]")
       ?.addEventListener("click", () => {
         discardDialog.close();
-        this._close(true);
+        void this._close(true);
       });
     discardDialog
       ?.querySelector("[data-continue-editing]")
@@ -180,386 +168,7 @@ class TaskUpdateDialog extends HTMLElement {
     if (this._open && !dialog.open) dialog.showModal();
   }
 
-  _content(task, updates) {
-    if (this._mode === "notes" || this._mode === "document")
-      return this._capture();
-    if (this._mode === "note-text") return this._noteText();
-    if (this._mode === "action") return this._action();
-    if (this._mode === "action-photos") return this._actionPhotos();
-    const expected = task.responseExpectedAt
-      ? new Date(task.responseExpectedAt)
-      : null;
-    const overdue = expected && expected.getTime() < Date.now();
-    const latestUpdateLabel = String(task.latestUpdateLabel || "").trim();
-    const timeline = [
-      ...updates,
-      {
-        type: "issue_created",
-        label:
-          this._detail?.issueOrigin === "single-problem"
-            ? "Issue added as a single issue"
-            : "Issue added during a perimeter check",
-        occurredAt: task.createdAt || task.created_at || task.notifiedAt,
-      },
-    ].filter((update) => update.occurredAt);
-    return html` <section class="task-update__summary">
-        <p
-          class="task-update__route${latestUpdateLabel
-            ? ""
-            : " task-update__route--bare"}"
-        >
-          ${escapeHtml(
-            task.kind === "escalation"
-              ? "311 request"
-              : task.inProgressActionKind === "called_911"
-                ? "Emergency call"
-                : "Non-emergency call",
-          )}${latestUpdateLabel
-            ? html` · <strong>${escapeHtml(latestUpdateLabel)}</strong>`
-            : ""}
-        </p>
-        <p class="task-update__location">
-          ${escapeHtml(
-            String(
-              task.georeferencedAddress ||
-                task.siteAddress ||
-                task.address ||
-                "",
-            ).split(/\r?\n|,/)[0],
-          )}
-        </p>
-        <h2 id="task-update-title">
-          ${escapeHtml(
-            task.userFriendlyLabel || task.category || "Issue update",
-          )}
-        </h2>
-        <p class="task-update__description">
-          ${escapeHtml(task.description || "")}
-        </p>
-        ${this._originalMediaUrl(task)
-          ? html`<img
-              class="task-update__photo task-update__photo--original"
-              src="${escapeAttr(this._originalMediaUrl(task))}"
-              alt="Evidence for ${escapeAttr(
-                task.userFriendlyLabel || task.category || "this issue",
-              )}"
-            />`
-          : ""}
-        <dl class="task-update__metadata">
-          <div>
-            <dt>Agency:</dt>
-            <dd>${escapeHtml(task.agency || "unknown")}</dd>
-          </div>
-          <div>
-            <dt>Notified:</dt>
-            <dd>
-              ${escapeHtml(
-                task.notifiedAt
-                  ? formatPacificDateTime(task.notifiedAt)
-                  : "unknown",
-              )}
-            </dd>
-          </div>
-          ${expected
-            ? html`<div>
-                <dt>Response expected by:</dt>
-                <dd>${escapeHtml(formatPacificDateTime(expected))}</dd>
-              </div>`
-            : ""}
-        </dl>
-        ${overdue && task.status !== "completed" && !task.resolvedAt
-          ? html`<p class="task-update__overdue">
-              <strong>Expected response time has passed</strong>
-            </p>`
-          : ""}
-      </section>
-      ${task.presencePromptDue
-        ? html`<section class="task-update__prompt">
-            <h3>Is the issue still there?</h3>
-            <div class="task-update__actions">
-              <button
-                type="button"
-                class="btn-theme wa-success wa-accent wa-pill"
-                data-presence="presence_resolved"
-              >
-                Resolved</button
-              ><button
-                type="button"
-                class="btn-theme wa-neutral wa-filled wa-pill"
-                data-presence="presence_still_present"
-              >
-                Still there
-              </button>
-            </div>
-          </section>`
-        : ""}
-      ${task.status === "in_progress"
-        ? html`<section class="task-update__section">
-            <h3>Updates</h3>
-            <div class="task-update__actions">
-              <button
-                type="button"
-                class="${task.presencePromptDue
-                  ? "btn-outline btn-outline--sm"
-                  : "btn-ink btn-ink--sm"}"
-                data-mode="notes"
-              >
-                Add a note or photo</button
-              ><button
-                type="button"
-                class="${task.presencePromptDue
-                  ? "btn-outline btn-outline--sm"
-                  : "btn-ink btn-ink--sm"}"
-                data-mode="action"
-              >
-                Record an action
-              </button>
-            </div>
-          </section>`
-        : html`<h3 class="task-update__updates-title">Updates</h3>`}
-      <ol class="ticket-timeline task-update__timeline">
-        ${timeline
-          .map(
-            (update) =>
-              html`<li
-                class="ticket-timeline__item task-update__timeline-item task-update__timeline-item--${this._timelineTone(
-                  update.type,
-                )}"
-              >
-                <div class="ticket-timeline__content">
-                  <strong>${escapeHtml(update.label)}</strong
-                  ><time datetime="${escapeAttr(update.occurredAt)}"
-                    >${escapeHtml(
-                      formatPacificDateTime(update.occurredAt),
-                    )}</time
-                  >${update.text
-                    ? html`<p>${escapeHtml(update.text)}</p>`
-                    : ""}${(update.notes || [])
-                    .map((note) => html`<p>${escapeHtml(note)}</p>`)
-                    .join("")}${(update.photoKeys || [])
-                    .map((artifactId) =>
-                      this._mediaUrls.get(artifactId)
-                        ? html`<img
-                            class="task-update__photo"
-                            src="${escapeAttr(this._mediaUrls.get(artifactId))}"
-                            alt="Update photo for ${escapeAttr(
-                              task.userFriendlyLabel ||
-                                task.category ||
-                                "this issue",
-                            )}"
-                          />`
-                        : "",
-                    )
-                    .join("")}
-                </div>
-              </li>`,
-          )
-          .join("")}
-      </ol>
-      <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
-  }
-
-  _timelineTone(type) {
-    if (type === "escalation_action_taken") return "escalation";
-    if (
-      type === "presence_still_present" ||
-      type === "additional_action_still_present"
-    )
-      return "still-there";
-    if (type === "presence_resolved" || type === "additional_action_resolved")
-      return "resolved";
-    return "general";
-  }
-
-  _capture() {
-    const title =
-      this._pendingEvent?.type === "presence_resolved"
-        ? "Document your success"
-        : this._pendingEvent
-          ? "Update this issue with a photo"
-          : "Add a photo or note to this issue";
-    const hasContent =
-      this._files.length || this._noteDrafts.some((note) => note.trim());
-    return html`<section class="task-update__capture">
-      <h2 id="task-update-title">${title}</h2>
-      <div class="task-update__photo-grid">
-        <label class="task-update__photo-picker"
-          ><input
-            class="visually-hidden"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            capture="environment"
-            multiple
-            data-photos
-          /><span class="task-update__camera" aria-hidden="true"
-            ><wa-icon name="camera"></wa-icon></span
-          ><span>Add a photo</span></label
-        >${this._filePreviews
-          .map(
-            (url, i) =>
-              html`<img
-                class="task-update__photo task-update__photo--draft"
-                src="${escapeAttr(url)}"
-                alt="Selected update photo ${i + 1}"
-              />`,
-          )
-          .join("")}
-      </div>
-      ${this._noteDrafts.filter((note) => note.trim()).length
-        ? html`<ul class="task-update__note-list">
-            ${this._noteDrafts
-              .map((note, i) =>
-                note.trim()
-                  ? html`<li>
-                      <button type="button" data-edit-note="${i}">
-                        ${escapeHtml(note)}
-                      </button>
-                    </li>`
-                  : "",
-              )
-              .join("")}
-          </ul>`
-        : ""}${this._noteDrafts.filter((note) => note.trim()).length < MAX_NOTES
-        ? html`<button
-            type="button"
-            class="btn-outline task-update__add-note"
-            data-add-note
-          >
-            Add a typed note
-          </button>`
-        : ""}
-      <p class="task-update__error" role="alert" hidden></p>
-      <div class="task-update__actions task-update__actions--footer">
-        <button
-          type="button"
-          class="btn-ink"
-          data-save-notes
-          ${!this._pendingEvent && !hasContent ? "disabled" : ""}
-        >
-          Done</button
-        >${this._pendingEvent
-          ? html`<button type="button" class="btn-outline" data-skip>
-              Skip
-            </button>`
-          : ""}
-      </div>
-    </section>`;
-  }
-
-  _noteText() {
-    return html`<section
-      class="task-update__capture task-update__capture--text"
-    >
-      <h2 id="task-update-title">Add a typed note</h2>
-      <div class="task-update__text-card">
-        <textarea
-          class="task-update__text-field"
-          maxlength="${MAX_TEXT}"
-          data-note-text
-          aria-label="Typed note"
-        >
-${escapeHtml(this._noteDrafts[this._noteIndex])}</textarea
-        ><button type="button" class="task-update__clear" data-clear-note>
-          Clear all
-        </button>
-      </div>
-      <button
-        type="button"
-        class="btn-ink task-update__next"
-        data-save-note
-        ${this._noteDrafts[this._noteIndex].trim() ? "" : "disabled"}
-      >
-        Continue
-      </button>
-    </section>`;
-  }
-
-  _action() {
-    return html`<section
-      class="task-update__capture task-update__capture--text"
-    >
-      <h2 id="task-update-title">Share a follow up action</h2>
-      <p class="task-update__subtitle">
-        Describe what else you did to address this issue.
-      </p>
-      <div class="task-update__text-card">
-        <textarea
-          class="task-update__text-field"
-          maxlength="${MAX_TEXT}"
-          data-action-text
-          aria-label="Follow up action"
-        >
-${escapeHtml(this._actionText)}</textarea
-        ><button type="button" class="task-update__clear" data-clear>
-          Clear all
-        </button>
-      </div>
-      <section class="task-update__outcome">
-        <h3>Did this action resolve the issue?</h3>
-        <div class="task-update__actions">
-          <button
-            type="button"
-            class="btn-theme wa-success wa-accent wa-pill"
-            data-action-outcome="additional_action_resolved"
-            ${this._actionText.trim() ? "" : "disabled"}
-          >
-            Resolved</button
-          ><button
-            type="button"
-            class="btn-theme wa-neutral wa-filled wa-pill"
-            data-action-outcome="additional_action_still_present"
-            ${this._actionText.trim() ? "" : "disabled"}
-          >
-            Still there
-          </button>
-        </div>
-      </section>
-      <p class="task-update__error" role="alert" hidden></p>
-    </section>`;
-  }
-
-  _actionPhotos() {
-    return html`<section class="task-update__capture">
-      <h2 id="task-update-title">Document your action</h2>
-      <div class="task-update__photo-grid">
-        <label class="task-update__photo-picker"
-          ><input
-            class="visually-hidden"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            capture="environment"
-            multiple
-            data-photos
-          /><span class="task-update__camera" aria-hidden="true"
-            ><wa-icon name="camera"></wa-icon></span
-          ><span>Add a photo</span></label
-        >${this._filePreviews
-          .map(
-            (url, i) =>
-              html`<img
-                class="task-update__photo task-update__photo--draft"
-                src="${escapeAttr(url)}"
-                alt="Selected action photo ${i + 1}"
-              />`,
-          )
-          .join("")}
-      </div>
-      <p class="task-update__error" role="alert" hidden></p>
-      <div class="task-update__actions task-update__actions--footer">
-        <button
-          type="button"
-          class="btn-ink"
-          data-save-action
-          ${this._files.length ? "" : "disabled"}
-        >
-          Done</button
-        ><button type="button" class="btn-outline" data-skip-action>
-          Skip
-        </button>
-      </div>
-    </section>`;
-  }
-
+  /** @param {Record<string, any>} task */
   _originalMediaUrl(task) {
     const embedded = taskMediaUrl(task);
     if (embedded) return embedded;
@@ -567,17 +176,21 @@ ${escapeHtml(this._actionText)}</textarea
     return artifactId ? this._mediaUrls.get(artifactId) || "" : "";
   }
 
+  /** @param {HTMLDialogElement} root */
   _wire(root) {
-    root.querySelectorAll("[data-mode]").forEach((button) =>
+    root.querySelectorAll("[data-mode]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
-        this._mode = button.dataset.mode;
+        this._mode = button.dataset.mode || "timeline";
         this._resetFiles();
-        this._noteDrafts = ["", "", ""];
+        this._noteDrafts = emptyTaskUpdateNotes();
         this._render();
-      }),
-    );
-    root.querySelectorAll("[data-presence]").forEach((button) =>
+      });
+    });
+    root.querySelectorAll("[data-presence]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", async () => {
+        if (!this._task) return;
         button.disabled = true;
         const response = await createTaskUpdate(this._task.taskId, {
           type: button.dataset.presence,
@@ -586,23 +199,26 @@ ${escapeHtml(this._actionText)}</textarea
         this._task = response.task;
         this._mode = "document";
         this._resetFiles();
-        this._noteDrafts = ["", "", ""];
+        this._noteDrafts = emptyTaskUpdateNotes();
         this._render();
-        this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
-      }),
-    );
+        this._notifyUpdated();
+      });
+    });
     root.querySelector("[data-photos]")?.addEventListener("change", (event) => {
-      this._filePreviews.forEach((url) => URL.revokeObjectURL(url));
-      this._files = [...event.target.files].slice(0, MAX_PHOTOS);
+      const input = /** @type {HTMLInputElement} */ (event.currentTarget);
+      this._resetFiles();
+      this._files = [...(input.files || [])].slice(0, MAX_TASK_UPDATE_PHOTOS);
       this._filePreviews = this._files.map((file) => URL.createObjectURL(file));
       this._render();
     });
     root
       .querySelector("[data-action-text]")
       ?.addEventListener("input", (event) => {
-        this._actionText = event.target.value.slice(0, MAX_TEXT);
-        root.querySelectorAll("[data-action-outcome]").forEach((button) => {
-          button.disabled = !this._actionText.trim();
+        const input = /** @type {HTMLTextAreaElement} */ (event.currentTarget);
+        this._actionText = input.value.slice(0, MAX_TASK_UPDATE_TEXT);
+        root.querySelectorAll("[data-action-outcome]").forEach((element) => {
+          /** @type {HTMLButtonElement} */ (element).disabled =
+            !this._actionText.trim();
         });
       });
     root.querySelector("[data-add-note]")?.addEventListener("click", () => {
@@ -610,21 +226,25 @@ ${escapeHtml(this._actionText)}</textarea
       this._mode = "note-text";
       this._render();
     });
-    root.querySelectorAll("[data-edit-note]").forEach((button) =>
+    root.querySelectorAll("[data-edit-note]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
         this._noteIndex = Number(button.dataset.editNote);
         this._mode = "note-text";
         this._render();
-      }),
-    );
+      });
+    });
     root
       .querySelector("[data-note-text]")
       ?.addEventListener("input", (event) => {
-        this._noteDrafts[this._noteIndex] = event.target.value.slice(
+        const input = /** @type {HTMLTextAreaElement} */ (event.currentTarget);
+        this._noteDrafts[this._noteIndex] = input.value.slice(
           0,
-          MAX_TEXT,
+          MAX_TASK_UPDATE_TEXT,
         );
-        const save = root.querySelector("[data-save-note]");
+        const save = /** @type {HTMLButtonElement | null} */ (
+          root.querySelector("[data-save-note]")
+        );
         if (save) save.disabled = !this._noteDrafts[this._noteIndex].trim();
       });
     root.querySelector("[data-clear-note]")?.addEventListener("click", () => {
@@ -639,40 +259,41 @@ ${escapeHtml(this._actionText)}</textarea
       this._actionText = "";
       this._render();
     });
-    root
-      .querySelectorAll("[data-action-outcome]")
-      .forEach((button) =>
-        button.addEventListener("click", () =>
-          this._recordActionOutcome(root, button.dataset.actionOutcome),
-        ),
+    root.querySelectorAll("[data-action-outcome]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
+      button.addEventListener(
+        "click",
+        () =>
+          void this._recordActionOutcome(
+            root,
+            button.dataset.actionOutcome || "",
+          ),
       );
+    });
     root
       .querySelector("[data-save-notes]")
-      ?.addEventListener("click", () => this._saveNotes(root));
+      ?.addEventListener("click", () => void this._saveNotes(root));
     root
       .querySelector("[data-skip]")
-      ?.addEventListener("click", () => this._finishDocumentation([], []));
+      ?.addEventListener("click", () => void this._finishDocumentation([], []));
     root
-      .querySelectorAll("[data-save-action]")
-      .forEach((button) =>
-        button.addEventListener("click", () => this._saveAction(root)),
-      );
+      .querySelector("[data-save-action]")
+      ?.addEventListener("click", () => void this._saveAction(root));
     root
       .querySelector("[data-skip-action]")
-      ?.addEventListener("click", () => this._saveAction(root, true));
+      ?.addEventListener("click", () => void this._saveAction(root, true));
   }
 
+  /** @param {HTMLElement} root @returns {Promise<string[] | null>} */
   async _uploadFiles(root) {
-    const error = root.querySelector(".task-update__error");
+    const error = /** @type {HTMLElement | null} */ (
+      root.querySelector(".task-update__error")
+    );
     try {
+      if (!this._task) return null;
       return await Promise.all(
         this._files.map(async (file) => {
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
+          const dataUrl = await this._readFile(file);
           const uploaded = await uploadTaskUpdatePhoto(
             this._task.taskId,
             this._task.checkId,
@@ -682,10 +303,22 @@ ${escapeHtml(this._actionText)}</textarea
         }),
       );
     } catch {
-      error.hidden = false;
-      error.textContent = "Could not upload the photos. Please try again.";
+      if (error) {
+        error.hidden = false;
+        error.textContent = "Could not upload the photos. Please try again.";
+      }
       return null;
     }
+  }
+
+  /** @param {File} file @returns {Promise<string>} */
+  _readFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   _resetFiles() {
@@ -694,11 +327,13 @@ ${escapeHtml(this._actionText)}</textarea
     this._files = [];
   }
 
+  /** @param {HTMLElement} root */
   async _saveNotes(root) {
+    if (!this._task) return;
     const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
     const photos = await this._uploadFiles(root);
-    if (!photos) return;
-    if (!this._pendingEvent && !notes.length && !photos.length) return;
+    if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
+      return;
     if (this._pendingEvent) await this._finishDocumentation(notes, photos);
     else {
       await createTaskUpdate(this._task.taskId, {
@@ -708,28 +343,31 @@ ${escapeHtml(this._actionText)}</textarea
       });
       this._mode = "timeline";
       await this._load();
-      this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
+      this._notifyUpdated();
     }
   }
 
+  /** @param {string[]} notes @param {string[]} photos */
   async _finishDocumentation(notes, photos) {
+    if (!this._task || !this._pendingEvent) return;
     await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
       notes,
       photoKeys: photos,
     });
     this._pendingEvent = null;
-    this._noteDrafts = ["", "", ""];
+    this._noteDrafts = emptyTaskUpdateNotes();
     this._mode = "timeline";
     await this._load();
   }
 
+  /** @param {HTMLElement} root @param {string} type */
   async _recordActionOutcome(root, type) {
     const text = this._actionText.trim();
-    if (!text) return;
-    const buttons = root.querySelectorAll("[data-action-outcome]");
-    buttons.forEach((button) => {
-      button.disabled = true;
-    });
+    if (!text || !this._task) return;
+    const buttons = [...root.querySelectorAll("[data-action-outcome]")].map(
+      (element) => /** @type {HTMLButtonElement} */ (element),
+    );
+    buttons.forEach((button) => (button.disabled = true));
     try {
       const response = await createTaskUpdate(this._task.taskId, {
         type,
@@ -740,20 +378,22 @@ ${escapeHtml(this._actionText)}</textarea
       this._mode = "action-photos";
       this._resetFiles();
       this._render();
-      this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
+      this._notifyUpdated();
     } catch {
-      const error = root.querySelector(".task-update__error");
+      const error = /** @type {HTMLElement | null} */ (
+        root.querySelector(".task-update__error")
+      );
       if (error) {
         error.hidden = false;
         error.textContent = "Could not record the action. Please try again.";
       }
-      buttons.forEach((button) => {
-        button.disabled = false;
-      });
+      buttons.forEach((button) => (button.disabled = false));
     }
   }
 
+  /** @param {HTMLElement} root @param {boolean} [skipPhotos] */
   async _saveAction(root, skipPhotos = false) {
+    if (!this._task) return;
     const photos = skipPhotos ? [] : await this._uploadFiles(root);
     if (!photos) return;
     if (this._pendingEvent)
@@ -771,56 +411,63 @@ ${escapeHtml(this._actionText)}</textarea
     this._actionText = "";
     this._mode = "timeline";
     await this._load();
-    this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
+    this._notifyUpdated();
   }
 
   _hasUnsavedDraft() {
-    const hasPhotos = this._files.length > 0;
-    const hasNotes = this._noteDrafts.some((note) => note.trim());
-    if (["notes", "document", "note-text"].includes(this._mode))
-      return hasPhotos || hasNotes;
-    if (this._mode === "action") return Boolean(this._actionText.trim());
-    if (this._mode === "action-photos") return hasPhotos;
-    return false;
+    return hasUnsavedTaskUpdateDraft(this._mode, {
+      files: this._files,
+      notes: this._noteDrafts,
+      actionText: this._actionText,
+    });
   }
 
   _showDiscardConfirmation() {
-    const dialog = this.querySelector("[data-discard-dialog]");
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("[data-discard-dialog]")
+    );
     if (dialog && !dialog.open) dialog.showModal();
   }
 
+  /** @param {boolean} [discardConfirmed] */
   async _close(discardConfirmed = false) {
     if (!discardConfirmed && this._hasUnsavedDraft()) {
       this._showDiscardConfirmation();
       return;
     }
     if (this._mode !== "timeline") {
-      if (this._pendingEvent) {
-        await documentTaskUpdate(
-          this._task.taskId,
-          this._pendingEvent.updateId,
-          { notes: [], photoKeys: [] },
-        ).catch(() => {});
-        this._pendingEvent = null;
-      }
-      this._resetFiles();
-      this._noteDrafts = ["", "", ""];
-      this._noteIndex = 0;
-      this._actionText = "";
+      await this._sealPendingEvent();
+      this._resetDraft();
       this._mode = "timeline";
       await this._load();
       return;
     }
-    if (this._pendingEvent) {
-      await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-        notes: [],
-        photoKeys: [],
-      }).catch(() => {});
-      this._pendingEvent = null;
-    }
+    await this._sealPendingEvent();
     this._open = false;
-    this.querySelector("dialog")?.close();
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.task-update")
+    )?.close();
     this.dispatchEvent(new CustomEvent("taskupdateclosed", { bubbles: true }));
+  }
+
+  async _sealPendingEvent() {
+    if (!this._pendingEvent || !this._task) return;
+    await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
+      notes: [],
+      photoKeys: [],
+    }).catch(() => {});
+    this._pendingEvent = null;
+  }
+
+  _resetDraft() {
+    this._resetFiles();
+    this._noteDrafts = emptyTaskUpdateNotes();
+    this._noteIndex = 0;
+    this._actionText = "";
+  }
+
+  _notifyUpdated() {
+    this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
   }
 }
 

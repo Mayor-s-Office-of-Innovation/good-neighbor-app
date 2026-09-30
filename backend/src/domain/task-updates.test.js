@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTaskUpdateTransition,
   notePhotoLabel,
   presencePeriod,
   presencePromptDue,
@@ -22,7 +23,11 @@ describe("task updates", () => {
     expect(presencePeriod(start, "2026-11-01T12:30:00.000Z")).toBe(1);
     expect(
       presencePromptDue(
-        { status: "in_progress", inProgressAt: start, lastAnsweredPresencePeriod: 1 },
+        {
+          status: "in_progress",
+          inProgressAt: start,
+          lastAnsweredPresencePeriod: 1,
+        },
         "2026-11-01T16:30:00.000Z",
       ),
     ).toBe(true);
@@ -41,5 +46,35 @@ describe("task updates", () => {
         maxAcceptableResponseHours: 4,
       }),
     ).toBe("2026-09-30T00:00:00.000Z");
+  });
+
+  it("builds task and timeline snapshots without persistence concerns", () => {
+    const result = buildTaskUpdateTransition(
+      {
+        status: "in_progress",
+        inProgressAt: "2026-09-30T08:00:00.000Z",
+        lastAnsweredPresencePeriod: 0,
+      },
+      { type: "presence_resolved" },
+      {
+        taskId: "task-1",
+        updateId: "update-1",
+        actorId: "user-1",
+        now: new Date("2026-09-30T12:00:00.000Z"),
+      },
+    );
+
+    expect(result).toMatchObject({
+      update: {
+        type: "presence_resolved",
+        label: "Site team marked as resolved",
+        documentationState: "open_for_documentation",
+      },
+      task: {
+        status: "completed",
+        latestUpdateLabel: "Resolved",
+        completionMethod: "site_team_resolved",
+      },
+    });
   });
 });

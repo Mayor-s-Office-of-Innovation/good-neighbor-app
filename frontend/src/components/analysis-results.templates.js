@@ -2,20 +2,9 @@ import "./analysis-results.css";
 import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
+import { taskMediaUrl } from "../domain/task-media.js";
 
 const CLEAR_CHECK_ICON = "/clear-check-icon.png";
-
-/** @param {HomeTask} task */
-export function taskMediaUrl(task) {
-  return (
-    task.thumbnailUrl ||
-    task.thumbUrl ||
-    task.mediaUrl ||
-    task.photoUrl ||
-    task.imageUrl ||
-    ""
-  );
-}
 
 /**
  * @typedef {object} AnalysisCondition
@@ -554,9 +543,10 @@ export function taskAnalysisCard({
     isNew,
     routeType: routeType(task),
     createdAt: task.createdAt || task.created_at || "",
-    footerTimeLabel: task.status === "in_progress" && (task.updatedAt || task.ticketUpdatedAt)
-      ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
-      : "",
+    footerTimeLabel:
+      task.status === "in_progress" && (task.updatedAt || task.ticketUpdatedAt)
+        ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
+        : "",
     mediaPlaceholder: action?.kind === "view311" && !mediaUrl,
     shortId: taskDisplayReference(task),
   });
@@ -1056,14 +1046,16 @@ function routeType(task) {
           tone: "emergency",
           status: task.latestUpdateLabel || "",
           statusDetail: "",
-          statusTone: task.latestUpdateLabel === "Resolved" ? "closed" : "default",
+          statusTone:
+            task.latestUpdateLabel === "Resolved" ? "closed" : "default",
         }
       : {
           label: "Non-emergency call",
           tone: "non-emergency",
           status: task.latestUpdateLabel || "",
           statusDetail: "",
-          statusTone: task.latestUpdateLabel === "Resolved" ? "closed" : "default",
+          statusTone:
+            task.latestUpdateLabel === "Resolved" ? "closed" : "default",
         };
   }
   return { label: "On-site action", tone: "onsite", status: "" };

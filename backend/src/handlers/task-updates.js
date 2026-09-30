@@ -1,30 +1,24 @@
-// @ts-nocheck -- Lambda handler event unions are validated at runtime below.
 import { randomUUID } from "node:crypto";
-import {
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  TransactWriteCommand,
-} from "@aws-sdk/lib-dynamodb";
-import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import {
-  taskKey,
-  artifactKey,
-  checkHeaderKey,
-  taskUpdateKey,
-  taskUpdatePrefix,
-  taskWorklistDateGsi,
-} from "./keys.js";
-import {
-  notePhotoLabel,
+  buildTaskUpdateTransition,
   presencePeriod,
   presencePromptDue,
   qualifyingAction,
   responseExpectedAt,
 } from "../domain/task-updates.js";
+import {
+  readCheckHeader,
+  readTask,
+  readTimeline,
+  readUpdateById,
+  sealOpenUpdates,
+  writeDocumentedUpdate,
+  writeTaskTransition,
+  writeTaskUpdateMedia,
+} from "../task-updates/task-update-store.js";
 
 const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
@@ -35,6 +29,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "image/webp",
 ]);
 
+/** @param {any} event @returns {Record<string, any> | null} */
 function bodyOf(event) {
   try {
     const value = readJsonBody(event);
@@ -44,6 +39,7 @@ function bodyOf(event) {
   }
 }
 
+/** @param {any} event */
 function idempotencyId(event) {
   const raw =
     event.headers?.["idempotency-key"] ||
@@ -56,6 +52,7 @@ function idempotencyId(event) {
   );
 }
 
+/** @param {any} event */
 function actorId(event) {
   const authorizer = event.requestContext?.authorizer || {};
   return String(
@@ -66,6 +63,7 @@ function actorId(event) {
   );
 }
 
+/** @param {unknown} value @param {number} max @returns {string[] | null} */
 function textList(value, max) {
   if (!Array.isArray(value) || value.length > max) return null;
   const values = value.map((item) => String(item || "").trim());
@@ -74,40 +72,14 @@ function textList(value, max) {
     : null;
 }
 
+/** @param {unknown} value @returns {string[] | null} */
 function photoList(value) {
   if (!Array.isArray(value) || value.length > MAX_PHOTOS) return null;
   const values = value.map((item) => String(item || "").trim());
   return values.every((item) => item && item.length <= 512) ? values : null;
 }
 
-async function getTask(tableName, siteId, taskId) {
-  const result = await ddb.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: taskKey(siteId, taskId),
-      ConsistentRead: true,
-    }),
-  );
-  return result.Item || null;
-}
-
-async function getUpdateById(tableName, siteId, taskId, updateId) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      ConsistentRead: true,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      FilterExpression: "updateId = :updateId",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": taskUpdatePrefix(taskId),
-        ":updateId": updateId,
-      },
-    }),
-  );
-  return result.Items?.[0] || null;
-}
-
+/** @param {Record<string, any>} task @param {Record<string, any>[]} updates */
 function detail(task, updates) {
   return {
     task: {
@@ -120,77 +92,23 @@ function detail(task, updates) {
   };
 }
 
-/** GET /v1/tasks/{taskId}/updates */
+/** GET /v1/tasks/{taskId}/updates @param {any} event */
 export const getTaskUpdates = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
   if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
   const [task, timeline] = await Promise.all([
-    getTask(dynamoTable, siteId, taskId),
-    ddb.send(
-      new QueryCommand({
-        TableName: dynamoTable,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": taskUpdatePrefix(taskId),
-        },
-        ScanIndexForward: false,
-      }),
-    ),
+    readTask(dynamoTable, siteId, taskId),
+    readTimeline(dynamoTable, siteId, taskId),
   ]);
   if (!task) return jsonResponse(404, { error: "Task not found" });
-  const check = task.checkId
-    ? (
-        await ddb.send(
-          new GetCommand({
-            TableName: dynamoTable,
-            Key: checkHeaderKey(siteId, task.checkId),
-            ConsistentRead: true,
-          }),
-        )
-      ).Item
-    : null;
-  // Reopening the card after an interrupted automatic documentation screen is
-  // the server-observable equivalent of Skip. Seal those events before
-  // returning them; a direct update can never amend an older presence event.
-  const updates = await Promise.all(
-    (timeline.Items || []).map(async (update) => {
-      if (update.documentationState !== "open_for_documentation") return update;
-      const sealed = {
-        ...update,
-        documentationState: "closed",
-        documentedAt: new Date().toISOString(),
-      };
-      try {
-        await ddb.send(
-          new TransactWriteCommand({
-            TransactItems: [
-              {
-                Put: {
-                  TableName: dynamoTable,
-                  Item: sealed,
-                  ConditionExpression: "documentationState = :open",
-                  ExpressionAttributeValues: {
-                    ":open": "open_for_documentation",
-                  },
-                },
-              },
-            ],
-          }),
-        );
-        return sealed;
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.name === "TransactionCanceledException"
-        )
-          return update;
-        throw error;
-      }
-    }),
+  const check = await readCheckHeader(
+    dynamoTable,
+    siteId,
+    String(task.checkId || ""),
   );
+  const updates = await sealOpenUpdates(dynamoTable, timeline);
   return jsonResponse(200, {
     ...detail(task, updates),
     issueOrigin:
@@ -198,7 +116,7 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
-/** POST /v1/tasks/{taskId}/start-progress */
+/** POST /v1/tasks/{taskId}/start-progress @param {any} event */
 export const startTaskProgress = async (event) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
@@ -208,32 +126,27 @@ export const startTaskProgress = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
-  const task = await getTask(dynamoTable, siteId, taskId);
+  const task = await readTask(dynamoTable, siteId, taskId);
   if (!task) return jsonResponse(404, { error: "Task not found" });
-  if (
-    ![
-      ...(Array.isArray(task.buttons) ? task.buttons : []),
-      ...(Array.isArray(task.appActions)
-        ? task.appActions.map(
-            (candidate) => candidate?.payload?.completionLabel,
-          )
-        : []),
-    ].some((label) => String(label || "") === String(input.actionLabel))
-  ) {
+  const available = [
+    ...(Array.isArray(task.buttons) ? task.buttons : []),
+    ...(Array.isArray(task.appActions)
+      ? task.appActions.map((candidate) => candidate?.payload?.completionLabel)
+      : []),
+  ];
+  if (!available.some((label) => String(label || "") === input.actionLabel))
     return jsonResponse(400, { error: "Action is not available on this task" });
-  }
   if (
     task.status === "in_progress" &&
     task.inProgressActionKind === action.actionKind
-  ) {
+  )
     return getTaskUpdates(event);
-  }
   if (task.status !== "open")
     return jsonResponse(409, { error: "Task is no longer open" });
+
   const now = new Date().toISOString();
   const updateId = idempotencyId(event);
   const update = {
-    ...taskUpdateKey(siteId, taskId, now, updateId),
     entityType: "task_update",
     taskId,
     updateId,
@@ -256,38 +169,17 @@ export const startTaskProgress = async (event) => {
     latestUpdateLabel: action.label,
     lastAnsweredPresencePeriod: 0,
     updatedAt: now,
-    ...taskWorklistDateGsi(
-      siteId,
-      "in_progress",
-      String(task.kind || ""),
-      Number(task.severity || 0),
-      now,
-      taskId,
-    ),
   };
   try {
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: update,
-              ConditionExpression: "attribute_not_exists(pk)",
-            },
-          },
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: updated,
-              ConditionExpression: "#status = :open",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: { ":open": "open" },
-            },
-          },
-        ],
-      }),
-    );
+    await writeTaskTransition({
+      tableName: dynamoTable,
+      siteId,
+      taskId,
+      occurredAt: now,
+      update,
+      task: updated,
+      expectedStatus: "open",
+    });
   } catch (error) {
     if (error instanceof Error && error.name === "TransactionCanceledException")
       return jsonResponse(409, { error: "Task update conflict" });
@@ -296,17 +188,17 @@ export const startTaskProgress = async (event) => {
   return jsonResponse(200, detail(updated, [update]));
 };
 
-/** POST /v1/tasks/{taskId}/updates */
+/** POST /v1/tasks/{taskId}/updates @param {any} event */
 export const createTaskUpdate = async (event) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
-  const task = await getTask(dynamoTable, siteId, taskId);
+  const task = await readTask(dynamoTable, siteId, taskId);
   if (!task) return jsonResponse(404, { error: "Task not found" });
   const updateId = idempotencyId(event);
-  const priorUpdate = await getUpdateById(
+  const priorUpdate = await readUpdateById(
     dynamoTable,
     siteId,
     taskId,
@@ -320,126 +212,26 @@ export const createTaskUpdate = async (event) => {
   if (task.status !== "in_progress")
     return jsonResponse(409, { error: "Task is not in progress" });
 
-  const type = String(input.type || "");
-  const nowDate = new Date();
-  const now = nowDate.toISOString();
-  let label = "";
-  let timelineLabel = "";
-  let documentationState = "closed";
-  let resolved = false;
-  let period;
-  let notes = [];
-  let photoKeys = [];
-  let text;
-
-  if (type === "presence_still_present" || type === "presence_resolved") {
-    period = presencePeriod(task.inProgressAt, nowDate);
-    if (period < 1 || Number(task.lastAnsweredPresencePeriod || 0) >= period)
-      return jsonResponse(409, { error: "Presence prompt is not due" });
-    resolved = type === "presence_resolved";
-    label = resolved ? "Resolved" : "Still present";
-    timelineLabel = resolved ? "Site team marked as resolved" : "Still there";
-    documentationState = "open_for_documentation";
-  } else if (type === "note_photo_update") {
-    const parsedNotes = textList(input.notes, MAX_NOTES);
-    const parsedPhotos = photoList(input.photoKeys);
-    if (!parsedNotes || !parsedPhotos)
-      return jsonResponse(400, { error: "Invalid notes or photos" });
-    label = notePhotoLabel(parsedNotes, parsedPhotos);
-    if (!label)
-      return jsonResponse(400, { error: "An update needs a note or photo" });
-    timelineLabel = label;
-    notes = parsedNotes;
-    photoKeys = parsedPhotos;
-  } else if (
-    type === "additional_action_resolved" ||
-    type === "additional_action_still_present"
-  ) {
-    text = String(input.text || "").trim();
-    if (!text || text.length > MAX_TEXT)
-      return jsonResponse(400, { error: "Invalid action" });
-    resolved = type === "additional_action_resolved";
-    label = resolved ? "Resolved" : "Still present";
-    timelineLabel = "Additional action taken";
-    documentationState = "open_for_documentation";
-  } else if (type === "additional_action") {
-    text = String(input.text || "").trim();
-    const parsedPhotos = photoList(input.photoKeys);
-    if (!text || text.length > MAX_TEXT || !parsedPhotos)
-      return jsonResponse(400, { error: "Invalid action or photos" });
-    label = "More action taken";
-    timelineLabel = "Additional action taken";
-    photoKeys = parsedPhotos;
-  } else {
-    return jsonResponse(400, { error: "Unsupported update type" });
-  }
-
-  const update = {
-    ...taskUpdateKey(siteId, taskId, now, updateId),
-    entityType: "task_update",
+  const transition = buildTaskUpdateTransition(task, input, {
     taskId,
     updateId,
-    type,
-    label: timelineLabel,
-    occurredAt: now,
     actorId: actorId(event),
-    documentationState,
-    ...(period ? { presencePeriod: period } : {}),
-    ...(text ? { text } : {}),
-    ...(notes.length ? { notes } : {}),
-    ...(photoKeys.length ? { photoKeys } : {}),
-  };
-  const status = resolved ? "completed" : "in_progress";
-  const updated = {
-    ...task,
-    status,
-    latestUpdateId: updateId,
-    latestUpdateLabel: label,
-    updatedAt: now,
-    ...(period ? { lastAnsweredPresencePeriod: period } : {}),
-    ...(resolved
-      ? {
-          resolvedAt: now,
-          completedAt: now,
-          completionMethod: "site_team_resolved",
-        }
-      : {}),
-    ...taskWorklistDateGsi(
-      siteId,
-      status,
-      String(task.kind || ""),
-      Number(task.severity || 0),
-      now,
-      taskId,
-    ),
-  };
+  });
+  if ("error" in transition)
+    return jsonResponse(transition.statusCode, { error: transition.error });
+  const { update, task: updated } = transition;
+  const now = update.occurredAt;
   try {
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: update,
-              ConditionExpression: "attribute_not_exists(pk)",
-            },
-          },
-          {
-            Put: {
-              TableName: dynamoTable,
-              Item: updated,
-              ConditionExpression:
-                "#status = :inProgress AND updatedAt = :prior",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: {
-                ":inProgress": "in_progress",
-                ":prior": task.updatedAt,
-              },
-            },
-          },
-        ],
-      }),
-    );
+    await writeTaskTransition({
+      tableName: dynamoTable,
+      siteId,
+      taskId,
+      occurredAt: now,
+      update,
+      task: updated,
+      expectedStatus: "in_progress",
+      expectedUpdatedAt: task.updatedAt,
+    });
   } catch (error) {
     if (error instanceof Error && error.name === "TransactionCanceledException")
       return jsonResponse(409, { error: "Task update conflict" });
@@ -448,7 +240,7 @@ export const createTaskUpdate = async (event) => {
   return jsonResponse(201, { task: detail(updated, [update]).task, update });
 };
 
-/** POST /v1/tasks/{taskId}/updates/{updateId}/document */
+/** POST /v1/tasks/{taskId}/updates/{updateId}/document @param {any} event */
 export const documentTaskUpdate = async (event) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
@@ -460,19 +252,7 @@ export const documentTaskUpdate = async (event) => {
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
   const updateId = String(event.pathParameters?.updateId || "");
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      FilterExpression: "updateId = :updateId",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": taskUpdatePrefix(taskId),
-        ":updateId": updateId,
-      },
-    }),
-  );
-  const existing = result.Items?.[0];
+  const existing = await readUpdateById(dynamoTable, siteId, taskId, updateId);
   if (!existing) return jsonResponse(404, { error: "Update not found" });
   if (existing.actorId !== actorId(event))
     return jsonResponse(403, { error: "Update belongs to another session" });
@@ -487,31 +267,18 @@ export const documentTaskUpdate = async (event) => {
     documentationState: "closed",
     documentedAt: new Date().toISOString(),
   };
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: dynamoTable,
-            Item: updated,
-            ConditionExpression: "documentationState = :open",
-            ExpressionAttributeValues: { ":open": "open_for_documentation" },
-          },
-        },
-      ],
-    }),
-  );
+  await writeDocumentedUpdate(dynamoTable, updated);
   return jsonResponse(200, { update: updated });
 };
 
-/** POST /v1/tasks/{taskId}/update-media — register an already-uploaded photo without analysis. */
+/** POST /v1/tasks/{taskId}/update-media @param {any} event */
 export const registerTaskUpdateMedia = async (event) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
-  const task = await getTask(dynamoTable, siteId, taskId);
+  const task = await readTask(dynamoTable, siteId, taskId);
   if (!task) return jsonResponse(404, { error: "Task not found" });
   if (!["in_progress", "completed"].includes(task.status))
     return jsonResponse(409, { error: "Task cannot accept update media" });
@@ -525,29 +292,22 @@ export const registerTaskUpdateMedia = async (event) => {
     checkId !== String(task.checkId || "") ||
     !s3Key.startsWith(`checks/${siteId}/${checkId}/`) ||
     !ALLOWED_CONTENT_TYPES.has(contentType)
-  ) {
+  )
     return jsonResponse(400, { error: "Invalid update media" });
-  }
   try {
-    await ddb.send(
-      new PutCommand({
-        TableName: dynamoTable,
-        Item: {
-          ...artifactKey(siteId, checkId, artifactId),
-          checkId,
-          artifactId,
-          s3Key,
-          contentType,
-          capturedAt:
-            typeof input.capturedAt === "string"
-              ? input.capturedAt
-              : new Date().toISOString(),
-          purpose: "task_update",
-          taskId,
-        },
-        ConditionExpression: "attribute_not_exists(sk)",
-      }),
-    );
+    await writeTaskUpdateMedia({
+      tableName: dynamoTable,
+      siteId,
+      checkId,
+      taskId,
+      artifactId,
+      s3Key,
+      contentType,
+      capturedAt:
+        typeof input.capturedAt === "string"
+          ? input.capturedAt
+          : new Date().toISOString(),
+    });
   } catch (error) {
     if (
       error instanceof Error &&

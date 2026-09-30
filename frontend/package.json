@@ -25,9 +25,24 @@
       "limit": "7 kB"
     },
     {
-      "name": "css",
-      "path": "dist/assets/*.css",
+      "name": "main css",
+      "path": "dist/assets/index-*.css",
       "limit": "21 kB"
+    },
+    {
+      "name": "task update js",
+      "path": "dist/assets/task-update-dialog-*.js",
+      "limit": "5 kB"
+    },
+    {
+      "name": "task update css",
+      "path": "dist/assets/task-update-dialog-*.css",
+      "limit": "2 kB"
+    },
+    {
+      "name": "site admin css",
+      "path": "dist/assets/site-admin-*.css",
+      "limit": "2 kB"
     }
   ],
   "dependencies": {
