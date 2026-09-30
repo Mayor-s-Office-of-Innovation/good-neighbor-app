@@ -1,6 +1,7 @@
 import {
   GetCommand,
   PutCommand,
+  QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,9 +9,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { registerTaskUpdateMedia, startTaskProgress } = await import(
-  "./task-updates.js"
-);
+const { createTaskUpdate, registerTaskUpdateMedia, startTaskProgress } =
+  await import("./task-updates.js");
 
 /** @param {Record<string, unknown>} body @param {Record<string, string>} [pathParameters] */
 function event(body, pathParameters = { taskId: "task-1" }) {
@@ -84,12 +84,14 @@ describe("task update handlers", () => {
       .mockResolvedValueOnce({});
 
     const response = await /** @type {any} */ (
-      registerTaskUpdateMedia(event({
+      registerTaskUpdateMedia(
+        event({
           checkId: "check-1",
           artifactId: "photo-1",
           s3Key: "checks/site-1/check-1/photo-1",
           contentType: "image/jpeg",
-        }))
+        }),
+      )
     );
 
     expect(response.statusCode).toBe(201);
@@ -101,4 +103,48 @@ describe("task update handlers", () => {
     });
     expect(send).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ["additional_action_resolved", "completed", "Resolved"],
+    ["additional_action_still_present", "in_progress", "Still present"],
+  ])(
+    "records %s before opening its documentation step",
+    async (type, status, latestUpdateLabel) => {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "TASK#task-1",
+            taskId: "task-1",
+            status: "in_progress",
+            kind: "non_actionable_escalation",
+            severity: 2,
+            updatedAt: "2026-09-30T16:00:00.000Z",
+          },
+        })
+        .mockResolvedValueOnce({ Items: [] })
+        .mockResolvedValueOnce({});
+
+      const response = await /** @type {any} */ (
+        createTaskUpdate(event({ type, text: "Power washed the sidewalk." }))
+      );
+
+      expect(response.statusCode).toBe(201);
+      expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+      const transaction = send.mock.calls[2][0];
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      const [eventPut, taskPut] = transaction.input.TransactItems;
+      expect(eventPut.Put.Item).toMatchObject({
+        type,
+        label: "Additional action taken",
+        text: "Power washed the sidewalk.",
+        documentationState: "open_for_documentation",
+      });
+      expect(taskPut.Put.Item).toMatchObject({ status, latestUpdateLabel });
+      if (status === "completed")
+        expect(taskPut.Put.Item).toMatchObject({
+          completionMethod: "site_team_resolved",
+        });
+    },
+  );
 });

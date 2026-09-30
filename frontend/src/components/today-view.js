@@ -889,7 +889,14 @@ class TodayView extends HTMLElement {
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
             : entry.homeStatus === "in_progress"
-              ? { kind: "update", label: "Update", variant: "outline" }
+              ? {
+                  kind: "update",
+                  label:
+                    entry.task.kind === "escalation"
+                      ? "View details"
+                      : "Update",
+                  variant: "outline",
+                }
               : null,
         statusLabel: isNew
           ? this._newTaskStatusMeta(entry)

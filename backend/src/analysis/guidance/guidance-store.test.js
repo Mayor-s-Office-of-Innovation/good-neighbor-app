@@ -995,6 +995,16 @@ describe("completeTaskWithAppActions", () => {
     expect(task).toMatchObject({
       status: "completed",
       completionMethod: "311_filed",
+      agency: "311",
+      notifiedAt: "2026-08-18T12:02:00.000Z",
+      latestUpdateLabel: "311 ticket filed",
+    });
+    const finalTransaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+    expect(finalTransaction.input.TransactItems[1].Put.Item).toMatchObject({
+      type: "311_ticket_filed",
+      label: "311 ticket filed",
+      occurredAt: "2026-08-18T12:02:00.000Z",
+      documentationState: "closed",
     });
     // The user_confirmed filing re-ran (idempotent: prior ticket reused) and
     // no closure action was synthesized for the 311_filed path.

@@ -351,6 +351,17 @@ export const createTaskUpdate = async (event) => {
     timelineLabel = label;
     notes = parsedNotes;
     photoKeys = parsedPhotos;
+  } else if (
+    type === "additional_action_resolved" ||
+    type === "additional_action_still_present"
+  ) {
+    text = String(input.text || "").trim();
+    if (!text || text.length > MAX_TEXT)
+      return jsonResponse(400, { error: "Invalid action" });
+    resolved = type === "additional_action_resolved";
+    label = resolved ? "Resolved" : "Still present";
+    timelineLabel = "Additional action taken";
+    documentationState = "open_for_documentation";
   } else if (type === "additional_action") {
     text = String(input.text || "").trim();
     const parsedPhotos = photoList(input.photoKeys);

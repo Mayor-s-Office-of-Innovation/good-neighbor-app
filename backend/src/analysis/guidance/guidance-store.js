@@ -17,6 +17,7 @@ import {
   siteMetaKey,
   taskDisplayCounterKey,
   taskKey,
+  taskUpdateKey,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -1535,6 +1536,8 @@ export async function completeTaskWithAppActions(opts) {
     summarizeAppActionResults(executedAppActionResults) === "failed" ||
     (opts.completionMethod === "311_filed" &&
       !hasSubmitted311ActionResult(executedAppActionResults));
+  const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
+  const filingUpdateId = filed311 ? randomUUID() : "";
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1570,6 +1573,14 @@ export async function completeTaskWithAppActions(opts) {
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
     appActionStatus,
     appActionResults,
+    ...(filed311
+      ? {
+          agency: "311",
+          notifiedAt: now,
+          latestUpdateId: filingUpdateId,
+          latestUpdateLabel: "311 ticket filed",
+        }
+      : {}),
     completionLeaseExpiresAt: null,
     updatedAt: now,
     ...taskWorklistDateGsi(
@@ -1601,6 +1612,32 @@ export async function completeTaskWithAppActions(opts) {
             },
           },
         },
+        ...(filed311
+          ? [
+              {
+                Put: {
+                  TableName: opts.tableName,
+                  Item: {
+                    ...taskUpdateKey(
+                      opts.siteId,
+                      opts.taskId,
+                      now,
+                      filingUpdateId,
+                    ),
+                    entityType: "task_update",
+                    taskId: opts.taskId,
+                    updateId: filingUpdateId,
+                    type: "311_ticket_filed",
+                    label: "311 ticket filed",
+                    occurredAt: now,
+                    actorId: "site-team",
+                    documentationState: "closed",
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+            ]
+          : []),
       ],
     }),
   );

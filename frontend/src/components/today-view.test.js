@@ -609,3 +609,32 @@ describe("card deletion events", () => {
     },
   );
 });
+
+describe("in-progress card actions", () => {
+  it("labels 311 request cards as View details", async () => {
+    await import("./today-view.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view");
+    const View = /** @type {any} */ (registration[1]);
+    const view = new View();
+    view._site = { name: "Test site", address: "1 Test St" };
+
+    const card = view._taskCardEntry(
+      {
+        task: {
+          taskId: "task_311",
+          kind: "escalation",
+          title: "311 request",
+        },
+        homeStatus: "in_progress",
+        createdAt: "2026-09-30T16:00:00.000Z",
+      },
+      false,
+    );
+
+    expect(card.markup).toContain("View details");
+    expect(card.markup).not.toContain(">Update<");
+    expect(card.markup).toContain('data-action="update"');
+  });
+});
