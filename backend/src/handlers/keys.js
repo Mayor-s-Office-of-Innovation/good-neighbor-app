@@ -104,6 +104,19 @@ export const taskKey = (siteId, taskId) => ({
 });
 
 /**
+ * One immutable update in a task's in-progress timeline.
+ * @param {string} siteId @param {string} taskId
+ * @param {string} occurredAt @param {string} updateId
+ */
+export const taskUpdateKey = (siteId, taskId, occurredAt, updateId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#UPDATE#${occurredAt}#${updateId}`,
+});
+
+/** Prefix used to read a task's update timeline newest-first. @param {string} taskId */
+export const taskUpdatePrefix = (taskId) => `TASK#${taskId}#UPDATE#`;
+
+/**
  * Site-scoped monotonic counter for human-facing task short IDs.
  * @param {string} siteId
  * @returns {PrimaryKey}

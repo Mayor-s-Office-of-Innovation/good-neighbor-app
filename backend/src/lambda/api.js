@@ -23,6 +23,13 @@ import {
   listTasks,
 } from "../handlers/tasks.js";
 import {
+  createTaskUpdate,
+  documentTaskUpdate,
+  getTaskUpdates,
+  registerTaskUpdateMedia,
+  startTaskProgress,
+} from "../handlers/task-updates.js";
+import {
   cannotDoTask,
   completeTask,
   evaluateAssessment,
@@ -104,6 +111,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
   "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
+  "GET /v1/tasks/{taskId}/updates": getTaskUpdates,
+  "POST /v1/tasks/{taskId}/start-progress": startTaskProgress,
+  "POST /v1/tasks/{taskId}/updates": createTaskUpdate,
+  "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,
+  "POST /v1/tasks/{taskId}/update-media": registerTaskUpdateMedia,
   // Assessment guidance workflow
   "POST /v1/assessments:evaluate": evaluateAssessment,
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,

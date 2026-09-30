@@ -804,7 +804,7 @@ describe("taskAnalysisCard", () => {
       "Updated Tuesday, 9:15 AM",
     );
     expect(updatedCardTime(new Date(2026, 8, 17, 9, 15), now)).toBe(
-      "Updated Sep 17, 9:15 AM",
+      "Updated 09/17/2026, 9:15 AM",
     );
   });
 

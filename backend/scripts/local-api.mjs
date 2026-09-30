@@ -28,6 +28,13 @@ import {
   listTasks,
 } from "../src/handlers/tasks.js";
 import {
+  createTaskUpdate,
+  documentTaskUpdate,
+  getTaskUpdates,
+  registerTaskUpdateMedia,
+  startTaskProgress,
+} from "../src/handlers/task-updates.js";
+import {
   cannotDoTask,
   completeTask,
   evaluateAssessment,
@@ -177,6 +184,7 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}",
     deleteArtifact,
   ),
+  route("POST", "/v1/tasks/{taskId}/update-media", registerTaskUpdateMedia),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",
@@ -190,6 +198,14 @@ const routes = [
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
+  route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
+  route("POST", "/v1/tasks/{taskId}/start-progress", startTaskProgress),
+  route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
+  route(
+    "POST",
+    "/v1/tasks/{taskId}/updates/{updateId}/document",
+    documentTaskUpdate,
+  ),
   // Assessment guidance workflow
   route("POST", "/v1/assessments:evaluate", evaluateAssessment),
   route("GET", "/v1/assessments/{assessmentId}/guidance", getGuidance),

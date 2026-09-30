@@ -1,6 +1,7 @@
 import "./analysis-results.css";
 import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { formatPacificUpdated } from "../domain/task-updates.js";
 
 const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 
@@ -147,6 +148,9 @@ export function taskMediaUrl(task) {
  * @property {string} [ticketStatusDetail]
  * @property {boolean} [ticketResponseOverdue]
  * @property {string} [ticketUpdatedAt]
+ * @property {string} [status]
+ * @property {string} [updatedAt]
+ * @property {string} [latestUpdateLabel]
  */
 
 /**
@@ -532,7 +536,10 @@ export function taskAnalysisCard({
   };
   return completedEvidenceCard(pseudoItem, task.checkId || "", {
     title: displayCategory(task) || task.label || "Condition found",
-    description: task.guidance || task.description || task.category || "",
+    description:
+      task.status === "in_progress" || task.status === "completed"
+        ? task.description || task.guidance || task.category || ""
+        : task.guidance || task.description || task.category || "",
     editableDescription: task.description || "",
     action: action?.label || (includeControls ? "Done" : ""),
     actionVariant: action?.variant || "",
@@ -547,8 +554,8 @@ export function taskAnalysisCard({
     isNew,
     routeType: routeType(task),
     createdAt: task.createdAt || task.created_at || "",
-    footerTimeLabel: task.ticketUpdatedAt
-      ? updatedCardTime(task.ticketUpdatedAt)
+    footerTimeLabel: task.status === "in_progress" && (task.updatedAt || task.ticketUpdatedAt)
+      ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
       : "",
     mediaPlaceholder: action?.kind === "view311" && !mediaUrl,
     shortId: taskDisplayReference(task),
@@ -560,33 +567,7 @@ export function taskAnalysisCard({
  * @param {string | number | Date} [now]
  */
 export function updatedCardTime(value, now = new Date()) {
-  const date = new Date(value);
-  const current = new Date(now);
-  if (Number.isNaN(date.getTime()) || Number.isNaN(current.getTime()))
-    return "";
-  const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const currentDay = new Date(
-    current.getFullYear(),
-    current.getMonth(),
-    current.getDate(),
-  );
-  const daysAgo = Math.round(
-    (currentDay.getTime() - dateDay.getTime()) / 86_400_000,
-  );
-  const dayLabel =
-    daysAgo === 0
-      ? "today"
-      : daysAgo > 0 && daysAgo <= 6
-        ? new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date)
-        : new Intl.DateTimeFormat(undefined, {
-            month: "short",
-            day: "numeric",
-          }).format(date);
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-  return `Updated ${dayLabel}, ${time}`;
+  return formatPacificUpdated(value, new Date(now));
 }
 
 /**
@@ -1036,7 +1017,7 @@ function cardTime(value) {
 
 function routeType(task) {
   if (task?.kind === "escalation") {
-    const status = [
+    const ticketStatus = [
       "New",
       "Accepted",
       "Prioritized",
@@ -1050,6 +1031,7 @@ function routeType(task) {
     ].includes(task.ticketStatus || "")
       ? task.ticketStatus
       : "";
+    const status = task.latestUpdateLabel || ticketStatus;
     return {
       label: "311 request",
       tone: "311",
@@ -1069,8 +1051,20 @@ function routeType(task) {
         String(action?.payload?.phoneNumber || "").replace(/\D/g, "") === "911",
     );
     return emergency
-      ? { label: "Emergency call", tone: "emergency", status: "" }
-      : { label: "Non-emergency call", tone: "non-emergency", status: "" };
+      ? {
+          label: "Emergency call",
+          tone: "emergency",
+          status: task.latestUpdateLabel || "",
+          statusDetail: "",
+          statusTone: task.latestUpdateLabel === "Resolved" ? "closed" : "default",
+        }
+      : {
+          label: "Non-emergency call",
+          tone: "non-emergency",
+          status: task.latestUpdateLabel || "",
+          statusDetail: "",
+          statusTone: task.latestUpdateLabel === "Resolved" ? "closed" : "default",
+        };
   }
   return { label: "On-site action", tone: "onsite", status: "" };
 }

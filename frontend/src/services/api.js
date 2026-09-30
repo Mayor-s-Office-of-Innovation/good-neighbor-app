@@ -326,7 +326,7 @@ export function listProviderSites(cursor = "") {
  * the `idempotency-key` header (not the body), so a replay can't duplicate the
  * header. `siteId` is server-derived.
  * @param {string} checkId
- * @param {{ places?: unknown }} [body]
+ * @param {{ flowType?: "perimeter" | "single-problem" }} [body]
  * @returns {Promise<{ checkId: string, status: string, startedAt?: string }>}
  */
 export function createCheck(checkId, body = {}) {
@@ -551,6 +551,44 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
+export function getTaskUpdates(taskId) {
+  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/updates`);
+}
+
+export function startTaskProgress(taskId, actionLabel) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/start-progress`,
+    {
+      body: { actionLabel },
+      headers: { "idempotency-key": crypto.randomUUID() },
+    },
+  );
+}
+
+export function createTaskUpdate(taskId, body) {
+  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
+    body,
+    headers: { "idempotency-key": crypto.randomUUID() },
+  });
+}
+
+export function documentTaskUpdate(taskId, updateId, body = {}) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/updates/${encodeURIComponent(updateId)}/document`,
+    { body },
+  );
+}
+
+export function registerTaskUpdateMedia(taskId, body) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/update-media`,
+    { body },
+  );
+}
+
 export function get311RequestDetail(taskId, srNum) {
   return request(
     "GET",
@@ -681,6 +719,28 @@ export async function uploadArtifact(
   onLeg?.("register");
 
   done({ artifactId });
+  return { artifactId, s3Key };
+}
+
+/**
+ * Upload documentation for a task update without registering it for analysis.
+ * @param {string} taskId
+ * @param {string} checkId
+ * @param {{ dataUrl: string, capturedAt?: string }} item
+ */
+export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
+  const contentType = contentTypeFromDataUrl(item.dataUrl);
+  const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
+    contentType,
+  });
+  await putMedia(uploadUrl, await dataUrlToBlob(item.dataUrl), contentType);
+  await registerTaskUpdateMedia(taskId, {
+    checkId,
+    artifactId,
+    s3Key,
+    contentType,
+    ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
+  });
   return { artifactId, s3Key };
 }
 

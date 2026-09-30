@@ -10,6 +10,7 @@
   "ticketdetailclosed" event carrying the task id and the original trigger so
   the host can return focus to the right card button.
 */
+import "./timeline.css";
 import "./ticket-detail-dialog.css";
 import { get311RequestDetail } from "../services/api.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";

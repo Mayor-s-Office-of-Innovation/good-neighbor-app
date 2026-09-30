@@ -36,6 +36,7 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
+  startTaskProgress,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -122,6 +123,7 @@ import {
   summaryBlock,
 } from "./today-view.templates.js";
 import "./ticket-detail-dialog.js";
+import "./task-update-dialog.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
@@ -184,6 +186,8 @@ class TodayView extends HTMLElement {
     this._startingCapture = false;
     /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
     this._ticketDetailDialog = null;
+    /** @type {any} */
+    this._taskUpdateDialog = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
   }
@@ -312,18 +316,21 @@ class TodayView extends HTMLElement {
         completingTasksResult,
         completedTasksResult,
         cannotDoTasksResult,
+        inProgressTasksResult,
       ] = await Promise.all([
         listChecks({ limit: 30 }),
         listTasks({ status: "open", limit: 50 }),
         listTasks({ status: "completing", limit: 50 }),
         listTasks({ status: "completed", limit: 50 }),
         listTasks({ status: "cannot_do", limit: 50 }),
+        listTasks({ status: "in_progress", limit: 50 }),
       ]);
       tasks = uniqueTasks([
         ...(openTasksResult.tasks || []),
         ...(completingTasksResult.tasks || []),
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
+        ...(inProgressTasksResult.tasks || []),
       ]);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
@@ -519,6 +526,7 @@ class TodayView extends HTMLElement {
     this._restoreLogoutDialog();
     this._restoreAttributionsDialog();
     this._mountTicketDetailDialog();
+    this._mountTaskUpdateDialog();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -777,6 +785,25 @@ class TodayView extends HTMLElement {
     );
   }
 
+  _mountTaskUpdateDialog() {
+    if (!this._taskUpdateDialog) {
+      const dialog = document.createElement("task-update-dialog");
+      dialog.addEventListener("taskupdated", () => {
+        void this.connectedCallback();
+      });
+      dialog.addEventListener("taskupdateclosed", () => {
+        void this.connectedCallback();
+      });
+      this._taskUpdateDialog = dialog;
+    }
+    this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
+  }
+
+  _openTaskUpdate(task) {
+    this._mountTaskUpdateDialog();
+    void this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
+  }
+
   _closeSettingsMenu() {
     if (!this._settingsMenuOpen) return;
     this._settingsMenuOpen = false;
@@ -861,9 +888,8 @@ class TodayView extends HTMLElement {
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
-            : entry.homeStatus === "in_progress" &&
-                submitted311Ticket(entry.task)
-              ? { kind: "view311", label: "View details", variant: "outline" }
+            : entry.homeStatus === "in_progress"
+              ? { kind: "update", label: "Update", variant: "outline" }
               : null,
         statusLabel: isNew
           ? this._newTaskStatusMeta(entry)
@@ -1731,7 +1757,20 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "view311") {
+    const label = btn.textContent?.trim() || "";
+    const startsProgress = [
+      "We called SFPD non-emergency",
+      "We called 911",
+      "We called SFACC",
+      "We called 311",
+    ].includes(label);
+    if (startsProgress) {
+      this._run(card, () => startTaskProgress(task.taskId, label)).then((ok) => {
+        if (ok) this.connectedCallback();
+      });
+    } else if (action === "update") {
+      this._openTaskUpdate(task);
+    } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
       this._run(card, () =>

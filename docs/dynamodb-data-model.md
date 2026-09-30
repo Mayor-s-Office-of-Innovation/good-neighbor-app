@@ -76,12 +76,13 @@ without a separate timestamp in the key.
 | Site config | `SITE#<siteId>` | `#META` | name, display address + `addressParts`, `contactPerson`, centrally managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, timezone, setup state, `providerShortCode`, `siteShortCode`. Uploaded compliance letters retain a private S3 key; client-facing admin responses mint short-lived download URLs. |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; JWT usually avoids the lookup |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | label, lastSeenAt, token generation, and `accessLevel` (`general` or `admin`) copied from the setup code |
-| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, issueCount, maxSeverity; **+ synthesized scorecard and `photoCount` / `textCount` / `evidenceKind` at `complete`** (see note) |
+| **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status, startedAt, `flowType` (`perimeter` or `single-problem`), issueCount, maxSeverity; **+ synthesized scorecard and `photoCount` / `textCount` / `evidenceKind` at `complete`** (see note) |
 | **Artifact** (per photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType (see note on pre-ADR-0014 rows) |
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
 | **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
+| **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only in-progress timeline event: type, label, actorId, notes/text, photo artifact IDs, optional presence period, documentation state |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | monotonic `nextTaskDisplayNumber` used to mint task `shortId` values |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch s), `lastExportId`, `updatedAt` — the incremental-export cursor maintained by the scheduled export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)) |
 
@@ -100,6 +101,13 @@ item): `appActions` (the structured rule actions), `appActionResults` (one resul
 action), `appActionStatus` (rollup), and `maxAcceptableResponseHours` (the rule-versioned
 response window; zero disables overdue assessment). Result shapes (`code` from
 `backend/src/analysis/guidance/app-actions.js`):
+
+In-progress tasks additionally carry `inProgressAt` / `notifiedAt`, an agency
+snapshot, `latestUpdateId` / `latestUpdateLabel`, and
+`lastAnsweredPresencePeriod`. Four-hour presence periods are always derived
+from the immutable `inProgressAt`. Task-update photos reuse ART rows with
+`purpose: "task_update"`; registration intentionally bypasses SQS/analyzer
+dispatch, while the event stores the artifact IDs used for authorized media reads.
 
 Task `shortId` is the human-facing reference shown on staff cards. New tasks mint it as
 `<providerShortCode>-<siteShortCode>-<nnn>`, where the short-code attributes are explicit
@@ -170,6 +178,7 @@ header, every artifact, and every analysis together.
 | AP15 | Conditions of one assessment | `Query` base `SITE#x`, `begins_with(sk,"ASSESSMENT#<id>#COND#")` |
 | AP16 | Unresolved conditions | `Query` **GSI5** `SITE#x#CONDITION#UNRESOLVED` |
 | AP17 | Guidance read / answers | `GetItem` assessment + condition, `UpdateItem` on answer |
+| AP18 | Read one task's update timeline | `GetItem` task + `Query` base `SITE#x`, `begins_with(sk,"TASK#<taskId>#UPDATE#")`, newest-first |
 
 ### Task ownership & escalation — scope (decided 2026-08-12)
 
