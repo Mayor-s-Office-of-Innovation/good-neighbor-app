@@ -9,7 +9,10 @@
   display: flex;
   flex-direction: column;
   flex: 1 0 auto;
+  width: min(100%, 34.375rem);
+  max-width: none;
   gap: 1.75rem;
+  margin-inline: auto;
   padding-top: 1rem;
   padding-bottom: 2rem;
 }
@@ -19,7 +22,7 @@
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 1rem;
-  width: min(100%, 30rem);
+  width: 100%;
   margin-inline: auto;
 }
 
@@ -65,17 +68,19 @@
 }
 
 .describe__heading {
+  width: 100%;
   min-width: 0;
   text-align: center;
 }
 
 .describe__main {
   display: flex;
-  flex: 1 1 auto;
+  flex: none;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 2rem;
+  width: 100%;
 }
 
 .describe__close-icon--back {
@@ -100,19 +105,20 @@
 }
 
 .describe__subtitle {
-  max-width: 24rem;
+  width: 100%;
   margin: 0.25rem auto 0;
   color: var(--text-secondary);
   font-size: 1rem;
   line-height: 1.6;
-  text-wrap: balance;
+  text-align: center;
+  text-wrap: pretty;
 }
 
 .describe__card {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  width: min(100%, 25.75rem);
+  width: 100%;
   margin: 0 auto;
   padding: 0.625rem 1rem 1.375rem;
   border-radius: 1.5rem;

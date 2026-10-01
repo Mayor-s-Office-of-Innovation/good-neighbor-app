@@ -29,6 +29,7 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
 */
 
 const MIN_PHOTOS = 1;
+const RECOMMENDED_PHOTOS = 3;
 
 test.describe("perimeter check", () => {
   test("an all-clear check remains visible on home after finishing", async ({
@@ -71,7 +72,9 @@ test.describe("perimeter check", () => {
       'section[aria-label="Analyzing evidence"]',
     );
 
-    await expect(photoCount).toHaveText(`0 of ${MIN_PHOTOS} photos taken`);
+    await expect(photoCount).toHaveText(
+      `0 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+    );
     await expect(done).toBeDisabled();
 
     // --- Photo 1: the issues scene ----------------------------------------
@@ -80,8 +83,10 @@ test.describe("perimeter check", () => {
 
     // Upload leg: the photo tile lands in the roll.
     await expect(shots).toHaveCount(1, { timeout: 30_000 });
-    await expect(photoCount).toHaveText(`1 of ${MIN_PHOTOS} photos taken`);
-    await expect(progress).toContainText("Ready to finish.");
+    await expect(photoCount).toHaveText(
+      `1 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+    );
+    await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
 
     // Analyzer + guidance legs: the multi fixture's three conditions resolve
@@ -97,7 +102,7 @@ test.describe("perimeter check", () => {
 
     // The first photo satisfies the completion rule.
     await expect(photoCount).toHaveText(
-      `${MIN_PHOTOS} of ${MIN_PHOTOS} photos taken`,
+      `${MIN_PHOTOS} of ${RECOMMENDED_PHOTOS} recommended photos taken`,
     );
 
     // Wait for the photo's analysis to finish. An issue check must not add a

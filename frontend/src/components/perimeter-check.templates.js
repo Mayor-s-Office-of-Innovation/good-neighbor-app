@@ -8,7 +8,7 @@
   analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   analysisDialogs,
   analysisResultsTray,
@@ -95,14 +95,13 @@ export const shell = () => html`
 /**
  * Stacked capture status under the title. The description minimum is
  * instructional copy; the existing completion rule is unchanged.
- * @param {{ photos: number, texts: number, complete: boolean }} status
+ * @param {{ photos: number }} status
  * @returns {string}
  */
-export function progressLine({ photos, texts, complete }) {
+export function progressLine({ photos }) {
   return (
-    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
-    `<span>Try to take at least 3-5 photos</span>` +
-    (complete && texts === 0 ? `<span>Ready to finish.</span>` : "")
+    `<strong>${photos} of ${RECOMMENDED_PERIMETER_PHOTOS} recommended photos taken</strong>` +
+    `<span>We recommend taking at least 3 photos in a perimeter check.</span>`
   );
 }
 

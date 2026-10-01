@@ -355,7 +355,7 @@ class ProblemReport extends HTMLElement {
   _syncControls() {
     const submit = this.querySelector("#submit-report");
     if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = false;
+    submit.disabled = !hasEvidence(getCurrentCheck());
   }
 
   /** @returns {Promise<void>} */

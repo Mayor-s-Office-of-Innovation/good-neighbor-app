@@ -21,6 +21,9 @@
 
 export const MIN_PERIMETER_PHOTOS = 1;
 
+/** Recommended coverage for a perimeter check; completion still requires one. */
+export const RECOMMENDED_PERIMETER_PHOTOS = 3;
+
 /** Minimum trimmed length for a perimeter description to count as evidence. */
 export const MIN_DESCRIPTION_LENGTH = 20;
 
