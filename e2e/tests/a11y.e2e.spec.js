@@ -2,7 +2,8 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { test, expect } from "@playwright/test";
 import { test as harnessTest } from "../helpers/harness.js";
-import { startCheck, openHistoryWithTrays } from "../helpers/app.js";
+import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
+import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
   Automated accessibility scans (axe-core) inside the existing e2e suite.
@@ -157,6 +158,19 @@ test.describe("bound app", () => {
         await expect(page.locator("#add-photo")).toBeVisible();
         await settle(page);
         assertClean(await scan(page), `capture view (${scheme})`);
+      });
+
+      harnessTest(`a11y: photo lightbox (${scheme})`, async ({ page }) => {
+        await startCheck(page);
+        await addPhoto(page, PHOTO_CLEAR);
+        const thumbnail = page.locator(".shot [data-photo-lightbox]");
+        await expect(thumbnail).toBeVisible({ timeout: 30_000 });
+        await thumbnail.click();
+        await expect(
+          page.getByRole("dialog", { name: "Photo viewer" }),
+        ).toBeVisible();
+        await settle(page);
+        assertClean(await scan(page), `photo lightbox (${scheme})`);
       });
 
       harnessTest(`a11y: site admin (${scheme})`, async ({ page }) => {
