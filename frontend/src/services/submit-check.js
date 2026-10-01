@@ -13,10 +13,7 @@
   finalization idempotently on every load until the completed header lands.
 */
 import { waitForAnalyses, completeCheck } from "./api.js";
-import {
-  checkItems,
-  itemCountsTowardCompletion,
-} from "../domain/check-completion.js";
+import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
 import { startRun, span, mark } from "./instrument.js";
 
 const pendingScorecardFinalizations = new Map();
@@ -154,14 +151,7 @@ async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
  * @returns {number}
  */
 export function expectedArtifactCountForCheck(check) {
-  return checkItems(check).filter(
-    (item) =>
-      itemCountsTowardCompletion(item) &&
-      (item?.kind === "text" ||
-        item?.dataUrl ||
-        item?.upload?.artifactId ||
-        item?.analysis?.artifactId),
-  ).length;
+  return checkItems(check).filter((item) => itemHasLiveEvidence(item)).length;
 }
 
 export function finalizeCaptureScorecardInBackground(

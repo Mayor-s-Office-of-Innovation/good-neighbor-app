@@ -3,7 +3,7 @@ import { analysisResultsTray } from "./analysis-results.templates.js";
 import { analysisDialogs } from "./analysis-results.templates.js";
 
 export const shell = ({ title = "Flag a single issue" } = {}) => html`
-  <div class="flow view-check check single-issue">
+  <div class="flow view-check check check-timeline single-issue">
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">
@@ -12,7 +12,9 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
       </button>
     </div>
 
-    <h1 class="single-issue__title" tabindex="-1">${escapeHtml(title)}</h1>
+    <h1 class="check-timeline__title single-issue__title" tabindex="-1">
+      ${escapeHtml(title)}
+    </h1>
 
     <div
       class="shotgrid"
@@ -21,7 +23,7 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
     ></div>
 
     <button
-      class="check__describe single-issue__describe"
+      class="btn-outline check-roll__describe"
       id="describe-instead"
       type="button"
     >
@@ -38,11 +40,18 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
       capture="environment"
     />
 
-    <div class="check__actions">
-      <button class="check__next" id="submit-report" type="button">Done</button>
-    </div>
-
     <div class="single-issue__analysis" id="single-issue-analysis"></div>
+
+    <div class="check-timeline__footer">
+      <button
+        class="check-timeline__done"
+        id="submit-report"
+        type="button"
+        disabled
+      >
+        Done
+      </button>
+    </div>
 
     <dialog
       class="sheet"
