@@ -7,12 +7,9 @@
   site list (today-view.templates.js).
 */
 
-site-switcher {
-  align-self: center;
-}
-
 .home-site-switcher {
   position: relative;
+  align-self: center;
   z-index: 4;
 }
 
