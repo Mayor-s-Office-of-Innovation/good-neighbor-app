@@ -89,6 +89,9 @@ export class SiteSetup extends HTMLElement {
       e.preventDefault();
       this._validate();
     });
+    this._continue.addEventListener("pointerdown", (event) =>
+      this._submitOnTouch(/** @type {PointerEvent} */ (event)),
+    );
     // <wa-otp-input> owns per-segment typing, arrow-key nav, backspace, and
     // paste internally — we only react to the resulting value. `wa-complete`
     // fires once all six segments are filled.
@@ -98,6 +101,19 @@ export class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
+  }
+
+  /**
+   * Mobile browsers can blur the OTP and reflow the keyboard-compacted layout
+   * before dispatching the resulting click. Submit on the initial touch so a
+   * valid code advances on that same gesture; mouse and keyboard users retain
+   * the form's native submit path.
+   * @param {PointerEvent} event
+   */
+  _submitOnTouch(event) {
+    if (event.pointerType !== "touch" || event.button !== 0) return;
+    event.preventDefault();
+    this._form?.requestSubmit();
   }
 
   _cancelSwitch() {

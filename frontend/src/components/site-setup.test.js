@@ -74,6 +74,36 @@ describe("setup code URLs", () => {
 });
 
 describe("site-switch validation", () => {
+  it("submits on the first touch before keyboard dismissal can cancel the click", () => {
+    const component = new SiteSetup();
+    component._form = { requestSubmit: vi.fn() };
+    const event = {
+      pointerType: "touch",
+      button: 0,
+      preventDefault: vi.fn(),
+    };
+
+    component._submitOnTouch(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(component._form.requestSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("leaves mouse activation on the native form-submit path", () => {
+    const component = new SiteSetup();
+    component._form = { requestSubmit: vi.fn() };
+    const event = {
+      pointerType: "mouse",
+      button: 0,
+      preventDefault: vi.fn(),
+    };
+
+    component._submitOnTouch(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(component._form.requestSubmit).not.toHaveBeenCalled();
+  });
+
   it("does not register or bind a site after cancellation during validation", async () => {
     let releaseValidation = () => {};
     setup.validateSetupCode.mockImplementation(
