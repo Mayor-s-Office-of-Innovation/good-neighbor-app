@@ -13,6 +13,9 @@
 - **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the authoritative item shapes,
   keys, GSIs, access patterns, identity model, and metric definitions for the single-table
   store.
+- **[dynamodb-sample-records.md](./dynamodb-sample-records.md)** — one check's records as
+  JSON: header, artifact, analysis, assessment, condition, and task, with the keys that
+  tie them together.
 - **[perimeter-check-data-flow.md](./perimeter-check-data-flow.md)** — a worked end-to-end
   walkthrough of one perimeter check: user actions, the analyzer call and what we do with
   its response, the DynamoDB record at each write point (with realistic sample data), the
