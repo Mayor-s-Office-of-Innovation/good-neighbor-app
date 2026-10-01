@@ -510,6 +510,7 @@ export function taskAnalysisCard({
     id: task.taskId || "",
     kind: mediaUrl || action?.kind === "view311" ? "photo" : "text",
     dataUrl: mediaUrl,
+    fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
     placeName: placeName || siteName || "Site",
     georeferencedAddress:
@@ -970,6 +971,7 @@ function imagePreview(item) {
       <button
         type="button"
         data-photo-lightbox
+        data-full-src="${escapeAttr(item.fullDataUrl || item.dataUrl)}"
         data-photo-address="${escapeAttr(address)}"
         data-photo-time="${escapeAttr(capturedAt)}"
       >

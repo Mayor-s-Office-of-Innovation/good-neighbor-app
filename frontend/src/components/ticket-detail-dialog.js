@@ -84,6 +84,19 @@ class TicketDetailDialog extends HTMLElement {
    */
   updateTask(task) {
     if (!task || !this._task || task.taskId !== this._task.taskId) return;
+    if (document.querySelector("photo-lightbox dialog[open]")) {
+      this._pendingTask = task;
+      document.addEventListener(
+        "photolightboxclosed",
+        () => {
+          const pendingTask = this._pendingTask;
+          this._pendingTask = null;
+          this.updateTask(pendingTask);
+        },
+        { once: true },
+      );
+      return;
+    }
     this._task = task;
     if (this._detail) {
       this._detail = { ...this._detail, mediaUrl: taskMediaUrl(task) };
@@ -147,3 +160,5 @@ class TicketDetailDialog extends HTMLElement {
 }
 
 customElements.define("ticket-detail-dialog", TicketDetailDialog);
+
+export { TicketDetailDialog };

@@ -75,5 +75,12 @@ test.describe("photo lightbox", () => {
     await page.mouse.click(Math.max(1, box.x - 8), box.y + box.height / 2);
     await expect(dialog).toBeHidden();
     await expect(thumbnail).toBeFocused();
+
+    await thumbnail.click();
+    await expect(dialog).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/check$/);
+    await expect(dialog).toBeHidden();
+    await expect(thumbnail).toBeFocused();
   });
 });

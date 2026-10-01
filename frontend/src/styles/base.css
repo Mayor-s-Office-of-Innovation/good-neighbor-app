@@ -161,7 +161,7 @@ body:has(dialog:modal) {
 
 [data-photo-lightbox]:focus-visible {
   outline: 3px solid var(--focus-ring, var(--wa-color-primary-60));
-  outline-offset: 3px;
+  outline-offset: -3px;
 }
 
 /* ---- App shell ----

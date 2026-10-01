@@ -45,3 +45,29 @@ describe("buildTicketDetail", () => {
     expect(typeof detail.location).toBe("string");
   });
 });
+
+describe("ticket evidence hydration", () => {
+  it("defers a dialog rerender until an open photo lightbox closes", async () => {
+    const listeners = new Map();
+    vi.stubGlobal("document", {
+      querySelector: vi.fn().mockReturnValueOnce({}).mockReturnValue(null),
+      addEventListener: vi.fn((type, listener) =>
+        listeners.set(type, listener),
+      ),
+    });
+    const { TicketDetailDialog } = await import("./ticket-detail-dialog.js");
+    const dialog = new TicketDetailDialog();
+    dialog._task = { taskId: "task-1", mediaUrl: "old.jpg" };
+    dialog._detail = { mediaUrl: "old.jpg" };
+    Object.defineProperty(dialog, "isConnected", { value: true });
+    dialog._render = vi.fn();
+
+    dialog.updateTask({ taskId: "task-1", mediaUrl: "new.jpg" });
+
+    expect(dialog._detail.mediaUrl).toBe("old.jpg");
+    expect(dialog._render).not.toHaveBeenCalled();
+    listeners.get("photolightboxclosed")();
+    expect(dialog._detail.mediaUrl).toBe("new.jpg");
+    expect(dialog._render).toHaveBeenCalledOnce();
+  });
+});

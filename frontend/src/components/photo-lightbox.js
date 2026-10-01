@@ -3,12 +3,14 @@ import {
   formatPhotoDateTime,
   photoLocation,
 } from "../domain/photo-lightbox.js";
+import { openOverlayDialog } from "../dialog-history.js";
 
 class PhotoLightbox extends HTMLElement {
   constructor() {
     super();
     /** @type {HTMLElement | null} */
     this._trigger = null;
+    this._source = "";
   }
 
   connectedCallback() {
@@ -16,7 +18,7 @@ class PhotoLightbox extends HTMLElement {
       <figure class="photo-lightbox__figure">
         <div class="photo-lightbox__image-wrap">
           <img class="photo-lightbox__image" alt="" />
-          <button class="photo-lightbox__close" type="button" aria-label="Close photo viewer">×</button>
+          <button class="photo-lightbox__close" type="button" aria-label="Close photo viewer"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
         </div>
         <figcaption class="photo-lightbox__caption"></figcaption>
       </figure>
@@ -49,6 +51,7 @@ class PhotoLightbox extends HTMLElement {
     );
     if (!(image instanceof HTMLImageElement) || !caption) return;
     this._trigger = photo.trigger || null;
+    this._source = photo.src;
     image.src = photo.src;
     image.alt = photo.alt || "Full-size photo";
     const address = photoLocation(
@@ -60,7 +63,7 @@ class PhotoLightbox extends HTMLElement {
       : "";
     caption.textContent = [address, timestamp].filter(Boolean).join(" · ");
     caption.hidden = !caption.textContent;
-    this._dialog.showModal();
+    openOverlayDialog(this._dialog, "photo-lightbox");
     /** @type {HTMLElement | null} */ (
       this.querySelector(".photo-lightbox__close")
     )?.focus();
@@ -71,8 +74,25 @@ class PhotoLightbox extends HTMLElement {
   }
 
   _restoreFocus() {
-    if (this._trigger?.isConnected) this._trigger.focus();
+    const trigger = this._trigger?.isConnected
+      ? this._trigger
+      : [...document.querySelectorAll("[data-photo-lightbox]")].find(
+          (candidate) => {
+            const image = candidate.querySelector("img");
+            return (
+              (candidate.getAttribute("data-full-src") ||
+                (image instanceof HTMLImageElement
+                  ? image.currentSrc || image.src
+                  : "")) === this._source
+            );
+          },
+        );
+    if (trigger instanceof HTMLElement) trigger.focus();
     this._trigger = null;
+    this._source = "";
+    this.dispatchEvent(
+      new CustomEvent("photolightboxclosed", { bubbles: true }),
+    );
   }
 }
 
@@ -84,6 +104,8 @@ customElements.define("photo-lightbox", PhotoLightbox);
  * @param {HTMLElement} trigger
  */
 export function openPhotoLightbox(host, trigger) {
+  if (!host.isConnected || !trigger.isConnected || !host.contains(trigger))
+    return;
   const image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;
   const existing = host.querySelector("photo-lightbox");

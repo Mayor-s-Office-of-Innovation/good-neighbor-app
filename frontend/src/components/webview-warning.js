@@ -3,6 +3,7 @@ import { reportClientEvent } from "../services/error-report.js";
 
 /** @param {HTMLElement} root */
 export function showWebviewWarning(root) {
+  if (!root.isConnected || root.querySelector(".webview-banner")) return;
   reportClientEvent("in_app_browser", "in-app webview detected at boot", {});
   const host = root.querySelector(".app__main") || root;
   host.insertAdjacentHTML(
