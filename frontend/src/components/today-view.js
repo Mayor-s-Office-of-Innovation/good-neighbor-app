@@ -929,17 +929,17 @@ class TodayView extends HTMLElement {
         this._showLocationDialog();
         return;
       }
-      // Routed capture: navigate so the flow has a real URL. The routed
-      // component bootstraps itself (resume-or-start) from IndexedDB on
-      // connect; today-view keeps no capture phase state.
-      if (flowType === "single-problem") {
-        navigate("/problem");
-      } else {
-        navigate("/check");
-      }
+      this._enterCaptureRoute(flowType);
     } finally {
       this._startingCapture = false;
     }
+  }
+
+  _enterCaptureRoute(flowType) {
+    // Routed capture: navigate so the flow has a real URL. The routed
+    // component bootstraps itself (resume-or-start) from IndexedDB on
+    // connect; today-view keeps no capture phase state.
+    navigate(flowType === "single-problem" ? "/problem" : "/check");
   }
 
   _scrollCaptureStartIntoView() {
@@ -1084,7 +1084,9 @@ class TodayView extends HTMLElement {
 
   /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
   _onLocationStay({ prompt }) {
-    if (prompt) void this._startCapture(prompt.flowType, prompt.launcher);
+    // The user explicitly confirmed the bound site is correct. Rechecking the
+    // same out-of-radius fix here would immediately reopen the prompt.
+    if (prompt) this._enterCaptureRoute(prompt.flowType);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
