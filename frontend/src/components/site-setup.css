@@ -199,28 +199,31 @@
   /* Mobile keyboards and their password/formatting accessory bars can cover
      nearly half the screen without changing the layout viewport. Once a login
      field has focus, stop centering the full-height composition and compact it
-     into the unobscured upper portion instead. */
-  .login:has(.login__otp:focus-within) {
+     into the unobscured upper portion instead. Keep that layout while Continue
+     is pressed so blurring the OTP cannot move the button out from under the
+     same tap before its click is delivered. */
+  .login:has(.login__otp:focus-within, .login__continue:active) {
     padding-block: max(1rem, env(safe-area-inset-top))
       max(2rem, env(safe-area-inset-bottom));
   }
 
-  .login:has(.login__otp:focus-within) .login__panel {
+  .login:has(.login__otp:focus-within, .login__continue:active) .login__panel {
     gap: 1rem;
   }
 
-  .login:has(.login__otp:focus-within) .login__mark {
+  .login:has(.login__otp:focus-within, .login__continue:active) .login__mark {
     width: 80px;
     height: 80px;
   }
 
-  .login:has(.login__otp:focus-within) .login__copy h1,
-  .login:has(.login__otp:focus-within) .login__copy p {
+  .login:has(.login__otp:focus-within, .login__continue:active) .login__copy h1,
+  .login:has(.login__otp:focus-within, .login__continue:active) .login__copy p {
     font-size: 1.35rem;
     line-height: 1.4;
   }
 
-  .login:has(.login__otp:focus-within) .login__otp::part(segments) {
+  .login:has(.login__otp:focus-within, .login__continue:active)
+    .login__otp::part(segments) {
     padding-block: 0.5rem;
   }
 }
