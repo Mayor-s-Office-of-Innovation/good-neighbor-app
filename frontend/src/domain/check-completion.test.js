@@ -7,7 +7,9 @@ import {
   checkItems,
   completionStatus,
   hasEvidence,
+  hasLiveEvidence,
   isPerimeterCheckComplete,
+  itemHasLiveEvidence,
   itemCountsTowardCompletion,
   photoCount,
   textCount,
@@ -82,6 +84,7 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
 
   it("a permanently failed item with no registered artifact does not count", () => {
     expect(itemCountsTowardCompletion(DEAD_PHOTO)).toBe(false);
+    expect(itemHasLiveEvidence(DEAD_PHOTO)).toBe(false);
   });
 
   it("an in-flight item (idle/queued/analyzing) counts", () => {
@@ -154,7 +157,29 @@ describe("itemCountsTowardCompletion (live evidence only)", () => {
       { ...DEAD_PHOTO, id: "dead-2" },
     ];
     expect(hasEvidence(check)).toBe(true);
+    expect(hasLiveEvidence(check)).toBe(false);
     expect(photoCount(check)).toBe(0);
+  });
+
+  it("registered evidence remains live when its analysis fails", () => {
+    const check = { items: [REGISTERED_BUT_FAILED] };
+    expect(hasLiveEvidence(check)).toBe(true);
+    expect(itemHasLiveEvidence(REGISTERED_BUT_FAILED)).toBe(true);
+  });
+
+  it("rechecks live evidence after an item fails", () => {
+    const item = {
+      id: "changing",
+      kind: "photo",
+      dataUrl: "data:,",
+      analysis: { status: "analyzing" },
+    };
+    const check = { items: [item] };
+    expect(hasLiveEvidence(check)).toBe(true);
+
+    item.analysis.status = "failed";
+    expect(hasEvidence(check)).toBe(true);
+    expect(hasLiveEvidence(check)).toBe(false);
   });
 });
 

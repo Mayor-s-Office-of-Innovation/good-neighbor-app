@@ -61,7 +61,7 @@ async function buildDescribeInstead({
 } = {}) {
   getFlowType.mockReturnValue(flowType);
   await import("./describe-instead.js");
-  const { MIN_DESCRIPTION_LENGTH, MIN_TEXT_EVIDENCE_LENGTH } = await import(
+  const { MIN_DESCRIPTION_LENGTH } = await import(
     "../domain/check-completion.js"
   );
   const define = /** @type {any} */ (globalThis.customElements).define;
@@ -71,10 +71,7 @@ async function buildDescribeInstead({
   if (!DescribeInstead) throw new Error("describe-instead was not registered");
   const element = Object.create(DescribeInstead.prototype);
   element._flowType = flowType;
-  element._minLength =
-    flowType === "perimeter"
-      ? MIN_DESCRIPTION_LENGTH
-      : MIN_TEXT_EVIDENCE_LENGTH;
+  element._minLength = MIN_DESCRIPTION_LENGTH;
   element._existing = existing;
   element._savedText = existing?.text || "";
   element._routeBase = flowType === "single-problem" ? "/problem" : "/check";
@@ -111,10 +108,7 @@ describe("describe-instead (single-problem)", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("refuses a note below the analyzer's 5-character text minimum", async () => {
-    // The backend rejects text artifacts under 5 chars permanently — the
-    // single-problem flow must not file one (perimeter uses its own 20-char
-    // minimum, covered in the describe block below).
+  it("refuses a note below the 20-character description minimum", async () => {
     const element = await buildDescribeInstead();
     element._text = "hi";
 

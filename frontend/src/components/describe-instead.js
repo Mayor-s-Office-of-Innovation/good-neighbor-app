@@ -22,7 +22,6 @@ import {
 } from "../state/check-session.js";
 import {
   MIN_DESCRIPTION_LENGTH,
-  MIN_TEXT_EVIDENCE_LENGTH,
   textItems,
 } from "../domain/check-completion.js";
 import {
@@ -48,13 +47,7 @@ class DescribeInstead extends HTMLElement {
     this._flowType = getFlowType();
     this._routeBase =
       this._flowType === "single-problem" ? "/problem" : "/check";
-    // The perimeter description must describe the whole area, so it carries a
-    // minimum length; a single-issue note only has to clear the backend's
-    // text-artifact minimum (the analyzer rejects shorter text permanently).
-    this._minLength =
-      this._flowType === "perimeter"
-        ? MIN_DESCRIPTION_LENGTH
-        : MIN_TEXT_EVIDENCE_LENGTH;
+    this._minLength = MIN_DESCRIPTION_LENGTH;
     this._existing =
       this._flowType === "perimeter" ? textItems(check)[0] || null : null;
     this._savedText = this._existing?.text || "";

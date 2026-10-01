@@ -32,7 +32,7 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
 import { isFiled311Completion } from "../domain/task-actions.js";
-import { hasEvidence } from "../domain/check-completion.js";
+import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -355,15 +355,14 @@ class ProblemReport extends HTMLElement {
   _syncControls() {
     const submit = this.querySelector("#submit-report");
     if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = false;
+    submit.disabled = !hasLiveEvidence(getCurrentCheck());
   }
 
   /** @returns {Promise<void>} */
   async _done() {
     const check = getCurrentCheck();
-    if (!hasEvidence(getCurrentCheck())) {
-      clearCheck();
-      this._exitCapture();
+    if (!hasLiveEvidence(check)) {
+      this._syncControls();
       return;
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
