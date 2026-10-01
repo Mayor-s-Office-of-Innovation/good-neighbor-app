@@ -45,6 +45,33 @@ test.describe("back button handling", () => {
     ).toBeVisible();
   });
 
+  test("staying at the current site unwinds the location prompt before capture", async ({
+    page,
+  }) => {
+    await page.context().setGeolocation({
+      latitude: 37.78,
+      longitude: -122.4194,
+    });
+    await page.reload();
+    await expect(page.locator("#start-check")).toBeVisible();
+
+    await page.locator("#start-check").click();
+    const locationDialog = page.getByRole("dialog", {
+      name: "Is your app set to the right location?",
+    });
+    await expect(locationDialog).toBeVisible();
+    await expect(page).toHaveURL(/\/today#location$/);
+
+    await page
+      .getByRole("button", { name: "I'm in the right location" })
+      .click();
+    await expect(page).toHaveURL(/\/check$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/today$/);
+    await expect(locationDialog).toBeHidden();
+  });
+
   test("system back closes an open dialog and strips its #hash", async ({
     page,
   }) => {
