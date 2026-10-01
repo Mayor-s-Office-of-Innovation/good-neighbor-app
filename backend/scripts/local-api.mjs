@@ -32,7 +32,6 @@ import {
   documentTaskUpdate,
   getTaskUpdates,
   registerTaskUpdateMedia,
-  startTaskProgress,
 } from "../src/handlers/task-updates.js";
 import {
   cannotDoTask,
@@ -199,7 +198,6 @@ const routes = [
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
-  route("POST", "/v1/tasks/{taskId}/start-progress", startTaskProgress),
   route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
   route(
     "POST",

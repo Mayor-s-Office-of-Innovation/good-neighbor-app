@@ -1,16 +1,72 @@
 import { describe, expect, it } from "vitest";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
 import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
+import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
 import {
   buildCatalog,
   parsePredicate,
   parseSeverityRange,
+  parseValidTimeRange,
   questionKeyForPrompt,
   validateCatalog,
 } from "./rule-catalog.js";
 import { resolveCategory } from "./category-resolver.js";
 
 describe("actions/escalations v2 catalog", () => {
+  it("loads and validates the time-aware v4 rubric", () => {
+    expect(actionsEscalationsV4Catalog.rules).toHaveLength(36);
+    expect(validateCatalog(actionsEscalationsV4Catalog)).toEqual([]);
+    expect(
+      actionsEscalationsV4Catalog.rules.filter((rule) => rule.canBeInProgress),
+    ).toHaveLength(33);
+    expect(
+      actionsEscalationsV4Catalog.rules.find(
+        (rule) => rule.ruleId === "ANIMAL-3",
+      ),
+    ).toMatchObject({
+      validTimeRange: {
+        kind: "daily",
+        startMinute: 0,
+        endMinute: 5 * 60 + 59,
+        timeZone: "America/Los_Angeles",
+      },
+      canBeInProgress: true,
+    });
+  });
+
+  it("parses inclusive daily and overnight time ranges", () => {
+    expect(parseValidTimeRange("24 hours")).toEqual({ kind: "always" });
+    expect(parseValidTimeRange("23:00-05:59")).toMatchObject({
+      kind: "daily",
+      startMinute: 23 * 60,
+      endMinute: 5 * 60 + 59,
+    });
+    expect(() => parseValidTimeRange("24:00-25:00")).toThrow(
+      "Invalid valid time range",
+    );
+  });
+
+  it("rejects a fully answered rubric path with a time coverage gap", () => {
+    const catalog = {
+      ...actionsEscalationsV4Catalog,
+      rules: actionsEscalationsV4Catalog.rules.map((rule) =>
+        rule.ruleId === "ANIMAL-3"
+          ? {
+              ...rule,
+              validTimeRange: {
+                kind: /** @type {const} */ ("daily"),
+                startMinute: 0,
+                endMinute: 5 * 60 + 58,
+                timeZone: /** @type {const} */ ("America/Los_Angeles"),
+              },
+            }
+          : rule,
+      ),
+    };
+    expect(validateCatalog(catalog)).toContain(
+      "Animals severity 1 (affiliated=false) has no rule at 05:59",
+    );
+  });
   it("loads all GNP-3 response-time values", () => {
     expect(actionsEscalationsV3Catalog.rules).toHaveLength(34);
     expect(

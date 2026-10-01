@@ -33,7 +33,6 @@ locals {
     "POST /v1/tasks/{taskId}/complete",
     "POST /v1/tasks/{taskId}/cannot-do",
     "GET /v1/tasks/{taskId}/updates",
-    "POST /v1/tasks/{taskId}/start-progress",
     "POST /v1/tasks/{taskId}/updates",
     "POST /v1/tasks/{taskId}/updates/{updateId}/document",
     "POST /v1/tasks/{taskId}/update-media",

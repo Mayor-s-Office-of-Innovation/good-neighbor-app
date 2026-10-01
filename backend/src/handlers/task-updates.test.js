@@ -4,12 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const {
-  createTaskUpdate,
-  getTaskUpdates,
-  registerTaskUpdateMedia,
-  startTaskProgress,
-} = await import("./task-updates.js");
+const { createTaskUpdate, getTaskUpdates, registerTaskUpdateMedia } =
+  await import("./task-updates.js");
 
 /** @param {Record<string, unknown>} body @param {Record<string, string>} [pathParameters] */
 function event(body, pathParameters = { taskId: "task-1" }) {
@@ -31,53 +27,6 @@ describe("task update handlers", () => {
     process.env.DYNAMO_TABLE = "tasks";
     process.env.S3_UPLOAD_BUCKET = "uploads";
     process.env.SQS_QUEUE_URL = "analysis";
-  });
-
-  it("moves a qualifying action to in progress and appends its event atomically", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "TASK#task-1",
-          taskId: "task-1",
-          status: "open",
-          kind: "non_actionable_escalation",
-          severity: 2,
-          buttons: ["We called SFPD non-emergency"],
-          createdAt: "2026-09-29T20:00:00.000Z",
-        },
-      })
-      .mockResolvedValueOnce({});
-
-    const response = await /** @type {any} */ (
-      startTaskProgress(event({ actionLabel: "We called SFPD non-emergency" }))
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = send.mock.calls[1][0];
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    const [eventPut, pointerPut, taskUpdate] = transaction.input.TransactItems;
-    expect(eventPut.Put.Item).toMatchObject({
-      type: "escalation_action_taken",
-      label: "Called non-emergency line",
-      agency: "SFPD",
-      actorId: "device-1",
-    });
-    expect(pointerPut.Put.Item).toMatchObject({
-      entityType: "task_update_pointer",
-      updateId: "request-1",
-      updateSk: eventPut.Put.Item.sk,
-    });
-    expect(taskUpdate.Update).toMatchObject({
-      Key: { pk: "SITE#site-1", sk: "TASK#task-1" },
-      ConditionExpression: "#status = :open",
-    });
-    expect(taskUpdate.Update.ExpressionAttributeValues).toMatchObject({
-      ":inProgress": "in_progress",
-      ":label": "Called non-emergency line",
-      ":gsi2pk": "SITE#site-1#TASK#in_progress",
-    });
   });
 
   it("registers update media without enqueuing analysis", async () => {

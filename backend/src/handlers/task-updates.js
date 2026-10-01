@@ -3,10 +3,15 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import {
+  eligibleTicketsForClosure,
+  executeAppActions,
+  is311SubmissionEnabled,
+  summarizeAppActionResults,
+} from "../analysis/guidance/app-actions.js";
+import {
   buildTaskUpdateTransition,
   presencePeriod,
   presencePromptDue,
-  qualifyingAction,
   responseExpectedAt,
 } from "../domain/task-updates.js";
 import {
@@ -17,7 +22,6 @@ import {
   readUpdateById,
   readUpdatePointer,
   writeDocumentedUpdate,
-  writeStartProgressTransition,
   writeTaskTransition,
   writeTaskUpdateMedia,
 } from "../task-updates/task-update-store.js";
@@ -121,77 +125,6 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
-/** POST /v1/tasks/{taskId}/start-progress @param {any} event */
-export const startTaskProgress = async (event) => {
-  const input = bodyOf(event);
-  if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
-  const action = qualifyingAction(input.actionLabel);
-  if (!action)
-    return jsonResponse(400, { error: "Action does not start progress" });
-  const { dynamoTable } = getConfig();
-  const siteId = deriveSiteId(event);
-  const taskId = String(event.pathParameters?.taskId || "");
-  const task = await readTask(dynamoTable, siteId, taskId);
-  if (!task) return jsonResponse(404, { error: "Task not found" });
-  const available = [
-    ...(Array.isArray(task.buttons) ? task.buttons : []),
-    ...(Array.isArray(task.appActions)
-      ? task.appActions.map((candidate) => candidate?.payload?.completionLabel)
-      : []),
-  ];
-  if (!available.some((label) => String(label || "") === input.actionLabel))
-    return jsonResponse(400, { error: "Action is not available on this task" });
-  if (
-    task.status === "in_progress" &&
-    task.inProgressActionKind === action.actionKind
-  )
-    return getTaskUpdates(event);
-  if (task.status !== "open")
-    return jsonResponse(409, { error: "Task is no longer open" });
-
-  const now = new Date().toISOString();
-  const updateId = idempotencyId(event);
-  const update = {
-    entityType: "task_update",
-    taskId,
-    updateId,
-    type: "escalation_action_taken",
-    actionKind: action.actionKind,
-    agency: action.agency,
-    label: action.label,
-    occurredAt: now,
-    actorId: actorId(event),
-    documentationState: "closed",
-  };
-  const updated = {
-    ...task,
-    status: "in_progress",
-    inProgressAt: now,
-    notifiedAt: now,
-    agency: action.agency,
-    inProgressActionKind: action.actionKind,
-    latestUpdateId: updateId,
-    latestUpdateLabel: action.label,
-    lastAnsweredPresencePeriod: 0,
-    updatedAt: now,
-  };
-  try {
-    await writeStartProgressTransition({
-      tableName: dynamoTable,
-      siteId,
-      taskId,
-      occurredAt: now,
-      update,
-      task: updated,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "TransactionCanceledException")
-      return jsonResponse(409, { error: "Task update conflict" });
-    throw error;
-  }
-  return jsonResponse(200, detail(updated, [update]));
-};
-
 /** POST /v1/tasks/{taskId}/updates @param {any} event */
 export const createTaskUpdate = async (event) => {
   const input = bodyOf(event);
@@ -237,6 +170,30 @@ export const createTaskUpdate = async (event) => {
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  if (updated.status === "completed" && is311SubmissionEnabled(process.env)) {
+    const priorResults = Array.isArray(task.appActionResults)
+      ? task.appActionResults
+      : [];
+    if (eligibleTicketsForClosure(priorResults).size > 0) {
+      const closureResults = await executeAppActions(
+        [{ code: "close_311_ticket", payload: {} }],
+        {
+          env: process.env,
+          now: new Date(now),
+          taskId,
+          tableName: dynamoTable,
+          siteId,
+          task: updated,
+          priorResults,
+          trigger: "user_confirmed",
+        },
+      );
+      updated.appActionResults = [...priorResults, ...closureResults];
+      updated.appActionStatus = summarizeAppActionResults(
+        updated.appActionResults,
+      );
+    }
+  }
   try {
     await writeTaskTransition({
       tableName: dynamoTable,

@@ -3,38 +3,6 @@ const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
 const MAX_TEXT = 4000;
 
-export const QUALIFYING_ACTIONS = Object.freeze({
-  "We called SFPD non-emergency": {
-    actionKind: "sfpd_non_emergency",
-    agency: "SFPD",
-    label: "Called non-emergency line",
-  },
-  "We called 911": {
-    actionKind: "called_911",
-    agency: "SFPD",
-    label: "Called 911",
-  },
-  "We called SFACC": {
-    actionKind: "called_sfacc",
-    agency: "SFACC",
-    label: "Called SFACC",
-  },
-  "We called 311": {
-    actionKind: "called_311",
-    agency: "311",
-    label: "Called 311",
-  },
-});
-
-/** @param {unknown} label */
-export function qualifyingAction(label) {
-  return (
-    /** @type {Record<string, any>} */ (QUALIFYING_ACTIONS)[
-      String(label || "")
-    ] || null
-  );
-}
-
 /** @param {string | number | Date} inProgressAt @param {string | number | Date} [now] */
 export function presencePeriod(inProgressAt, now = new Date()) {
   const start = new Date(inProgressAt).getTime();

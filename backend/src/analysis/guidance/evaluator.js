@@ -1,4 +1,4 @@
-import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
+import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
 import { resolveCategory } from "./category-resolver.js";
 
 /**
@@ -66,6 +66,43 @@ function predicateMatches(rule, answers) {
   });
 }
 
+const PACIFIC_TIME = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/**
+ * @param {string | number | Date} reportedAt
+ * @returns {number | null}
+ */
+function pacificMinute(reportedAt) {
+  const date = new Date(reportedAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(
+    PACIFIC_TIME.formatToParts(date).map(({ type, value }) => [type, value]),
+  );
+  return Number(parts.hour) * 60 + Number(parts.minute);
+}
+
+/**
+ * @param {GuidanceRule} rule
+ * @param {string | number | Date | undefined} reportedAt
+ * @returns {boolean}
+ */
+export function timeRangeMatches(rule, reportedAt) {
+  const range = rule.validTimeRange;
+  if (!range || range.kind === "always") return true;
+  if (reportedAt === undefined) return false;
+  const minute = pacificMinute(reportedAt);
+  if (minute === null) return false;
+  if (range.startMinute <= range.endMinute) {
+    return minute >= range.startMinute && minute <= range.endMinute;
+  }
+  return minute >= range.startMinute || minute <= range.endMinute;
+}
+
 /**
  * @param {GuidanceRule[]} rules
  * @returns {Map<number, GuidanceRule[]>}
@@ -100,12 +137,14 @@ function rulesByEvaluationOrder(rules) {
  * @param {EvaluatedCondition} opts.condition
  * @param {Record<string, unknown>} [opts.answers]
  * @param {GuidanceCatalog} [opts.catalog]
+ * @param {string | number | Date} [opts.reportedAt]
  * @returns {EvaluationResult}
  */
 export function evaluateCondition({
   condition,
   answers = {},
-  catalog = actionsEscalationsV3Catalog,
+  catalog = actionsEscalationsV4Catalog,
+  reportedAt,
 }) {
   const severity = conditionSeverity(condition);
   if (severity <= 0) {
@@ -150,8 +189,11 @@ export function evaluateCondition({
       };
     }
 
-    const rule = group.find((candidate) =>
+    const predicateCandidates = group.filter((candidate) =>
       predicateMatches(candidate, answers),
+    );
+    const rule = predicateCandidates.find((candidate) =>
+      timeRangeMatches(candidate, reportedAt),
     );
     if (rule) {
       return {

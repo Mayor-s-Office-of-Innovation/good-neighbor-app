@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateCondition } from "./evaluator.js";
+import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
+import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
 
 /**
  * @param {string} category
@@ -8,7 +10,11 @@ import { evaluateCondition } from "./evaluator.js";
  * @returns {ReturnType<typeof evaluateCondition>}
  */
 const evalRule = (category, severity, answers = {}) =>
-  evaluateCondition({ condition: { category, severity }, answers });
+  evaluateCondition({
+    condition: { category, severity },
+    answers,
+    catalog: actionsEscalationsV3Catalog,
+  });
 
 describe("evaluateCondition", () => {
   it("returns no guidance for severity zero", () => {
@@ -187,6 +193,45 @@ describe("evaluateCondition", () => {
           },
         ],
       },
+    });
+  });
+});
+
+describe("time-valid v4 evaluation", () => {
+  /**
+   * @param {string} reportedAt
+   * @returns {ReturnType<typeof evaluateCondition>}
+   */
+  const evaluateAnimal = (reportedAt) =>
+    evaluateCondition({
+      condition: { category: "Animals", severity: 2 },
+      answers: { affiliated: false },
+      catalog: actionsEscalationsV4Catalog,
+      reportedAt,
+    });
+
+  it.each([
+    ["2026-10-01T12:59:00.000Z", "ANIMAL-3"],
+    ["2026-10-01T13:00:00.000Z", "ANIMAL-2"],
+    ["2026-10-02T06:59:00.000Z", "ANIMAL-2"],
+    ["2026-10-02T07:00:00.000Z", "ANIMAL-3"],
+  ])("selects the Pacific-time rule at %s", (reportedAt, ruleId) => {
+    expect(evaluateAnimal(reportedAt)).toMatchObject({
+      kind: "outcome",
+      rule: { ruleId },
+    });
+  });
+
+  it("asks the clarifying question before applying its time split", () => {
+    expect(
+      evaluateCondition({
+        condition: { category: "Animals", severity: 2 },
+        catalog: actionsEscalationsV4Catalog,
+        reportedAt: "2026-10-01T12:00:00.000Z",
+      }),
+    ).toMatchObject({
+      kind: "needs_answer",
+      question: { key: "affiliated" },
     });
   });
 });

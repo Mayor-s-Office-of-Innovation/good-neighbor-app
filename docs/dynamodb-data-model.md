@@ -81,7 +81,7 @@ without a separate timestamp in the key.
 | **Analysis** (per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | concerns[], grade, rubricVersion (raw service output) |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, policyVersion, grade, location, summary counts, raw assessment |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | canonical category, severity, answers, outcome, status, taskIds (see [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks)) |
-| **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, category, severity, status |
+| **Action item / task** | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, type (onsite\|city_escalation), kind, ruleId, policyVersion, `canBeInProgress`, category, severity, status |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only in-progress timeline event: type, label, actorId, notes/text, photo artifact IDs, optional presence period, documentation state |
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | direct addressability for documentation and idempotent retries; stores the event's full sort key |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | update documentation stored outside analyzer input; a `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer preserves the authorized media route |

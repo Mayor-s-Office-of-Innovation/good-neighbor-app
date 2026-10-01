@@ -4,19 +4,10 @@ import {
   notePhotoLabel,
   presencePeriod,
   presencePromptDue,
-  qualifyingAction,
   responseExpectedAt,
 } from "./task-updates.js";
 
 describe("task updates", () => {
-  it("recognizes only the four confirmed escalation labels", () => {
-    expect(qualifyingAction("We called SFACC")).toMatchObject({
-      agency: "SFACC",
-      label: "Called SFACC",
-    });
-    expect(qualifyingAction("Call SFACC")).toBeNull();
-  });
-
   it("uses fixed four-hour periods from the original start", () => {
     const start = "2026-11-01T08:30:00.000Z";
     expect(presencePeriod(start, "2026-11-01T12:29:59.999Z")).toBe(0);

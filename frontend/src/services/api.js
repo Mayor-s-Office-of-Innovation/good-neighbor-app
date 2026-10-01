@@ -558,17 +558,6 @@ export function getTaskUpdates(taskId, nextToken) {
   );
 }
 
-export function startTaskProgress(taskId, actionLabel) {
-  return request(
-    "POST",
-    `/v1/tasks/${encodeURIComponent(taskId)}/start-progress`,
-    {
-      body: { actionLabel },
-      headers: { "idempotency-key": crypto.randomUUID() },
-    },
-  );
-}
-
 export function createTaskUpdate(taskId, body) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,

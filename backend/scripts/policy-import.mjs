@@ -43,11 +43,13 @@ const rows = parseCsv(await readFile(resolve(input), "utf8"));
 const header =
   rows.shift()?.map((value) => value.replace(/^\uFEFF/, "").trim()) ?? [];
 if (
-  header.length !== 17 ||
-  header[13] !== "Max acceptable response time (hours)"
+  header.length !== 19 ||
+  header[5] !== "Condition: valid in time range" ||
+  header[9] !== "Can be in progress" ||
+  header[15] !== "Max acceptable response time (hours)"
 ) {
   throw new Error(
-    "Expected the 17-column GNP rulebase with Max acceptable response time (hours) in column 14",
+    "Expected the 19-column GNP rulebase with time validity and in-progress eligibility",
   );
 }
 const catalog = buildCatalog({
