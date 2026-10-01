@@ -130,7 +130,7 @@ class TaskUpdateDialog extends HTMLElement {
     if (this._mode === "action")
       return taskUpdateActionEditor({ text: this._actionText });
     if (this._mode === "action-photos")
-      return taskUpdateActionPhotos(this._filePreviews);
+      return taskUpdateActionPhotos(this._filePreviews, this._files);
     const task = this._task || {};
     return taskUpdateTimeline({
       task,

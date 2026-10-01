@@ -134,11 +134,26 @@ export function taskUpdateTimeline({
         ${escapeHtml(task.description || "")}
       </p>
       ${originalMediaUrl
-        ? html`<img
-            class="task-update__photo task-update__photo--original"
-            src="${escapeAttr(originalMediaUrl)}"
-            alt="Evidence for ${escapeAttr(title)}"
-          />`
+        ? html`<button
+            class="task-update__photo-trigger"
+            type="button"
+            data-photo-lightbox
+            data-photo-address="${escapeAttr(
+              task.georeferencedAddress ||
+                task.siteAddress ||
+                task.address ||
+                "",
+            )}"
+            data-photo-time="${escapeAttr(
+              task.createdAt || task.created_at || task.notifiedAt || "",
+            )}"
+          >
+            <img
+              class="task-update__photo task-update__photo--original"
+              src="${escapeAttr(originalMediaUrl)}"
+              alt="Evidence for ${escapeAttr(title)}"
+            />
+          </button>`
         : ""}
       <dl class="task-update__metadata">
         <div>
@@ -236,11 +251,24 @@ export function taskUpdateTimeline({
                 ${(update.photoKeys || [])
                   .map((artifactId) =>
                     mediaUrls.get(artifactId)
-                      ? html`<img
-                          class="task-update__photo"
-                          src="${escapeAttr(mediaUrls.get(artifactId))}"
-                          alt="Update photo for ${escapeAttr(title)}"
-                        />`
+                      ? html`<button
+                          class="task-update__photo-trigger"
+                          type="button"
+                          data-photo-lightbox
+                          data-photo-address="${escapeAttr(
+                            task.georeferencedAddress ||
+                              task.siteAddress ||
+                              task.address ||
+                              "",
+                          )}"
+                          data-photo-time="${escapeAttr(update.occurredAt)}"
+                        >
+                          <img
+                            class="task-update__photo"
+                            src="${escapeAttr(mediaUrls.get(artifactId))}"
+                            alt="Update photo for ${escapeAttr(title)}"
+                          />
+                        </button>`
                       : "",
                   )
                   .join("")}
@@ -269,7 +297,7 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
   const hasContent = files.length || populatedNotes.length;
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
-    ${photoPicker(previews, "update")}
+    ${photoPicker(previews, "update", files)}
     ${populatedNotes.length
       ? html`<ul class="task-update__note-list">
           ${notes
@@ -313,8 +341,8 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
   </section>`;
 }
 
-/** @param {string[]} previews @param {string} label */
-function photoPicker(previews, label) {
+/** @param {string[]} previews @param {string} label @param {File[]} [files] */
+function photoPicker(previews, label, files = []) {
   return html`<div class="task-update__photo-grid">
     <label class="task-update__photo-picker"
       ><input
@@ -331,11 +359,22 @@ function photoPicker(previews, label) {
     ${previews
       .map(
         (url, index) =>
-          html`<img
-            class="task-update__photo task-update__photo--draft"
-            src="${escapeAttr(url)}"
-            alt="Selected ${label} photo ${index + 1}"
-          />`,
+          html`<button
+            class="task-update__photo-trigger"
+            type="button"
+            data-photo-lightbox
+            data-photo-time="${escapeAttr(
+              files[index]?.lastModified
+                ? new Date(files[index].lastModified).toISOString()
+                : "",
+            )}"
+          >
+            <img
+              class="task-update__photo task-update__photo--draft"
+              src="${escapeAttr(url)}"
+              alt="Selected ${label} photo ${index + 1}"
+            />
+          </button>`,
       )
       .join("")}
   </div>`;
@@ -412,11 +451,11 @@ ${escapeHtml(text)}</textarea
   </section>`;
 }
 
-/** @param {string[]} previews */
-export function taskUpdateActionPhotos(previews) {
+/** @param {string[]} previews @param {File[]} [files] */
+export function taskUpdateActionPhotos(previews, files = []) {
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">Document your action</h2>
-    ${photoPicker(previews, "action")}
+    ${photoPicker(previews, "action", files)}
     <p class="task-update__error" role="alert" hidden></p>
     <div class="task-update__actions task-update__actions--footer">
       <button

@@ -100,6 +100,11 @@
   object-fit: cover;
   border-radius: var(--wa-border-radius-l);
 }
+
+.task-update__photo-trigger {
+  width: fit-content;
+  border-radius: var(--radius-sm);
+}
 .task-update__photo--original {
   display: block;
   margin-block: 1rem;
