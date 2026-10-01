@@ -22,7 +22,7 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { navigate } from "../router.js";
-import { openOverlayDialog } from "../dialog-history.js";
+import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   activateSiteBinding,
@@ -1083,10 +1083,12 @@ class TodayView extends HTMLElement {
   }
 
   /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
-  _onLocationStay({ prompt }) {
+  async _onLocationStay({ prompt }) {
     // The user explicitly confirmed the bound site is correct. Rechecking the
     // same out-of-radius fix here would immediately reopen the prompt.
-    if (prompt) this._enterCaptureRoute(prompt.flowType);
+    if (!prompt) return;
+    await awaitOverlayUnwind("location");
+    this._enterCaptureRoute(prompt.flowType);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {

@@ -26,6 +26,7 @@ const logout = vi.hoisted(() => ({
   discardInMemorySession: vi.fn(),
 }));
 const navigateMock = vi.hoisted(() => vi.fn());
+const awaitOverlayUnwindMock = vi.hoisted(() => vi.fn(async () => {}));
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
@@ -52,9 +53,16 @@ vi.mock("../router.js", () => ({
   onOverlayPop: () => () => {},
   currentRoute: () => "/today",
 }));
+vi.mock("../dialog-history.js", () => ({
+  awaitOverlayUnwind: awaitOverlayUnwindMock,
+  openOverlayDialog: vi.fn((dialog) => {
+    if (!dialog.open) dialog.showModal();
+  }),
+}));
 
 let TodayView;
 beforeEach(() => {
+  awaitOverlayUnwindMock.mockClear();
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -380,14 +388,17 @@ describe("site location prompt", () => {
       name: "Mission District",
       location: { latitude: 37.7749, longitude: -122.4194 },
     };
-    view._onLocationStay({
+    await view._onLocationStay({
       prompt: { flowType: "single-problem", launcher: null },
     });
+    expect(awaitOverlayUnwindMock).toHaveBeenLastCalledWith("location");
     expect(navigateMock).toHaveBeenLastCalledWith("/problem");
-    view._onLocationStay({ prompt: { flowType: "perimeter", launcher: null } });
+    await view._onLocationStay({
+      prompt: { flowType: "perimeter", launcher: null },
+    });
     expect(navigateMock).toHaveBeenLastCalledWith("/check");
     navigateMock.mockClear();
-    view._onLocationStay({ prompt: null });
+    await view._onLocationStay({ prompt: null });
     expect(navigateMock).not.toHaveBeenCalled();
   });
 });
