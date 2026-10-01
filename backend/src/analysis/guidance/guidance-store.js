@@ -441,6 +441,7 @@ function buildTaskItem({
     conditionId,
     policyVersion: rule.policyVersion,
     canBeInProgress: rule.canBeInProgress,
+    primaryInProgressAgency: rule.primaryInProgressAgency,
     ...(rule.maxAcceptableResponseHours === undefined
       ? {}
       : { maxAcceptableResponseHours: rule.maxAcceptableResponseHours }),
@@ -1376,6 +1377,7 @@ export async function markTaskCannotDo(opts) {
  * @param {string} opts.siteId
  * @param {string} opts.taskId
  * @param {string} [opts.completionMethod]
+ * @param {string} [opts.actorId]
  * @param {Record<string, string | undefined>} [opts.env]
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>>}
@@ -1597,6 +1599,7 @@ export async function completeTaskWithAppActions(opts) {
       ? {
           inProgressAt: now,
           notifiedAt: now,
+          agency: String(existing.Item.primaryInProgressAgency ?? "unknown"),
           inProgressActionKind: opts.completionMethod ?? "user_confirmed",
           latestUpdateId: actionUpdateId,
           latestUpdateLabel: actionLabel,
@@ -1664,7 +1667,7 @@ export async function completeTaskWithAppActions(opts) {
                       : "escalation_action_taken",
                     label: actionLabel,
                     occurredAt: now,
-                    actorId: "site-team",
+                    actorId: opts.actorId ?? "site-team",
                     documentationState: "closed",
                   },
                   ConditionExpression: "attribute_not_exists(pk)",

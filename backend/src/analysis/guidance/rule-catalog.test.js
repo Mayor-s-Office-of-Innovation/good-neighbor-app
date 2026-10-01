@@ -31,6 +31,7 @@ describe("actions/escalations v2 catalog", () => {
         timeZone: "America/Los_Angeles",
       },
       canBeInProgress: true,
+      primaryInProgressAgency: "311 (will be routed)",
     });
   });
 
@@ -43,6 +44,20 @@ describe("actions/escalations v2 catalog", () => {
     });
     expect(() => parseValidTimeRange("24:00-25:00")).toThrow(
       "Invalid valid time range",
+    );
+  });
+
+  it("requires a primary agency for every in-progress-capable rule", () => {
+    const catalog = {
+      ...actionsEscalationsV4Catalog,
+      rules: actionsEscalationsV4Catalog.rules.map((rule) => ({ ...rule })),
+    };
+    const rule = catalog.rules.find((candidate) => candidate.canBeInProgress);
+    if (!rule) throw new Error("Expected an in-progress-capable rule");
+    rule.primaryInProgressAgency = "";
+
+    expect(validateCatalog(catalog)).toContain(
+      `${rule.ruleId} is missing primaryInProgressAgency`,
     );
   });
 

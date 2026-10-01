@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { deriveSiteId } from "../lib/principal.js";
+import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
   eligibleTicketsForClosure,
   executeAppActions,
   is311SubmissionEnabled,
+  mergeAppActionResults,
   summarizeAppActionResults,
 } from "../analysis/guidance/app-actions.js";
 import {
@@ -16,11 +17,13 @@ import {
 } from "../domain/task-updates.js";
 import {
   readCheckHeader,
+  claimTaskResolution,
   readLegacyUpdateById,
   readTask,
   readTimeline,
   readUpdateById,
   readUpdatePointer,
+  releaseTaskResolution,
   writeDocumentedUpdate,
   writeTaskTransition,
   writeTaskUpdateMedia,
@@ -29,6 +32,7 @@ import {
 const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
 const MAX_TEXT = 4000;
+const RESOLUTION_LEASE_MS = 5 * 60 * 1000;
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -59,16 +63,6 @@ function idempotencyId(event) {
 }
 
 /** @param {any} event */
-function actorId(event) {
-  const authorizer = event.requestContext?.authorizer || {};
-  return String(
-    authorizer.lambda?.["claims.sub"] ||
-      authorizer["claims.sub"] ||
-      authorizer.jwt?.claims?.sub ||
-      "site-team",
-  );
-}
-
 /** @param {unknown} value @param {number} max @returns {string[] | null} */
 function textList(value, max) {
   if (!Array.isArray(value) || value.length > max) return null;
@@ -146,7 +140,11 @@ export const createTaskUpdate = async (event) => {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
     });
-  if (task.status !== "in_progress") {
+  const resolutionLeaseExpired =
+    task.status === "resolving" &&
+    new Date(String(task.resolutionLeaseExpiresAt ?? "")).getTime() <=
+      Date.now();
+  if (task.status !== "in_progress" && !resolutionLeaseExpired) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -164,17 +162,43 @@ export const createTaskUpdate = async (event) => {
   const transition = buildTaskUpdateTransition(task, input, {
     taskId,
     updateId,
-    actorId: actorId(event),
+    actorId: deriveActorId(event),
   });
   if ("error" in transition)
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  let resolutionLeaseExpiresAt = "";
   if (updated.status === "completed" && is311SubmissionEnabled(process.env)) {
-    const priorResults = Array.isArray(task.appActionResults)
+    let priorResults = Array.isArray(task.appActionResults)
       ? task.appActionResults
       : [];
     if (eligibleTicketsForClosure(priorResults).size > 0) {
+      resolutionLeaseExpiresAt = new Date(
+        new Date(now).getTime() + RESOLUTION_LEASE_MS,
+      ).toISOString();
+      let claimed;
+      try {
+        claimed = await claimTaskResolution({
+          tableName: dynamoTable,
+          siteId,
+          task,
+          updateId,
+          now,
+          leaseExpiresAt: resolutionLeaseExpiresAt,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "ConditionalCheckFailedException"
+        ) {
+          return jsonResponse(409, { error: "Task resolution in progress" });
+        }
+        throw error;
+      }
+      priorResults = Array.isArray(claimed?.appActionResults)
+        ? claimed.appActionResults
+        : priorResults;
       const closureResults = await executeAppActions(
         [{ code: "close_311_ticket", payload: {} }],
         {
@@ -183,15 +207,57 @@ export const createTaskUpdate = async (event) => {
           taskId,
           tableName: dynamoTable,
           siteId,
-          task: updated,
+          task: claimed ?? updated,
           priorResults,
           trigger: "user_confirmed",
+          executionLease: {
+            status: "resolving",
+            attribute: "resolutionLeaseExpiresAt",
+            value: resolutionLeaseExpiresAt,
+          },
         },
       );
-      updated.appActionResults = [...priorResults, ...closureResults];
+      updated.appActionResults = closureResults.reduce(
+        (results, result) => mergeAppActionResults(results, result),
+        priorResults,
+      );
       updated.appActionStatus = summarizeAppActionResults(
         updated.appActionResults,
       );
+      const closureSucceeded = closureResults.every(
+        (result) => result.status === "submitted",
+      );
+      if (!closureSucceeded) {
+        let released;
+        try {
+          released = await releaseTaskResolution({
+            tableName: dynamoTable,
+            siteId,
+            taskId,
+            task: claimed ?? task,
+            leaseExpiresAt: resolutionLeaseExpiresAt,
+            appActionResults: updated.appActionResults,
+            appActionStatus: updated.appActionStatus,
+            now,
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.name === "ConditionalCheckFailedException"
+          ) {
+            return jsonResponse(409, { error: "Task resolution in progress" });
+          }
+          throw error;
+        }
+        return jsonResponse(502, {
+          error: "311 ticket closure incomplete",
+          retryable: true,
+          task: released,
+        });
+      }
+      delete updated.resolutionUpdateId;
+      delete updated.resolutionStartedAt;
+      delete updated.resolutionLeaseExpiresAt;
     }
   }
   try {
@@ -202,8 +268,15 @@ export const createTaskUpdate = async (event) => {
       occurredAt: now,
       update,
       task: updated,
-      expectedStatus: "in_progress",
-      expectedUpdatedAt: task.updatedAt,
+      expectedStatus: resolutionLeaseExpiresAt ? "resolving" : "in_progress",
+      ...(resolutionLeaseExpiresAt
+        ? {
+            expectedLease: {
+              attribute: "resolutionLeaseExpiresAt",
+              value: resolutionLeaseExpiresAt,
+            },
+          }
+        : { expectedUpdatedAt: task.updatedAt }),
     });
   } catch (error) {
     if (
@@ -242,7 +315,7 @@ export const documentTaskUpdate = async (event) => {
   const updateId = String(event.pathParameters?.updateId || "");
   const existing = await readUpdateById(dynamoTable, siteId, taskId, updateId);
   if (!existing) return jsonResponse(404, { error: "Update not found" });
-  if (existing.actorId !== actorId(event))
+  if (existing.actorId !== deriveActorId(event))
     return jsonResponse(403, { error: "Update belongs to another session" });
   if (existing.documentationState === "closed")
     return jsonResponse(200, { update: existing });

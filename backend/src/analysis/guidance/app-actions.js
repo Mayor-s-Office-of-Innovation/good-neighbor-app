@@ -177,7 +177,7 @@ function build311ActionResult({
  * @param {AppActionResult} result
  * @returns {AppActionResult[]}
  */
-function mergeAppActionResults(priorResults, result) {
+export function mergeAppActionResults(priorResults, result) {
   const merged = [];
   let placed = false;
   for (const prior of priorResults) {
@@ -208,6 +208,7 @@ function mergeAppActionResults(priorResults, result) {
  * @param {AppActionResult} opts.result
  * @param {AppActionResult[]} opts.priorResults
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {string} opts.updatedAt
  * @returns {Promise<void>}
  */
@@ -218,31 +219,44 @@ async function checkpoint311ActionResult({
   result,
   priorResults,
   completionLeaseExpiresAt,
+  executionLease,
   updatedAt,
 }) {
   if (!tableName || !siteId || !taskId) return;
+  const lease =
+    executionLease ??
+    (completionLeaseExpiresAt
+      ? {
+          status: "completing",
+          attribute: "completionLeaseExpiresAt",
+          value: completionLeaseExpiresAt,
+        }
+      : null);
   await ddb.send(
     new UpdateCommand({
       TableName: tableName,
       Key: taskKey(siteId, taskId),
       UpdateExpression:
         "SET appActionResults = :results, appActionStatus = :status, updatedAt = :updatedAt",
-      ConditionExpression: completionLeaseExpiresAt
-        ? "#status = :completing AND #lease = :leaseExpiresAt"
-        : "#status = :completing",
+      ConditionExpression: executionLease
+        ? "#status = :executionStatus AND #lease = :leaseExpiresAt"
+        : completionLeaseExpiresAt
+          ? "#status = :completing AND #lease = :leaseExpiresAt"
+          : "#status = :completing",
       ExpressionAttributeNames: {
         "#status": "status",
-        ...(completionLeaseExpiresAt
-          ? { "#lease": "completionLeaseExpiresAt" }
-          : {}),
+        ...(lease ? { "#lease": lease.attribute } : {}),
       },
       ExpressionAttributeValues: {
         ":results": mergeAppActionResults(priorResults, result),
         ":status": summarizeAppActionResults([result]),
         ":updatedAt": updatedAt,
         ":completing": "completing",
-        ...(completionLeaseExpiresAt
-          ? { ":leaseExpiresAt": completionLeaseExpiresAt }
+        ...(lease
+          ? {
+              ":leaseExpiresAt": lease.value,
+              ...(executionLease ? { ":executionStatus": lease.status } : {}),
+            }
           : {}),
       },
     }),
@@ -788,6 +802,7 @@ function buildCloseActionResult({
  * @param {string} [opts.siteId]
  * @param {string} [opts.taskId]
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311ClosureAction({
@@ -799,6 +814,7 @@ async function execute311ClosureAction({
   siteId = "",
   taskId = "",
   completionLeaseExpiresAt = "",
+  executionLease,
 }) {
   const now = nowDate.toISOString();
   const priorClosuresByServiceCode =
@@ -849,6 +865,7 @@ async function execute311ClosureAction({
             siteId,
             taskId,
             completionLeaseExpiresAt,
+            executionLease,
             result: buildCloseActionResult({
               action,
               status: closures.every((closure) => closure.status === "closed")
@@ -885,7 +902,11 @@ async function execute311ClosureAction({
     }
   }
 
-  if (closures.every((closure) => closure.status === "closed")) {
+  const allTicketsProcessed = closures.length === eligible.size;
+  if (
+    allTicketsProcessed &&
+    closures.every((closure) => closure.status === "closed")
+  ) {
     return buildCloseActionResult({
       action,
       status: "submitted",
@@ -1017,6 +1038,7 @@ function actionsForTrigger(appActions, trigger) {
  * @param {"task_created" | "user_confirmed"} [opts.trigger]
  * @param {Date} [opts.now]
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -1103,6 +1125,7 @@ export async function executeAppActions(appActions, opts = {}) {
               siteId: opts.siteId ?? "",
               taskId: opts.taskId ?? "",
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
+              executionLease: opts.executionLease,
             }),
           );
         } catch (error) {

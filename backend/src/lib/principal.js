@@ -82,3 +82,20 @@ export function deriveAccessLevel(event) {
     authorizer?.jwt?.claims?.accessLevel;
   return claim === "admin" ? "admin" : "general";
 }
+
+/**
+ * Derive the authenticated actor recorded on task timeline events. Local and
+ * anonymous development requests retain the established site-team fallback.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
+ * @returns {string}
+ */
+export function deriveActorId(event) {
+  const authorizer = /** @type {Record<string, any> | undefined} */ (
+    /** @type {any} */ (event.requestContext?.authorizer)
+  );
+  const claim =
+    authorizer?.lambda?.["claims.sub"] ??
+    authorizer?.["claims.sub"] ??
+    authorizer?.jwt?.claims?.sub;
+  return typeof claim === "string" && claim.length > 0 ? claim : "site-team";
+}

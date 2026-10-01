@@ -1403,11 +1403,15 @@ describe("311 ticket closure", () => {
       tableName: "table",
       siteId: "site-1",
       taskId: "task-1",
-      completionLeaseExpiresAt: "2026-08-18T12:05:00.000Z",
+      executionLease: {
+        status: "resolving",
+        attribute: "resolutionLeaseExpiresAt",
+        value: "2026-08-18T12:05:00.000Z",
+      },
       priorResults: [fanout],
     });
 
-    // One checkpoint per successful UpdateSR, each pinned to the completion
+    // One checkpoint per successful UpdateSR, each pinned to the resolution
     // lease so a reclaimed executor cannot persist stale closures.
     expect(send).toHaveBeenCalledTimes(2);
     for (const [index] of ["2000008106", "2000008107"].entries()) {
@@ -1418,8 +1422,14 @@ describe("311 ticket closure", () => {
         sk: "TASK#task-1",
       });
       expect(checkpoint.input.ConditionExpression).toBe(
-        "#status = :completing AND #lease = :leaseExpiresAt",
+        "#status = :executionStatus AND #lease = :leaseExpiresAt",
       );
+      expect(checkpoint.input.ExpressionAttributeNames["#lease"]).toBe(
+        "resolutionLeaseExpiresAt",
+      );
+      expect(
+        checkpoint.input.ExpressionAttributeValues[":executionStatus"],
+      ).toBe("resolving");
       expect(
         checkpoint.input.ExpressionAttributeValues[":leaseExpiresAt"],
       ).toBe("2026-08-18T12:05:00.000Z");
@@ -1499,13 +1509,12 @@ describe("311 ticket closure", () => {
     // The second SR was never sent to HUB: without a durable closed record,
     // issuing that update would risk a double close after lease recovery.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    // The attempted ticket did close at HUB, so the rollup is `submitted`
-    // even though the loop bailed early — the un-attempted ticket simply has
-    // no closure entry and is retried (safely) on lease recovery.
+    // The attempted ticket did close at HUB, but the unattempted ticket keeps
+    // the result partial so the owning resolution cannot become terminal.
     expect(results).toEqual([
       {
         code: "close_311_ticket",
-        status: "submitted",
+        status: "partial",
         payload: {
           closures: [
             {

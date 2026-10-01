@@ -168,6 +168,7 @@ describe("storeEvaluatedAssessment", () => {
       conditionId: "001-litter",
       ruleId: "LITTER-2",
       canBeInProgress: true,
+      primaryInProgressAgency: "Department of Public Works (DPW)",
       kind: "escalation",
       type: "city_escalation",
       status: "open",
@@ -533,6 +534,7 @@ describe("completeTaskWithAppActions", () => {
           kind: "non_actionable_escalation",
           severity: 4,
           canBeInProgress: true,
+          primaryInProgressAgency: "SF Police Department (SFPD)",
           buttons: ["We called 911"],
           appActions: [],
         },
@@ -545,6 +547,7 @@ describe("completeTaskWithAppActions", () => {
       siteId: "site-1",
       taskId: "task-1",
       completionMethod: "manual",
+      actorId: "device-7",
       now: new Date("2026-10-01T18:00:00.000Z"),
     });
 
@@ -552,6 +555,7 @@ describe("completeTaskWithAppActions", () => {
       status: "in_progress",
       inProgressAt: "2026-10-01T18:00:00.000Z",
       notifiedAt: "2026-10-01T18:00:00.000Z",
+      agency: "SF Police Department (SFPD)",
       latestUpdateLabel: "We called 911",
       gsi2pk: "SITE#site-1#TASK#in_progress",
     });
@@ -561,6 +565,7 @@ describe("completeTaskWithAppActions", () => {
     expect(writes[1].Put.Item).toMatchObject({
       type: "escalation_action_taken",
       label: "We called 911",
+      actorId: "device-7",
     });
     expect(writes[2].Put.Item).toMatchObject({
       entityType: "task_update_pointer",

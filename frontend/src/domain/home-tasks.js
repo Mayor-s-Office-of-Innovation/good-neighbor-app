@@ -128,7 +128,11 @@ export function normalizedHomeTab(value) {
 
 export function homeTaskStatus(task, override, now = new Date()) {
   const status = String(task.status || "open");
-  if (status === "completing" || status === "in_progress") {
+  if (
+    status === "completing" ||
+    status === "resolving" ||
+    status === "in_progress"
+  ) {
     return "in_progress";
   }
   if (status === "completed" || status === "cannot_do") {

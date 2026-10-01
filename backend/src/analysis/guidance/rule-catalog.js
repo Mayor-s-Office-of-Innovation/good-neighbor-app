@@ -40,6 +40,7 @@
  * @property {{ min: number, max: number }} severity
  * @property {RuleTimeRange} validTimeRange
  * @property {boolean} canBeInProgress
+ * @property {string} primaryInProgressAgency
  * @property {RuleQuestion[]} requiredQuestions
  * @property {{ all: RulePredicateClause[] }} predicate
  * @property {RuleOutcome} outcome
@@ -277,12 +278,14 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
-      const isTimeValidityRulebaseShape = row.length === 19;
+      const isAgencyAwareRulebaseShape = row.length === 20;
+      const isTimeValidityRulebaseShape =
+        row.length === 19 || isAgencyAwareRulebaseShape;
       const isResponseTimeRulebaseShape =
         row.length === 17 || isTimeValidityRulebaseShape;
       const isResponsibleAgencyRulebaseShape =
         row.length === 16 || isResponseTimeRulebaseShape;
-      if (![15, 16, 17, 19].includes(row.length)) {
+      if (![15, 16, 17, 19, 20].includes(row.length)) {
         throw new Error(
           `Unsupported rulebase row shape: ${row.length} columns`,
         );
@@ -303,35 +306,49 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
       const canBeInProgress = isTimeValidityRulebaseShape
         ? parseBoolean(row[9])
         : false;
-      const label = row[isTimeValidityRulebaseShape ? 10 : 8];
-      const buttons = row[isTimeValidityRulebaseShape ? 11 : 9];
-      const appAction = row[isTimeValidityRulebaseShape ? 12 : 10];
-      const serviceCodeOrAction = row[isTimeValidityRulebaseShape ? 13 : 11];
+      const primaryInProgressAgency = isAgencyAwareRulebaseShape
+        ? cleanCell(row[10])
+        : "";
+      const timeValidityOffset = isAgencyAwareRulebaseShape ? 1 : 0;
+      const label =
+        row[isTimeValidityRulebaseShape ? 10 + timeValidityOffset : 8];
+      const buttons =
+        row[isTimeValidityRulebaseShape ? 11 + timeValidityOffset : 9];
+      const appAction =
+        row[isTimeValidityRulebaseShape ? 12 + timeValidityOffset : 10];
+      const serviceCodeOrAction =
+        row[isTimeValidityRulebaseShape ? 13 + timeValidityOffset : 11];
       const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
-        ? row[isTimeValidityRulebaseShape ? 14 : 12]
+        ? row[isTimeValidityRulebaseShape ? 14 + timeValidityOffset : 12]
         : "";
       const responseHours = isResponseTimeRulebaseShape
-        ? row[isTimeValidityRulebaseShape ? 15 : 13]
+        ? row[isTimeValidityRulebaseShape ? 15 + timeValidityOffset : 13]
         : undefined;
-      const guidance = isTimeValidityRulebaseShape
-        ? row[16]
-        : isResponseTimeRulebaseShape
-          ? row[14]
-          : isResponsibleAgencyRulebaseShape
-            ? row[13]
-            : row[12];
-      const cannotDoReasons = isTimeValidityRulebaseShape
+      const guidance = isAgencyAwareRulebaseShape
         ? row[17]
-        : isResponsibleAgencyRulebaseShape
-          ? row[isResponseTimeRulebaseShape ? 15 : 14]
-          : row[13];
-      const source = isTimeValidityRulebaseShape
-        ? row[18]
-        : isResponseTimeRulebaseShape
+        : isTimeValidityRulebaseShape
           ? row[16]
+          : isResponseTimeRulebaseShape
+            ? row[14]
+            : isResponsibleAgencyRulebaseShape
+              ? row[13]
+              : row[12];
+      const cannotDoReasons = isAgencyAwareRulebaseShape
+        ? row[18]
+        : isTimeValidityRulebaseShape
+          ? row[17]
           : isResponsibleAgencyRulebaseShape
-            ? row[15]
-            : row[14];
+            ? row[isResponseTimeRulebaseShape ? 15 : 14]
+            : row[13];
+      const source = isAgencyAwareRulebaseShape
+        ? row[19]
+        : isTimeValidityRulebaseShape
+          ? row[18]
+          : isResponseTimeRulebaseShape
+            ? row[16]
+            : isResponsibleAgencyRulebaseShape
+              ? row[15]
+              : row[14];
 
       const normalizedResponseHours =
         responseHours === undefined
@@ -350,6 +367,7 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         severity: parseSeverityRange(severity),
         validTimeRange,
         canBeInProgress,
+        primaryInProgressAgency,
         requiredQuestions: questionsForPrompt(askUser),
         predicate: parsePredicate(userResponse),
         outcome: {
@@ -516,6 +534,9 @@ export function validateCatalog(catalog) {
     }
     if (typeof rule.canBeInProgress !== "boolean") {
       errors.push(`${rule.ruleId} has invalid canBeInProgress`);
+    }
+    if (rule.canBeInProgress && !rule.primaryInProgressAgency) {
+      errors.push(`${rule.ruleId} is missing primaryInProgressAgency`);
     }
     if (
       !rule.validTimeRange ||

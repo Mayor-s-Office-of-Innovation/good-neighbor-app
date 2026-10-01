@@ -4,13 +4,15 @@
 
 ## actions-escalations-v4 - 2026-10-01
 
-- Source asset: `GNP rubrics.csv`.
+- Source asset: `GNP rubrics-2.csv`.
 - Added a Pacific-local daily validity window to every rule. Clarifying
   questions are resolved first, then the matching answer branch is checked at
   the condition's original `reportedAt` time.
 - Added `canBeInProgress` as explicit rule metadata and snapshot it onto every
   new task. The first successful card action now moves eligible tasks to In
   progress; other tasks move directly to History.
+- Added `primaryInProgressAgency` as explicit rule metadata and snapshot it
+  onto new tasks so in-progress details show the rubric-defined agency.
 - Removed status inference from user-facing button labels.
 - Catalog validation now rejects any fully answered category, severity, and
   time combination that cannot resolve to a rule.
