@@ -6,10 +6,14 @@ test.describe("today view", () => {
   test("centers the site selector in the view", async ({ page }) => {
     await bindSite(page);
 
-    const centers = await page.locator(".home-lead").evaluate((lead) => {
-      const selector = lead.querySelector("site-switcher");
-      if (!selector) throw new Error("Site selector is missing");
-      const leadBox = lead.getBoundingClientRect();
+    const lead = page.locator(".home-lead");
+    const selector = lead.locator("site-switcher");
+    await expect(selector).toBeVisible();
+
+    const centers = await lead.evaluate((element) => {
+      const selector = element.querySelector("site-switcher");
+      if (!selector) throw new Error("Site selector disappeared");
+      const leadBox = element.getBoundingClientRect();
       const selectorBox = selector.getBoundingClientRect();
       return {
         lead: leadBox.left + leadBox.width / 2,

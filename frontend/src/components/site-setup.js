@@ -20,7 +20,16 @@ const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 const SITE_SEARCH_DELAY_MS = 250;
 
 export class SiteSetup extends HTMLElement {
+  constructor() {
+    super();
+    this._pendingTouchSubmit = null;
+    this._onTouchPointerUp = (event) => this._finishTouchSubmit(event);
+    this._onTouchPointerCancel = () => this._cancelTouchSubmit();
+  }
+
   connectedCallback() {
+    window.addEventListener("pointerup", this._onTouchPointerUp, true);
+    window.addEventListener("pointercancel", this._onTouchPointerCancel, true);
     this._validationGeneration = 0;
     this._cancelled = false;
     this._committingSite = false;
@@ -52,10 +61,18 @@ export class SiteSetup extends HTMLElement {
   }
 
   disconnectedCallback() {
+    window.removeEventListener("pointerup", this._onTouchPointerUp, true);
+    window.removeEventListener(
+      "pointercancel",
+      this._onTouchPointerCancel,
+      true,
+    );
+    this._cancelTouchSubmit();
     this._cancelSiteSearch();
   }
 
   _render() {
+    this._cancelTouchSubmit();
     this.innerHTML = codeEntryView({
       value: this._code,
       error: this._error,
@@ -89,6 +106,9 @@ export class SiteSetup extends HTMLElement {
       e.preventDefault();
       this._validate();
     });
+    this._continue.addEventListener("pointerdown", (event) =>
+      this._beginTouchSubmit(/** @type {PointerEvent} */ (event)),
+    );
     // <wa-otp-input> owns per-segment typing, arrow-key nav, backspace, and
     // paste internally — we only react to the resulting value. `wa-complete`
     // fires once all six segments are filled.
@@ -98,6 +118,48 @@ export class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
+  }
+
+  /**
+   * Mobile browsers can blur the OTP and reflow the keyboard-compacted layout
+   * before dispatching the resulting click. Prevent that initial touch from
+   * blurring the OTP, then submit only after a matching release inside the
+   * button. Mouse and keyboard users retain the form's native submit path.
+   * @param {PointerEvent} event
+   */
+  _beginTouchSubmit(event) {
+    if (
+      event.pointerType !== "touch" ||
+      event.button !== 0 ||
+      event.isPrimary === false
+    ) {
+      return;
+    }
+    event.preventDefault();
+    this._pendingTouchSubmit = {
+      pointerId: event.pointerId,
+      button: event.currentTarget,
+    };
+  }
+
+  /** @param {PointerEvent} event */
+  _finishTouchSubmit(event) {
+    const pending = this._pendingTouchSubmit;
+    this._cancelTouchSubmit();
+    if (!pending || event.pointerId !== pending.pointerId) return;
+    const button = pending.button;
+    if (!(button instanceof Element)) return;
+    const rect = button.getBoundingClientRect();
+    const releasedInside =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (releasedInside) this._form?.requestSubmit();
+  }
+
+  _cancelTouchSubmit() {
+    this._pendingTouchSubmit = null;
   }
 
   _cancelSwitch() {
