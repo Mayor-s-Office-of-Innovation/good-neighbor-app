@@ -26,6 +26,7 @@ const logout = vi.hoisted(() => ({
   discardInMemorySession: vi.fn(),
 }));
 const navigateMock = vi.hoisted(() => vi.fn());
+const awaitOverlayUnwindMock = vi.hoisted(() => vi.fn(async () => {}));
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
@@ -52,9 +53,16 @@ vi.mock("../router.js", () => ({
   onOverlayPop: () => () => {},
   currentRoute: () => "/today",
 }));
+vi.mock("../dialog-history.js", () => ({
+  awaitOverlayUnwind: awaitOverlayUnwindMock,
+  openOverlayDialog: vi.fn((dialog) => {
+    if (!dialog.open) dialog.showModal();
+  }),
+}));
 
 let TodayView;
 beforeEach(() => {
+  awaitOverlayUnwindMock.mockClear();
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -373,16 +381,22 @@ describe("site location prompt", () => {
   });
 
   it("resumes the waiting capture flow on Stay", async () => {
-    devicePosition.current = { latitude: 37.7749, longitude: -122.4194 };
+    devicePosition.current = { latitude: 37.78, longitude: -122.4194 };
     const view = await mount("?filter=todo");
     view._site = {
       siteId: "site-1",
       name: "Mission District",
       location: { latitude: 37.7749, longitude: -122.4194 },
     };
-    const prompt = { flowType: "single-problem", launcher: null };
-    await view._onLocationStay({ prompt });
+    await view._onLocationStay({
+      prompt: { flowType: "single-problem", launcher: null },
+    });
+    expect(awaitOverlayUnwindMock).toHaveBeenLastCalledWith("location");
     expect(navigateMock).toHaveBeenLastCalledWith("/problem");
+    await view._onLocationStay({
+      prompt: { flowType: "perimeter", launcher: null },
+    });
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
     navigateMock.mockClear();
     await view._onLocationStay({ prompt: null });
     expect(navigateMock).not.toHaveBeenCalled();
