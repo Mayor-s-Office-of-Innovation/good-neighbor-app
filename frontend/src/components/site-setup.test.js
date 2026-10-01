@@ -1,4 +1,12 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const setup = vi.hoisted(() => ({
   validateSetupCode: vi.fn(),
@@ -74,19 +82,91 @@ describe("setup code URLs", () => {
 });
 
 describe("site-switch validation", () => {
-  it("submits on the first touch before keyboard dismissal can cancel the click", () => {
+  const continueRect = () => ({
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 50,
+    left: 0,
+    right: 100,
+    top: 0,
+    bottom: 50,
+    toJSON: () => ({}),
+  });
+  const touchEvent = (overrides = {}) => ({
+    pointerType: "touch",
+    pointerId: 7,
+    button: 0,
+    isPrimary: true,
+    clientX: 50,
+    clientY: 25,
+    preventDefault: vi.fn(),
+    currentTarget: {
+      getBoundingClientRect: continueRect,
+    },
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.stubGlobal("Element", class {});
+  });
+
+  it("submits after a completed touch release inside Continue", () => {
     const component = new SiteSetup();
     component._form = { requestSubmit: vi.fn() };
-    const event = {
-      pointerType: "touch",
-      button: 0,
-      preventDefault: vi.fn(),
-    };
+    const button = new Element();
+    button.getBoundingClientRect = continueRect;
+    const down = touchEvent({ currentTarget: button });
 
-    component._submitOnTouch(event);
+    component._beginTouchSubmit(down);
 
-    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(down.preventDefault).toHaveBeenCalledOnce();
+    expect(component._form.requestSubmit).not.toHaveBeenCalled();
+
+    component._finishTouchSubmit(touchEvent({ currentTarget: button }));
+
     expect(component._form.requestSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("does not submit when the touch is released outside Continue", () => {
+    const component = new SiteSetup();
+    component._form = { requestSubmit: vi.fn() };
+    const button = new Element();
+    button.getBoundingClientRect = continueRect;
+
+    component._beginTouchSubmit(touchEvent({ currentTarget: button }));
+    component._finishTouchSubmit(touchEvent({ clientX: 150 }));
+
+    expect(component._form.requestSubmit).not.toHaveBeenCalled();
+    expect(component._pendingTouchSubmit).toBeNull();
+  });
+
+  it("does not submit after pointer cancellation", () => {
+    const component = new SiteSetup();
+    component._form = { requestSubmit: vi.fn() };
+    const button = new Element();
+    button.getBoundingClientRect = vi.fn();
+
+    component._beginTouchSubmit(touchEvent({ currentTarget: button }));
+    component._onTouchPointerCancel();
+    component._finishTouchSubmit(touchEvent());
+
+    expect(component._form.requestSubmit).not.toHaveBeenCalled();
+    expect(button.getBoundingClientRect).not.toHaveBeenCalled();
+  });
+
+  it("clears the gesture without submitting on a mismatched release", () => {
+    const component = new SiteSetup();
+    component._form = { requestSubmit: vi.fn() };
+    const button = new Element();
+    button.getBoundingClientRect = vi.fn();
+
+    component._beginTouchSubmit(touchEvent({ currentTarget: button }));
+    component._finishTouchSubmit(touchEvent({ pointerId: 8 }));
+    component._finishTouchSubmit(touchEvent({ pointerId: 7 }));
+
+    expect(component._form.requestSubmit).not.toHaveBeenCalled();
+    expect(button.getBoundingClientRect).not.toHaveBeenCalled();
   });
 
   it("leaves mouse activation on the native form-submit path", () => {
@@ -98,7 +178,7 @@ describe("site-switch validation", () => {
       preventDefault: vi.fn(),
     };
 
-    component._submitOnTouch(event);
+    component._beginTouchSubmit(event);
 
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(component._form.requestSubmit).not.toHaveBeenCalled();
