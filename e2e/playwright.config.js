@@ -25,7 +25,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: CI ? 1 : 0,
-  reporter: CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: [["list"], ["html", { open: "never" }]],
   outputDir: "./test-results",
   use: {
     baseURL: "http://127.0.0.1:5173",

@@ -13,6 +13,7 @@
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "9.9.1",
     "@playwright/test": "1.63.0",
+    "ramp-check": "github:Mayor-s-Office-of-Innovation/ramp-check#ebf5b68ff7eb7c3d54407e944fe682130820c22d",
     "typescript": "5.5.4"
   }
 }

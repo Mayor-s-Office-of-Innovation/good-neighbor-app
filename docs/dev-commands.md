@@ -292,5 +292,37 @@ Notes for debugging:
 - Tests always get a **fresh browser context** (fresh IndexedDB), so each test
   re-runs the real site-code → device-registration flow; no shared login state.
 
+### Accessibility scans (ramp-check)
+
+`e2e/tests/a11y.e2e.spec.js` runs automated a11y checks via
+[ramp-check](https://github.com/Mayor-s-Office-of-Innovation/ramp-check) (a git-pinned
+dependency, see its README for the check catalog): axe with every WCAG A/AA finding
+blocking, a reduced-motion audit (including view transitions and shadow roots), a
+320px reflow check, a full keyboard audit, and a text-spacing check. Ten tests: the
+app's five scanned states (code entry, bound home, capture view, site admin, home
+history trays) × light/dark, under reduced-motion emulation.
+
+| File | Does |
+|---|---|
+| `e2e/a11y-allowlist.json` | Exceptions: rule + target + reason + **expiry date**. An expired entry fails the run by name until removed. |
+
+Notes:
+
+- **Policy:** `wcag22-aa` — 2.2 A+AA blocks (stricter than the DOJ ADA Title II floor of
+  2.1 AA); AAA findings (mainly the 7:1 `color-contrast-enhanced` rule) report as
+  warnings and don't fail tests.
+- The suite also runs ramp-check's **keyboard audit** (full Tab traversal — reachability,
+  visible focus, focus not obscured, no trap) and a **text-spacing check** (warns by
+  default) on every scanned state, on top of axe/motion/reflow.
+- To see warnings for a state without failing it, use `a11y.scan()` instead of
+  `a11y.check()` in the spec. For one-off audits of a behavior that needs an action
+  (dialog open/close, focus placement, live-region announcements, form errors), use
+  `ramp-check/patterns` (`dialogAudit`, `focusAfter`, `expectAnnouncement`,
+  `formErrorAudit`) + `a11y.assert()`.
+- ramp-check's README has the fixture/policy/allowlist/pattern docs; its repo also explains
+  each check's seeded-defect test, proving every check fires.
+- ramp-check's README has the fixture/policy/allowlist docs; its repo also explains
+  each check's seeded-defect test, proving every check fires.
+
 CI runs the same suite in its own `e2e` job (Chromium only, one retry, trace
 artifacts uploaded on failure) — see `.github/workflows/ci.yml`.
