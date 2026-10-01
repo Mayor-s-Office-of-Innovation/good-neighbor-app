@@ -52,10 +52,10 @@ test.describe("describe instead", () => {
       .evaluate((element) => {
         const button = element.querySelector("#done-check");
         const footer = element.querySelector("#check-footer");
-        if (!(button instanceof HTMLElement)) {
+        if (!button) {
           throw new Error("Finish check button not found");
         }
-        if (!(footer instanceof HTMLElement)) {
+        if (!footer) {
           throw new Error("Finish check footer not found");
         }
         const buttonRect = button.getBoundingClientRect();
@@ -90,7 +90,7 @@ test.describe("describe instead", () => {
       .locator(".describe__main")
       .evaluate((element) => {
         const card = element.querySelector(".describe__card");
-        if (!(card instanceof HTMLElement)) throw new Error("Card not found");
+        if (!card) throw new Error("Card not found");
         return (
           element.getBoundingClientRect().bottom -
           card.getBoundingClientRect().bottom
@@ -176,10 +176,10 @@ test.describe("describe instead", () => {
     const donePosition = await capture.evaluate((element) => {
       const button = element.querySelector("#submit-report");
       const footer = element.querySelector(".check-timeline__footer");
-      if (!(button instanceof HTMLElement)) {
+      if (!button) {
         throw new Error("Done button not found");
       }
-      if (!(footer instanceof HTMLElement)) {
+      if (!footer) {
         throw new Error("Done button footer not found");
       }
       const buttonRect = button.getBoundingClientRect();
@@ -207,10 +207,16 @@ test.describe("describe instead", () => {
     );
     const subtitleMetrics = await page
       .locator(".describe__subtitle")
-      .evaluate((element) => ({
-        height: element.getBoundingClientRect().height,
-        lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
-      }));
+      .evaluate((element) => {
+        const view = element.ownerDocument.defaultView;
+        if (!view) throw new Error("Browser window not found");
+        return {
+          height: element.getBoundingClientRect().height,
+          lineHeight: Number.parseFloat(
+            view.getComputedStyle(element).lineHeight,
+          ),
+        };
+      });
     expect(subtitleMetrics.height).toBeLessThanOrEqual(
       subtitleMetrics.lineHeight * 1.1,
     );
