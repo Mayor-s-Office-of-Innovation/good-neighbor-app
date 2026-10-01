@@ -104,13 +104,21 @@ export function ticketDetailDialog({ detail, state }) {
                   </p>`
                 : ""}
               ${detail.mediaUrl
-                ? html`<img
-                    class="ticket-detail__photo"
-                    src="${escapeAttr(detail.mediaUrl)}"
-                    alt="Evidence for ${escapeAttr(
-                      detail.title || detail.problemType || "the 311 request",
-                    )}"
-                  />`
+                ? html`<button
+                    class="ticket-detail__photo-trigger"
+                    type="button"
+                    data-photo-lightbox
+                    data-photo-address="${escapeAttr(detail.location || "")}"
+                    data-photo-time="${escapeAttr(detail.submittedAt || "")}"
+                  >
+                    <img
+                      class="ticket-detail__photo"
+                      src="${escapeAttr(detail.mediaUrl)}"
+                      alt="Evidence for ${escapeAttr(
+                        detail.title || detail.problemType || "the 311 request",
+                      )}"
+                    />
+                  </button>`
                 : html`<div
                     class="ticket-detail__photo photo-placeholder"
                     role="img"

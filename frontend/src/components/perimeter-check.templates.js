@@ -211,11 +211,23 @@ export function analyzingSection(
 // Shared with <problem-report>, which renders the same grid.
 export const shotTile = (item, index) => html`
   <div class="shot">
-    <img
-      class="shot__img"
-      src="${escapeAttr(item.dataUrl)}"
-      alt="Captured photo ${index + 1}"
-    />
+    <button
+      class="shot__preview"
+      type="button"
+      data-photo-lightbox
+      data-photo-address="${escapeAttr(
+        item.georeferencedAddress || item.address || item.siteAddress || "",
+      )}"
+      data-photo-time="${escapeAttr(
+        item.uploadedAt || item.createdAt || item.capturedAt || "",
+      )}"
+    >
+      <img
+        class="shot__img"
+        src="${escapeAttr(item.dataUrl)}"
+        alt="Captured photo ${index + 1}"
+      />
+    </button>
     <button
       class="shot__del"
       type="button"
