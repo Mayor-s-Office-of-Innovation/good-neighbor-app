@@ -590,3 +590,38 @@ html.wa-dark .home-results__complete-content img {
   margin-top: 0;
   padding-inline: 0.4rem;
 }
+
+/* Language picker (settings menu → Language). Options are submit buttons so
+   the dialog's returnValue carries the chosen locale id. */
+.language-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.language-list__option {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.language-list__option[aria-current="true"] {
+  border-color: var(--brand-blue);
+  box-shadow: inset 0 0 0 1px var(--brand-blue);
+  cursor: default;
+}
+
+.language-list__option:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}

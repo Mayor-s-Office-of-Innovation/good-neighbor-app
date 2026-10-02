@@ -22,6 +22,7 @@ import {
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
+import { t } from "../i18n/i18n.js";
 import {
   missingConditionMessage,
   problemFromCard,
@@ -320,7 +321,10 @@ class PerimeterCheck extends HTMLElement {
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
-    if (title) title.textContent = `Delete "${problem.title}"?`;
+    if (title)
+      title.textContent = t("analysis.deleteDialog.titleFor", {
+        title: problem.title,
+      });
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",
@@ -392,7 +396,7 @@ class PerimeterCheck extends HTMLElement {
     if (description.length < 5) {
       this._setDialogError(
         "analysis-edit-error",
-        "Description must be at least 5 characters.",
+        t("analysis.editDialog.tooShort"),
       );
       return;
     }
@@ -564,7 +568,10 @@ class PerimeterCheck extends HTMLElement {
           const minutes = Math.floor(seconds / 60);
           const rest = seconds % 60;
           el.textContent =
-            minutes > 0 ? ` ${minutes}m ${rest}s` : ` ${seconds}s`;
+            " " +
+            (minutes > 0
+              ? t("date.elapsed.minutes", { minutes, seconds: rest })
+              : t("date.elapsed.seconds", { seconds }));
         }
       }
     };

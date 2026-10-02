@@ -4,6 +4,8 @@ import {
   photoLocation,
 } from "../domain/photo-lightbox.js";
 import { openOverlayDialog } from "../dialog-history.js";
+import { escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 
 class PhotoLightbox extends HTMLElement {
   constructor() {
@@ -14,11 +16,11 @@ class PhotoLightbox extends HTMLElement {
   }
 
   connectedCallback() {
-    this.innerHTML = `<dialog class="photo-lightbox" aria-label="Photo viewer">
+    this.innerHTML = `<dialog class="photo-lightbox" aria-label="${escapeAttr(t("lightbox.dialog.aria"))}">
       <figure class="photo-lightbox__figure">
         <div class="photo-lightbox__image-wrap">
           <img class="photo-lightbox__image" alt="" />
-          <button class="photo-lightbox__close" type="button" aria-label="Close photo viewer"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
+          <button class="photo-lightbox__close" type="button" aria-label="${escapeAttr(t("lightbox.close.aria"))}"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
         </div>
         <figcaption class="photo-lightbox__caption"></figcaption>
       </figure>
@@ -53,7 +55,7 @@ class PhotoLightbox extends HTMLElement {
     this._trigger = photo.trigger || null;
     this._source = photo.src;
     image.src = photo.src;
-    image.alt = photo.alt || "Full-size photo";
+    image.alt = photo.alt || t("lightbox.image.alt");
     const address = photoLocation(
       photo.address || "",
       this.getAttribute("site-address") || "",

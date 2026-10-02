@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { t } from "../i18n/i18n.js";
 import {
   descriptionCard,
   footer,
@@ -47,27 +48,30 @@ describe("progressLine", () => {
     const markup = progressLine({ photos: 2 });
 
     expect(markup).toContain(
-      `2 of ${RECOMMENDED_PERIMETER_PHOTOS} recommended photos taken`,
+      t("check.progress.count", {
+        photos: 2,
+        recommended: RECOMMENDED_PERIMETER_PHOTOS,
+      }),
     );
-    expect(markup).toContain(
-      "We recommend taking at least 3 photos in a perimeter check.",
-    );
+    expect(markup).toContain(t("check.progress.hint"));
   });
 
   it("does not add a completion label once the photo minimum is met", () => {
     const markup = progressLine({ photos: 1 });
 
-    expect(markup).toContain("1 of 3 recommended photos taken");
+    expect(markup).toContain(
+      t("check.progress.count", { photos: 1, recommended: 3 }),
+    );
     expect(markup).not.toContain("Ready to finish");
   });
 
   it("keeps the photo guidance without a saved-description status", () => {
     const markup = progressLine({ photos: 0 });
 
-    expect(markup).toContain("0 of 3 recommended photos taken");
     expect(markup).toContain(
-      "We recommend taking at least 3 photos in a perimeter check.",
+      t("check.progress.count", { photos: 0, recommended: 3 }),
     );
+    expect(markup).toContain(t("check.progress.hint"));
     expect(markup).not.toContain("Description saved");
     expect(markup).not.toContain("Ready to finish");
   });
@@ -89,8 +93,8 @@ describe("descriptionCard", () => {
     expect(markup).toContain('class="shot shot--description"');
     expect(markup).toContain('class="shot__del shot__edit"');
     expect(markup).toContain('class="shot__del"');
-    expect(markup).toContain('aria-label="Edit description"');
-    expect(markup).toContain('aria-label="Delete description"');
+    expect(markup).toContain(`aria-label="${t("check.description.edit")}"`);
+    expect(markup).toContain(`aria-label="${t("check.description.delete")}"`);
     expect(markup).toContain('data-edit-description="text-1"');
     expect(markup).toContain('data-remove-description="text-1"');
   });
@@ -116,7 +120,7 @@ describe("photoGrid", () => {
     const markup = photoGrid([]);
 
     expect(markup).toContain("addshot--empty");
-    expect(markup).toContain("Take photo");
+    expect(markup).toContain(t("check.photo.take"));
     expect(markup).toContain('name="camera"');
   });
 
@@ -153,6 +157,6 @@ describe("footer", () => {
 
     expect(markup).not.toMatch(/id="done-check"[^>]*disabled/);
     expect(markup).toContain('id="toggle-analyzing"');
-    expect(markup).toContain("Analyzing...");
+    expect(markup).toContain(t("card.pending.title"));
   });
 });

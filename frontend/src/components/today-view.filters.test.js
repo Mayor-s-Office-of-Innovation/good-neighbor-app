@@ -8,6 +8,10 @@ import {
   vi,
 } from "vitest";
 
+import { lastLogSummary } from "../domain/home-tasks.js";
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
+
 const session = vi.hoisted(() => ({ current: null }));
 const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
 vi.mock("../services/device-location.js", () => ({
@@ -337,14 +341,21 @@ describe("site location prompt", () => {
       location: { latitude: 37.7749, longitude: -122.4194 },
     };
     view._deviceLocation = { latitude: 37.78, longitude: -122.4194 };
-    const summary = view._summaryBlock(
-      { id: "check-1", submittedAt: new Date().toISOString(), issueCount: 1 },
-      [{ task: { checkId: "check-1" }, homeStatus: "needs_action" }],
-    );
-    expect(summary).toContain("Looks like you're not near this site.");
+    const last = {
+      id: "check-1",
+      submittedAt: new Date().toISOString(),
+      issueCount: 1,
+    };
+    const entries = [
+      { task: { checkId: "check-1" }, homeStatus: "needs_action" },
+    ];
+    const summary = view._summaryBlock(last, entries);
+    expect(summary).toContain(escapeHtml(t("today.summary.outsideRadius")));
     expect(summary).toContain('id="lastlog-change-site"');
     expect(summary).toContain('appearance="plain"');
-    expect(summary).not.toContain("Last log:");
+    const label = lastLogSummary(last, entries);
+    expect(label).not.toBe("");
+    expect(summary).not.toContain(escapeHtml(label));
     view._deviceLocation = null;
     expect(view._summaryBlock(null, [])).toBe("");
   });
@@ -495,9 +506,7 @@ describe("logout", () => {
     expect(logout.discardInMemorySession).not.toHaveBeenCalled();
     expect(window.dispatchEvent).not.toHaveBeenCalled();
     expect(view._logoutPending).toBe(false);
-    expect(view._logoutError).toBe(
-      "We couldn't log you out. Please try again.",
-    );
+    expect(view._logoutError).toBe(t("today.logout.error"));
     expect(view._renderHome).toHaveBeenCalledTimes(2);
   });
 });

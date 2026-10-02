@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { t } from "../helpers/i18n.js";
 import {
   dismissAllNewResults,
   finishCheck,
@@ -146,11 +147,9 @@ test.describe("describe instead", () => {
     // One description satisfies the rule with zero photos.
     await expect(page.locator(".shot img")).toHaveCount(0);
     await expect(progress).toContainText(
-      `0 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+      t("check.progress.count", { photos: 0, recommended: RECOMMENDED_PHOTOS }),
     );
-    await expect(progress).toContainText(
-      "We recommend taking at least 3 photos in a perimeter check.",
-    );
+    await expect(progress).toContainText(t("check.progress.hint"));
     await expect(progress).not.toContainText("Description saved");
     await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
@@ -203,7 +202,7 @@ test.describe("describe instead", () => {
     await page.locator("#describe-instead").click();
     await expect(page).toHaveURL(/\/problem\/describe$/);
     await expect(page.locator(".describe__subtitle")).toHaveText(
-      "Describe the issue you see in as much detail as possible",
+      t("describe.problem.subtitle"),
     );
     const subtitleMetrics = await page
       .locator(".describe__subtitle")
@@ -221,7 +220,7 @@ test.describe("describe instead", () => {
       subtitleMetrics.lineHeight * 1.1,
     );
     await expect(page.locator("#describe-hint")).toHaveText(
-      "At least 20 characters",
+      t("describe.hint", { count: 20 }),
     );
     await expect
       .poll(() =>

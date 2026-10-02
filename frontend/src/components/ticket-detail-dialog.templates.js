@@ -4,27 +4,55 @@
   ticket-detail-dialog.js; this file owns only the markup.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { hasKey, t } from "../i18n/i18n.js";
+import { rulebookText } from "../i18n/rulebook.js";
+import { statusLine } from "./analysis-results.templates.js";
+import { formatDateTime, pacificDaysAgo } from "../i18n/dates.js";
+
+/** Key-prefix scope for 311 vocabulary ("Resolved" also exists as a task label). */
+const SF311 = "server.sf311";
 import { formatOverdueElapsed } from "../domain/home-tasks.js";
 
 function formatTicketDate(date) {
   return date
-    ? new Intl.DateTimeFormat(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(date))
+    ? formatDateTime(date, { dateStyle: "medium", timeStyle: "short" })
     : "";
 }
 
 function formatTicketRelativeDate(date) {
   if (!date) return "";
-  const days = Math.max(
-    0,
-    Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
-  );
-  return days === 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  const days = Math.max(0, pacificDaysAgo(date) ?? 0);
+  return days === 0 ? t("date.today") : t("date.daysAgo", { count: days });
 }
 
-function ticketEventDescription(description) {
+/**
+ * 311 timeline events arrive with the English sentence already filled in
+ * (`title`) plus the structured `kind` / `value` it was built from, so the
+ * sentence can be rebuilt in the active language. Unknown kinds fall back to
+ * the English title.
+ * @param {{ kind?: string, value?: string, title?: string }} event
+ */
+function ticketEventTitle(event) {
+  const key = event.kind ? `server.sf311.eventTitle.${event.kind}` : "";
+  if (key && hasKey(key)) {
+    return t(key, { value: rulebookText(event.value ?? "", SF311) });
+  }
+  return rulebookText(event.title, SF311);
+}
+
+/** @param {{ kind?: string, closureReason?: string, notes?: string, description?: string }} event */
+function ticketEventDescription(event) {
+  let description = event.description;
+  if (event.kind === "resolved" && event.closureReason) {
+    description = [
+      t("server.sf311.eventDescription.agencySaid", {
+        value: rulebookText(event.closureReason, SF311),
+      }),
+      event.notes,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   return description ? html`<p>${escapeHtml(description)}</p>` : "";
 }
 
@@ -45,30 +73,30 @@ export function ticketDetailDialog({ detail, state }) {
           type="button"
           class="btn-icon ticket-detail__close wa-plain"
           data-close-311
-          aria-label="Close request details"
+          aria-label="${escapeAttr(t("ticket.close.aria"))}"
         >
           <wa-icon name="xmark" aria-hidden="true"></wa-icon>
         </button>
       </header>
       ${state === "loading"
-        ? html`<p role="status">Loading request updates…</p>`
+        ? html`<p role="status">${escapeHtml(t("ticket.loading"))}</p>`
         : ""}
       ${state === "error"
         ? html`<div role="alert">
-            <p>We couldn't load the latest 311 updates.</p>
+            <p>${escapeHtml(t("ticket.loadError"))}</p>
             <button
               type="button"
               class="btn-outline btn-outline--sm"
               data-retry-311
             >
-              Try again
+              ${escapeHtml(t("common.retry"))}
             </button>
           </div>`
         : ""}
       ${detail
         ? html` <section
               class="ticket-detail__summary"
-              aria-label="Request summary"
+              aria-label="${escapeAttr(t("ticket.summary.aria"))}"
             >
               <p
                 class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
@@ -78,14 +106,16 @@ export function ticketDetailDialog({ detail, state }) {
                     : "default"}"
               >
                 <span aria-hidden="true"></span>
-                <span class="ticket-detail__type-label">311 request</span>
+                <span class="ticket-detail__type-label"
+                  >${escapeHtml(t("card.route.ticket"))}</span
+                >
                 <span class="ticket-detail__type-separator" aria-hidden="true"
                   >·</span
                 >
                 <strong
-                  >${escapeHtml(detail.status)}${detail.statusDetail
-                    ? html`: ${escapeHtml(detail.statusDetail)}`
-                    : ""}</strong
+                  >${escapeHtml(
+                    statusLine(detail.status, detail.statusDetail, SF311),
+                  )}</strong
                 >
               </p>
               ${detail.location
@@ -95,7 +125,9 @@ export function ticketDetailDialog({ detail, state }) {
                 : ""}
               <h2 id="ticket-detail-title">
                 ${escapeHtml(
-                  detail.title || detail.problemType || "Request details",
+                  detail.title ||
+                    detail.problemType ||
+                    t("ticket.fallbackTitle"),
                 )}
               </h2>
               ${detail.description
@@ -114,28 +146,37 @@ export function ticketDetailDialog({ detail, state }) {
                     <img
                       class="ticket-detail__photo"
                       src="${escapeAttr(detail.mediaUrl)}"
-                      alt="Evidence for ${escapeAttr(
-                        detail.title || detail.problemType || "the 311 request",
+                      alt="${escapeAttr(
+                        t("taskUpdate.photo.evidenceAlt", {
+                          title:
+                            detail.title ||
+                            detail.problemType ||
+                            t("ticket.photo.fallbackSubject"),
+                        }),
                       )}"
                     />
                   </button>`
                 : html`<div
                     class="ticket-detail__photo photo-placeholder"
                     role="img"
-                    aria-label="No photo available"
+                    aria-label="${escapeAttr(t("ticket.photo.none"))}"
                   >
                     <wa-icon name="image" aria-hidden="true"></wa-icon>
                   </div>`}
               <dl class="ticket-detail__metadata">
                 ${detail.assignedAgency
                   ? html`<div>
-                      <dt>Agency:</dt>
-                      <dd>${escapeHtml(detail.assignedAgency)}</dd>
+                      <dt>${escapeHtml(t("taskUpdate.metadata.agency"))}</dt>
+                      <dd>
+                        ${escapeHtml(
+                          rulebookText(detail.assignedAgency, SF311),
+                        )}
+                      </dd>
                     </div>`
                   : ""}
                 ${detail.submittedAt
                   ? html`<div>
-                      <dt>Submitted:</dt>
+                      <dt>${escapeHtml(t("ticket.metadata.submitted"))}</dt>
                       <dd>
                         ${escapeHtml(
                           formatTicketRelativeDate(detail.submittedAt),
@@ -145,7 +186,9 @@ export function ticketDetailDialog({ detail, state }) {
                   : ""}
                 ${detail.expectedResponseAt
                   ? html`<div>
-                      <dt>Response expected:</dt>
+                      <dt>
+                        ${escapeHtml(t("ticket.metadata.responseExpected"))}
+                      </dt>
                       <dd>
                         ${escapeHtml(
                           formatTicketDate(detail.expectedResponseAt),
@@ -155,23 +198,27 @@ export function ticketDetailDialog({ detail, state }) {
                   : ""}
                 ${detail.closureReason
                   ? html`<div>
-                      <dt>Closure reason:</dt>
-                      <dd>${escapeHtml(detail.closureReason)}</dd>
+                      <dt>${escapeHtml(t("ticket.metadata.closureReason"))}</dt>
+                      <dd>
+                        ${escapeHtml(rulebookText(detail.closureReason, SF311))}
+                      </dd>
                     </div>`
                   : ""}
               </dl>
               ${detail.responseOverdue && detail.expectedResponseAt
                 ? html`<p class="ticket-detail__overdue-message">
-                    The City's expected response time passed
                     ${escapeHtml(
-                      formatOverdueElapsed(detail.expectedResponseAt),
+                      t("ticket.overdue.message", {
+                        elapsed: formatOverdueElapsed(
+                          detail.expectedResponseAt,
+                        ),
+                      }),
                     )}
-                    ago.
                   </p>`
                 : ""}
             </section>
             <section class="ticket-detail__updates">
-              <h3>Request updates</h3>
+              <h3>${escapeHtml(t("ticket.updates.title"))}</h3>
               ${detail.events?.length
                 ? html`<ol class="ticket-timeline">
                     ${detail.events
@@ -179,8 +226,9 @@ export function ticketDetailDialog({ detail, state }) {
                         (event) =>
                           html`<li class="ticket-timeline__item">
                             <div class="ticket-timeline__content">
-                              <strong>${escapeHtml(event.title)}</strong
-                              >${ticketEventDescription(event.description)}
+                              <strong
+                                >${escapeHtml(ticketEventTitle(event))}</strong
+                              >${ticketEventDescription(event)}
                               <time datetime="${escapeAttr(event.occurredAt)}"
                                 >${escapeHtml(
                                   formatTicketDate(event.occurredAt),
@@ -191,7 +239,7 @@ export function ticketDetailDialog({ detail, state }) {
                       )
                       .join("")}
                   </ol>`
-                : html`<p>No updates are available yet.</p>`}
+                : html`<p>${escapeHtml(t("ticket.updates.empty"))}</p>`}
             </section>
             <p class="ticket-detail__reference">
               #${escapeHtml(detail.requestNumber)}

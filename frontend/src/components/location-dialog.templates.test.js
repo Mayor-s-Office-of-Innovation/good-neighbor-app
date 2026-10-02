@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
 import {
   locationDialog,
   locationDialogSites,
@@ -30,7 +32,9 @@ describe("locationDialog", () => {
       sites,
       currentSiteId: "site-b",
     });
-    expect(markup).toContain("not near Alpha Center");
+    expect(markup).toContain(
+      escapeHtml(t("location.text", { site: "Alpha Center" })),
+    );
     expect(markup).toMatch(/data-location-site="site-b"\s+aria-pressed="true"/);
     expect(markup).toMatch(
       /data-location-site="site-a"\s+aria-pressed="false"/,
@@ -47,7 +51,7 @@ describe("locationDialog", () => {
       ],
       currentSiteId: "site-1",
     });
-    expect(markup).toContain("Is your app set to the right location?");
+    expect(markup).toContain(escapeHtml(t("location.title")));
     expect(markup).toContain('<h2 id="location-dialog-title">');
     expect(markup).toContain('aria-labelledby="location-dialog-title"');
     expect(markup).toContain('aria-describedby="location-dialog-copy"');
@@ -55,7 +59,10 @@ describe("locationDialog", () => {
     expect(markup).toMatch(/location-dialog__site"\s+appearance="plain"/);
     expect(markup).toMatch(/location-dialog__confirm"\s+appearance="plain"/);
     expect(markup).toMatch(/location-dialog__stay"\s+appearance="plain"/);
-    expect(markup).toMatch(/Confirm site change\s*<\/button>/);
+    expect(markup).toContain(escapeHtml(t("location.confirm")));
+    expect(markup).toMatch(
+      new RegExp(`${escapeHtml(t("location.confirm"))}\\s*</button>`),
+    );
     expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
   });
 });

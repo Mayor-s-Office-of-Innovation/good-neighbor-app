@@ -1,4 +1,6 @@
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
+import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 import {
   MAX_TASK_UPDATE_NOTES,
@@ -29,7 +31,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
                 type="button"
                 class="btn-icon wa-plain"
                 data-back
-                aria-label="Back"
+                aria-label="${escapeAttr(t("common.back"))}"
               >
                 <wa-icon name="chevron-left"></wa-icon>
               </button>`
@@ -38,18 +40,16 @@ export function taskUpdateDialogShell({ mode, state, content }) {
             type="button"
             class="btn-icon wa-plain"
             data-close
-            aria-label="Close"
+            aria-label="${escapeAttr(t("common.close"))}"
           >
             <wa-icon name="xmark"></wa-icon>
           </button>
         </header>
         ${state === "loading"
-          ? html`<p role="status">Loading updates…</p>`
+          ? html`<p role="status">${escapeHtml(t("taskUpdate.loading"))}</p>`
           : ""}
         ${state === "error"
-          ? html`<p role="alert">
-              We couldn't load this issue. Please try again.
-            </p>`
+          ? html`<p role="alert">${escapeHtml(t("taskUpdate.loadError"))}</p>`
           : ""}
         ${state === "ready" ? content : ""}
       </div>
@@ -61,7 +61,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     >
       <div class="task-update__discard-card">
         <h2 id="task-update-discard-title">
-          Closing will discard what you've added
+          ${escapeHtml(t("taskUpdate.discard.title"))}
         </h2>
         <div class="task-update__discard-actions">
           <button
@@ -69,10 +69,10 @@ export function taskUpdateDialogShell({ mode, state, content }) {
             class="task-update__discard-confirm"
             data-confirm-discard
           >
-            Discard changes
+            ${escapeHtml(t("common.discardChanges"))}
           </button>
           <button type="button" class="btn-outline" data-continue-editing>
-            Back to editing
+            ${escapeHtml(t("taskUpdate.discard.cancel"))}
           </button>
         </div>
       </div>
@@ -98,14 +98,17 @@ export function taskUpdateTimeline({
     type: "issue_created",
     label:
       issueOrigin === "single-problem"
-        ? "Issue added as a single issue"
-        : "Issue added during a perimeter check",
+        ? t("taskUpdate.created.single")
+        : t("taskUpdate.created.perimeter"),
     occurredAt: task.createdAt || task.created_at || task.notifiedAt,
   });
   const timeline = [...updates, ...(nextToken ? [] : [creation])].filter(
     (update) => update.occurredAt,
   );
-  const title = task.userFriendlyLabel || task.category || "Issue update";
+  const title =
+    task.userFriendlyLabel ||
+    rulebookText(task.category) ||
+    t("taskUpdate.fallbackTitle");
   return html`<section class="task-update__summary">
       <p
         class="task-update__route${latestUpdateLabel
@@ -114,12 +117,17 @@ export function taskUpdateTimeline({
       >
         ${escapeHtml(
           task.kind === "escalation"
-            ? "311 request"
+            ? t("card.route.ticket")
             : task.inProgressActionKind === "called_911"
-              ? "Emergency call"
-              : "Non-emergency call",
+              ? t("card.route.emergency")
+              : t("card.route.nonEmergency"),
         )}${latestUpdateLabel
-          ? html` · <strong>${escapeHtml(latestUpdateLabel)}</strong>`
+          ? html` ·
+              <strong
+                >${escapeHtml(
+                  rulebookText(latestUpdateLabel, "server.taskUpdate"),
+                )}</strong
+              >`
           : ""}
       </p>
       <p class="task-update__location">
@@ -151,55 +159,60 @@ export function taskUpdateTimeline({
             <img
               class="task-update__photo task-update__photo--original"
               src="${escapeAttr(originalMediaUrl)}"
-              alt="Evidence for ${escapeAttr(title)}"
+              alt="${escapeAttr(t("taskUpdate.photo.evidenceAlt", { title }))}"
             />
           </button>`
         : ""}
       <dl class="task-update__metadata">
         <div>
-          <dt>Agency:</dt>
-          <dd>${escapeHtml(task.agency || "unknown")}</dd>
+          <dt>${escapeHtml(t("taskUpdate.metadata.agency"))}</dt>
+          <dd>
+            ${escapeHtml(
+              rulebookText(task.agency, "rulebook.agency") ||
+                t("taskUpdate.metadata.unknown"),
+            )}
+          </dd>
         </div>
         <div>
-          <dt>Notified:</dt>
+          <dt>${escapeHtml(t("taskUpdate.metadata.notified"))}</dt>
           <dd>
             ${escapeHtml(
               task.notifiedAt
                 ? formatPacificDateTime(task.notifiedAt)
-                : "unknown",
+                : t("taskUpdate.metadata.unknown"),
             )}
           </dd>
         </div>
         ${expected
           ? html`<div>
-              <dt>Response expected by:</dt>
+              <dt>${escapeHtml(t("taskUpdate.metadata.responseExpected"))}</dt>
               <dd>${escapeHtml(formatPacificDateTime(expected))}</dd>
             </div>`
           : ""}
       </dl>
       ${overdue && !task.resolvedAt
         ? html`<p class="task-update__overdue">
-            <strong>Expected response time has passed</strong>
+            <strong>${escapeHtml(t("taskUpdate.overdue"))}</strong>
           </p>`
         : ""}
     </section>
     ${task.presencePromptDue
       ? html`<section class="task-update__prompt">
-          <h3>Is the issue still there?</h3>
+          <h3>${escapeHtml(t("taskUpdate.presence.title"))}</h3>
           <div class="task-update__actions">
             <button
               type="button"
               class="btn-theme wa-success wa-accent wa-pill"
               data-presence="presence_resolved"
             >
-              Resolved
+              ${escapeHtml(t("taskUpdate.outcome.resolved"))}
             </button>
             <button
               type="button"
               class="btn-theme wa-neutral wa-filled wa-pill"
               data-presence="presence_still_present"
             >
-              Still there
+              ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
             </button>
           </div>
           <p class="task-update__error" role="alert" hidden></p>
@@ -207,7 +220,7 @@ export function taskUpdateTimeline({
       : ""}
     ${task.status === "in_progress"
       ? html`<section class="task-update__section">
-          <h3>Updates</h3>
+          <h3>${escapeHtml(t("taskUpdate.updates.title"))}</h3>
           <div class="task-update__actions">
             <button
               type="button"
@@ -216,7 +229,7 @@ export function taskUpdateTimeline({
                 : "btn-ink btn-ink--sm"}"
               data-mode="notes"
             >
-              Add a note or photo
+              ${escapeHtml(t("taskUpdate.updates.addNote"))}
             </button>
             <button
               type="button"
@@ -225,11 +238,13 @@ export function taskUpdateTimeline({
                 : "btn-ink btn-ink--sm"}"
               data-mode="action"
             >
-              Record an action
+              ${escapeHtml(t("taskUpdate.updates.recordAction"))}
             </button>
           </div>
         </section>`
-      : html`<h3 class="task-update__updates-title">Updates</h3>`}
+      : html`<h3 class="task-update__updates-title">
+          ${escapeHtml(t("taskUpdate.updates.title"))}
+        </h3>`}
     <ol class="ticket-timeline task-update__timeline">
       ${timeline
         .map(
@@ -240,7 +255,10 @@ export function taskUpdateTimeline({
               )}"
             >
               <div class="ticket-timeline__content">
-                <strong>${escapeHtml(update.label)}</strong
+                <strong
+                  >${escapeHtml(
+                    rulebookText(update.label, "server.taskUpdate"),
+                  )}</strong
                 ><time datetime="${escapeAttr(update.occurredAt)}"
                   >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
                 >
@@ -266,7 +284,9 @@ export function taskUpdateTimeline({
                           <img
                             class="task-update__photo"
                             src="${escapeAttr(mediaUrls.get(artifactId))}"
-                            alt="Update photo for ${escapeAttr(title)}"
+                            alt="${escapeAttr(
+                              t("taskUpdate.photo.updateAlt", { title }),
+                            )}"
                           />
                         </button>`
                       : "",
@@ -279,7 +299,7 @@ export function taskUpdateTimeline({
     </ol>
     ${nextToken
       ? html`<button type="button" class="btn-outline" data-load-older>
-          Load older updates
+          ${escapeHtml(t("taskUpdate.updates.loadOlder"))}
         </button>`
       : ""}
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
@@ -289,10 +309,10 @@ export function taskUpdateTimeline({
 export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
   const title =
     pendingEvent?.type === "presence_resolved"
-      ? "Document your success"
+      ? t("taskUpdate.capture.successTitle")
       : pendingEvent
-        ? "Update this issue with a photo"
-        : "Add a photo or note to this issue";
+        ? t("taskUpdate.capture.pendingTitle")
+        : t("taskUpdate.capture.title");
   const populatedNotes = notes.filter((note) => note.trim());
   const hasContent = files.length || populatedNotes.length;
   return html`<section class="task-update__capture">
@@ -319,7 +339,7 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
           class="btn-outline task-update__add-note"
           data-add-note
         >
-          Add a typed note
+          ${escapeHtml(t("taskUpdate.capture.addNote"))}
         </button>`
       : ""}
     <p class="task-update__error" role="alert" hidden></p>
@@ -330,19 +350,19 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
         data-save-notes
         ${!pendingEvent && !hasContent ? "disabled" : ""}
       >
-        Done
+        ${escapeHtml(t("common.done"))}
       </button>
       ${pendingEvent
         ? html`<button type="button" class="btn-outline" data-skip>
-            Skip
+            ${escapeHtml(t("taskUpdate.skip"))}
           </button>`
         : ""}
     </div>
   </section>`;
 }
 
-/** @param {string[]} previews @param {string} label @param {File[]} [files] */
-function photoPicker(previews, label, files = []) {
+/** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] */
+function photoPicker(previews, kind, files = []) {
   return html`<div class="task-update__photo-grid">
     <label class="task-update__photo-picker"
       ><input
@@ -354,7 +374,7 @@ function photoPicker(previews, label, files = []) {
         data-photos
       /><span class="task-update__camera" aria-hidden="true"
         ><wa-icon name="camera"></wa-icon></span
-      ><span>Add a photo</span></label
+      ><span>${escapeHtml(t("taskUpdate.photo.add"))}</span></label
     >
     ${previews
       .map(
@@ -372,7 +392,14 @@ function photoPicker(previews, label, files = []) {
             <img
               class="task-update__photo task-update__photo--draft"
               src="${escapeAttr(url)}"
-              alt="Selected ${label} photo ${index + 1}"
+              alt="${escapeAttr(
+                t(
+                  kind === "action"
+                    ? "taskUpdate.photo.selectedActionAlt"
+                    : "taskUpdate.photo.selectedUpdateAlt",
+                  { index: index + 1 },
+                ),
+              )}"
             />
           </button>`,
       )
@@ -383,17 +410,17 @@ function photoPicker(previews, label, files = []) {
 /** @param {{ note: string }} view */
 export function taskUpdateNoteEditor({ note }) {
   return html`<section class="task-update__capture task-update__capture--text">
-    <h2 id="task-update-title">Add a typed note</h2>
+    <h2 id="task-update-title">${escapeHtml(t("taskUpdate.note.title"))}</h2>
     <div class="task-update__text-card">
       <textarea
         class="task-update__text-field"
         maxlength="${MAX_TASK_UPDATE_TEXT}"
         data-note-text
-        aria-label="Typed note"
+        aria-label="${escapeAttr(t("taskUpdate.note.aria"))}"
       >
 ${escapeHtml(note)}</textarea
       ><button type="button" class="task-update__clear" data-clear-note>
-        Clear all
+        ${escapeHtml(t("common.clearAll"))}
       </button>
     </div>
     <button
@@ -402,7 +429,7 @@ ${escapeHtml(note)}</textarea
       data-save-note
       ${note.trim() ? "" : "disabled"}
     >
-      Continue
+      ${escapeHtml(t("common.continue"))}
     </button>
   </section>`;
 }
@@ -410,24 +437,24 @@ ${escapeHtml(note)}</textarea
 /** @param {{ text: string }} view */
 export function taskUpdateActionEditor({ text }) {
   return html`<section class="task-update__capture task-update__capture--text">
-    <h2 id="task-update-title">Share a follow up action</h2>
+    <h2 id="task-update-title">${escapeHtml(t("taskUpdate.action.title"))}</h2>
     <p class="task-update__subtitle">
-      Describe what else you did to address this issue.
+      ${escapeHtml(t("taskUpdate.action.subtitle"))}
     </p>
     <div class="task-update__text-card">
       <textarea
         class="task-update__text-field"
         maxlength="${MAX_TASK_UPDATE_TEXT}"
         data-action-text
-        aria-label="Follow up action"
+        aria-label="${escapeAttr(t("taskUpdate.action.aria"))}"
       >
 ${escapeHtml(text)}</textarea
       ><button type="button" class="task-update__clear" data-clear>
-        Clear all
+        ${escapeHtml(t("common.clearAll"))}
       </button>
     </div>
     <section class="task-update__outcome">
-      <h3>Did this action resolve the issue?</h3>
+      <h3>${escapeHtml(t("taskUpdate.action.outcomeTitle"))}</h3>
       <div class="task-update__actions">
         <button
           type="button"
@@ -435,7 +462,7 @@ ${escapeHtml(text)}</textarea
           data-action-outcome="additional_action_resolved"
           ${text.trim() ? "" : "disabled"}
         >
-          Resolved
+          ${escapeHtml(t("taskUpdate.outcome.resolved"))}
         </button>
         <button
           type="button"
@@ -443,7 +470,7 @@ ${escapeHtml(text)}</textarea
           data-action-outcome="additional_action_still_present"
           ${text.trim() ? "" : "disabled"}
         >
-          Still there
+          ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
         </button>
       </div>
     </section>
@@ -454,7 +481,9 @@ ${escapeHtml(text)}</textarea
 /** @param {string[]} previews @param {File[]} [files] */
 export function taskUpdateActionPhotos(previews, files = []) {
   return html`<section class="task-update__capture">
-    <h2 id="task-update-title">Document your action</h2>
+    <h2 id="task-update-title">
+      ${escapeHtml(t("taskUpdate.actionPhotos.title"))}
+    </h2>
     ${photoPicker(previews, "action", files)}
     <p class="task-update__error" role="alert" hidden></p>
     <div class="task-update__actions task-update__actions--footer">
@@ -464,8 +493,10 @@ export function taskUpdateActionPhotos(previews, files = []) {
         data-save-action
         ${previews.length ? "" : "disabled"}
       >
-        Done</button
-      ><button type="button" class="btn-outline" data-skip-action>Skip</button>
+        ${escapeHtml(t("common.done"))}</button
+      ><button type="button" class="btn-outline" data-skip-action>
+        ${escapeHtml(t("taskUpdate.skip"))}
+      </button>
     </div>
   </section>`;
 }

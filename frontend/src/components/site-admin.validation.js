@@ -1,17 +1,22 @@
+import { formatDateTime } from "../i18n/dates.js";
+import { t } from "../i18n/i18n.js";
+
 /** @param {unknown} value */
 const text = (value) => String(value || "").trim();
 
-/** @param {string} value */
+/** @param {string} value a calendar date, "YYYY-MM-DD" */
 export function formatAdminDate(value) {
-  if (!value) return "Present";
-  const date = new Date(`${value}T00:00:00`);
+  if (!value) return t("siteAdmin.datePresent");
+  // Anchor at noon Pacific so the Pacific-fixed formatter shows this calendar
+  // day whatever the device's zone (DST shifts it by an hour at most).
+  const date = new Date(`${value}T12:00:00-08:00`);
   return Number.isNaN(date.getTime())
     ? value
-    : new Intl.DateTimeFormat("en-US", {
+    : formatDateTime(date, {
         month: "short",
         day: "numeric",
         year: "numeric",
-      }).format(date);
+      });
 }
 
 /** @param {unknown} value */
@@ -27,14 +32,14 @@ export function formatAdminPhone(value) {
 /** @param {Record<string, unknown>} value */
 export function validateContact(value) {
   if (!text(value.firstName) || !text(value.lastName)) {
-    return "First and last name are required.";
+    return t("siteAdmin.validation.nameRequired");
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value.email))) {
-    return "Enter a correctly formed email address.";
+    return t("siteAdmin.validation.email");
   }
   const digits = text(value.phone).replace(/\D/g, "");
   if (!(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))) {
-    return "Enter a valid US phone number.";
+    return t("siteAdmin.validation.phone");
   }
   return "";
 }
@@ -42,19 +47,19 @@ export function validateContact(value) {
 /** @param {Record<string, any>} value */
 export function validateSiteDetails(value) {
   const address = value.address || {};
-  if (!text(value.name)) return "Site name is required.";
+  if (!text(value.name)) return t("siteAdmin.validation.siteNameRequired");
   if (
     !text(address.streetNumber) ||
     !text(address.streetAddress) ||
     !text(address.city)
   ) {
-    return "Street number, street address, and city are required.";
+    return t("siteAdmin.validation.addressRequired");
   }
   if (!/^[A-Za-z]{2}$/.test(text(address.state))) {
-    return "Enter a two-letter state abbreviation.";
+    return t("siteAdmin.validation.state");
   }
   if (!/^\d{5}(?:-\d{4})?$/.test(text(address.zip))) {
-    return "Enter a valid ZIP code.";
+    return t("siteAdmin.validation.zip");
   }
   return "";
 }

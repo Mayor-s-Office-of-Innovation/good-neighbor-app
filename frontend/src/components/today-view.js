@@ -26,6 +26,7 @@ import {
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
   showSiteSwitchSuccessToast,
+  showLanguageErrorToast,
   queueSiteSwitchSuccessToast,
 } from "../state/toasts.js";
 import {
@@ -136,6 +137,8 @@ import "./ticket-detail-dialog.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
+import { getLocale, setLocale, t } from "../i18n/i18n.js";
+import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
@@ -163,6 +166,8 @@ class TodayView extends HTMLElement {
     this._settingsDocumentClick = null;
     this._attributionsDialog = null;
     this._attributionsDialogOpen = false;
+    this._languageDialog = null;
+    this._languageDialogOpen = false;
     /** @type {any} the persistent <site-switcher>, created on first render */
     this._siteSwitcher = null;
     this._providerSites = [];
@@ -474,9 +479,44 @@ class TodayView extends HTMLElement {
         );
       },
     );
+    this.querySelector("#settings-language")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      this._languageDialogOpen = true;
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._languageDialog),
+        "language",
+      );
+    });
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       navigate("/site-admin"),
     );
+    this._languageDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #language-dialog")
+    );
+    this._languageDialog?.addEventListener("click", (event) => {
+      if (event.target === this._languageDialog) this._languageDialog.close();
+    });
+    this._languageDialog?.addEventListener("close", () => {
+      this._languageDialogOpen = false;
+      const chosen = this._languageDialog?.returnValue || "";
+      if (this._languageDialog) this._languageDialog.returnValue = "";
+      if (chosen && chosen !== getLocale()) {
+        // app-root re-renders the view on "localechange". A failed catalog
+        // load (offline first use of a language) changes nothing; say so.
+        void setLocale(chosen).then((ok) => {
+          if (!ok) showLanguageErrorToast();
+        });
+        return;
+      }
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
     this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #attributions-dialog")
     );
@@ -502,6 +542,7 @@ class TodayView extends HTMLElement {
     });
     this._restoreLogoutDialog();
     this._restoreAttributionsDialog();
+    this._restoreLanguageDialog();
     this._mountTicketDetailDialog();
     this._mountTaskUpdateDialog();
     this._mountLocationDialog();
@@ -809,6 +850,14 @@ class TodayView extends HTMLElement {
     );
   }
 
+  _restoreLanguageDialog() {
+    if (!this._languageDialogOpen || this._languageDialog?.open) return;
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._languageDialog),
+      "language",
+    );
+  }
+
   async _logout() {
     if (this._logoutPending) return;
     this._logoutPending = true;
@@ -821,7 +870,7 @@ class TodayView extends HTMLElement {
       window.dispatchEvent(new CustomEvent("authsignout"));
     } catch {
       this._logoutPending = false;
-      this._logoutError = "We couldn't log you out. Please try again.";
+      this._logoutError = t("today.logout.error");
       if (this._homeModel) this._renderHome(this._homeModel);
     }
   }
@@ -882,8 +931,8 @@ class TodayView extends HTMLElement {
                   kind: "update",
                   label:
                     entry.task.kind === "escalation"
-                      ? "View details"
-                      : "Update",
+                      ? t("today.card.viewDetails")
+                      : t("today.card.update"),
                   variant: "outline",
                 }
               : null,
@@ -986,12 +1035,14 @@ class TodayView extends HTMLElement {
       siteName: identity.site,
       summary: this._summaryBlock(last, homeTasks),
       checkLabel: this._checkActionLabel(),
-      reportLabel: "Flag a single issue",
+      reportLabel: t("today.actions.report"),
     });
   }
 
   _checkActionLabel() {
-    return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
+    return this._hasPerimeterDraft
+      ? t("today.actions.resumeCheck")
+      : t("today.actions.startCheck");
   }
 
   async _retryProviderSites() {
@@ -1025,7 +1076,7 @@ class TodayView extends HTMLElement {
           this._site.orgName ||
           this._site.organizationName)) ||
       "";
-    const name = (this._site && this._site.name) || "Your site";
+    const name = (this._site && this._site.name) || t("today.site.fallback");
     if (org) return { org, site: name };
     return splitSiteIdentity(name) || { org: "", site: name };
   }
@@ -1070,11 +1121,11 @@ class TodayView extends HTMLElement {
       this._locationDialog = dialog;
     }
     const dialog = this._locationDialog;
-    dialog.siteName = this._site?.name || "this site";
+    dialog.siteName = this._site?.name || t("today.site.thisSite");
     dialog.sites = this._providerSites;
     dialog.currentSite = {
       siteId: this._siteId,
-      name: this._site?.name || "Your site",
+      name: this._site?.name || t("today.site.fallback"),
     };
     this.querySelector(":scope > .home location-dialog")?.replaceWith(dialog);
   }
@@ -1235,15 +1286,18 @@ class TodayView extends HTMLElement {
   _taskStatusMeta(entry) {
     const createdAt = taskCreatedAt(entry.task);
     const when = createdAt
-      ? `${relativeDay(createdAt)} • ${timeOf(createdAt)}`
-      : "Existing";
+      ? t("today.card.when", {
+          day: relativeDay(createdAt),
+          time: timeOf(createdAt),
+        })
+      : t("today.card.existing");
     const id = displayTaskId(entry.task);
-    return id ? `${when} • ${id}` : when;
+    return id ? t("today.card.meta", { when, id }) : when;
   }
 
   _newTaskStatusMeta(entry) {
     const id = displayTaskId(entry.task);
-    return id ? `NEW • ${id}` : "NEW";
+    return id ? t("today.card.newMeta", { id }) : t("card.meta.new");
   }
 
   // Resolve a task's persisted actions into the concrete controls this screen
@@ -1263,10 +1317,18 @@ class TodayView extends HTMLElement {
       if (a) actions.push(a);
     }
     if (!actions.length) {
-      actions.push({ kind: "done", label: "Done", variant: "ink" });
+      actions.push({
+        kind: "done",
+        label: t("common.done"),
+        variant: "ink",
+      });
     }
     if ((task.cannotDoReasons || []).length) {
-      actions.push({ kind: "cant", label: "Can't", variant: "outline" });
+      actions.push({
+        kind: "cant",
+        label: t("today.action.cant"),
+        variant: "outline",
+      });
     }
     return actions;
   }
@@ -1275,24 +1337,29 @@ class TodayView extends HTMLElement {
   // Returns null for actions with no wired behavior yet (fire-hazard report,
   // generic manual steps) — they always co-occur with a call/311 action, so the
   // card stays actionable without rendering a dead button.
-  _resolveAction(appAction, label) {
+  // `storedLabel` is the English rulebook string persisted on the task: the
+  // label-shape checks below run against it, and only the rendered `label`
+  // goes through the active-language lookup.
+  _resolveAction(appAction, storedLabel) {
     const code = appAction?.code;
     const payload = appAction?.payload || {};
-    const l = label.toLowerCase();
+    const l = storedLabel.toLowerCase();
+    const label = rulebookText(storedLabel);
     if (payload.executionTrigger === "task_created") {
       return label ? { kind: "done", label, variant: "ink" } : null;
     }
     if (code === "open_phone" || /^call\b/.test(l)) {
       return {
         kind: "done",
-        label: String(payload.completionLabel || label || "Done"),
+        label:
+          rulebookText(payload.completionLabel) || label || t("common.done"),
         variant: "blue",
       };
     }
     if (code === "create_311_ticket") {
       return {
         kind: "file311",
-        label: label || "File 311 ticket",
+        label: label || t("today.action.file311"),
         variant: "blue",
       };
     }
@@ -1300,12 +1367,14 @@ class TodayView extends HTMLElement {
       const to = String(payload.to || "");
       return {
         kind: "email",
-        label: label || "Email",
+        label: label || t("today.action.email"),
         variant: "blue",
         href: to ? `mailto:${to}` : null,
       };
     }
-    if (l === "done") return { kind: "done", label: "Done", variant: "ink" };
+    if (l === "done") {
+      return { kind: "done", label: t("common.done"), variant: "ink" };
+    }
     return null;
   }
 
@@ -1384,7 +1453,9 @@ class TodayView extends HTMLElement {
       conditionId: base.conditionId || task?.conditionId || "",
       actionKind: base.actionKind || task?.kind || "",
       title:
-        card.getAttribute("data-card-title") || task?.category || "problem",
+        card.getAttribute("data-card-title") ||
+        rulebookText(task?.category) ||
+        t("card.title.problemFallback"),
       description:
         card.getAttribute("data-card-edit-description") ||
         task?.description ||
@@ -1400,7 +1471,11 @@ class TodayView extends HTMLElement {
     const title = this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
     );
-    if (title) title.textContent = `Delete "${problem.title}"?`;
+    if (title) {
+      title.textContent = t("analysis.deleteDialog.titleFor", {
+        title: problem.title,
+      });
+    }
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",
@@ -1472,7 +1547,7 @@ class TodayView extends HTMLElement {
     if (description.length < 5) {
       this._setDialogError(
         "analysis-edit-error",
-        "Description must be at least 5 characters.",
+        t("analysis.editDialog.tooShort"),
       );
       return;
     }
@@ -1747,7 +1822,12 @@ class TodayView extends HTMLElement {
       ".analysis-card__actions, .actioncard__actions",
     );
     if (!actions) return;
-    const reasons = task.cannotDoReasons || [];
+    // The backend validates the reason against the task's English list, so
+    // each option submits the stored string and displays its translation.
+    const reasons = (task.cannotDoReasons || []).map((value) => ({
+      value: String(value),
+      label: rulebookText(value),
+    }));
     actions.innerHTML = reasonPicker({ reasons });
     this._wireCardButtons(card, task);
   }

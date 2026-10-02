@@ -23,6 +23,15 @@ export class ApiError extends Error {
   }
 }
 
+/** The site code was rejected (401/404 from device registration). */
+export class InvalidSiteCodeError extends ApiError {
+  /** @param {number} [status] */
+  constructor(status = 401) {
+    super("invalid site code", { status });
+    this.name = "InvalidSiteCodeError";
+  }
+}
+
 /**
  * Raised when the device session cannot be renewed (refresh rejected after the
  * access token died — months of disuse, or the device was revoked). Callers

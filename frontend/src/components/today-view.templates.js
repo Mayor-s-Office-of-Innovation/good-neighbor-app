@@ -5,6 +5,7 @@
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { HOME_TABS } from "../domain/home-tasks.js";
+import { getLocale, LOCALES, t } from "../i18n/i18n.js";
 import {
   analysisResultsTray,
   clearCheckCard,
@@ -51,20 +52,24 @@ export function homeShell({
             hide-trigger
           ></feedback-dialog>
         </div>
-        <div class="screen screen--today-hero" role="group" aria-label="Today">
+        <div
+          class="screen screen--today-hero"
+          role="group"
+          aria-label="${escapeAttr(t("today.hero.aria"))}"
+        >
           ${hero}
         </div>
       </section>
 
       <section
         class="home-region home-region--results"
-        aria-label="Task results"
+        aria-label="${escapeAttr(t("today.results.aria"))}"
       >
         ${results}
       </section>
       ${showAnalysisDialogs ? analysisDialogs() : ""}
       <location-dialog></location-dialog>
-      ${attributionDialog()}
+      ${attributionDialog()} ${languageDialog()}
       ${logoutDialog({ error: logoutError, pending: logoutPending })}
     </div>
   `;
@@ -78,7 +83,7 @@ export function settingsMenu({ open, adminAccess = false }) {
         class="home-settings"
         id="home-settings"
         type="button"
-        aria-label="Settings"
+        aria-label="${escapeAttr(t("today.settings.aria"))}"
         aria-haspopup="menu"
         aria-expanded="${open ? "true" : "false"}"
       >
@@ -88,11 +93,11 @@ export function settingsMenu({ open, adminAccess = false }) {
         ? html`<div
             class="home-settings-menu"
             role="menu"
-            aria-label="Settings"
+            aria-label="${escapeAttr(t("today.settings.aria"))}"
           >
             <button id="settings-feedback" type="button" role="menuitem">
               <wa-icon name="comment" aria-hidden="true"></wa-icon>
-              Send feedback
+              ${escapeHtml(t("today.settings.feedback"))}
             </button>
             ${adminAccess
               ? html`<button
@@ -101,19 +106,23 @@ export function settingsMenu({ open, adminAccess = false }) {
                   role="menuitem"
                 >
                   <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
-                  Site admin
+                  ${escapeHtml(t("today.settings.siteAdmin"))}
                 </button>`
               : ""}
+            <button id="settings-language" type="button" role="menuitem">
+              <wa-icon name="language" aria-hidden="true"></wa-icon>
+              ${escapeHtml(t("today.settings.language"))}
+            </button>
             <button id="settings-attributions" type="button" role="menuitem">
               <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
-              Attributions
+              ${escapeHtml(t("today.settings.attributions"))}
             </button>
             <button id="settings-logout" type="button" role="menuitem">
               <wa-icon
                 name="arrow-right-from-bracket"
                 aria-hidden="true"
               ></wa-icon>
-              Logout
+              ${escapeHtml(t("today.settings.logout"))}
             </button>
           </div>`
         : ""}
@@ -131,10 +140,10 @@ export function attributionDialog() {
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="attributions-title">
-          Attributions
+          ${escapeHtml(t("today.attributions.title"))}
         </h2>
         <p class="places-modal__text" id="attributions-copy">
-          Address information used by this app is provided by these services.
+          ${escapeHtml(t("today.attributions.text"))}
         </p>
         <ul class="attributions-list">
           <li>
@@ -142,9 +151,13 @@ export function attributionDialog() {
               href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Amazon Location Service data attribution (opens in a new tab)"
+              aria-label="${escapeAttr(
+                t("common.opensNewTab", {
+                  label: t("today.attributions.aws"),
+                }),
+              )}"
             >
-              Amazon Location Service data attribution
+              ${escapeHtml(t("today.attributions.aws"))}
             </a>
           </li>
           <li>
@@ -152,16 +165,68 @@ export function attributionDialog() {
               href="https://geocoding.geo.census.gov/geocoder/"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="U.S. Census Bureau Geocoder (opens in a new tab)"
+              aria-label="${escapeAttr(
+                t("common.opensNewTab", {
+                  label: t("today.attributions.census"),
+                }),
+              )}"
             >
-              U.S. Census Bureau Geocoder
+              ${escapeHtml(t("today.attributions.census"))}
             </a>
           </li>
         </ul>
       </div>
       <div class="places-modal__actions">
         <button class="btn-ink places-modal__primary" type="submit">
-          Close
+          ${escapeHtml(t("common.close"))}
+        </button>
+      </div>
+    </form>
+  </dialog>`;
+}
+
+/**
+ * Language picker. Each option is a submit button whose value is the locale
+ * id; the host reads dialog.returnValue on close and calls setLocale. The
+ * current language is marked with aria-current; choosing it is a no-op.
+ */
+export function languageDialog() {
+  const current = getLocale();
+  return html`<dialog
+    class="places-modal language-dialog"
+    id="language-dialog"
+    aria-labelledby="language-title"
+    aria-describedby="language-copy"
+  >
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="language-title">
+          ${escapeHtml(t("today.language.title"))}
+        </h2>
+        <p class="places-modal__text" id="language-copy">
+          ${escapeHtml(t("today.language.text"))}
+        </p>
+        <ul class="language-list" data-testid="language-options">
+          ${LOCALES.map(
+            (locale) =>
+              html`<li>
+                <button
+                  class="language-list__option"
+                  type="submit"
+                  value="${escapeAttr(locale.id)}"
+                  lang="${escapeAttr(locale.tag)}"
+                  data-locale="${escapeAttr(locale.id)}"
+                  ${locale.id === current ? 'aria-current="true"' : ""}
+                >
+                  ${escapeHtml(locale.label)}
+                </button>
+              </li>`,
+          ).join("")}
+        </ul>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-ink places-modal__primary" type="submit" value="">
+          ${escapeHtml(t("common.close"))}
         </button>
       </div>
     </form>
@@ -180,11 +245,10 @@ export function logoutDialog({ error, pending }) {
       <form class="places-modal__card" method="dialog">
         <div class="places-modal__copy">
           <h2 class="places-modal__title" id="logout-title">
-            Confirm you'd like to logout
+            ${escapeHtml(t("today.logout.title"))}
           </h2>
           <p class="places-modal__text" id="logout-copy">
-            This will log you out and unlink this device: you'll need to request
-            a new code to access the app
+            ${escapeHtml(t("today.logout.text"))}
           </p>
           ${error
             ? html`<p class="logout-dialog__error" role="alert">
@@ -199,10 +263,12 @@ export function logoutDialog({ error, pending }) {
             type="button"
             ${pending ? "disabled" : ""}
           >
-            ${pending ? "Logging out..." : "Log me out"}
+            ${escapeHtml(
+              pending ? t("today.logout.pending") : t("today.logout.confirm"),
+            )}
           </button>
           <button class="logout-dialog__cancel" type="submit">
-            Return to app
+            ${escapeHtml(t("today.logout.cancel"))}
           </button>
         </div>
       </form>
@@ -255,7 +321,7 @@ export function summaryBlock({ outsideRadius, label }) {
   if (outsideRadius) {
     return html`<div class="lastlog">
       <p class="lastlog__eyebrow">
-        Looks like you're not near this site.
+        ${escapeHtml(t("today.summary.outsideRadius"))}
         <button
           id="lastlog-change-site"
           class="lastlog__switch"
@@ -263,7 +329,7 @@ export function summaryBlock({ outsideRadius, label }) {
           appearance="plain"
           data-opens-site-switcher
         >
-          Change the site
+          ${escapeHtml(t("today.summary.changeSite"))}
         </button>
       </p>
     </div>`;
@@ -318,7 +384,7 @@ export function homeResults({
   const trayOptions = {
     id: "home-analysis-results",
     title: "",
-    ariaLabel: "New analysis results",
+    ariaLabel: t("today.newResults.aria"),
     tone: "new",
     siteName,
     siteAddress,
@@ -360,7 +426,7 @@ export function newTaskTray({ cards, checkTime }) {
   return html`
     <section
       class="analysis-tray analysis-tray--new analysis-tray--recent"
-      aria-label="New analysis results"
+      aria-label="${escapeAttr(t("today.newResults.aria"))}"
     >
       <div class="analysis-tray__cards">
         <h2 class="analysis-tray__check-title">
@@ -417,10 +483,14 @@ export function historyTray({ checkTime, cards }) {
   `;
 }
 
-/** @param {{ activeId: string, tabs?: Array<{ id: string, label: string }> }} vm */
+/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }> }} vm */
 export function taskTabs({ activeId, tabs = HOME_TABS }) {
   return html`
-    <div class="home-tabs" role="group" aria-label="Filter tasks">
+    <div
+      class="home-tabs"
+      role="group"
+      aria-label="${escapeAttr(t("today.tabs.aria"))}"
+    >
       ${tabs
         .map(
           (tab) => html`
@@ -432,7 +502,7 @@ export function taskTabs({ activeId, tabs = HOME_TABS }) {
               aria-pressed="${tab.id === activeId ? "true" : "false"}"
               data-home-filter="${escapeAttr(tab.id)}"
             >
-              ${escapeHtml(tab.label)}
+              ${escapeHtml(t(tab.labelKey))}
             </button>
           `,
         )
@@ -444,16 +514,27 @@ export function taskTabs({ activeId, tabs = HOME_TABS }) {
 /** @param {{ homeFilter: string }} vm */
 export function emptyResults({ homeFilter }) {
   return html`<p class="home-results__empty" role="status">
-    ${homeFilter === "todo"
-      ? "No tasks to do."
-      : homeFilter === "in_progress"
-        ? "No tasks in progress."
-        : "No task history yet."}
+    ${escapeHtml(
+      homeFilter === "todo"
+        ? t("today.empty.todo")
+        : homeFilter === "in_progress"
+          ? t("today.empty.inProgress")
+          : t("today.empty.history"),
+    )}
   </p>`;
 }
 
 /** @returns {string} */
 export function homeAllDonePanel() {
+  // The note is one sentence whose {link} slot holds the single-issue anchor;
+  // escape the sentence first, then drop the trusted markup into the slot.
+  const addProblem = html`<a href="/problem" data-start-capture="single-problem"
+    >${escapeHtml(t("card.clear.addProblem"))}</a
+  >`;
+  const note = escapeHtml(t("today.allDone.note")).replace(
+    "{link}",
+    addProblem,
+  );
   return html`
     <section
       class="home-results__complete"
@@ -461,16 +542,11 @@ export function homeAllDonePanel() {
     >
       <div class="home-results__complete-content">
         <img src="/clear-check-icon.png" alt="" width="96" height="98" />
-        <h2 id="home-all-done-title">All done!</h2>
-        <p>
-          Your site is in great shape. Nothing needs your attention right now.
-        </p>
-        <p class="home-results__complete-note">
-          <a href="/problem" data-start-capture="single-problem">
-            Add a problem
-          </a>
-          if we missed something.
-        </p>
+        <h2 id="home-all-done-title">
+          ${escapeHtml(t("today.allDone.title"))}
+        </h2>
+        <p>${escapeHtml(t("today.allDone.text"))}</p>
+        <p class="home-results__complete-note">${note}</p>
       </div>
     </section>
   `;
@@ -510,7 +586,9 @@ export function actionButton(a) {
 /**
  * "Can't" → the task's allowlisted reasons (the backend rejects arbitrary
  * ones), plus a cancel.
- * @param {{ reasons: string[] }} vm
+ * Each reason carries the stored English `value` (submitted to the API, which
+ * validates it) and a display `label` in the active language.
+ * @param {{ reasons: Array<{ value: string, label: string }> }} vm
  */
 export function reasonPicker({ reasons }) {
   return html`
@@ -521,9 +599,9 @@ export function reasonPicker({ reasons }) {
             type="button"
             class="btn-outline btn-outline--sm"
             data-action="cant-reason"
-            data-reason="${escapeHtml(r)}"
+            data-reason="${escapeAttr(r.value)}"
           >
-            ${escapeHtml(r)}
+            ${escapeHtml(r.label)}
           </button>`,
       )
       .join("")}
@@ -532,7 +610,7 @@ export function reasonPicker({ reasons }) {
       class="home-cta__link actioncard__cancel"
       data-action="cant-cancel"
     >
-      Cancel
+      ${escapeHtml(t("common.cancel"))}
     </button>
   `;
 }
@@ -546,7 +624,11 @@ export function reasonPicker({ reasons }) {
 export function errorView({ identity }) {
   return html`
     <div class="home">
-      <div class="screen" role="group" aria-label="Today">
+      <div
+        class="screen"
+        role="group"
+        aria-label="${escapeAttr(t("today.hero.aria"))}"
+      >
         <div class="screen__sec home-lead">
           <div class="home-identity">
             ${identity.org
@@ -559,11 +641,15 @@ export function errorView({ identity }) {
             </h1>
           </div>
           <div class="lastlog">
-            <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
-            <p class="lastlog__summary">Checks are unavailable</p>
+            <p class="lastlog__eyebrow">
+              ${escapeHtml(t("today.error.title"))}
+            </p>
+            <p class="lastlog__summary">${escapeHtml(t("today.error.text"))}</p>
           </div>
           <div class="home-actions">
-            <button id="retry" class="btn-ink" type="button">Try again</button>
+            <button id="retry" class="btn-ink" type="button">
+              ${escapeHtml(t("common.retry"))}
+            </button>
           </div>
         </div>
       </div>

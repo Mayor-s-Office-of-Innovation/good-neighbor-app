@@ -11,6 +11,7 @@
   the host can return focus to the right card button.
 */
 import "./timeline.css";
+import { rulebookText } from "../i18n/rulebook.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
 import { get311RequestDetail } from "../services/api.js";
@@ -33,8 +34,8 @@ export function buildTicketDetail(task, site, request) {
     title:
       task.userFriendlyLabel ||
       task.user_friendly_label ||
-      task.category ||
-      task.analyzerCategory ||
+      rulebookText(task.category) ||
+      rulebookText(task.analyzerCategory) ||
       request.problemType,
     description: task.description || request.description || "",
     location: ticketDetailLocation(task, site || {}, request),

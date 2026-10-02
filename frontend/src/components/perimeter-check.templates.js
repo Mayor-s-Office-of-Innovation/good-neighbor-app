@@ -8,6 +8,7 @@
   analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   analysisDialogs,
@@ -22,12 +23,14 @@ export const shell = () => html`
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">
         <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden">Close check</span>
+        <span class="visually-hidden"
+          >${escapeHtml(t("check.close.aria"))}</span
+        >
       </button>
     </div>
 
     <h1 class="check-timeline__title" tabindex="-1">
-      Take photos around your building.
+      ${escapeHtml(t("check.title"))}
     </h1>
 
     <p
@@ -40,7 +43,7 @@ export const shell = () => html`
     <div
       class="shotgrid check-roll__grid"
       id="shotgrid"
-      aria-label="Perimeter evidence"
+      aria-label="${escapeAttr(t("check.grid.aria"))}"
     ></div>
 
     <button
@@ -48,7 +51,7 @@ export const shell = () => html`
       id="describe-instead"
       type="button"
     >
-      Describe instead
+      ${escapeHtml(t("check.describeInstead"))}
     </button>
 
     <div class="check-timeline__footer" id="check-footer"></div>
@@ -58,12 +61,12 @@ export const shell = () => html`
     <dialog
       class="sheet"
       id="cancel-check-dialog"
-      aria-label="Leave this check?"
+      aria-label="${escapeAttr(t("check.cancelDialog.aria"))}"
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
           <button class="sheet__cancel" type="button" id="cancel-check-save">
-            Save my place to resume later
+            ${escapeHtml(t("check.cancelDialog.save"))}
           </button>
         </div>
         <ul class="sheet__opts">
@@ -73,7 +76,7 @@ export const shell = () => html`
               id="cancel-check-discard"
               type="button"
             >
-              End the check and exit
+              ${escapeHtml(t("check.cancelDialog.discard"))}
             </button>
           </li>
         </ul>
@@ -100,8 +103,8 @@ export const shell = () => html`
  */
 export function progressLine({ photos }) {
   return (
-    `<strong>${photos} of ${RECOMMENDED_PERIMETER_PHOTOS} recommended photos taken</strong>` +
-    `<span>We recommend taking at least 3 photos in a perimeter check.</span>`
+    `<strong>${escapeHtml(t("check.progress.count", { photos, recommended: RECOMMENDED_PERIMETER_PHOTOS }))}</strong>` +
+    `<span>${escapeHtml(t("check.progress.hint"))}</span>`
   );
 }
 
@@ -113,12 +116,15 @@ export function progressLine({ photos }) {
 export function descriptionCard(item) {
   if (!item) return "";
   return html`
-    <section class="shot shot--description" aria-label="Saved description">
+    <section
+      class="shot shot--description"
+      aria-label="${escapeAttr(t("check.description.aria"))}"
+    >
       <p class="shot__description">${escapeHtml(item.text || "")}</p>
       <button
         class="shot__del shot__edit"
         type="button"
-        aria-label="Edit description"
+        aria-label="${escapeAttr(t("check.description.edit"))}"
         data-edit-description="${escapeAttr(item.id)}"
       >
         <wa-icon name="pen" aria-hidden="true"></wa-icon>
@@ -126,7 +132,7 @@ export function descriptionCard(item) {
       <button
         class="shot__del"
         type="button"
-        aria-label="Delete description"
+        aria-label="${escapeAttr(t("check.description.delete"))}"
         data-remove-description="${escapeAttr(item.id)}"
       >
         <wa-icon name="trash" aria-hidden="true"></wa-icon>
@@ -161,7 +167,9 @@ export function footer({ items, analyzingOpen, complete }) {
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
   const problems = problemSummary(items);
-  const problemLabel = active ? "Analyzing..." : problemSummaryLabel(problems);
+  const problemLabel = active
+    ? t("card.pending.title")
+    : problemSummaryLabel(problems);
   return html`
     <button
       class="check-timeline__done"
@@ -169,7 +177,7 @@ export function footer({ items, analyzingOpen, complete }) {
       type="button"
       ${complete ? "" : "disabled"}
     >
-      Finish check
+      ${escapeHtml(t("check.footer.finish"))}
     </button>
     ${items.length
       ? html`
@@ -179,7 +187,7 @@ export function footer({ items, analyzingOpen, complete }) {
             type="button"
             aria-expanded="${analyzingOpen ? "true" : "false"}"
           >
-            ${problemLabel}
+            ${escapeHtml(problemLabel)}
             <span
               class="check-timeline__analyzing-caret ${analyzingOpen
                 ? "check-timeline__analyzing-caret--up"
@@ -199,8 +207,8 @@ export function analyzingSection(
 ) {
   return analysisResultsTray(items, sessionCheckId, {
     title: "",
-    ariaLabel: "Analyzing evidence",
-    emptyText: "All problems were resolved or deleted.",
+    ariaLabel: t("check.analyzing.aria"),
+    emptyText: t("analysis.tray.empty"),
     siteName,
     siteAddress,
     checkTime: startedAt,
@@ -224,14 +232,14 @@ export const shotTile = (item, index) => html`
       <img
         class="shot__img"
         src="${escapeAttr(item.dataUrl)}"
-        alt="Captured photo ${index + 1}"
+        alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
       />
     </button>
     <button
       class="shot__del"
       type="button"
       data-del="${escapeAttr(item.id)}"
-      aria-label="Delete photo"
+      aria-label="${escapeAttr(t("check.photo.delete"))}"
     >
       <wa-icon name="trash" aria-hidden="true"></wa-icon>
     </button>
@@ -247,6 +255,6 @@ export const addTile = (empty) => html`
     <span class="addshot__icon" aria-hidden="true"
       ><wa-icon name="camera"></wa-icon
     ></span>
-    <span class="addshot__label">Take photo</span>
+    <span class="addshot__label">${escapeHtml(t("check.photo.take"))}</span>
   </button>
 `;

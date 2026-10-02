@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { t } from "../helpers/i18n.js";
 import { addPhoto, startCheck } from "../helpers/app.js";
 import { setAnalyzerFixture } from "../helpers/analyzer-control.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
@@ -48,8 +49,10 @@ test.describe("photo lightbox", () => {
         sameHeight: true,
       });
 
-    const dialog = page.getByRole("dialog", { name: "Photo viewer" });
-    const close = page.getByRole("button", { name: "Close photo viewer" });
+    const dialog = page.getByRole("dialog", {
+      name: t("lightbox.dialog.aria"),
+    });
+    const close = page.getByRole("button", { name: t("lightbox.close.aria") });
 
     await thumbnail.click();
     await expect(dialog).toBeVisible();

@@ -1,5 +1,6 @@
 // @ts-check
 import { test as base, expect } from "@playwright/test";
+import { t } from "../helpers/i18n.js";
 import { test } from "../helpers/harness.js";
 
 /** Browser-side source for the exact Vite module instance loaded by the app. */
@@ -19,7 +20,9 @@ const loadActiveToastModule = `async () => {
  */
 async function prepareFeedback(page, message) {
   await page.locator("#home-settings").click();
-  await page.getByRole("menuitem", { name: "Send feedback" }).click();
+  await page
+    .getByRole("menuitem", { name: t("today.settings.feedback") })
+    .click();
 
   const dialog = page.locator("#feedback-dialog");
   await expect(dialog).toBeVisible();
@@ -55,12 +58,13 @@ test.describe("standardized app toasts", () => {
       });
     }, loadActiveToastModule);
 
-    const region = page.getByRole("region", { name: "Notifications" });
+    const region = page.getByRole("region", { name: t("toastUi.region.aria") });
     const toast = region.locator(".app-toast");
     const status = toast.getByRole("status");
     const undo = toast.getByRole("button", { name: "Undo" });
     const close = toast.getByRole("button", {
-      name: "Dismiss Issue deleted notification",
+      // The title is this test's own fixture; the wrapper sentence is app copy.
+      name: t("toastUi.dismiss.aria", { title: "Issue deleted" }),
     });
 
     await expect(toast).toBeVisible();
@@ -113,7 +117,7 @@ test.describe("standardized app toasts", () => {
     }, loadActiveToastModule);
 
     const toast = page.locator(".app-toast", {
-      hasText: "Ticket filing failed",
+      hasText: t("toast.ticketFailed.title"),
     });
     await expect(toast).toBeVisible();
     await page.waitForTimeout(3200);
@@ -127,12 +131,12 @@ test.describe("standardized app toasts", () => {
     });
     const dialog = await prepareFeedback(page, "The new toast looks good.");
 
-    await dialog.getByRole("button", { name: "Send" }).click();
+    await dialog.getByRole("button", { name: t("feedback.send") }).click();
 
     await expect(dialog).not.toBeVisible();
     const toast = page.locator(".app-toast--success");
-    await expect(toast).toContainText("Feedback sent");
-    await expect(toast).toContainText("Thanks for sharing!");
+    await expect(toast).toContainText(t("toast.feedbackSuccess.title"));
+    await expect(toast).toContainText(t("toast.feedbackSuccess.message"));
   });
 
   test("shows a failure toast and preserves feedback after a failed send", async ({
@@ -144,7 +148,7 @@ test.describe("standardized app toasts", () => {
     const message = "Please keep this draft after failure.";
     const dialog = await prepareFeedback(page, message);
 
-    await dialog.getByRole("button", { name: "Send" }).click();
+    await dialog.getByRole("button", { name: t("feedback.send") }).click();
 
     await expect(dialog).toBeVisible();
     await expect(dialog.locator("#feedback-text")).toHaveJSProperty(
@@ -152,8 +156,8 @@ test.describe("standardized app toasts", () => {
       message,
     );
     const toast = page.locator(".app-toast--error");
-    await expect(toast).toContainText("Feedback failed to send");
-    await expect(toast).toContainText("Please try again later.");
+    await expect(toast).toContainText(t("toast.feedbackError.title"));
+    await expect(toast).toContainText(t("toast.feedbackError.message"));
     await expect(page.locator("app-toasts")).toHaveAttribute(
       "popover",
       "manual",
@@ -176,12 +180,14 @@ test.describe("standardized app toasts", () => {
     }, loadActiveToastModule);
 
     const toast = page.locator(".app-toast--info");
-    await expect(toast).toContainText("You're offline");
-    await expect(toast).toContainText(
-      "Your photos are saved. We'll retry later.",
-    );
+    await expect(toast).toContainText(t("toast.offlinePhotos.title"));
+    await expect(toast).toContainText(t("toast.offlinePhotos.message"));
     await toast
-      .getByRole("button", { name: "Dismiss You're offline notification" })
+      .getByRole("button", {
+        name: t("toastUi.dismiss.aria", {
+          title: t("toast.offlinePhotos.title"),
+        }),
+      })
       .click();
     await expect(toast).toHaveCount(0);
   });
@@ -200,6 +206,6 @@ base("renders notifications before a site has been bound", async ({ page }) => {
   }, loadActiveToastModule);
 
   await expect(page.locator(".app-toast--info")).toContainText(
-    "Your photos are saved. We'll retry later.",
+    t("toast.offlinePhotos.message"),
   );
 });

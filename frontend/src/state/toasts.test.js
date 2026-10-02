@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { t } from "../i18n/i18n.js";
 import {
   getToasts,
   showToast,
@@ -80,12 +82,10 @@ describe("toast lifetime", () => {
 
   it("uses the approved 311 failure copy and expires after 3.5 seconds", async () => {
     const toast = show311ErrorToast();
-    expect(toast.title).toBe("Ticket filing failed");
+    expect(toast.title).toBe(t("toast.ticketFailed.title"));
     expect(toast.icon).toBe("triangle-exclamation");
     expect(toast.tone).toBe("error");
-    expect(toast.message).toBe(
-      "We could not file your 311 ticket. Please try again later.",
-    );
+    expect(toast.message).toBe(t("toast.ticketFailed.message"));
     await vi.advanceTimersByTimeAsync(3499);
     expect(getToasts()).toContain(toast);
     await vi.advanceTimersByTimeAsync(1);
@@ -94,107 +94,109 @@ describe("toast lifetime", () => {
 
   it("uses the approved 311 success copy", () => {
     const toast = show311SuccessToast("LOCAL-SR-000001");
-    expect(toast.title).toBe("Ticket filed");
-    expect(toast.message).toBe("311 ticket #LOCAL-SR-000001");
+    expect(toast.title).toBe(t("toast.ticketFiled.title"));
+    expect(toast.message).toBe(
+      t("toast.ticketFiled.message", { number: "LOCAL-SR-000001" }),
+    );
     expect(toast.action).toBeUndefined();
   });
 
   it("defines the standardized edit, save-failure, and information variants", () => {
     expect(showEditSavedToast()).toMatchObject({
-      title: "Edits saved",
-      message: "The issue description has been successfully updated",
+      title: t("toast.editSaved.title"),
+      message: t("toast.editSaved.message"),
       tone: "success",
     });
     expect(showActionSaveErrorToast()).toMatchObject({
-      title: "Save failed",
-      message: "We couldn't save your action. Please try again.",
+      title: t("toast.actionSaveError.title"),
+      message: t("toast.actionSaveError.message"),
       tone: "error",
     });
     expect(showAnswerSaveErrorToast()).toMatchObject({
-      title: "Save failed",
-      message: "We couldn't save your answer. Please try again.",
+      title: t("toast.answerSaveError.title"),
+      message: t("toast.answerSaveError.message"),
       tone: "error",
     });
     expect(showDeletionRefreshToast()).toMatchObject({
-      title: "Deletion saved",
-      message: "Please reload the page.",
+      title: t("toast.deletionRefresh.title"),
+      message: t("toast.deletionRefresh.message"),
       tone: "info",
     });
     expect(showSavedForLaterToast()).toMatchObject({
-      title: "Saved for later",
-      message: "You're offline. We'll sync this later.",
+      title: t("toast.savedForLater.title"),
+      message: t("toast.savedForLater.message"),
       tone: "info",
     });
     expect(showOfflinePhotosToast()).toMatchObject({
-      title: "You're offline",
-      message: "Your photos are saved. We'll retry later.",
+      title: t("toast.offlinePhotos.title"),
+      message: t("toast.offlinePhotos.message"),
       tone: "info",
     });
   });
 
   it("defines the remaining standardized action outcomes", () => {
     expect(showDeleteErrorToast()).toMatchObject({
-      title: "Item could not be deleted",
-      message: "We could not delete your item. Please try again.",
+      title: t("toast.deleteError.title"),
+      message: t("toast.deleteError.message"),
       tone: "error",
     });
     expect(showEditErrorToast()).toMatchObject({
-      title: "Edits could not be saved",
-      message: "Please try again.",
+      title: t("toast.editError.title"),
+      message: t("toast.editError.message"),
       tone: "error",
     });
     expect(showEditRefreshErrorToast()).toMatchObject({
-      title: "Edits saved but could not refresh",
-      message: "Please reload your page.",
+      title: t("toast.editRefreshError.title"),
+      message: t("toast.editRefreshError.message"),
       tone: "info",
     });
     expect(showReanalysisErrorToast()).toMatchObject({
-      title: "Changes could not be analyzed",
-      message: "We were unable to re-analyze this description.",
+      title: t("toast.reanalysisError.title"),
+      message: t("toast.reanalysisError.message"),
       tone: "error",
     });
     expect(showTaskUpdateErrorToast()).toMatchObject({
-      title: "Failed to save",
-      message: "Please try again later.",
+      title: t("toast.taskUpdateError.title"),
+      message: t("toast.taskUpdateError.message"),
       tone: "error",
     });
     expect(showFeedbackErrorToast()).toMatchObject({
-      title: "Feedback failed to send",
-      message: "Please try again later.",
+      title: t("toast.feedbackError.title"),
+      message: t("toast.feedbackError.message"),
       tone: "error",
     });
     expect(showFeedbackSuccessToast()).toMatchObject({
-      title: "Feedback sent",
-      message: "Thanks for sharing!",
+      title: t("toast.feedbackSuccess.title"),
+      message: t("toast.feedbackSuccess.message"),
       tone: "success",
     });
     expect(showSiteAdminErrorToast()).toMatchObject({
-      title: "Save failed",
-      message: "Please try again.",
+      title: t("toast.siteAdminError.title"),
+      message: t("toast.siteAdminError.message"),
       tone: "error",
     });
     expect(showSiteAdminSuccessToast()).toMatchObject({
-      title: "Changes saved",
-      message: "Your site administration changes have been saved",
+      title: t("toast.siteAdminSuccess.title"),
+      message: t("toast.siteAdminSuccess.message"),
       tone: "success",
     });
     expect(showSiteSwitchErrorToast()).toMatchObject({
-      title: "Could not switch sites",
-      message: "Please try again.",
+      title: t("toast.siteSwitchError.title"),
+      message: t("toast.siteSwitchError.message"),
       tone: "error",
     });
     expect(showSiteCatalogErrorToast()).toMatchObject({
-      title: "Sites could not be loaded",
-      message: "Please try again.",
+      title: t("toast.siteCatalogError.title"),
+      message: t("toast.siteCatalogError.message"),
       tone: "error",
     });
     expect(showSiteSwitchBlockedToast()).toMatchObject({
-      title: "Site switch unavailable",
-      message: "Wait for your check to finish analyzing, then try again.",
+      title: t("toast.siteSwitchBlocked.title"),
+      message: t("toast.siteSwitchBlocked.message"),
       tone: "info",
     });
     expect(showSiteSwitchSuccessToast()).toMatchObject({
-      title: "Successfully switched sites",
+      title: t("toast.siteSwitchSuccess.title"),
       message: "",
       tone: "success",
     });
