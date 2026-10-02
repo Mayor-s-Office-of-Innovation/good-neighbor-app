@@ -190,7 +190,10 @@ export const registerArtifact = async (event) => {
   }
   // The requester's locale for analyzer-written text. The analyzer falls back
   // to English on unknown tags, so this is pass-through, not an allowlist.
-  const languageValue = typeof language === "string" && language.trim() ? language.trim() : undefined;
+  const languageValue =
+    typeof language === "string" && language.trim()
+      ? language.trim()
+      : undefined;
 
   const now = new Date().toISOString();
   // Per-photo capture time. The worker forwards this as the analyzer's

@@ -105,7 +105,13 @@ export class AnalyzerError extends Error {
  *   (en/es/vi/fil/zh-Hant; unknown tags fall back to English there)
  * @returns {Record<string, unknown>}
  */
-export function buildAnalyzeRequest({ metadata, media, requestId, appId, language }) {
+export function buildAnalyzeRequest({
+  metadata,
+  media,
+  requestId,
+  appId,
+  language,
+}) {
   /** @type {Record<string, string>} */
   const caller = {};
   if (appId !== undefined) caller.app_id = appId;
@@ -241,12 +247,22 @@ export function createAnalyzerClient({
 
   return {
     async analyze({ metadata, media, requestId, appId, language }) {
-      const body = buildAnalyzeRequest({ metadata, media, requestId, appId, language });
+      const body = buildAnalyzeRequest({
+        metadata,
+        media,
+        requestId,
+        appId,
+        language,
+      });
       return /** @type {Promise<AnalysisResponse>} */ (
         request("/v1/analyses", { method: "POST", body, auth: true })
       );
     },
-    editCondition(analysisId, conditionId, { description, requestId, appId, language }) {
+    editCondition(
+      analysisId,
+      conditionId,
+      { description, requestId, appId, language },
+    ) {
       /** @type {Record<string, string>} */
       const caller = {};
       if (appId !== undefined) caller.app_id = appId;

@@ -479,7 +479,8 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
     title: condition.needsAnswer
       ? t("card.title.moreDetails")
       : displayCategory(condition) || t("card.title.fallback"),
-    description: displayDescription(condition) || t("card.description.fallback"),
+    description:
+      displayDescription(condition) || t("card.description.fallback"),
     action: "",
     actionKind: "",
     conditionId: condition.conditionId || "",
@@ -970,7 +971,11 @@ function localizedAnalyzerText(record, flat, translationsKey) {
 
 function displayCategory(record) {
   return (
-    localizedAnalyzerText(record, record?.userFriendlyLabel, "user_friendly_label") ||
+    localizedAnalyzerText(
+      record,
+      record?.userFriendlyLabel,
+      "user_friendly_label",
+    ) ||
     record?.userFriendlyLabel ||
     record?.user_friendly_label ||
     rulebookText(record?.category) ||
