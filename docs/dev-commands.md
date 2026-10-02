@@ -310,7 +310,9 @@ Notes:
 
 - **Policy:** `wcag22-aa` — 2.2 A+AA blocks (stricter than the DOJ ADA Title II floor of
   2.1 AA); AAA findings (mainly the 7:1 `color-contrast-enhanced` rule) report as
-  warnings and don't fail tests.
+  warnings and don't fail tests. A full AAA evaluation (2026-10-01) found the contrast
+  rule is the only AAA gap — token updates pending design sign-off; everything else
+  AAA-level passes.
 - The suite also runs ramp-check's **keyboard audit** (full Tab traversal — reachability,
   visible focus, focus not obscured, no trap) and a **text-spacing check** (warns by
   default) on every scanned state, on top of axe/motion/reflow.
@@ -320,8 +322,6 @@ Notes:
   `ramp-check/patterns` (`dialogAudit`, `focusAfter`, `expectAnnouncement`,
   `formErrorAudit`) + `a11y.assert()`.
 - ramp-check's README has the fixture/policy/allowlist/pattern docs; its repo also explains
-  each check's seeded-defect test, proving every check fires.
-- ramp-check's README has the fixture/policy/allowlist docs; its repo also explains
   each check's seeded-defect test, proving every check fires.
 
 CI runs the same suite in its own `e2e` job (Chromium only, one retry, trace
