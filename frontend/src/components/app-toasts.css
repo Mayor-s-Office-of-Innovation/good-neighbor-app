@@ -9,6 +9,7 @@
 app-toasts {
   position: fixed;
   inset-block-start: env(safe-area-inset-top, 0px);
+  inset-block-end: auto;
   inset-inline: 0;
   z-index: 100;
   display: grid;
@@ -16,7 +17,12 @@ app-toasts {
   justify-items: center;
   max-block-size: 100dvh;
   overflow-y: auto;
-  padding-block-end: 0.5rem;
+  inline-size: auto;
+  margin: 0;
+  border: 0;
+  padding: 0 0 0.5rem;
+  background: transparent;
+  color: inherit;
   pointer-events: none;
 }
 

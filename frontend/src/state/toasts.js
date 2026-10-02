@@ -252,6 +252,24 @@ export function showSiteSwitchErrorToast() {
   });
 }
 
+export function showSiteCatalogErrorToast() {
+  return showToast({
+    title: "Sites could not be loaded",
+    message: "Please try again.",
+    icon: "triangle-exclamation",
+    tone: "error",
+  });
+}
+
+export function showSiteSwitchBlockedToast() {
+  return showToast({
+    title: "Site switch unavailable",
+    message: "Wait for your check to finish analyzing, then try again.",
+    icon: "circle-info",
+    tone: "info",
+  });
+}
+
 export function showSiteSwitchSuccessToast() {
   return showToast({
     title: "Successfully switched sites",

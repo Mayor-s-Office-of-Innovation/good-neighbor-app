@@ -22,6 +22,8 @@ import {
   showEditRefreshErrorToast,
   showEditSavedToast,
   showReanalysisErrorToast,
+  showSiteCatalogErrorToast,
+  showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
   showSiteSwitchSuccessToast,
   queueSiteSwitchSuccessToast,
@@ -251,7 +253,7 @@ class TodayView extends HTMLElement {
     const [catalog, bindings] = await Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
-        showSiteSwitchErrorToast();
+        showSiteCatalogErrorToast();
         return null;
       }),
       listBoundSites(),
@@ -1008,7 +1010,7 @@ class TodayView extends HTMLElement {
     } catch (error) {
       console.error("listProviderSites retry failed", error);
       this._providerSitesStatus = "error";
-      showSiteSwitchErrorToast();
+      showSiteCatalogErrorToast();
     } finally {
       if (requestedSiteId === this._siteId && this._homeModel) {
         this._renderHome(this._homeModel);
@@ -1110,7 +1112,7 @@ class TodayView extends HTMLElement {
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      showSiteSwitchErrorToast();
+      showSiteSwitchBlockedToast();
       return;
     }
     try {
@@ -1144,7 +1146,7 @@ class TodayView extends HTMLElement {
     }
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      showSiteSwitchErrorToast();
+      showSiteSwitchBlockedToast();
       return;
     }
     try {

@@ -19,6 +19,8 @@ import {
   showFeedbackSuccessToast,
   showSiteAdminErrorToast,
   showSiteAdminSuccessToast,
+  showSiteCatalogErrorToast,
+  showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
   showSiteSwitchSuccessToast,
   queueSiteSwitchSuccessToast,
@@ -180,6 +182,16 @@ describe("toast lifetime", () => {
       title: "Could not switch sites",
       message: "Please try again.",
       tone: "error",
+    });
+    expect(showSiteCatalogErrorToast()).toMatchObject({
+      title: "Sites could not be loaded",
+      message: "Please try again.",
+      tone: "error",
+    });
+    expect(showSiteSwitchBlockedToast()).toMatchObject({
+      title: "Site switch unavailable",
+      message: "Wait for your check to finish analyzing, then try again.",
+      tone: "info",
     });
     expect(showSiteSwitchSuccessToast()).toMatchObject({
       title: "Successfully switched sites",

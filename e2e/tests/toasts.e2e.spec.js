@@ -1,5 +1,6 @@
 // @ts-check
-import { test, expect } from "../helpers/harness.js";
+import { test as base, expect } from "@playwright/test";
+import { test } from "../helpers/harness.js";
 
 /** Browser-side source for the exact Vite module instance loaded by the app. */
 const loadActiveToastModule = `async () => {
@@ -153,6 +154,15 @@ test.describe("standardized app toasts", () => {
     const toast = page.locator(".app-toast--error");
     await expect(toast).toContainText("Feedback failed to send");
     await expect(toast).toContainText("Please try again later.");
+    await expect(page.locator("app-toasts")).toHaveAttribute(
+      "popover",
+      "manual",
+    );
+    expect(
+      await page
+        .locator("app-toasts")
+        .evaluate((element) => element.matches(":popover-open")),
+    ).toBe(true);
   });
 
   test("renders and dismisses an informational offline toast", async ({
@@ -175,4 +185,21 @@ test.describe("standardized app toasts", () => {
       .click();
     await expect(toast).toHaveCount(0);
   });
+});
+
+base("renders notifications before a site has been bound", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
+  await expect(page.locator("app-toasts")).toHaveCount(1);
+
+  await page.evaluate(async (moduleLoader) => {
+    const { showOfflinePhotosToast } = await /** @type {any} */ (
+      eval(`(${moduleLoader})`)
+    )();
+    showOfflinePhotosToast();
+  }, loadActiveToastModule);
+
+  await expect(page.locator(".app-toast--info")).toContainText(
+    "Your photos are saved. We'll retry later.",
+  );
 });

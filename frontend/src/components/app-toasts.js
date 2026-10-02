@@ -10,6 +10,9 @@ class AppToasts extends HTMLElement {
   _unsubscribe;
 
   connectedCallback() {
+    // A manual popover puts the single global toast host in the browser's top
+    // layer, so notifications remain visible above an open modal <dialog>.
+    this.setAttribute("popover", "manual");
     this.setAttribute("aria-label", "Notifications");
     this.setAttribute("role", "region");
     this._unsubscribe = onToastsChange(() => this._sync());
@@ -29,8 +32,32 @@ class AppToasts extends HTMLElement {
     }
   };
 
+  /** Keep active notifications at the front of the browser's top layer. */
+  _syncTopLayer(hasToasts) {
+    if (
+      typeof this.showPopover !== "function" ||
+      typeof this.hidePopover !== "function"
+    )
+      return;
+    try {
+      const open = this.matches(":popover-open");
+      if (!hasToasts) {
+        if (open) this.hidePopover();
+        return;
+      }
+      // Reopening promotes the host above a modal that may have opened while
+      // an earlier toast was still active.
+      if (open) this.hidePopover();
+      this.showPopover();
+    } catch {
+      // Older browsers keep the existing fixed-position fallback.
+    }
+  }
+
   _sync() {
     const current = getToasts();
+    /** @type {HTMLElement | null} */
+    let focusTarget = null;
     for (const [toast, element] of this._elements) {
       if (current.includes(toast)) continue;
       const hadFocus = element.contains(document.activeElement);
@@ -121,9 +148,11 @@ class AppToasts extends HTMLElement {
       this._elements.set(toast, element);
       if (toast.focusAction) {
         const undo = element.querySelector(".app-toast__undo");
-        if (undo instanceof HTMLElement) undo.focus({ preventScroll: true });
+        if (undo instanceof HTMLElement) focusTarget = undo;
       }
     }
+    this._syncTopLayer(current.length > 0);
+    focusTarget?.focus({ preventScroll: true });
     this._visibility();
   }
 }

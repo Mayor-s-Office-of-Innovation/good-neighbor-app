@@ -170,6 +170,7 @@ class AppRoot extends HTMLElement {
       this._unsub = null;
     }
     this.innerHTML = setupView(options);
+    this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
     this._maybeWarnInAppBrowser();
     this.querySelector("site-setup").addEventListener("sitecancel", () => {
