@@ -79,6 +79,11 @@
   background: var(--surface-2);
   object-fit: cover;
 }
+
+.ticket-detail__photo-trigger {
+  width: fit-content;
+  border-radius: var(--radius-sm);
+}
 .ticket-detail__photo.photo-placeholder {
   display: flex;
 }

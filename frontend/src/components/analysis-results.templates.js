@@ -510,12 +510,14 @@ export function taskAnalysisCard({
     id: task.taskId || "",
     kind: mediaUrl || action?.kind === "view311" ? "photo" : "text",
     dataUrl: mediaUrl,
+    fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
     placeName: placeName || siteName || "Site",
     georeferencedAddress:
       task.georeferencedAddress || task.evidence?.georeferencedAddress || "",
     address: task.address || "",
     siteAddress: task.siteAddress || "",
+    createdAt: task.createdAt || task.created_at || task.updatedAt || "",
     checkId: task.checkId || "",
     analysis: {
       artifactId: taskArtifactId(task),
@@ -956,16 +958,28 @@ function evidencePreview(item, placeholder = false) {
   if (item.kind === "text") {
     return textPreview();
   }
-  return imagePreview(item.dataUrl, item.placeName || "Site");
+  return imagePreview(item);
 }
 
-function imagePreview(src, placeName) {
+function imagePreview(item) {
+  const placeName = item.placeName || "Site";
+  const address =
+    item.georeferencedAddress || item.address || item.siteAddress || "";
+  const capturedAt = item.uploadedAt || item.createdAt || "";
   return html`
     <div class="analysis-card__media">
-      <img
-        src="${escapeAttr(src)}"
-        alt="Evidence from ${escapeAttr(placeName || "the site")}"
-      />
+      <button
+        type="button"
+        data-photo-lightbox
+        data-full-src="${escapeAttr(item.fullDataUrl || item.dataUrl)}"
+        data-photo-address="${escapeAttr(address)}"
+        data-photo-time="${escapeAttr(capturedAt)}"
+      >
+        <img
+          src="${escapeAttr(item.dataUrl)}"
+          alt="Evidence from ${escapeAttr(placeName || "the site")}"
+        />
+      </button>
     </div>
   `;
 }

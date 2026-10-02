@@ -79,6 +79,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
       # Install once at the repo root; workspaces (backend + frontend) share the
       # lockfile. Needed for both the Lambda bundles and the frontend build.
       - name: Install dependencies
