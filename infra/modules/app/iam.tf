@@ -261,6 +261,13 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
+    sid       = "ReadSf311Secret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.sf311_basic_auth.arn]
+  }
+
+  statement {
     sid       = "UseAppKey"
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]

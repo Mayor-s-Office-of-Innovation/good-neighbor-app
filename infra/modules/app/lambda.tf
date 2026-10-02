@@ -2,6 +2,22 @@
 # `npm run build:lambdas` (esbuild → backend/dist/{api,worker}/index.mjs) before
 # `terraform plan`; the archive's source_code_hash drives redeploys.
 
+# Ticket creation can run synchronously in the API or silently after analysis
+# in the worker. Keep both runtimes on one configuration map so those paths
+# cannot drift apart.
+locals {
+  sf311_lambda_environment = {
+    GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
+    SF311_CREATESR_URL                = var.sf311_createsr_url
+    SF311_UPDATESR_URL                = var.sf311_updatesr_url
+    SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
+    SF311_LATEST_UPDATES_URL          = var.sf311_latest_updates_url
+    SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
+    SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
+    SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+  }
+}
+
 data "archive_file" "api" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/api"
@@ -78,24 +94,16 @@ resource "aws_lambda_function" "api" {
   }
 
   environment {
-    variables = {
-      DYNAMO_TABLE                      = aws_dynamodb_table.app.name
-      SQS_QUEUE_URL                     = aws_sqs_queue.submissions.url
-      S3_UPLOAD_BUCKET                  = aws_s3_bucket.uploads.bucket
-      DEMO_SITE_ID                      = "demo-site"
-      BEDROCK_MODEL_ID                  = var.bedrock_model_id
-      ANALYZER_BASE_URL                 = var.analyzer_base_url
-      ANALYZER_API_KEY_SECRET_ARN       = aws_secretsmanager_secret.analyzer_api_key.arn
-      POSTHOG_API_KEY_SECRET_ARN        = aws_secretsmanager_secret.posthog_project_api_key.arn
-      POSTHOG_HOST                      = var.posthog_host
-      GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
-      SF311_CREATESR_URL                = var.sf311_createsr_url
-      SF311_UPDATESR_URL                = var.sf311_updatesr_url
-      SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
-      SF311_LATEST_UPDATES_URL          = var.sf311_latest_updates_url
-      SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
-      SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
-      SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+    variables = merge({
+      DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      DEMO_SITE_ID                = "demo-site"
+      BEDROCK_MODEL_ID            = var.bedrock_model_id
+      ANALYZER_BASE_URL           = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
+      POSTHOG_API_KEY_SECRET_ARN  = aws_secretsmanager_secret.posthog_project_api_key.arn
+      POSTHOG_HOST                = var.posthog_host
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN = aws_secretsmanager_secret.device_token_key.arn
@@ -108,7 +116,7 @@ resource "aws_lambda_function" "api" {
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
-    }
+    }, local.sf311_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
@@ -187,14 +195,14 @@ resource "aws_lambda_function" "worker" {
   }
 
   environment {
-    variables = {
+    variables = merge({
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
-    }
+    }, local.sf311_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]
