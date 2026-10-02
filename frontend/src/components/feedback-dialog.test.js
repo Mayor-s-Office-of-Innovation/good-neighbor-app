@@ -38,12 +38,6 @@ describe("feedback-dialog pure decisions", () => {
     expect(hasSendableText("")).toBe(false);
     expect(hasSendableText(undefined)).toBe(false);
   });
-
-  it("clearsDraft only when a send succeeded", async () => {
-    const { clearsDraft } = await import("./feedback-dialog.js");
-    expect(clearsDraft(true)).toBe(true);
-    expect(clearsDraft(false)).toBe(false);
-  });
 });
 
 describe("feedback-dialog → sendFeedback payload", () => {

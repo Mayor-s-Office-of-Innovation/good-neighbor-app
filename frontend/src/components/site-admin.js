@@ -11,6 +11,10 @@ import {
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
+  showSiteAdminErrorToast,
+  showSiteAdminSuccessToast,
+} from "../state/toasts.js";
+import {
   formatAdminDate,
   formatAdminPhone,
   validateContact,
@@ -397,9 +401,10 @@ class SiteAdminEdit extends HTMLElement {
         await saveSiteSettings({ name: value.name });
       }
       this._allowLeave = true;
+      showSiteAdminSuccessToast();
       backOrNavigate("/site-admin");
     } catch {
-      if (error) error.textContent = "We couldn't save the changes. Try again.";
+      showSiteAdminErrorToast();
       if (save) {
         save.disabled = false;
         save.textContent = "Save changes";

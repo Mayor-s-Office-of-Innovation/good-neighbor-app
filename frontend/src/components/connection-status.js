@@ -2,9 +2,7 @@
   connection-state.js — the UI surface for backend-health.js states
   (api-response-integrity plan §3b).
 
-  OUTAGE → a compact dismissible banner ("can't reach the server"), appended
-  as a fixed element so it survives route changes without touching #view.
-  Clears on the first healthy probe (backend-health → healthy).
+  OUTAGE → an informational app toast, shown once per outage period.
 
   AUTH → a non-dismissable dialog: the device session is expired/revoked and
   the only recovery is site re-entry. "Sign out and re-enter site code"
@@ -16,11 +14,11 @@
   Rendered by app-root alongside app-toasts.
 */
 
-import "./connection-status.css";
 import { getHealthState, onHealthChange } from "../services/backend-health.js";
 import { clearSiteSession } from "../db.js";
 import { discardInMemorySession } from "../state/check-session.js";
 import { html } from "../lib/html.js";
+import { showOfflinePhotosToast } from "../state/toasts.js";
 
 class ConnectionStatus extends HTMLElement {
   connectedCallback() {
@@ -73,60 +71,26 @@ class ConnectionStatus extends HTMLElement {
 
   /** @type {(() => void) | undefined} */
   _unsubscribe;
-  /** @type {boolean} */
-  _dismissed = false;
+  /** @type {string | undefined} */
+  _lastState;
 
   _sync() {
     const state = getHealthState();
-    const banner = this.querySelector(".conn-banner");
     const dialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#conn-auth-dialog")
     );
 
+    if (state === "outage" && this._lastState !== "outage") {
+      showOfflinePhotosToast();
+    }
+    this._lastState = state;
+
     if (state === "auth") {
-      // Banner never shows in the AUTH state — the dialog owns the screen.
-      banner?.remove();
       if (dialog && !dialog.open) dialog.showModal();
       return;
     }
 
     dialog?.close();
-    if (state === "outage" && !banner && !this._dismissed) {
-      this.insertAdjacentHTML(
-        "beforeend",
-        html`<div class="conn-banner" role="status">
-          <wa-icon name="cloud-slash" aria-hidden="true"></wa-icon>
-          <p>
-            <strong>Can't reach the server.</strong> Your photos are still saved
-            on this device — we'll retry automatically.
-          </p>
-          <button
-            type="button"
-            class="conn-banner__close"
-            aria-label="Dismiss connection notice"
-          >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-          </button>
-        </div>`,
-      );
-      this.querySelector(".conn-banner__close")?.addEventListener(
-        "click",
-        () => {
-          // Dismiss until the state leaves outage (outage → healthy →
-          // outage re-arms the banner — see the reset below).
-          this.querySelector(".conn-banner")?.remove();
-          this._dismissed = true;
-        },
-      );
-    } else if (state === "healthy" && this._dismissed) {
-      // Reset the dismissal on ANY transition to healthy — a dismissed
-      // banner may already be gone from the DOM, so keying the reset on the
-      // banner's presence would suppress every later outage forever.
-      this._dismissed = false;
-    }
-    if (state !== "outage") {
-      this.querySelector(".conn-banner")?.remove();
-    }
   }
 }
 

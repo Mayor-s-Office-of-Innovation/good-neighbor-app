@@ -8,6 +8,7 @@ import {
   getTaskUpdates,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
+import { showTaskUpdateErrorToast } from "../state/toasts.js";
 import { taskArtifactIds } from "../domain/home-tasks.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import {
@@ -217,7 +218,6 @@ class TaskUpdateDialog extends HTMLElement {
             createTaskUpdate(this._task.taskId, {
               type: button.dataset.presence,
             }),
-          "Could not record your answer. Please try again.",
           true,
         );
         if (!response) return;
@@ -316,21 +316,15 @@ class TaskUpdateDialog extends HTMLElement {
       ?.addEventListener("click", () => void this._saveAction(root, true));
   }
 
-  /** @param {HTMLElement} root @returns {Promise<string[] | null>} */
-  async _uploadFiles(root) {
-    const error = /** @type {HTMLElement | null} */ (
-      root.querySelector(".task-update__error")
-    );
+  /** @returns {Promise<string[] | null>} */
+  async _uploadFiles() {
     try {
       if (!this._task) return null;
       return await Promise.all(
         this._files.map((file) => this._uploadFile(file)),
       );
     } catch {
-      if (error) {
-        error.hidden = false;
-        error.textContent = "Could not upload the photos. Please try again.";
-      }
+      showTaskUpdateErrorToast();
       return null;
     }
   }
@@ -377,22 +371,18 @@ class TaskUpdateDialog extends HTMLElement {
   async _saveNotes(root) {
     if (!this._task) return;
     const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
-    const photos = await this._uploadFiles(root);
+    const photos = await this._uploadFiles();
     if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
       return;
     if (this._pendingEvent)
       await this._finishDocumentation(root, notes, photos);
     else {
-      const response = await this._runMutation(
-        root,
-        "[data-save-notes]",
-        () =>
-          createTaskUpdate(this._task.taskId, {
-            type: "note_photo_update",
-            notes,
-            photoKeys: photos,
-          }),
-        "Could not save this update. Please try again.",
+      const response = await this._runMutation(root, "[data-save-notes]", () =>
+        createTaskUpdate(this._task.taskId, {
+          type: "note_photo_update",
+          notes,
+          photoKeys: photos,
+        }),
       );
       if (!response) return;
       this._resetFiles();
@@ -413,7 +403,6 @@ class TaskUpdateDialog extends HTMLElement {
           notes,
           photoKeys: photos,
         }),
-      "Could not save this documentation. Please try again.",
     );
     if (!response) return;
     this._pendingEvent = null;
@@ -431,7 +420,6 @@ class TaskUpdateDialog extends HTMLElement {
       root,
       "[data-action-outcome]",
       () => createTaskUpdate(this._task.taskId, { type, text }),
-      "Could not record the action. Please try again.",
     );
     if (!response) return;
     this._pendingEvent = response.update;
@@ -445,7 +433,7 @@ class TaskUpdateDialog extends HTMLElement {
   /** @param {HTMLElement} root @param {boolean} [skipPhotos] */
   async _saveAction(root, skipPhotos = false) {
     if (!this._task) return;
-    const photos = skipPhotos ? [] : await this._uploadFiles(root);
+    const photos = skipPhotos ? [] : await this._uploadFiles();
     if (!photos) return;
     const response = await this._runMutation(
       root,
@@ -461,7 +449,6 @@ class TaskUpdateDialog extends HTMLElement {
               text: this._actionText.trim(),
               photoKeys: photos,
             }),
-      "Could not save this action. Please try again.",
     );
     if (!response) return;
     this._pendingEvent = null;
@@ -477,16 +464,9 @@ class TaskUpdateDialog extends HTMLElement {
    * @param {HTMLElement} root
    * @param {string} buttonSelector
    * @param {() => Promise<any>} action
-   * @param {string} message
    * @param {boolean} [reloadOnConflict]
    */
-  async _runMutation(
-    root,
-    buttonSelector,
-    action,
-    message,
-    reloadOnConflict = false,
-  ) {
+  async _runMutation(root, buttonSelector, action, reloadOnConflict = false) {
     const buttons = [...root.querySelectorAll(buttonSelector)].map(
       (element) => /** @type {HTMLButtonElement} */ (element),
     );
@@ -506,10 +486,7 @@ class TaskUpdateDialog extends HTMLElement {
         await this._load();
         return null;
       }
-      if (error) {
-        error.hidden = false;
-        error.textContent = message;
-      }
+      showTaskUpdateErrorToast();
       return null;
     } finally {
       buttons.forEach((button) => (button.disabled = false));

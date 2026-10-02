@@ -10,18 +10,17 @@
   textarea-only — no category
   picker, no rating, no email field; feedback is anonymous.
 
-  States: form → sending (disabled + spinner) → thanks (auto-close after a
-  beat). Send happens while the dialog is open; failure re-enables the form +
-  shows a gentle inline retry (the draft text is never cleared on failure).
-  The thanks auto-close timer is cleared on every close, so Done/Escape/
-  backdrop followed by a quick reopen can't be dismissed by the stale timer.
+  Send happens while the dialog is open. Success closes and clears the form;
+  failure re-enables it and preserves the draft. Both outcomes use app toasts.
 */
 import "./feedback-dialog.css";
 import { html } from "../lib/html.js";
 import { openOverlayDialog } from "../dialog-history.js";
 import { sendFeedback } from "../services/feedback.js";
-
-const THANKS_MS = 2200;
+import {
+  showFeedbackErrorToast,
+  showFeedbackSuccessToast,
+} from "../state/toasts.js";
 
 /**
  * Whether a textarea value is sendable (trimmed non-empty). Exported pure so
@@ -33,23 +32,9 @@ export function hasSendableText(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-/**
- * Whether closing the dialog should clear the draft: only when the thanks
- * pane is showing (a successful send). Escape/backdrop mid-edit must never
- * discard typing. Exported pure for the node test.
- * @param {boolean} thanksShowing
- * @returns {boolean}
- */
-export function clearsDraft(thanksShowing) {
-  return thanksShowing === true;
-}
-
 class FeedbackDialog extends HTMLElement {
   /** @type {HTMLDialogElement | null} */
   _dialog = null;
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  _thanksTimer;
-
   connectedCallback() {
     this._renderForm();
     this._dialog = /** @type {HTMLDialogElement | null} */ (
@@ -67,9 +52,6 @@ class FeedbackDialog extends HTMLElement {
       e.preventDefault();
       void this._submit();
     });
-    this.querySelector("#feedback-done")?.addEventListener("click", () =>
-      this._dialog?.close(),
-    );
     // Click on the backdrop (target is the <dialog> itself) dismisses it.
     this._dialog?.addEventListener("click", (e) => {
       if (e.target === this._dialog) this._dialog.close();
@@ -78,7 +60,6 @@ class FeedbackDialog extends HTMLElement {
 
   /** Open the sheet from an external menu item. */
   open() {
-    this._setState("form");
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._dialog),
       "feedback",
@@ -86,10 +67,6 @@ class FeedbackDialog extends HTMLElement {
     /** @type {HTMLElement | null} */ (
       this.querySelector("#feedback-text")
     )?.focus();
-  }
-
-  disconnectedCallback() {
-    if (this._thanksTimer) clearTimeout(this._thanksTimer);
   }
 
   async _submit() {
@@ -102,47 +79,27 @@ class FeedbackDialog extends HTMLElement {
     const send = /** @type {HTMLElement | null} */ (
       this.querySelector("#feedback-send")
     );
-    const errEl = /** @type {HTMLElement | null} */ (
-      this.querySelector("#feedback-error")
-    );
     if (send) {
       /** @type {any} */ (send).disabled = true;
       /** @type {any} */ (send).loading = true;
     }
-    if (errEl) errEl.hidden = true;
-
     try {
       await sendFeedback({
         message: text,
         site: /** @type {any} */ (this).siteId || undefined,
       });
-      this._setState("thanks");
-      this._thanksTimer = setTimeout(() => this._dialog?.close(), THANKS_MS);
+      showFeedbackSuccessToast();
+      this._resetForm();
+      this._dialog?.close();
     } catch {
-      // Keep the dialog open + the draft intact; offer a gentle retry.
-      if (errEl) errEl.hidden = false;
+      // Keep the dialog open + the draft intact for retry.
+      showFeedbackErrorToast();
     } finally {
       if (send) {
         /** @type {any} */ (send).disabled = false;
         /** @type {any} */ (send).loading = false;
       }
     }
-  }
-
-  /**
-   * Swap which pane is visible. (Panes live in one render; toggling `hidden`
-   * keeps listeners wired and avoids re-render focus loss.)
-   * @param {"form" | "thanks"} state
-   */
-  _setState(state) {
-    const form = /** @type {HTMLElement | null} */ (
-      this.querySelector(".feedback__pane--form")
-    );
-    const thanks = /** @type {HTMLElement | null} */ (
-      this.querySelector(".feedback__pane--thanks")
-    );
-    if (form) form.hidden = state !== "form";
-    if (thanks) thanks.hidden = state !== "thanks";
   }
 
   /** Reset the draft after a successful send (called when the sheet closes). */
@@ -189,14 +146,6 @@ class FeedbackDialog extends HTMLElement {
                 label="Your feedback"
                 resize="vertical"
               ></wa-textarea>
-              <p
-                class="feedback__error"
-                id="feedback-error"
-                role="alert"
-                hidden
-              >
-                Couldn't send just now. Your note is still here — try again.
-              </p>
               <div class="feedback__actions">
                 <button class="btn-outline" id="feedback-cancel" type="button">
                   Cancel
@@ -207,38 +156,9 @@ class FeedbackDialog extends HTMLElement {
               </div>
             </form>
           </div>
-          <div class="feedback__pane feedback__pane--thanks" hidden>
-            <p class="feedback__thanks" aria-live="polite">
-              Thanks — your note is on its way to the team.
-            </p>
-            <div class="feedback__actions">
-              <button class="btn-ink" id="feedback-done" type="button">
-                Done
-              </button>
-            </div>
-          </div>
         </div>
       </dialog>
     `;
-
-    // Clear the draft only after a dialog that ended in a sent state — closing
-    // via Escape/backdrop mid-edit must not discard typing. `cancel` fires on
-    // Escape; the backdrop-click branch above covers pointing-device dismissal.
-    // Also clears the thanks auto-close timer on EVERY close: Done/Escape/
-    // backdrop followed by a quick reopen would otherwise be dismissed by the
-    // stale timer (close() on an already-closed dialog is a no-op, so this is
-    // belt-and-suspenders for the timer's own self-close).
-    this._dialog?.addEventListener("close", () => {
-      if (this._thanksTimer) {
-        clearTimeout(this._thanksTimer);
-        this._thanksTimer = undefined;
-      }
-      const thanksPane = /** @type {HTMLElement | null} */ (
-        this.querySelector(".feedback__pane--thanks")
-      );
-      const thanksShowing = Boolean(thanksPane && !thanksPane.hidden);
-      if (clearsDraft(thanksShowing)) this._resetForm();
-    });
   }
 }
 

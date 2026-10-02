@@ -3,7 +3,18 @@
   immediately and renders through the same live result cards as perimeter check.
 */
 import "./problem-report.css";
-import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import {
+  show311SuccessToast,
+  show311ErrorToast,
+  showActionSaveErrorToast,
+  showAnswerSaveErrorToast,
+  showDeletionRefreshToast,
+  showDeleteErrorToast,
+  showEditErrorToast,
+  showEditRefreshErrorToast,
+  showEditSavedToast,
+  showReanalysisErrorToast,
+} from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import {
   missingConditionMessage,
@@ -31,7 +42,10 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import { isFiled311Completion } from "../domain/task-actions.js";
+import {
+  isFiled311Completion,
+  submitted311ServiceRequestNumber,
+} from "../domain/task-actions.js";
 import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
   ensureProblemReport,
@@ -82,7 +96,6 @@ class ProblemReport extends HTMLElement {
     this._analysisProgressDialog = null;
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
-    this._toastTimer = 0;
     this._initGeneration = 0;
     this._answeringConditionIds = new Set();
   }
@@ -465,21 +478,16 @@ class ProblemReport extends HTMLElement {
             requestId: this._requestId("delete", problem),
             deleteLocally: () => this._deleteProblemLocally(problem),
             onRefreshFailure: () => {
-              this._showToast(
-                "Deletion saved. Could not refresh the cards; please reload.",
-              );
+              showDeletionRefreshToast();
             },
           }),
         () => this._render(),
-        { focusUndo },
+        { focusUndo, address: this._site?.address || "" },
       );
       this._activeProblem = null;
     } catch (err) {
       console.error("delete analysis condition failed", err);
-      this._setDialogError(
-        "analysis-delete-error",
-        "Could not delete this problem. Please try again.",
-      );
+      showDeleteErrorToast();
     } finally {
       this._deletingProblem = false;
       setBusy(button, false);
@@ -512,7 +520,13 @@ class ProblemReport extends HTMLElement {
     this._setDialogError("analysis-edit-error", "");
     try {
       if (!problem.conditionId) {
-        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
+        try {
+          await analyzeNoIssueDescriptionEdit(problem.itemId, description);
+        } catch (error) {
+          console.error("text-only no-issue reanalysis failed", error);
+          showReanalysisErrorToast();
+          return;
+        }
       } else {
         if (!problem.checkId || !problem.artifactId) {
           this._setDialogError(
@@ -534,22 +548,19 @@ class ProblemReport extends HTMLElement {
           await refreshEvidenceAnalysis(problem.itemId, result);
         } catch (error) {
           console.error("refresh after saved edit failed", error);
-          this._setDialogError(
-            "analysis-edit-error",
-            "Edit saved. Could not refresh the cards; please reload.",
-          );
+          this._analysisEditDialog?.close();
+          this._activeProblem = null;
+          showEditRefreshErrorToast();
           return;
         }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
+      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      this._setDialogError(
-        "analysis-edit-error",
-        "Could not save this edit. Please try again.",
-      );
+      showEditErrorToast();
     } finally {
       setBusy(button, false);
     }
@@ -580,7 +591,7 @@ class ProblemReport extends HTMLElement {
           return;
         }
         this._markProblemResolved(problem);
-        show311SuccessToast();
+        show311SuccessToast(submitted311ServiceRequestNumber(result.task));
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
@@ -598,7 +609,7 @@ class ProblemReport extends HTMLElement {
       );
     } catch (err) {
       console.error("resolve task failed", err);
-      this._showToast("Could not save that action. Please try again.");
+      showActionSaveErrorToast();
     }
   }
 
@@ -607,7 +618,7 @@ class ProblemReport extends HTMLElement {
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
     if (!problem.itemId || !problem.conditionId || !answerKey) {
-      this._showToast("Could not save that answer. Please try again.");
+      showAnswerSaveErrorToast();
       return;
     }
     if (this._answeringConditionIds.has(problem.conditionId)) return;
@@ -624,7 +635,7 @@ class ProblemReport extends HTMLElement {
       this._render();
     } catch (err) {
       console.error("answer condition failed", err);
-      this._showToast("Could not save that answer. Please try again.");
+      showAnswerSaveErrorToast();
     } finally {
       this._answeringConditionIds.delete(problem.conditionId);
       setQuestionAnswerBusy(this, problem.conditionId, false);
@@ -637,20 +648,6 @@ class ProblemReport extends HTMLElement {
 
   _setDialogError(id, message) {
     setDialogError(this, `#${id}`, message);
-  }
-
-  _showToast(message) {
-    let toast = this.querySelector(".check-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.className = "check-toast";
-      toast.setAttribute("role", "status");
-      this.appendChild(toast);
-    }
-    toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
-    toast.querySelector("span").textContent = message;
-    window.clearTimeout(this._toastTimer);
-    this._toastTimer = window.setTimeout(() => toast.remove(), 3500);
   }
 
   _requestId(action, problem) {

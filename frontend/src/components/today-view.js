@@ -12,7 +12,22 @@
   state, data loading, and DOM wiring.
 */
 import "./today-view.css";
-import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import {
+  show311SuccessToast,
+  show311ErrorToast,
+  showActionSaveErrorToast,
+  showAnswerSaveErrorToast,
+  showDeleteErrorToast,
+  showEditErrorToast,
+  showEditRefreshErrorToast,
+  showEditSavedToast,
+  showReanalysisErrorToast,
+  showSiteCatalogErrorToast,
+  showSiteSwitchBlockedToast,
+  showSiteSwitchErrorToast,
+  showSiteSwitchSuccessToast,
+  queueSiteSwitchSuccessToast,
+} from "../state/toasts.js";
 import {
   onDeletionsChange,
   isTaskPendingDeletion,
@@ -90,6 +105,7 @@ import {
 import {
   appActionFailureMessage,
   isFiled311Completion,
+  submitted311ServiceRequestNumber,
 } from "../domain/task-actions.js";
 import {
   getCurrentCheck,
@@ -237,6 +253,7 @@ class TodayView extends HTMLElement {
     const [catalog, bindings] = await Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
+        showSiteCatalogErrorToast();
         return null;
       }),
       listBoundSites(),
@@ -993,6 +1010,7 @@ class TodayView extends HTMLElement {
     } catch (error) {
       console.error("listProviderSites retry failed", error);
       this._providerSitesStatus = "error";
+      showSiteCatalogErrorToast();
     } finally {
       if (requestedSiteId === this._siteId && this._homeModel) {
         this._renderHome(this._homeModel);
@@ -1094,9 +1112,7 @@ class TodayView extends HTMLElement {
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitcher?.showError(
-        "Wait for this check to finish analyzing before switching sites.",
-      );
+      showSiteSwitchBlockedToast();
       return;
     }
     try {
@@ -1111,9 +1127,7 @@ class TodayView extends HTMLElement {
       );
     } catch (error) {
       console.error("site switch preparation failed", error);
-      this._siteSwitcher?.showError(
-        "We couldn't save this check before switching sites.",
-      );
+      showSiteSwitchErrorToast();
     }
   }
 
@@ -1132,9 +1146,7 @@ class TodayView extends HTMLElement {
     }
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitcher?.showError(
-        "Wait for this check to finish analyzing before switching sites.",
-      );
+      showSiteSwitchBlockedToast();
       return;
     }
     try {
@@ -1145,10 +1157,11 @@ class TodayView extends HTMLElement {
         return;
       }
       discardInMemorySession();
+      if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
       window.location.assign("/today");
     } catch (error) {
       console.error("site switch failed", error);
-      this._siteSwitcher?.showError("We couldn't switch sites. Try again.");
+      showSiteSwitchErrorToast();
     }
   }
 
@@ -1441,15 +1454,12 @@ class TodayView extends HTMLElement {
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
-        { focusUndo },
+        { focusUndo, address: this._site?.address || "" },
       );
       this._activeProblem = null;
     } catch (err) {
       console.error("delete analysis condition failed", err);
-      this._setDialogError(
-        "analysis-delete-error",
-        "Could not delete this problem. Please try again.",
-      );
+      showDeleteErrorToast();
     } finally {
       this._deletingProblem = false;
       setBusy(button, false);
@@ -1490,12 +1500,10 @@ class TodayView extends HTMLElement {
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         await this.connectedCallback();
+        showEditSavedToast();
       } catch (err) {
         console.error("text-only no-issue reanalysis failed", err);
-        this._setDialogError(
-          "analysis-edit-error",
-          "Could not analyze this description. Please try again.",
-        );
+        showReanalysisErrorToast();
       } finally {
         setBusy(button, false);
       }
@@ -1525,17 +1533,23 @@ class TodayView extends HTMLElement {
         },
       );
       if (problem.itemId) {
-        await refreshEvidenceAnalysis(problem.itemId, result);
+        try {
+          await refreshEvidenceAnalysis(problem.itemId, result);
+        } catch (error) {
+          console.error("refresh after saved edit failed", error);
+          this._analysisEditDialog?.close();
+          this._activeProblem = null;
+          showEditRefreshErrorToast();
+          return;
+        }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
+      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      this._setDialogError(
-        "analysis-edit-error",
-        "Could not save this edit. Please try again.",
-      );
+      showEditErrorToast();
     } finally {
       setBusy(button, false);
     }
@@ -1566,7 +1580,7 @@ class TodayView extends HTMLElement {
         show311ErrorToast();
         return;
       }
-      show311SuccessToast();
+      show311SuccessToast(submitted311ServiceRequestNumber(result.task));
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
@@ -1582,10 +1596,7 @@ class TodayView extends HTMLElement {
       await this.connectedCallback();
     } catch (err) {
       console.error("resolve task failed", err);
-      this._setInlineProblemError(
-        problem,
-        "Could not save that action. Please try again.",
-      );
+      showActionSaveErrorToast();
     }
   }
 
@@ -1594,10 +1605,7 @@ class TodayView extends HTMLElement {
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
     if (!problem.itemId || !problem.conditionId || !answerKey) {
-      this._setInlineProblemError(
-        problem,
-        "Could not save that answer. Please try again.",
-      );
+      showAnswerSaveErrorToast();
       return;
     }
     if (this._answeringConditionIds.has(problem.conditionId)) return;
@@ -1614,10 +1622,7 @@ class TodayView extends HTMLElement {
       );
     } catch (err) {
       console.error("answer condition failed", err);
-      this._setInlineProblemError(
-        problem,
-        "Could not save that answer. Please try again.",
-      );
+      showAnswerSaveErrorToast();
     } finally {
       this._answeringConditionIds.delete(problem.conditionId);
       setQuestionAnswerBusy(this, problem.conditionId, false);
@@ -1701,9 +1706,9 @@ class TodayView extends HTMLElement {
         card,
         () => completeTask(task.taskId, { completionMethod: "311_filed" }),
         { requireSubmitted311: true },
-      ).then((ok) => {
-        if (ok) {
-          show311SuccessToast();
+      ).then((result) => {
+        if (result) {
+          show311SuccessToast(submitted311ServiceRequestNumber(result.task));
           this.connectedCallback();
         }
       });
@@ -1761,9 +1766,9 @@ class TodayView extends HTMLElement {
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable the card. Explicit 311 failures use the app error toast; other
-  // actions keep their inline error. A 200 with a failed app action still
-  // counts as a failure and leaves the task available to retry.
+  // re-enable the card. Failures use the standardized app toast. A 200 with a
+  // failed app action still counts as a failure and leaves the task available
+  // to retry.
   async _run(card, fn, { requireSubmitted311 = false } = {}) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
@@ -1783,21 +1788,15 @@ class TodayView extends HTMLElement {
       if (failure) {
         buttons.forEach((b) => (b.disabled = false));
         if (requireSubmitted311) show311ErrorToast();
-        else if (err) {
-          err.hidden = false;
-          err.textContent = failure;
-        }
+        else showActionSaveErrorToast();
         return;
       }
-      return true;
+      return result || true;
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
       if (requireSubmitted311) show311ErrorToast();
-      else if (err) {
-        err.hidden = false;
-        err.textContent = "Couldn’t save that — please try again.";
-      }
+      else showActionSaveErrorToast();
       return false;
     }
   }
