@@ -99,12 +99,6 @@ site-switcher {
   font-weight: 600;
 }
 
-.home-site-switcher__error {
-  margin: 0.5rem 1rem;
-  color: var(--c-hazard);
-  font-size: var(--wa-font-size-s, 0.875rem);
-}
-
 .home-site-switcher__status,
 .home-site-switcher__failure p {
   margin: 0.5rem 1rem;

@@ -47,15 +47,4 @@ describe("site-switcher outside click", () => {
     expect(switcher.open).toBe(false);
     expect(switcher.render).toHaveBeenCalledTimes(1);
   });
-
-  it("clears a shown error when toggled", () => {
-    const switcher = new SiteSwitcher();
-    switcher.render = vi.fn();
-    switcher.querySelector = () => null;
-    switcher.showError("Nope");
-    expect(switcher._error).toBe("Nope");
-    switcher.setOpen(true);
-    expect(switcher._error).toBe("");
-    expect(switcher.open).toBe(true);
-  });
 });

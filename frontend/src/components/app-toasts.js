@@ -53,13 +53,13 @@ class AppToasts extends HTMLElement {
         ></wa-icon>
         <div class="app-toast__copy">
           <div role="status" aria-atomic="true"></div>
-        </div>
-        <div class="app-toast__controls">
           ${toast.action
             ? html`<button type="button" class="app-toast__undo">
                 ${escapeHtml(toast.action.label)}
               </button>`
             : ""}
+        </div>
+        <div class="app-toast__controls">
           <button
             type="button"
             class="app-toast__close"
@@ -75,13 +75,15 @@ class AppToasts extends HTMLElement {
         status.innerHTML = html`<p class="app-toast__title">
             ${escapeHtml(toast.title)}
           </p>
-          <p class="app-toast__message">
-            ${escapeHtml(toast.message)}${toast.link
-              ? html`<a href="${escapeAttr(toast.link.href)}"
-                  >${escapeHtml(toast.link.label)}</a
-                >`
-              : ""}
-          </p>
+          ${toast.message || toast.link
+            ? html`<p class="app-toast__message">
+                ${escapeHtml(toast.message)}${toast.link
+                  ? html`<a href="${escapeAttr(toast.link.href)}"
+                      >${escapeHtml(toast.link.label)}</a
+                    >`
+                  : ""}
+              </p>`
+            : ""}
           ${toast.action
             ? html`<span class="visually-hidden"
                 >Undo is available in Notifications.</span

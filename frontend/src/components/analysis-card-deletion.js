@@ -18,14 +18,14 @@ export function isDeletingAnalysisCard(host) {
  * @param {import("../state/pending-deletions.js").DeletedProblem} problem
  * @param {() => Promise<unknown> | void} commit
  * @param {() => Promise<unknown> | void} render
- * @param {{focusUndo?: boolean}} [options]
+ * @param {{focusUndo?: boolean, address?: string}} [options]
  */
 export async function deleteAnalysisCard(
   host,
   problem,
   commit,
   render,
-  { focusUndo = false } = {},
+  { focusUndo = false, address = "" } = {},
 ) {
   const cards = [...host.querySelectorAll(".analysis-card")];
   const index = cards.findIndex(
@@ -77,10 +77,10 @@ export async function deleteAnalysisCard(
     }
     if (pending) {
       showToast({
-        title: "Item deleted",
-        message: `${reference ? `${reference} (“${problem.title || "Item"}”)` : `“${problem.title || "Item"}”`} has been successfully deleted.`,
-        icon: "trash",
-        duration: 5000,
+        title: "Issue deleted",
+        message: deletionSummary(problem.title, address),
+        icon: "circle-check",
+        tone: "success",
         focusAction: focusUndo,
         action: { label: "Undo", run: () => pending.undo() },
         onDismiss: () => {
@@ -89,6 +89,15 @@ export async function deleteAnalysisCard(
       });
     }
   }
+}
+
+/** @param {string | undefined} label @param {string} address */
+function deletionSummary(label, address) {
+  const friendlyLabel = label || "Issue";
+  const firstAddressLine = address.split(/[\n,]/, 1)[0].trim();
+  return firstAddressLine
+    ? `${friendlyLabel} at ${firstAddressLine}`
+    : friendlyLabel;
 }
 
 /** @param {HTMLElement} card */
