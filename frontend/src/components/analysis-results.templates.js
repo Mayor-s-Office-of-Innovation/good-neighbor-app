@@ -3,7 +3,7 @@ import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
-import { t } from "../i18n/i18n.js";
+import { getLocale, t } from "../i18n/i18n.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
   formatMonthDay,
@@ -25,7 +25,8 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [userFriendlyLabel]
  * @property {string} [user_friendly_label]
  * @property {string} [description]
- * @property {{ key?: string, prompt?: string, options?: { label?: string, value?: boolean }[] } | null} [needsAnswer]
+ * @property {{ language?: string, user_friendly_label?: string, description?: string }} [translations]
+ * @property {{ key?: string, prompt?: string, options: { label?: string, value?: boolean }[] } | null} [needsAnswer]
  */
 
 /**
@@ -42,6 +43,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
+ * @property {{ language?: string, user_friendly_label?: string, description?: string }} [translations]
  * @property {string} [guidance]
  * @property {string} [kind]
  * @property {string[]} [buttons]
@@ -404,7 +406,7 @@ function analysisCardEntries(
             t("card.title.fallback"),
           description:
             rulebookText(task.guidance) ||
-            condition.description ||
+            displayDescription(condition) ||
             t("card.description.fallback"),
           action: taskButtonLabel(task) || actionLabel(task.kind),
           actionKind: task.kind || "",
@@ -477,7 +479,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
     title: condition.needsAnswer
       ? t("card.title.moreDetails")
       : displayCategory(condition) || t("card.title.fallback"),
-    description: condition.description || t("card.description.fallback"),
+    description: displayDescription(condition) || t("card.description.fallback"),
     action: "",
     actionKind: "",
     conditionId: condition.conditionId || "",
@@ -535,12 +537,12 @@ export function taskAnalysisCard({
       t("card.title.fallback"),
     description:
       task.status === "in_progress" || task.status === "completed"
-        ? task.description ||
+        ? displayDescription(task) ||
           rulebookText(task.guidance) ||
           rulebookText(task.category) ||
           ""
         : rulebookText(task.guidance) ||
-          task.description ||
+          displayDescription(task) ||
           rulebookText(task.category) ||
           "",
     editableDescription: task.description || "",
@@ -955,13 +957,33 @@ export function statusLine(status, detail = "", scope = "server.sf311") {
   return detail ? `${head}: ${rulebookText(detail, "server.sf311")}` : head;
 }
 
+// Prefer the active-locale analyzer translation when present; fall back to the
+// canonical English wire fields, then rulebook text.
+function localizedAnalyzerText(record, flat, translationsKey) {
+  const translations = record?.translations;
+  if (translations && translations.language === getLocale()) {
+    const localized = translations[translationsKey];
+    if (typeof localized === "string" && localized) return localized;
+  }
+  return flat;
+}
+
 function displayCategory(record) {
   return (
+    localizedAnalyzerText(record, record?.userFriendlyLabel, "user_friendly_label") ||
     record?.userFriendlyLabel ||
     record?.user_friendly_label ||
     rulebookText(record?.category) ||
     rulebookText(record?.analyzerCategory) ||
     rulebookText(record?.canonicalCategory) ||
+    ""
+  );
+}
+
+function displayDescription(record) {
+  return (
+    localizedAnalyzerText(record, record?.description, "description") ||
+    record?.description ||
     ""
   );
 }

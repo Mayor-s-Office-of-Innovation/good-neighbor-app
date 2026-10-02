@@ -100,9 +100,12 @@ export class AnalyzerError extends Error {
  * @param {AnalyzeMedia[]} input.media
  * @param {string} [input.requestId] threaded to `caller.request_id` for tracing
  * @param {string} [input.appId] threaded to `caller.app_id`
+ * @param {string} [input.language] BCP-47 tag the analyzer writes the
+ *   `translations` copies of `user_friendly_label`/`description` in
+ *   (en/es/vi/fil/zh-Hant; unknown tags fall back to English there)
  * @returns {Record<string, unknown>}
  */
-export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
+export function buildAnalyzeRequest({ metadata, media, requestId, appId, language }) {
   /** @type {Record<string, string>} */
   const caller = {};
   if (appId !== undefined) caller.app_id = appId;
@@ -115,6 +118,7 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
     media,
     // Never let the analyzer persist our media — GNP owns retention.
     storage: { store_input: false, return_signed_urls: false },
+    ...(language ? { language } : {}),
     ...(Object.keys(caller).length > 0 ? { caller } : {}),
   };
 }
@@ -131,8 +135,8 @@ export function buildAnalyzeRequest({ metadata, media, requestId, appId }) {
 
 /**
  * @typedef {object} AnalyzerClient
- * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string }) => Promise<AnalysisResponse>} analyze
- * @property {(analysisId: string, conditionId: string, input: { description: string, requestId?: string, appId?: string }) => Promise<unknown>} editCondition
+ * @property {(input: { metadata: AnalyzeMetadata, media: AnalyzeMedia[], requestId?: string, appId?: string, language?: string }) => Promise<AnalysisResponse>} analyze
+ * @property {(analysisId: string, conditionId: string, input: { description: string, requestId?: string, appId?: string, language?: string }) => Promise<unknown>} editCondition
  * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
  * @property {(input: { classifierId: string, evidence: ClassifierEvidence, requestId?: string, appId?: string }) => Promise<unknown>} classifyEvidence
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
@@ -236,13 +240,13 @@ export function createAnalyzerClient({
   };
 
   return {
-    async analyze({ metadata, media, requestId, appId }) {
-      const body = buildAnalyzeRequest({ metadata, media, requestId, appId });
+    async analyze({ metadata, media, requestId, appId, language }) {
+      const body = buildAnalyzeRequest({ metadata, media, requestId, appId, language });
       return /** @type {Promise<AnalysisResponse>} */ (
         request("/v1/analyses", { method: "POST", body, auth: true })
       );
     },
-    editCondition(analysisId, conditionId, { description, requestId, appId }) {
+    editCondition(analysisId, conditionId, { description, requestId, appId, language }) {
       /** @type {Record<string, string>} */
       const caller = {};
       if (appId !== undefined) caller.app_id = appId;
@@ -253,6 +257,7 @@ export function createAnalyzerClient({
           method: "POST",
           body: {
             description,
+            ...(language ? { language } : {}),
             ...(Object.keys(caller).length > 0 ? { caller } : {}),
           },
           auth: true,

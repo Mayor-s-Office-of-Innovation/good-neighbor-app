@@ -143,8 +143,9 @@ export const registerArtifact = async (event) => {
     latitude,
     longitude,
     text,
+    language,
   } =
-    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown, language?: unknown }} */ (
       body ?? {}
     );
 
@@ -187,6 +188,9 @@ export const registerArtifact = async (event) => {
   if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
   }
+  // The requester's locale for analyzer-written text. The analyzer falls back
+  // to English on unknown tags, so this is pass-through, not an allowlist.
+  const languageValue = typeof language === "string" && language.trim() ? language.trim() : undefined;
 
   const now = new Date().toISOString();
   // Per-photo capture time. The worker forwards this as the analyzer's
@@ -248,6 +252,7 @@ export const registerArtifact = async (event) => {
         ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),
         ...(hasText ? { text: normalizedText } : {}),
+        ...(languageValue ? { language: languageValue } : {}),
       }),
     }),
   );

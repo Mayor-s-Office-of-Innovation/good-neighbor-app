@@ -1,5 +1,5 @@
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import { t } from "../i18n/i18n.js";
+import { getLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 import {
@@ -105,8 +105,19 @@ export function taskUpdateTimeline({
   const timeline = [...updates, ...(nextToken ? [] : [creation])].filter(
     (update) => update.occurredAt,
   );
+  const analyzerTitle = (() => {
+    const translations = task?.translations;
+    if (translations && translations.language === getLocale()) {
+      const localized = translations.user_friendly_label;
+      if (typeof localized === "string" && localized)
+        return task.userFriendlyLabel || task.user_friendly_label
+          ? localized
+          : "";
+    }
+    return task.userFriendlyLabel || task.user_friendly_label || "";
+  })();
   const title =
-    task.userFriendlyLabel ||
+    analyzerTitle ||
     rulebookText(task.category) ||
     t("taskUpdate.fallbackTitle");
   return html`<section class="task-update__summary">

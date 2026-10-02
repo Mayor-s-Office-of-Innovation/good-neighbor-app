@@ -140,10 +140,11 @@ export async function editAnalysisCondition(event) {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const description =
+  const bodyObject =
     body && typeof body === "object"
-      ? /** @type {{ description?: unknown }} */ (body).description
+      ? /** @type {{ description?: unknown, language?: unknown }} */ (body)
       : undefined;
+  const description = bodyObject?.description;
   if (typeof description !== "string" || description.trim().length < 5) {
     return jsonResponse(400, {
       error: "Description must be at least 5 characters",
@@ -154,6 +155,11 @@ export async function editAnalysisCondition(event) {
       error: `Description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`,
     });
   }
+  // Pass-through to the analyzer (falls back to English on unknown tags).
+  const language =
+    typeof bodyObject?.language === "string" && bodyObject.language.trim()
+      ? bodyObject.language.trim()
+      : undefined;
 
   try {
     const context = await findAnalysisContext({
@@ -170,6 +176,7 @@ export async function editAnalysisCondition(event) {
       description: description.trim(),
       appId: APP_ID,
       requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
+      ...(language ? { language } : {}),
     });
     return jsonResponse(200, result);
   } catch (err) {

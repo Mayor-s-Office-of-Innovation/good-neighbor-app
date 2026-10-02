@@ -26,6 +26,16 @@
  */
 
 /**
+ * A `translations` block on one identified condition: localized copies of the
+ * model-written display fields, present only when the caller requested a
+ * supported non-English `language`.
+ * @typedef {object} ConditionTranslations
+ * @property {string} language
+ * @property {string} user_friendly_label
+ * @property {string} description
+ */
+
+/**
  * @typedef {object} IdentifiedCondition
  * @property {string} [condition_id]
  * @property {string} category
@@ -36,6 +46,7 @@
  * @property {string} description
  * @property {number[]} evidence_indices
  * @property {number} [confidence]
+ * @property {ConditionTranslations} [translations]
  */
 
 /**
