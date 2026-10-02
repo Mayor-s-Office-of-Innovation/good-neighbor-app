@@ -215,6 +215,10 @@ export const createTaskUpdate = async (event) => {
             attribute: "resolutionLeaseExpiresAt",
             value: resolutionLeaseExpiresAt,
           },
+          // An expired lease can mean HUB accepted a close before the prior
+          // executor persisted its checkpoint. Reconcile remote state before
+          // retrying the non-idempotent update.
+          reconcile311Closures: resolutionLeaseExpired,
         },
       );
       updated.appActionResults = closureResults.reduce(

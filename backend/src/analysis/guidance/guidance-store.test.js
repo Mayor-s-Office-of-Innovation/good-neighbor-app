@@ -1563,6 +1563,7 @@ describe("assessment refresh preserves unchanged conditions", () => {
             checkId,
             assessmentRevision: 1,
             policyVersion: "actions-escalations-v3",
+            reportedAt: "2026-09-10T19:00:00Z",
           },
         };
       if (command instanceof QueryCommand)
@@ -1663,6 +1664,17 @@ describe("assessment refresh preserves unchanged conditions", () => {
     );
     expect(result.conditionItems[0].answers).toEqual({});
     expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
+  });
+
+  it("pins refreshed assessments and condition evaluation to the original report time", async () => {
+    mockPrevious();
+    const result = await storeEvaluatedAssessment(input, {
+      tableName: "table",
+    });
+
+    expect(result.assessmentItem.reportedAt).toBe("2026-09-10T19:00:00Z");
+    expect(result.assessmentItem.gsi1sk).toContain("2026-09-10T19:00:00Z");
+    expect(result.conditionItems[0].gsi4sk).toContain("2026-09-10T19:00:00Z");
   });
 
   it("does not reuse answers from different evidence", async () => {

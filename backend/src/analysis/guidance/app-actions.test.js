@@ -1054,6 +1054,7 @@ describe("311 ticket closure", () => {
     SF311_CREATESR_URL: "https://hub.example.test/createsr",
     SF311_UPDATESR_URL: "https://hub.example.test/updatesr",
     SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+    SF311_LATEST_UPDATES_URL: "https://hub.example.test/latest/{agencyID}",
     SF311_BASIC_AUTH_USER: "user",
     SF311_BASIC_AUTH_PASS: "pass",
   };
@@ -1146,6 +1147,77 @@ describe("311 ticket closure", () => {
       ToAgencyDate: "",
       Notes: "",
     });
+  });
+
+  it("reconciles an expired lease without closing an already-closed SR again", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ requests: [{ SRNum: "2000008106", Status: "4" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const results = await executeAppActions(
+      [{ code: "close_311_ticket", payload: {} }],
+      {
+        env: ENV,
+        now,
+        priorResults: [SUBMITTED_311_RESULT],
+        reconcile311Closures: true,
+      },
+    );
+
+    expect(results).toEqual([
+      {
+        code: "close_311_ticket",
+        status: "submitted",
+        payload: {
+          closures: [
+            {
+              serviceCode: "1.1.4.7.20.0",
+              srNum: "2000008106",
+              closedReasonCode: "8",
+              status: "closed",
+              reconciled: true,
+            },
+          ],
+        },
+        recordedAt: "2026-08-18T12:00:00.000Z",
+      },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("does not issue a duplicate close when recovery cannot find the SR", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ requests: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const results = await executeAppActions(
+      [{ code: "close_311_ticket", payload: {} }],
+      {
+        env: ENV,
+        now,
+        priorResults: [SUBMITTED_311_RESULT],
+        reconcile311Closures: true,
+      },
+    );
+
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      payload: {
+        closures: [{ status: "failed", reason: "sf311_closure_state_unknown" }],
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("closes every eligible ticket on classifier fan-out", async () => {

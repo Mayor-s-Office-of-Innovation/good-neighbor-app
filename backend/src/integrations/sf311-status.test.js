@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { findServiceRequest, normalizeSf311Detail } from "./sf311-status.js";
+import {
+  findServiceRequest,
+  normalizeSf311Detail,
+  serviceRequestClosureState,
+} from "./sf311-status.js";
 
 describe("SF311 status normalization", () => {
+  it("distinguishes closed, open, and unknown records for safe retries", () => {
+    expect(
+      serviceRequestClosureState(
+        { requests: [{ SRNum: "123", Status: "4" }] },
+        "123",
+      ),
+    ).toBe("closed");
+    expect(
+      serviceRequestClosureState(
+        { requests: [{ SRNum: "123", Status: "5" }] },
+        "123",
+      ),
+    ).toBe("open");
+    expect(serviceRequestClosureState({ requests: [] }, "123")).toBe("unknown");
+  });
+
   it("returns human-readable updates newest first and omits attachment events", () => {
     const record = findServiceRequest(
       {

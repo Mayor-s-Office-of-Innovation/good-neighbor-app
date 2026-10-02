@@ -247,6 +247,32 @@ function latestStatusCode(record) {
   return candidates[0]?.code || "";
 }
 
+/**
+ * Return a conservative closure state for retry reconciliation. Unknown is
+ * intentionally distinct from open: a missing or unfamiliar HUB record must
+ * not trigger a potentially duplicate non-idempotent close request.
+ * @param {unknown} body
+ * @param {string} srNum
+ * @returns {"closed" | "open" | "unknown"}
+ */
+export function serviceRequestClosureState(body, srNum) {
+  const record = findServiceRequest(body, srNum);
+  if (!record) return "unknown";
+  const statusCode = latestStatusCode(record);
+  if (statusCode === "4") return "closed";
+  if (statusCode && STATUS_NAMES[statusCode]) return "open";
+  const closedReason = first(
+    record,
+    "ClosedReason",
+    "ClosedReasonCode",
+    "closed_reason",
+  );
+  if (closedReason) return "closed";
+  const summaryStatus = first(record, "Status", "StatusCode", "status");
+  if (summaryStatus === "4") return "closed";
+  return summaryStatus && STATUS_NAMES[summaryStatus] ? "open" : "unknown";
+}
+
 /** Normalize a HUB record into the app's stable, PII-free ticket-detail contract. */
 /** @param {{record: Record<string, unknown>, task: Record<string, any>, srNum: string, now?: Date}} params */
 export function normalizeSf311Detail({

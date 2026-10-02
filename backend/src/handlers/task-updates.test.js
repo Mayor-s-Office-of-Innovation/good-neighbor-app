@@ -39,6 +39,7 @@ describe("task update handlers", () => {
     delete process.env.SF311_UPDATESR_URL;
     delete process.env.SF311_CREATESR_URL;
     delete process.env.SF311_AGENCY_LOOKUP_URL;
+    delete process.env.SF311_LATEST_UPDATES_URL;
     delete process.env.SF311_BASIC_AUTH_USER;
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
@@ -327,6 +328,80 @@ describe("task update handlers", () => {
     expect(send.mock.calls[3][0].input.UpdateExpression).toContain(
       "#status = :inProgress",
     );
+  });
+
+  it("reconciles HUB state before recovering an expired resolution lease", async () => {
+    process.env.GNP_311_SUBMISSION_ENABLED = "true";
+    process.env.SF311_UPDATESR_URL = "https://hub.example.test/updatesr";
+    process.env.SF311_CREATESR_URL = "https://hub.example.test/createsr";
+    process.env.SF311_AGENCY_LOOKUP_URL = "https://hub.example.test/lookup";
+    process.env.SF311_LATEST_UPDATES_URL =
+      "https://hub.example.test/latest/{agencyID}";
+    process.env.SF311_BASIC_AUTH_USER = "user";
+    process.env.SF311_BASIC_AUTH_PASS = "pass";
+    /** @type {string[]} */
+    const order = [];
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "task-1",
+          status: "resolving",
+          resolutionLeaseExpiresAt: "2020-01-01T00:00:00.000Z",
+          kind: "non_actionable_escalation",
+          severity: 4,
+          inProgressAt: "2026-10-01T16:00:00.000Z",
+          updatedAt: "2026-10-01T16:00:00.000Z",
+          appActionResults: [
+            {
+              code: "create_311_ticket",
+              status: "submitted",
+              payload: {
+                tickets: [
+                  {
+                    serviceCode: "1.1.4.7.20.0",
+                    responsibleAgency: "76",
+                    srNum: "2000008106",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockImplementationOnce(async () => {
+        order.push("claim");
+        return { Attributes: { status: "resolving" } };
+      })
+      .mockImplementationOnce(async () => {
+        order.push("checkpoint");
+        return {};
+      })
+      .mockResolvedValueOnce({});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url, init) => {
+        order.push(String(init?.method));
+        return new Response(
+          JSON.stringify({
+            requests: [{ SRNum: "2000008106", Status: "4" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const response = await /** @type {any} */ (
+      createTaskUpdate(
+        event({
+          type: "additional_action_resolved",
+          text: "The issue is resolved.",
+        }),
+      )
+    );
+
+    expect(response.statusCode, response.body).toBe(201);
+    expect(order).toEqual(["claim", "GET", "checkpoint"]);
   });
 
   it("does not call 311 when another resolution request wins the claim", async () => {

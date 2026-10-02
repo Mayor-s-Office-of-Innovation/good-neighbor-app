@@ -532,6 +532,15 @@ export async function storeEvaluatedAssessment(input, options) {
       "Assessment has been replaced",
     );
   }
+  // Refreshes are revisions of the original report, not new observations.
+  // Keep time-dependent rubric evaluation pinned to the first assessment's
+  // reported time even if the analyzer sends a newer timestamp on refresh.
+  const previousReportedAt = previous?.assessment?.reportedAt;
+  const reportedAt =
+    typeof previousReportedAt === "string" &&
+    Number.isFinite(Date.parse(previousReportedAt))
+      ? previousReportedAt
+      : input.reportedAt;
   const artifactId =
     typeof input.rawAssessment.artifactId === "string"
       ? input.rawAssessment.artifactId
@@ -602,7 +611,7 @@ export async function storeEvaluatedAssessment(input, options) {
         ...conditionTimelineGsi(
           input.siteId,
           condition.severity,
-          input.reportedAt,
+          reportedAt,
           input.assessmentId,
           conditionId,
         ),
@@ -613,7 +622,7 @@ export async function storeEvaluatedAssessment(input, options) {
           unresolvedConditionGsi(
             input.siteId,
             condition.severity,
-            input.reportedAt,
+            reportedAt,
             input.assessmentId,
             conditionId,
           ),
@@ -629,7 +638,7 @@ export async function storeEvaluatedAssessment(input, options) {
         severity: condition.severity,
       },
       catalog,
-      reportedAt: input.reportedAt,
+      reportedAt,
     });
 
     /** @type {string[]} */
@@ -657,7 +666,7 @@ export async function storeEvaluatedAssessment(input, options) {
         condition,
         conditionId,
         checkId: input.checkId,
-        reportedAt: input.reportedAt,
+        reportedAt,
         evaluation,
         policyVersion: catalog.policyVersion,
         taskIds,
@@ -738,7 +747,7 @@ export async function storeEvaluatedAssessment(input, options) {
     grade: input.grade,
     assessmentRevision: 0,
     lineageId,
-    reportedAt: input.reportedAt,
+    reportedAt,
     rawAssessment: input.rawAssessment,
     summary: {
       totalConditions: input.conditions.length,
@@ -752,11 +761,7 @@ export async function storeEvaluatedAssessment(input, options) {
       emergencyCount,
       manualReviewCount,
     },
-    ...assessmentTimelineGsi(
-      input.siteId,
-      input.reportedAt,
-      input.assessmentId,
-    ),
+    ...assessmentTimelineGsi(input.siteId, reportedAt, input.assessmentId),
     createdAt: now,
     updatedAt: now,
   };
