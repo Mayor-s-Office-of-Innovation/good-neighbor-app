@@ -3,6 +3,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   uploadTaskUpdatePhoto: vi.fn(),
 }));
+const toasts = vi.hoisted(() => ({
+  showTaskUpdateErrorToast: vi.fn(),
+}));
 vi.mock("../services/api.js", () => ({
   ApiError: class ApiError extends Error {},
   createTaskUpdate: vi.fn(),
@@ -11,6 +14,7 @@ vi.mock("../services/api.js", () => ({
   getTaskUpdates: vi.fn(),
   uploadTaskUpdatePhoto: api.uploadTaskUpdatePhoto,
 }));
+vi.mock("../state/toasts.js", () => toasts);
 
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
@@ -72,7 +76,7 @@ describe("task-update-dialog controller", () => {
     );
   });
 
-  it("restores controls and exposes retry feedback after a failed mutation", async () => {
+  it("restores controls and shows a failure toast after a failed mutation", async () => {
     await import("./task-update-dialog.js");
     const registration = vi
       .mocked(customElements.define)
@@ -87,15 +91,13 @@ describe("task-update-dialog controller", () => {
     };
 
     await expect(
-      dialog._runMutation(
-        root,
-        "button",
-        () => Promise.reject(new Error("offline")),
-        "Please try again.",
+      dialog._runMutation(root, "button", () =>
+        Promise.reject(new Error("offline")),
       ),
     ).resolves.toBeNull();
     expect(button.disabled).toBe(false);
-    expect(error).toEqual({ hidden: false, textContent: "Please try again." });
+    expect(error).toEqual({ hidden: true, textContent: "" });
+    expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce();
   });
 
   it("reuses a successful per-file upload throughout the draft", async () => {

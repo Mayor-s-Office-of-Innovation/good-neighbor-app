@@ -77,19 +77,6 @@
   font-size: 0.9rem;
 }
 
-.feedback__error {
-  margin: 0.6rem 0 0;
-  font-size: 0.9rem;
-  color: var(--danger, #b3261e);
-}
-
-.feedback__thanks {
-  margin: 0.4rem 0 1rem;
-  font-size: 1.05rem;
-  font-weight: 600;
-  text-align: center;
-}
-
 .feedback__actions {
   display: flex;
   justify-content: flex-end;

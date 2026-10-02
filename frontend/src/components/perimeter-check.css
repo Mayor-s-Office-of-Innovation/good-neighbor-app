@@ -376,28 +376,6 @@
   transform: translate(-50%, -35%) rotate(45deg);
 }
 
-.check-toast {
-  position: fixed;
-  left: 50%;
-  bottom: 1rem;
-  z-index: 20;
-  width: min(26.5rem, calc(100vw - 2rem));
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  border: 1px solid var(--wa-color-success-border-quiet, #c2f2c1);
-  border-radius: var(--radius);
-  background: var(--wa-color-success-fill-quiet, #e3f9e3);
-  color: var(--text);
-  padding: 1rem;
-  box-shadow: var(--shadow);
-}
-
-.check-toast wa-icon {
-  color: var(--wa-color-success-on-quiet, #036730);
-}
-
 .check-timeline button:not(.analysis-dialog__button):focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;

@@ -2,8 +2,8 @@
   site-switcher — the provider name button at the top of the home hub that
   opens a menu of the provider's sites.
 
-  Presentational with one piece of local state (open) plus an inline error the
-  host can set. today-view owns the catalog and the actual switch: it creates
+  Presentational with one piece of local state (open). today-view owns the
+  catalog and the actual switch: it creates
   one instance, pushes providerName / sites / currentSite / status before each
   of its renders, swaps the instance in for the <site-switcher> placeholder in
   the hero, and listens for:
@@ -26,7 +26,6 @@ class SiteSwitcher extends HTMLElement {
     /** @type {string} "idle" | "loading" | "loaded" | "error" */
     this.status = "idle";
     this._open = false;
-    this._error = "";
     this._onDocumentClick = (event) => this._handleDocumentClick(event);
   }
 
@@ -50,7 +49,6 @@ class SiteSwitcher extends HTMLElement {
    */
   setOpen(open) {
     this._open = open;
-    this._error = "";
     this.render();
     /** @type {HTMLElement | null} */ (
       this.querySelector("#site-switcher-trigger")
@@ -64,22 +62,12 @@ class SiteSwitcher extends HTMLElement {
     this.render();
   }
 
-  /**
-   * Show a switch failure inside the menu.
-   * @param {string} message
-   */
-  showError(message) {
-    this._error = message;
-    this.render();
-  }
-
   render() {
     this.innerHTML = siteSwitcher({
       providerName: this.providerName,
       sites: switcherSites(this.sites, this.currentSite),
       currentSiteId: this.currentSite.siteId,
       open: this._open,
-      error: this._error,
       status: this.status,
     });
     this.querySelector("#site-switcher-trigger")?.addEventListener(

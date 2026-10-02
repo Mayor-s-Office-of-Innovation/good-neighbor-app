@@ -28,7 +28,6 @@ export function switcherSites(providerSites, currentSite) {
  *   sites: Array<{ siteId: string, name: string }>,
  *   currentSiteId: string,
  *   open: boolean,
- *   error: string,
  *   status: string,
  * }} vm
  */
@@ -37,7 +36,6 @@ export function siteSwitcher({
   sites,
   currentSiteId,
   open,
-  error,
   status,
 }) {
   return html`
@@ -75,11 +73,6 @@ export function siteSwitcher({
                   </button>`,
               )
               .join("")}
-            ${error
-              ? html`<p class="home-site-switcher__error" role="alert">
-                  ${escapeHtml(error)}
-                </p>`
-              : ""}
             ${status === "loading"
               ? html`<p class="home-site-switcher__status" role="status">
                   Loading sites…
@@ -87,8 +80,9 @@ export function siteSwitcher({
               : ""}
             ${status === "error"
               ? html`<div class="home-site-switcher__failure">
-                  <p role="alert">Other sites couldn't load.</p>
-                  <button id="site-catalog-retry" type="button">Retry</button>
+                  <button id="site-catalog-retry" type="button">
+                    Retry loading sites
+                  </button>
                 </div>`
               : ""}
           </div>`

@@ -1,5 +1,5 @@
 /**
- * @typedef {{ code?: string, status?: string, reason?: string }} AppActionResult
+ * @typedef {{ code?: string, status?: string, reason?: string, payload?: {tickets?: Array<{srNum?: string}>} }} AppActionResult
  * @typedef {{ status?: string, appActionResults?: AppActionResult[] }} TaskActionState
  */
 
@@ -26,6 +26,22 @@ export function isFiled311Completion(task) {
     ["in_progress", "completed"].includes(task?.status || "") &&
     hasSubmitted311Ticket(task)
   );
+}
+
+/**
+ * @param {TaskActionState | null | undefined} task
+ * @returns {string}
+ */
+export function submitted311ServiceRequestNumber(task) {
+  const results = Array.isArray(task?.appActionResults)
+    ? task.appActionResults
+    : [];
+  for (const result of results) {
+    if (result?.code !== "create_311_ticket") continue;
+    const ticket = result?.payload?.tickets?.find((item) => item?.srNum);
+    if (ticket?.srNum) return String(ticket.srNum);
+  }
+  return "";
 }
 
 /**

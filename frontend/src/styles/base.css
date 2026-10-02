@@ -721,8 +721,8 @@ button[data-loading] [data-loading-label] {
   outline-offset: 2px;
 }
 
-/* Connection-state surface (backend-health OUTAGE banner). Fixed top strip,
-   below app-toasts' stacking order; dismissible until the state changes. */
+/* Connection-state host. OUTAGE feedback is rendered by app-toasts; the host
+   retains the authentication-expiry dialog. */
 connection-status {
   display: contents;
 }

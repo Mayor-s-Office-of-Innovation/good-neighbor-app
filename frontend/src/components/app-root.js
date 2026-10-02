@@ -31,6 +31,10 @@ import {
   isEditable,
   keyboardViewport,
 } from "../services/keyboard-viewport.js";
+import {
+  showQueuedSiteSwitchSuccessToast,
+  showSiteSwitchSuccessToast,
+} from "../state/toasts.js";
 
 const ROUTE_VIEW = [
   ["/site-admin/edit", "site-admin-edit"],
@@ -160,11 +164,13 @@ class AppRoot extends HTMLElement {
   }
 
   _renderSetup(options = {}) {
+    const switchingSite = Boolean(this._site);
     if (this._unsub) {
       this._unsub();
       this._unsub = null;
     }
     this.innerHTML = setupView(options);
+    this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
     this._maybeWarnInAppBrowser();
     this.querySelector("site-setup").addEventListener("sitecancel", () => {
@@ -178,6 +184,7 @@ class AppRoot extends HTMLElement {
       clearAuthState(); // re-bind heals an AUTH state
       await this._refreshSiteSettings();
       this._renderApp();
+      if (switchingSite) showSiteSwitchSuccessToast();
       this._unsub = onRouteChange(() => this._renderView());
       navigate("/today");
       this._renderView();
@@ -191,6 +198,7 @@ class AppRoot extends HTMLElement {
     this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
+    showQueuedSiteSwitchSuccessToast();
   }
 
   /**

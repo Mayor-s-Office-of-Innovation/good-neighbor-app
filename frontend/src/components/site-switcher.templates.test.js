@@ -27,7 +27,6 @@ describe("siteSwitcher", () => {
       sites,
       currentSiteId: "site-a",
       open: false,
-      error: "",
       status: "loaded",
     });
     expect(closed).toContain("Provider One");
@@ -39,7 +38,6 @@ describe("siteSwitcher", () => {
       sites,
       currentSiteId: "site-a",
       open: true,
-      error: "",
       status: "loaded",
     });
     expect(open).toContain("Your provider");
@@ -49,21 +47,18 @@ describe("siteSwitcher", () => {
     expect(open).not.toContain("Beta <Hall>");
   });
 
-  it("shows the loading, failure, and error rows", () => {
+  it("shows loading and a retry control after catalog failure", () => {
     const base = {
       providerName: "P",
       sites,
       currentSiteId: "site-a",
       open: true,
     };
-    expect(siteSwitcher({ ...base, error: "", status: "loading" })).toContain(
+    expect(siteSwitcher({ ...base, status: "loading" })).toContain(
       "Loading sites…",
     );
-    expect(siteSwitcher({ ...base, error: "", status: "error" })).toContain(
+    expect(siteSwitcher({ ...base, status: "error" })).toContain(
       'id="site-catalog-retry"',
-    );
-    expect(siteSwitcher({ ...base, error: "Bad", status: "loaded" })).toContain(
-      'class="home-site-switcher__error" role="alert"',
     );
   });
 });
@@ -78,7 +73,6 @@ describe("siteSwitcher menu", () => {
       ],
       currentSiteId: "chc-730-polk",
       open: true,
-      error: "",
       status: "loaded",
     });
     expect(menu).toContain("640 Jones");
