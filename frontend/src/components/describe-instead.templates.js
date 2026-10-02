@@ -1,18 +1,18 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Presentational HTML strings.
-import { html } from "../lib/html.js";
+import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 
 export const DESCRIPTION_MAX_LENGTH = 4000;
 
+// Translation keys; the copy lives in the i18n catalogs.
 const PERIMETER_COPY = {
-  subtitle: "Describe the whole area, even if there are no problems.",
-  placeholder:
-    "Example: Sidewalks are clear on both sides. There’s trash near the entrance and graffiti on the wall...",
+  subtitle: "describe.perimeter.subtitle",
+  placeholder: "describe.perimeter.placeholder",
 };
 
 const PROBLEM_COPY = {
-  subtitle: "Describe the issue you see in as much detail as possible",
-  placeholder:
-    "Example: There’s trash near the entrance and graffiti on the wall...",
+  subtitle: "describe.problem.subtitle",
+  placeholder: "describe.problem.placeholder",
 };
 
 export const shell = ({
@@ -34,7 +34,9 @@ export const shell = ({
             class="describe__close-icon describe__close-icon--back"
             aria-hidden="true"
           ></span>
-          <span class="visually-hidden">Back to photo capture</span>
+          <span class="visually-hidden"
+            >${escapeHtml(t("describe.back.aria"))}</span
+          >
         </button>
         <span aria-hidden="true"></span>
         <button
@@ -46,25 +48,29 @@ export const shell = ({
             class="describe__close-icon describe__close-icon--dismiss"
             aria-hidden="true"
           ></span>
-          <span class="visually-hidden">Close description screen</span>
+          <span class="visually-hidden"
+            >${escapeHtml(t("describe.close.aria"))}</span
+          >
         </button>
       </div>
 
       <div class="describe__main">
         <div class="describe__heading">
-          <h1 class="describe__title" tabindex="-1">Describe what you see</h1>
-          <p class="describe__subtitle">${copy.subtitle}</p>
+          <h1 class="describe__title" tabindex="-1">
+            ${escapeHtml(t("describe.title"))}
+          </h1>
+          <p class="describe__subtitle">${escapeHtml(t(copy.subtitle))}</p>
         </div>
 
         <div class="describe__card">
           <label class="visually-hidden" for="describe-text"
-            >Describe what you see</label
+            >${escapeHtml(t("describe.title"))}</label
           >
           <div class="describe__field-wrap">
             <textarea
               class="describe__field"
               id="describe-text"
-              placeholder="${copy.placeholder}"
+              placeholder="${escapeAttr(t(copy.placeholder))}"
               rows="5"
               spellcheck="true"
               maxlength="${DESCRIPTION_MAX_LENGTH}"
@@ -75,7 +81,7 @@ export const shell = ({
           <div class="describe__meta">
             ${minLength > 1
               ? html`<span class="describe__hint" id="describe-hint"
-                  >At least ${minLength} characters</span
+                  >${escapeHtml(t("describe.hint", { count: minLength }))}</span
                 >`
               : ""}
             <button
@@ -83,9 +89,9 @@ export const shell = ({
               id="describe-clear"
               type="button"
               ${hasText ? "" : "disabled"}
-              aria-label="Clear all text"
+              aria-label="${escapeAttr(t("describe.clear.aria"))}"
             >
-              Clear all
+              ${escapeHtml(t("common.clearAll"))}
             </button>
           </div>
         </div>
@@ -98,7 +104,7 @@ export const shell = ({
           type="button"
           ${canContinue ? "" : "disabled"}
         >
-          Continue
+          ${escapeHtml(t("common.continue"))}
         </button>
       </div>
 
@@ -110,10 +116,10 @@ export const shell = ({
       >
         <form class="describe-modal__card" method="dialog">
           <h2 class="describe-modal__title" id="describe-modal-title">
-            Discard this description?
+            ${escapeHtml(t("describe.discardDialog.title"))}
           </h2>
           <p class="describe-modal__text" id="describe-modal-text">
-            Your typed changes have not been saved yet.
+            ${escapeHtml(t("describe.discardDialog.text"))}
           </p>
           <div class="describe-modal__actions">
             <button
@@ -121,7 +127,7 @@ export const shell = ({
               type="submit"
               value="stay"
             >
-              Keep editing
+              ${escapeHtml(t("common.keepEditing"))}
             </button>
             <button
               class="describe-modal__primary"
@@ -129,7 +135,7 @@ export const shell = ({
               type="submit"
               value="discard"
             >
-              Discard changes
+              ${escapeHtml(t("common.discardChanges"))}
             </button>
           </div>
         </form>

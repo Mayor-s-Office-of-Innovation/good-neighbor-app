@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { t } from "../i18n/i18n.js";
 import {
   taskUpdateActionEditor,
   taskUpdateCapture,
@@ -27,9 +28,9 @@ describe("task update dialog templates", () => {
       now: new Date("2026-09-30T17:00:00.000Z"),
     });
 
-    expect(markup).toContain("Add a note or photo");
-    expect(markup).toContain("Load older updates");
-    expect(markup).not.toContain("Issue added as a single issue");
+    expect(markup).toContain(t("taskUpdate.updates.addNote"));
+    expect(markup).toContain(t("taskUpdate.updates.loadOlder"));
+    expect(markup).not.toContain(t("taskUpdate.created.single"));
     expect(markup).toContain("#GUB-STJ-001");
   });
 
@@ -41,7 +42,7 @@ describe("task update dialog templates", () => {
         notes: ["", "", ""],
         previews: [],
       }),
-    ).toContain("Add a typed note");
+    ).toContain(t("taskUpdate.capture.addNote"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',
@@ -62,10 +63,10 @@ describe("task update dialog templates", () => {
       now: new Date("2026-09-30T17:00:00.000Z"),
     };
     expect(taskUpdateTimeline({ ...base, nextToken: "older" })).not.toContain(
-      "Issue added during a perimeter check",
+      t("taskUpdate.created.perimeter"),
     );
     expect(taskUpdateTimeline(base)).toContain(
-      "Issue added during a perimeter check",
+      t("taskUpdate.created.perimeter"),
     );
   });
 
@@ -85,15 +86,13 @@ describe("task update dialog templates", () => {
       mediaUrls: new Map(),
       now: new Date("2026-09-30T12:00:00.000Z"),
     };
-    expect(taskUpdateTimeline(view)).toContain(
-      "Expected response time has passed",
-    );
+    expect(taskUpdateTimeline(view)).toContain(t("taskUpdate.overdue"));
     expect(
       taskUpdateTimeline({
         ...view,
         task: { ...task, resolvedAt: "2026-09-30T11:00:00.000Z" },
       }),
-    ).not.toContain("Expected response time has passed");
+    ).not.toContain(t("taskUpdate.overdue"));
   });
 
   it("keeps shell navigation and timeline tones explicit", () => {
@@ -102,8 +101,8 @@ describe("task update dialog templates", () => {
       state: "ready",
       content: "x",
     });
-    expect(shell).toContain('aria-label="Back"');
-    expect(shell).toContain("Discard changes");
+    expect(shell).toContain(`aria-label="${t("common.back")}"`);
+    expect(shell).toContain(t("common.discardChanges"));
     expect(shell).not.toContain("Discard and close");
     expect(taskUpdateTimelineTone("presence_resolved")).toBe("resolved");
     expect(taskUpdateTimelineTone("note_photo_update")).toBe("general");

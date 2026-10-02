@@ -5,6 +5,7 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getToasts } from "../state/toasts.js";
+import { t } from "../i18n/i18n.js";
 import {
   onDeletionsChange,
   pendingDeletedConditionIds,
@@ -72,8 +73,11 @@ describe("undoable analysis card deletion", () => {
     expect(pendingDeletedConditionIds(problem)).toContain(problem.conditionId);
     expect(commit).not.toHaveBeenCalled();
     expect(getToasts()[0]).toMatchObject({
-      title: "Issue deleted",
-      message: "Litter at 123 Main St",
+      title: t("card.deleteToast.title"),
+      message: t("card.deleteToast.messageAt", {
+        label: "Litter",
+        address: "123 Main St",
+      }),
       tone: "success",
     });
     await vi.advanceTimersByTimeAsync(3499);
@@ -122,7 +126,7 @@ describe("undoable analysis card deletion", () => {
     expect(pendingDeletedConditionIds(problem)).not.toContain(
       problem.conditionId,
     );
-    expect(getToasts()[0].title).toBe("Item could not be deleted");
+    expect(getToasts()[0].title).toBe(t("toast.deleteError.title"));
     await vi.advanceTimersByTimeAsync(3500);
     expect(getToasts()).toHaveLength(0);
   });
@@ -133,7 +137,7 @@ describe("undoable analysis card deletion", () => {
     await deleteAnalysisCard(host, problem, vi.fn(), () =>
       Promise.reject(new Error("refresh failed")),
     );
-    expect(getToasts()[0].action.label).toBe("Undo");
+    expect(getToasts()[0].action.label).toBe(t("common.undo"));
     expect(focus).toHaveBeenCalledOnce();
   });
 });

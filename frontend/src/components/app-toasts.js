@@ -1,6 +1,7 @@
 import "./app-toasts.css";
 import { getToasts, onToastsChange } from "../state/toasts.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 
 /** App-level host: route changes replace #view, leaving notifications intact. */
 class AppToasts extends HTMLElement {
@@ -13,7 +14,7 @@ class AppToasts extends HTMLElement {
     // A manual popover puts the single global toast host in the browser's top
     // layer, so notifications remain visible above an open modal <dialog>.
     this.setAttribute("popover", "manual");
-    this.setAttribute("aria-label", "Notifications");
+    this.setAttribute("aria-label", t("toastUi.region.aria"));
     this.setAttribute("role", "region");
     this._unsubscribe = onToastsChange(() => this._sync());
     document.addEventListener("visibilitychange", this._visibility);
@@ -90,7 +91,9 @@ class AppToasts extends HTMLElement {
           <button
             type="button"
             class="app-toast__close"
-            aria-label="Dismiss ${escapeAttr(toast.title)} notification"
+            aria-label="${escapeAttr(
+              t("toastUi.dismiss.aria", { title: toast.title }),
+            )}"
           >
             <wa-icon name="xmark" aria-hidden="true"></wa-icon>
           </button>
@@ -113,7 +116,7 @@ class AppToasts extends HTMLElement {
             : ""}
           ${toast.action
             ? html`<span class="visually-hidden"
-                >Undo is available in Notifications.</span
+                >${escapeHtml(t("toastUi.undoHint"))}</span
               >`
             : ""}`;
       element

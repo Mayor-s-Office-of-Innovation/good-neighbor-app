@@ -1,5 +1,6 @@
 // @ts-check
 import { a11yMatrix, matrix, test } from "ramp-check/test";
+import { t } from "../helpers/i18n.js";
 import { expect, boundPage } from "../helpers/harness.js";
 import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
@@ -118,7 +119,7 @@ matrix(
         await expect(thumbnail).toBeVisible({ timeout: 30_000 });
         await thumbnail.click();
         await expect(
-          page.getByRole("dialog", { name: "Photo viewer" }),
+          page.getByRole("dialog", { name: t("lightbox.dialog.aria") }),
         ).toBeVisible();
         await a11y.check("photo lightbox");
       },
@@ -128,10 +129,12 @@ matrix(
       "a11y: site admin",
       async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
         await page.locator("#home-settings").click();
-        await page.getByRole("menuitem", { name: "Site admin" }).click();
+        await page
+          .getByRole("menuitem", { name: t("today.settings.siteAdmin") })
+          .click();
         await expect(page).toHaveURL(/\/site-admin$/);
         await expect(
-          page.getByRole("heading", { name: "Site information" }),
+          page.getByRole("heading", { name: t("siteAdmin.title") }),
         ).toBeVisible();
         await a11y.check("site admin");
       },

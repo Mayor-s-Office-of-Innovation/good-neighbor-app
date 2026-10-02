@@ -17,7 +17,8 @@
 import { getHealthState, onHealthChange } from "../services/backend-health.js";
 import { clearSiteSession } from "../db.js";
 import { discardInMemorySession } from "../state/check-session.js";
-import { html } from "../lib/html.js";
+import { html, escapeHtml } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 import { showOfflinePhotosToast } from "../state/toasts.js";
 
 class ConnectionStatus extends HTMLElement {
@@ -31,12 +32,10 @@ class ConnectionStatus extends HTMLElement {
       <form class="places-modal__card" method="dialog">
         <div class="places-modal__copy">
           <h2 class="places-modal__title" id="conn-auth-title">
-            This device's sign-in has expired or been revoked.
+            ${escapeHtml(t("connection.authExpired.title"))}
           </h2>
           <p class="places-modal__text">
-            Sign out and re-enter your site's code to keep this device working.
-            Signing out removes this site's saved photos and drafts from the
-            device.
+            ${escapeHtml(t("connection.authExpired.message"))}
           </p>
         </div>
         <div class="places-modal__actions">
@@ -45,7 +44,7 @@ class ConnectionStatus extends HTMLElement {
             id="conn-auth-signout"
             type="button"
           >
-            Sign out and re-enter site code
+            ${escapeHtml(t("connection.authExpired.signOut"))}
           </button>
         </div>
       </form>

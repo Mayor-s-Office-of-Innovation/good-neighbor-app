@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "../i18n/i18n.js";
 import {
   appActionFailureMessage,
   isFiled311Completion,
@@ -48,7 +49,7 @@ describe("task action helpers", () => {
 
     expect(appActionFailureMessage(task)).toBeNull();
     expect(appActionFailureMessage(task, { includeUnsubmitted311: true })).toBe(
-      "We couldn't complete the 311 submission. Please try again.",
+      t("taskAction.failure.featureDisabled"),
     );
   });
 });

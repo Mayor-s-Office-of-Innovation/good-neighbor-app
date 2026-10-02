@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
+import { t } from "../helpers/i18n.js";
 import { bindSite } from "../helpers/app.js";
 
 test.describe("site admin access", () => {
@@ -15,65 +16,80 @@ test.describe("site admin access", () => {
     await expect(page.locator("#feedback-open")).toHaveCount(0);
 
     await page.locator("#home-settings").click();
-    const menu = page.getByRole("menu", { name: "Settings" });
+    const menu = page.getByRole("menu", { name: t("today.settings.aria") });
     await expect(menu.getByRole("menuitem")).toHaveText([
-      "Send feedback",
-      "Site admin",
-      "Attributions",
-      "Logout",
+      t("today.settings.feedback"),
+      t("today.settings.siteAdmin"),
+      t("today.settings.language"),
+      t("today.settings.attributions"),
+      t("today.settings.logout"),
     ]);
 
-    await menu.getByRole("menuitem", { name: "Attributions" }).click();
+    await menu
+      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .click();
     const attributions = page.locator("#attributions-dialog");
     await expect(attributions).toBeVisible();
     await expect(
       attributions.getByRole("link", {
-        name: /Amazon Location Service data attribution/,
+        name: t("today.attributions.aws"),
       }),
     ).toBeVisible();
     await expect(
-      attributions.getByRole("link", { name: /U\.S\. Census Bureau Geocoder/ }),
+      attributions.getByRole("link", { name: t("today.attributions.census") }),
     ).toBeVisible();
-    await attributions.getByRole("button", { name: "Close" }).click();
+    await attributions.getByRole("button", { name: t("common.close") }).click();
 
     await page.locator("#home-settings").click();
-    await page.getByRole("menuitem", { name: "Send feedback" }).click();
+    await page
+      .getByRole("menuitem", { name: t("today.settings.feedback") })
+      .click();
     const feedback = page.locator("#feedback-dialog");
     await expect(feedback).toBeVisible();
-    await feedback.getByRole("button", { name: "Cancel" }).click();
+    await feedback.getByRole("button", { name: t("common.cancel") }).click();
 
     await page.locator("#home-settings").click();
-    await page.getByRole("menuitem", { name: "Site admin" }).click();
+    await page
+      .getByRole("menuitem", { name: t("today.settings.siteAdmin") })
+      .click();
     await expect(page).toHaveURL(/\/site-admin$/);
     await expect(
-      page.getByRole("heading", { name: "Site information" }),
+      page.getByRole("heading", { name: t("siteAdmin.title") }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Site details" }),
+      page.getByRole("heading", { name: t("siteAdmin.siteDetails.title") }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Contact person" }),
+      page.getByRole("heading", { name: t("siteAdmin.contact.title") }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Oversight" }),
+      page.getByRole("heading", { name: t("siteAdmin.oversight.title") }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Compliance", exact: true }),
+      page.getByRole("heading", {
+        name: t("siteAdmin.compliance.title"),
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Perimeter" }),
+      page.getByRole("heading", { name: t("siteAdmin.perimeter.title") }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Compliance letters", exact: true }),
+      page.getByRole("heading", {
+        name: t("siteAdmin.letters.title"),
+        exact: true,
+      }),
     ).toBeVisible();
 
     const contactSection = page.locator(".site-admin-section", {
-      has: page.getByRole("heading", { name: "Contact person" }),
+      has: page.getByRole("heading", { name: t("siteAdmin.contact.title") }),
     });
-    await contactSection.getByRole("button", { name: "Edit" }).click();
+    await contactSection
+      .getByRole("button", { name: t("common.edit") })
+      .click();
     await expect(page).toHaveURL(/\/site-admin\/edit\/contact$/);
     await expect(
-      page.getByRole("heading", { name: "Edit contact person" }),
+      page.getByRole("heading", { name: t("siteAdmin.edit.contactTitle") }),
     ).toBeVisible();
     await expect(page.locator("#site-admin-save")).toBeDisabled();
 
@@ -90,12 +106,16 @@ test.describe("site admin access", () => {
 
     const discard = page.locator("#site-admin-discard-dialog");
     await expect(discard).toBeVisible();
-    await discard.getByRole("button", { name: "Keep editing" }).click();
+    await discard
+      .getByRole("button", { name: t("common.keepEditing") })
+      .click();
     await expect(page).toHaveURL(/\/site-admin\/edit\/contact$/);
     await expect(lastName).toHaveValue("Unsaved change");
 
     await page.locator("[data-admin-back]").click();
-    await discard.getByRole("button", { name: "Discard changes" }).click();
+    await discard
+      .getByRole("button", { name: t("common.discardChanges") })
+      .click();
     await expect(page).toHaveURL(/\/site-admin$/);
 
     await page.locator("[data-admin-back]").click();
@@ -118,7 +138,7 @@ test.describe("general site access", () => {
     await page.goto("/site-admin");
     await expect(page).toHaveURL(/\/today$/);
     await expect(
-      page.getByRole("heading", { name: "Site information" }),
+      page.getByRole("heading", { name: t("siteAdmin.title") }),
     ).toHaveCount(0);
   });
 });

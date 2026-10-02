@@ -55,6 +55,9 @@
   for the action/escalation rulebase (versions, update process). The workflow itself is
   described in [architecture.md](./architecture.md); the rule catalog lives in
   `backend/src/analysis/guidance/`.
+- **[localization.md](./localization.md)** — how the five-language UI works: catalogs,
+  `t()`, the language switch, date rules, translated rulebook/311 text, the i18n scripts,
+  and the translation glossary.
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for
   building a screen to spec from the token/class system (`tokens.css` / `base.css` plus each
   component's `.css` are the source of truth).

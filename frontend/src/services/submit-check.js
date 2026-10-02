@@ -15,6 +15,7 @@
 import { waitForAnalyses, completeCheck } from "./api.js";
 import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
 import { startRun, span, mark } from "./instrument.js";
+import { t } from "../i18n/i18n.js";
 
 const pendingScorecardFinalizations = new Map();
 
@@ -55,45 +56,34 @@ function causeOf(err) {
 }
 
 /**
- * Per-leg cause → user message. Each leg has a `default` for causes it doesn't
- * spell out; an untagged error falls back to a single generic line. Every string
- * names both the step that failed and what to do next, so no two failure modes
- * read the same.
+ * Per-leg cause → catalog key of the user message. Each leg has a `default` for
+ * causes it doesn't spell out; an untagged error falls back to a single generic
+ * line. Every message names both the step that failed and what to do next, so
+ * no two failure modes read the same. Keys (not text) are stored so the message
+ * resolves in the active language at the moment it is shown.
  */
 const SUBMIT_MESSAGES = {
   start: {
-    network:
-      "Couldn’t start this check — we couldn’t reach the server. Check your connection and try again.",
-    conflict:
-      "This check may already have been filed. Go home to check before submitting again.",
-    rejected:
-      "The server wouldn’t accept this check. Please try again; if it keeps happening, report it.",
-    default:
-      "Something went wrong on our end starting this check. Please try again in a moment.",
+    network: "error.submit.start.network",
+    conflict: "error.submit.start.conflict",
+    rejected: "error.submit.start.rejected",
+    default: "error.submit.start.default",
   },
   upload: {
-    network:
-      "Couldn’t upload your photos — we couldn’t reach the server. Check your connection and try again.",
-    too_large:
-      "One of your photos was too large to upload. Retake it and try again.",
-    conflict:
-      "One of your photos looks already uploaded. Go home to check, or try again.",
-    rejected:
-      "The server rejected one of your photos. Please try again; if it keeps happening, report it.",
-    default:
-      "Something went wrong on our end uploading your photos. Please try again in a moment.",
+    network: "error.submit.upload.network",
+    too_large: "error.submit.upload.tooLarge",
+    conflict: "error.submit.upload.conflict",
+    rejected: "error.submit.upload.rejected",
+    default: "error.submit.upload.default",
   },
   analyze: {
-    pending: "The AI is taking longer than expected. Please try again soon.",
-    network:
-      "Lost connection while waiting for the AI analysis. Check your connection and reopen this check.",
-    default: "The analysis service had a problem. Please try again soon.",
+    pending: "error.submit.analyze.pending",
+    network: "error.submit.analyze.network",
+    default: "error.submit.analyze.default",
   },
   complete: {
-    network:
-      "Couldn’t finish filing this check — the connection dropped. Reopen it to finish.",
-    default:
-      "Something went wrong finishing this check. Please try again soon.",
+    network: "error.submit.complete.network",
+    default: "error.submit.complete.default",
   },
 };
 
@@ -107,10 +97,8 @@ const SUBMIT_MESSAGES = {
  */
 export function submitErrorMessage(err) {
   const leg = SUBMIT_MESSAGES[err?.leg];
-  if (!leg) {
-    return "Couldn’t file this check. Check your connection and try again.";
-  }
-  return leg[causeOf(err)] ?? leg.default;
+  if (!leg) return t("error.submit.generic");
+  return t(leg[causeOf(err)] ?? leg.default);
 }
 
 async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
