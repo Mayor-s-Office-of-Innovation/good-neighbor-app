@@ -35,15 +35,41 @@ const SHORT_TEXT = "Trash by door";
 const DESCRIPTION =
   "Sidewalks are clear on both sides. There is trash near the entrance and " +
   "graffiti on the wall, plus a tent against the side of the building.";
-const MIN_PHOTOS = 1;
+const RECOMMENDED_PHOTOS = 3;
 
 test.describe("describe instead", () => {
   test("one description completes a check with zero photos and yields task cards", async ({
     page,
   }) => {
     await startCheck(page);
+    const captureWidth = await page
+      .locator(".check-timeline")
+      .evaluate((element) => element.getBoundingClientRect().width);
     const done = page.locator("#done-check");
     const progress = page.locator("#check-progress");
+    const finishPosition = await page
+      .locator(".check-timeline")
+      .evaluate((element) => {
+        const button = element.querySelector("#done-check");
+        const footer = element.querySelector("#check-footer");
+        if (!button) {
+          throw new Error("Finish check button not found");
+        }
+        if (!footer) {
+          throw new Error("Finish check footer not found");
+        }
+        const buttonRect = button.getBoundingClientRect();
+        const footerRect = footer.getBoundingClientRect();
+        return {
+          bottomGap: element.getBoundingClientRect().bottom - buttonRect.bottom,
+          centerDelta:
+            footerRect.left +
+            footerRect.width / 2 -
+            (buttonRect.left + buttonRect.width / 2),
+        };
+      });
+    expect(finishPosition.bottomGap).toBeCloseTo(32, 0);
+    expect(finishPosition.centerDelta).toBeCloseTo(0, 0);
 
     // Zero photos, no description: the rule is not met.
     await expect(page.locator(".shot img")).toHaveCount(0);
@@ -56,6 +82,28 @@ test.describe("describe instead", () => {
     // --- Describe instead ---------------------------------------------------
     await page.locator("#describe-instead").click();
     await expect(page).toHaveURL(/\/check\/describe$/);
+    await expect(page.locator(".describe__main")).toHaveCSS(
+      "justify-content",
+      "flex-start",
+    );
+    const contentBottomGap = await page
+      .locator(".describe__main")
+      .evaluate((element) => {
+        const card = element.querySelector(".describe__card");
+        if (!card) throw new Error("Card not found");
+        return (
+          element.getBoundingClientRect().bottom -
+          card.getBoundingClientRect().bottom
+        );
+      });
+    expect(contentBottomGap).toBeLessThan(1);
+    await expect
+      .poll(() =>
+        page
+          .locator(".view-describe")
+          .evaluate((element) => element.getBoundingClientRect().width),
+      )
+      .toBe(captureWidth);
     const field = page.locator("#describe-text");
     const cont = page.locator("#describe-continue");
     await expect(field).toBeVisible();
@@ -97,8 +145,12 @@ test.describe("describe instead", () => {
 
     // One description satisfies the rule with zero photos.
     await expect(page.locator(".shot img")).toHaveCount(0);
-    await expect(progress).toContainText(`0 of ${MIN_PHOTOS} photos taken`);
-    await expect(progress).toContainText("Try to take at least 3-5 photos");
+    await expect(progress).toContainText(
+      `0 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+    );
+    await expect(progress).toContainText(
+      "We recommend taking at least 3 photos in a perimeter check.",
+    );
     await expect(progress).not.toContainText("Description saved");
     await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
@@ -110,5 +162,83 @@ test.describe("describe instead", () => {
     // multi fixture's conditions. Dismiss every generated card.
     const cardCount = await dismissAllNewResults(page);
     expect(cardCount).toBeGreaterThan(0);
+  });
+
+  test("single-issue capture and description share the flow width and 20-character minimum", async ({
+    page,
+  }) => {
+    await page.locator("#report-problem").click();
+    await expect(page).toHaveURL(/\/problem$/);
+    const capture = page.locator(".single-issue");
+    const captureWidth = await capture.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    const donePosition = await capture.evaluate((element) => {
+      const button = element.querySelector("#submit-report");
+      const footer = element.querySelector(".check-timeline__footer");
+      if (!button) {
+        throw new Error("Done button not found");
+      }
+      if (!footer) {
+        throw new Error("Done button footer not found");
+      }
+      const buttonRect = button.getBoundingClientRect();
+      const footerRect = footer.getBoundingClientRect();
+      return {
+        bottomGap: element.getBoundingClientRect().bottom - buttonRect.bottom,
+        centerDelta:
+          footerRect.left +
+          footerRect.width / 2 -
+          (buttonRect.left + buttonRect.width / 2),
+      };
+    });
+    expect(donePosition.bottomGap).toBeCloseTo(32, 0);
+    expect(donePosition.centerDelta).toBeCloseTo(0, 0);
+    await expect(page.locator("#submit-report")).toBeDisabled();
+    await expect(page.locator("#describe-instead")).toHaveClass(/btn-outline/);
+    await expect(page.locator("#submit-report")).toHaveClass(
+      /check-timeline__done/,
+    );
+
+    await page.locator("#describe-instead").click();
+    await expect(page).toHaveURL(/\/problem\/describe$/);
+    await expect(page.locator(".describe__subtitle")).toHaveText(
+      "Describe the issue you see in as much detail as possible",
+    );
+    const subtitleMetrics = await page
+      .locator(".describe__subtitle")
+      .evaluate((element) => {
+        const view = element.ownerDocument.defaultView;
+        if (!view) throw new Error("Browser window not found");
+        return {
+          height: element.getBoundingClientRect().height,
+          lineHeight: Number.parseFloat(
+            view.getComputedStyle(element).lineHeight,
+          ),
+        };
+      });
+    expect(subtitleMetrics.height).toBeLessThanOrEqual(
+      subtitleMetrics.lineHeight * 1.1,
+    );
+    await expect(page.locator("#describe-hint")).toHaveText(
+      "At least 20 characters",
+    );
+    await expect
+      .poll(() =>
+        page
+          .locator(".view-describe")
+          .evaluate((element) => element.getBoundingClientRect().width),
+      )
+      .toBe(captureWidth);
+
+    const field = page.locator("#describe-text");
+    const cont = page.locator("#describe-continue");
+    await field.fill("1234567890123456789");
+    await expect(cont).toBeDisabled();
+    await field.fill("12345678901234567890");
+    await expect(cont).toBeEnabled();
+    await cont.click();
+    await expect(page).toHaveURL(/\/problem$/);
+    await expect(page.locator("#submit-report")).toBeEnabled();
   });
 });

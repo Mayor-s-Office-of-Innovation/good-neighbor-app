@@ -691,6 +691,13 @@ html.wa-dark .analysis-card__clear-copy a {
   border-radius: inherit;
 }
 
+.analysis-card__media [data-photo-lightbox] {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
 .analysis-card__media span {
   position: absolute;
   top: 0.5rem;

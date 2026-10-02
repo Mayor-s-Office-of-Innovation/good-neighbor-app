@@ -1,7 +1,8 @@
 // @ts-check
 import { a11yMatrix, matrix, test } from "ramp-check/test";
 import { expect, boundPage } from "../helpers/harness.js";
-import { startCheck, openHistoryWithTrays } from "../helpers/app.js";
+import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
+import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
   Automated accessibility scans via ramp-check inside the existing e2e suite.
@@ -21,12 +22,14 @@ import { startCheck, openHistoryWithTrays } from "../helpers/app.js";
   obscured, no trap) and a text-spacing check (warns by default), and records
   warnings as annotations with the full result attached as JSON.
 
-  States (same five as before):
+  States (six — five from the pre-ramp-check spec plus the photo lightbox
+  the Playwright-coverage work added):
     - code entry (unbound): the app's public front door, reached without a
       site binding. Plain page; no bindSite.
-    - bound home (/today) + capture view + site admin + home history trays:
-      via helpers/harness.js's shared boundPage fixture, which binds through
-      the real code-entry flow.
+    - bound home (/today) + capture view + photo lightbox + site admin +
+      home history trays: via helpers/harness.js's shared boundPage fixture,
+      which binds through the real code-entry flow. The lightbox state is
+      the only one scanned with a dialog open (backdrop + focus inside).
 
   Policy: wcag22-aa — WCAG 2.2 A and AA findings block; AAA findings warn.
   A full AAA evaluation ran on 2026-10-01 for the designer contrast review; it
@@ -100,6 +103,24 @@ matrix(
         await startCheck(page);
         await expect(page.locator("#add-photo")).toBeVisible();
         await a11y.check("capture view");
+      },
+    );
+
+    // Photo lightbox: upload one photo, open the viewer dialog. The only
+    // scanned state with a dialog open — dialog surfaces and their backdrops
+    // scan differently (backdrop + ::backdrop pseudo, focus inside dialog).
+    boundA11y(
+      "a11y: photo lightbox",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await startCheck(page);
+        await addPhoto(page, PHOTO_CLEAR);
+        const thumbnail = page.locator(".shot [data-photo-lightbox]");
+        await expect(thumbnail).toBeVisible({ timeout: 30_000 });
+        await thumbnail.click();
+        await expect(
+          page.getByRole("dialog", { name: "Photo viewer" }),
+        ).toBeVisible();
+        await a11y.check("photo lightbox");
       },
     );
 

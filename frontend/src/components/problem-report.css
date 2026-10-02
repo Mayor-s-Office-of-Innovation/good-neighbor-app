@@ -6,10 +6,6 @@
   these rules follow the shared base in the bundle. Unlayered, like base.css.
 */
 
-.single-issue {
-  gap: 1.25rem;
-}
-
 .single-issue__title {
   margin: 0;
   color: var(--text);
@@ -28,15 +24,6 @@
 }
 
 .single-issue .shotgrid--empty {
-  justify-content: flex-start;
-}
-
-.single-issue__describe {
-  align-self: flex-start;
-  margin-top: -0.5rem;
-}
-
-.single-issue .check__actions {
   justify-content: flex-start;
 }
 

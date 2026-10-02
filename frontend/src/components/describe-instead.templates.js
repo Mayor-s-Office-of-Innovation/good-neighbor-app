@@ -10,7 +10,7 @@ const PERIMETER_COPY = {
 };
 
 const PROBLEM_COPY = {
-  subtitle: "Describe the general conditions around the site.",
+  subtitle: "Describe the issue you see in as much detail as possible",
   placeholder:
     "Example: There’s trash near the entrance and graffiti on the wall...",
 };
@@ -75,7 +75,7 @@ export const shell = ({
           <div class="describe__meta">
             ${minLength > 1
               ? html`<span class="describe__hint" id="describe-hint"
-                  >At least ${minLength} characters.</span
+                  >At least ${minLength} characters</span
                 >`
               : ""}
             <button

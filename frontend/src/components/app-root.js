@@ -25,11 +25,7 @@ import {
 import { currentRoute, onRouteChange, navigate } from "../router.js";
 import { setupView, appShell } from "./app-root.templates.js";
 import "./connection-status.js";
-import {
-  isInAppBrowser,
-  escapeUrlForPlatform,
-} from "../services/browser-context.js";
-import { reportClientEvent } from "../services/error-report.js";
+import { isInAppBrowser } from "../services/browser-context.js";
 import {
   deepActiveElement,
   isEditable,
@@ -48,6 +44,17 @@ const ROUTE_VIEW = [
 
 class AppRoot extends HTMLElement {
   async connectedCallback() {
+    if (!this._onPhotoLightbox) {
+      this._onPhotoLightbox = (event) => {
+        const trigger = event.target?.closest?.("[data-photo-lightbox]");
+        if (!trigger) return;
+        event.preventDefault();
+        void import("./photo-lightbox.js").then(({ openPhotoLightbox }) =>
+          openPhotoLightbox(this, trigger),
+        );
+      };
+      this.addEventListener("click", this._onPhotoLightbox);
+    }
     this._startKeyboardViewportSync();
     if (this._isDevResetRoute()) {
       await this._resetFirstLaunch();
@@ -97,6 +104,8 @@ class AppRoot extends HTMLElement {
     window.removeEventListener("authsignout", this._onAuthSignout);
     this.removeEventListener("siterequested", this._onSiteRequested);
     this._stopKeyboardViewportSync();
+    this.removeEventListener("click", this._onPhotoLightbox);
+    this._onPhotoLightbox = null;
   }
 
   /**
@@ -191,34 +200,8 @@ class AppRoot extends HTMLElement {
    */
   _maybeWarnInAppBrowser() {
     if (!isInAppBrowser()) return;
-    reportClientEvent("in_app_browser", "in-app webview detected at boot", {});
-    const host = this.querySelector(".app__main") || this;
-    host.insertAdjacentHTML(
-      "afterbegin",
-      `<div class="webview-banner" role="status">
-        <p>
-          <strong>Camera may not open here.</strong> You're inside another app's
-          browser. Open in your browser instead for the camera to work.
-        </p>
-        <button class="webview-banner__open" type="button">Open in browser</button>
-        <button class="webview-banner__close" type="button" aria-label="Dismiss">
-          ✕
-        </button>
-      </div>`,
-    );
-    this.querySelector(".webview-banner__open")?.addEventListener(
-      "click",
-      () => {
-        const url = escapeUrlForPlatform();
-        if (!url) return;
-        // Both the iOS handoff (target=_blank → Safari) and the Android
-        // intent URL must be triggered from a user gesture.
-        window.open(url, "_blank", "noopener");
-      },
-    );
-    this.querySelector(".webview-banner__close")?.addEventListener(
-      "click",
-      () => this.querySelector(".webview-banner")?.remove(),
+    void import("./webview-warning.js").then(({ showWebviewWarning }) =>
+      showWebviewWarning(this),
     );
   }
 

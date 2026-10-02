@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   descriptionCard,
   footer,
@@ -44,24 +44,30 @@ describe("shell", () => {
 
 describe("progressLine", () => {
   it("counts photos toward the minimum and offers the text alternative", () => {
-    const markup = progressLine({ photos: 2, texts: 0, complete: false });
+    const markup = progressLine({ photos: 2 });
 
-    expect(markup).toContain(`2 of ${MIN_PERIMETER_PHOTOS} photos taken`);
-    expect(markup).toContain("Try to take at least 3-5 photos");
+    expect(markup).toContain(
+      `2 of ${RECOMMENDED_PERIMETER_PHOTOS} recommended photos taken`,
+    );
+    expect(markup).toContain(
+      "We recommend taking at least 3 photos in a perimeter check.",
+    );
   });
 
-  it("reads ready once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 1, texts: 0, complete: true });
+  it("does not add a completion label once the photo minimum is met", () => {
+    const markup = progressLine({ photos: 1 });
 
-    expect(markup).toContain("1 of 1 photos taken");
-    expect(markup).toContain("Ready to finish");
+    expect(markup).toContain("1 of 3 recommended photos taken");
+    expect(markup).not.toContain("Ready to finish");
   });
 
   it("keeps the photo guidance without a saved-description status", () => {
-    const markup = progressLine({ photos: 0, texts: 1, complete: true });
+    const markup = progressLine({ photos: 0 });
 
-    expect(markup).toContain(`0 of ${MIN_PERIMETER_PHOTOS} photos taken`);
-    expect(markup).toContain("Try to take at least 3-5 photos");
+    expect(markup).toContain("0 of 3 recommended photos taken");
+    expect(markup).toContain(
+      "We recommend taking at least 3 photos in a perimeter check.",
+    );
     expect(markup).not.toContain("Description saved");
     expect(markup).not.toContain("Ready to finish");
   });

@@ -21,6 +21,9 @@
 
 export const MIN_PERIMETER_PHOTOS = 1;
 
+/** Recommended coverage for a perimeter check; completion still requires one. */
+export const RECOMMENDED_PERIMETER_PHOTOS = 3;
+
 /** Minimum trimmed length for a perimeter description to count as evidence. */
 export const MIN_DESCRIPTION_LENGTH = 20;
 
@@ -60,6 +63,22 @@ export function itemCountsTowardCompletion(item) {
   if (item.analysis?.artifactId || item.upload?.artifactId) return true;
   if (item.analysis?.status === "failed") return false;
   return true;
+}
+
+/**
+ * Whether a live item has enough local or registered evidence to contribute an
+ * artifact to this submission.
+ * @param {EvidenceItem & { dataUrl?: string }} item
+ * @returns {boolean}
+ */
+export function itemHasLiveEvidence(item) {
+  return Boolean(
+    itemCountsTowardCompletion(item) &&
+      (item.kind === "text" ||
+        item.dataUrl ||
+        item.upload?.artifactId ||
+        item.analysis?.artifactId),
+  );
 }
 
 /**
@@ -128,6 +147,17 @@ export function textCount(check) {
  */
 export function hasEvidence(check) {
   return photoItems(check).length > 0 || textItems(check).length > 0;
+}
+
+/**
+ * Any evidence capable of contributing an artifact to this submission.
+ * Unlike hasEvidence, this excludes permanently failed local items and is
+ * suitable for completion controls rather than discard decisions.
+ * @param {SessionCheck} check
+ * @returns {boolean}
+ */
+export function hasLiveEvidence(check) {
+  return checkItems(check).some(itemHasLiveEvidence);
 }
 
 /**

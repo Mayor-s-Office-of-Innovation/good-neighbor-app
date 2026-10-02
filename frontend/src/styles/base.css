@@ -147,6 +147,23 @@ body:has(dialog:modal) {
   border: 0;
 }
 
+/* Photo thumbnails are buttons so they remain keyboard accessible. Keep their
+   button reset in the eager bundle; the viewer itself is loaded on demand. */
+[data-photo-lightbox] {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: zoom-in;
+}
+
+[data-photo-lightbox]:focus-visible {
+  outline: 3px solid var(--focus-ring, var(--wa-color-primary-60));
+  outline-offset: -3px;
+}
+
 /* ---- App shell ----
    Sizing contract: the document is the only scroll surface. <app-root> holds
    the single viewport-height reference in the app; everything below it (shell,
@@ -244,7 +261,8 @@ app-root {
   flex: 1 0 auto;
 }
 
-.app__main:has(.check-timeline) {
+.app__main:has(.check-timeline),
+.app__main:has(.view-describe) {
   width: min(72rem, 100%);
   max-width: none;
   padding-inline: clamp(1rem, 4vw, 3rem);

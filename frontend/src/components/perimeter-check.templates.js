@@ -8,7 +8,7 @@
   analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   analysisDialogs,
   analysisResultsTray,
@@ -95,14 +95,13 @@ export const shell = () => html`
 /**
  * Stacked capture status under the title. The description minimum is
  * instructional copy; the existing completion rule is unchanged.
- * @param {{ photos: number, texts: number, complete: boolean }} status
+ * @param {{ photos: number }} status
  * @returns {string}
  */
-export function progressLine({ photos, texts, complete }) {
+export function progressLine({ photos }) {
   return (
-    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
-    `<span>Try to take at least 3-5 photos</span>` +
-    (complete && texts === 0 ? `<span>Ready to finish.</span>` : "")
+    `<strong>${photos} of ${RECOMMENDED_PERIMETER_PHOTOS} recommended photos taken</strong>` +
+    `<span>We recommend taking at least 3 photos in a perimeter check.</span>`
   );
 }
 
@@ -211,11 +210,23 @@ export function analyzingSection(
 // Shared with <problem-report>, which renders the same grid.
 export const shotTile = (item, index) => html`
   <div class="shot">
-    <img
-      class="shot__img"
-      src="${escapeAttr(item.dataUrl)}"
-      alt="Captured photo ${index + 1}"
-    />
+    <button
+      class="shot__preview"
+      type="button"
+      data-photo-lightbox
+      data-photo-address="${escapeAttr(
+        item.georeferencedAddress || item.address || item.siteAddress || "",
+      )}"
+      data-photo-time="${escapeAttr(
+        item.uploadedAt || item.createdAt || item.capturedAt || "",
+      )}"
+    >
+      <img
+        class="shot__img"
+        src="${escapeAttr(item.dataUrl)}"
+        alt="Captured photo ${index + 1}"
+      />
+    </button>
     <button
       class="shot__del"
       type="button"

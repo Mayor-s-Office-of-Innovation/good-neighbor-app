@@ -722,6 +722,23 @@ describe("failed cards", () => {
 });
 
 describe("taskAnalysisCard", () => {
+  it("uses the thumbnail on the card and the full media URL in the lightbox", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_photo",
+        checkId: "check_photo",
+        category: "Litter",
+        thumbnailUrl: "https://cdn.example/thumb.jpg",
+        mediaUrl: "https://cdn.example/full.jpg",
+      },
+      action: null,
+      statusLabel: "Today",
+    });
+
+    expect(card).toContain('src="https://cdn.example/thumb.jpg"');
+    expect(card).toContain('data-full-src="https://cdn.example/full.jpg"');
+  });
+
   it("keeps action guidance visible while preserving the condition description for edits", () => {
     const card = taskAnalysisCard({
       task: {
