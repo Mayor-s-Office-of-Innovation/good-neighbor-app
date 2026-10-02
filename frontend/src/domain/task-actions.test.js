@@ -7,10 +7,16 @@ import {
 } from "./task-actions.js";
 
 describe("task action helpers", () => {
-  it("requires a completed task with a submitted 311 result", () => {
+  it("requires an acted-on task with a submitted 311 result", () => {
     expect(
       isFiled311Completion({
         status: "completed",
+        appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+      }),
+    ).toBe(true);
+    expect(
+      isFiled311Completion({
+        status: "in_progress",
         appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
       }),
     ).toBe(true);

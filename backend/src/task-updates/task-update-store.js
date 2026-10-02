@@ -2,6 +2,7 @@ import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import {
@@ -152,84 +153,90 @@ export async function readUpdatePointer(tableName, siteId, taskId, updateId) {
 }
 
 /**
- * Start progress without replacing unrelated fields written concurrently.
- * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any> }} input
+ * Claim an in-progress resolution before invoking non-idempotent integrations.
+ * An expired claim may be recovered; an active claim remains exclusive.
+ * @param {{ tableName: string, siteId: string, task: Record<string, any>, updateId: string, now: string, leaseExpiresAt: string }} input
  */
-export async function writeStartProgressTransition(input) {
-  const updateKey = taskUpdateKey(
-    input.siteId,
-    input.taskId,
-    input.occurredAt,
-    input.update.updateId,
-  );
+export async function claimTaskResolution(input) {
   const worklist = taskWorklistDateGsi(
     input.siteId,
     "in_progress",
     String(input.task.kind || ""),
     Number(input.task.severity || 0),
-    String(input.task.updatedAt || input.occurredAt),
-    input.taskId,
+    input.now,
+    String(input.task.taskId),
   );
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: input.tableName,
-            Item: { ...updateKey, ...input.update },
-            ConditionExpression: "attribute_not_exists(pk)",
-          },
-        },
-        {
-          Put: {
-            TableName: input.tableName,
-            Item: {
-              ...taskUpdatePointerKey(
-                input.siteId,
-                input.taskId,
-                input.update.updateId,
-              ),
-              entityType: "task_update_pointer",
-              taskId: input.taskId,
-              updateId: input.update.updateId,
-              updateSk: updateKey.sk,
-            },
-            ConditionExpression: "attribute_not_exists(pk)",
-          },
-        },
-        {
-          Update: {
-            TableName: input.tableName,
-            Key: taskKey(input.siteId, input.taskId),
-            UpdateExpression:
-              "SET #status = :inProgress, inProgressAt = :at, notifiedAt = :at, agency = :agency, inProgressActionKind = :kind, latestUpdateId = :updateId, latestUpdateLabel = :label, lastAnsweredPresencePeriod = :period, updatedAt = :at, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk",
-            ConditionExpression: "#status = :open",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":open": "open",
-              ":inProgress": "in_progress",
-              ":at": input.occurredAt,
-              ":agency": input.task.agency,
-              ":kind": input.task.inProgressActionKind,
-              ":updateId": input.update.updateId,
-              ":label": input.task.latestUpdateLabel,
-              ":period": 0,
-              ":gsi2pk": worklist.gsi2pk,
-              ":gsi2sk": worklist.gsi2sk,
-            },
-          },
-        },
-      ],
+  const result = await ddb.send(
+    new UpdateCommand({
+      TableName: input.tableName,
+      Key: taskKey(input.siteId, String(input.task.taskId)),
+      UpdateExpression:
+        "SET #status = :resolving, resolutionUpdateId = :updateId, resolutionStartedAt = if_not_exists(resolutionStartedAt, :now), resolutionLeaseExpiresAt = :lease, updatedAt = :now, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk",
+      ConditionExpression:
+        "(#status = :inProgress AND updatedAt = :priorUpdatedAt) OR (#status = :resolving AND resolutionLeaseExpiresAt <= :now)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":inProgress": "in_progress",
+        ":resolving": "resolving",
+        ":priorUpdatedAt": input.task.updatedAt,
+        ":updateId": input.updateId,
+        ":now": input.now,
+        ":lease": input.leaseExpiresAt,
+        ":gsi2pk": worklist.gsi2pk,
+        ":gsi2sk": worklist.gsi2sk,
+      },
+      ReturnValues: "ALL_NEW",
     }),
   );
+  return result.Attributes;
+}
+
+/**
+ * Persist closure progress and return a failed/partial resolution to the
+ * in-progress worklist so the user can retry it.
+ * @param {{ tableName: string, siteId: string, taskId: string, task: Record<string, any>, leaseExpiresAt: string, appActionResults: unknown[], appActionStatus: string, now: string }} input
+ */
+export async function releaseTaskResolution(input) {
+  const worklist = taskWorklistDateGsi(
+    input.siteId,
+    "in_progress",
+    String(input.task.kind || ""),
+    Number(input.task.severity || 0),
+    input.now,
+    input.taskId,
+  );
+  const result = await ddb.send(
+    new UpdateCommand({
+      TableName: input.tableName,
+      Key: taskKey(input.siteId, input.taskId),
+      UpdateExpression:
+        "SET #status = :inProgress, appActionResults = :results, appActionStatus = :appActionStatus, updatedAt = :now, gsi2pk = :gsi2pk, gsi2sk = :gsi2sk REMOVE resolutionUpdateId, resolutionStartedAt, resolutionLeaseExpiresAt",
+      ConditionExpression:
+        "#status = :resolving AND resolutionLeaseExpiresAt = :lease",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":inProgress": "in_progress",
+        ":resolving": "resolving",
+        ":results": input.appActionResults,
+        ":appActionStatus": input.appActionStatus,
+        ":now": input.now,
+        ":lease": input.leaseExpiresAt,
+        ":gsi2pk": worklist.gsi2pk,
+        ":gsi2sk": worklist.gsi2sk,
+      },
+      ReturnValues: "ALL_NEW",
+    }),
+  );
+  return result.Attributes;
 }
 
 /**
  * Atomically append an update and replace its task snapshot.
- * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string }} input
+ * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string, expectedLease?: { attribute: string, value: string } }} input
  */
 export async function writeTaskTransition(input) {
-  const statusOnly = input.expectedUpdatedAt === undefined;
+  const statusOnly =
+    input.expectedUpdatedAt === undefined && input.expectedLease === undefined;
   const updateKey = taskUpdateKey(
     input.siteId,
     input.taskId,
@@ -280,13 +287,24 @@ export async function writeTaskTransition(input) {
                 input.taskId,
               ),
             },
-            ConditionExpression: statusOnly
-              ? "#status = :expected"
-              : "#status = :expected AND updatedAt = :prior",
-            ExpressionAttributeNames: { "#status": "status" },
+            ConditionExpression: input.expectedLease
+              ? "#status = :expected AND #lease = :lease"
+              : statusOnly
+                ? "#status = :expected"
+                : "#status = :expected AND updatedAt = :prior",
+            ExpressionAttributeNames: {
+              "#status": "status",
+              ...(input.expectedLease
+                ? { "#lease": input.expectedLease.attribute }
+                : {}),
+            },
             ExpressionAttributeValues: {
               ":expected": input.expectedStatus,
-              ...(statusOnly ? {} : { ":prior": input.expectedUpdatedAt }),
+              ...(input.expectedLease
+                ? { ":lease": input.expectedLease.value }
+                : statusOnly
+                  ? {}
+                  : { ":prior": input.expectedUpdatedAt }),
             },
           },
         },

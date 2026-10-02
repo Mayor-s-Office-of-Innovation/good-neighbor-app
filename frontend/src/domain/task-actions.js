@@ -22,7 +22,10 @@ export function hasSubmitted311Ticket(task) {
  * @returns {boolean}
  */
 export function isFiled311Completion(task) {
-  return task?.status === "completed" && hasSubmitted311Ticket(task);
+  return (
+    ["in_progress", "completed"].includes(task?.status || "") &&
+    hasSubmitted311Ticket(task)
+  );
 }
 
 /**

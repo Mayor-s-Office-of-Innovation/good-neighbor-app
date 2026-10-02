@@ -1,12 +1,16 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { readTimeline, readUpdateById, readUpdatePointer } = await import(
-  "./task-update-store.js"
-);
+const {
+  claimTaskResolution,
+  readTimeline,
+  readUpdateById,
+  readUpdatePointer,
+  releaseTaskResolution,
+} = await import("./task-update-store.js");
 
 describe("task update store", () => {
   beforeEach(() => send.mockReset());
@@ -79,5 +83,65 @@ describe("task update store", () => {
     ).resolves.toBeNull();
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+  });
+
+  it("claims resolution before a non-idempotent external close", async () => {
+    send.mockResolvedValueOnce({ Attributes: { status: "resolving" } });
+
+    await expect(
+      claimTaskResolution({
+        tableName: "tasks",
+        siteId: "site-1",
+        task: {
+          taskId: "task-1",
+          status: "in_progress",
+          updatedAt: "2026-10-01T12:00:00.000Z",
+          kind: "escalation",
+          severity: 3,
+        },
+        updateId: "update-1",
+        now: "2026-10-01T12:05:00.000Z",
+        leaseExpiresAt: "2026-10-01T12:10:00.000Z",
+      }),
+    ).resolves.toEqual({ status: "resolving" });
+
+    const command = send.mock.calls[0][0];
+    expect(command).toBeInstanceOf(UpdateCommand);
+    expect(command.input.ConditionExpression).toContain(
+      "#status = :inProgress AND updatedAt = :priorUpdatedAt",
+    );
+    expect(command.input.ConditionExpression).toContain(
+      "#status = :resolving AND resolutionLeaseExpiresAt <= :now",
+    );
+    expect(command.input.ExpressionAttributeValues).toMatchObject({
+      ":updateId": "update-1",
+      ":lease": "2026-10-01T12:10:00.000Z",
+    });
+  });
+
+  it("returns an incomplete resolution to the in-progress worklist", async () => {
+    send.mockResolvedValueOnce({ Attributes: { status: "in_progress" } });
+
+    await expect(
+      releaseTaskResolution({
+        tableName: "tasks",
+        siteId: "site-1",
+        taskId: "task-1",
+        task: { kind: "escalation", severity: 3 },
+        leaseExpiresAt: "2026-10-01T12:10:00.000Z",
+        appActionResults: [{ code: "close_311_ticket", status: "partial" }],
+        appActionStatus: "partial",
+        now: "2026-10-01T12:05:00.000Z",
+      }),
+    ).resolves.toEqual({ status: "in_progress" });
+
+    const command = send.mock.calls[0][0];
+    expect(command).toBeInstanceOf(UpdateCommand);
+    expect(command.input.ConditionExpression).toBe(
+      "#status = :resolving AND resolutionLeaseExpiresAt = :lease",
+    );
+    expect(command.input.UpdateExpression).toContain(
+      "REMOVE resolutionUpdateId, resolutionStartedAt, resolutionLeaseExpiresAt",
+    );
   });
 });

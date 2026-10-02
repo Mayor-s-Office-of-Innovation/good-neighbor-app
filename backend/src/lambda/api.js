@@ -27,7 +27,6 @@ import {
   documentTaskUpdate,
   getTaskUpdates,
   registerTaskUpdateMedia,
-  startTaskProgress,
 } from "../handlers/task-updates.js";
 import {
   cannotDoTask,
@@ -112,7 +111,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/tasks/{taskId}/complete": completeTask,
   "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
   "GET /v1/tasks/{taskId}/updates": getTaskUpdates,
-  "POST /v1/tasks/{taskId}/start-progress": startTaskProgress,
   "POST /v1/tasks/{taskId}/updates": createTaskUpdate,
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,
   "POST /v1/tasks/{taskId}/update-media": registerTaskUpdateMedia,

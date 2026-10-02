@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MissingSiteClaimError, deriveSiteId } from "./principal.js";
+import {
+  MissingSiteClaimError,
+  deriveActorId,
+  deriveSiteId,
+} from "./principal.js";
 
 /**
  * JWT-authorizer shape (Cognito / the local X-Debug stub): claims nested under
@@ -133,5 +137,23 @@ describe("deriveSiteId", () => {
     expect(() =>
       deriveSiteId(eventWithLambdaContext({ "claims.custom:siteId": "" })),
     ).toThrow(MissingSiteClaimError);
+  });
+});
+
+describe("deriveActorId", () => {
+  it("reads the authenticated device from every supported authorizer shape", () => {
+    expect(deriveActorId(eventWithJwtClaims({ sub: "jwt-device" }))).toBe(
+      "jwt-device",
+    );
+    expect(
+      deriveActorId(eventWithLambdaContext({ "claims.sub": "lambda-device" })),
+    ).toBe("lambda-device");
+    expect(
+      deriveActorId(eventWithRequestContext({ "claims.sub": "flat-device" })),
+    ).toBe("flat-device");
+  });
+
+  it("uses the site-team fallback for local anonymous requests", () => {
+    expect(deriveActorId(eventWithJwtClaims())).toBe("site-team");
   });
 });

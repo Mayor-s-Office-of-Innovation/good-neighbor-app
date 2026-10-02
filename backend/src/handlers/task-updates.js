@@ -1,23 +1,30 @@
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { deriveSiteId } from "../lib/principal.js";
+import { deriveActorId, deriveSiteId } from "../lib/principal.js";
+import {
+  eligibleTicketsForClosure,
+  executeAppActions,
+  is311SubmissionEnabled,
+  mergeAppActionResults,
+  summarizeAppActionResults,
+} from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
   presencePeriod,
   presencePromptDue,
-  qualifyingAction,
   responseExpectedAt,
 } from "../domain/task-updates.js";
 import {
   readCheckHeader,
+  claimTaskResolution,
   readLegacyUpdateById,
   readTask,
   readTimeline,
   readUpdateById,
   readUpdatePointer,
+  releaseTaskResolution,
   writeDocumentedUpdate,
-  writeStartProgressTransition,
   writeTaskTransition,
   writeTaskUpdateMedia,
 } from "../task-updates/task-update-store.js";
@@ -25,6 +32,7 @@ import {
 const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
 const MAX_TEXT = 4000;
+const RESOLUTION_LEASE_MS = 5 * 60 * 1000;
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -55,16 +63,6 @@ function idempotencyId(event) {
 }
 
 /** @param {any} event */
-function actorId(event) {
-  const authorizer = event.requestContext?.authorizer || {};
-  return String(
-    authorizer.lambda?.["claims.sub"] ||
-      authorizer["claims.sub"] ||
-      authorizer.jwt?.claims?.sub ||
-      "site-team",
-  );
-}
-
 /** @param {unknown} value @param {number} max @returns {string[] | null} */
 function textList(value, max) {
   if (!Array.isArray(value) || value.length > max) return null;
@@ -121,77 +119,6 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
-/** POST /v1/tasks/{taskId}/start-progress @param {any} event */
-export const startTaskProgress = async (event) => {
-  const input = bodyOf(event);
-  if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
-  const action = qualifyingAction(input.actionLabel);
-  if (!action)
-    return jsonResponse(400, { error: "Action does not start progress" });
-  const { dynamoTable } = getConfig();
-  const siteId = deriveSiteId(event);
-  const taskId = String(event.pathParameters?.taskId || "");
-  const task = await readTask(dynamoTable, siteId, taskId);
-  if (!task) return jsonResponse(404, { error: "Task not found" });
-  const available = [
-    ...(Array.isArray(task.buttons) ? task.buttons : []),
-    ...(Array.isArray(task.appActions)
-      ? task.appActions.map((candidate) => candidate?.payload?.completionLabel)
-      : []),
-  ];
-  if (!available.some((label) => String(label || "") === input.actionLabel))
-    return jsonResponse(400, { error: "Action is not available on this task" });
-  if (
-    task.status === "in_progress" &&
-    task.inProgressActionKind === action.actionKind
-  )
-    return getTaskUpdates(event);
-  if (task.status !== "open")
-    return jsonResponse(409, { error: "Task is no longer open" });
-
-  const now = new Date().toISOString();
-  const updateId = idempotencyId(event);
-  const update = {
-    entityType: "task_update",
-    taskId,
-    updateId,
-    type: "escalation_action_taken",
-    actionKind: action.actionKind,
-    agency: action.agency,
-    label: action.label,
-    occurredAt: now,
-    actorId: actorId(event),
-    documentationState: "closed",
-  };
-  const updated = {
-    ...task,
-    status: "in_progress",
-    inProgressAt: now,
-    notifiedAt: now,
-    agency: action.agency,
-    inProgressActionKind: action.actionKind,
-    latestUpdateId: updateId,
-    latestUpdateLabel: action.label,
-    lastAnsweredPresencePeriod: 0,
-    updatedAt: now,
-  };
-  try {
-    await writeStartProgressTransition({
-      tableName: dynamoTable,
-      siteId,
-      taskId,
-      occurredAt: now,
-      update,
-      task: updated,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "TransactionCanceledException")
-      return jsonResponse(409, { error: "Task update conflict" });
-    throw error;
-  }
-  return jsonResponse(200, detail(updated, [update]));
-};
-
 /** POST /v1/tasks/{taskId}/updates @param {any} event */
 export const createTaskUpdate = async (event) => {
   const input = bodyOf(event);
@@ -213,7 +140,11 @@ export const createTaskUpdate = async (event) => {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
     });
-  if (task.status !== "in_progress") {
+  const resolutionLeaseExpired =
+    task.status === "resolving" &&
+    new Date(String(task.resolutionLeaseExpiresAt ?? "")).getTime() <=
+      Date.now();
+  if (task.status !== "in_progress" && !resolutionLeaseExpired) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -231,12 +162,108 @@ export const createTaskUpdate = async (event) => {
   const transition = buildTaskUpdateTransition(task, input, {
     taskId,
     updateId,
-    actorId: actorId(event),
+    actorId: deriveActorId(event),
   });
   if ("error" in transition)
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  let resolutionLeaseExpiresAt = "";
+  if (updated.status === "completed" && is311SubmissionEnabled(process.env)) {
+    let priorResults = Array.isArray(task.appActionResults)
+      ? task.appActionResults
+      : [];
+    if (eligibleTicketsForClosure(priorResults).size > 0) {
+      resolutionLeaseExpiresAt = new Date(
+        new Date(now).getTime() + RESOLUTION_LEASE_MS,
+      ).toISOString();
+      let claimed;
+      try {
+        claimed = await claimTaskResolution({
+          tableName: dynamoTable,
+          siteId,
+          task,
+          updateId,
+          now,
+          leaseExpiresAt: resolutionLeaseExpiresAt,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "ConditionalCheckFailedException"
+        ) {
+          return jsonResponse(409, { error: "Task resolution in progress" });
+        }
+        throw error;
+      }
+      priorResults = Array.isArray(claimed?.appActionResults)
+        ? claimed.appActionResults
+        : priorResults;
+      const closureResults = await executeAppActions(
+        [{ code: "close_311_ticket", payload: {} }],
+        {
+          env: process.env,
+          now: new Date(now),
+          taskId,
+          tableName: dynamoTable,
+          siteId,
+          task: claimed ?? updated,
+          priorResults,
+          trigger: "user_confirmed",
+          executionLease: {
+            status: "resolving",
+            attribute: "resolutionLeaseExpiresAt",
+            value: resolutionLeaseExpiresAt,
+          },
+          // An expired lease can mean HUB accepted a close before the prior
+          // executor persisted its checkpoint. Reconcile remote state before
+          // retrying the non-idempotent update.
+          reconcile311Closures: resolutionLeaseExpired,
+        },
+      );
+      updated.appActionResults = closureResults.reduce(
+        (results, result) => mergeAppActionResults(results, result),
+        priorResults,
+      );
+      updated.appActionStatus = summarizeAppActionResults(
+        updated.appActionResults,
+      );
+      const closureSucceeded = closureResults.every(
+        (result) => result.status === "submitted",
+      );
+      if (!closureSucceeded) {
+        let released;
+        try {
+          released = await releaseTaskResolution({
+            tableName: dynamoTable,
+            siteId,
+            taskId,
+            task: claimed ?? task,
+            leaseExpiresAt: resolutionLeaseExpiresAt,
+            appActionResults: updated.appActionResults,
+            appActionStatus: updated.appActionStatus,
+            now,
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.name === "ConditionalCheckFailedException"
+          ) {
+            return jsonResponse(409, { error: "Task resolution in progress" });
+          }
+          throw error;
+        }
+        return jsonResponse(502, {
+          error: "311 ticket closure incomplete",
+          retryable: true,
+          task: released,
+        });
+      }
+      delete updated.resolutionUpdateId;
+      delete updated.resolutionStartedAt;
+      delete updated.resolutionLeaseExpiresAt;
+    }
+  }
   try {
     await writeTaskTransition({
       tableName: dynamoTable,
@@ -245,8 +272,15 @@ export const createTaskUpdate = async (event) => {
       occurredAt: now,
       update,
       task: updated,
-      expectedStatus: "in_progress",
-      expectedUpdatedAt: task.updatedAt,
+      expectedStatus: resolutionLeaseExpiresAt ? "resolving" : "in_progress",
+      ...(resolutionLeaseExpiresAt
+        ? {
+            expectedLease: {
+              attribute: "resolutionLeaseExpiresAt",
+              value: resolutionLeaseExpiresAt,
+            },
+          }
+        : { expectedUpdatedAt: task.updatedAt }),
     });
   } catch (error) {
     if (
@@ -285,7 +319,7 @@ export const documentTaskUpdate = async (event) => {
   const updateId = String(event.pathParameters?.updateId || "");
   const existing = await readUpdateById(dynamoTable, siteId, taskId, updateId);
   if (!existing) return jsonResponse(404, { error: "Update not found" });
-  if (existing.actorId !== actorId(event))
+  if (existing.actorId !== deriveActorId(event))
     return jsonResponse(403, { error: "Update belongs to another session" });
   if (existing.documentationState === "closed")
     return jsonResponse(200, { update: existing });

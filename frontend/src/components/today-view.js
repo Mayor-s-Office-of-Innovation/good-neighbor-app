@@ -53,7 +53,6 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
-  startTaskProgress,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -1587,8 +1586,13 @@ class TodayView extends HTMLElement {
     }
 
     try {
-      await completeTask(problem.taskId, { completionMethod: "manual" });
-      this._markAnalysisProblemResolved(problem);
+      const result = await completeTask(problem.taskId, {
+        completionMethod: "manual",
+      });
+      this._markAnalysisProblemResolved(problem, {
+        taskStatus:
+          result?.task?.status === "in_progress" ? "in_progress" : "resolved",
+      });
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
         "analysis-success",
@@ -1675,36 +1679,31 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    const label = btn.textContent?.trim() || "";
-    const startsProgress = [
-      "We called SFPD non-emergency",
-      "We called 911",
-      "We called SFACC",
-      "We called 311",
-    ].includes(label);
-    if (startsProgress) {
-      this._run(card, () => startTaskProgress(task.taskId, label)).then(
-        (ok) => {
-          if (ok) this.connectedCallback();
-        },
-      );
-    } else if (action === "update") {
+    if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
       this._run(card, () =>
-        completeTask(task.taskId, { completionMethod: "manual" }),
-      ).then((ok) => {
-        if (ok) {
-          this._setTaskOverride(task.taskId, "resolved");
+        completeTask(task.taskId, {
+          completionMethod: "manual",
+        }),
+      ).then((result) => {
+        if (result) {
+          this._setTaskOverride(
+            task.taskId,
+            result.task?.status === "in_progress" ? "in_progress" : "resolved",
+          );
           this.connectedCallback();
         }
       });
     } else if (action === "file311") {
       this._run(
         card,
-        () => completeTask(task.taskId, { completionMethod: "311_filed" }),
+        () =>
+          completeTask(task.taskId, {
+            completionMethod: "311_filed",
+          }),
         { requireSubmitted311: true },
       ).then((result) => {
         if (result) {

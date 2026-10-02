@@ -440,6 +440,8 @@ function buildTaskItem({
     checkId,
     conditionId,
     policyVersion: rule.policyVersion,
+    canBeInProgress: rule.canBeInProgress,
+    primaryInProgressAgency: rule.primaryInProgressAgency,
     ...(rule.maxAcceptableResponseHours === undefined
       ? {}
       : { maxAcceptableResponseHours: rule.maxAcceptableResponseHours }),
@@ -496,7 +498,7 @@ function currentAssessmentKey(siteId, checkId, lineageId) {
  * @returns {Promise<{ assessmentItem: Record<string, unknown>, conditionItems: Record<string, unknown>[], taskItems: Record<string, unknown>[] }>}
  */
 export async function storeEvaluatedAssessment(input, options) {
-  const catalog = options.catalog ?? activeCatalog();
+  let catalog = options.catalog ?? activeCatalog();
   const now = (options.now ?? new Date()).toISOString();
   const idFactory = options.idFactory ?? randomUUID;
 
@@ -508,6 +510,11 @@ export async function storeEvaluatedAssessment(input, options) {
         assessmentId: input.previousAssessmentId,
       })
     : null;
+  if (!options.catalog && previous?.assessment?.policyVersion) {
+    catalog = catalogForPolicyVersion(
+      String(previous.assessment.policyVersion),
+    );
+  }
   if (
     previous &&
     (!previous.assessment ||
@@ -525,6 +532,15 @@ export async function storeEvaluatedAssessment(input, options) {
       "Assessment has been replaced",
     );
   }
+  // Refreshes are revisions of the original report, not new observations.
+  // Keep time-dependent rubric evaluation pinned to the first assessment's
+  // reported time even if the analyzer sends a newer timestamp on refresh.
+  const previousReportedAt = previous?.assessment?.reportedAt;
+  const reportedAt =
+    typeof previousReportedAt === "string" &&
+    Number.isFinite(Date.parse(previousReportedAt))
+      ? previousReportedAt
+      : input.reportedAt;
   const artifactId =
     typeof input.rawAssessment.artifactId === "string"
       ? input.rawAssessment.artifactId
@@ -595,7 +611,7 @@ export async function storeEvaluatedAssessment(input, options) {
         ...conditionTimelineGsi(
           input.siteId,
           condition.severity,
-          input.reportedAt,
+          reportedAt,
           input.assessmentId,
           conditionId,
         ),
@@ -606,7 +622,7 @@ export async function storeEvaluatedAssessment(input, options) {
           unresolvedConditionGsi(
             input.siteId,
             condition.severity,
-            input.reportedAt,
+            reportedAt,
             input.assessmentId,
             conditionId,
           ),
@@ -622,6 +638,7 @@ export async function storeEvaluatedAssessment(input, options) {
         severity: condition.severity,
       },
       catalog,
+      reportedAt,
     });
 
     /** @type {string[]} */
@@ -649,7 +666,7 @@ export async function storeEvaluatedAssessment(input, options) {
         condition,
         conditionId,
         checkId: input.checkId,
-        reportedAt: input.reportedAt,
+        reportedAt,
         evaluation,
         policyVersion: catalog.policyVersion,
         taskIds,
@@ -730,7 +747,7 @@ export async function storeEvaluatedAssessment(input, options) {
     grade: input.grade,
     assessmentRevision: 0,
     lineageId,
-    reportedAt: input.reportedAt,
+    reportedAt,
     rawAssessment: input.rawAssessment,
     summary: {
       totalConditions: input.conditions.length,
@@ -744,11 +761,7 @@ export async function storeEvaluatedAssessment(input, options) {
       emergencyCount,
       manualReviewCount,
     },
-    ...assessmentTimelineGsi(
-      input.siteId,
-      input.reportedAt,
-      input.assessmentId,
-    ),
+    ...assessmentTimelineGsi(input.siteId, reportedAt, input.assessmentId),
     createdAt: now,
     updatedAt: now,
   };
@@ -1138,6 +1151,10 @@ export async function answerCondition(opts) {
       },
       answers: mergedAnswers,
       catalog,
+      reportedAt: String(
+        /** @type {Record<string, unknown>} */ (conditionItem.source ?? {})
+          .reportedAt ?? "",
+      ),
     });
 
     /** @type {Record<string, unknown> | null} */
@@ -1365,6 +1382,7 @@ export async function markTaskCannotDo(opts) {
  * @param {string} opts.siteId
  * @param {string} opts.taskId
  * @param {string} [opts.completionMethod]
+ * @param {string} [opts.actorId]
  * @param {Record<string, string | undefined>} [opts.env]
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>>}
@@ -1483,6 +1501,7 @@ export async function completeTaskWithAppActions(opts) {
     priorResults,
     trigger: "user_confirmed",
   });
+  const canBeInProgress = existing.Item.canBeInProgress === true;
 
   // Informational 311 tickets we filed under our own agency (76) are closed
   // when the site owner marks the underlying work done. The prior filing
@@ -1492,6 +1511,7 @@ export async function completeTaskWithAppActions(opts) {
   let closureResult = null;
   if (
     opts.completionMethod !== "311_filed" &&
+    !canBeInProgress &&
     is311SubmissionEnabled(opts.env ?? process.env) &&
     eligibleTicketsForClosure(priorResults).size > 0
   ) {
@@ -1538,7 +1558,11 @@ export async function completeTaskWithAppActions(opts) {
     (opts.completionMethod === "311_filed" &&
       !hasSubmitted311ActionResult(executedAppActionResults));
   const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
-  const filingUpdateId = filed311 ? randomUUID() : "";
+  const actionUpdateId =
+    !appActionFailed && (canBeInProgress || filed311) ? randomUUID() : "";
+  const actionLabel = filed311
+    ? "311 ticket filed"
+    : String(existing.Item.buttons?.[0] ?? "Action taken");
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1567,18 +1591,33 @@ export async function completeTaskWithAppActions(opts) {
 
   const updated = {
     ...claimed,
-    status: appActionFailed ? "open" : "completed",
-    ...(appActionFailed ? {} : { completedAt: now }),
-    ...(appActionFailed
+    status: appActionFailed
+      ? "open"
+      : canBeInProgress
+        ? "in_progress"
+        : "completed",
+    ...(appActionFailed || canBeInProgress ? {} : { completedAt: now }),
+    ...(appActionFailed || canBeInProgress
       ? {}
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
+    ...(!appActionFailed && canBeInProgress
+      ? {
+          inProgressAt: now,
+          notifiedAt: now,
+          agency: String(existing.Item.primaryInProgressAgency ?? "unknown"),
+          inProgressActionKind: opts.completionMethod ?? "user_confirmed",
+          latestUpdateId: actionUpdateId,
+          latestUpdateLabel: actionLabel,
+          lastAnsweredPresencePeriod: 0,
+        }
+      : {}),
     appActionStatus,
     appActionResults,
     ...(filed311
       ? {
           agency: "311",
           notifiedAt: now,
-          latestUpdateId: filingUpdateId,
+          latestUpdateId: actionUpdateId,
           latestUpdateLabel: "311 ticket filed",
         }
       : {}),
@@ -1586,7 +1625,7 @@ export async function completeTaskWithAppActions(opts) {
     updatedAt: now,
     ...taskWorklistDateGsi(
       opts.siteId,
-      appActionFailed ? "open" : "completed",
+      appActionFailed ? "open" : canBeInProgress ? "in_progress" : "completed",
       String(existing.Item.kind),
       Number(existing.Item.severity ?? 0),
       now,
@@ -1613,7 +1652,7 @@ export async function completeTaskWithAppActions(opts) {
             },
           },
         },
-        ...(filed311
+        ...(actionUpdateId
           ? [
               {
                 Put: {
@@ -1623,15 +1662,17 @@ export async function completeTaskWithAppActions(opts) {
                       opts.siteId,
                       opts.taskId,
                       now,
-                      filingUpdateId,
+                      actionUpdateId,
                     ),
                     entityType: "task_update",
                     taskId: opts.taskId,
-                    updateId: filingUpdateId,
-                    type: "311_ticket_filed",
-                    label: "311 ticket filed",
+                    updateId: actionUpdateId,
+                    type: filed311
+                      ? "311_ticket_filed"
+                      : "escalation_action_taken",
+                    label: actionLabel,
                     occurredAt: now,
-                    actorId: "site-team",
+                    actorId: opts.actorId ?? "site-team",
                     documentationState: "closed",
                   },
                   ConditionExpression: "attribute_not_exists(pk)",
@@ -1644,16 +1685,16 @@ export async function completeTaskWithAppActions(opts) {
                     ...taskUpdatePointerKey(
                       opts.siteId,
                       opts.taskId,
-                      filingUpdateId,
+                      actionUpdateId,
                     ),
                     entityType: "task_update_pointer",
                     taskId: opts.taskId,
-                    updateId: filingUpdateId,
+                    updateId: actionUpdateId,
                     updateSk: taskUpdateKey(
                       opts.siteId,
                       opts.taskId,
                       now,
-                      filingUpdateId,
+                      actionUpdateId,
                     ).sk,
                   },
                   ConditionExpression: "attribute_not_exists(pk)",

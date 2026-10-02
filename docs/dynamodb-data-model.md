@@ -149,7 +149,7 @@ as task update events and every GSI sort key.
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `cannotDo`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
 | Guidance current pointer | `SITE#<siteId>` | `GUIDANCE_CURRENT#<JSON [checkId, lineageId]>` | points to the current assessment for one artifact. Moved atomically on refresh. See [Guidance refresh lineage](#guidance-refresh-lineage). |
-| **Task** (action item) | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, kind (`action` \| `escalation` \| `non_actionable_escalation`), type (`onsite` \| `city_escalation`, derived from kind), ruleId, policyVersion, category, severity, status |
+| **Task** (action item) | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, kind (`action` \| `escalation` \| `non_actionable_escalation`), type (`onsite` \| `city_escalation`, derived from kind), ruleId, policyVersion, `canBeInProgress`, `primaryInProgressAgency`, category, severity, status |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only timeline event for an in-progress task: type, label, actorId, `text` / `notes`, `photoKeys` (artifact IDs), optional `presencePeriod`, `documentationState` |
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | finds an update by ID alone, for documentation and safe retries. Stores the event's full sort key. |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | photos attached to an update. Not analyzer input. A `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer lets the normal media route serve them. |
@@ -194,6 +194,20 @@ presence periods are always counted from `inProgressAt`, which never changes. Ta
 photos reuse ART rows with `purpose: "task_update"`. Registering them skips the SQS and
 analyzer path on purpose. The update event stores the artifact IDs so the media route can
 authorize reads.
+
+`canBeInProgress` is snapshotted from the versioned guidance rule when the task is
+created. The first successful card action moves eligible tasks to `in_progress`; tasks
+without that flag complete directly.
+
+`primaryInProgressAgency` is also snapshotted from the rule. When an eligible task enters
+progress, it becomes the task's displayed `agency` without interpreting user-facing button
+text.
+
+Resolution of an in-progress task with an app-owned informational 311 ticket temporarily
+uses `status: "resolving"`, `resolutionUpdateId`, and `resolutionLeaseExpiresAt`. The claim
+prevents concurrent, non-idempotent ticket closures. Per-ticket closure checkpoints are
+written under that lease; partial or failed closure returns the task to `in_progress` for
+retry, while full success atomically writes the resolution event and completed task.
 
 **Short IDs.** `shortId` is the reference staff see on task cards. New tasks mint it as
 `<providerShortCode>-<siteShortCode>-<nnn>`. The short codes are site metadata. `nnn`

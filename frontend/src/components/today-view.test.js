@@ -158,6 +158,7 @@ describe("home task status helpers", () => {
     const { homeTaskStatus } = await import("../domain/home-tasks.js");
 
     expect(homeTaskStatus({ status: "open" }, null)).toBe("needs_action");
+    expect(homeTaskStatus({ status: "resolving" }, null)).toBe("in_progress");
     expect(
       homeTaskStatus(
         {
