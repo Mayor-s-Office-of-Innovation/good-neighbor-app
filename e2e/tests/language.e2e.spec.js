@@ -39,10 +39,9 @@ test.describe("language switching", () => {
     await expect(page.locator("html")).toHaveAttribute("lang", "es-US");
     await expect(page.locator("#start-check")).toBeVisible({ timeout: 30_000 });
 
+    // The menu now renders in Spanish ("Idioma"), so locate by id.
     await page.locator("#home-settings").click();
-    await page
-      .getByRole("menuitem", { name: t("today.settings.language") })
-      .click();
+    await page.locator("#settings-language").click();
     await expect(
       page.locator('#language-dialog [data-locale="es"][aria-current="true"]'),
     ).toHaveCount(1);
