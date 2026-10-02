@@ -349,7 +349,7 @@ html.wa-dark .analysis-card__clear-copy a {
   gap: 1rem;
   width: 100%;
   padding: 0.25rem 1.5rem 0.5rem;
-  color: var(--wa-color-gray-30, #424554);
+  color: var(--text-secondary);
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
 }
@@ -689,6 +689,11 @@ html.wa-dark .analysis-card__clear-copy a {
   display: block;
   object-fit: cover;
   border-radius: inherit;
+}
+
+.analysis-card__media [data-photo-lightbox]:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, var(--brand-blue));
+  outline-offset: -0.1875rem;
 }
 
 .analysis-card__media span {
