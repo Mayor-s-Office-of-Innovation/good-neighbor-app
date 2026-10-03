@@ -36,6 +36,9 @@ describe("City-issued Manager enrollment grants", () => {
           siteId: "site-1",
           status: "pending",
           tokenHash: "secret-verifier",
+          securityNotificationStatus: "accepted",
+          securityNotificationProvider: "ses",
+          securityNotificationUpdatedAt: "2026-10-03T20:00:00.000Z",
           expiresAt: "2099-01-01T00:00:00.000Z",
         },
       ],
@@ -46,6 +49,11 @@ describe("City-issued Manager enrollment grants", () => {
     );
     expect(response.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
+    expect(JSON.parse(String(response.body)).grants[0]).toMatchObject({
+      securityNotificationStatus: "accepted",
+      securityNotificationProvider: "ses",
+      securityNotificationUpdatedAt: "2026-10-03T20:00:00.000Z",
+    });
     expect(String(response.body)).not.toContain("secret-verifier");
   });
 

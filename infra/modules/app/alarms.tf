@@ -395,3 +395,35 @@ resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
 
   tags = var.tags
 }
+
+resource "aws_cloudwatch_log_metric_filter" "manager_security_notification_failed" {
+  name           = "${local.name_prefix}-manager-security-notification-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerSecurityNotification\" && $.status = \"failed\" }"
+
+  metric_transformation {
+    name          = "ManagerSecurityNotificationFailed"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_security_notification_failed" {
+  alarm_name          = "${local.name_prefix}-manager-security-notification-failed"
+  alarm_description   = "A post-enrollment Site Manager security notification failed. Enrollment remains valid; restore delivery and follow docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerSecurityNotificationFailed"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}

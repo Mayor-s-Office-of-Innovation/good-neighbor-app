@@ -292,6 +292,87 @@ export async function sendManagerAccessEmail(email) {
   }
 }
 
+/**
+ * Notify a Manager after a new device binding is enrolled. This message never
+ * contains an enrollment credential or access token.
+ * @param {{ to:string, managerName:string, siteName:string, deviceLabel:string, clientDescription:string, enrolledAt:string, revocationContact?:string }} email
+ * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
+ */
+export async function sendManagerSecurityNotification(email) {
+  const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
+  const metadata = {
+    marker: "manager_security_notification_email",
+    contactHash: createHash("sha256")
+      .update(email.to.trim().toLowerCase())
+      .digest("hex"),
+    siteName: email.siteName,
+  };
+  if (localPreview) {
+    const messageId = `local-${Date.now()}`;
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "log",
+        status: "preview",
+        messageId,
+      }),
+    );
+    return { provider: "log", messageId };
+  }
+  try {
+    const from = process.env.SETUP_CODE_EMAIL_FROM;
+    if (!from) throw new Error("Missing email sender");
+    const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
+    const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
+    const enrolled = managerExpiry(email.enrolledAt);
+    const contact = email.revocationContact
+      ? `Contact ${email.revocationContact} immediately to revoke this device.`
+      : "Contact your City administrator immediately to revoke this device.";
+    const text = `Hello ${email.managerName},\n\nA device was enrolled as a Good Neighbor Site Manager for ${email.siteName}.\n\nTime: ${enrolled}\nDevice label: ${email.deviceLabel}\nBrowser/device: ${email.clientDescription}\n\nIf this was you, no action is needed. If you do not recognize this enrollment, ${contact}`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>A device was enrolled as a Good Neighbor Site Manager for <strong>${escapeHtml(email.siteName)}</strong>.</p><dl><dt>Time</dt><dd>${escapeHtml(enrolled)}</dd><dt>Device label</dt><dd>${escapeHtml(email.deviceLabel)}</dd><dt>Browser/device</dt><dd>${escapeHtml(email.clientDescription)}</dd></dl><p>If this was you, no action is needed. If you do not recognize this enrollment, ${escapeHtml(contact)}</p>`;
+    const response = await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: from,
+        Destination: { ToAddresses: [email.to] },
+        ...(replyTo && { ReplyToAddresses: [replyTo] }),
+        Content: {
+          Simple: {
+            Subject: {
+              Data: `${prefix}New Good Neighbor Manager device enrolled`,
+              Charset: "UTF-8",
+            },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              Html: { Data: html, Charset: "UTF-8" },
+            },
+          },
+        },
+      }),
+    );
+    if (!response.MessageId) throw new Error("Missing SES message ID");
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "ses",
+        status: "accepted",
+        messageId: response.MessageId,
+      }),
+    );
+    return { provider: "ses", messageId: response.MessageId };
+  } catch {
+    console.error(
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
+    );
+    throw new Error("Manager security notification delivery failed");
+  }
+}
+
 /** @param {string} value */
 function managerExpiry(value) {
   return new Date(value).toLocaleString("en-US", {

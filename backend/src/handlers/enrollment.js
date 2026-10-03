@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
+import { sendManagerSecurityNotification } from "../integrations/email.js";
 import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
 
 const ACCESS_TTL_SECONDS = 15 * 60;
@@ -360,6 +365,17 @@ export const redeemEnrollmentGrant = async (event) => {
     }
     throw error;
   }
+  if (accessLevel === "manager") {
+    await notifyManagerEnrollment({
+      event,
+      tableName,
+      grant,
+      membership: authority,
+      site,
+      label,
+      enrolledAt: nowIso,
+    });
+  }
   return jsonResponse(201, {
     physicalDeviceId,
     bindingId,
@@ -383,6 +399,100 @@ export const redeemEnrollmentGrant = async (event) => {
     ],
   });
 };
+
+/**
+ * Notification failure must not roll back a successfully redeemed one-time
+ * grant. Delivery evidence remains on the redeemed grant and safe logs feed
+ * the operational alarm.
+ * @param {{event:import("aws-lambda").APIGatewayProxyEventV2, tableName:string, grant:Record<string, any>, membership:Record<string, any>, site:Record<string, any>, label:string, enrolledAt:string}} input
+ */
+async function notifyManagerEnrollment(input) {
+  let status = "accepted";
+  let provider = "ses";
+  let messageId = "";
+  try {
+    const delivery = await sendManagerSecurityNotification({
+      to: String(input.membership.email),
+      managerName: String(input.membership.name || "Site Manager"),
+      siteName: String(input.site.name),
+      deviceLabel: input.label,
+      clientDescription: describeClient(input.event.headers),
+      enrolledAt: input.enrolledAt,
+      revocationContact:
+        process.env.SETUP_CODE_EMAIL_REPLY_TO ||
+        process.env.SETUP_CODE_EMAIL_FROM,
+    });
+    provider = delivery.provider;
+    messageId = delivery.messageId;
+  } catch {
+    status = "failed";
+  }
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: input.tableName,
+        Key: { pk: input.grant.pk, sk: input.grant.sk },
+        UpdateExpression:
+          "SET securityNotificationStatus = :status, securityNotificationProvider = :provider, securityNotificationMessageId = :messageId, securityNotificationUpdatedAt = :now",
+        ConditionExpression: "#status = :redeemed",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":status": status,
+          ":provider": provider,
+          ":messageId": messageId,
+          ":now": new Date().toISOString(),
+          ":redeemed": "redeemed",
+        },
+      }),
+    );
+  } catch {
+    console.error(
+      JSON.stringify({
+        marker: "ManagerSecurityNotificationEvidenceFailed",
+        level: "ERROR",
+      }),
+    );
+  }
+  console[status === "failed" ? "error" : "info"](
+    JSON.stringify({
+      marker: "ManagerSecurityNotification",
+      status,
+      provider,
+      siteId: String(input.site.siteId),
+    }),
+  );
+}
+
+/** @param {Record<string, string | undefined> | undefined} headers */
+function describeClient(headers = {}) {
+  const entry = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === "user-agent",
+  );
+  const userAgent = entry?.[1] ?? "";
+  const platform = /android/i.test(userAgent)
+    ? "Android"
+    : /iphone|ipad|ipod/i.test(userAgent)
+      ? "iOS/iPadOS"
+      : /windows/i.test(userAgent)
+        ? "Windows"
+        : /cros/i.test(userAgent)
+          ? "ChromeOS"
+          : /macintosh|mac os/i.test(userAgent)
+            ? "macOS"
+            : /linux/i.test(userAgent)
+              ? "Linux"
+              : "unknown device";
+  const browser = /edg\//i.test(userAgent)
+    ? "Edge"
+    : /firefox\//i.test(userAgent)
+      ? "Firefox"
+      : /chrome\//i.test(userAgent) || /crios\//i.test(userAgent)
+        ? "Chrome"
+        : /safari\//i.test(userAgent)
+          ? "Safari"
+          : "unknown browser";
+  return `${browser} on ${platform}`;
+}
 
 /**
  * @param {unknown} value

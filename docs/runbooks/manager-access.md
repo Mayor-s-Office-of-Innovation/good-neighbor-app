@@ -18,13 +18,14 @@ delivery provider/status, and the number of single-Site links.
 | `<env>-manager-access-throttled` | At least ten application-limit rejections in five minutes. | Check whether one limit type dominates, then compare with WAF volume. Do not loosen limits during an unexplained burst. |
 | `<env>-manager-access-waf-blocked` | WAF blocked at least ten requests in five minutes. | Review WAF sampled requests for distribution and URI correctness. Keep sampled data access restricted because AWS may retain source IP metadata. |
 | `<env>-manager-access-delivery-failed` | SES submission failed for at least one recovery email. | Check SES account/sender health, suppression/bounce status, Lambda permissions, and the configured sender without retrieving or replaying the enrollment URL. |
+| `<env>-manager-security-notification-failed` | A Manager device was enrolled, but its post-enrollment security notification failed. | Treat the binding as valid, restore delivery, and use Site Admin delivery evidence to identify the affected grant without exposing its recipient or token. |
 | `<env>-server-errors` | An unexpected recovery-path dependency or write failed repeatedly. | Filter for `ManagerAccessRequestFailed`, then check DynamoDB/API health and recent deployments. |
 
 Application-log query for the API Lambda:
 
 ```text
-fields @timestamp, marker, limitedBy, status, provider, siteCount
-| filter marker in ["ManagerAccessThrottled", "ManagerAccessDelivery", "ManagerAccessRequestFailed", "manager_access_email"]
+fields @timestamp, marker, limitedBy, status, provider, siteCount, siteId
+| filter marker in ["ManagerAccessThrottled", "ManagerAccessDelivery", "ManagerAccessRequestFailed", "ManagerSecurityNotification", "ManagerSecurityNotificationEvidenceFailed", "manager_access_email", "manager_security_notification_email"]
 | sort @timestamp desc
 | limit 200
 ```
@@ -39,6 +40,11 @@ Expected markers:
   no enrollment URL outside explicitly local preview mode.
 - `ManagerAccessRequestFailed`: an unexpected internal failure; investigate the surrounding
   Lambda request and AWS service metrics.
+- `ManagerSecurityNotification`: accepted/failed result after a Manager binding is created.
+  Failure never rolls back the valid binding. The redeemed grant retains provider, message
+  ID, status, and update time for authorized Site Admin review.
+- `ManagerSecurityNotificationEvidenceFailed`: delivery was attempted, but its evidence
+  could not be attached to the redeemed grant; inspect DynamoDB health and permissions.
 
 ## Abuse triage
 
@@ -65,6 +71,19 @@ Expected markers:
 4. Correct the service/configuration problem. Ask the Manager to submit a new recovery
    request after the cooldown; do not reuse or manually extract an old token.
 5. Confirm a later `ManagerAccessDelivery` is accepted and the alarm returns to OK.
+
+## Post-enrollment notification failure
+
+1. Confirm the Manager binding was successfully created; never revoke it solely because the
+   notification failed.
+2. Locate the redeemed grant through the authorized Site Admin view and inspect its
+   `securityNotificationStatus`, provider, message ID, and update time.
+3. Follow the SES checks above. If evidence persistence failed, separately inspect DynamoDB
+   health and the API Lambda's update permission.
+4. If enrollment looks suspicious for other reasons, contact the Manager through an approved
+   channel and use normal device revocation. Delivery failure alone is not compromise proof.
+5. After repair, verify notifications with a designated test Manager enrollment. Do not
+   resend an old enrollment credential.
 
 ## Safe local verification
 

@@ -1,15 +1,37 @@
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  GetCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, sendManagerSecurityNotification } = vi.hoisted(() => ({
+  send: vi.fn(),
+  sendManagerSecurityNotification: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../integrations/email.js", () => ({
+  sendManagerSecurityNotification,
+}));
 
 const { redeemEnrollmentGrant } = await import("./enrollment.js");
 
 beforeEach(() => {
   send.mockReset();
+  sendManagerSecurityNotification.mockReset().mockResolvedValue({
+    provider: "ses",
+    messageId: "security-message-1",
+  });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("DEVICE_TOKEN_SECRET", "test-device-secret-at-least-32-bytes");
+  vi.stubEnv("SETUP_CODE_EMAIL_REPLY_TO", "support@example.org");
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("Manager enrollment redemption", () => {
@@ -53,18 +75,26 @@ describe("Manager enrollment redemption", () => {
           sk: "MANAGER_MEMBERSHIP#membership-1",
           status: "active",
           generation: 2,
+          name: "Alex Rivera",
+          email: "alex@example.org",
         },
       })
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
 
     const response = await call(
-      event({
-        grantId: "grant-1",
-        token,
-        physicalDeviceId: "physical_device_1",
-        label: "Alex's tablet",
-      }),
+      event(
+        {
+          grantId: "grant-1",
+          token,
+          physicalDeviceId: "physical_device_1",
+          label: "Alex's tablet",
+        },
+        {
+          "user-agent": "Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1",
+        },
+      ),
     );
     expect(response.statusCode).toBe(201);
     const body = JSON.parse(String(response.body));
@@ -106,6 +136,24 @@ describe("Manager enrollment redemption", () => {
       status: "active",
     });
     expect(JSON.stringify(transaction.input)).not.toContain(token);
+    expect(sendManagerSecurityNotification).toHaveBeenCalledWith({
+      to: "alex@example.org",
+      managerName: "Alex Rivera",
+      siteName: "Site One",
+      deviceLabel: "Alex's tablet",
+      clientDescription: "Safari on iOS/iPadOS",
+      enrolledAt: expect.any(String),
+      revocationContact: "support@example.org",
+    });
+    expect(send.mock.calls[6][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[6][0].input.ExpressionAttributeValues).toMatchObject(
+      {
+        ":status": "accepted",
+        ":provider": "ses",
+        ":messageId": "security-message-1",
+        ":redeemed": "redeemed",
+      },
+    );
   });
 
   it("returns the same public failure for an unknown token", async () => {
@@ -117,6 +165,75 @@ describe("Manager enrollment redemption", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "invalid_enrollment_grant",
     });
+  });
+
+  it("keeps a successful Manager enrollment valid when notification delivery fails", async () => {
+    const token = "notification-failure-token";
+    const tokenHash = await sha256(token);
+    sendManagerSecurityNotification.mockRejectedValueOnce(
+      new Error("SES unavailable"),
+    );
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: `ENROLLMENT_TOKEN#${tokenHash}`,
+          sk: "#META",
+          grantId: "grant-2",
+          grantPk: "SITE#site-1",
+          grantSk: "MANAGER_GRANT#time#grant-2",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "MANAGER_GRANT#time#grant-2",
+          grantId: "grant-2",
+          siteId: "site-1",
+          membershipId: "membership-1",
+          accessLevel: "manager",
+          status: "pending",
+          tokenHash,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", name: "Site One", status: "active" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "MANAGER_MEMBERSHIP#membership-1",
+          status: "active",
+          generation: 1,
+          name: "Alex Rivera",
+          email: "alex@example.org",
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const response = await call(event({ grantId: "grant-2", token }));
+
+    expect(response.statusCode).toBe(201);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      accessLevel: "manager",
+      site: { siteId: "site-1" },
+    });
+    expect(send.mock.calls[6][0].input.ExpressionAttributeValues).toMatchObject(
+      {
+        ":status": "failed",
+        ":redeemed": "redeemed",
+      },
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      JSON.stringify({
+        marker: "ManagerSecurityNotification",
+        status: "failed",
+        provider: "ses",
+        siteId: "site-1",
+      }),
+    );
   });
 
   it("fails closed when a concurrent redemption wins", async () => {
@@ -248,10 +365,11 @@ describe("Manager enrollment redemption", () => {
 
 /**
  * @param {Record<string, unknown>} body
+ * @param {Record<string, string>} [headers]
  * @returns {Record<string, unknown>}
  */
-function event(body) {
-  return { body: JSON.stringify(body), requestContext: {} };
+function event(body, headers = {}) {
+  return { body: JSON.stringify(body), requestContext: {}, headers };
 }
 
 /**
