@@ -9,6 +9,11 @@ import {
   setPopstateGuard,
 } from "../router.js";
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
+import {
+  createStaffEnrollmentGrant,
+  listManagerDeviceBindings,
+  revokeManagerDeviceBinding,
+} from "../services/api.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   showSiteAdminErrorToast,
@@ -112,6 +117,15 @@ class SiteAdminView extends HTMLElement {
             </div>
           </section>
           <section class="site-admin-section">
+            <div class="site-admin-section-heading">
+              <h2>Access &amp; devices</h2>
+              <button type="button" data-access-devices>Manage</button>
+            </div>
+            <div class="site-admin-card site-admin-card--prose">
+              Enroll team devices and revoke individual general-access devices.
+            </div>
+          </section>
+          <section class="site-admin-section">
             <h2>Compliance letters</h2>
             ${current
               ? letterCard(
@@ -147,6 +161,188 @@ class SiteAdminView extends HTMLElement {
         ),
       );
     });
+    this.querySelector("[data-access-devices]")?.addEventListener("click", () =>
+      navigate("/site-admin/access"),
+    );
+  }
+}
+
+class SiteAccessView extends HTMLElement {
+  async connectedCallback() {
+    const binding = await getSite();
+    if (!hasAdminAccess(binding)) {
+      navigate("/today");
+      return;
+    }
+    this._site = binding;
+    this._secretUrl = "";
+    this.innerHTML = loadingView("Access & devices");
+    await this._load();
+  }
+
+  async _load() {
+    try {
+      const result = await listManagerDeviceBindings();
+      this._bindings = result.bindings || [];
+      this._render();
+      announceScreenHeading(this, ".site-admin-header h1");
+    } catch {
+      this.innerHTML = errorView("We couldn't load the registered devices.");
+      this._wireBack();
+    }
+  }
+
+  _wireBack() {
+    this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
+      backOrNavigate("/site-admin"),
+    );
+  }
+
+  _render() {
+    this.innerHTML = html`
+      <div class="site-admin-page">
+        ${adminHeader("Access & devices")}
+        <div class="site-admin-content">
+          <section
+            class="site-admin-section"
+            aria-labelledby="enroll-team-title"
+          >
+            <h2 id="enroll-team-title">Enroll a team member</h2>
+            <form
+              class="site-admin-card site-access-form"
+              id="staff-grant-form"
+            >
+              <label for="staff-device-label">Device label</label>
+              <wa-input
+                id="staff-device-label"
+                name="label"
+                maxlength="100"
+                autocomplete="off"
+                required
+              ></wa-input>
+              <p class="site-access-help">
+                Create one 10-minute, single-use enrollment link. Finish sharing
+                it before creating another.
+              </p>
+              <p
+                class="site-admin-form-error"
+                id="staff-grant-error"
+                role="alert"
+              ></p>
+              <button class="btn-ink" type="submit">
+                Create enrollment link
+              </button>
+            </form>
+            <div
+              class="site-access-grant"
+              id="staff-grant-result"
+              aria-live="polite"
+            ></div>
+          </section>
+          <section
+            class="site-admin-section"
+            aria-labelledby="team-devices-title"
+          >
+            <h2 id="team-devices-title">Team devices</h2>
+            <div class="site-admin-card site-access-list">
+              ${this._bindings.length
+                ? this._bindings.map(deviceRow).join("")
+                : html`<p class="site-admin-empty">
+                    No team devices enrolled.
+                  </p>`}
+            </div>
+          </section>
+        </div>
+      </div>
+    `;
+    this._wireBack();
+    this.querySelector("#staff-grant-form")?.addEventListener(
+      "submit",
+      (event) => void this._createGrant(event),
+    );
+    this.querySelectorAll("[data-revoke-team-device]").forEach((button) => {
+      button.addEventListener(
+        "click",
+        () =>
+          void this._revoke(
+            button.getAttribute("data-revoke-team-device") || "",
+          ),
+      );
+    });
+  }
+
+  async _createGrant(event) {
+    event.preventDefault();
+    const form = /** @type {HTMLFormElement} */ (event.currentTarget);
+    const label = String(
+      /** @type {any} */ (form.querySelector("#staff-device-label"))?.value ||
+        "",
+    ).trim();
+    const error = this.querySelector("#staff-grant-error");
+    if (!label) {
+      if (error)
+        error.textContent = "Enter a label for the team member's device.";
+      return;
+    }
+    const button = form.querySelector("button[type=submit]");
+    button?.setAttribute("disabled", "");
+    if (error) error.textContent = "";
+    try {
+      const result = await createStaffEnrollmentGrant(label);
+      this._secretUrl = result.enrollmentUrl;
+      const output = this.querySelector("#staff-grant-result");
+      if (output) {
+        output.innerHTML = html`<div class="site-admin-card site-access-ready">
+          <h3>Enrollment link ready</h3>
+          <p>
+            For ${escapeHtml(result.grant.label)}. It expires
+            ${escapeHtml(formatTimestamp(result.grant.expiresAt))} and works
+            once.
+          </p>
+          <button class="btn-ink" type="button" id="share-staff-grant">
+            Share enrollment link
+          </button>
+        </div>`;
+        output
+          .querySelector("#share-staff-grant")
+          ?.addEventListener("click", () => void this._shareGrant());
+      }
+    } catch (caught) {
+      if (error) {
+        error.textContent =
+          caught?.status === 409
+            ? "Finish or wait for the current enrollment link to expire before creating another."
+            : "We couldn't create the enrollment link. Try again.";
+      }
+      button?.removeAttribute("disabled");
+    }
+  }
+
+  async _shareGrant() {
+    if (!this._secretUrl) return;
+    if (navigator.share) {
+      await navigator.share({
+        title: "Good Neighbor enrollment",
+        url: this._secretUrl,
+      });
+      return;
+    }
+    await navigator.clipboard.writeText(this._secretUrl);
+    const button = this.querySelector("#share-staff-grant");
+    if (button) button.textContent = "Enrollment link copied";
+  }
+
+  async _revoke(bindingId) {
+    if (!bindingId || !window.confirm("Revoke access for this team device?"))
+      return;
+    try {
+      await revokeManagerDeviceBinding(bindingId);
+      await this._load();
+    } catch {
+      const error = this.querySelector("#staff-grant-error");
+      if (error)
+        error.textContent = "We couldn't revoke that device. Try again.";
+    }
   }
 }
 
@@ -562,5 +758,38 @@ function field(id, label, value, autocomplete, type, required = true) {
   ></wa-input>`;
 }
 
+/** @param {Record<string, any>} binding */
+function deviceRow(binding) {
+  return html`<article class="site-access-device">
+    <div>
+      <h3>${escapeHtml(binding.label || "Team device")}</h3>
+      <p>
+        ${escapeHtml(binding.status || "active")} · Last seen
+        ${escapeHtml(formatTimestamp(binding.lastSeenAt))}
+      </p>
+    </div>
+    ${binding.status === "active"
+      ? html`<button
+          class="btn-outline"
+          type="button"
+          data-revoke-team-device="${escapeAttr(binding.bindingId)}"
+        >
+          Revoke
+        </button>`
+      : ""}
+  </article>`;
+}
+
+/** @param {unknown} value */
+function formatTimestamp(value) {
+  const date = new Date(String(value || ""));
+  if (Number.isNaN(date.getTime())) return EMPTY;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 customElements.define("site-admin-view", SiteAdminView);
 customElements.define("site-admin-edit", SiteAdminEdit);
+customElements.define("site-access-view", SiteAccessView);

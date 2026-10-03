@@ -50,6 +50,11 @@ import {
   selectDeviceBinding,
 } from "../src/handlers/device-bindings.js";
 import {
+  createStaffGrant,
+  listGeneralBindings,
+  revokeGeneralBinding,
+} from "../src/handlers/manager-access.js";
+import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
@@ -209,6 +214,13 @@ const routes = [
   route("POST", "/app/v1/enrollment/redeem", redeemEnrollmentGrant),
   route("GET", "/app/v1/device-bindings", listDeviceBindings),
   route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
+  route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
+  route("GET", "/app/v1/manager/device-bindings", listGeneralBindings),
+  route(
+    "POST",
+    "/app/v1/manager/device-bindings/{bindingId}/revoke",
+    revokeGeneralBinding,
+  ),
   route("GET", "/v1/sites:search", searchSites),
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config

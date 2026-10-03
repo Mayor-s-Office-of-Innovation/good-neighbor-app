@@ -336,6 +336,26 @@ export function selectDeviceBinding(bindingId) {
   });
 }
 
+/** @param {string} label */
+export function createStaffEnrollmentGrant(label) {
+  return request("POST", "/app/v1/manager/staff-grants", {
+    body: { label },
+  });
+}
+
+/** List general-access devices at the current Manager binding's Site. */
+export function listManagerDeviceBindings() {
+  return request("GET", "/app/v1/manager/device-bindings");
+}
+
+/** @param {string} bindingId */
+export function revokeManagerDeviceBinding(bindingId) {
+  return request(
+    "POST",
+    `/app/v1/manager/device-bindings/${encodeURIComponent(bindingId)}/revoke`,
+  );
+}
+
 /**
  * POST /v1/checks — start a perimeter run. The client-minted `checkId` rides in
  * the `idempotency-key` header (not the body), so a replay can't duplicate the

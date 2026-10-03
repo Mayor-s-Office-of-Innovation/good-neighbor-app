@@ -12,7 +12,7 @@ const INACTIVITY_LIMIT_DAYS = 60;
 const INVALID_GRANT = { error: "invalid_enrollment_grant" };
 
 /**
- * Redeem a one-time Manager enrollment grant into a physical-device identity,
+ * Redeem a one-time enrollment grant into a physical-device identity,
  * one Site binding, and the existing device-token compatibility session.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
@@ -27,7 +27,6 @@ export const redeemEnrollmentGrant = async (event) => {
   const grantId = clean(input.grantId);
   const token = clean(input.token);
   const requestedPhysicalDeviceId = clean(input.physicalDeviceId);
-  const label = clean(input.label).slice(0, 100) || "Site Manager device";
   if (!grantId || !token) return jsonResponse(401, INVALID_GRANT);
   if (requestedPhysicalDeviceId && !validDeviceId(requestedPhysicalDeviceId)) {
     return jsonResponse(400, { error: "invalid_physical_device_id" });
@@ -57,7 +56,7 @@ export const redeemEnrollmentGrant = async (event) => {
   if (
     !grant ||
     grant.status !== "pending" ||
-    grant.accessLevel !== "manager" ||
+    !["general", "manager"].includes(grant.accessLevel) ||
     grant.tokenHash !== tokenHash ||
     grant.expiresAt <= nowIso
   ) {
@@ -65,9 +64,17 @@ export const redeemEnrollmentGrant = async (event) => {
   }
 
   const siteId = String(grant.siteId);
-  const membershipId = String(grant.membershipId);
+  const accessLevel = /** @type {"general"|"manager"} */ (grant.accessLevel);
+  const membershipId =
+    accessLevel === "manager" ? String(grant.membershipId) : "";
+  const issuerBindingId =
+    accessLevel === "general" ? String(grant.issuedByBindingId) : "";
+  const label =
+    clean(input.label).slice(0, 100) ||
+    clean(grant.label).slice(0, 100) ||
+    (accessLevel === "manager" ? "Site Manager device" : "Team device");
   const physicalDeviceId = requestedPhysicalDeviceId || randomUUID();
-  const [siteResult, membershipResult, physicalResult] = await Promise.all([
+  const [siteResult, authorityResult, physicalResult] = await Promise.all([
     ddb.send(
       new GetCommand({
         TableName: tableName,
@@ -79,7 +86,10 @@ export const redeemEnrollmentGrant = async (event) => {
         TableName: tableName,
         Key: {
           pk: `SITE#${siteId}`,
-          sk: `MANAGER_MEMBERSHIP#${membershipId}`,
+          sk:
+            accessLevel === "manager"
+              ? `MANAGER_MEMBERSHIP#${membershipId}`
+              : `DEVICE_BINDING#${issuerBindingId}`,
         },
       }),
     ),
@@ -91,13 +101,33 @@ export const redeemEnrollmentGrant = async (event) => {
     ),
   ]);
   const site = siteResult.Item;
-  const membership = membershipResult.Item;
+  const authority = authorityResult.Item;
   const physical = physicalResult.Item;
+  const issuerMembership =
+    accessLevel === "general" && grant.issuerMembershipId
+      ? (
+          await ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: {
+                pk: `SITE#${siteId}`,
+                sk: `MANAGER_MEMBERSHIP#${grant.issuerMembershipId}`,
+              },
+            }),
+          )
+        ).Item
+      : undefined;
   if (
     !site ||
     site.status === "inactive" ||
-    !membership ||
-    membership.status !== "active" ||
+    !authority ||
+    authority.status !== "active" ||
+    (accessLevel === "general" && authority.accessLevel !== "manager") ||
+    (accessLevel === "general" &&
+      (!issuerMembership ||
+        issuerMembership.status !== "active" ||
+        Number(issuerMembership.generation ?? 0) !==
+          Number(grant.issuerMembershipGeneration ?? -1))) ||
     physical?.status === "revoked"
   ) {
     return jsonResponse(401, INVALID_GRANT);
@@ -111,7 +141,7 @@ export const redeemEnrollmentGrant = async (event) => {
         siteId,
         deviceId: bindingId,
         tokenGeneration: generation,
-        accessLevel: "manager",
+        accessLevel,
       },
       { expiresIn: ACCESS_TTL_SECONDS },
     ),
@@ -120,7 +150,7 @@ export const redeemEnrollmentGrant = async (event) => {
         siteId,
         deviceId: bindingId,
         tokenGeneration: generation,
-        accessLevel: "manager",
+        accessLevel,
       },
       { expiresIn: REFRESH_TTL_SECONDS },
     ),
@@ -129,7 +159,8 @@ export const redeemEnrollmentGrant = async (event) => {
     now.getTime() + ABSOLUTE_LIFETIME_MS,
   ).toISOString();
   const siteGeneration = Number(site.siteCredentialGeneration ?? 0);
-  const membershipGeneration = Number(membership.generation ?? 1);
+  const membershipGeneration =
+    accessLevel === "manager" ? Number(authority.generation ?? 1) : undefined;
   const binding = {
     pk: `SITE#${siteId}`,
     sk: `DEVICE_BINDING#${bindingId}`,
@@ -138,9 +169,10 @@ export const redeemEnrollmentGrant = async (event) => {
     bindingId,
     physicalDeviceId,
     siteId,
-    accessLevel: "manager",
-    membershipId,
-    membershipGeneration,
+    accessLevel,
+    ...(accessLevel === "manager"
+      ? { membershipId, membershipGeneration }
+      : {}),
     siteCredentialGeneration: siteGeneration,
     label,
     status: "active",
@@ -161,9 +193,10 @@ export const redeemEnrollmentGrant = async (event) => {
     physicalDeviceId,
     siteId,
     siteName: site.name,
-    accessLevel: "manager",
-    membershipId,
-    membershipGeneration,
+    accessLevel,
+    ...(accessLevel === "manager"
+      ? { membershipId, membershipGeneration }
+      : {}),
     siteCredentialGeneration: siteGeneration,
     label,
     status: "active",
@@ -236,16 +269,43 @@ export const redeemEnrollmentGrant = async (event) => {
           {
             ConditionCheck: {
               TableName: tableName,
-              Key: { pk: membership.pk, sk: membership.sk },
+              Key: { pk: authority.pk, sk: authority.sk },
               ConditionExpression:
-                "#status = :active AND generation = :generation",
+                accessLevel === "manager"
+                  ? "#status = :active AND generation = :generation"
+                  : "#status = :active AND accessLevel = :manager",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":active": "active",
-                ":generation": membershipGeneration,
+                ...(accessLevel === "manager"
+                  ? { ":generation": membershipGeneration }
+                  : {}),
+                ...(accessLevel === "general" ? { ":manager": "manager" } : {}),
               },
             },
           },
+          ...(accessLevel === "general"
+            ? [
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_MEMBERSHIP#${grant.issuerMembershipId}`,
+                    },
+                    ConditionExpression:
+                      "#status = :active AND generation = :generation",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: {
+                      ":active": "active",
+                      ":generation": Number(
+                        grant.issuerMembershipGeneration ?? 0,
+                      ),
+                    },
+                  },
+                },
+              ]
+            : []),
           physicalWrite,
           put(tableName, binding),
           put(tableName, legacyDevice),
@@ -256,7 +316,7 @@ export const redeemEnrollmentGrant = async (event) => {
             physicalDeviceId,
             bindingId,
             siteId,
-            accessLevel: "manager",
+            accessLevel,
             status: "active",
             createdAt: nowIso,
           }),
@@ -264,15 +324,30 @@ export const redeemEnrollmentGrant = async (event) => {
             pk: `SITE#${siteId}`,
             sk: `AUDIT#${nowIso}#${randomUUID()}`,
             type: "siteAuditEvent",
-            eventType: "manager_grant_redeemed",
+            eventType: `${accessLevel}_grant_redeemed`,
             siteId,
-            membershipId,
+            ...(membershipId ? { membershipId } : {}),
             grantId,
             bindingId,
             physicalDeviceId,
             actor: `physical-device:${physicalDeviceId}`,
             createdAt: nowIso,
           }),
+          ...(accessLevel === "general"
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `ACTIVE_STAFF_GRANT#${issuerBindingId}`,
+                    },
+                    ConditionExpression: "grantId = :grantId",
+                    ExpressionAttributeValues: { ":grantId": grantId },
+                  },
+                },
+              ]
+            : []),
         ],
       }),
     );
@@ -290,7 +365,7 @@ export const redeemEnrollmentGrant = async (event) => {
     bindingId,
     deviceId: bindingId,
     site: { siteId, name: site.name },
-    accessLevel: "manager",
+    accessLevel,
     token: access.token,
     refreshToken: refresh.token,
     expiresIn: access.expiresIn,
@@ -302,7 +377,7 @@ export const redeemEnrollmentGrant = async (event) => {
         bindingId,
         siteId,
         siteName: site.name,
-        accessLevel: "manager",
+        accessLevel,
         status: "active",
       },
     ],

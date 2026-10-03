@@ -38,6 +38,7 @@ import {
 
 const ROUTE_VIEW = [
   ["/site-admin/edit", "site-admin-edit"],
+  ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
   ["/problem/describe", "describe-instead"],
   ["/problem", "problem-report"],

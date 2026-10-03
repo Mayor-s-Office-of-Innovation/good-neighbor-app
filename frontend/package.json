@@ -22,7 +22,7 @@
     {
       "name": "site admin js",
       "path": "dist/assets/site-admin-*.js",
-      "limit": "7 kB"
+      "limit": "8 kB"
     },
     {
       "name": "main css",

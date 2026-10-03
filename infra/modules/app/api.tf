@@ -15,6 +15,9 @@ locals {
     "POST /app/v1/enrollment/redeem",
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
+    "POST /app/v1/manager/staff-grants",
+    "GET /app/v1/manager/device-bindings",
+    "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
     "GET /v1/sites:search",
     "POST /v1/setup-codes:request",
     # Site config
