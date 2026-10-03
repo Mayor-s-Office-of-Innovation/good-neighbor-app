@@ -70,7 +70,7 @@ export function deriveSiteId(event, env = process.env) {
 /**
  * Device access defaults to the least-privileged role for legacy/local events.
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
- * @returns {"general"|"admin"}
+ * @returns {"general"|"manager"}
  */
 export function deriveAccessLevel(event) {
   const authorizer = /** @type {Record<string, any> | undefined} */ (
@@ -80,7 +80,7 @@ export function deriveAccessLevel(event) {
     authorizer?.lambda?.["claims.accessLevel"] ??
     authorizer?.["claims.accessLevel"] ??
     authorizer?.jwt?.claims?.accessLevel;
-  return claim === "admin" ? "admin" : "general";
+  return claim === "manager" || claim === "admin" ? "manager" : "general";
 }
 
 /**

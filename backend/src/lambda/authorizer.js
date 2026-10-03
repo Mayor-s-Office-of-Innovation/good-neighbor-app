@@ -12,7 +12,11 @@
 
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { DeviceTokenError, verifyDeviceToken } from "../lib/device-token.js";
+import {
+  canonicalAccessLevel,
+  DeviceTokenError,
+  verifyDeviceToken,
+} from "../lib/device-token.js";
 
 /** The API Gateway v2 simple-response `Allow` shape. */
 const ALLOW = { isAuthorized: true, context: {} };
@@ -65,15 +69,21 @@ export const handler = async (event) => {
       Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
     }),
   );
-  const device =
-    /** @type {{ tokenGeneration?: number, accessLevel?: string } | undefined} */ (
-      res.Item
-    );
+  const device = /** @type {Record<string, any> | undefined} */ (res.Item);
+  const now = new Date();
+  const inactiveAfter = device?.lastSeenAt
+    ? new Date(device.lastSeenAt).getTime() +
+      Number(device.inactivityLimitDays ?? 60) * 24 * 60 * 60 * 1000
+    : Number.POSITIVE_INFINITY;
   if (
     !device ||
+    device.status === "revoked" ||
+    device.status === "suspended" ||
     device.tokenGeneration !== claims.ver ||
-    (device.accessLevel === "admin" ? "admin" : "general") !==
-      claims.accessLevel
+    canonicalAccessLevel(device.accessLevel) !== claims.accessLevel ||
+    (device.absoluteExpiresAt &&
+      device.absoluteExpiresAt <= now.toISOString()) ||
+    inactiveAfter <= now.getTime()
   ) {
     return DENY({ reason: "revoked" });
   }
@@ -84,9 +94,36 @@ export const handler = async (event) => {
       Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
     }),
   );
-  const site = /** @type {{ status?: string } | undefined} */ (siteRes.Item);
+  const site = /** @type {Record<string, any> | undefined} */ (siteRes.Item);
   if (!site || site.status === "inactive") {
     return DENY({ reason: "site_inactive" });
+  }
+  if (
+    device.siteCredentialGeneration !== undefined &&
+    Number(device.siteCredentialGeneration) !==
+      Number(site.siteCredentialGeneration ?? 0)
+  ) {
+    return DENY({ reason: "revoked" });
+  }
+  if (claims.accessLevel === "manager" && device.membershipId) {
+    const membershipResult = await ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: {
+          pk: `SITE#${claims.siteId}`,
+          sk: `MANAGER_MEMBERSHIP#${device.membershipId}`,
+        },
+      }),
+    );
+    const membership = membershipResult.Item;
+    if (
+      !membership ||
+      membership.status !== "active" ||
+      Number(membership.generation ?? 0) !==
+        Number(device.membershipGeneration ?? -1)
+    ) {
+      return DENY({ reason: "revoked" });
+    }
   }
 
   return {

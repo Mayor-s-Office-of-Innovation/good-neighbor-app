@@ -44,9 +44,9 @@ describe("mint + verify round-trip", () => {
       { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 3 },
       { now: at(1000) },
     );
-    expect(expiresIn).toBe(30 * 24 * 60 * 60);
+    expect(expiresIn).toBe(15 * 60);
 
-    const claims = await verifyDeviceToken(token, { now: at(2000) });
+    const claims = await verifyDeviceToken(token, { now: at(1000) + 500 });
     expect(claims.sub).toBe("dev-1");
     expect(claims.siteId).toBe("site-1");
     expect(claims.ver).toBe(3);
@@ -79,6 +79,23 @@ describe("mint + verify round-trip", () => {
     const claims = await verifyDeviceToken(token, { now: at(2000) });
 
     expect(claims.accessLevel).toBe("general");
+  });
+
+  it("reads legacy admin claims as canonical manager access", async () => {
+    const token = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "access",
+      accessLevel: "admin",
+      iat: at(1000),
+      exp: at(3000),
+    });
+    await expect(
+      verifyDeviceToken(token, { now: at(2000) }),
+    ).resolves.toMatchObject({
+      accessLevel: "manager",
+    });
   });
 
   it.each([null, "", "owner"])(

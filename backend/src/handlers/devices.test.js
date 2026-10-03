@@ -296,7 +296,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);
@@ -313,7 +313,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 3, refreshJti: "whatever" },
@@ -333,7 +333,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 2, refreshJti: `old-${jti}` },
@@ -349,7 +349,7 @@ describe("refreshDeviceToken", () => {
   it("rotates: bumps generation, stores the NEW jti, returns a fresh pair", async () => {
     const oldToken = await setupRefresh({ generation: 2 });
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: oldToken });
 
@@ -414,7 +414,7 @@ describe("refreshDeviceToken", () => {
       })
       .mockResolvedValueOnce({});
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken });
 
@@ -454,7 +454,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 60 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);

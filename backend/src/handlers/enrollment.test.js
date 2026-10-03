@@ -96,8 +96,7 @@ describe("Manager enrollment redemption", () => {
     const compatibility = transaction.input.TransactItems[5].Put.Item;
     expect(compatibility).toMatchObject({
       type: "device",
-      canonicalAccessLevel: "manager",
-      accessLevel: "admin",
+      accessLevel: "manager",
     });
     expect(JSON.stringify(transaction.input)).not.toContain(token);
   });

@@ -16,8 +16,8 @@ import {
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
 
-const ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — long-lived by design
-const REFRESH_TTL_SECONDS = 180 * 24 * 60 * 60; // 180 days — rotated on use
+const ACCESS_TTL_SECONDS = 15 * 60;
+const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
@@ -71,7 +71,7 @@ export function resetDeviceTokenSecretCache() {
  * @property {string} siteId
  * @property {string} deviceId
  * @property {number} tokenGeneration
- * @property {"general"|"admin"} [accessLevel]
+ * @property {"general"|"manager"|"admin"} [accessLevel]
  */
 
 /**
@@ -97,7 +97,7 @@ export async function mintAccessToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
-      accessLevel: accessLevel === "admin" ? "admin" : "general",
+      accessLevel: canonicalAccessLevel(accessLevel),
       typ: "access",
       iat: now,
       exp: now + expiresIn,
@@ -125,7 +125,7 @@ export async function mintRefreshToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
-      accessLevel: accessLevel === "admin" ? "admin" : "general",
+      accessLevel: canonicalAccessLevel(accessLevel),
       typ: "refresh",
       jti,
       iat: now,
@@ -147,7 +147,7 @@ export async function mintRefreshToken(
  * @property {"access" | "refresh"} typ
  * @property {number} iat
  * @property {number} exp
- * @property {"general"|"admin"} accessLevel
+ * @property {"general"|"manager"} accessLevel
  * @property {string} [jti]         refresh tokens only
  */
 
@@ -214,15 +214,29 @@ export async function verifyDeviceToken(token, opts = {}) {
   // out after the legacy refresh-token lifetime.
   const accessLevel =
     claims.accessLevel === undefined ? "general" : claims.accessLevel;
-  if (accessLevel !== "general" && accessLevel !== "admin") {
+  if (
+    accessLevel !== "general" &&
+    accessLevel !== "manager" &&
+    accessLevel !== "admin"
+  ) {
     throw new DeviceTokenError("malformed", "unknown access level");
   }
   // Project the wire shape (Cognito's `custom:siteId`) onto the typed view.
   return /** @type {DeviceClaims} */ ({
     ...claims,
     siteId: claims["custom:siteId"],
-    accessLevel,
+    accessLevel: canonicalAccessLevel(accessLevel),
   });
+}
+
+/**
+ * Read legacy `admin` as Manager-equivalent while every newly minted token
+ * emits the canonical role.
+ * @param {unknown} value
+ * @returns {"general"|"manager"}
+ */
+export function canonicalAccessLevel(value) {
+  return value === "manager" || value === "admin" ? "manager" : "general";
 }
 
 /**

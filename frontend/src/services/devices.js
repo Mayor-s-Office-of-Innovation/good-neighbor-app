@@ -27,7 +27,9 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
  * @property {number} expiresIn    access-token TTL in seconds
  * @property {number} refreshExpiresIn refresh-token TTL in seconds
  * @property {number} tokenGeneration revocation counter this session was minted against
- * @property {"general"|"admin"} [accessLevel]
+ * @property {"general"|"manager"} [accessLevel]
+ * @property {string} [physicalDeviceId]
+ * @property {string} [bindingId]
  */
 
 /**
@@ -55,6 +57,36 @@ export async function registerDevice(code, opts = {}) {
   if (!res.ok) {
     throw new Error(`device registration failed (${res.status})`);
   }
+  const body = await res.json();
+  assertSession(body);
+  return body;
+}
+
+/**
+ * Redeem a one-time enrollment link. The secret is sent only in the JSON body;
+ * callers should remove it from the URL before awaiting this request.
+ * @param {string} grantId
+ * @param {string} token
+ * @param {{ physicalDeviceId?: string, label?: string }} [opts]
+ * @returns {Promise<DeviceSession>}
+ */
+export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
+  const res = await fetch(`${BASE}/app/v1/enrollment/redeem`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      grantId,
+      token,
+      ...(opts.physicalDeviceId
+        ? { physicalDeviceId: opts.physicalDeviceId }
+        : {}),
+      ...(opts.label ? { label: opts.label } : {}),
+    }),
+  });
+  if (res.status === 401 || res.status === 404) {
+    throw new Error("invalid enrollment link");
+  }
+  if (!res.ok) throw new Error(`enrollment failed (${res.status})`);
   const body = await res.json();
   assertSession(body);
   return body;
@@ -113,7 +145,7 @@ function assertSession(body) {
     typeof body.token !== "string" ||
     typeof body.refreshToken !== "string" ||
     typeof body.expiresIn !== "number" ||
-    (body.accessLevel !== "general" && body.accessLevel !== "admin") ||
+    (body.accessLevel !== "general" && body.accessLevel !== "manager") ||
     !body.site?.siteId
   ) {
     throw new ApiError("malformed device session response", { status: 0 });

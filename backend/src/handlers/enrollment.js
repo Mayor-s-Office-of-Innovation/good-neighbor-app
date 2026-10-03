@@ -105,16 +105,13 @@ export const redeemEnrollmentGrant = async (event) => {
 
   const bindingId = randomUUID();
   const generation = 1;
-  // `admin` remains the bounded token-claim compatibility value until the
-  // authorizer migration lands; all new durable records and API responses use
-  // the canonical `manager` role.
   const [access, refresh] = await Promise.all([
     mintAccessToken(
       {
         siteId,
         deviceId: bindingId,
         tokenGeneration: generation,
-        accessLevel: "admin",
+        accessLevel: "manager",
       },
       { expiresIn: ACCESS_TTL_SECONDS },
     ),
@@ -123,7 +120,7 @@ export const redeemEnrollmentGrant = async (event) => {
         siteId,
         deviceId: bindingId,
         tokenGeneration: generation,
-        accessLevel: "admin",
+        accessLevel: "manager",
       },
       { expiresIn: REFRESH_TTL_SECONDS },
     ),
@@ -164,8 +161,7 @@ export const redeemEnrollmentGrant = async (event) => {
     physicalDeviceId,
     siteId,
     siteName: site.name,
-    accessLevel: "admin",
-    canonicalAccessLevel: "manager",
+    accessLevel: "manager",
     membershipId,
     membershipGeneration,
     siteCredentialGeneration: siteGeneration,

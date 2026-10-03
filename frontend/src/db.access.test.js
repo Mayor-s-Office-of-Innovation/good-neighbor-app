@@ -12,6 +12,7 @@ function token(claims) {
 
 describe("hasAdminAccess", () => {
   it("accepts the stored binding role", () => {
+    expect(hasAdminAccess({ accessLevel: "manager" })).toBe(true);
     expect(hasAdminAccess({ accessLevel: "admin" })).toBe(true);
   });
 

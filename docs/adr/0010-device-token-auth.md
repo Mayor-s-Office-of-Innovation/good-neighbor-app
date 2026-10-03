@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-09-03, branch `feature/session-security`). Amends the identity
+Superseded in part by [ADR 0015](./0015-device-bindings-and-manager-enrollment.md)
+for token lifetime, canonical Manager role, and physical-device/Site-binding
+separation. Accepted originally (2026-09-03, branch `feature/session-security`). Amends the identity
 decision in [security-review.md](../security-review.md): that doc adopted
 **Option 3** (Cognito device identity + STS/SigV4) with **Option 4** (bearer
 token) as the documented *lighter fallback if device provisioning slips*.
