@@ -91,7 +91,9 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  getSitePerimeter,
   listSiteTerms,
+  putSitePerimeter,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
 import {
@@ -173,6 +175,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
+  "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
+  "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
   "GET /admin/v1/site-imports/{importId}": getSiteImport,

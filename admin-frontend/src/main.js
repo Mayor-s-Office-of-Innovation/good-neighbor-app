@@ -13,7 +13,7 @@ import { currentRoute, navigate } from "./router.js";
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number>, perimeter?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, status?: string, updatedAt?: string }} AdminSite
+ * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ email: string, emailHash: string, name?: string, status?: string }} AdminContact
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
@@ -41,6 +41,9 @@ import { currentRoute, navigate } from "./router.js";
  * @property {any | null} importResult
  * @property {boolean} importBusy
  * @property {string} importApplyKey
+ * @property {boolean} perimeterSaving
+ * @property {string} perimeterMessage
+ * @property {string} perimeterError
  */
 
 class AdminApp extends HTMLElement {
@@ -70,6 +73,9 @@ class AdminApp extends HTMLElement {
       importResult: null,
       importBusy: false,
       importApplyKey: "",
+      perimeterSaving: false,
+      perimeterMessage: "",
+      perimeterError: "",
     };
   }
 
@@ -101,6 +107,9 @@ class AdminApp extends HTMLElement {
       importResult: null,
       importBusy: false,
       importApplyKey: "",
+      perimeterSaving: false,
+      perimeterMessage: "",
+      perimeterError: "",
     };
     const callback = await completeAdminLoginFromUrl().catch((err) => ({
       handled: true,
@@ -345,7 +354,6 @@ class AdminApp extends HTMLElement {
       periodEnd: formValue(data, "tier-period-end"),
       requiredChecksPerDay: formValue(data, "required-checks-per-day"),
     };
-    const perimeter = formValue(data, "perimeter");
     /** @type {Record<string, unknown>} */
     const values = { name };
     if (this.state.site.addressParts || hasEnteredValues(addressParts)) {
@@ -364,9 +372,6 @@ class AdminApp extends HTMLElement {
         periodEnd: complianceValues.periodEnd,
         requiredChecksPerDay: Number(complianceValues.requiredChecksPerDay),
       };
-    }
-    if (this.state.site.perimeter !== undefined || perimeter) {
-      values.perimeter = perimeter;
     }
     const letter = data.get("compliance-letter");
     this.state.siteSaving = true;
@@ -416,6 +421,32 @@ class AdminApp extends HTMLElement {
     }
   }
 
+  async updatePerimeter(form) {
+    if (!this.state.site) return;
+    const perimeter = formValue(new FormData(form), "perimeter");
+    this.state.perimeterSaving = true;
+    this.state.perimeterMessage = "";
+    this.state.perimeterError = "";
+    this.render();
+    try {
+      const result = await adminApi.updateSitePerimeter(
+        this.state.site.siteId,
+        perimeter,
+        String(this.state.site.updatedAt || ""),
+      );
+      this.state.site = { ...this.state.site, ...result };
+      this.state.perimeterMessage = "Perimeter saved.";
+    } catch (error) {
+      this.state.perimeterError =
+        error instanceof Error && error.message === "perimeter_update_conflict"
+          ? "This Site changed after you opened it. Reload the latest version before saving."
+          : "The perimeter could not be saved. Check the text and try again.";
+    } finally {
+      this.state.perimeterSaving = false;
+      this.render();
+    }
+  }
+
   /**
    * Open a site with its contacts and devices.
    * @param {string} siteId
@@ -455,6 +486,9 @@ class AdminApp extends HTMLElement {
     this.state.issuedCode = null;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
+    this.state.perimeterSaving = false;
+    this.state.perimeterMessage = "";
+    this.state.perimeterError = "";
     this.render();
     queueMicrotask(() => this.querySelector("h1")?.focus());
   }
@@ -751,6 +785,19 @@ class AdminApp extends HTMLElement {
         this.render();
       });
     });
+    this.querySelector("#site-perimeter-form")?.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        this.updatePerimeter(asForm(e.currentTarget));
+      },
+    );
+    this.querySelector("#reload-site-perimeter")?.addEventListener(
+      "click",
+      () => {
+        if (this.state.site) this.openSite(this.state.site.siteId, false);
+      },
+    );
     this.querySelector("#site-import-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.previewSiteImport(asForm(e.currentTarget)).catch((err) => {
@@ -1003,12 +1050,41 @@ function siteSectionView(state, section) {
     return `<section aria-labelledby="letters-title"><h2 id="letters-title">Letters</h2><p class="muted">Letter state: ${escapeHtml(site.letterState || "No generated letter")}. Letter generation and delivery controls are added after the terms job processor.</p></section>`;
   }
   if (section === "perimeter") {
-    return `<section aria-labelledby="perimeter-title"><h2 id="perimeter-title">Perimeter</h2><p>${escapeHtml(site.perimeter || "No perimeter notes have been recorded.")}</p><p class="muted">Versioned geometry and the accessible coordinate editor are the next perimeter increment.</p></section>`;
+    return sitePerimeterView(state);
   }
   if (section === "access") return siteAccessView(state);
   return `${siteEditor(site, state.siteSaving, state.siteSaveError)}
     ${state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
     ${site.geocodedAddress ? `<p class="muted">Mapped to ${escapeHtml(site.geocodedAddress)}</p>` : ""}`;
+}
+
+/** @param {AdminState} state */
+function sitePerimeterView(state) {
+  const site = /** @type {AdminSite} */ (state.site);
+  const conflict = state.perimeterError.includes("Reload the latest version");
+  const updatedBy = site.perimeterUpdatedBy
+    ? ` by ${escapeHtml(site.perimeterUpdatedBy)}`
+    : "";
+  return `<section class="subsection" aria-labelledby="perimeter-title">
+    <div>
+      <h2 id="perimeter-title">Perimeter</h2>
+      <p class="muted">Describe the area staff should inspect using streets, block sides, landmarks, or other plain-language directions. This is guidance, not a geofence.</p>
+    </div>
+    <form id="site-perimeter-form" class="site-details-form">
+      <label>
+        <span>Perimeter description</span>
+        <textarea name="perimeter" rows="8" maxlength="4000" aria-describedby="perimeter-help">${escapeHtml(site.perimeter || "")}</textarea>
+      </label>
+      <p id="perimeter-help" class="muted">Up to 4,000 characters. Saving a blank description clears the current perimeter.</p>
+      <div class="form-actions">
+        <button class="btn-primary" type="submit" ${state.perimeterSaving ? "disabled" : ""}>${state.perimeterSaving ? "Saving…" : "Save perimeter"}</button>
+        <button class="btn-secondary" type="reset" ${state.perimeterSaving ? "disabled" : ""}>Cancel edits</button>
+      </div>
+    </form>
+    ${site.perimeterUpdatedAt ? `<p class="muted">Last updated ${escapeHtml(formatTimestamp(site.perimeterUpdatedAt))}${updatedBy}.</p>` : '<p class="muted">No perimeter description has been saved.</p>'}
+    ${state.perimeterError ? `<div class="error site-details-form__message" role="alert"><p>${escapeHtml(state.perimeterError)}</p>${conflict ? '<button class="btn-secondary" id="reload-site-perimeter" type="button">Reload latest Site</button>' : ""}</div>` : ""}
+    ${state.perimeterMessage ? `<p class="success" role="status">${escapeHtml(state.perimeterMessage)}</p>` : ""}
+  </section>`;
 }
 
 /** @param {AdminState} state */
@@ -1436,13 +1512,6 @@ function siteEditor(site, saving, saveError) {
         ${formInput("tier-period-end", "Tier period end (leave blank for present)", compliance.periodEnd, { type: "date" })}
         ${formInput("required-checks-per-day", "Required checks per day", compliance.requiredChecksPerDay ?? "", { required: hasCompliance, type: "number", min: 0, max: 100, step: 1 })}
       </div>
-    </fieldset>
-    <fieldset>
-      <legend>Perimeter</legend>
-      <label>
-        <span>Perimeter description</span>
-        <textarea name="perimeter" rows="5" maxlength="4000">${escapeHtml(site.perimeter || "")}</textarea>
-      </label>
     </fieldset>
     <fieldset>
       <legend>Compliance letter</legend>

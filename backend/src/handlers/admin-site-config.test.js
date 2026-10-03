@@ -8,8 +8,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { assignSiteUser, createSiteTerms, listSiteTerms, unassignSiteUser } =
-  await import("./admin-site-config.js");
+const {
+  assignSiteUser,
+  createSiteTerms,
+  getSitePerimeter,
+  listSiteTerms,
+  putSitePerimeter,
+  unassignSiteUser,
+} = await import("./admin-site-config.js");
 
 beforeEach(() => {
   send.mockReset();
@@ -145,6 +151,94 @@ describe("Site Program-contact assignments", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "primary_contact_replacement_required",
     });
+  });
+});
+
+describe("Site perimeter text", () => {
+  it("returns the Site perimeter and its edit metadata", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        perimeter: "Along Mission Street",
+        updatedAt: "2026-10-03T12:00:00.000Z",
+        perimeterUpdatedAt: "2026-10-03T12:00:00.000Z",
+        perimeterUpdatedBy: "admin-1",
+      },
+    });
+    const response = await call(
+      getSitePerimeter,
+      event(undefined, { siteId: "site-1" }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      perimeter: "Along Mission Street",
+      perimeterUpdatedBy: "admin-1",
+    });
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+  });
+
+  it("updates trimmed text and appends an audit event atomically", async () => {
+    send.mockResolvedValueOnce({});
+    const response = await call(
+      putSitePerimeter,
+      event(
+        {
+          perimeter: "  Both sides of Mission Street.  ",
+          expectedUpdatedAt: "2026-10-03T12:00:00.000Z",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).perimeter).toBe(
+      "Both sides of Mission Street.",
+    );
+    const transaction = send.mock.calls[0][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(2);
+    expect(transaction.input.TransactItems[0].Update).toMatchObject({
+      ConditionExpression:
+        "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt",
+    });
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      type: "siteAuditEvent",
+      eventType: "perimeter_text_updated",
+      actor: "admin-1",
+    });
+  });
+
+  it("reports an optimistic-concurrency conflict", async () => {
+    const error = new Error("changed");
+    error.name = "TransactionCanceledException";
+    send.mockRejectedValueOnce(error);
+    const response = await call(
+      putSitePerimeter,
+      event(
+        {
+          perimeter: "Updated boundary",
+          expectedUpdatedAt: "2026-10-03T12:00:00.000Z",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "perimeter_update_conflict",
+    });
+  });
+
+  it("rejects perimeter text over the field limit", async () => {
+    const response = await call(
+      putSitePerimeter,
+      event(
+        {
+          perimeter: "x".repeat(4001),
+          expectedUpdatedAt: "2026-10-03T12:00:00.000Z",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

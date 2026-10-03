@@ -116,6 +116,13 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
+  getSitePerimeter: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`),
+  updateSitePerimeter: (siteId, perimeter, expectedUpdatedAt) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`, {
+      method: "PUT",
+      body: JSON.stringify({ perimeter, expectedUpdatedAt }),
+    }),
   previewSiteImport: (fileName, csv) =>
     adminFetch("/admin/v1/site-imports/preview", {
       method: "POST",

@@ -65,6 +65,8 @@ locals {
     "DELETE /admin/v1/sites/{siteId}/users/{userId}",
     "GET /admin/v1/sites/{siteId}/terms",
     "POST /admin/v1/sites/{siteId}/terms",
+    "GET /admin/v1/sites/{siteId}/perimeter",
+    "PUT /admin/v1/sites/{siteId}/perimeter",
     "POST /admin/v1/site-imports/preview",
     "POST /admin/v1/site-imports/{importId}/apply",
     "GET /admin/v1/site-imports/{importId}",

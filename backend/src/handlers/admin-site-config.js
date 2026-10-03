@@ -373,6 +373,97 @@ export const unassignSiteUser = (event) =>
     return jsonResponse(200, { unassigned: true });
   });
 
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const getSitePerimeter = (event) =>
+  adminOnly(event, async () => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const result = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `SITE#${siteId}`, sk: "#META" },
+      }),
+    );
+    if (!result.Item) return jsonResponse(404, { error: "site_not_found" });
+    return jsonResponse(200, {
+      perimeter: String(result.Item.perimeter ?? ""),
+      updatedAt: result.Item.updatedAt,
+      perimeterUpdatedAt: result.Item.perimeterUpdatedAt,
+      perimeterUpdatedBy: result.Item.perimeterUpdatedBy,
+    });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const putSitePerimeter = (event) =>
+  adminOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    if (typeof body.perimeter !== "string") {
+      return jsonResponse(400, { error: "perimeter_required" });
+    }
+    const perimeter = body.perimeter.trim();
+    if (perimeter.length > 4000) {
+      return jsonResponse(400, { error: "invalid_perimeter" });
+    }
+    const expectedUpdatedAt = String(body.expectedUpdatedAt ?? "");
+    if (!expectedUpdatedAt) {
+      return jsonResponse(400, { error: "expected_version_required" });
+    }
+    const tableName = getDynamoTableName();
+    const now = new Date().toISOString();
+    const actor = String(
+      /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
+        "central-admin",
+    );
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key: { pk: `SITE#${siteId}`, sk: "#META" },
+                UpdateExpression:
+                  "SET perimeter = :perimeter, perimeterUpdatedAt = :now, perimeterUpdatedBy = :actor, updatedAt = :now",
+                ConditionExpression:
+                  "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt",
+                ExpressionAttributeValues: {
+                  ":perimeter": perimeter,
+                  ":now": now,
+                  ":actor": actor,
+                  ":expectedUpdatedAt": expectedUpdatedAt,
+                },
+              },
+            },
+            put({
+              pk: `SITE#${siteId}`,
+              sk: `AUDIT#${now}#${randomUUID()}`,
+              type: "siteAuditEvent",
+              eventType: perimeter
+                ? "perimeter_text_updated"
+                : "perimeter_text_cleared",
+              siteId,
+              actor,
+              createdAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "perimeter_update_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      perimeter,
+      updatedAt: now,
+      perimeterUpdatedAt: now,
+      perimeterUpdatedBy: actor,
+    });
+  });
+
 /**
  * @param {string} tableName
  * @param {string} siteId
