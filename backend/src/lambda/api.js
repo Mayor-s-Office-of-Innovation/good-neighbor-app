@@ -41,6 +41,10 @@ import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
 import { redeemEnrollmentGrant } from "../handlers/enrollment.js";
 import {
+  listDeviceBindings,
+  selectDeviceBinding,
+} from "../handlers/device-bindings.js";
+import {
   requestSetupCode,
   searchSites,
 } from "../handlers/setup-code-requests.js";
@@ -125,6 +129,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/devices": registerDevice,
   "POST /v1/devices/token:refresh": refreshDeviceToken,
   "POST /app/v1/enrollment/redeem": redeemEnrollmentGrant,
+  "GET /app/v1/device-bindings": listDeviceBindings,
+  "POST /app/v1/device-bindings/select": selectDeviceBinding,
   "GET /v1/sites:search": searchSites,
   "POST /v1/setup-codes:request": requestSetupCode,
   // Site config

@@ -189,11 +189,14 @@ const SITE_BINDING_FIELDS = [
   "providerSiteId",
   "code",
   "deviceId",
+  "bindingId",
+  "physicalDeviceId",
   "token",
   "refreshToken",
   "tokenExpiresAt",
   "tokenGeneration",
   "accessLevel",
+  "absoluteExpiresAt",
   "boundAt",
 ];
 

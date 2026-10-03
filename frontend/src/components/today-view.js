@@ -45,6 +45,7 @@ import {
   getSite,
   hasAdminAccess,
   listBoundSites,
+  setSite,
 } from "../db.js";
 import {
   listChecks,
@@ -53,6 +54,7 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
+  selectDeviceBinding,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -1136,7 +1138,7 @@ class TodayView extends HTMLElement {
       return;
     }
     const target = this._providerSites.find((site) => site.siteId === siteId);
-    const bound = this._boundSites.some(
+    const bound = this._boundSites.find(
       (site) => site.siteId === siteId && site.token && site.refreshToken,
     );
     if (!bound) {
@@ -1150,7 +1152,24 @@ class TodayView extends HTMLElement {
     }
     try {
       if (active) await pauseCheck();
-      const selected = await activateSiteBinding(siteId);
+      let selected;
+      if (bound.bindingId && bound.physicalDeviceId) {
+        const session = await selectDeviceBinding(bound.bindingId);
+        selected = await setSite(session.site.name, {
+          siteId: session.site.siteId,
+          deviceId: session.deviceId,
+          bindingId: session.bindingId,
+          physicalDeviceId: session.physicalDeviceId,
+          token: session.token,
+          refreshToken: session.refreshToken,
+          tokenExpiresAt: Date.now() + session.expiresIn * 1000,
+          tokenGeneration: session.tokenGeneration,
+          accessLevel: session.accessLevel,
+          absoluteExpiresAt: session.absoluteExpiresAt,
+        });
+      } else {
+        selected = await activateSiteBinding(siteId);
+      }
       if (!selected) {
         await this._requestAnotherSite("code", siteId, target?.name || "");
         return;

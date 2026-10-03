@@ -46,6 +46,10 @@ import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
 import { redeemEnrollmentGrant } from "../src/handlers/enrollment.js";
 import {
+  listDeviceBindings,
+  selectDeviceBinding,
+} from "../src/handlers/device-bindings.js";
+import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
@@ -203,6 +207,8 @@ const routes = [
   route("POST", "/v1/devices", registerDevice),
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
   route("POST", "/app/v1/enrollment/redeem", redeemEnrollmentGrant),
+  route("GET", "/app/v1/device-bindings", listDeviceBindings),
+  route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
   route("GET", "/v1/sites:search", searchSites),
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config

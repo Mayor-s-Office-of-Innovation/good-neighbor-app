@@ -321,6 +321,21 @@ export function listProviderSites(cursor = "") {
   );
 }
 
+/** List the authenticated physical device's currently usable Site bindings. */
+export function listDeviceBindings() {
+  return request("GET", "/app/v1/device-bindings");
+}
+
+/**
+ * Select one Site binding owned by the authenticated physical device.
+ * @param {string} bindingId
+ */
+export function selectDeviceBinding(bindingId) {
+  return request("POST", "/app/v1/device-bindings/select", {
+    body: { bindingId },
+  });
+}
+
 /**
  * POST /v1/checks — start a perimeter run. The client-minted `checkId` rides in
  * the `idempotency-key` header (not the body), so a replay can't duplicate the

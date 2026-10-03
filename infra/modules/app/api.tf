@@ -13,6 +13,8 @@ locals {
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
     "POST /app/v1/enrollment/redeem",
+    "GET /app/v1/device-bindings",
+    "POST /app/v1/device-bindings/select",
     "GET /v1/sites:search",
     "POST /v1/setup-codes:request",
     # Site config

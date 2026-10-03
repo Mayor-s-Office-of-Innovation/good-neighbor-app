@@ -82,7 +82,7 @@ describe("Manager enrollment redemption", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[5][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(7);
+    expect(transaction.input.TransactItems).toHaveLength(8);
     const binding = transaction.input.TransactItems[4].Put.Item;
     expect(binding).toMatchObject({
       type: "deviceBinding",
@@ -97,6 +97,13 @@ describe("Manager enrollment redemption", () => {
     expect(compatibility).toMatchObject({
       type: "device",
       accessLevel: "manager",
+    });
+    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
+      type: "physicalDeviceBindingPointer",
+      physicalDeviceId: "physical_device_1",
+      bindingId: binding.bindingId,
+      siteId: "site-1",
+      status: "active",
     });
     expect(JSON.stringify(transaction.input)).not.toContain(token);
   });

@@ -250,6 +250,17 @@ export const redeemEnrollmentGrant = async (event) => {
           put(tableName, binding),
           put(tableName, legacyDevice),
           put(tableName, {
+            pk: `PHYSICAL_DEVICE#${physicalDeviceId}`,
+            sk: `BINDING#${bindingId}`,
+            type: "physicalDeviceBindingPointer",
+            physicalDeviceId,
+            bindingId,
+            siteId,
+            accessLevel: "manager",
+            status: "active",
+            createdAt: nowIso,
+          }),
+          put(tableName, {
             pk: `SITE#${siteId}`,
             sk: `AUDIT#${nowIso}#${randomUUID()}`,
             type: "siteAuditEvent",
