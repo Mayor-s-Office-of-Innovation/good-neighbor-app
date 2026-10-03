@@ -62,8 +62,6 @@ export class SiteSetup extends HTMLElement {
     };
     this._siteSearchTimer = null;
     this._siteSearchGeneration = 0;
-    this._scannerStream = null;
-    this._scannerFrame = 0;
     this._render();
 
     if (enrollment) {
@@ -88,7 +86,6 @@ export class SiteSetup extends HTMLElement {
     );
     this._cancelTouchSubmit();
     this._cancelSiteSearch();
-    this._stopEnrollmentScanner();
   }
 
   _render() {
@@ -190,18 +187,6 @@ export class SiteSetup extends HTMLElement {
   }
 
   _bindEnrollmentOptions() {
-    const scan = this.querySelector("#scan-enrollment-qr");
-    if (
-      !("BarcodeDetector" in window) ||
-      !navigator.mediaDevices?.getUserMedia
-    ) {
-      if (scan) scan.hidden = true;
-    } else {
-      scan?.addEventListener(
-        "click",
-        () => void this._startEnrollmentScanner(),
-      );
-    }
     this.querySelector("#paste-enrollment-form")?.addEventListener(
       "submit",
       (event) => {
@@ -219,73 +204,6 @@ export class SiteSetup extends HTMLElement {
         void this._redeemEnrollment(enrollment);
       },
     );
-  }
-
-  async _startEnrollmentScanner() {
-    const dialog = this.querySelector("#enrollment-scanner");
-    const video = this.querySelector("#enrollment-scanner-video");
-    const status = this.querySelector("#enrollment-scanner-status");
-    if (
-      !(dialog instanceof HTMLDialogElement) ||
-      !(video instanceof HTMLVideoElement)
-    ) {
-      return;
-    }
-    dialog.showModal();
-    dialog.addEventListener("close", () => this._stopEnrollmentScanner(), {
-      once: true,
-    });
-    this.querySelector("#close-enrollment-scanner")?.addEventListener(
-      "click",
-      () => dialog.close(),
-      { once: true },
-    );
-    try {
-      this._scannerStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      });
-      video.srcObject = this._scannerStream;
-      await video.play();
-      const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-      const detect = async () => {
-        if (!this._scannerStream || dialog.open === false) return;
-        try {
-          const codes = await detector.detect(video);
-          const enrollment = parseEnrollmentLink(codes[0]?.rawValue || "");
-          if (enrollment) {
-            this._stopEnrollmentScanner();
-            dialog.close();
-            this._checking = true;
-            this._error = "";
-            this._render();
-            void this._redeemEnrollment(enrollment);
-            return;
-          }
-        } catch {
-          // Individual frames can fail while the camera focuses; keep scanning.
-        }
-        this._scannerFrame = requestAnimationFrame(detect);
-      };
-      this._scannerFrame = requestAnimationFrame(detect);
-      if (status)
-        status.textContent = "Point the camera at the enrollment QR code.";
-    } catch {
-      this._stopEnrollmentScanner();
-      if (status) {
-        status.textContent =
-          "Camera scanning isn't available. Close this window and paste the enrollment link instead.";
-      }
-    }
-  }
-
-  _stopEnrollmentScanner() {
-    cancelAnimationFrame(this._scannerFrame);
-    this._scannerFrame = 0;
-    for (const track of this._scannerStream?.getTracks?.() || []) track.stop();
-    this._scannerStream = null;
-    const video = this.querySelector("#enrollment-scanner-video");
-    if (video) video.srcObject = null;
   }
 
   /**

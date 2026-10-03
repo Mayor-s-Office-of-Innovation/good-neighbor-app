@@ -48,6 +48,8 @@
 
 - **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
   and deployment troubleshooting.
+- **[Site Manager access recovery](./runbooks/manager-access.md)** — public recovery abuse,
+  delivery-failure, and WAF alarm triage without exposing email addresses or grant secrets.
 
 ## Domain & policy reference
 

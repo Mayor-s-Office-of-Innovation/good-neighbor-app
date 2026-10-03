@@ -41,12 +41,29 @@ export const requestManagerAccess = async (event) => {
   const sourceIp = String(event.requestContext?.http?.sourceIp ?? "unknown");
   const ipHash = createHash("sha256").update(sourceIp).digest("hex");
   const now = new Date();
-  const allowed =
-    (await acquireHourlyLimit(`IP#${ipHash}`, 5, now)) &&
-    (await acquireHourlyLimit(`EMAIL#${verifier}`, 3, now)) &&
-    (await acquireCooldown(verifier, now));
-  if (allowed) {
-    await issueRecoveryLinks(email, verifier, now).catch(() => {});
+  let limitedBy = "";
+  if (!(await acquireHourlyLimit(`IP#${ipHash}`, 5, now))) {
+    limitedBy = "ip_hour";
+  } else if (!(await acquireHourlyLimit(`EMAIL#${verifier}`, 3, now))) {
+    limitedBy = "email_hour";
+  } else if (!(await acquireCooldown(verifier, now))) {
+    limitedBy = "email_cooldown";
+  }
+  if (limitedBy) {
+    console.warn(
+      JSON.stringify({ marker: "ManagerAccessThrottled", limitedBy }),
+    );
+  } else {
+    try {
+      await issueRecoveryLinks(email, verifier, now);
+    } catch {
+      console.error(
+        JSON.stringify({
+          marker: "ManagerAccessRequestFailed",
+          level: "ERROR",
+        }),
+      );
+    }
   }
   await minimumDelay(startedAt);
   return jsonResponse(202, { message: GENERIC_MESSAGE });
@@ -144,6 +161,14 @@ async function issueRecoveryLinks(email, verifier, now) {
         }),
       ),
     ),
+  );
+  console.info(
+    JSON.stringify({
+      marker: "ManagerAccessDelivery",
+      status: delivery.status,
+      provider: delivery.provider,
+      siteCount: issued.length,
+    }),
   );
 }
 

@@ -14,7 +14,8 @@ variable "alarm_emails" {
 }
 
 locals {
-  error_namespace = "${local.name_prefix}-errors"
+  error_namespace    = "${local.name_prefix}-errors"
+  security_namespace = "${local.name_prefix}-security"
 }
 
 resource "aws_sns_topic" "alarms" {
@@ -302,6 +303,95 @@ resource "aws_cloudwatch_metric_alarm" "server_error_rate" {
 
   alarm_actions = [aws_sns_topic.alarms.arn]
   ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# --- Manager access recovery (docs/runbooks/manager-access.md) ---------------
+
+resource "aws_cloudwatch_log_metric_filter" "manager_access_throttled" {
+  name           = "${local.name_prefix}-manager-access-throttled"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerAccessThrottled\" }"
+
+  metric_transformation {
+    name          = "ManagerAccessThrottled"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_throttled" {
+  alarm_name          = "${local.name_prefix}-manager-access-throttled"
+  alarm_description   = "Manager recovery requests are repeatedly hitting application limits. Triage with docs/runbooks/manager-access.md; do not identify users from request logs."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerAccessThrottled"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 10
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "manager_access_delivery_failed" {
+  name           = "${local.name_prefix}-manager-access-delivery-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerAccessDelivery\" && $.status = \"failed\" }"
+
+  metric_transformation {
+    name          = "ManagerAccessDeliveryFailed"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_delivery_failed" {
+  alarm_name          = "${local.name_prefix}-manager-access-delivery-failed"
+  alarm_description   = "A Site Manager recovery email failed delivery. Inspect safe ManagerAccessDelivery and manager_access_email metadata using docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerAccessDeliveryFailed"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
+  alarm_name          = "${local.name_prefix}-manager-access-waf-blocked"
+  alarm_description   = "The WAF ManagerAccessRateLimit rule is blocking a burst of public recovery requests. Triage with docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "BlockedRequests"
+  namespace           = "AWS/WAFV2"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 10
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Region = "Global"
+    Rule   = "ManagerAccessRateLimit"
+    WebACL = aws_wafv2_web_acl.web.name
+  }
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }

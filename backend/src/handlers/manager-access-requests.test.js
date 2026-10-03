@@ -24,6 +24,9 @@ beforeEach(() => {
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-verifier-secret");
   vi.stubEnv("PROVIDER_APP_URL", "https://field.example.test/");
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(globalThis, "setTimeout").mockImplementation((callback) => {
     callback();
     return /** @type {any} */ (0);
@@ -94,6 +97,12 @@ describe("public Manager access recovery", () => {
     expect(response.statusCode).toBe(202);
     expect(JSON.parse(String(response.body))).toEqual(generic);
     expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      JSON.stringify({
+        marker: "ManagerAccessThrottled",
+        limitedBy: "ip_hour",
+      }),
+    );
   });
 });
 

@@ -38,6 +38,7 @@ let parseEnrollmentLink;
 let stripCodeFromUrl;
 let stripEnrollmentFromUrl;
 let SiteSetup;
+let codeEntryView;
 beforeAll(async () => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("customElements", { get: () => true });
@@ -49,6 +50,7 @@ beforeAll(async () => {
     stripEnrollmentFromUrl,
     SiteSetup,
   } = await import("./site-setup.js"));
+  ({ codeEntryView } = await import("./site-setup.templates.js"));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -61,6 +63,14 @@ afterEach(() => {
 });
 
 describe("Manager enrollment URLs", () => {
+  it("directs QR users to the system Camera and provides only a paste fallback", () => {
+    const markup = codeEntryView();
+    expect(markup).toContain("scan it with this device's Camera app");
+    expect(markup).toContain('id="paste-enrollment-form"');
+    expect(markup).not.toContain("scan-enrollment-qr");
+    expect(markup).not.toContain("enrollment-scanner");
+  });
+
   it("accepts enrollment fragments and rejects malformed pasted values", () => {
     vi.stubGlobal("location", new URL("https://goodneighborsf.org/"));
     expect(
