@@ -140,11 +140,6 @@ export const deactivateProvider = (event) =>
   adminOnly(event, async () => {
     const providerId = event.pathParameters?.providerId ?? "";
     const now = new Date().toISOString();
-    const memberships = await listProviderSiteMemberships(providerId);
-    const activeMemberships = memberships.filter(
-      (membership) => membership.status !== "inactive",
-    );
-    await deactivateProviderSites(providerId, activeMemberships, now);
     const res = await ddb.send(
       new UpdateCommand({
         TableName: getDynamoTableName(),
@@ -164,15 +159,6 @@ export const deactivateProvider = (event) =>
         TableName: getDynamoTableName(),
         Key: { pk: "PROVIDER_SEARCH#ACTIVE", sk: providerId },
       }),
-    );
-    await Promise.all(
-      activeMemberships.map((membership) =>
-        cleanupDeactivatedSite(
-          String(membership.siteId),
-          "provider_deactivated",
-          now,
-        ),
-      ),
     );
     return jsonResponse(200, { provider: res.Attributes });
   });
@@ -1085,77 +1071,6 @@ function contactDeactivator(prefix) {
         });
         return jsonResponse(200, { contact: res.Attributes });
       })
-  );
-}
-
-/**
- * @param {string} providerId
- * @returns {Promise<Record<string, unknown>[]>}
- */
-function listProviderSiteMemberships(providerId) {
-  return queryAll({
-    KeyConditionExpression: "pk = :pk AND begins_with(sk, :site)",
-    ExpressionAttributeValues: {
-      ":pk": `PROVIDER#${providerId}`,
-      ":site": "SITE#",
-    },
-  });
-}
-
-/**
- * @param {string} providerId
- * @param {Record<string, unknown>[]} memberships
- * @param {string} now
- * @returns {Promise<void>}
- */
-async function deactivateProviderSites(providerId, memberships, now) {
-  if (!memberships.length) return;
-
-  await Promise.all(
-    memberships.map((membership) => {
-      const siteId = String(membership.siteId);
-      return ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: getDynamoTableName(),
-                Key: { pk: `SITE#${siteId}`, sk: "#META" },
-                UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-                ConditionExpression: "attribute_exists(pk)",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":inactive": "inactive",
-                  ":now": now,
-                },
-              },
-            },
-            {
-              Update: {
-                TableName: getDynamoTableName(),
-                Key: { pk: `PROVIDER#${providerId}`, sk: `SITE#${siteId}` },
-                UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-                ConditionExpression: "attribute_exists(pk)",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":inactive": "inactive",
-                  ":now": now,
-                },
-              },
-            },
-            {
-              Delete: {
-                TableName: getDynamoTableName(),
-                Key: {
-                  pk: "SITE_SEARCH#ACTIVE",
-                  sk: siteSearchSk(String(membership.siteName ?? ""), siteId),
-                },
-              },
-            },
-          ],
-        }),
-      );
-    }),
   );
 }
 

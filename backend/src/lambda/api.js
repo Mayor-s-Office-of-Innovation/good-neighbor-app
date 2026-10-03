@@ -77,6 +77,13 @@ import {
   updateSite,
 } from "../handlers/admin.js";
 import { jsonResponse } from "../http.js";
+import {
+  createProgram,
+  deactivateProgram,
+  getProgram,
+  listPrograms,
+  updateProgram,
+} from "../handlers/admin-programs.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
@@ -135,6 +142,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/providers/{providerId}": getProvider,
   "PATCH /admin/v1/providers/{providerId}": updateProvider,
   "DELETE /admin/v1/providers/{providerId}": deactivateProvider,
+  "GET /admin/v1/programs": listPrograms,
+  "POST /admin/v1/programs": createProgram,
+  "GET /admin/v1/programs/{programId}": getProgram,
+  "PATCH /admin/v1/programs/{programId}": updateProgram,
+  "DELETE /admin/v1/programs/{programId}": deactivateProgram,
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
   "PATCH /admin/v1/sites/{siteId}": updateSite,

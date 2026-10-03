@@ -354,40 +354,15 @@ describe("provider and site management", () => {
     });
   });
 
-  it("deactivates active sites when deactivating a provider", async () => {
+  it("archives a provider without changing its sites or access", async () => {
     send
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            siteId: "site-1",
-            siteName: "City Hall",
-            status: "active",
-          },
-          {
-            siteId: "site-2",
-            siteName: "Library",
-            status: "active",
-          },
-          {
-            siteId: "site-3",
-            siteName: "Closed Site",
-            status: "inactive",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Attributes: {
           providerId: "provider-one",
           status: "inactive",
         },
       })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] });
+      .mockResolvedValueOnce({});
 
     const res = await call(
       deactivateProvider,
@@ -395,43 +370,12 @@ describe("provider and site management", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
-    expect(send.mock.calls[0][0].input.ExpressionAttributeValues).toMatchObject(
-      {
-        ":pk": "PROVIDER#provider-one",
-        ":site": "SITE#",
-      },
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls.some(([cmd]) => cmd instanceof QueryCommand)).toBe(
+      false,
     );
-    const siteTransactions = send.mock.calls
-      .map(([cmd]) => cmd)
-      .filter((cmd) => cmd instanceof TransactWriteCommand);
-    expect(siteTransactions).toHaveLength(2);
-    expect(siteTransactions[0].input.TransactItems).toMatchObject([
-      {
-        Update: {
-          Key: { pk: "SITE#site-1", sk: "#META" },
-        },
-      },
-      {
-        Update: {
-          Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
-        },
-      },
-      {
-        Delete: {
-          Key: { pk: "SITE_SEARCH#ACTIVE", sk: "city hall#site-1" },
-        },
-      },
-    ]);
-    expect(siteTransactions[1].input.TransactItems?.[0]).toMatchObject({
-      Update: { Key: { pk: "SITE#site-2", sk: "#META" } },
-    });
     expect(
-      siteTransactions.some((tx) =>
-        tx.input.TransactItems?.some(
-          (item) => item.Update?.Key?.pk === "SITE#site-3",
-        ),
-      ),
+      send.mock.calls.some(([cmd]) => cmd instanceof TransactWriteCommand),
     ).toBe(false);
     const providerUpdate = send.mock.calls
       .map(([cmd]) => cmd)
