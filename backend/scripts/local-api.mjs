@@ -101,6 +101,11 @@ import {
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
 import {
+  createManagerMembership,
+  deactivateManagerMembership,
+  listManagerMemberships,
+} from "../src/handlers/admin-manager-memberships.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -284,6 +289,21 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
+  route(
+    "GET",
+    "/admin/v1/sites/{siteId}/manager-memberships",
+    listManagerMemberships,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/manager-memberships",
+    createManagerMembership,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    deactivateManagerMembership,
+  ),
   route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
   route("POST", "/admin/v1/site-imports/{importId}/apply", applySiteImport),
   route("GET", "/admin/v1/site-imports/{importId}", getSiteImport),

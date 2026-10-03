@@ -97,6 +97,11 @@ import {
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
 import {
+  createManagerMembership,
+  deactivateManagerMembership,
+  listManagerMemberships,
+} from "../handlers/admin-manager-memberships.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -177,6 +182,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
+  "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
+  "POST /admin/v1/sites/{siteId}/manager-memberships": createManagerMembership,
+  "DELETE /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":
+    deactivateManagerMembership,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
   "GET /admin/v1/site-imports/{importId}": getSiteImport,

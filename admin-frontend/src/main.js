@@ -28,6 +28,7 @@ import { currentRoute, navigate } from "./router.js";
  * @property {any[]} availableSiteUsers
  * @property {any[]} siteTerms
  * @property {AdminContact[]} contacts
+ * @property {any[]} managerMemberships
  * @property {AdminDevice[]} devices
  * @property {AdminIssuedCode | null} issuedCode
  * @property {string} siteSaveMessage
@@ -60,6 +61,7 @@ class AdminApp extends HTMLElement {
       availableSiteUsers: [],
       siteTerms: [],
       contacts: [],
+      managerMemberships: [],
       devices: [],
       issuedCode: null,
       siteSaveMessage: "",
@@ -94,6 +96,7 @@ class AdminApp extends HTMLElement {
       availableSiteUsers: [],
       siteTerms: [],
       contacts: [],
+      managerMemberships: [],
       devices: [],
       issuedCode: null,
       siteSaveMessage: "",
@@ -454,9 +457,9 @@ class AdminApp extends HTMLElement {
    */
   async openSite(siteId, updateUrl = true) {
     if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
-    const [site, contacts, devices, terms] = await Promise.all([
+    const [site, memberships, devices, terms] = await Promise.all([
       adminApi.getSite(siteId),
-      adminApi.listMasterContacts(siteId),
+      adminApi.listManagerMemberships(siteId),
       adminApi.listDevices(siteId),
       adminApi.listSiteTerms(siteId),
     ]);
@@ -481,7 +484,8 @@ class AdminApp extends HTMLElement {
     this.state.siteTerms = terms.terms || [];
     this.state.provider = null;
     this.state.program = null;
-    this.state.contacts = contacts.contacts || [];
+    this.state.contacts = [];
+    this.state.managerMemberships = memberships.memberships || [];
     this.state.devices = devices.devices || [];
     this.state.issuedCode = null;
     this.state.siteSaveMessage = "";
@@ -639,6 +643,29 @@ class AdminApp extends HTMLElement {
     if (!this.state.site) return;
     await adminApi.removeMasterContact(this.state.site.siteId, emailHash);
     await this.openSite(this.state.site.siteId);
+  }
+
+  /** @param {HTMLFormElement} form */
+  async addManagerMembership(form) {
+    if (!this.state.site) return;
+    const data = new FormData(form);
+    await adminApi.createManagerMembership(
+      this.state.site.siteId,
+      formValue(data, "manager-name"),
+      formValue(data, "manager-email"),
+    );
+    form.reset();
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  /** @param {string} membershipId */
+  async deactivateManagerMembership(membershipId) {
+    if (!this.state.site) return;
+    await adminApi.deactivateManagerMembership(
+      this.state.site.siteId,
+      membershipId,
+    );
+    await this.openSite(this.state.site.siteId, false);
   }
 
   /**
@@ -828,6 +855,16 @@ class AdminApp extends HTMLElement {
       this.querySelector("#site-save-status")?.remove();
       this.querySelector("#site-save-error")?.remove();
     });
+    this.querySelector("#manager-membership-form")?.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        this.addManagerMembership(asForm(e.currentTarget)).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
     this.querySelector("#contact-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.addMasterContact(asForm(e.currentTarget));
@@ -861,6 +898,18 @@ class AdminApp extends HTMLElement {
         this.removeMasterContact(dataAttr(button, "data-remove-contact")),
       );
     });
+    this.querySelectorAll("[data-remove-manager-membership]").forEach(
+      (button) => {
+        button.addEventListener("click", () =>
+          this.deactivateManagerMembership(
+            dataAttr(button, "data-remove-manager-membership"),
+          ).catch((err) => {
+            this.state.error = err.message;
+            this.render();
+          }),
+        );
+      },
+    );
     this.querySelectorAll("[data-issue-contact-code]").forEach((button) => {
       button.addEventListener("click", () =>
         this.issueSetupCodeForEmail(
@@ -1169,21 +1218,32 @@ function firstDayOfNextMonth() {
 /** @param {AdminState} state */
 function siteAccessView(state) {
   return `<section class="subsection" aria-labelledby="access-title">
-    <div><h2 id="access-title">App access</h2><p class="muted">Manage transitional setup codes and registered devices.</p></div>
-    <form id="contact-form" class="inline-form">
-      ${formInput("contact-name", "Contact name", "")}
-      ${formInput("contact-email", "Work email", "", { required: true, type: "email" })}
-      <button class="btn-primary" type="submit">Add master contact</button>
+    <div><h2 id="access-title">App access</h2><p class="muted">Manage Site Manager membership and registered devices. Site Managers use email enrollment rather than Cognito accounts.</p></div>
+    <h3>Site Managers</h3>
+    <form id="manager-membership-form" class="inline-form">
+      ${formInput("manager-name", "Manager name", "", { required: true, autocomplete: "name" })}
+      ${formInput("manager-email", "Work email", "", { required: true, type: "email", autocomplete: "email" })}
+      <button class="btn-primary" type="submit">Add Site Manager</button>
     </form>
-    <div class="list">${state.contacts.map((contact) => `<div class="row"><p>${escapeHtml(contact.name || contact.email)} ${escapeHtml(contact.email)}</p><button class="btn-secondary" type="button" data-issue-contact-code="${escapeHtml(contact.email)}">Generate code</button><button class="btn-danger" type="button" data-remove-contact="${escapeHtml(contact.emailHash)}">Remove</button></div>`).join("")}</div>
-    <form id="setup-code-form" class="inline-form">
-      ${formInput("setup-email", "Email setup code to", "", { required: true, type: "email" })}
-      <label><span>Access</span><select name="setup-access"><option value="general">General access</option><option value="manager">Site manager access</option></select></label>
-      <button class="btn-primary" type="submit">Issue setup code</button>
-    </form>
-    ${state.issuedCode ? `<p class="success">Code ${escapeHtml(state.issuedCode.code)} for ${escapeHtml(state.issuedCode.issuedTo)} (${escapeHtml(state.issuedCode.accessLevel || "general")} access) expires ${escapeHtml(state.issuedCode.expiresAt)}</p>` : ""}
+    ${managerMembershipList(state.managerMemberships)}
+    <p class="muted">Email enrollment links will be available from each active membership after the grant-delivery increment.</p>
     <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><p>${escapeHtml(device.label || device.deviceId)} ${escapeHtml(device.status || "active")}</p><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.deviceId)}">Revoke</button></div>`).join("")}</div>
   </section>`;
+}
+
+/** @param {any[]} memberships */
+function managerMembershipList(memberships) {
+  if (!memberships.length) {
+    return '<p class="muted">No Site Managers have been added.</p>';
+  }
+  return `<ul class="contact-list">${memberships
+    .map(
+      (membership) => `<li>
+        <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span></div>
+        <div class="contact-list__actions"><span class="status-badge">Active</span><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
+      </li>`,
+    )
+    .join("")}</ul>`;
 }
 
 /**

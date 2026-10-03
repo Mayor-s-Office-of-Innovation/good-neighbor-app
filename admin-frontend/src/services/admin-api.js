@@ -123,6 +123,23 @@ export const adminApi = {
       method: "PUT",
       body: JSON.stringify({ perimeter, expectedUpdatedAt }),
     }),
+  listManagerMemberships: (siteId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+    ),
+  createManagerMembership: (siteId, name, email) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name, email }),
+      },
+    ),
+  deactivateManagerMembership: (siteId, membershipId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
   previewSiteImport: (fileName, csv) =>
     adminFetch("/admin/v1/site-imports/preview", {
       method: "POST",
