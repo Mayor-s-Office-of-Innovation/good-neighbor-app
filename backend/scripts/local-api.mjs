@@ -93,6 +93,12 @@ import {
   updateProgram,
 } from "../src/handlers/admin-programs.js";
 import {
+  assignSiteUser,
+  createSiteTerms,
+  listSiteTerms,
+  unassignSiteUser,
+} from "../src/handlers/admin-site-config.js";
+import {
   listAnalyticsQueries,
   runAnalyticsCatalogQuery,
   runAnalyticsQuery,
@@ -264,6 +270,10 @@ const routes = [
   route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
   route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
   route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
+  route("POST", "/admin/v1/sites/{siteId}/users", assignSiteUser),
+  route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
+  route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
   route(
     "POST",

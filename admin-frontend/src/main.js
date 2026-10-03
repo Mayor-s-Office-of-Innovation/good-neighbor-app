@@ -24,6 +24,9 @@ import { currentRoute, navigate } from "./router.js";
  * @property {any | null} program
  * @property {AdminProvider | null} provider
  * @property {AdminSite | null} site
+ * @property {any[]} assignedUsers
+ * @property {any[]} availableSiteUsers
+ * @property {any[]} siteTerms
  * @property {AdminContact[]} contacts
  * @property {AdminDevice[]} devices
  * @property {AdminIssuedCode | null} issuedCode
@@ -46,6 +49,9 @@ class AdminApp extends HTMLElement {
       program: null,
       provider: null,
       site: null,
+      assignedUsers: [],
+      availableSiteUsers: [],
+      siteTerms: [],
       contacts: [],
       devices: [],
       issuedCode: null,
@@ -70,6 +76,9 @@ class AdminApp extends HTMLElement {
       program: null,
       provider: null,
       site: null,
+      assignedUsers: [],
+      availableSiteUsers: [],
+      siteTerms: [],
       contacts: [],
       devices: [],
       issuedCode: null,
@@ -368,12 +377,31 @@ class AdminApp extends HTMLElement {
    */
   async openSite(siteId, updateUrl = true) {
     if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
-    const [site, contacts, devices] = await Promise.all([
+    const [site, contacts, devices, terms] = await Promise.all([
       adminApi.getSite(siteId),
       adminApi.listMasterContacts(siteId),
       adminApi.listDevices(siteId),
+      adminApi.listSiteTerms(siteId),
     ]);
     this.state.site = site.items?.find((item) => item.sk === "#META") || null;
+    this.state.assignedUsers = (site.items || []).filter((item) =>
+      String(item.sk || "").startsWith("ASSIGNED_USER#"),
+    );
+    this.state.availableSiteUsers = [];
+    if (this.state.site?.leadProgramId) {
+      const program = await adminApi.getProgram(this.state.site.leadProgramId);
+      this.state.availableSiteUsers = (program.users || []).filter(
+        (user) => user.status !== "inactive",
+      );
+      const currentUsers = new Map(
+        this.state.availableSiteUsers.map((user) => [user.userId, user]),
+      );
+      this.state.assignedUsers = this.state.assignedUsers.map((assignment) => ({
+        ...assignment,
+        ...(currentUsers.get(assignment.userId) || {}),
+      }));
+    }
+    this.state.siteTerms = terms.terms || [];
     this.state.provider = null;
     this.state.program = null;
     this.state.contacts = contacts.contacts || [];
@@ -383,6 +411,46 @@ class AdminApp extends HTMLElement {
     this.state.siteSaveError = "";
     this.render();
     queueMicrotask(() => this.querySelector("h1")?.focus());
+  }
+
+  async assignSiteUser(form) {
+    if (!this.state.site) return;
+    const data = new FormData(form);
+    await adminApi.assignSiteUser(
+      this.state.site.siteId,
+      formValue(data, "user-id"),
+      data.get("primary") === "on",
+    );
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  async setPrimarySiteUser(form) {
+    if (!this.state.site) return;
+    const data = new FormData(form);
+    await adminApi.assignSiteUser(
+      this.state.site.siteId,
+      formValue(data, "primary-user-id"),
+      true,
+    );
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  async unassignSiteUser(userId) {
+    if (!this.state.site) return;
+    await adminApi.unassignSiteUser(this.state.site.siteId, userId);
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  async createSiteTerms(form) {
+    if (!this.state.site) return;
+    const data = new FormData(form);
+    await adminApi.createSiteTerms(this.state.site.siteId, {
+      tier: Number(data.get("terms-tier")),
+      requiredChecksPerDay: Number(data.get("terms-checks-per-day")),
+      effectiveStart: formValue(data, "terms-start"),
+      expiresOnExclusive: formValue(data, "terms-expiry"),
+    });
+    await this.openSite(this.state.site.siteId, false);
   }
 
   /**
@@ -546,6 +614,30 @@ class AdminApp extends HTMLElement {
         });
       },
     );
+    this.querySelector("#site-user-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.assignSiteUser(asForm(e.currentTarget)).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
+    this.querySelector("#site-primary-form")?.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        this.setPrimarySiteUser(asForm(e.currentTarget)).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelector("#site-terms-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.createSiteTerms(asForm(e.currentTarget)).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
     this.querySelector("#site-details-form")?.addEventListener("input", () => {
       this.state.siteSaveMessage = "";
       this.state.siteSaveError = "";
@@ -597,6 +689,16 @@ class AdminApp extends HTMLElement {
         this.revokeDevice(dataAttr(button, "data-revoke-device")),
       );
     });
+    this.querySelectorAll("[data-unassign-site-user]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this.unassignSiteUser(
+          dataAttr(button, "data-unassign-site-user"),
+        ).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      });
+    });
   }
 
   /**
@@ -608,6 +710,8 @@ class AdminApp extends HTMLElement {
     const program = this.state.program;
     const site = this.state.site;
     const route = currentRoute();
+    const activeSiteSection =
+      new URLSearchParams(window.location.search).get("section") || "details";
     this.innerHTML = `
       <main class="admin" id="main-content">
         <header class="admin__header">
@@ -721,71 +825,8 @@ class AdminApp extends HTMLElement {
                     Deactivate site
                   </button>
                 </div>
-                ${siteEditor(site, this.state.siteSaving, this.state.siteSaveError)}
-                ${this.state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(this.state.siteSaveMessage)}</p>` : ""}
-                ${site.geocodedAddress ? `<p class="muted">Mapped to ${escapeHtml(site.geocodedAddress)}</p>` : ""}
-                <form id="contact-form" class="inline-form">
-                  <label>
-                    <span>Contact name</span>
-                    <input name="contact-name" />
-                  </label>
-                  <label>
-                    <span>Work email</span>
-                    <input name="contact-email" type="email" required />
-                  </label>
-                  <button class="btn-primary" type="submit">Add master contact</button>
-                </form>
-                <div class="list">
-                  ${this.state.contacts
-                    .map(
-                      (c) => `
-                        <div class="row">
-                          <p>${escapeHtml(c.name || c.email)} ${escapeHtml(c.email)}</p>
-                          <button class="btn-secondary" type="button" data-issue-contact-code="${escapeHtml(c.email)}">
-                            Generate code
-                          </button>
-                          <button class="btn-danger" type="button" data-remove-contact="${escapeHtml(c.emailHash)}">
-                            Remove
-                          </button>
-                        </div>
-                      `,
-                    )
-                    .join("")}
-                </div>
-                <form id="setup-code-form" class="inline-form">
-                  <label>
-                    <span>Email setup code to</span>
-                    <input name="setup-email" type="email" required />
-                  </label>
-                  <label>
-                    <span>Access</span>
-                    <select name="setup-access">
-                      <option value="general">General access</option>
-                      <option value="manager">Site manager access</option>
-                    </select>
-                  </label>
-                  <button class="btn-primary" type="submit">Issue setup code</button>
-                </form>
-                ${
-                  this.state.issuedCode
-                    ? `<p class="success">Code ${escapeHtml(this.state.issuedCode.code)} for ${escapeHtml(this.state.issuedCode.issuedTo)} (${escapeHtml(this.state.issuedCode.accessLevel || "general")} access) expires ${escapeHtml(this.state.issuedCode.expiresAt)}</p>`
-                    : ""
-                }
-                <h3>Devices</h3>
-                <div class="list">
-                  ${this.state.devices
-                    .map(
-                      (d) => `
-                        <div class="row">
-                          <p>${escapeHtml(d.label || d.deviceId)} ${escapeHtml(d.status || "active")}</p>
-                          <button class="btn-danger" type="button" data-revoke-device="${escapeHtml(d.deviceId)}">
-                            Revoke
-                          </button>
-                        </div>
-                      `,
-                    )
-                    .join("")}
-                </div>
+                ${siteSectionNav(site.siteId, activeSiteSection)}
+                ${siteSectionView(this.state, activeSiteSection)}
               </section>
             `
             : ""
@@ -797,6 +838,140 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
+
+/** @param {string} siteId @param {string} current */
+function siteSectionNav(siteId, current) {
+  const sections = [
+    ["details", "Details"],
+    ["staff", "Staff & oversight"],
+    ["terms", "Compliance terms"],
+    ["letters", "Letters"],
+    ["perimeter", "Perimeter"],
+    ["access", "App access"],
+  ];
+  return `<nav class="entity-tabs" aria-label="Site sections">${sections
+    .map(
+      ([value, label]) =>
+        `<a href="/sites/${encodeURIComponent(siteId)}?section=${value}" data-route ${value === current ? 'aria-current="page"' : ""}>${label}</a>`,
+    )
+    .join("")}</nav>`;
+}
+
+/** @param {AdminState} state @param {string} section */
+function siteSectionView(state, section) {
+  const site = /** @type {AdminSite} */ (state.site);
+  if (section === "staff") return siteStaffView(state);
+  if (section === "terms") return siteTermsView(state);
+  if (section === "letters") {
+    return `<section aria-labelledby="letters-title"><h2 id="letters-title">Letters</h2><p class="muted">Letter state: ${escapeHtml(site.letterState || "No generated letter")}. Letter generation and delivery controls are added after the terms job processor.</p></section>`;
+  }
+  if (section === "perimeter") {
+    return `<section aria-labelledby="perimeter-title"><h2 id="perimeter-title">Perimeter</h2><p>${escapeHtml(site.perimeter || "No perimeter notes have been recorded.")}</p><p class="muted">Versioned geometry and the accessible coordinate editor are the next perimeter increment.</p></section>`;
+  }
+  if (section === "access") return siteAccessView(state);
+  return `${siteEditor(site, state.siteSaving, state.siteSaveError)}
+    ${state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
+    ${site.geocodedAddress ? `<p class="muted">Mapped to ${escapeHtml(site.geocodedAddress)}</p>` : ""}`;
+}
+
+/** @param {AdminState} state */
+function siteStaffView(state) {
+  const site = /** @type {AdminSite} */ (state.site);
+  const assignedIds = new Set(state.assignedUsers.map((user) => user.userId));
+  const available = state.availableSiteUsers.filter(
+    (user) => !assignedIds.has(user.userId),
+  );
+  return `<section class="subsection" aria-labelledby="staff-title">
+    <div><h2 id="staff-title">Staff and oversight</h2><p class="muted">These are contact records from the lead Program; they do not authenticate.</p></div>
+    <h3>Assigned contacts</h3>
+    ${siteAssignedUserList(state.assignedUsers, site.primaryContactUserId)}
+    <form id="site-primary-form" class="inline-form">
+      <label><span>Primary Site contact</span><select name="primary-user-id" required>
+        <option value="">Choose an assigned contact</option>
+        ${state.assignedUsers.map((user) => `<option value="${escapeHtml(user.userId)}" ${user.userId === site.primaryContactUserId ? "selected" : ""}>${escapeHtml(`${user.firstName} ${user.lastName}`)}</option>`).join("")}
+      </select></label>
+      <button class="btn-secondary" type="submit" ${state.assignedUsers.length ? "" : "disabled"}>Set primary contact</button>
+    </form>
+    <form id="site-user-form" class="inline-form">
+      <label><span>Program contact</span><select name="user-id" required>
+        <option value="">Choose a contact</option>
+        ${available.map((user) => `<option value="${escapeHtml(user.userId)}">${escapeHtml(`${user.firstName} ${user.lastName}`)}</option>`).join("")}
+      </select></label>
+      <label class="checkbox-label"><input name="primary" type="checkbox" /> Make primary Site contact</label>
+      <button class="btn-primary" type="submit" ${available.length ? "" : "disabled"}>Assign contact</button>
+    </form>
+    ${available.length ? "" : '<p class="muted">All active Program contacts are already assigned.</p>'}
+  </section>`;
+}
+
+/** @param {any[]} users @param {string} primaryContactUserId */
+function siteAssignedUserList(users, primaryContactUserId) {
+  if (!users.length)
+    return '<p class="muted">No Program contacts are assigned.</p>';
+  return `<ul class="contact-list">${users
+    .map(
+      (user) =>
+        `<li><div><strong>${escapeHtml(`${user.firstName} ${user.lastName}`)}</strong><span><a href="mailto:${escapeHtml(user.email)}">${escapeHtml(user.email)}</a></span></div><div class="contact-list__actions"><span class="status-badge">${user.userId === primaryContactUserId ? "Primary contact" : "Assigned"}</span><button class="btn-danger" type="button" data-unassign-site-user="${escapeHtml(user.userId)}" ${user.userId === primaryContactUserId ? "disabled" : ""}>Unassign</button></div></li>`,
+    )
+    .join("")}</ul>`;
+}
+
+/** @param {AdminState} state */
+function siteTermsView(state) {
+  return `<section class="subsection" aria-labelledby="terms-title">
+    <div><h2 id="terms-title">Compliance terms</h2><p class="muted">Dates are inclusive at the start and exclusive at expiry. Saving schedules a new draft letter.</p></div>
+    <form id="site-terms-form" class="site-details-form">
+      <fieldset><legend>Add terms change</legend><div class="form-grid form-grid--two">
+        <label><span>GNP tier</span><select name="terms-tier" required>${[0, 1, 2, 3, 4].map((tier) => `<option value="${tier}">${tier === 0 ? "Tier 0 — No enhanced monitoring" : `Tier ${tier}`}</option>`).join("")}</select></label>
+        ${formInput("terms-checks-per-day", "Checks required per day", "", { required: true, type: "number", min: 0, max: 100, step: 1 })}
+        ${formInput("terms-start", "Start date", firstDayOfNextMonth(), { required: true, type: "date" })}
+        ${formInput("terms-expiry", "Expiry date (leave blank for no expiry)", "", { type: "date" })}
+      </div></fieldset>
+      <button class="btn-primary" type="submit">Save terms change</button>
+    </form>
+    <h3>Terms history</h3>
+    ${termsHistory(state.siteTerms)}
+  </section>`;
+}
+
+/** @param {any[]} terms */
+function termsHistory(terms) {
+  if (!terms.length)
+    return '<p class="muted">No effective-dated terms have been added.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Expires</th><th>Tier</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
+    .map(
+      (term) =>
+        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.expiresOnExclusive || "No expiry")}</td><td>${escapeHtml(term.tier)}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
+}
+
+function firstDayOfNextMonth() {
+  const value = new Date();
+  value.setHours(12, 0, 0, 0);
+  value.setMonth(value.getMonth() + 1, 1);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+/** @param {AdminState} state */
+function siteAccessView(state) {
+  return `<section class="subsection" aria-labelledby="access-title">
+    <div><h2 id="access-title">App access</h2><p class="muted">Manage transitional setup codes and registered devices.</p></div>
+    <form id="contact-form" class="inline-form">
+      ${formInput("contact-name", "Contact name", "")}
+      ${formInput("contact-email", "Work email", "", { required: true, type: "email" })}
+      <button class="btn-primary" type="submit">Add master contact</button>
+    </form>
+    <div class="list">${state.contacts.map((contact) => `<div class="row"><p>${escapeHtml(contact.name || contact.email)} ${escapeHtml(contact.email)}</p><button class="btn-secondary" type="button" data-issue-contact-code="${escapeHtml(contact.email)}">Generate code</button><button class="btn-danger" type="button" data-remove-contact="${escapeHtml(contact.emailHash)}">Remove</button></div>`).join("")}</div>
+    <form id="setup-code-form" class="inline-form">
+      ${formInput("setup-email", "Email setup code to", "", { required: true, type: "email" })}
+      <label><span>Access</span><select name="setup-access"><option value="general">General access</option><option value="manager">Site manager access</option></select></label>
+      <button class="btn-primary" type="submit">Issue setup code</button>
+    </form>
+    ${state.issuedCode ? `<p class="success">Code ${escapeHtml(state.issuedCode.code)} for ${escapeHtml(state.issuedCode.issuedTo)} (${escapeHtml(state.issuedCode.accessLevel || "general")} access) expires ${escapeHtml(state.issuedCode.expiresAt)}</p>` : ""}
+    <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><p>${escapeHtml(device.label || device.deviceId)} ${escapeHtml(device.status || "active")}</p><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.deviceId)}">Revoke</button></div>`).join("")}</div>
+  </section>`;
+}
 
 /**
  * Render the top-level entity directory without fetching every provider record.
@@ -978,8 +1153,8 @@ function programView(program) {
   </section>`;
 }
 
-/** @param {any[]} users */
-function programUserList(users) {
+/** @param {any[]} users @param {string} [primaryContactUserId] */
+function programUserList(users, primaryContactUserId = "") {
   if (!users.length)
     return '<p class="muted">No program contacts have been added.</p>';
   return `<ul class="contact-list">${users
@@ -987,7 +1162,7 @@ function programUserList(users) {
       (user) => `<li>
         <div><strong>${escapeHtml([user.firstName, user.lastName].filter(Boolean).join(" "))}</strong>
         <span><a href="mailto:${escapeHtml(user.email)}">${escapeHtml(user.email)}</a></span></div>
-        <div class="contact-list__meta"><span>${escapeHtml(user.phone)}</span><span>${Number(user.siteAssignmentCount || 0)} site ${Number(user.siteAssignmentCount || 0) === 1 ? "assignment" : "assignments"}</span></div>
+        <div class="contact-list__meta"><span>${escapeHtml(user.phone)}</span><span>${primaryContactUserId ? (user.userId === primaryContactUserId ? "Primary contact" : "Assigned") : `${Number(user.siteAssignmentCount || 0)} site ${Number(user.siteAssignmentCount || 0) === 1 ? "assignment" : "assignments"}`}</span></div>
       </li>`,
     )
     .join("")}</ul>`;

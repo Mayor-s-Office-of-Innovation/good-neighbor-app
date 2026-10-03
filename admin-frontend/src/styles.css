@@ -183,6 +183,17 @@ label {
   font-size: 0.875rem;
 }
 
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.checkbox-label input {
+  min-height: auto;
+}
+
 input,
 textarea {
   min-height: 40px;
@@ -368,6 +379,12 @@ button:disabled,
   color: var(--muted);
   font-size: 0.8125rem;
   text-align: end;
+}
+
+.contact-list__actions {
+  display: flex !important;
+  align-items: center;
+  grid-auto-flow: column;
 }
 
 .list > button,

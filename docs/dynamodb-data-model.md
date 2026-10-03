@@ -157,6 +157,10 @@ as task update events and every GSI sort key.
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
 | Program contact | `PROGRAM#<programId>` | `USER#<userId>` | non-authenticating roster/contact record: name, phone, normalized email, status, Site-assignment count, timestamps. Archival is blocked while assignments remain. |
+| Site contact assignment | `SITE#<siteId>` | `ASSIGNED_USER#<userId>` | assignment to an active contact in the Site's lead Program, with a contact snapshot for display. The Site `#META` row identifies exactly one `primaryContactUserId`; primary removal requires replacement first. |
+| Compliance terms version | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | immutable effective-dated tier 0–4 and integer checks/day. Start is inclusive, expiry is exclusive, and missing expiry means indefinite. New versions may close the prior open version but cannot overlap a future version. |
+| Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | transactional outbox item created with a terms version; a later worker generates the draft and advances letter state. |
+| Site audit event | `SITE#<siteId>` | `AUDIT#<createdAt>#<eventId>` | append-only actor/event record for Site administration changes. |
 | Provider → program membership | `PROVIDER#<providerId>` | `PROGRAM#<programId>` | lists Programs owned by a Provider; archival never cascades to Programs or Sites |
 | Program → site membership | `PROGRAM#<programId>` | `SITE#<siteId>` | lists Sites led by a Program; reassignment updates this relationship without changing Site identity or device access |
 | Program search row | `PROGRAM_SEARCH#ACTIVE` | `<lowercased name>#<programId>` | active Program directory projection with Provider and migration-review metadata |
@@ -304,6 +308,8 @@ Every pattern is a single query. There are no scans.
 | AP21 | Resolve or replace a setup code | `GetItem` `SETUP_CODE#<verifier>` / `#META`, falling back to `GetItem` legacy `SITE_CODE#<code>`. On a repeat request, `Query` **GSI6** and revoke the contact's older pending code (`REMOVE gsi6pk, gsi6sk, gsi7pk, gsi7sk`). |
 | AP22 | Deactivate a site | `Query` **GSI7** `SETUP_CODE_PENDING_SITE#x` and revoke open codes. Delete the `SITE_SEARCH#ACTIVE` row. Set membership and `#META` status. |
 | AP23 | List a Program's contacts and Sites | `Query` base `PROGRAM#<programId>` with `USER#` or `SITE#` sort-key prefix. Program contacts are roster records only and have no authentication principal. |
+| AP24 | Assign a Program contact to a Site | transactionally put `SITE#x / ASSIGNED_USER#y`, increment the Program contact's assignment count, and optionally update the Site primary-contact pointer/snapshot. |
+| AP25 | Read or add effective-dated terms | `Query` the Site `COMPLIANCE_TERMS#` prefix. Creation transactionally puts the version, conditionally closes the prior open version, marks the letter draft pending, and writes letter-job and audit rows. |
 
 ### Who owns a task
 

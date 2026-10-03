@@ -88,6 +88,12 @@ import {
   updateProgramUser,
   updateProgram,
 } from "../handlers/admin-programs.js";
+import {
+  assignSiteUser,
+  createSiteTerms,
+  listSiteTerms,
+  unassignSiteUser,
+} from "../handlers/admin-site-config.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
@@ -157,6 +163,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
+  "POST /admin/v1/sites/{siteId}/users": assignSiteUser,
+  "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
+  "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
+  "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
   "PATCH /admin/v1/sites/{siteId}": updateSite,
   "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
     presignComplianceLetter,

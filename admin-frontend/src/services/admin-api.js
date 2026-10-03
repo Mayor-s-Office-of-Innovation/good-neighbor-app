@@ -99,6 +99,23 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ providerId, leadProgramId }),
     }),
+  assignSiteUser: (siteId, userId, primary = false) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/users`, {
+      method: "POST",
+      body: JSON.stringify({ userId, primary }),
+    }),
+  unassignSiteUser: (siteId, userId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
+  listSiteTerms: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`),
+  createSiteTerms: (siteId, values) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`, {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
   presignComplianceLetter: (siteId, file) =>
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-letters:presign`,
