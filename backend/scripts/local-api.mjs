@@ -50,7 +50,9 @@ import {
   selectDeviceBinding,
 } from "../src/handlers/device-bindings.js";
 import {
+  cancelStaffGrant,
   createStaffGrant,
+  getCurrentStaffGrant,
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../src/handlers/manager-access.js";
@@ -215,6 +217,8 @@ const routes = [
   route("GET", "/app/v1/device-bindings", listDeviceBindings),
   route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
   route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
+  route("GET", "/app/v1/manager/staff-grants/current", getCurrentStaffGrant),
+  route("DELETE", "/app/v1/manager/staff-grants/{grantId}", cancelStaffGrant),
   route("GET", "/app/v1/manager/device-bindings", listGeneralBindings),
   route(
     "POST",

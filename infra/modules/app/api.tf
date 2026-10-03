@@ -16,6 +16,8 @@ locals {
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
     "POST /app/v1/manager/staff-grants",
+    "GET /app/v1/manager/staff-grants/current",
+    "DELETE /app/v1/manager/staff-grants/{grantId}",
     "GET /app/v1/manager/device-bindings",
     "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
     "GET /v1/sites:search",

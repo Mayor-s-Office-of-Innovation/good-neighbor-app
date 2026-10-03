@@ -95,6 +95,34 @@ function enterCodeView({ value, error, checking }) {
     <button id="show-request-code" class="btn-link" type="button">
       Need a new code?
     </button>
+    <div class="login__enrollment-options">
+      <button id="scan-enrollment-qr" class="btn-outline" type="button">
+        Scan enrollment QR
+      </button>
+      <form id="paste-enrollment-form" class="login__paste" novalidate>
+        <label for="enrollment-link">Or paste an enrollment link</label>
+        <input
+          id="enrollment-link"
+          name="enrollment-link"
+          type="url"
+          inputmode="url"
+          autocomplete="off"
+          placeholder="https://…"
+        />
+        <button class="btn-outline" type="submit">Open enrollment link</button>
+      </form>
+    </div>
+    <dialog class="login__scanner" id="enrollment-scanner">
+      <div class="login__scanner-card">
+        <h2>Scan enrollment QR</h2>
+        <p>Camera access is used only while this scanner is open.</p>
+        <video id="enrollment-scanner-video" playsinline muted></video>
+        <p id="enrollment-scanner-status" role="status">Starting camera…</p>
+        <button class="btn-outline" id="close-enrollment-scanner" type="button">
+          Cancel
+        </button>
+      </div>
+    </dialog>
   `;
 }
 

@@ -32,6 +32,7 @@ vi.mock("../db.js", () => ({
 
 let readCodeFromUrl;
 let readEnrollmentFromUrl;
+let parseEnrollmentLink;
 let stripCodeFromUrl;
 let stripEnrollmentFromUrl;
 let SiteSetup;
@@ -41,6 +42,7 @@ beforeAll(async () => {
   ({
     readCodeFromUrl,
     readEnrollmentFromUrl,
+    parseEnrollmentLink,
     stripCodeFromUrl,
     stripEnrollmentFromUrl,
     SiteSetup,
@@ -56,6 +58,22 @@ afterEach(() => {
 });
 
 describe("Manager enrollment URLs", () => {
+  it("accepts enrollment fragments and rejects malformed pasted values", () => {
+    vi.stubGlobal("location", new URL("https://goodneighborsf.org/"));
+    expect(
+      parseEnrollmentLink(
+        "https://goodneighborsf.org/#enrollment_grant=12345678-abcd&enrollment_token=abcdefghijklmnopqrstuvwxyz_123456",
+      ),
+    ).toEqual({
+      grantId: "12345678-abcd",
+      token: "abcdefghijklmnopqrstuvwxyz_123456",
+    });
+    expect(parseEnrollmentLink("javascript:alert(1)")).toBeNull();
+    expect(
+      parseEnrollmentLink("https://example.org/#enrollment_grant=x"),
+    ).toBeNull();
+  });
+
   it("reads both secret fragment fields", () => {
     vi.stubGlobal(
       "location",

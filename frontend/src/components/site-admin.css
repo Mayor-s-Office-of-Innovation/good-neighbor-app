@@ -200,6 +200,15 @@
   font-size: var(--wa-font-size-m);
 }
 
+.site-access-ready wa-qr-code {
+  justify-self: center;
+  max-width: 100%;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: white;
+  color: black;
+}
+
 .site-access-list {
   padding-inline: 1rem;
 }

@@ -189,6 +189,122 @@ export const createStaffGrant = async (event) => {
   });
 };
 
+/** Return the current Manager binding's unfinished staff grant, if any. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
+export const getCurrentStaffGrant = async (event) => {
+  if (deriveAccessLevel(event) !== "manager") {
+    return jsonResponse(403, { error: "manager_access_required" });
+  }
+  const siteId = deriveSiteId(event);
+  const issuerBindingId = deriveActorId(event);
+  const tableName = getDynamoTableName();
+  const markerResult = await get(
+    tableName,
+    `SITE#${siteId}`,
+    `ACTIVE_STAFF_GRANT#${issuerBindingId}`,
+  );
+  const marker = markerResult.Item;
+  if (!marker) return jsonResponse(200, { grant: null });
+  const grantResult = await get(tableName, marker.grantPk, marker.grantSk);
+  const grant = grantResult.Item;
+  if (!grant || grant.issuedByBindingId !== issuerBindingId) {
+    return jsonResponse(200, { grant: null });
+  }
+  return jsonResponse(200, { grant: publicGrant(grant) });
+};
+
+/** Cancel this Manager binding's current staff grant. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
+export const cancelStaffGrant = async (event) => {
+  if (deriveAccessLevel(event) !== "manager") {
+    return jsonResponse(403, { error: "manager_access_required" });
+  }
+  const siteId = deriveSiteId(event);
+  const issuerBindingId = deriveActorId(event);
+  const grantId = String(event.pathParameters?.grantId ?? "");
+  const tableName = getDynamoTableName();
+  const markerKey = {
+    pk: `SITE#${siteId}`,
+    sk: `ACTIVE_STAFF_GRANT#${issuerBindingId}`,
+  };
+  const markerResult = await get(tableName, markerKey.pk, markerKey.sk);
+  const marker = markerResult.Item;
+  if (!marker || marker.grantId !== grantId) {
+    return jsonResponse(404, { error: "staff_grant_not_found" });
+  }
+  const grantResult = await get(tableName, marker.grantPk, marker.grantSk);
+  const grant = grantResult.Item;
+  if (
+    !grant ||
+    grant.status !== "pending" ||
+    grant.issuedByBindingId !== issuerBindingId
+  ) {
+    return jsonResponse(404, { error: "staff_grant_not_found" });
+  }
+  const now = new Date().toISOString();
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: grant.pk, sk: grant.sk },
+              UpdateExpression: "SET #status = :cancelled, cancelledAt = :now",
+              ConditionExpression:
+                "#status = :pending AND issuedByBindingId = :issuer",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":pending": "pending",
+                ":cancelled": "cancelled",
+                ":now": now,
+                ":issuer": issuerBindingId,
+              },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: { pk: `ENROLLMENT_TOKEN#${grant.tokenHash}`, sk: "#META" },
+              ConditionExpression: "grantId = :grantId",
+              ExpressionAttributeValues: { ":grantId": grantId },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: markerKey,
+              ConditionExpression: "grantId = :grantId",
+              ExpressionAttributeValues: { ":grantId": grantId },
+            },
+          },
+          put(tableName, {
+            pk: `SITE#${siteId}`,
+            sk: `AUDIT#${now}#${randomUUID()}`,
+            type: "siteAuditEvent",
+            eventType: "staff_grant_cancelled",
+            siteId,
+            grantId,
+            actor: `binding:${issuerBindingId}`,
+            createdAt: now,
+          }),
+        ],
+      }),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException"
+    ) {
+      return jsonResponse(409, { error: "staff_grant_cancel_conflict" });
+    }
+    throw error;
+  }
+  return jsonResponse(200, {
+    grant: { ...publicGrant(grant, now), status: "cancelled" },
+  });
+};
+
 /** List general-access bindings at the Manager's current Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
 export const listGeneralBindings = async (event) => {

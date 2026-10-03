@@ -343,6 +343,19 @@ export function createStaffEnrollmentGrant(label) {
   });
 }
 
+/** Return the current Manager binding's unfinished staff grant metadata. */
+export function getCurrentStaffEnrollmentGrant() {
+  return request("GET", "/app/v1/manager/staff-grants/current");
+}
+
+/** @param {string} grantId */
+export function cancelStaffEnrollmentGrant(grantId) {
+  return request(
+    "DELETE",
+    `/app/v1/manager/staff-grants/${encodeURIComponent(grantId)}`,
+  );
+}
+
 /** List general-access devices at the current Manager binding's Site. */
 export function listManagerDeviceBindings() {
   return request("GET", "/app/v1/manager/device-bindings");

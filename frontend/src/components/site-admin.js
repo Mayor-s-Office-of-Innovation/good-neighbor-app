@@ -10,7 +10,9 @@ import {
 } from "../router.js";
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
 import {
+  cancelStaffEnrollmentGrant,
   createStaffEnrollmentGrant,
+  getCurrentStaffEnrollmentGrant,
   listManagerDeviceBindings,
   revokeManagerDeviceBinding,
 } from "../services/api.js";
@@ -176,20 +178,30 @@ class SiteAccessView extends HTMLElement {
     }
     this._site = binding;
     this._secretUrl = "";
+    this._activeGrant = null;
     this.innerHTML = loadingView("Access & devices");
     await this._load();
   }
 
   async _load() {
     try {
-      const result = await listManagerDeviceBindings();
-      this._bindings = result.bindings || [];
+      const [devices, currentGrant] = await Promise.all([
+        listManagerDeviceBindings(),
+        getCurrentStaffEnrollmentGrant(),
+      ]);
+      this._bindings = devices.bindings || [];
+      this._activeGrant =
+        currentGrant.grant?.status === "pending" ? currentGrant.grant : null;
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView("We couldn't load the registered devices.");
       this._wireBack();
     }
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._countdownTimer);
   }
 
   _wireBack() {
@@ -219,6 +231,7 @@ class SiteAccessView extends HTMLElement {
                 maxlength="100"
                 autocomplete="off"
                 required
+                ${this._activeGrant ? "disabled" : ""}
               ></wa-input>
               <p class="site-access-help">
                 Create one 10-minute, single-use enrollment link. Finish sharing
@@ -229,7 +242,11 @@ class SiteAccessView extends HTMLElement {
                 id="staff-grant-error"
                 role="alert"
               ></p>
-              <button class="btn-ink" type="submit">
+              <button
+                class="btn-ink"
+                type="submit"
+                ${this._activeGrant ? "disabled" : ""}
+              >
                 Create enrollment link
               </button>
             </form>
@@ -237,7 +254,11 @@ class SiteAccessView extends HTMLElement {
               class="site-access-grant"
               id="staff-grant-result"
               aria-live="polite"
-            ></div>
+            >
+              ${this._activeGrant
+                ? activeGrantView(this._activeGrant, false)
+                : ""}
+            </div>
           </section>
           <section
             class="site-admin-section"
@@ -269,6 +290,11 @@ class SiteAccessView extends HTMLElement {
           ),
       );
     });
+    this.querySelector("[data-cancel-staff-grant]")?.addEventListener(
+      "click",
+      () => void this._cancelGrant(),
+    );
+    this._startCountdown();
   }
 
   async _createGrant(event) {
@@ -290,22 +316,18 @@ class SiteAccessView extends HTMLElement {
     try {
       const result = await createStaffEnrollmentGrant(label);
       this._secretUrl = result.enrollmentUrl;
+      this._activeGrant = result.grant;
       const output = this.querySelector("#staff-grant-result");
       if (output) {
-        output.innerHTML = html`<div class="site-admin-card site-access-ready">
-          <h3>Enrollment link ready</h3>
-          <p>
-            For ${escapeHtml(result.grant.label)}. It expires
-            ${escapeHtml(formatTimestamp(result.grant.expiresAt))} and works
-            once.
-          </p>
-          <button class="btn-ink" type="button" id="share-staff-grant">
-            Share enrollment link
-          </button>
-        </div>`;
+        output.innerHTML = activeGrantView(result.grant, true);
+        void renderEnrollmentQr(output, this._secretUrl);
         output
           .querySelector("#share-staff-grant")
           ?.addEventListener("click", () => void this._shareGrant());
+        output
+          .querySelector("[data-cancel-staff-grant]")
+          ?.addEventListener("click", () => void this._cancelGrant());
+        this._startCountdown();
       }
     } catch (caught) {
       if (error) {
@@ -316,6 +338,47 @@ class SiteAccessView extends HTMLElement {
       }
       button?.removeAttribute("disabled");
     }
+  }
+
+  async _cancelGrant() {
+    if (!this._activeGrant?.grantId) return;
+    const button = this.querySelector("[data-cancel-staff-grant]");
+    button?.setAttribute("disabled", "");
+    try {
+      await cancelStaffEnrollmentGrant(this._activeGrant.grantId);
+      this._secretUrl = "";
+      this._activeGrant = null;
+      clearInterval(this._countdownTimer);
+      await this._load();
+    } catch {
+      button?.removeAttribute("disabled");
+      const error = this.querySelector("#staff-grant-error");
+      if (error)
+        error.textContent =
+          "We couldn't cancel that enrollment link. Try again.";
+    }
+  }
+
+  _startCountdown() {
+    clearInterval(this._countdownTimer);
+    if (!this._activeGrant) return;
+    const update = () => {
+      const countdown = this.querySelector("[data-grant-countdown]");
+      if (!countdown || !this._activeGrant) return;
+      const remaining = Math.max(
+        0,
+        Date.parse(this._activeGrant.expiresAt) - Date.now(),
+      );
+      countdown.textContent = formatCountdown(remaining);
+      if (remaining === 0) {
+        clearInterval(this._countdownTimer);
+        this._secretUrl = "";
+        this._activeGrant = null;
+        void this._load();
+      }
+    };
+    update();
+    this._countdownTimer = setInterval(update, 1000);
   }
 
   async _shareGrant() {
@@ -778,6 +841,56 @@ function deviceRow(binding) {
         </button>`
       : ""}
   </article>`;
+}
+
+/** @param {Record<string, any>} grant @param {boolean} showSecretActions */
+function activeGrantView(grant, showSecretActions) {
+  return html`<div class="site-admin-card site-access-ready">
+    <h3>
+      ${showSecretActions ? "Enrollment QR ready" : "Enrollment in progress"}
+    </h3>
+    <p>
+      For ${escapeHtml(grant.label)}. Expires in
+      <strong data-grant-countdown
+        >${escapeHtml(
+          formatCountdown(
+            Math.max(0, Date.parse(grant.expiresAt) - Date.now()),
+          ),
+        )}</strong
+      >. It works once.
+    </p>
+    ${showSecretActions
+      ? html`<wa-qr-code
+            size="220"
+            error-correction="M"
+            label="Scan to enroll ${escapeAttr(grant.label)} for this Site"
+          ></wa-qr-code>
+          <button class="btn-outline" type="button" id="share-staff-grant">
+            Share enrollment link
+          </button>`
+      : html`<p>
+          The secret link is no longer shown after leaving this screen. Cancel
+          it to create a replacement.
+        </p>`}
+    <button class="btn-outline" type="button" data-cancel-staff-grant>
+      Cancel enrollment link
+    </button>
+  </div>`;
+}
+
+/** @param {number} milliseconds */
+function formatCountdown(milliseconds) {
+  const seconds = Math.ceil(milliseconds / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+/** @param {Element} container @param {string} value */
+async function renderEnrollmentQr(container, value) {
+  await import("@awesome.me/webawesome/dist/components/qr-code/qr-code.js");
+  const qrCode = /** @type {any} */ (container.querySelector("wa-qr-code"));
+  if (qrCode?.isConnected) qrCode.value = value;
 }
 
 /** @param {unknown} value */

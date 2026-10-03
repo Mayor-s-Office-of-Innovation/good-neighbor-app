@@ -8,8 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { createStaffGrant, listGeneralBindings, revokeGeneralBinding } =
-  await import("./manager-access.js");
+const {
+  cancelStaffGrant,
+  createStaffGrant,
+  getCurrentStaffGrant,
+  listGeneralBindings,
+  revokeGeneralBinding,
+} = await import("./manager-access.js");
 
 beforeEach(() => {
   send.mockReset();
@@ -63,6 +68,52 @@ describe("manager staff enrollment", () => {
     );
     expect(response.statusCode).toBe(403);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns and cancels only the current Manager binding's grant", async () => {
+    const marker = {
+      pk: "SITE#site-1",
+      sk: "ACTIVE_STAFF_GRANT#manager-1",
+      grantId: "staff-1",
+      grantPk: "SITE#site-1",
+      grantSk: "STAFF_GRANT#time#staff-1",
+    };
+    const grant = {
+      pk: marker.grantPk,
+      sk: marker.grantSk,
+      grantId: "staff-1",
+      label: "Team phone",
+      issuedByBindingId: "manager-1",
+      status: "pending",
+      tokenHash: "token-hash",
+      createdAt: "2026-10-03T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    };
+    send
+      .mockResolvedValueOnce({ Item: marker })
+      .mockResolvedValueOnce({ Item: grant });
+    const current = await call(getCurrentStaffGrant, event());
+    expect(current.statusCode).toBe(200);
+    expect(JSON.parse(String(current.body)).grant).toMatchObject({
+      grantId: "staff-1",
+      label: "Team phone",
+    });
+
+    send
+      .mockResolvedValueOnce({ Item: marker })
+      .mockResolvedValueOnce({ Item: grant })
+      .mockResolvedValueOnce({});
+    const cancelled = await call(
+      cancelStaffGrant,
+      event({ pathParameters: { grantId: "staff-1" } }),
+    );
+    expect(cancelled.statusCode).toBe(200);
+    const transaction = send.mock.calls[4][0];
+    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
+      pk: "ENROLLMENT_TOKEN#token-hash",
+      sk: "#META",
+    });
   });
 
   it("lists only general bindings", async () => {

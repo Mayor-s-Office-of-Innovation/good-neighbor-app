@@ -45,7 +45,9 @@ import {
   selectDeviceBinding,
 } from "../handlers/device-bindings.js";
 import {
+  cancelStaffGrant,
   createStaffGrant,
+  getCurrentStaffGrant,
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
@@ -137,6 +139,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /app/v1/device-bindings": listDeviceBindings,
   "POST /app/v1/device-bindings/select": selectDeviceBinding,
   "POST /app/v1/manager/staff-grants": createStaffGrant,
+  "GET /app/v1/manager/staff-grants/current": getCurrentStaffGrant,
+  "DELETE /app/v1/manager/staff-grants/{grantId}": cancelStaffGrant,
   "GET /app/v1/manager/device-bindings": listGeneralBindings,
   "POST /app/v1/manager/device-bindings/{bindingId}/revoke":
     revokeGeneralBinding,
