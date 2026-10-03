@@ -116,6 +116,38 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
+  previewSiteImport: (fileName, csv) =>
+    adminFetch("/admin/v1/site-imports/preview", {
+      method: "POST",
+      body: JSON.stringify({ fileName, csv }),
+    }),
+  applySiteImport: (importId, previewVersion, idempotencyKey) =>
+    adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ previewVersion, idempotencyKey }),
+    }),
+  getSiteImport: (importId) =>
+    adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}`),
+  downloadSiteImportConflicts: async (importId) => {
+    const config = getAdminConfig();
+    const token = getAdminToken();
+    const response = await fetch(
+      `${config.apiBase}/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
+      {
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(config.localDebugAdmin
+            ? {
+                "x-debug-groups": "central-admin",
+                "x-debug-sub": "local-admin",
+              }
+            : {}),
+        },
+      },
+    );
+    if (!response.ok) throw new Error("conflict_report_failed");
+    return response.blob();
+  },
   presignComplianceLetter: (siteId, file) =>
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-letters:presign`,

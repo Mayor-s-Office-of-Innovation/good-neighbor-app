@@ -161,6 +161,8 @@ as task update events and every GSI sort key.
 | Compliance terms version | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | immutable effective-dated tier 0–4 and integer checks/day. Start is inclusive, expiry is exclusive, and missing expiry means indefinite. New versions may close the prior open version but cannot overlap a future version. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | transactional outbox item created with a terms version; a later worker generates the draft and advances letter state. |
 | Site audit event | `SITE#<siteId>` | `AUDIT#<createdAt>#<eventId>` | append-only actor/event record for Site administration changes. |
+| Site-import ledger | `SITE_IMPORT#<importId>` | `#META` | requester, source SHA-256 digest, preview version/expiry, idempotency key, confirmed counts, status, aggregate outcomes, and bounded-review TTL. |
+| Site-import row | `SITE_IMPORT#<importId>` | `ROW#<sourceRow>` | normalized plan and safe source fields, preview classification, apply attempts, terminal outcome, created/reused IDs, safe conflict reason, and the same bounded-review TTL. |
 | Provider → program membership | `PROVIDER#<providerId>` | `PROGRAM#<programId>` | lists Programs owned by a Provider; archival never cascades to Programs or Sites |
 | Program → site membership | `PROGRAM#<programId>` | `SITE#<siteId>` | lists Sites led by a Program; reassignment updates this relationship without changing Site identity or device access |
 | Program search row | `PROGRAM_SEARCH#ACTIVE` | `<lowercased name>#<programId>` | active Program directory projection with Provider and migration-review metadata |
@@ -310,6 +312,7 @@ Every pattern is a single query. There are no scans.
 | AP23 | List a Program's contacts and Sites | `Query` base `PROGRAM#<programId>` with `USER#` or `SITE#` sort-key prefix. Program contacts are roster records only and have no authentication principal. |
 | AP24 | Assign a Program contact to a Site | transactionally put `SITE#x / ASSIGNED_USER#y`, increment the Program contact's assignment count, and optionally update the Site primary-contact pointer/snapshot. |
 | AP25 | Read or add effective-dated terms | `Query` the Site `COMPLIANCE_TERMS#` prefix. Creation transactionally puts the version, conditionally closes the prior open version, marks the letter draft pending, and writes letter-job and audit rows. |
+| AP26 | Preview/apply a Site CSV import | Query the three bounded active-directory partitions, exact-match Program contacts/assignments by parent, and write a TTL-bound import ledger. Apply processes only valid rows with one conditional transaction per logical row; terminal row outcomes make retries idempotent. |
 
 ### Who owns a task
 

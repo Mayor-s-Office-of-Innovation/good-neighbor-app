@@ -37,6 +37,10 @@ import { currentRoute, navigate } from "./router.js";
  * @property {boolean} hasToken
  * @property {AdminConfig} authConfig
  * @property {boolean} authBusy
+ * @property {any | null} importPreview
+ * @property {any | null} importResult
+ * @property {boolean} importBusy
+ * @property {string} importApplyKey
  */
 
 class AdminApp extends HTMLElement {
@@ -62,6 +66,10 @@ class AdminApp extends HTMLElement {
       hasToken: false,
       authConfig: getAdminConfig(),
       authBusy: false,
+      importPreview: null,
+      importResult: null,
+      importBusy: false,
+      importApplyKey: "",
     };
   }
 
@@ -89,6 +97,10 @@ class AdminApp extends HTMLElement {
       hasToken: hasAdminSession(),
       authConfig: getAdminConfig(),
       authBusy: false,
+      importPreview: null,
+      importResult: null,
+      importBusy: false,
+      importApplyKey: "",
     };
     const callback = await completeAdminLoginFromUrl().catch((err) => ({
       handled: true,
@@ -131,9 +143,43 @@ class AdminApp extends HTMLElement {
 
   async openRoute() {
     const route = currentRoute();
+    if (route.name === "site-import") return this.openSiteImport();
     if (route.name === "provider") return this.openProvider(route.id, false);
     if (route.name === "program") return this.openProgram(route.id, false);
     if (route.name === "site") return this.openSite(route.id, false);
+    this.state.provider = null;
+    this.state.program = null;
+    this.state.site = null;
+    this.render();
+    queueMicrotask(() => this.querySelector("h1")?.focus());
+  }
+
+  async openSiteImport() {
+    const importId = new URLSearchParams(window.location.search).get(
+      "importId",
+    );
+    if (importId && this.state.importPreview?.importId !== importId) {
+      const result = await adminApi.getSiteImport(importId);
+      this.state.importPreview = {
+        importId,
+        previewVersion: result.import.previewVersion,
+        previewExpiresAt: result.import.previewExpiresAt,
+        counts: result.import.counts,
+        rows: result.rows,
+      };
+      this.state.importResult =
+        result.import.status === "complete"
+          ? { outcomes: result.import.outcomes || {} }
+          : null;
+      this.state.importApplyKey =
+        sessionStorage.getItem(`site-import-key:${importId}`) ||
+        result.import.idempotencyKey ||
+        crypto.randomUUID();
+      sessionStorage.setItem(
+        `site-import-key:${importId}`,
+        this.state.importApplyKey,
+      );
+    }
     this.state.provider = null;
     this.state.program = null;
     this.state.site = null;
@@ -453,6 +499,73 @@ class AdminApp extends HTMLElement {
     await this.openSite(this.state.site.siteId, false);
   }
 
+  async previewSiteImport(form) {
+    const input = /** @type {HTMLInputElement | null} */ (
+      form.querySelector('input[type="file"]')
+    );
+    const file = input?.files?.[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) throw new Error("invalid_file_size");
+    this.state.importBusy = true;
+    this.state.error = "";
+    this.render();
+    try {
+      this.state.importPreview = await adminApi.previewSiteImport(
+        file.name,
+        await file.text(),
+      );
+      this.state.importResult = null;
+      this.state.importApplyKey = crypto.randomUUID();
+      sessionStorage.setItem(
+        `site-import-key:${this.state.importPreview.importId}`,
+        this.state.importApplyKey,
+      );
+      window.history.replaceState(
+        {},
+        "",
+        `/sites/import?importId=${encodeURIComponent(this.state.importPreview.importId)}`,
+      );
+    } finally {
+      this.state.importBusy = false;
+      this.render();
+    }
+  }
+
+  async applySiteImport() {
+    const preview = this.state.importPreview;
+    if (!preview) return;
+    this.state.importBusy = true;
+    this.render();
+    try {
+      let result;
+      do {
+        result = await adminApi.applySiteImport(
+          preview.importId,
+          preview.previewVersion,
+          this.state.importApplyKey,
+        );
+        this.state.importResult = result;
+        if (result.rows) this.state.importPreview.rows = result.rows;
+        this.render();
+      } while (result.status === "applying");
+    } finally {
+      this.state.importBusy = false;
+      this.render();
+    }
+  }
+
+  async downloadImportConflicts() {
+    const importId = this.state.importPreview?.importId;
+    if (!importId) return;
+    const blob = await adminApi.downloadSiteImportConflicts(importId);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `site-import-${importId}-conflicts.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   /**
    * Deactivate a site and refresh the current provider.
    * @param {string} siteId
@@ -638,6 +751,30 @@ class AdminApp extends HTMLElement {
         this.render();
       });
     });
+    this.querySelector("#site-import-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.previewSiteImport(asForm(e.currentTarget)).catch((err) => {
+        this.state.importBusy = false;
+        this.state.error = err.message;
+        this.render();
+      });
+    });
+    this.querySelector("#apply-site-import")?.addEventListener("click", () => {
+      this.applySiteImport().catch((err) => {
+        this.state.importBusy = false;
+        this.state.error = err.message;
+        this.render();
+      });
+    });
+    this.querySelector("#download-import-conflicts")?.addEventListener(
+      "click",
+      () => {
+        this.downloadImportConflicts().catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
     this.querySelector("#site-details-form")?.addEventListener("input", () => {
       this.state.siteSaveMessage = "";
       this.state.siteSaveError = "";
@@ -754,7 +891,7 @@ class AdminApp extends HTMLElement {
             `
         }
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
-        ${this.state.hasToken && !provider && !program && !site ? directoryView(this.state, route) : ""}
+        ${this.state.hasToken && !provider && !program && !site ? (route.name === "site-import" ? siteImportView(this.state) : directoryView(this.state, route)) : ""}
         ${
           provider
             ? `
@@ -1017,6 +1154,7 @@ function siteDirectory(providers) {
         <h2 id="sites-title">Sites</h2>
         <p class="muted">Choose a provider to view and manage its sites.</p>
       </div>
+      <a class="btn-link" href="/sites/import" data-route>Import CSV</a>
     </div>
     ${entityList(
       providers,
@@ -1026,6 +1164,61 @@ function siteDirectory(providers) {
       "No providers have been added.",
     )}
   </section>`;
+}
+
+/** @param {AdminState} state */
+function siteImportView(state) {
+  const preview = state.importPreview;
+  const counts = preview?.counts || {};
+  const applicable = Number(counts.create || 0) + Number(counts.reuse || 0);
+  const skipped = Number(counts.conflict || 0) + Number(counts.invalid || 0);
+  const hasConflictReport =
+    skipped > 0 ||
+    Number(state.importResult?.outcomes?.skipped_conflict || 0) > 0 ||
+    Number(state.importResult?.outcomes?.failed || 0) > 0;
+  return `<section class="directory" aria-labelledby="import-title">
+    <div class="page-head"><div><p class="muted"><a href="/sites" data-route>Sites</a></p><h1 id="import-title" tabindex="-1">Import sites</h1><p class="muted">Preview first. Applying uses one atomic transaction per valid logical row; conflicts and invalid rows are skipped.</p></div></div>
+    <section class="panel" aria-labelledby="upload-title">
+      <h2 id="upload-title">1. Upload</h2>
+      <p>Upload a UTF-8 CSV no larger than 1 MB or 500 data rows with these exact columns:</p>
+      <p class="column-list"><code>Provider</code>, <code>Program</code>, <code>Site name</code>, <code>Site address</code>, <code>Contact first name</code>, <code>Contact last name</code>, <code>Contact phone</code>, <code>Contact email</code>.</p>
+      <form id="site-import-form" class="inline-form">
+        <label><span>Site import CSV</span><input name="site-import-file" type="file" accept="text/csv,.csv" required /></label>
+        <button class="btn-primary" type="submit" ${state.importBusy ? "disabled" : ""}>${state.importBusy ? "Working…" : "Preview import"}</button>
+      </form>
+    </section>
+    ${preview ? `<section class="panel" aria-labelledby="review-title"><h2 id="review-title">2. Review</h2><dl class="import-summary"><div><dt>Create</dt><dd>${Number(counts.create || 0)}</dd></div><div><dt>Reuse exact matches</dt><dd>${Number(counts.reuse || 0)}</dd></div><div><dt>Conflicts</dt><dd>${Number(counts.conflict || 0)}</dd></div><div><dt>Invalid</dt><dd>${Number(counts.invalid || 0)}</dd></div></dl>${importRowsTable(preview.rows || [])}<div class="confirmation"><p><strong>Apply ${applicable} valid rows; skip ${skipped} conflicting or invalid rows.</strong></p><button class="btn-primary" id="apply-site-import" type="button" ${state.importBusy || state.importResult?.status === "complete" ? "disabled" : ""}>${state.importResult?.status === "applying" ? "Continue apply" : "Confirm and apply"}</button>${hasConflictReport ? '<button class="btn-secondary" id="download-import-conflicts" type="button">Download conflict CSV</button>' : ""}</div></section>` : ""}
+    ${state.importResult ? `<section class="panel" aria-labelledby="result-title"><h2 id="result-title">3. Result</h2><p class="${state.importResult.status === "complete" ? "success" : "muted"}" role="status">${state.importResult.status === "complete" ? "Import complete." : "Applying the next group of rows…"}</p>${importOutcomeSummary(state.importResult.outcomes || {})}${importResultLinks(preview?.rows || [])}</section>` : ""}
+  </section>`;
+}
+
+/** @param {any[]} rows */
+function importRowsTable(rows) {
+  return `<div class="table-wrap"><table><thead><tr><th>Row</th><th>Site</th><th>Provider</th><th>Program</th><th>Status</th><th>Reason</th></tr></thead><tbody>${rows
+    .map(
+      (row) =>
+        `<tr><td>${escapeHtml(row.rowNumber)}</td><td>${escapeHtml(row.source?.["Site name"] || "")}</td><td>${escapeHtml(row.source?.Provider || "")}</td><td>${escapeHtml(row.source?.Program || "")}</td><td><span class="status-badge">${escapeHtml(row.classification)}</span></td><td>${escapeHtml(row.reasonCode || "—")}</td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
+}
+
+/** @param {Record<string, number>} outcomes */
+function importOutcomeSummary(outcomes) {
+  return `<dl class="import-summary"><div><dt>Applied</dt><dd>${Number(outcomes.applied || 0)}</dd></div><div><dt>Skipped</dt><dd>${Number(outcomes.skipped || 0) + Number(outcomes.skipped_conflict || 0)}</dd></div><div><dt>Failed</dt><dd>${Number(outcomes.failed || 0)}</dd></div></dl>`;
+}
+
+/** @param {any[]} rows */
+function importResultLinks(rows) {
+  const applied = rows.filter(
+    (row) => row.outcome === "applied" && row.resultIds?.siteId,
+  );
+  if (!applied.length) return "";
+  return `<div><h3>Applied sites</h3><ul class="entity-list">${applied
+    .map(
+      (row) =>
+        `<li><a class="entity-link" href="/sites/${encodeURIComponent(row.resultIds.siteId)}" data-route><span>${escapeHtml(row.source?.["Site name"] || row.resultIds.siteId)}</span><span class="entity-meta">Row ${escapeHtml(row.rowNumber)}</span></a></li>`,
+    )
+    .join("")}</ul></div>`;
 }
 
 /** @param {AdminState} state */

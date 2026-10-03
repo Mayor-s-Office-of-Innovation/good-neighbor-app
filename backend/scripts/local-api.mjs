@@ -99,6 +99,12 @@ import {
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
 import {
+  applySiteImport,
+  getSiteImport,
+  getSiteImportConflicts,
+  previewSiteImport,
+} from "../src/handlers/admin-site-imports.js";
+import {
   listAnalyticsQueries,
   runAnalyticsCatalogQuery,
   runAnalyticsQuery,
@@ -274,6 +280,14 @@ const routes = [
   route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
+  route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
+  route("POST", "/admin/v1/site-imports/{importId}/apply", applySiteImport),
+  route("GET", "/admin/v1/site-imports/{importId}", getSiteImport),
+  route(
+    "GET",
+    "/admin/v1/site-imports/{importId}/conflicts.csv",
+    getSiteImportConflicts,
+  ),
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
   route(
     "POST",

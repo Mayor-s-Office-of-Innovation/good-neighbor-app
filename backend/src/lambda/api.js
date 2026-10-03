@@ -94,6 +94,12 @@ import {
   listSiteTerms,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
+import {
+  applySiteImport,
+  getSiteImport,
+  getSiteImportConflicts,
+  previewSiteImport,
+} from "../handlers/admin-site-imports.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
@@ -167,6 +173,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
+  "POST /admin/v1/site-imports/preview": previewSiteImport,
+  "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
+  "GET /admin/v1/site-imports/{importId}": getSiteImport,
+  "GET /admin/v1/site-imports/{importId}/conflicts.csv": getSiteImportConflicts,
   "PATCH /admin/v1/sites/{siteId}": updateSite,
   "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
     presignComplianceLetter,
