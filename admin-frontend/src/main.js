@@ -8,6 +8,7 @@ import {
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
 import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
+import { currentRoute, navigate } from "./router.js";
 
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
@@ -19,6 +20,8 @@ import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
  * @typedef {object} AdminState
  * @property {AdminProvider[]} providers
+ * @property {any[]} programs
+ * @property {any | null} program
  * @property {AdminProvider | null} provider
  * @property {AdminSite | null} site
  * @property {AdminContact[]} contacts
@@ -39,6 +42,8 @@ class AdminApp extends HTMLElement {
     /** @type {AdminState} */
     this.state = {
       providers: [],
+      programs: [],
+      program: null,
       provider: null,
       site: null,
       contacts: [],
@@ -61,6 +66,8 @@ class AdminApp extends HTMLElement {
   async connectedCallback() {
     this.state = {
       providers: [],
+      programs: [],
+      program: null,
       provider: null,
       site: null,
       contacts: [],
@@ -83,7 +90,46 @@ class AdminApp extends HTMLElement {
       this.state.error = callback.error || "";
     }
     this.render();
-    if (this.state.hasToken) this.loadProviders();
+    window.addEventListener("popstate", this.routeChanged);
+    if (this.state.hasToken) {
+      this.loadDirectory().catch((error) => {
+        this.state.error = error.message;
+        this.render();
+      });
+    }
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("popstate", this.routeChanged);
+  }
+
+  routeChanged = () => {
+    this.openRoute().catch((error) => {
+      this.state.error = error.message;
+      this.render();
+    });
+  };
+
+  async loadDirectory() {
+    const [providers, programs] = await Promise.all([
+      adminApi.listProviders(),
+      adminApi.listPrograms(),
+    ]);
+    this.state.providers = providers.providers || [];
+    this.state.programs = programs.programs || [];
+    await this.openRoute();
+  }
+
+  async openRoute() {
+    const route = currentRoute();
+    if (route.name === "provider") return this.openProvider(route.id, false);
+    if (route.name === "program") return this.openProgram(route.id, false);
+    if (route.name === "site") return this.openSite(route.id, false);
+    this.state.provider = null;
+    this.state.program = null;
+    this.state.site = null;
+    this.render();
+    queueMicrotask(() => this.querySelector("h1")?.focus());
   }
 
   /**
@@ -119,15 +165,50 @@ class AdminApp extends HTMLElement {
    * @param {string} providerId
    * @returns {Promise<void>}
    */
-  async openProvider(providerId) {
+  async openProvider(providerId, updateUrl = true) {
+    if (updateUrl)
+      return navigate(`/providers/${encodeURIComponent(providerId)}`);
     const data = await adminApi.getProvider(providerId);
     this.state.provider = data.provider;
+    this.state.program = null;
     this.state.site = null;
     this.state.contacts = [];
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.state.provider.sites = data.sites || [];
     this.render();
+    queueMicrotask(() => this.querySelector("h1")?.focus());
+  }
+
+  async openProgram(programId, updateUrl = true) {
+    if (updateUrl)
+      return navigate(`/programs/${encodeURIComponent(programId)}`);
+    const data = await adminApi.getProgram(programId);
+    this.state.program = {
+      ...data.program,
+      sites: data.sites,
+      users: data.users,
+    };
+    this.state.provider = null;
+    this.state.site = null;
+    this.render();
+    queueMicrotask(() => this.querySelector("h1")?.focus());
+  }
+
+  async createProgram(form) {
+    const data = new FormData(form);
+    const result = await adminApi.createProgram({
+      name: String(data.get("program-name") || ""),
+      providerId: String(data.get("program-provider") || ""),
+      contact: {
+        firstName: String(data.get("contact-first-name") || ""),
+        lastName: String(data.get("contact-last-name") || ""),
+        phone: String(data.get("contact-phone") || ""),
+        email: String(data.get("contact-email") || ""),
+      },
+    });
+    await this.loadDirectory();
+    navigate(`/programs/${encodeURIComponent(result.program.programId)}`);
   }
 
   /**
@@ -151,10 +232,12 @@ class AdminApp extends HTMLElement {
     const data = new FormData(form);
     const name = data.get("site-name");
     const address = data.get("site-address");
+    const leadProgramId = data.get("lead-program-id");
     if (!name || !address || !this.state.provider) return;
     await adminApi.createSite(this.state.provider.providerId, {
       name: String(name),
       address: String(address),
+      leadProgramId: String(leadProgramId || ""),
     });
     form.reset();
     await this.openProvider(this.state.provider.providerId);
@@ -270,19 +353,23 @@ class AdminApp extends HTMLElement {
    * @param {string} siteId
    * @returns {Promise<void>}
    */
-  async openSite(siteId) {
+  async openSite(siteId, updateUrl = true) {
+    if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
     const [site, contacts, devices] = await Promise.all([
       adminApi.getSite(siteId),
       adminApi.listMasterContacts(siteId),
       adminApi.listDevices(siteId),
     ]);
     this.state.site = site.items?.find((item) => item.sk === "#META") || null;
+    this.state.provider = null;
+    this.state.program = null;
     this.state.contacts = contacts.contacts || [];
     this.state.devices = devices.devices || [];
     this.state.issuedCode = null;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.render();
+    queueMicrotask(() => this.querySelector("h1")?.focus());
   }
 
   /**
@@ -338,7 +425,7 @@ class AdminApp extends HTMLElement {
     const accessLevel = data.get("setup-access");
     await this.issueSetupCodeForEmail(
       String(email || ""),
-      accessLevel === "admin" ? "admin" : "general",
+      accessLevel === "manager" ? "admin" : "general",
     );
     form.reset();
   }
@@ -396,6 +483,28 @@ class AdminApp extends HTMLElement {
     this.querySelector("#provider-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.createProvider(asForm(e.currentTarget));
+    });
+    this.querySelector("#program-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this.createProgram(asForm(e.currentTarget)).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
+    this.querySelectorAll("a[data-route]").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        event.preventDefault();
+        navigate(link.getAttribute("href") || "/sites");
+      });
     });
     this.querySelector("#site-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -473,12 +582,14 @@ class AdminApp extends HTMLElement {
    */
   render() {
     const provider = this.state.provider;
+    const program = this.state.program;
     const site = this.state.site;
+    const route = currentRoute();
     this.innerHTML = `
-      <main class="admin">
+      <main class="admin" id="main-content">
         <header class="admin__header">
           <div class="site-title">
-            <h1>Good Neighbor Admin</h1>
+            <a class="brand" href="/sites" data-route>Good Neighbor Admin</a>
             ${
               this.state.hasToken
                 ? '<nav class="admin__nav"><a href="/analytics.html">Analytics</a></nav>'
@@ -487,7 +598,7 @@ class AdminApp extends HTMLElement {
           </div>
           ${
             this.state.hasToken
-              ? '<button id="clear-token" type="button">Sign out</button>'
+              ? '<button class="btn-secondary" id="clear-token" type="button">Sign out</button>'
               : ""
           }
         </header>
@@ -503,7 +614,7 @@ class AdminApp extends HTMLElement {
               <section class="panel">
                 <h2>Sign in</h2>
                 <p class="muted">Use the City-managed admin sign-in to continue.</p>
-                <button id="sign-in" type="button" ${this.state.authBusy ? "disabled" : ""}>
+                <button class="btn-primary" id="sign-in" type="button" ${this.state.authBusy ? "disabled" : ""}>
                   ${this.state.authBusy ? "Opening sign in..." : "Sign in with Cognito"}
                 </button>
                 ${
@@ -516,38 +627,14 @@ class AdminApp extends HTMLElement {
             `
         }
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
-        ${
-          this.state.hasToken
-            ? `<section class="panel">
-          <h2>Providers</h2>
-          <form id="provider-form" class="inline-form">
-            <label>
-              <span>Provider name</span>
-              <input name="provider-name" required />
-            </label>
-            <button type="submit">Add provider</button>
-          </form>
-          <div class="list">
-            ${this.state.providers
-              .map(
-                (p) => `
-                  <button type="button" data-provider="${escapeHtml(p.providerId)}">
-                    ${escapeHtml(p.name)}
-                  </button>
-                `,
-              )
-              .join("")}
-          </div>
-        </section>`
-            : ""
-        }
+        ${this.state.hasToken && !provider && !program && !site ? directoryView(this.state, route) : ""}
         ${
           provider
             ? `
               <section class="panel">
                 <div class="panel__head">
-                  <h2>${escapeHtml(provider.name)}</h2>
-                  <button type="button" data-deactivate-provider="${escapeHtml(provider.providerId)}">
+                  <h1 tabindex="-1">${escapeHtml(provider.name)}</h1>
+                  <button class="btn-danger" type="button" data-deactivate-provider="${escapeHtml(provider.providerId)}">
                     Deactivate provider
                   </button>
                 </div>
@@ -560,17 +647,30 @@ class AdminApp extends HTMLElement {
                     <span>Site address</span>
                     <input name="site-address" autocomplete="street-address" required />
                   </label>
-                  <button type="submit">Add site</button>
+                  <label>
+                    <span>Lead program</span>
+                    <select name="lead-program-id" required>
+                      <option value="">Choose a program</option>
+                      ${this.state.programs
+                        .filter(
+                          (item) => item.providerId === provider.providerId,
+                        )
+                        .map(
+                          (item) =>
+                            `<option value="${escapeHtml(item.programId)}">${escapeHtml(item.name)}</option>`,
+                        )
+                        .join("")}
+                    </select>
+                  </label>
+                  <button class="btn-primary" type="submit">Add site</button>
                 </form>
                 <div class="list">
                   ${(provider.sites || [])
                     .map(
                       (s) => `
                         <div class="row">
-                          <button type="button" data-site="${escapeHtml(s.siteId)}">
-                            ${escapeHtml(s.siteName)}
-                          </button>
-                          <button type="button" data-deactivate-site="${escapeHtml(s.siteId)}">
+                          <a href="/sites/${encodeURIComponent(s.siteId)}" data-route>${escapeHtml(s.siteName)}</a>
+                          <button class="btn-danger" type="button" data-deactivate-site="${escapeHtml(s.siteId)}">
                             Deactivate
                           </button>
                         </div>
@@ -582,18 +682,19 @@ class AdminApp extends HTMLElement {
             `
             : ""
         }
+        ${program ? programView(program) : ""}
         ${
           site
             ? `
               <section class="panel">
                 <div class="panel__head">
                   <div class="site-title">
-                    <h2>${escapeHtml(site.name)}</h2>
+                    <h1 tabindex="-1">${escapeHtml(site.name)}</h1>
                     <p class="muted site-title__updated">
                       Last updated ${escapeHtml(formatTimestamp(site.updatedAt))}
                     </p>
                   </div>
-                  <button type="button" data-deactivate-site="${escapeHtml(site.siteId)}">
+                  <button class="btn-danger" type="button" data-deactivate-site="${escapeHtml(site.siteId)}">
                     Deactivate site
                   </button>
                 </div>
@@ -609,7 +710,7 @@ class AdminApp extends HTMLElement {
                     <span>Work email</span>
                     <input name="contact-email" type="email" required />
                   </label>
-                  <button type="submit">Add master contact</button>
+                  <button class="btn-primary" type="submit">Add master contact</button>
                 </form>
                 <div class="list">
                   ${this.state.contacts
@@ -617,10 +718,10 @@ class AdminApp extends HTMLElement {
                       (c) => `
                         <div class="row">
                           <p>${escapeHtml(c.name || c.email)} ${escapeHtml(c.email)}</p>
-                          <button type="button" data-issue-contact-code="${escapeHtml(c.email)}">
+                          <button class="btn-secondary" type="button" data-issue-contact-code="${escapeHtml(c.email)}">
                             Generate code
                           </button>
-                          <button type="button" data-remove-contact="${escapeHtml(c.emailHash)}">
+                          <button class="btn-danger" type="button" data-remove-contact="${escapeHtml(c.emailHash)}">
                             Remove
                           </button>
                         </div>
@@ -637,10 +738,10 @@ class AdminApp extends HTMLElement {
                     <span>Access</span>
                     <select name="setup-access">
                       <option value="general">General access</option>
-                      <option value="admin">Admin access</option>
+                      <option value="manager">Site manager access</option>
                     </select>
                   </label>
-                  <button type="submit">Issue setup code</button>
+                  <button class="btn-primary" type="submit">Issue setup code</button>
                 </form>
                 ${
                   this.state.issuedCode
@@ -654,7 +755,7 @@ class AdminApp extends HTMLElement {
                       (d) => `
                         <div class="row">
                           <p>${escapeHtml(d.label || d.deviceId)} ${escapeHtml(d.status || "active")}</p>
-                          <button type="button" data-revoke-device="${escapeHtml(d.deviceId)}">
+                          <button class="btn-danger" type="button" data-revoke-device="${escapeHtml(d.deviceId)}">
                             Revoke
                           </button>
                         </div>
@@ -673,6 +774,168 @@ class AdminApp extends HTMLElement {
 }
 
 customElements.define("admin-app", AdminApp);
+
+/**
+ * Render the top-level entity directory without fetching every provider record.
+ * Sites are intentionally discovered through their provider until a paginated,
+ * server-side site directory endpoint is available.
+ * @param {AdminState} state
+ * @param {{ name: string, id: string }} route
+ */
+function directoryView(state, route) {
+  const section = route.name.startsWith("program")
+    ? "programs"
+    : route.name.startsWith("provider")
+      ? "providers"
+      : "sites";
+  return `<section class="directory" aria-labelledby="directory-title">
+    <div class="page-head">
+      <div>
+        <h1 id="directory-title" tabindex="-1">Site admin</h1>
+        <p class="muted">Manage providers, programs, sites, enrollment, and devices.</p>
+      </div>
+    </div>
+    <nav class="entity-tabs" aria-label="Site administration sections">
+      ${directoryTab("sites", "Sites", section)}
+      ${directoryTab("programs", "Programs", section)}
+      ${directoryTab("providers", "Providers", section)}
+    </nav>
+    ${section === "sites" ? siteDirectory(state.providers) : ""}
+    ${section === "programs" ? programDirectory(state) : ""}
+    ${section === "providers" ? providerDirectory(state.providers) : ""}
+  </section>`;
+}
+
+/** @param {string} kind @param {string} label @param {string} current */
+function directoryTab(kind, label, current) {
+  return `<a href="/${kind}" data-route ${kind === current ? 'aria-current="page"' : ""}>${label}</a>`;
+}
+
+/** @param {AdminProvider[]} providers */
+function siteDirectory(providers) {
+  return `<section class="panel" aria-labelledby="sites-title">
+    <div class="panel__head">
+      <div>
+        <h2 id="sites-title">Sites</h2>
+        <p class="muted">Choose a provider to view and manage its sites.</p>
+      </div>
+    </div>
+    ${entityList(
+      providers,
+      (provider) => `/providers/${encodeURIComponent(provider.providerId)}`,
+      (provider) => provider.name,
+      () => "Provider",
+      "No providers have been added.",
+    )}
+  </section>`;
+}
+
+/** @param {AdminState} state */
+function programDirectory(state) {
+  return `<section class="panel" aria-labelledby="programs-title">
+    <div>
+      <h2 id="programs-title">Programs</h2>
+      <p class="muted">Programs group sites under a provider.</p>
+    </div>
+    <form id="program-form" class="site-details-form">
+      <fieldset>
+        <legend>Add program</legend>
+        <div class="form-grid form-grid--two">
+          ${formInput("program-name", "Program name", "", { required: true, autocomplete: "organization" })}
+          <label><span>Provider</span><select name="program-provider" required>
+            <option value="">Choose a provider</option>
+            ${state.providers.map((provider) => `<option value="${escapeHtml(provider.providerId)}">${escapeHtml(provider.name)}</option>`).join("")}
+          </select></label>
+          ${formInput("contact-first-name", "Contact first name", "", { autocomplete: "given-name" })}
+          ${formInput("contact-last-name", "Contact last name", "", { autocomplete: "family-name" })}
+          ${formInput("contact-phone", "Contact phone", "", { type: "tel", autocomplete: "tel" })}
+          ${formInput("contact-email", "Contact email", "", { type: "email", autocomplete: "email" })}
+        </div>
+      </fieldset>
+      <button class="btn-primary" type="submit">Add program</button>
+    </form>
+    ${entityList(
+      state.programs,
+      (program) => `/programs/${encodeURIComponent(program.programId)}`,
+      (program) => program.name,
+      (program) => program.providerName || "Provider not recorded",
+      "No programs have been added.",
+    )}
+  </section>`;
+}
+
+/** @param {AdminProvider[]} providers */
+function providerDirectory(providers) {
+  return `<section class="panel" aria-labelledby="providers-title">
+    <div>
+      <h2 id="providers-title">Providers</h2>
+      <p class="muted">Providers contain programs and sites.</p>
+    </div>
+    <form id="provider-form" class="inline-form">
+      ${formInput("provider-name", "Provider name", "", { required: true, autocomplete: "organization" })}
+      <button class="btn-primary" type="submit">Add provider</button>
+    </form>
+    ${entityList(
+      providers,
+      (provider) => `/providers/${encodeURIComponent(provider.providerId)}`,
+      (provider) => provider.name,
+      () => "Provider",
+      "No providers have been added.",
+    )}
+  </section>`;
+}
+
+/**
+ * @param {any[]} items
+ * @param {(item: any) => string} href
+ * @param {(item: any) => string} title
+ * @param {(item: any) => string} detail
+ * @param {string} emptyMessage
+ */
+function entityList(items, href, title, detail, emptyMessage) {
+  if (!items.length) return `<p class="muted">${escapeHtml(emptyMessage)}</p>`;
+  return `<ul class="entity-list">${items
+    .map(
+      (item) => `<li><a class="entity-link" href="${href(item)}" data-route>
+        <span>${escapeHtml(title(item))}</span>
+        <span class="entity-meta">${escapeHtml(detail(item))}</span>
+      </a></li>`,
+    )
+    .join("")}</ul>`;
+}
+
+/** @param {any} program */
+function programView(program) {
+  const contact = program.contact || {};
+  const contactName = [contact.firstName, contact.lastName]
+    .filter(Boolean)
+    .join(" ");
+  return `<section class="panel">
+    <div class="panel__head">
+      <div>
+        <h1 tabindex="-1">${escapeHtml(program.name)}</h1>
+        <p class="muted"><a href="/providers/${encodeURIComponent(program.providerId)}" data-route>${escapeHtml(program.providerName || "Provider")}</a></p>
+      </div>
+      ${program.needsReview ? '<span class="status-badge">Needs review</span>' : '<span class="status-badge">Active</span>'}
+    </div>
+    <dl class="detail-list">
+      <div><dt>Primary contact</dt><dd>${escapeHtml(contactName || "Not assigned")}</dd></div>
+      <div><dt>Email</dt><dd>${contact.email ? `<a href="mailto:${escapeHtml(contact.email)}">${escapeHtml(contact.email)}</a>` : "Not provided"}</dd></div>
+      <div><dt>Phone</dt><dd>${escapeHtml(contact.phone || "Not provided")}</dd></div>
+    </dl>
+    <section aria-labelledby="program-sites-title">
+      <h2 id="program-sites-title">Sites</h2>
+      ${entityList(
+        program.sites || [],
+        (site) => `/sites/${encodeURIComponent(site.siteId)}`,
+        (site) => site.siteName || site.name || site.siteId,
+        (site) => site.status || "Active",
+        "No sites are assigned to this program.",
+      )}
+    </section>
+    <p class="muted">${Number(program.users?.length || 0)} program contact ${Number(program.users?.length || 0) === 1 ? "record" : "records"}</p>
+  </section>`;
+}
 
 /**
  * @param {AdminSite} site
@@ -736,11 +999,11 @@ function siteEditor(site, saving, saveError) {
         <label>
           <span>Current tier</span>
           <select name="current-tier" ${hasCompliance ? "required" : ""}>
-            <option value="" ${compliance.currentTier ? "" : "selected"}>Choose tier</option>
-            ${[1, 2, 3, 4]
+            <option value="" ${compliance.currentTier === undefined || compliance.currentTier === "" ? "selected" : ""}>Choose tier</option>
+            ${[0, 1, 2, 3, 4]
               .map(
                 (tier) =>
-                  `<option value="${tier}" ${Number(compliance.currentTier) === tier ? "selected" : ""}>Tier ${tier}</option>`,
+                  `<option value="${tier}" ${Number(compliance.currentTier) === tier ? "selected" : ""}>${tier === 0 ? "Tier 0 — No enhanced monitoring" : `Tier ${tier}`}</option>`,
               )
               .join("")}
           </select>
@@ -767,7 +1030,7 @@ function siteEditor(site, saving, saveError) {
       <p class="muted field-help">PDF only, up to 10 MB. The previous current letter will move to past letters.</p>
     </fieldset>
     ${saveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(saveError)}</p>` : ""}
-    <button type="submit" ${saving ? "disabled" : ""}>
+    <button class="btn-primary" type="submit" ${saving ? "disabled" : ""}>
       ${saving ? "Saving..." : "Save site"}
     </button>
   </form>`;
