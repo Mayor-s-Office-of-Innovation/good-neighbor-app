@@ -49,6 +49,7 @@ const {
   deactivateSite,
   deactivateMasterContact,
   issueAdminSetupCode,
+  listDevices,
   listProviders,
   presignComplianceLetter,
   reassignSite,
@@ -577,8 +578,22 @@ describe("provider and site management", () => {
     expect(body.setupCode.code).toMatch(/^[A-Z0-9]{6}$/);
   });
 
-  it("revokes devices by bumping token generation", async () => {
-    send.mockResolvedValueOnce({ Attributes: { deviceId: "dev-1" } });
+  it("atomically revokes the canonical binding, compatibility row, and pointer", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "DEVICE_BINDING#dev-1",
+          bindingId: "dev-1",
+          physicalDeviceId: "physical-1",
+          siteId: "site-1",
+          label: "Manager tablet",
+          accessLevel: "manager",
+          status: "active",
+          tokenGeneration: 4,
+        },
+      })
+      .mockResolvedValueOnce({});
 
     const res = await call(
       revokeDevice,
@@ -589,7 +604,106 @@ describe("provider and site management", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    const update = /** @type {any} */ (send.mock.calls[0][0]);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[1][0]
+    );
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems?.[0]?.Update?.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE_BINDING#dev-1",
+    });
+    expect(transaction.input.TransactItems?.[1]?.Update?.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE#dev-1",
+    });
+    expect(transaction.input.TransactItems?.[2]?.Update?.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "BINDING#dev-1",
+    });
+    expect(
+      transaction.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues,
+    ).toMatchObject({ ":next": 5, ":revoked": "revoked" });
+    expect(transaction.input.TransactItems?.[3]?.Put?.Item).toMatchObject({
+      type: "siteAuditEvent",
+      eventType: "device_binding_revoked",
+      bindingId: "dev-1",
+      reason: "city_admin_revocation",
+    });
+  });
+
+  it("lists canonical bindings and retains unmigrated legacy devices", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            bindingId: "binding-1",
+            siteId: "site-1",
+            label: "Current tablet",
+            accessLevel: "manager",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          { deviceId: "binding-1", label: "duplicate projection" },
+          {
+            deviceId: "legacy-1",
+            siteId: "site-1",
+            label: "Legacy tablet",
+            accessLevel: "general",
+            status: "active",
+          },
+        ],
+      });
+
+    const res = await call(
+      listDevices,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).devices).toEqual([
+      expect.objectContaining({
+        bindingId: "binding-1",
+        label: "Current tablet",
+        legacy: false,
+      }),
+      expect.objectContaining({
+        bindingId: "legacy-1",
+        label: "Legacy tablet",
+        legacy: true,
+      }),
+    ]);
+  });
+
+  it("retains revocation compatibility for a pre-binding dev device", async () => {
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({
+      Attributes: {
+        deviceId: "legacy-1",
+        siteId: "site-1",
+        label: "Legacy tablet",
+        status: "revoked",
+        tokenGeneration: 2,
+      },
+    });
+
+    const res = await call(
+      revokeDevice,
+      event(undefined, "central-admin", {
+        siteId: "site-1",
+        deviceId: "legacy-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).device).toMatchObject({
+      bindingId: "legacy-1",
+      status: "revoked",
+      legacy: true,
+    });
+    const update = /** @type {UpdateCommand} */ (send.mock.calls[1][0]);
     expect(update.input.UpdateExpression).toContain("tokenGeneration");
   });
 

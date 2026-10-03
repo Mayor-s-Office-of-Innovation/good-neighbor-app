@@ -727,6 +727,17 @@ class AdminApp extends HTMLElement {
    */
   async revokeDevice(deviceId) {
     if (!this.state.site) return;
+    const device = this.state.devices.find(
+      (item) => (item.bindingId || item.deviceId) === deviceId,
+    );
+    const label = device?.label || "this device";
+    if (
+      !globalThis.confirm(
+        `Revoke ${label} from ${this.state.site.name}? This ends this Site binding immediately. Other Site bindings on the same physical device are not affected.`,
+      )
+    ) {
+      return;
+    }
     await adminApi.revokeDevice(this.state.site.siteId, deviceId);
     await this.openSite(this.state.site.siteId);
   }
@@ -957,9 +968,14 @@ class AdminApp extends HTMLElement {
       );
     });
     this.querySelectorAll("[data-revoke-device]").forEach((button) => {
-      button.addEventListener("click", () =>
-        this.revokeDevice(dataAttr(button, "data-revoke-device")),
-      );
+      button.addEventListener("click", () => {
+        this.revokeDevice(dataAttr(button, "data-revoke-device")).catch(
+          (err) => {
+            this.state.error = err.message;
+            this.render();
+          },
+        );
+      });
     });
     this.querySelectorAll("[data-unassign-site-user]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1268,7 +1284,7 @@ function siteAccessView(state) {
     <h3>Enrollment links</h3>
     <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
     ${managerGrantList(state.managerGrants)}
-    <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><p>${escapeHtml(device.label || device.deviceId)} ${escapeHtml(device.status || "active")}</p><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.deviceId)}">Revoke</button></div>`).join("")}</div>
+    <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}</p></div>${device.status === "revoked" ? "" : `<button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke</button>`}</div>`).join("")}</div>
   </section>`;
 }
 
@@ -1296,6 +1312,12 @@ function managerGrantList(grants) {
         `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
+}
+
+/** @param {unknown} value */
+function shortOpaqueId(value) {
+  const id = String(value || "");
+  return id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
 }
 
 /**

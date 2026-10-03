@@ -960,17 +960,31 @@ export const issueAdminSetupCode = (event) =>
 export const listDevices = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const res = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
+    const [bindings, legacyDevices] = await Promise.all([
+      queryAll({
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":binding": "DEVICE_BINDING#",
+        },
+      }),
+      queryAll({
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
         ExpressionAttributeValues: {
           ":pk": `SITE#${siteId}`,
           ":device": "DEVICE#",
         },
       }),
-    );
-    return jsonResponse(200, { devices: res.Items ?? [] });
+    ]);
+    const canonicalIds = new Set(bindings.map((item) => item.bindingId));
+    return jsonResponse(200, {
+      devices: [
+        ...bindings.map((item) => publicDevice(item)),
+        ...legacyDevices
+          .filter((item) => !canonicalIds.has(item.bindingId ?? item.deviceId))
+          .map((item) => publicDevice({ ...item, legacy: true })),
+      ],
+    });
   });
 
 /**
@@ -981,17 +995,119 @@ export const revokeDevice = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const deviceId = event.pathParameters?.deviceId ?? "";
+    const tableName = getDynamoTableName();
+    const bindingResult = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `SITE#${siteId}`, sk: `DEVICE_BINDING#${deviceId}` },
+        ConsistentRead: true,
+      }),
+    );
+    const binding = bindingResult.Item;
+    if (!binding) {
+      return revokeLegacyDevice(tableName, siteId, deviceId);
+    }
+    if (binding.status === "revoked") {
+      return jsonResponse(200, {
+        device: publicDevice(binding),
+        alreadyRevoked: true,
+      });
+    }
     const now = new Date().toISOString();
+    const actor = String(
+      /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
+        "central-admin",
+    );
+    const nextGeneration = Number(binding.tokenGeneration ?? 0) + 1;
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            revokeBindingUpdate(
+              tableName,
+              binding.pk,
+              binding.sk,
+              nextGeneration,
+              now,
+              actor,
+            ),
+            revokeBindingUpdate(
+              tableName,
+              `SITE#${siteId}`,
+              `DEVICE#${deviceId}`,
+              nextGeneration,
+              now,
+              actor,
+            ),
+            {
+              Update: {
+                TableName: tableName,
+                Key: {
+                  pk: `PHYSICAL_DEVICE#${binding.physicalDeviceId}`,
+                  sk: `BINDING#${deviceId}`,
+                },
+                UpdateExpression:
+                  "SET #status = :revoked, revokedAt = :now, updatedAt = :now",
+                ConditionExpression: "attribute_exists(pk)",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":revoked": "revoked",
+                  ":now": now,
+                },
+              },
+            },
+            transactionPut(tableName, {
+              pk: `SITE#${siteId}`,
+              sk: `AUDIT#${now}#${randomUUID()}`,
+              type: "siteAuditEvent",
+              eventType: "device_binding_revoked",
+              siteId,
+              bindingId: deviceId,
+              physicalDeviceId: binding.physicalDeviceId,
+              accessLevel: binding.accessLevel,
+              reason: "city_admin_revocation",
+              actor,
+              createdAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "device_revocation_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      device: publicDevice({
+        ...binding,
+        status: "revoked",
+        tokenGeneration: nextGeneration,
+        revokedAt: now,
+        revokedBy: actor,
+        revokedReason: "city_admin_revocation",
+      }),
+    });
+  });
+
+/** @param {string} tableName @param {string} siteId @param {string} deviceId */
+async function revokeLegacyDevice(tableName, siteId, deviceId) {
+  const now = new Date().toISOString();
+  try {
     const res = await ddb.send(
       new UpdateCommand({
-        TableName: getDynamoTableName(),
+        TableName: tableName,
         Key: { pk: `SITE#${siteId}`, sk: `DEVICE#${deviceId}` },
         UpdateExpression:
-          "SET #status = :revoked, revokedAt = :now, updatedAt = :now, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
+          "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
         ConditionExpression: "attribute_exists(pk)",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":revoked": "revoked",
+          ":reason": "city_admin_revocation",
           ":now": now,
           ":zero": 0,
           ":one": 1,
@@ -999,8 +1115,19 @@ export const revokeDevice = (event) =>
         ReturnValues: "ALL_NEW",
       }),
     );
-    return jsonResponse(200, { device: res.Attributes });
-  });
+    return jsonResponse(200, {
+      device: publicDevice({ ...res.Attributes, legacy: true }),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "ConditionalCheckFailedException"
+    ) {
+      return jsonResponse(404, { error: "device_not_found" });
+    }
+    throw error;
+  }
+}
 
 /**
  * @param {string} prefix
@@ -1346,6 +1473,67 @@ function slug(provided, fallback) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
   return value || randomUUID();
+}
+
+/** @param {Record<string, any>} item */
+function publicDevice(item) {
+  const bindingId = String(item.bindingId ?? item.deviceId ?? "");
+  return {
+    bindingId,
+    deviceId: bindingId,
+    physicalDeviceId: item.physicalDeviceId,
+    siteId: item.siteId,
+    label: item.label,
+    accessLevel: item.accessLevel === "admin" ? "manager" : item.accessLevel,
+    status: item.status ?? "active",
+    enrolledAt: item.enrolledAt ?? item.registeredAt,
+    lastSeenAt: item.lastSeenAt,
+    absoluteExpiresAt: item.absoluteExpiresAt,
+    revokedAt: item.revokedAt,
+    revokedReason: item.revokedReason,
+    legacy: item.legacy === true,
+  };
+}
+
+/**
+ * @param {string} tableName
+ * @param {string} pk
+ * @param {string} sk
+ * @param {number} nextGeneration
+ * @param {string} now
+ * @param {string} actor
+ */
+function revokeBindingUpdate(tableName, pk, sk, nextGeneration, now, actor) {
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { pk, sk },
+      UpdateExpression:
+        "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, revokedBy = :actor, tokenGeneration = :next",
+      ConditionExpression:
+        "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":revoked": "revoked",
+        ":reason": "city_admin_revocation",
+        ":actor": actor,
+        ":now": now,
+        ":next": nextGeneration,
+      },
+    },
+  };
+}
+
+/** @param {string} tableName @param {Record<string, unknown>} item */
+function transactionPut(tableName, item) {
+  return {
+    Put: {
+      TableName: tableName,
+      Item: item,
+      ConditionExpression:
+        "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+    },
+  };
 }
 
 /**

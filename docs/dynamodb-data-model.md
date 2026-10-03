@@ -327,6 +327,7 @@ Every pattern is a single query. There are no scans.
 | AP27 | List or select this physical device's Site bindings | Query `PHYSICAL_DEVICE#<physicalDeviceId>` with `begins_with(sk,"BINDING#")`, then revalidate each canonical Site binding. Selection conditionally rotates the target binding's session and writes a Site audit event. |
 | AP28 | Manager enrolls and manages general devices | Range-query the last hour of `STAFF_GRANT#` rows for bounded hourly limits, conditionally create one active-grant guard, and query `DEVICE_BINDING#` rows filtered to `general`. Redemption/cancellation consumes the guard and token lookup atomically. Individual revocation conditionally updates the canonical binding, compatibility Device row, and physical-device pointer in one transaction. |
 | AP29 | Recover Site Manager access by email | Apply per-IP, per-email, and cooldown controls, then query `MANAGER_EMAIL#<emailHash>`. Revalidate every canonical Site and membership and issue one 15-minute, single-use link per active Site membership. The public response is generic whether the address is known, unknown, throttled, or delivery fails. |
+| AP30 | City revokes one Site binding | Consistently read `SITE#x / DEVICE_BINDING#y`, then transactionally mark the canonical binding, compatibility Device row, and physical-device pointer revoked with the same incremented generation and append a Site audit event. Pre-binding dev devices retain a bounded legacy fallback until migration is complete. |
 
 ### Who owns a task
 
