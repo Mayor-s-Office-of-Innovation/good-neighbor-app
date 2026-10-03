@@ -107,6 +107,98 @@ export async function sendSetupCodeEmail(email) {
 }
 
 /**
+ * Send a single-Site Manager enrollment link. The token may appear in the
+ * outbound message but never in logs.
+ * @param {{ to: string, managerName: string, siteName: string, enrollmentUrl: string, expiresAt: string }} email
+ * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
+ */
+export async function sendManagerEnrollmentEmail(email) {
+  const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
+  const metadata = {
+    marker: "manager_enrollment_email",
+    contactHash: createHash("sha256")
+      .update(email.to.trim().toLowerCase())
+      .digest("hex"),
+    siteName: email.siteName,
+    expiresAt: email.expiresAt,
+  };
+  if (localPreview) {
+    const messageId = `local-${Date.now()}`;
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "log",
+        status: "preview",
+        messageId,
+        localOpenUrl: email.enrollmentUrl,
+      }),
+    );
+    return { provider: "log", messageId };
+  }
+  try {
+    const from = process.env.SETUP_CODE_EMAIL_FROM;
+    if (!from) throw new Error("Missing email sender");
+    const url = new URL(email.enrollmentUrl);
+    if (url.protocol !== "https:" || url.username || url.password) {
+      throw new Error("Invalid enrollment URL");
+    }
+    const expires = new Date(email.expiresAt).toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+      timeZoneName: "short",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
+    const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
+    const text = `Hello ${email.managerName},\n\nUse this one-time link to enroll a device as a Site Manager for ${email.siteName}:\n\n${email.enrollmentUrl}\n\nThis link expires ${expires} and enrolls this Site only. Do not forward it.`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>Use this one-time link to enroll a device as a Site Manager for ${escapeHtml(email.siteName)}:</p><p><a href="${escapeHtml(email.enrollmentUrl)}">Enroll Site Manager device</a></p><p>This link expires ${escapeHtml(expires)} and enrolls this Site only. Do not forward it.</p>`;
+    const response = await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: from,
+        Destination: { ToAddresses: [email.to] },
+        ...(replyTo && { ReplyToAddresses: [replyTo] }),
+        Content: {
+          Simple: {
+            Subject: {
+              Data: `${prefix}Enroll as a Good Neighbor Site Manager`,
+              Charset: "UTF-8",
+            },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              Html: { Data: html, Charset: "UTF-8" },
+            },
+          },
+        },
+      }),
+    );
+    if (!response.MessageId) throw new Error("Missing SES message ID");
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "ses",
+        status: "accepted",
+        messageId: response.MessageId,
+      }),
+    );
+    return { provider: "ses", messageId: response.MessageId };
+  } catch {
+    console.error(
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
+    );
+    throw new Error("Manager enrollment email delivery failed");
+  }
+}
+
+/**
  * @param {string} value
  * @returns {string}
  */

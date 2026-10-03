@@ -29,6 +29,7 @@ import { currentRoute, navigate } from "./router.js";
  * @property {any[]} siteTerms
  * @property {AdminContact[]} contacts
  * @property {any[]} managerMemberships
+ * @property {any[]} managerGrants
  * @property {AdminDevice[]} devices
  * @property {AdminIssuedCode | null} issuedCode
  * @property {string} siteSaveMessage
@@ -62,6 +63,7 @@ class AdminApp extends HTMLElement {
       siteTerms: [],
       contacts: [],
       managerMemberships: [],
+      managerGrants: [],
       devices: [],
       issuedCode: null,
       siteSaveMessage: "",
@@ -97,6 +99,7 @@ class AdminApp extends HTMLElement {
       siteTerms: [],
       contacts: [],
       managerMemberships: [],
+      managerGrants: [],
       devices: [],
       issuedCode: null,
       siteSaveMessage: "",
@@ -457,9 +460,10 @@ class AdminApp extends HTMLElement {
    */
   async openSite(siteId, updateUrl = true) {
     if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
-    const [site, memberships, devices, terms] = await Promise.all([
+    const [site, memberships, grants, devices, terms] = await Promise.all([
       adminApi.getSite(siteId),
       adminApi.listManagerMemberships(siteId),
+      adminApi.listManagerGrants(siteId),
       adminApi.listDevices(siteId),
       adminApi.listSiteTerms(siteId),
     ]);
@@ -486,6 +490,7 @@ class AdminApp extends HTMLElement {
     this.state.program = null;
     this.state.contacts = [];
     this.state.managerMemberships = memberships.memberships || [];
+    this.state.managerGrants = grants.grants || [];
     this.state.devices = devices.devices || [];
     this.state.issuedCode = null;
     this.state.siteSaveMessage = "";
@@ -665,6 +670,20 @@ class AdminApp extends HTMLElement {
       this.state.site.siteId,
       membershipId,
     );
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  /** @param {string} membershipId */
+  async issueManagerGrant(membershipId) {
+    if (!this.state.site) return;
+    await adminApi.createManagerGrant(this.state.site.siteId, membershipId);
+    await this.openSite(this.state.site.siteId, false);
+  }
+
+  /** @param {string} grantId */
+  async cancelManagerGrant(grantId) {
+    if (!this.state.site) return;
+    await adminApi.cancelManagerGrant(this.state.site.siteId, grantId);
     await this.openSite(this.state.site.siteId, false);
   }
 
@@ -910,6 +929,26 @@ class AdminApp extends HTMLElement {
         );
       },
     );
+    this.querySelectorAll("[data-issue-manager-grant]").forEach((button) => {
+      button.addEventListener("click", () =>
+        this.issueManagerGrant(
+          dataAttr(button, "data-issue-manager-grant"),
+        ).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        }),
+      );
+    });
+    this.querySelectorAll("[data-cancel-manager-grant]").forEach((button) => {
+      button.addEventListener("click", () =>
+        this.cancelManagerGrant(
+          dataAttr(button, "data-cancel-manager-grant"),
+        ).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        }),
+      );
+    });
     this.querySelectorAll("[data-issue-contact-code]").forEach((button) => {
       button.addEventListener("click", () =>
         this.issueSetupCodeForEmail(
@@ -1226,7 +1265,9 @@ function siteAccessView(state) {
       <button class="btn-primary" type="submit">Add Site Manager</button>
     </form>
     ${managerMembershipList(state.managerMemberships)}
-    <p class="muted">Email enrollment links will be available from each active membership after the grant-delivery increment.</p>
+    <h3>Enrollment links</h3>
+    <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
+    ${managerGrantList(state.managerGrants)}
     <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><p>${escapeHtml(device.label || device.deviceId)} ${escapeHtml(device.status || "active")}</p><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.deviceId)}">Revoke</button></div>`).join("")}</div>
   </section>`;
 }
@@ -1240,10 +1281,21 @@ function managerMembershipList(memberships) {
     .map(
       (membership) => `<li>
         <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span></div>
-        <div class="contact-list__actions"><span class="status-badge">Active</span><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
+        <div class="contact-list__actions"><span class="status-badge">Active</span><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">Email enrollment link</button><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
       </li>`,
     )
     .join("")}</ul>`;
+}
+
+/** @param {any[]} grants */
+function managerGrantList(grants) {
+  if (!grants.length) return '<p class="muted">No enrollment links issued.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
+    .map(
+      (grant) =>
+        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
 }
 
 /**

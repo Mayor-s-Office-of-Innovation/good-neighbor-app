@@ -140,6 +140,18 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
       { method: "DELETE" },
     ),
+  listManagerGrants: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/grants`),
+  createManagerGrant: (siteId, membershipId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/manager-grants`, {
+      method: "POST",
+      body: JSON.stringify({ membershipId }),
+    }),
+  cancelManagerGrant: (siteId, grantId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/grants/${encodeURIComponent(grantId)}`,
+      { method: "DELETE" },
+    ),
   previewSiteImport: (fileName, csv) =>
     adminFetch("/admin/v1/site-imports/preview", {
       method: "POST",

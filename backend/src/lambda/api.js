@@ -102,6 +102,11 @@ import {
   listManagerMemberships,
 } from "../handlers/admin-manager-memberships.js";
 import {
+  cancelManagerGrant,
+  createManagerGrant,
+  listManagerGrants,
+} from "../handlers/admin-manager-grants.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -186,6 +191,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/manager-memberships": createManagerMembership,
   "DELETE /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":
     deactivateManagerMembership,
+  "GET /admin/v1/sites/{siteId}/grants": listManagerGrants,
+  "POST /admin/v1/sites/{siteId}/manager-grants": createManagerGrant,
+  "DELETE /admin/v1/sites/{siteId}/grants/{grantId}": cancelManagerGrant,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
   "GET /admin/v1/site-imports/{importId}": getSiteImport,
