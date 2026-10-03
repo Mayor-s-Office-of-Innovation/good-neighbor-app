@@ -53,6 +53,24 @@ export const adminApi = {
     adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`, {
       method: "DELETE",
     }),
+  createProgramUser: (programId, values) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}/users`, {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updateProgramUser: (programId, userId, values) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(values),
+      },
+    ),
+  deactivateProgramUser: (programId, userId) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
   createProvider: (name) =>
     adminFetch("/admin/v1/providers", {
       method: "POST",

@@ -79,10 +79,13 @@ import {
 } from "../handlers/admin.js";
 import { jsonResponse } from "../http.js";
 import {
+  createProgramUser,
   createProgram,
+  deactivateProgramUser,
   deactivateProgram,
   getProgram,
   listPrograms,
+  updateProgramUser,
   updateProgram,
 } from "../handlers/admin-programs.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
@@ -148,6 +151,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/programs/{programId}": getProgram,
   "PATCH /admin/v1/programs/{programId}": updateProgram,
   "DELETE /admin/v1/programs/{programId}": deactivateProgram,
+  "POST /admin/v1/programs/{programId}/users": createProgramUser,
+  "PATCH /admin/v1/programs/{programId}/users/{userId}": updateProgramUser,
+  "DELETE /admin/v1/programs/{programId}/users/{userId}": deactivateProgramUser,
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,

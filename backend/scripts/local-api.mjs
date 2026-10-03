@@ -83,10 +83,13 @@ import {
   updateSite,
 } from "../src/handlers/admin.js";
 import {
+  createProgramUser,
   createProgram,
+  deactivateProgramUser,
   deactivateProgram,
   getProgram,
   listPrograms,
+  updateProgramUser,
   updateProgram,
 } from "../src/handlers/admin-programs.js";
 import {
@@ -247,6 +250,17 @@ const routes = [
   route("GET", "/admin/v1/programs/{programId}", getProgram),
   route("PATCH", "/admin/v1/programs/{programId}", updateProgram),
   route("DELETE", "/admin/v1/programs/{programId}", deactivateProgram),
+  route("POST", "/admin/v1/programs/{programId}/users", createProgramUser),
+  route(
+    "PATCH",
+    "/admin/v1/programs/{programId}/users/{userId}",
+    updateProgramUser,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/programs/{programId}/users/{userId}",
+    deactivateProgramUser,
+  ),
   route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
   route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
   route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),

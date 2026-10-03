@@ -211,6 +211,19 @@ class AdminApp extends HTMLElement {
     navigate(`/programs/${encodeURIComponent(result.program.programId)}`);
   }
 
+  async createProgramUser(form) {
+    if (!this.state.program) return;
+    const data = new FormData(form);
+    await adminApi.createProgramUser(this.state.program.programId, {
+      firstName: formValue(data, "user-first-name"),
+      lastName: formValue(data, "user-last-name"),
+      phone: formValue(data, "user-phone"),
+      email: formValue(data, "user-email"),
+    });
+    form.reset();
+    await this.openProgram(this.state.program.programId, false);
+  }
+
   /**
    * Deactivate a provider and return to the provider list.
    * @param {string} providerId
@@ -491,6 +504,16 @@ class AdminApp extends HTMLElement {
         this.render();
       });
     });
+    this.querySelector("#program-user-form")?.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        this.createProgramUser(asForm(e.currentTarget)).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
     this.querySelectorAll("a[data-route]").forEach((link) => {
       link.addEventListener("click", (event) => {
         if (
@@ -933,8 +956,41 @@ function programView(program) {
         "No sites are assigned to this program.",
       )}
     </section>
-    <p class="muted">${Number(program.users?.length || 0)} program contact ${Number(program.users?.length || 0) === 1 ? "record" : "records"}</p>
+    <section class="subsection" aria-labelledby="program-users-title">
+      <div>
+        <h2 id="program-users-title">Program contacts</h2>
+        <p class="muted">Contact records do not receive accounts or sign-in access.</p>
+      </div>
+      <form id="program-user-form" class="site-details-form">
+        <fieldset>
+          <legend>Add program contact</legend>
+          <div class="form-grid form-grid--two">
+            ${formInput("user-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
+            ${formInput("user-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
+            ${formInput("user-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
+            ${formInput("user-email", "Email", "", { required: true, type: "email", autocomplete: "email" })}
+          </div>
+        </fieldset>
+        <button class="btn-primary" type="submit">Add contact</button>
+      </form>
+      ${programUserList((program.users || []).filter((user) => user.status !== "inactive"))}
+    </section>
   </section>`;
+}
+
+/** @param {any[]} users */
+function programUserList(users) {
+  if (!users.length)
+    return '<p class="muted">No program contacts have been added.</p>';
+  return `<ul class="contact-list">${users
+    .map(
+      (user) => `<li>
+        <div><strong>${escapeHtml([user.firstName, user.lastName].filter(Boolean).join(" "))}</strong>
+        <span><a href="mailto:${escapeHtml(user.email)}">${escapeHtml(user.email)}</a></span></div>
+        <div class="contact-list__meta"><span>${escapeHtml(user.phone)}</span><span>${Number(user.siteAssignmentCount || 0)} site ${Number(user.siteAssignmentCount || 0) === 1 ? "assignment" : "assignments"}</span></div>
+      </li>`,
+    )
+    .join("")}</ul>`;
 }
 
 /**

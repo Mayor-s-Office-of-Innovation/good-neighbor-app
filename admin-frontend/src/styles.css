@@ -330,6 +330,46 @@ button:disabled,
   overflow-wrap: anywhere;
 }
 
+.subsection {
+  display: grid;
+  gap: 16px;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 16px;
+}
+
+.subsection > div > p {
+  margin: 6px 0 0;
+}
+
+.contact-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contact-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.contact-list li > div {
+  display: grid;
+  gap: 3px;
+}
+
+.contact-list__meta {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  text-align: end;
+}
+
 .list > button,
 .list p {
   margin: 0;
@@ -519,6 +559,15 @@ tbody tr:last-child td {
   }
 
   .entity-meta {
+    text-align: start;
+  }
+
+  .contact-list li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .contact-list__meta {
     text-align: start;
   }
 }

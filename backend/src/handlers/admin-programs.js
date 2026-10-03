@@ -117,6 +117,125 @@ export const getProgram = (event) =>
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const createProgramUser = (event) =>
+  adminOnly(event, async (body) => {
+    const programId = event.pathParameters?.programId ?? "";
+    const contact = normalizeContact(body);
+    if (!contact.firstName || !contact.lastName) {
+      return jsonResponse(400, { error: "name_required" });
+    }
+    if (!isEmail(contact.email)) {
+      return jsonResponse(400, { error: "valid_email_required" });
+    }
+    if (!contact.phone) {
+      return jsonResponse(400, { error: "phone_required" });
+    }
+    const program = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+      }),
+    );
+    if (!program.Item || program.Item.status === "inactive") {
+      return jsonResponse(404, { error: "program_not_found" });
+    }
+    const userId = randomUUID();
+    const now = new Date().toISOString();
+    const user = {
+      pk: `PROGRAM#${programId}`,
+      sk: `USER#${userId}`,
+      type: "programUser",
+      entityType: "PROGRAM_USER",
+      programId,
+      userId,
+      ...contact,
+      status: "active",
+      siteAssignmentCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [put(user)],
+      }),
+    );
+    return jsonResponse(201, { user });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const updateProgramUser = (event) =>
+  adminOnly(event, async (body) => {
+    const programId = event.pathParameters?.programId ?? "";
+    const userId = event.pathParameters?.userId ?? "";
+    const contact = normalizeContact(body);
+    if (!contact.firstName || !contact.lastName) {
+      return jsonResponse(400, { error: "name_required" });
+    }
+    if (!isEmail(contact.email)) {
+      return jsonResponse(400, { error: "valid_email_required" });
+    }
+    if (!contact.phone) {
+      return jsonResponse(400, { error: "phone_required" });
+    }
+    const now = new Date().toISOString();
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+        UpdateExpression:
+          "SET firstName = :firstName, lastName = :lastName, phone = :phone, email = :email, updatedAt = :now",
+        ConditionExpression: "attribute_exists(pk) AND #status = :active",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":firstName": contact.firstName,
+          ":lastName": contact.lastName,
+          ":phone": contact.phone,
+          ":email": contact.email,
+          ":now": now,
+          ":active": "active",
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return jsonResponse(200, { user: result.Attributes });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const deactivateProgramUser = (event) =>
+  adminOnly(event, async () => {
+    const programId = event.pathParameters?.programId ?? "";
+    const userId = event.pathParameters?.userId ?? "";
+    const now = new Date().toISOString();
+    try {
+      const result = await ddb.send(
+        new UpdateCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+          UpdateExpression: "SET #status = :inactive, updatedAt = :now",
+          ConditionExpression:
+            "attribute_exists(pk) AND (attribute_not_exists(siteAssignmentCount) OR siteAssignmentCount = :zero)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":inactive": "inactive",
+            ":now": now,
+            ":zero": 0,
+          },
+          ReturnValues: "ALL_NEW",
+        }),
+      );
+      return jsonResponse(200, { user: result.Attributes });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      ) {
+        return jsonResponse(409, { error: "program_user_in_use" });
+      }
+      throw error;
+    }
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateProgram = (event) =>
   adminOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
@@ -221,6 +340,11 @@ function normalizeContact(value) {
     phone: clean(contact.phone),
     email: clean(contact.email).toLocaleLowerCase("en-US"),
   };
+}
+
+/** @param {string} value @returns {boolean} */
+function isEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 /** @param {unknown} provided @param {string} fallback */

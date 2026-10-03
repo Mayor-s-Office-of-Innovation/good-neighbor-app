@@ -12,10 +12,13 @@ vi.mock("../db.js", () => ({ ddb: { send } }));
 
 const {
   createProgram,
+  createProgramUser,
+  deactivateProgramUser,
   deactivateProgram,
   getProgram,
   listPrograms,
   updateProgram,
+  updateProgramUser,
 } = await import("./admin-programs.js");
 
 beforeEach(() => {
@@ -65,6 +68,101 @@ describe("program administration", () => {
     expect(JSON.parse(String(response.body))).toMatchObject({
       sites: [{ siteId: "site-1" }],
       users: [{ userId: "user-1" }],
+    });
+  });
+
+  it("creates a non-authenticating program contact atomically", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { programId: "program-1", status: "active" },
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      createProgramUser,
+      event(
+        {
+          firstName: "Sam",
+          lastName: "Lee",
+          phone: "415-555-0100",
+          email: "SAM@example.org",
+        },
+        { programId: "program-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(201);
+    const transaction = send.mock.calls[1][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
+      pk: "PROGRAM#program-1",
+      type: "programUser",
+      firstName: "Sam",
+      lastName: "Lee",
+      email: "sam@example.org",
+      status: "active",
+      siteAssignmentCount: 0,
+    });
+  });
+
+  it("rejects a program contact without a valid email", async () => {
+    const response = await call(
+      createProgramUser,
+      event(
+        {
+          firstName: "Sam",
+          lastName: "Lee",
+          phone: "415-555-0100",
+          email: "not-an-email",
+        },
+        { programId: "program-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("updates a program contact in place", async () => {
+    send.mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
+    const response = await call(
+      updateProgramUser,
+      event(
+        {
+          firstName: "Sam",
+          lastName: "Lee",
+          phone: "415-555-0101",
+          email: "sam@example.org",
+        },
+        { programId: "program-1", userId: "user-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(UpdateCommand);
+  });
+
+  it("archives an unassigned program contact without deleting history", async () => {
+    send.mockResolvedValueOnce({ Attributes: { status: "inactive" } });
+    const response = await call(
+      deactivateProgramUser,
+      event(undefined, { programId: "program-1", userId: "user-1" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const command = send.mock.calls[0][0];
+    expect(command).toBeInstanceOf(UpdateCommand);
+    expect(command.input.ConditionExpression).toContain(
+      "siteAssignmentCount = :zero",
+    );
+  });
+
+  it("does not archive a program contact that still has Site dependencies", async () => {
+    const conflict = new Error("assigned");
+    conflict.name = "ConditionalCheckFailedException";
+    send.mockRejectedValueOnce(conflict);
+    const response = await call(
+      deactivateProgramUser,
+      event(undefined, { programId: "program-1", userId: "user-1" }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "program_user_in_use",
     });
   });
 
