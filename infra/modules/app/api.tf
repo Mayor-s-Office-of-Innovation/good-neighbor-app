@@ -57,6 +57,7 @@ locals {
     "DELETE /admin/v1/programs/{programId}",
     "POST /admin/v1/providers/{providerId}/sites",
     "GET /admin/v1/sites/{siteId}",
+    "POST /admin/v1/sites/{siteId}/reassign",
     "PATCH /admin/v1/sites/{siteId}",
     "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",

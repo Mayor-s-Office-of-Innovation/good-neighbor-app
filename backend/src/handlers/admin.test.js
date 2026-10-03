@@ -51,6 +51,7 @@ const {
   issueAdminSetupCode,
   listProviders,
   presignComplianceLetter,
+  reassignSite,
   revokeDevice,
   updateSite,
 } = await import("./admin.js");
@@ -206,6 +207,149 @@ describe("provider and site management", () => {
       address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
       location: { latitude: 37.7793, longitude: -122.4192 },
     });
+  });
+
+  it("creates the program-to-site relationship in the site transaction", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-one",
+          name: "Provider One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-one",
+          providerId: "provider-one",
+          name: "Program One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      createSite,
+      event(
+        {
+          name: "Main Site",
+          address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+          leadProgramId: "program-one",
+        },
+        "central-admin",
+        { providerId: "provider-one" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(201);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[2][0]);
+    expect(tx.input.TransactItems).toHaveLength(4);
+    expect(tx.input.TransactItems?.[0]?.Put?.Item).toMatchObject({
+      leadProgramId: "program-one",
+      programName: "Program One",
+    });
+    expect(tx.input.TransactItems?.[3]?.Put?.Item).toMatchObject({
+      pk: "PROGRAM#program-one",
+      sk: "SITE#provider-one-main-site",
+      type: "programSiteMembership",
+    });
+  });
+
+  it("rejects a program owned by a different provider", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-one",
+          name: "Provider One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-two",
+          providerId: "provider-two",
+          name: "Program Two",
+          status: "active",
+        },
+      });
+
+    const res = await call(
+      createSite,
+      event(
+        {
+          name: "Main Site",
+          address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+          leadProgramId: "program-two",
+        },
+        "central-admin",
+        { providerId: "provider-one" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: "incompatible_program" });
+    expect(geocodeAddress).not.toHaveBeenCalled();
+  });
+
+  it("reassigns a site without changing site or access records", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          providerId: "provider-old",
+          leadProgramId: "program-old",
+          providerSiteId: "external-1",
+          status: "active",
+          updatedAt: "2026-10-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-new",
+          name: "New Provider",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-new",
+          providerId: "provider-new",
+          name: "New Program",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      reassignSite,
+      event(
+        { providerId: "provider-new", leadProgramId: "program-new" },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
+    expect(tx.input.TransactItems).toHaveLength(6);
+    expect(tx.input.TransactItems?.[0]?.Update?.UpdateExpression).not.toMatch(
+      /token|generation|device/i,
+    );
+    expect(tx.input.TransactItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Delete: expect.objectContaining({
+            Key: { pk: "PROVIDER#provider-old", sk: "SITE#site-1" },
+          }),
+        }),
+        expect.objectContaining({
+          Delete: expect.objectContaining({
+            Key: { pk: "PROGRAM#program-old", sk: "SITE#site-1" },
+          }),
+        }),
+      ]),
+    );
   });
 
   it("rejects unknown providers before geocoding the site address", async () => {

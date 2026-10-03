@@ -183,6 +183,24 @@ export const createSite = (event) =>
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
+    const leadProgramId = cleanText(body.leadProgramId);
+    let program = null;
+    if (leadProgramId) {
+      const result = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
+        }),
+      );
+      program = result.Item;
+      if (
+        !program ||
+        program.status === "inactive" ||
+        program.providerId !== providerId
+      ) {
+        return jsonResponse(400, { error: "incompatible_program" });
+      }
+    }
     const geocoded = await geocodeSiteAddress(address);
     if (geocoded instanceof GeocodingError) {
       return jsonResponse(422, { error: geocoded.code });
@@ -207,6 +225,7 @@ export const createSite = (event) =>
       geocodedAddress: geocoded.matchedAddress,
       providerId,
       providerName: provider.Item.name,
+      ...(program ? { leadProgramId, programName: String(program.name) } : {}),
       providerSiteId,
       status: "active",
       createdAt: now,
@@ -226,41 +245,63 @@ export const createSite = (event) =>
       updatedAt: now,
     };
     const tableName = getDynamoTableName();
+    const transactItems = [
+      {
+        Put: {
+          TableName: tableName,
+          Item: site,
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: membership,
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: siteSearchItem(
+            siteId,
+            name,
+            providerId,
+            provider.Item.name,
+            providerSiteId,
+            now,
+          ),
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+    ];
+    if (program) {
+      transactItems.push({
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROGRAM#${leadProgramId}`,
+            sk: `SITE#${siteId}`,
+            type: "programSiteMembership",
+            programId: leadProgramId,
+            programName: program.name,
+            siteId,
+            siteName: name,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      });
+    }
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: tableName,
-              Item: site,
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: tableName,
-              Item: membership,
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: tableName,
-              Item: siteSearchItem(
-                siteId,
-                name,
-                providerId,
-                provider.Item.name,
-                providerSiteId,
-                now,
-              ),
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-        ],
+        TransactItems: transactItems,
       }),
     );
     return jsonResponse(201, { site });
@@ -282,6 +323,173 @@ export const getAdminSite = (event) =>
     );
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
     return jsonResponse(200, { items: res.Items });
+  });
+
+/**
+ * POST /admin/v1/sites/{siteId}/reassign
+ * Changes only the Site's Provider/Program relationships. Site identity,
+ * device credentials, checks, tasks, and access generations are untouched.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const reassignSite = (event) =>
+  adminOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const providerId = cleanText(body.providerId);
+    const leadProgramId = cleanText(body.leadProgramId);
+    if (!providerId || !leadProgramId) {
+      return jsonResponse(400, { error: "provider_and_program_required" });
+    }
+    const tableName = getDynamoTableName();
+    const [siteResult, providerResult, programResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${providerId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
+        }),
+      ),
+    ]);
+    const site = siteResult.Item;
+    const provider = providerResult.Item;
+    const program = programResult.Item;
+    if (!site || site.status === "inactive") {
+      return jsonResponse(404, { error: "site_not_found" });
+    }
+    if (!provider || provider.status === "inactive") {
+      return jsonResponse(404, { error: "provider_not_found" });
+    }
+    if (
+      !program ||
+      program.status === "inactive" ||
+      program.providerId !== providerId
+    ) {
+      return jsonResponse(400, { error: "incompatible_program" });
+    }
+    if (
+      site.providerId === providerId &&
+      site.leadProgramId === leadProgramId
+    ) {
+      return jsonResponse(200, { site, unchanged: true });
+    }
+    const now = new Date().toISOString();
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const items = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          UpdateExpression:
+            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now REMOVE programMigrationRunId",
+          ConditionExpression: site.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
+            : "attribute_exists(pk)",
+          ExpressionAttributeValues: {
+            ":providerId": providerId,
+            ":providerName": provider.name,
+            ":programId": leadProgramId,
+            ":programName": program.name,
+            ":now": now,
+            ...(site.updatedAt ? { ":expectedUpdatedAt": site.updatedAt } : {}),
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROVIDER#${providerId}`,
+            sk: `SITE#${siteId}`,
+            type: "providerSiteMembership",
+            providerId,
+            providerName: provider.name,
+            siteId,
+            siteName: site.name,
+            providerSiteId: site.providerSiteId,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROGRAM#${leadProgramId}`,
+            sk: `SITE#${siteId}`,
+            type: "programSiteMembership",
+            programId: leadProgramId,
+            programName: program.name,
+            siteId,
+            siteName: site.name,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: siteSearchItem(
+            siteId,
+            String(site.name),
+            providerId,
+            String(provider.name),
+            String(site.providerSiteId ?? ""),
+            now,
+          ),
+        },
+      },
+    ];
+    if (site.providerId && site.providerId !== providerId) {
+      items.push({
+        Delete: {
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${site.providerId}`, sk: `SITE#${siteId}` },
+        },
+      });
+    }
+    if (site.leadProgramId && site.leadProgramId !== leadProgramId) {
+      items.push({
+        Delete: {
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: `SITE#${siteId}` },
+        },
+      });
+    }
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "site_reassignment_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      site: {
+        ...site,
+        providerId,
+        providerName: provider.name,
+        leadProgramId,
+        programName: program.name,
+        updatedAt: now,
+      },
+    });
   });
 
 const COMPLIANCE_LETTER_CONTENT_TYPE = "application/pdf";

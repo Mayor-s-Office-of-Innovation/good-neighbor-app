@@ -36,6 +36,23 @@ async function adminFetch(path, init = {}) {
 
 export const adminApi = {
   listProviders: () => adminFetch("/admin/v1/providers"),
+  listPrograms: () => adminFetch("/admin/v1/programs"),
+  createProgram: (values) =>
+    adminFetch("/admin/v1/programs", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  getProgram: (programId) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`),
+  updateProgram: (programId, values) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  deactivateProgram: (programId) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`, {
+      method: "DELETE",
+    }),
   createProvider: (name) =>
     adminFetch("/admin/v1/providers", {
       method: "POST",
@@ -47,10 +64,10 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
-  createSite: (providerId, { name, address }) =>
+  createSite: (providerId, { name, address, leadProgramId }) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/sites`, {
       method: "POST",
-      body: JSON.stringify({ name, address }),
+      body: JSON.stringify({ name, address, leadProgramId }),
     }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
@@ -58,6 +75,11 @@ export const adminApi = {
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "PATCH",
       body: JSON.stringify(values),
+    }),
+  reassignSite: (siteId, providerId, leadProgramId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ providerId, leadProgramId }),
     }),
   presignComplianceLetter: (siteId, file) =>
     adminFetch(

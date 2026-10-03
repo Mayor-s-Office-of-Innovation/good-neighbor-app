@@ -72,6 +72,7 @@ import {
   listMasterContacts,
   listProviders,
   presignComplianceLetter,
+  reassignSite,
   revokeDevice,
   updateProvider,
   updateSite,
@@ -149,6 +150,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "DELETE /admin/v1/programs/{programId}": deactivateProgram,
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
+  "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
   "PATCH /admin/v1/sites/{siteId}": updateSite,
   "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
     presignComplianceLetter,

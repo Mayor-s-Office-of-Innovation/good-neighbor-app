@@ -77,6 +77,7 @@ import {
   listMasterContacts,
   listProviders,
   presignComplianceLetter,
+  reassignSite,
   revokeDevice,
   updateProvider,
   updateSite,
@@ -248,6 +249,7 @@ const routes = [
   route("DELETE", "/admin/v1/programs/{programId}", deactivateProgram),
   route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
   route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
+  route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
   route(
     "POST",
