@@ -39,6 +39,7 @@ import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
+import { redeemEnrollmentGrant } from "../handlers/enrollment.js";
 import {
   requestSetupCode,
   searchSites,
@@ -123,6 +124,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // no authorizer. Everything under /v1/* except these + the intakes is gated.
   "POST /v1/devices": registerDevice,
   "POST /v1/devices/token:refresh": refreshDeviceToken,
+  "POST /app/v1/enrollment/redeem": redeemEnrollmentGrant,
   "GET /v1/sites:search": searchSites,
   "POST /v1/setup-codes:request": requestSetupCode,
   // Site config

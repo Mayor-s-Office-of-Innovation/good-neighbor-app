@@ -44,6 +44,7 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
+import { redeemEnrollmentGrant } from "../src/handlers/enrollment.js";
 import {
   requestSetupCode,
   searchSites,
@@ -201,6 +202,7 @@ const routes = [
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  route("POST", "/app/v1/enrollment/redeem", redeemEnrollmentGrant),
   route("GET", "/v1/sites:search", searchSites),
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config

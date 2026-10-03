@@ -12,6 +12,7 @@ locals {
     # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
+    "POST /app/v1/enrollment/redeem",
     "GET /v1/sites:search",
     "POST /v1/setup-codes:request",
     # Site config
@@ -108,6 +109,7 @@ locals {
     "POST /site-code"                = true
     "POST /v1/devices"               = true
     "POST /v1/devices/token:refresh" = true
+    "POST /app/v1/enrollment/redeem" = true
     "GET /v1/sites:search"           = true
     "POST /v1/setup-codes:request"   = true
     "GET /health"                    = true
