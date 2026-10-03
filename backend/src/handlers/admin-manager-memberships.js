@@ -89,6 +89,15 @@ export const createManagerMembership = (event) =>
               createdAt: now,
             }),
             put(tableName, {
+              pk: `MANAGER_EMAIL#${verifier}`,
+              sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
+              type: "managerMembershipDirectory",
+              membershipId,
+              siteId,
+              status: "active",
+              createdAt: now,
+            }),
+            put(tableName, {
               pk: `SITE#${siteId}`,
               sk: `AUDIT#${now}#${randomUUID()}`,
               type: "siteAuditEvent",
@@ -158,6 +167,17 @@ export const deactivateManagerMembership = (event) =>
                 Key: {
                   pk: `SITE#${siteId}`,
                   sk: `MANAGER_EMAIL#${membership.emailHash}`,
+                },
+                ConditionExpression: "membershipId = :membershipId",
+                ExpressionAttributeValues: { ":membershipId": membershipId },
+              },
+            },
+            {
+              Delete: {
+                TableName: tableName,
+                Key: {
+                  pk: `MANAGER_EMAIL#${membership.emailHash}`,
+                  sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
                 },
                 ConditionExpression: "membershipId = :membershipId",
                 ExpressionAttributeValues: { ":membershipId": membershipId },

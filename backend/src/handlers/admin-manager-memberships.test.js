@@ -54,7 +54,7 @@ describe("Site Manager memberships", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(3);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     const membership = transaction.input.TransactItems[0].Put.Item;
     expect(membership).toMatchObject({
       siteId: "site-1",
@@ -68,6 +68,12 @@ describe("Site Manager memberships", () => {
       /^MANAGER_EMAIL#[a-f0-9]{64}$/,
     );
     expect(transaction.input.TransactItems[2].Put.Item).toMatchObject({
+      type: "managerMembershipDirectory",
+      membershipId: membership.membershipId,
+      siteId: "site-1",
+      status: "active",
+    });
+    expect(transaction.input.TransactItems[3].Put.Item).toMatchObject({
       eventType: "manager_membership_created",
       actor: "admin-1",
     });
@@ -111,7 +117,7 @@ describe("Site Manager memberships", () => {
     expect(response.statusCode).toBe(200);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(3);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
     ).toContain("generation = generation + :one");
@@ -119,7 +125,11 @@ describe("Site Manager memberships", () => {
       pk: "SITE#site-1",
       sk: "MANAGER_EMAIL#email-hash",
     });
-    expect(transaction.input.TransactItems[2].Put.Item.eventType).toBe(
+    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+      pk: "MANAGER_EMAIL#email-hash",
+      sk: "SITE#site-1#MEMBERSHIP#membership-1",
+    });
+    expect(transaction.input.TransactItems[3].Put.Item.eventType).toBe(
       "manager_membership_deactivated",
     );
   });

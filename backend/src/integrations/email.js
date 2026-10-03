@@ -199,6 +199,113 @@ export async function sendManagerEnrollmentEmail(email) {
 }
 
 /**
+ * Send one recovery message containing separate single-Site Manager links.
+ * @param {{ to: string, managerName: string, links: Array<{siteName:string, enrollmentUrl:string, expiresAt:string}> }} email
+ * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
+ */
+export async function sendManagerAccessEmail(email) {
+  const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
+  const contactHash = createHash("sha256")
+    .update(email.to.trim().toLowerCase())
+    .digest("hex");
+  const metadata = {
+    marker: "manager_access_email",
+    contactHash,
+    siteCount: email.links.length,
+  };
+  if (localPreview) {
+    const messageId = `local-${Date.now()}`;
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "log",
+        status: "preview",
+        messageId,
+        localOpenUrls: email.links.map((link) => link.enrollmentUrl),
+      }),
+    );
+    return { provider: "log", messageId };
+  }
+  try {
+    const from = process.env.SETUP_CODE_EMAIL_FROM;
+    if (!from) throw new Error("Missing email sender");
+    for (const link of email.links) {
+      const url = new URL(link.enrollmentUrl);
+      if (url.protocol !== "https:" || url.username || url.password) {
+        throw new Error("Invalid enrollment URL");
+      }
+    }
+    const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
+    const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
+    const lines = email.links.map(
+      (link) =>
+        `${link.siteName}: ${link.enrollmentUrl}\nExpires ${managerExpiry(link.expiresAt)}`,
+    );
+    const text = `Hello ${email.managerName},\n\nUse the applicable one-time link below to enroll this device as a Site Manager. Each link enrolls one Site only.\n\n${lines.join("\n\n")}\n\nDo not forward these links. If you did not request access, contact the City administrator.`;
+    const htmlLinks = email.links
+      .map(
+        (link) =>
+          `<li><strong>${escapeHtml(link.siteName)}</strong>: <a href="${escapeHtml(link.enrollmentUrl)}">Enroll this Site</a><br>Expires ${escapeHtml(managerExpiry(link.expiresAt))}</li>`,
+      )
+      .join("");
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>Use the applicable one-time link below to enroll this device as a Site Manager. Each link enrolls one Site only.</p><ul>${htmlLinks}</ul><p>Do not forward these links. If you did not request access, contact the City administrator.</p>`;
+    const response = await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: from,
+        Destination: { ToAddresses: [email.to] },
+        ...(replyTo && { ReplyToAddresses: [replyTo] }),
+        Content: {
+          Simple: {
+            Subject: {
+              Data: `${prefix}Your Good Neighbor Site Manager access`,
+              Charset: "UTF-8",
+            },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              Html: { Data: html, Charset: "UTF-8" },
+            },
+          },
+        },
+      }),
+    );
+    if (!response.MessageId) throw new Error("Missing SES message ID");
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "ses",
+        status: "accepted",
+        messageId: response.MessageId,
+      }),
+    );
+    return { provider: "ses", messageId: response.MessageId };
+  } catch {
+    console.error(
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
+    );
+    throw new Error("Manager access email delivery failed");
+  }
+}
+
+/** @param {string} value */
+function managerExpiry(value) {
+  return new Date(value).toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    timeZoneName: "short",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
  * @param {string} value
  * @returns {string}
  */

@@ -13,6 +13,7 @@ locals {
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
     "POST /app/v1/enrollment/redeem",
+    "POST /app/v1/manager-access/request",
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
     "POST /app/v1/manager/staff-grants",
@@ -114,12 +115,13 @@ locals {
   # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
   route_is_open = {
     "POST /site-code"                = true
-    "POST /v1/devices"               = true
-    "POST /v1/devices/token:refresh" = true
-    "POST /app/v1/enrollment/redeem" = true
-    "GET /v1/sites:search"           = true
-    "POST /v1/setup-codes:request"   = true
-    "GET /health"                    = true
+    "POST /v1/devices"                    = true
+    "POST /v1/devices/token:refresh"      = true
+    "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/manager-access/request" = true
+    "GET /v1/sites:search"                = true
+    "POST /v1/setup-codes:request"        = true
+    "GET /health"                         = true
     "POST /v1/client-errors"         = true
     "POST /v1/feedback"              = true
     "POST /submissions"              = true

@@ -704,7 +704,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
     items {
       header   = "Permissions-Policy"
       override = true
-      value    = "camera=(), microphone=(), geolocation=(self)"
+      value    = "camera=(self), microphone=(), geolocation=(self)"
     }
   }
 }
@@ -952,6 +952,46 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-device-auth-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Manager recovery is intentionally anonymous and non-enumerating. The
+  # application enforces the stricter rolling business limits (5/IP/hour,
+  # 3/email/hour, 15-minute email cooldown); this edge rule absorbs bursts
+  # before they consume Lambda/DynamoDB capacity.
+  rule {
+    name     = "ManagerAccessRateLimit"
+    priority = 7
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 20
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "EXACTLY"
+            search_string         = "/app/v1/manager-access/request"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-manager-access-rate"
       sampled_requests_enabled   = true
     }
   }

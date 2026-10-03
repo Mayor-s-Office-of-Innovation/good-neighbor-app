@@ -51,6 +51,7 @@ import {
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
+import { requestManagerAccess } from "../handlers/manager-access-requests.js";
 import {
   requestSetupCode,
   searchSites,
@@ -136,6 +137,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/devices": registerDevice,
   "POST /v1/devices/token:refresh": refreshDeviceToken,
   "POST /app/v1/enrollment/redeem": redeemEnrollmentGrant,
+  "POST /app/v1/manager-access/request": requestManagerAccess,
   "GET /app/v1/device-bindings": listDeviceBindings,
   "POST /app/v1/device-bindings/select": selectDeviceBinding,
   "POST /app/v1/manager/staff-grants": createStaffGrant,

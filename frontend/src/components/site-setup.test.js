@@ -10,6 +10,7 @@ import {
 
 const setup = vi.hoisted(() => ({
   validateSetupCode: vi.fn(),
+  requestManagerAccess: vi.fn(),
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
   getSite: vi.fn(),
@@ -17,6 +18,7 @@ const setup = vi.hoisted(() => ({
 }));
 vi.mock("../services/onboarding.js", () => ({
   formatSiteCode: (value) => value,
+  requestManagerAccess: setup.requestManagerAccess,
   requestSetupCode: vi.fn(),
   searchSites: vi.fn(),
   validateSetupCode: setup.validateSetupCode,
@@ -51,6 +53,7 @@ beforeAll(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   setup.validateSetupCode.mockReset();
+  setup.requestManagerAccess.mockReset();
   setup.registerDevice.mockReset();
   setup.redeemEnrollmentGrant.mockReset();
   setup.getSite.mockReset();

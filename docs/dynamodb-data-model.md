@@ -145,6 +145,7 @@ as task update events and every GSI sort key.
 | Code contact / master contact | `SITE#<siteId>` | `CODE_CONTACT#<emailHash>` / `MASTER_CONTACT#<emailHash>` | contacts allowed to request setup codes. Managed by central admin. `email`, `emailHash`, `name`, `status` |
 | Manager membership | `SITE#<siteId>` | `MANAGER_MEMBERSHIP#<membershipId>` | One email-based Site Manager role at exactly one Site. Stores normalized `email`, keyed verifier in `emailHash`, `status`, `role=manager`, and a generation advanced on removal so later bindings can fail closed. |
 | Manager email uniqueness | `SITE#<siteId>` | `MANAGER_EMAIL#<emailHash>` | Conditional uniqueness marker pointing to the active `membershipId`; written and removed in the same transaction as membership lifecycle changes. |
+| Manager membership directory | `MANAGER_EMAIL#<emailHash>` | `SITE#<siteId>#MEMBERSHIP#<membershipId>` | Non-secret pointer used only by the public Manager recovery flow. Each result is revalidated against the canonical Site and membership before a separate, single-Site link is issued. Existing memberships are populated by the dry-run-first directory backfill. |
 | Manager enrollment grant | `SITE#<siteId>` | `MANAGER_GRANT#<createdAt>#<grantId>` | Fifteen-minute, single-use, single-Site Manager enrollment grant with status and delivery evidence. Stores only the random token's SHA-256 verifier; list APIs omit it. |
 | Staff enrollment grant | `SITE#<siteId>` | `STAFF_GRANT#<createdAt>#<grantId>` | Ten-minute, single-use general-access grant issued by an active Manager binding. Stores its intended device label, issuing binding/membership generations, status, and only the token verifier. |
 | Active staff-grant guard | `SITE#<siteId>` | `ACTIVE_STAFF_GRANT#<managerBindingId>` | Conditional singleton ensuring a Manager can have only one unfinished staff grant. Redemption or explicit cancellation removes it atomically; an expired marker can be conditionally replaced. |
@@ -182,6 +183,7 @@ as task update events and every GSI sort key.
 | Current setup code pointer | `SETUP_CODE_CURRENT#<siteId>#<contactHash>` | `#META` | `currentCodePk` / `currentCodeId`: the code a contact's latest request created |
 | Legacy site code | `SITE_CODE#<code>` | `#META` | `type: providerSiteCode`. Rows from before setup codes. `/site-code` still accepts them as a fallback. |
 | Setup-code request throttle | `SETUP_CODE_REQUEST#<siteId>#<contactHash>` | `#THROTTLE` | `nextAllowedAt`, a cooldown for the public request route. Written with a conditional Put. |
+| Manager-access request controls | `MANAGER_ACCESS_RATE#IP#<ipHash>` / `MANAGER_ACCESS_RATE#EMAIL#<emailHash>` / `MANAGER_ACCESS_COOLDOWN#<emailHash>` | `HOUR#<yyyy-mm-ddThh>` / `#REQUEST` | TTL-bound counters and cooldown marker for the non-enumerating public Manager recovery route. No raw email or IP address is stored. |
 | Analytics export watermark | `ANALYTICS#EXPORT` | `#WATERMARK` | `exportToTime` (epoch seconds), `lastExportId`, `updatedAt`. The cursor for the incremental export Lambda ([ADR 0013](./adr/0013-analytics-read-plane.md)). |
 
 ### Old artifact rows
@@ -324,6 +326,7 @@ Every pattern is a single query. There are no scans.
 | AP26 | Preview/apply a Site CSV import | Query the three bounded active-directory partitions, exact-match Program contacts/assignments by parent, and write a TTL-bound import ledger. Apply processes only valid rows with one conditional transaction per logical row; terminal row outcomes make retries idempotent. |
 | AP27 | List or select this physical device's Site bindings | Query `PHYSICAL_DEVICE#<physicalDeviceId>` with `begins_with(sk,"BINDING#")`, then revalidate each canonical Site binding. Selection conditionally rotates the target binding's session and writes a Site audit event. |
 | AP28 | Manager enrolls and manages general devices | Range-query the last hour of `STAFF_GRANT#` rows for bounded hourly limits, conditionally create one active-grant guard, and query `DEVICE_BINDING#` rows filtered to `general`. Redemption/cancellation consumes the guard and token lookup atomically. Individual revocation conditionally updates the canonical binding, compatibility Device row, and physical-device pointer in one transaction. |
+| AP29 | Recover Site Manager access by email | Apply per-IP, per-email, and cooldown controls, then query `MANAGER_EMAIL#<emailHash>`. Revalidate every canonical Site and membership and issue one 15-minute, single-use link per active Site membership. The public response is generic whether the address is known, unknown, throttled, or delivery fails. |
 
 ### Who owns a task
 
