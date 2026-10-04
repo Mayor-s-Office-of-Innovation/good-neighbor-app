@@ -69,8 +69,9 @@ are never referenced from code.
 
 ## Translation glossary
 
-Current status: Spanish and Filipino are machine first passes pending
-community review; Vietnamese and Traditional Chinese are English placeholders.
+Current status: all four languages are machine first passes pending community
+review (Spanish and Filipino drafted 2026-10-02, Vietnamese and Traditional
+Chinese 2026-10-04).
 
 Cross-language rules:
 
@@ -115,3 +116,36 @@ Filipino (fil-PH), polite "kayo / ninyo", no "po"; common workplace loanwords
 | the City | ang Lungsod |
 | settings / logout / attributions | mga setting / mag-log out / mga pagkilala |
 | to do / in progress / history | gagawin / isinasagawa / kasaysayan |
+
+Vietnamese (vi-VN), "bạn", full diacritics; "Email" stays as the loanword:
+
+| English | Vietnamese |
+| --- | --- |
+| site | địa điểm |
+| perimeter check / check | kiểm tra quanh tòa nhà / đợt kiểm tra |
+| issue / problem | vấn đề |
+| task | nhiệm vụ |
+| 311 request / ticket | yêu cầu 311 (action: gửi yêu cầu 311) |
+| escalate | báo lên cấp trên |
+| log action | ghi lại hành động |
+| the City | Thành phố |
+| client / resident | khách hàng / cư dân |
+| settings / logout / attributions | cài đặt / đăng xuất / ghi nhận nguồn |
+| to do / in progress / history | cần làm / đang xử lý / lịch sử |
+
+Traditional Chinese (zh-Hant), "您", San Francisco Cantonese-community
+wording (三藩市, not 舊金山), full-width punctuation in sentences:
+
+| English | Traditional Chinese |
+| --- | --- |
+| site | 站點 |
+| perimeter check / check | 周邊巡檢 / 巡檢 |
+| issue / problem | 問題 |
+| task | 任務 |
+| 311 request / ticket | 311 工單 (action: 提交 311 工單) |
+| escalate | 上報 |
+| log action | 記錄行動 |
+| the City | 市政府 |
+| client / resident | 服務對象 / 住戶 |
+| settings / logout / attributions | 設定 / 登出 / 資料出處 |
+| to do / in progress / history | 待辦 / 處理中 / 歷史記錄 |

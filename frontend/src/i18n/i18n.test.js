@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { hasKey, ready, setLocale, t } from "./i18n.js";
 import { getLocale, getLocaleTag, LOCALES } from "./locale.js";
 import en from "./catalogs/en.json";
+import vi from "./catalogs/vi.json";
 
 afterEach(async () => {
   await setLocale("en");
@@ -64,14 +65,17 @@ describe("setLocale()", () => {
 });
 
 describe("plural selection", () => {
-  it("uses English plural rules for untranslated entries in one-less locales", async () => {
+  it("uses the locale's own plural rules once an entry is translated", async () => {
     await setLocale("vi");
-    // vi.json still carries the English placeholder, so "1" must pick ".one".
+    // Vietnamese has no "one" category, so count 1 takes the ".other" form.
+    expect(vi["home.overdue.hours.other"]).not.toBe(
+      en["home.overdue.hours.other"],
+    );
     expect(t("home.overdue.hours", { count: 1 })).toBe(
-      en["home.overdue.hours.one"].replace("{count}", "1"),
+      vi["home.overdue.hours.other"].replace("{count}", "1"),
     );
     expect(t("home.overdue.hours", { count: 2 })).toBe(
-      en["home.overdue.hours.other"].replace("{count}", "2"),
+      vi["home.overdue.hours.other"].replace("{count}", "2"),
     );
   });
 
