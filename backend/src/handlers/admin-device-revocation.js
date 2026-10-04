@@ -14,6 +14,113 @@ const MAX_SELECTED_BINDINGS = 20;
 const MAX_PHYSICAL_BINDINGS = 20;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const suspendDeviceBinding = (event) =>
+  adminOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const bindingId = event.pathParameters?.bindingId ?? "";
+    if (
+      !/^[A-Za-z0-9_-]{1,100}$/.test(siteId) ||
+      !/^[A-Za-z0-9_-]{1,100}$/.test(bindingId)
+    ) {
+      return jsonResponse(400, { error: "invalid_device_binding" });
+    }
+    const reason = suspensionReason(body.reason);
+    if (!reason)
+      return jsonResponse(400, { error: "invalid_suspension_reason" });
+    const tableName = getDynamoTableName();
+    const binding = await getBinding(tableName, siteId, bindingId);
+    if (!binding) {
+      return suspendLegacyDevice(tableName, siteId, bindingId, reason, event);
+    }
+    if (binding.status === "revoked") {
+      return jsonResponse(409, { error: "device_binding_already_revoked" });
+    }
+    if (binding.status === "suspended") {
+      return jsonResponse(200, {
+        binding: publicSuspendedBinding(binding),
+        alreadySuspended: true,
+      });
+    }
+    const now = new Date().toISOString();
+    const actor = actorId(event);
+    const nextGeneration = Number(binding.tokenGeneration ?? 0) + 1;
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            suspensionUpdate(
+              tableName,
+              binding.pk,
+              binding.sk,
+              nextGeneration,
+              now,
+              actor,
+              reason,
+            ),
+            suspensionUpdate(
+              tableName,
+              `SITE#${siteId}`,
+              `DEVICE#${bindingId}`,
+              nextGeneration,
+              now,
+              actor,
+              reason,
+            ),
+            {
+              Update: {
+                TableName: tableName,
+                Key: {
+                  pk: `PHYSICAL_DEVICE#${binding.physicalDeviceId}`,
+                  sk: `BINDING#${bindingId}`,
+                },
+                UpdateExpression:
+                  "SET #status = :suspended, suspendedAt = :now, updatedAt = :now, suspendedReason = :reason",
+                ConditionExpression:
+                  "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active)",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":active": "active",
+                  ":suspended": "suspended",
+                  ":now": now,
+                  ":reason": reason,
+                },
+              },
+            },
+            transactionPut(tableName, {
+              pk: `SITE#${siteId}`,
+              sk: `AUDIT#${now}#${randomUUID()}`,
+              type: "siteAuditEvent",
+              eventType: "device_binding_suspended",
+              siteId,
+              bindingId,
+              physicalDeviceId: binding.physicalDeviceId,
+              accessLevel: binding.accessLevel,
+              reason,
+              actor,
+              createdAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (isTransactionConflict(error)) {
+        return jsonResponse(409, { error: "device_suspension_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      binding: publicSuspendedBinding({
+        ...binding,
+        status: "suspended",
+        tokenGeneration: nextGeneration,
+        suspendedAt: now,
+        suspendedBy: actor,
+        suspendedReason: reason,
+      }),
+    });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const getPhysicalDeviceRevocationPreview = (event) =>
   adminOnly(event, async () => {
     const physicalDeviceId = event.pathParameters?.physicalDeviceId ?? "";
@@ -392,7 +499,7 @@ async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
   if (!physical) return null;
   const resolved = await Promise.all(
     (pointersResult.Items ?? [])
-      .filter((pointer) => pointer.status === "active")
+      .filter((pointer) => pointer.status !== "revoked")
       .map(async (pointer) => {
         const [bindingResult, siteResult] = await Promise.all([
           ddb.send(
@@ -436,6 +543,105 @@ async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
     label: String(physical.label || "Unnamed device"),
     status: String(physical.status || "active"),
     bindings,
+  };
+}
+
+/** @param {unknown} value */
+function suspensionReason(value) {
+  const reason = String(value ?? "");
+  return [
+    "security_review",
+    "lost_or_unaccounted_device",
+    "refresh_replay",
+    "policy_violation",
+  ].includes(reason)
+    ? reason
+    : "";
+}
+
+/** @param {string} tableName @param {string} siteId @param {string} deviceId @param {string} reason @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+async function suspendLegacyDevice(tableName, siteId, deviceId, reason, event) {
+  const now = new Date().toISOString();
+  const actor = actorId(event);
+  try {
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: { pk: `SITE#${siteId}`, sk: `DEVICE#${deviceId}` },
+        UpdateExpression:
+          "SET #status = :suspended, suspendedAt = :now, updatedAt = :now, suspendedReason = :reason, suspendedBy = :actor, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
+        ConditionExpression:
+          "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active)",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":active": "active",
+          ":suspended": "suspended",
+          ":reason": reason,
+          ":actor": actor,
+          ":now": now,
+          ":zero": 0,
+          ":one": 1,
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return jsonResponse(200, {
+      binding: publicSuspendedBinding({ ...result.Attributes, legacy: true }),
+    });
+  } catch (error) {
+    if (isTransactionConflict(error)) {
+      return jsonResponse(409, { error: "device_suspension_conflict" });
+    }
+    throw error;
+  }
+}
+
+/** @param {string} tableName @param {string} pk @param {string} sk @param {number} nextGeneration @param {string} now @param {string} actor @param {string} reason */
+function suspensionUpdate(
+  tableName,
+  pk,
+  sk,
+  nextGeneration,
+  now,
+  actor,
+  reason,
+) {
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { pk, sk },
+      UpdateExpression:
+        "SET #status = :suspended, suspendedAt = :now, updatedAt = :now, suspendedReason = :reason, suspendedBy = :actor, tokenGeneration = :next",
+      ConditionExpression:
+        "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":active": "active",
+        ":suspended": "suspended",
+        ":reason": reason,
+        ":actor": actor,
+        ":now": now,
+        ":next": nextGeneration,
+      },
+    },
+  };
+}
+
+/** @param {Record<string, any>} binding */
+function publicSuspendedBinding(binding) {
+  return {
+    bindingId: binding.bindingId ?? binding.deviceId,
+    deviceId: binding.bindingId ?? binding.deviceId,
+    physicalDeviceId: binding.physicalDeviceId,
+    siteId: binding.siteId,
+    label: binding.label,
+    accessLevel:
+      binding.accessLevel === "admin" ? "manager" : binding.accessLevel,
+    status: binding.status,
+    tokenGeneration: binding.tokenGeneration,
+    suspendedAt: binding.suspendedAt,
+    suspendedReason: binding.suspendedReason,
+    legacy: binding.legacy === true,
   };
 }
 

@@ -251,6 +251,14 @@ export const adminApi = {
         body: JSON.stringify({ confirmation }),
       },
     ),
+  suspendDeviceBinding: (siteId, bindingId, reason) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings/${encodeURIComponent(bindingId)}:suspend`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
   getPhysicalDevice: (physicalDeviceId) =>
     adminFetch(
       `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}`,

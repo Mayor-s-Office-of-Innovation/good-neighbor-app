@@ -1491,6 +1491,8 @@ function publicDevice(item) {
     absoluteExpiresAt: item.absoluteExpiresAt,
     revokedAt: item.revokedAt,
     revokedReason: item.revokedReason,
+    suspendedAt: item.suspendedAt,
+    suspendedReason: item.suspendedReason,
     legacy: item.legacy === true,
   };
 }

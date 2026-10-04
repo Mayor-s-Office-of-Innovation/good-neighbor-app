@@ -50,6 +50,7 @@ import { currentRoute, navigate } from "./router.js";
  * @property {any | null} physicalDeviceRevocationPreview
  * @property {any[]} emergencyRevocationSites
  * @property {any | null} emergencyRevocationPreview
+ * @property {any | null} suspensionTarget
  */
 
 class AdminApp extends HTMLElement {
@@ -88,6 +89,7 @@ class AdminApp extends HTMLElement {
       physicalDeviceRevocationPreview: null,
       emergencyRevocationSites: [],
       emergencyRevocationPreview: null,
+      suspensionTarget: null,
     };
   }
 
@@ -125,6 +127,7 @@ class AdminApp extends HTMLElement {
       physicalDeviceRevocationPreview: null,
       emergencyRevocationSites: [],
       emergencyRevocationPreview: null,
+      suspensionTarget: null,
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -448,6 +451,7 @@ class AdminApp extends HTMLElement {
     this.state.physicalDeviceRevocationPreview = null;
     this.state.emergencyRevocationSites = [];
     this.state.emergencyRevocationPreview = null;
+    this.state.suspensionTarget = null;
     this.state.revocationMessage = "";
     this.render();
     try {
@@ -889,6 +893,36 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  beginDeviceSuspension(bindingId) {
+    this.state.suspensionTarget =
+      this.state.devices.find(
+        (device) => (device.bindingId || device.deviceId) === bindingId,
+      ) || null;
+    this.render();
+    queueMicrotask(() =>
+      this.querySelector("#device-suspension-reason")?.focus(),
+    );
+  }
+
+  async suspendDeviceBinding(form) {
+    if (!this.state.site || !this.state.suspensionTarget) return;
+    const reason = formValue(new FormData(form), "reason");
+    const bindingId =
+      this.state.suspensionTarget.bindingId ||
+      this.state.suspensionTarget.deviceId;
+    const result = await adminApi.suspendDeviceBinding(
+      this.state.site.siteId,
+      bindingId,
+      reason,
+    );
+    const siteId = this.state.site.siteId;
+    await this.openSite(siteId, false);
+    this.state.revocationMessage = result.alreadySuspended
+      ? "This binding was already suspended."
+      : `${result.binding.label || "Device binding"} suspended. Existing credentials are invalid; re-enrollment requires a new single-Site grant.`;
+    this.render();
+  }
+
   /**
    * Bind event handlers to the currently rendered DOM.
    * @returns {void}
@@ -1153,6 +1187,28 @@ class AdminApp extends HTMLElement {
         });
       });
     });
+    this.querySelectorAll("[data-suspend-device]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this.beginDeviceSuspension(dataAttr(button, "data-suspend-device"));
+      });
+    });
+    this.querySelector("#device-suspension")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        this.suspendDeviceBinding(event.currentTarget).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelector("#cancel-device-suspension")?.addEventListener(
+      "click",
+      () => {
+        this.state.suspensionTarget = null;
+        this.render();
+      },
+    );
     this.querySelector("#physical-device-revocation")?.addEventListener(
       "submit",
       (event) => {
@@ -1523,7 +1579,8 @@ function siteAccessView(state) {
     ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
     <div class="row"><div><button id="revoke-selected-devices" class="btn-danger" type="button">Revoke selected</button><button id="begin-emergency-site-revocation" class="btn-danger" type="button">Emergency revoke across Sites</button></div><span class="muted">Up to 20 current bindings or 20 Sites per operation.</span></div>
     ${emergencySiteRevocationPanel(state)}
-    <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device: revoke individually" : ""}</p></div>${device.status === "revoked" ? "" : `<div><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke this Site binding</button>${device.physicalDeviceId && !device.legacy ? `<button class="btn-danger" type="button" data-revoke-physical-device="${escapeHtml(device.physicalDeviceId)}">Revoke physical device everywhere</button>` : ""}</div>`}</div>`).join("")}</div>
+    <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.suspendedAt ? ` · Suspended ${escapeHtml(formatTimestamp(device.suspendedAt))} (${escapeHtml(suspensionReasonLabel(device.suspendedReason))})` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device" : ""}</p>${device.status === "suspended" ? '<p class="muted">This binding cannot be restored. Issue a new single-Site enrollment grant to return this device to service.</p>' : ""}</div>${device.status === "revoked" ? "" : `<div>${device.status === "active" ? `<button class="btn-secondary" type="button" data-suspend-device="${escapeHtml(device.bindingId || device.deviceId)}">Suspend</button>` : ""}<button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke this Site binding</button>${device.physicalDeviceId && !device.legacy ? `<button class="btn-danger" type="button" data-revoke-physical-device="${escapeHtml(device.physicalDeviceId)}">Revoke physical device everywhere</button>` : ""}</div>`}</div>`).join("")}</div>
+    ${deviceSuspensionForm(state.suspensionTarget)}
     ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
     <form id="revoke-all-site-devices" class="inline-form"><div><label for="revoke-all-confirmation">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke every device binding at this Site</label><input id="revoke-all-confirmation" name="confirmation" required autocomplete="off" /></div><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
   </section>`;
@@ -1541,6 +1598,36 @@ function physicalDeviceRevocationConfirmation(preview) {
     </fieldset>
     <div class="row"><button class="btn-danger" type="submit">Revoke physical device everywhere</button><button class="btn-secondary" id="cancel-physical-device-revocation" type="button">Cancel</button></div>
   </form>`;
+}
+
+/** @param {any | null} device */
+function deviceSuspensionForm(device) {
+  if (!device) return "";
+  return `<form id="device-suspension" class="site-details-form" aria-labelledby="device-suspension-title">
+    <fieldset><legend id="device-suspension-title">Suspend ${escapeHtml(device.label || "device binding")}</legend>
+      <p>Suspension invalidates this Site binding immediately. It cannot be reinstated; returning the device to service requires a new single-Site enrollment grant.</p>
+      <label for="device-suspension-reason"><span>Reason</span><select id="device-suspension-reason" name="reason" required>
+        <option value="">Choose a reason</option>
+        <option value="security_review">Security review</option>
+        <option value="lost_or_unaccounted_device">Lost or unaccounted device</option>
+        <option value="refresh_replay">Refresh-token replay</option>
+        <option value="policy_violation">Policy violation</option>
+      </select></label>
+    </fieldset>
+    <div class="row"><button class="btn-danger" type="submit">Suspend binding</button><button class="btn-secondary" id="cancel-device-suspension" type="button">Cancel</button></div>
+  </form>`;
+}
+
+/** @param {unknown} reason */
+function suspensionReasonLabel(reason) {
+  return (
+    {
+      security_review: "Security review",
+      lost_or_unaccounted_device: "Lost or unaccounted device",
+      refresh_replay: "Refresh-token replay",
+      policy_violation: "Policy violation",
+    }[String(reason ?? "")] || "Reason not recorded"
+  );
 }
 
 /** @param {AdminState} state */

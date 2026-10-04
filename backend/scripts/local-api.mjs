@@ -100,6 +100,7 @@ import {
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
+  suspendDeviceBinding,
 } from "../src/handlers/admin-device-revocation.js";
 import {
   listEmergencyRevocationSites,
@@ -398,6 +399,11 @@ const routes = [
     "POST",
     "/admin/v1/sites/{siteId}/device-bindings:revoke-all",
     revokeAllSiteDeviceBindings,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend",
+    suspendDeviceBinding,
   ),
   route(
     "GET",

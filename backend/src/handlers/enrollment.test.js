@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe("Manager enrollment redemption", () => {
-  it("atomically consumes one grant and creates physical, binding, and compatibility records", async () => {
+  it("atomically consumes one grant and creates a fresh binding on an existing physical identity", async () => {
     const token = "one-time-secret-token";
     const tokenHash = await sha256(token);
     send
@@ -79,7 +79,16 @@ describe("Manager enrollment redemption", () => {
           email: "alex@example.org",
         },
       })
-      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "PHYSICAL_DEVICE#physical_device_1",
+          sk: "#META",
+          physicalDeviceId: "physical_device_1",
+          status: "active",
+          label: "Previously suspended tablet",
+          lastSuspendedBindingId: "suspended-binding-1",
+        },
+      })
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
 
@@ -113,6 +122,10 @@ describe("Manager enrollment redemption", () => {
     const transaction = send.mock.calls[5][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems).toHaveLength(8);
+    expect(transaction.input.TransactItems[3].Update.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical_device_1",
+      sk: "#META",
+    });
     const binding = transaction.input.TransactItems[4].Put.Item;
     expect(binding).toMatchObject({
       type: "deviceBinding",
@@ -123,6 +136,7 @@ describe("Manager enrollment redemption", () => {
       siteCredentialGeneration: 4,
       inactivityLimitDays: 60,
     });
+    expect(binding.bindingId).not.toBe("suspended-binding-1");
     const compatibility = transaction.input.TransactItems[5].Put.Item;
     expect(compatibility).toMatchObject({
       type: "device",

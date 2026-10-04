@@ -14,6 +14,7 @@ const {
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
+  suspendDeviceBinding,
 } = await import("./admin-device-revocation.js");
 
 beforeEach(() => {
@@ -260,6 +261,96 @@ describe("City physical-device-wide revocation", () => {
 
     expect(response.statusCode).toBe(400);
     expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("City device-binding suspension", () => {
+  it("suspends every projection and advances the binding generation", async () => {
+    send
+      .mockResolvedValueOnce({ Item: binding("binding-1", "physical-1", 4) })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      suspendDeviceBinding,
+      event(
+        { reason: "security_review" },
+        { siteId: "site-1", bindingId: "binding-1" },
+      ),
+    );
+
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[1][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems[0].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE_BINDING#binding-1",
+    });
+    expect(
+      transaction.input.TransactItems[0].Update.ExpressionAttributeValues,
+    ).toMatchObject({
+      ":suspended": "suspended",
+      ":reason": "security_review",
+      ":next": 5,
+    });
+    expect(transaction.input.TransactItems[2].Update.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[3].Put.Item).toMatchObject({
+      type: "siteAuditEvent",
+      eventType: "device_binding_suspended",
+      reason: "security_review",
+    });
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      binding: {
+        bindingId: "binding-1",
+        status: "suspended",
+        tokenGeneration: 5,
+        suspendedReason: "security_review",
+      },
+    });
+  });
+
+  it("does not reactivate an already suspended binding", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        ...binding("binding-1", "physical-1", 5),
+        status: "suspended",
+        suspendedAt: "2026-10-03T12:00:00.000Z",
+        suspendedReason: "security_review",
+      },
+    });
+
+    const response = await call(
+      suspendDeviceBinding,
+      event(
+        { reason: "policy_violation" },
+        { siteId: "site-1", bindingId: "binding-1" },
+      ),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      alreadySuspended: true,
+      binding: {
+        status: "suspended",
+        suspendedReason: "security_review",
+      },
+    });
+  });
+
+  it("rejects an unrecognized suspension reason", async () => {
+    const response = await call(
+      suspendDeviceBinding,
+      event(
+        { reason: "because" },
+        { siteId: "site-1", bindingId: "binding-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

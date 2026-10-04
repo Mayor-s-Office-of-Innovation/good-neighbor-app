@@ -95,6 +95,7 @@ import {
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
+  suspendDeviceBinding,
 } from "../handlers/admin-device-revocation.js";
 import {
   listEmergencyRevocationSites,
@@ -251,6 +252,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     revokeSelectedDeviceBindings,
   "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all":
     revokeAllSiteDeviceBindings,
+  "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend":
+    suspendDeviceBinding,
   "GET /admin/v1/physical-devices/{physicalDeviceId}":
     getPhysicalDeviceRevocationPreview,
   "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke":

@@ -117,6 +117,30 @@ describe("authorizer", () => {
     }
   });
 
+  it("denies a suspended binding even before its access token expires", async () => {
+    const { token } = await mintAccessToken(
+      { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 1 },
+      { now: 1000 },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send.mockResolvedValueOnce({
+        Item: {
+          tokenGeneration: 2,
+          status: "suspended",
+          suspendedReason: "security_review",
+        },
+      });
+      const res = await invoke(event(`Bearer ${token}`));
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("revoked");
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("denies a deleted device", async () => {
     const { token } = await mintAccessToken(
       { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 1 },

@@ -71,3 +71,9 @@ administrator issues a new valid enrollment link, redemption creates a new bindi
 current Site and membership generations. Existing revoked rows remain visible for audit. A
 physical-device-wide revocation also blocks that physical identity from redeeming a new
 grant; enrolling again requires a newly established physical-device identity.
+
+For a suspended general binding, the Site Manager issues a new staff grant. For a suspended
+Manager binding, a City administrator issues a new Manager grant for the still-active Site
+membership. Do not edit the suspended row back to `active`, reduce its token generation, or
+reuse its refresh family. Confirm the new binding is active and the old binding remains
+suspended with its original reason and timestamp.
