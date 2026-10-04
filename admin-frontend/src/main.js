@@ -670,11 +670,25 @@ class AdminApp extends HTMLElement {
   /** @param {string} membershipId */
   async deactivateManagerMembership(membershipId) {
     if (!this.state.site) return;
-    await adminApi.deactivateManagerMembership(
+    const membership = this.state.managerMemberships.find(
+      (item) => item.membershipId === membershipId,
+    );
+    const bindingCount = Number(membership?.activeBindingCount || 0);
+    if (
+      !globalThis.confirm(
+        `Remove ${membership?.name || "this Site Manager"} from ${this.state.site.name}? This revokes ${bindingCount} active Manager binding${bindingCount === 1 ? "" : "s"} at this Site. Memberships at other Sites remain active.`,
+      )
+    ) {
+      return;
+    }
+    const result = await adminApi.deactivateManagerMembership(
       this.state.site.siteId,
       membershipId,
     );
-    await this.openSite(this.state.site.siteId, false);
+    const siteId = this.state.site.siteId;
+    await this.openSite(siteId, false);
+    this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;
+    this.render();
   }
 
   /** @param {string} membershipId */
@@ -1371,7 +1385,7 @@ function managerMembershipList(memberships) {
   return `<ul class="contact-list">${memberships
     .map(
       (membership) => `<li>
-        <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span></div>
+        <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">${escapeHtml(membership.activeBindingCount || 0)} active Manager binding${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} at this Site</span></div>
         <div class="contact-list__actions"><span class="status-badge">Active</span><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">Email enrollment link</button><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
       </li>`,
     )

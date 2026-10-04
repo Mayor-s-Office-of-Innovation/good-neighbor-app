@@ -14,20 +14,44 @@ import { emailHash, normalizeEmail } from "./setup-codes.js";
 export const listManagerMemberships = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const result = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "MANAGER_MEMBERSHIP#",
-        },
-      }),
-    );
-    return jsonResponse(200, {
-      memberships: (result.Items ?? []).filter(
-        (item) => item.status === "active",
+    const tableName = getDynamoTableName();
+    const [result, bindingsResult] = await Promise.all([
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "MANAGER_MEMBERSHIP#",
+          },
+        }),
       ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "DEVICE_BINDING#",
+          },
+        }),
+      ),
+    ]);
+    const bindingCounts = new Map();
+    for (const binding of bindingsResult.Items ?? []) {
+      if (binding.status !== "active" || !binding.membershipId) continue;
+      bindingCounts.set(
+        binding.membershipId,
+        Number(bindingCounts.get(binding.membershipId) ?? 0) + 1,
+      );
+    }
+    return jsonResponse(200, {
+      memberships: (result.Items ?? [])
+        .filter((item) => item.status === "active")
+        .map((item) => ({
+          ...item,
+          activeBindingCount: Number(bindingCounts.get(item.membershipId) ?? 0),
+        })),
     });
   });
 
@@ -140,6 +164,25 @@ export const deactivateManagerMembership = (event) =>
     }
     const now = new Date().toISOString();
     const actor = actorId(event);
+    const bindingsResult = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": "DEVICE_BINDING#",
+        },
+      }),
+    );
+    const bindings = (bindingsResult.Items ?? []).filter(
+      (binding) =>
+        binding.status === "active" &&
+        binding.membershipId === membershipId &&
+        binding.accessLevel === "manager",
+    );
+    if (bindings.length > 30) {
+      return jsonResponse(409, { error: "membership_binding_limit_exceeded" });
+    }
     try {
       await ddb.send(
         new TransactWriteCommand({
@@ -183,6 +226,9 @@ export const deactivateManagerMembership = (event) =>
                 ExpressionAttributeValues: { ":membershipId": membershipId },
               },
             },
+            ...bindings.flatMap((binding) =>
+              managerBindingRevocationItems(tableName, binding, now, actor),
+            ),
             put(tableName, {
               pk: `SITE#${siteId}`,
               sk: `AUDIT#${now}#${randomUUID()}`,
@@ -190,6 +236,7 @@ export const deactivateManagerMembership = (event) =>
               eventType: "manager_membership_deactivated",
               siteId,
               membershipId,
+              revokedBindingCount: bindings.length,
               actor,
               createdAt: now,
             }),
@@ -202,8 +249,73 @@ export const deactivateManagerMembership = (event) =>
       }
       throw error;
     }
-    return jsonResponse(200, { deactivated: true, membershipId });
+    return jsonResponse(200, {
+      deactivated: true,
+      membershipId,
+      revokedBindingCount: bindings.length,
+    });
   });
+
+/** @param {string} tableName @param {Record<string, any>} binding @param {string} now @param {string} actor */
+function managerBindingRevocationItems(tableName, binding, now, actor) {
+  const bindingId = String(binding.bindingId);
+  const nextGeneration = Number(binding.tokenGeneration ?? 0) + 1;
+  return [
+    revokedBindingUpdate(
+      tableName,
+      binding.pk,
+      binding.sk,
+      nextGeneration,
+      now,
+      actor,
+    ),
+    revokedBindingUpdate(
+      tableName,
+      `SITE#${binding.siteId}`,
+      `DEVICE#${bindingId}`,
+      nextGeneration,
+      now,
+      actor,
+    ),
+    {
+      Update: {
+        TableName: tableName,
+        Key: {
+          pk: `PHYSICAL_DEVICE#${binding.physicalDeviceId}`,
+          sk: `BINDING#${bindingId}`,
+        },
+        UpdateExpression:
+          "SET #status = :revoked, revokedAt = :now, updatedAt = :now",
+        ConditionExpression:
+          "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":revoked": "revoked", ":now": now },
+      },
+    },
+  ];
+}
+
+/** @param {string} tableName @param {string} pk @param {string} sk @param {number} nextGeneration @param {string} now @param {string} actor */
+function revokedBindingUpdate(tableName, pk, sk, nextGeneration, now, actor) {
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { pk, sk },
+      UpdateExpression:
+        "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, revokedBy = :actor, tokenGeneration = :next",
+      ConditionExpression:
+        "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":revoked": "revoked",
+        ":reason": "manager_membership_deactivated",
+        ":actor": actor,
+        ":now": now,
+        ":next": nextGeneration,
+      },
+    },
+  };
+}
 
 /**
  * @param {string} tableName

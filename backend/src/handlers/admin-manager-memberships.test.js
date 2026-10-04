@@ -22,19 +22,30 @@ beforeEach(() => {
 
 describe("Site Manager memberships", () => {
   it("lists only active memberships", async () => {
-    send.mockResolvedValueOnce({
-      Items: [
-        { membershipId: "active-1", status: "active" },
-        { membershipId: "inactive-1", status: "inactive" },
-      ],
-    });
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { membershipId: "active-1", status: "active" },
+          { membershipId: "inactive-1", status: "inactive" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          { membershipId: "active-1", status: "active" },
+          { membershipId: "active-1", status: "revoked" },
+        ],
+      });
     const response = await call(
       listManagerMemberships,
       event(undefined, { siteId: "site-1" }),
     );
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body)).memberships).toEqual([
-      { membershipId: "active-1", status: "active" },
+      {
+        membershipId: "active-1",
+        status: "active",
+        activeBindingCount: 1,
+      },
     ]);
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
   });
@@ -109,15 +120,30 @@ describe("Site Manager memberships", () => {
           status: "active",
         },
       })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "DEVICE_BINDING#binding-1",
+            bindingId: "binding-1",
+            physicalDeviceId: "physical-1",
+            siteId: "site-1",
+            membershipId: "membership-1",
+            accessLevel: "manager",
+            status: "active",
+            tokenGeneration: 3,
+          },
+        ],
+      })
       .mockResolvedValueOnce({});
     const response = await call(
       deactivateManagerMembership,
       event(undefined, { siteId: "site-1", membershipId: "membership-1" }),
     );
     expect(response.statusCode).toBe(200);
-    const transaction = send.mock.calls[1][0];
+    const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems).toHaveLength(7);
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
     ).toContain("generation = generation + :one");
@@ -129,9 +155,25 @@ describe("Site Manager memberships", () => {
       pk: "MANAGER_EMAIL#email-hash",
       sk: "SITE#site-1#MEMBERSHIP#membership-1",
     });
-    expect(transaction.input.TransactItems[3].Put.Item.eventType).toBe(
+    expect(transaction.input.TransactItems[3].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE_BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[4].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE#binding-1",
+    });
+    expect(transaction.input.TransactItems[5].Update.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[6].Put.Item.eventType).toBe(
       "manager_membership_deactivated",
     );
+    expect(
+      transaction.input.TransactItems[6].Put.Item.revokedBindingCount,
+    ).toBe(1);
+    expect(JSON.parse(String(response.body)).revokedBindingCount).toBe(1);
   });
 });
 

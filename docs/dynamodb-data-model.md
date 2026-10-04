@@ -331,6 +331,7 @@ Every pattern is a single query. There are no scans.
 | AP30 | City revokes one Site binding | Consistently read `SITE#x / DEVICE_BINDING#y`, then transactionally mark the canonical binding, compatibility Device row, and physical-device pointer revoked with the same incremented generation and append a Site audit event. Pre-binding dev devices retain a bounded legacy fallback until migration is complete. |
 | AP31 | City revokes selected Site bindings | Consistently read up to 20 canonical bindings, then use one all-or-nothing transaction to revoke every canonical/compatibility/pointer projection and write the completed operation plus audit event. Already-revoked selections are reported without changing generations. |
 | AP32 | City revokes every device at one Site | Require exact typed Site-name confirmation, atomically advance `siteCredentialGeneration` with an applying operation/audit record, then reconcile canonical and bounded legacy rows. The generation change invalidates canonical Site credentials before display reconciliation; the operation finishes `complete` or `partial` with counts. |
+| AP33 | Remove one Site Manager membership | Query current Manager bindings at the Site, then atomically deactivate/advance the membership generation, remove both email-directory pointers, revoke up to 30 matching canonical/compatibility/physical-pointer projections, and append an audit event with the impact count. Other Site memberships are unaffected. |
 
 ### Who owns a task
 
