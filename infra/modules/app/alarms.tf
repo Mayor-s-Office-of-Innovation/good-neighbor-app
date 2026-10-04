@@ -427,3 +427,35 @@ resource "aws_cloudwatch_metric_alarm" "manager_security_notification_failed" {
 
   tags = var.tags
 }
+
+resource "aws_cloudwatch_log_metric_filter" "revocation_operation_partial" {
+  name           = "${local.name_prefix}-revocation-operation-partial"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"RevocationOperationPartial\" }"
+
+  metric_transformation {
+    name          = "RevocationOperationPartial"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
+  alarm_name          = "${local.name_prefix}-revocation-operation-partial"
+  alarm_description   = "A Site-wide revocation invalidated canonical credentials but did not reconcile every display/legacy record. Follow docs/runbooks/device-revocation.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "RevocationOperationPartial"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}

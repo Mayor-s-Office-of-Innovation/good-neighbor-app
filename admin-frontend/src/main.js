@@ -46,6 +46,7 @@ import { currentRoute, navigate } from "./router.js";
  * @property {boolean} perimeterSaving
  * @property {string} perimeterMessage
  * @property {string} perimeterError
+ * @property {string} revocationMessage
  */
 
 class AdminApp extends HTMLElement {
@@ -80,6 +81,7 @@ class AdminApp extends HTMLElement {
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
+      revocationMessage: "",
     };
   }
 
@@ -113,6 +115,7 @@ class AdminApp extends HTMLElement {
       importResult: null,
       importBusy: false,
       importApplyKey: "",
+      revocationMessage: "",
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -433,6 +436,7 @@ class AdminApp extends HTMLElement {
     this.state.perimeterSaving = true;
     this.state.perimeterMessage = "";
     this.state.perimeterError = "";
+    this.state.revocationMessage = "";
     this.render();
     try {
       const result = await adminApi.updateSitePerimeter(
@@ -742,6 +746,54 @@ class AdminApp extends HTMLElement {
     await this.openSite(this.state.site.siteId);
   }
 
+  async revokeSelectedDevices() {
+    if (!this.state.site) return;
+    const selected = [
+      ...this.querySelectorAll("[data-device-selection]:checked"),
+    ].map((input) => dataAttr(input, "data-device-selection"));
+    if (!selected.length) {
+      this.state.error = "Select at least one current device binding.";
+      this.render();
+      return;
+    }
+    if (selected.length > 20) {
+      this.state.error = "Select no more than 20 bindings per operation.";
+      this.render();
+      return;
+    }
+    if (
+      !globalThis.confirm(
+        `Revoke ${selected.length} selected Site binding${selected.length === 1 ? "" : "s"}? Other Site bindings on those physical devices are not affected.`,
+      )
+    ) {
+      return;
+    }
+    const result = await adminApi.revokeSelectedDeviceBindings(
+      this.state.site.siteId,
+      selected,
+    );
+    const siteId = this.state.site.siteId;
+    await this.openSite(siteId, false);
+    this.state.revocationMessage = `Operation ${result.operationId}: ${result.affectedCount} binding${result.affectedCount === 1 ? "" : "s"} revoked.`;
+    this.render();
+  }
+
+  async revokeAllSiteDevices(form) {
+    if (!this.state.site) return;
+    const confirmation = formValue(new FormData(form), "confirmation");
+    const result = await adminApi.revokeAllSiteDeviceBindings(
+      this.state.site.siteId,
+      confirmation,
+    );
+    const siteId = this.state.site.siteId;
+    await this.openSite(siteId, false);
+    this.state.revocationMessage =
+      result.status === "complete"
+        ? `Operation ${result.operationId}: all Site credentials invalidated and ${result.affectedCount} device record${result.affectedCount === 1 ? "" : "s"} reconciled.`
+        : `Operation ${result.operationId}: canonical Site credentials were invalidated, but ${result.failedCount} device record${result.failedCount === 1 ? "" : "s"} could not be reconciled. Follow the revocation runbook.`;
+    this.render();
+  }
+
   /**
    * Bind event handlers to the currently rendered DOM.
    * @returns {void}
@@ -977,6 +1029,25 @@ class AdminApp extends HTMLElement {
         );
       });
     });
+    this.querySelector("#revoke-selected-devices")?.addEventListener(
+      "click",
+      () => {
+        this.revokeSelectedDevices().catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelector("#revoke-all-site-devices")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        this.revokeAllSiteDevices(event.currentTarget).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
     this.querySelectorAll("[data-unassign-site-user]").forEach((button) => {
       button.addEventListener("click", () => {
         this.unassignSiteUser(
@@ -1284,7 +1355,11 @@ function siteAccessView(state) {
     <h3>Enrollment links</h3>
     <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
     ${managerGrantList(state.managerGrants)}
-    <h3>Devices</h3><div class="list">${state.devices.map((device) => `<div class="row"><div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}</p></div>${device.status === "revoked" ? "" : `<button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke</button>`}</div>`).join("")}</div>
+    <h3>Devices</h3>
+    ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
+    <div class="row"><button id="revoke-selected-devices" class="btn-danger" type="button">Revoke selected</button><span class="muted">Up to 20 current bindings per operation.</span></div>
+    <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device: revoke individually" : ""}</p></div>${device.status === "revoked" ? "" : `<button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke</button>`}</div>`).join("")}</div>
+    <form id="revoke-all-site-devices" class="inline-form"><div><label for="revoke-all-confirmation">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke every device binding at this Site</label><input id="revoke-all-confirmation" name="confirmation" required autocomplete="off" /></div><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
   </section>`;
 }
 

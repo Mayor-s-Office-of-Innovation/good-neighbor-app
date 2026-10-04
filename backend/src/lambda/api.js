@@ -90,6 +90,10 @@ import {
   updateProvider,
   updateSite,
 } from "../handlers/admin.js";
+import {
+  revokeAllSiteDeviceBindings,
+  revokeSelectedDeviceBindings,
+} from "../handlers/admin-device-revocation.js";
 import { jsonResponse } from "../http.js";
 import {
   createProgramUser,
@@ -236,6 +240,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/setup-codes": issueAdminSetupCode,
   "GET /admin/v1/sites/{siteId}/devices": listDevices,
   "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}": revokeDevice,
+  "POST /admin/v1/sites/{siteId}/device-bindings:revoke":
+    revokeSelectedDeviceBindings,
+  "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all":
+    revokeAllSiteDeviceBindings,
 });
 
 /**

@@ -50,6 +50,8 @@
   and deployment troubleshooting.
 - **[Site Manager access recovery](./runbooks/manager-access.md)** — public recovery abuse,
   delivery-failure, and WAF alarm triage without exposing email addresses or grant secrets.
+- **[Device revocation](./runbooks/device-revocation.md)** — individual, selected, and
+  Site-wide credential invalidation, partial reconciliation, and recovery checks.
 
 ## Domain & policy reference
 

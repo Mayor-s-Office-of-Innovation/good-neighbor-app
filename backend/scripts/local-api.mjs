@@ -96,6 +96,10 @@ import {
   updateSite,
 } from "../src/handlers/admin.js";
 import {
+  revokeAllSiteDeviceBindings,
+  revokeSelectedDeviceBindings,
+} from "../src/handlers/admin-device-revocation.js";
+import {
   createProgramUser,
   createProgram,
   deactivateProgramUser,
@@ -378,6 +382,16 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
   route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
   route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings:revoke",
+    revokeSelectedDeviceBindings,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings:revoke-all",
+    revokeAllSiteDeviceBindings,
+  ),
   route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
   route(
     "POST",

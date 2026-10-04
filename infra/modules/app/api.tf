@@ -98,6 +98,8 @@ locals {
     "POST /admin/v1/sites/{siteId}/setup-codes",
     "GET /admin/v1/sites/{siteId}/devices",
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
     "GET /health",
   ]
 

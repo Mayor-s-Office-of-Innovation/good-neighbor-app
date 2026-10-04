@@ -235,6 +235,22 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/devices/${encodeURIComponent(deviceId)}`,
       { method: "DELETE" },
     ),
+  revokeSelectedDeviceBindings: (siteId, bindingIds) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings:revoke`,
+      {
+        method: "POST",
+        body: JSON.stringify({ bindingIds }),
+      },
+    ),
+  revokeAllSiteDeviceBindings: (siteId, confirmation) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings:revoke-all`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation }),
+      },
+    ),
   // Analytics (ADR 0013): the reporting lake, never the app database.
   /** The canned query catalog. */
   analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
