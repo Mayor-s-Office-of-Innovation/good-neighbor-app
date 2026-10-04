@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Historical synthetic enrollment-token fixture from frontend tests"
+regexTarget = "secret"
+regexes = ['''abcdefghijklmnopqrstuvwxyz_123456''']

@@ -75,11 +75,11 @@ describe("Manager enrollment URLs", () => {
     vi.stubGlobal("location", new URL("https://goodneighborsf.org/"));
     expect(
       parseEnrollmentLink(
-        "https://goodneighborsf.org/#enrollment_grant=12345678-abcd&enrollment_token=abcdefghijklmnopqrstuvwxyz_123456",
+        "https://goodneighborsf.org/#enrollment_grant=test-grant&enrollment_token=test_token_test_token_",
       ),
     ).toEqual({
-      grantId: "12345678-abcd",
-      token: "abcdefghijklmnopqrstuvwxyz_123456",
+      grantId: "test-grant",
+      token: "test_token_test_token_",
     });
     expect(parseEnrollmentLink("javascript:alert(1)")).toBeNull();
     expect(

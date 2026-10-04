@@ -122,7 +122,7 @@ locals {
   # intakes. Everything else gets the device-token authorizer (Option 4).
   # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
   route_is_open = {
-    "POST /site-code"                = true
+    "POST /site-code"                     = true
     "POST /v1/devices"                    = true
     "POST /v1/devices/token:refresh"      = true
     "POST /app/v1/enrollment/redeem"      = true
@@ -130,9 +130,9 @@ locals {
     "GET /v1/sites:search"                = true
     "POST /v1/setup-codes:request"        = true
     "GET /health"                         = true
-    "POST /v1/client-errors"         = true
-    "POST /v1/feedback"              = true
-    "POST /submissions"              = true
+    "POST /v1/client-errors"              = true
+    "POST /v1/feedback"                   = true
+    "POST /submissions"                   = true
   }
 }
 
