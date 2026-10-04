@@ -502,8 +502,8 @@ export function getCheck(checkId) {
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ contentType: string }} body
- * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
+ * @param {{ contentType: string, contentLength: number }} body
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body) {
   return request(
@@ -517,7 +517,7 @@ export function presignArtifact(checkId, body) {
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -553,15 +553,21 @@ export function deleteArtifact(checkId, artifactId) {
  * @param {string} uploadUrl  absolute presigned URL from `presignArtifact`
  * @param {Blob} blob
  * @param {string} contentType
+ * @param {Record<string, string>} [uploadHeaders]
  * @returns {Promise<void>}
  */
-export async function putMedia(uploadUrl, blob, contentType) {
+export async function putMedia(
+  uploadUrl,
+  blob,
+  contentType,
+  uploadHeaders = {},
+) {
   /** @type {Response} */
   let res;
   try {
     res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "content-type": contentType },
+      headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
     });
   } catch (err) {
@@ -731,16 +737,20 @@ export async function uploadArtifact(
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
+  const blob = await dataUrlToBlob(dataUrl);
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    contentType,
-  });
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
+    checkId,
+    {
+      contentType,
+      contentLength: blob.size,
+    },
+  );
   endPresign({ artifactId });
   onLeg?.("presign");
 
-  const blob = await dataUrlToBlob(dataUrl);
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await putMedia(uploadUrl, blob, contentType);
+  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
   endPut();
   onLeg?.("put");
 
@@ -749,6 +759,7 @@ export async function uploadArtifact(
     artifactId,
     s3Key,
     contentType,
+    contentLength: blob.size,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
       ? { latitude, longitude }
@@ -770,15 +781,21 @@ export async function uploadArtifact(
  */
 export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
   const contentType = contentTypeFromDataUrl(item.dataUrl);
-  const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    contentType,
-  });
-  await putMedia(uploadUrl, await dataUrlToBlob(item.dataUrl), contentType);
+  const blob = await dataUrlToBlob(item.dataUrl);
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
+    checkId,
+    {
+      contentType,
+      contentLength: blob.size,
+    },
+  );
+  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
   await registerTaskUpdateMedia(taskId, {
     checkId,
     artifactId,
     s3Key,
     contentType,
+    contentLength: blob.size,
     ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
   });
   return { artifactId, s3Key };

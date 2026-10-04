@@ -59,11 +59,11 @@ For a worked example of one check's records as JSON, see
 3. **Photos live in S3, not DynamoDB.** Items store the S3 key. See R4.
 4. **Retention is not enforced yet.** Media is designed to expire after about 7 days
    through an S3 lifecycle rule, but that rule is not in place. It is a pre-launch TODO.
-   Retention for checks and analysis is post-MVP. The table already names `expiresAt`
-   as its TTL attribute, with TTL turned **off** (`infra/modules/app/main.tf`). One
-   caution before turning it on: setup-code items store `expiresAt` as an ISO date
-   string. DynamoDB TTL needs epoch seconds. Rename one side first, or those rows will
-   never expire.
+   Retention for checks and analysis is post-MVP. DynamoDB TTL is enabled on
+   `expiresAt` for numeric operational expiries such as upload reservations, daily
+   quota counters, rate limits, and import staging. Legacy/domain rows that store an
+   ISO date string in the same attribute are ignored by DynamoDB TTL and continue to
+   use application-level expiry checks.
 
 ## Identity model
 
@@ -71,19 +71,20 @@ Who can write what:
 
 | Principal | How they authenticate | What they write | How their scope is enforced |
 |---|---|---|---|
-| **Admin** | Cognito user with a `custom:siteId` claim in the JWT | site config, users, devices; resolves and assigns tasks | IAM `LeadingKeys = SITE#<custom:siteId>` |
-| **Device** (the front-desk tablet) | a site-scoped device session, not a person | perimeter checks and artifacts | same `LeadingKeys` scoping |
+| **City administrator** | Cognito JWT in the `central-admin` group | cross-Site configuration and operations | central-admin handler guard plus server-built keys |
+| **Site-bound device** | bounded access token checked against current physical-device, binding, membership, and Site generations | perimeter checks, artifacts, and Manager operations allowed by binding access | authorizer-derived Site/access claims plus server-built keys and negative tests |
 | **Performer** (staff member) | none; they use the device | nothing directly | not needed; attribution is device + site |
-| **City reviewer** | separate Cognito group or role | escalation status | reads **GSI3 only**, across sites |
+| **City reviewer** | Cognito `central-admin` user | cross-Site review | central-admin handler guard |
 
 The key decision: **the device is authenticated as the site.** Staff never need accounts.
 Every check is still tied to a site and a device. The admin registers the device once
 during setup.
 
-The goal is to enforce tenant isolation **in IAM, not only in app code**. Each site or
-device role would carry a `dynamodb:LeadingKeys` condition pinned to
-`SITE#${custom:siteId}`. A buggy or compromised client then cannot read another site's
-data, because AWS blocks the call.
+Tenant isolation is enforced at the application boundary: the authorizer verifies the
+current binding and supplies the Site claim, and handlers derive keys from that claim.
+The media path adds exact server-owned key validation and re-checks stored pointers before
+signing reads. A shared Lambda role cannot express a different `LeadingKeys` value for each
+JWT caller because DynamoDB sees the execution role, not the original principal.
 
 ### What runs today
 
@@ -101,11 +102,13 @@ The IAM part above is the target. Here is what is deployed now (`infra/modules/a
   `DEMO_SITE_ID` is only a fallback for requests with no authorizer context, such as the
   local harness and the open intakes. Clients never choose their own site.
 
-### What is not built yet
+### Platform-layer limitation
 
-The API Lambda role can still reach the whole table. It has no `LeadingKeys` condition
-(`infra/modules/app/iam.tf`). That work is the Phase 6 issue on the issue tracker. See
-[security-review.md](./security-review.md).
+The API Lambda role reaches the whole table because it also executes authenticated City
+administration over global and cross-Site records. A genuine IAM tenant backstop would
+require a separate tenant-only Lambda/role or per-request tagged-role assumption. A static
+`SITE#*` condition would still permit cross-Site access and must not be described as tenant
+isolation. See [security-review.md](./security-review.md).
 
 ## Table design
 
@@ -163,6 +166,9 @@ as task update events and every GSI sort key.
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only timeline event for an in-progress task: type, label, actorId, `text` / `notes`, `photoKeys` (artifact IDs), optional `presencePeriod`, `documentationState` |
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | finds an update by ID alone, for documentation and safe retries. Stores the event's full sort key. |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | photos attached to an update. Not analyzer input. A `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer lets the normal media route serve them. |
+| Upload reservation | `SITE#<siteId>` | `UPLOAD_RESERVATION#<checkId>#<artifactId>` | 24-hour record created before issuing a media PUT; binds key, type, and declared bytes. |
+| Daily device/Site media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#DEVICE#<actorId>` or `...#SITE` | conservative reserved byte and artifact counts; expires after the quota day. |
+| Daily global media quota | `MEDIA_QUOTA#<yyyy-mm-dd>` | `#GLOBAL` | conservative global byte and artifact-count cost budget. This is operational, not tenant data. |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | `nextTaskDisplayNumber`, a counter that only goes up. Used to mint task `shortId` values. |
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
@@ -494,7 +500,7 @@ migration cost.
 | **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) serves the admin analytics routes today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
 | **R3** | Detecting a **missing** check (a site did fewer than 3 today). You cannot query for something that was never written. | Not built | Design: a scheduled EventBridge sweep walks the site registry and counts GSI1 rows per site. Not a single query, but it is a cron job, not a hot path. Today the daily Tier 2 report answers this after the fact from the Parquet lake. |
 | **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Blobs go to the existing S3 uploads bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
-| **R5** | Tenant isolation must be **airtight** across 400 tenants | **App layer enforced; IAM scoping not yet. Required before any real data.** | Today: every protected route authenticates (device-token or admin JWT authorizer, see [Identity model](#identity-model)), and handlers set `siteId` on the server. `DEMO_SITE_ID` is only the no-authorizer fallback. Not yet: the API Lambda role reaches the whole table with no `dynamodb:LeadingKeys = SITE#${custom:siteId}` condition (`iam.tf`). That platform-layer half (Cognito device principal, `LeadingKeys` scoping, a negative test) is the Phase 6 issue on the issue tracker. See [security-review.md](./security-review.md). |
+| **R5** | Tenant isolation must be **airtight** across 400 tenants | **Runtime authorization and negative tests enforced; shared-role IAM cannot express caller-dynamic scoping.** | Every protected route authenticates, derives `siteId` from the verified principal, and builds partition keys server-side. Media also uses exact server-owned keys and refuses to sign a stored pointer outside that Site/check. A `LeadingKeys = SITE#${custom:siteId}` condition cannot be applied to the shared API Lambda execution role: DynamoDB sees the Lambda role, not the JWT/device principal, and central-admin operations intentionally access global partitions. A future platform backstop requires a separate tenant-only data-plane function/role or per-request tagged-role assumption; do not add a misleading `SITE#*` condition. |
 | **R6** | Anonymous staff, so **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local PIN or roster. Not required now. |
 | **R7** | Each task status change rewrites its GSI2 entry | Normal | Expected DynamoDB behavior. Volume is tiny. |
 
@@ -505,8 +511,8 @@ routine.
 
 1. **City cross-site queue.** Deferred post-MVP. GSI3 is sparse and can be added with no
    rebuild. The queue view ships with the escalation integrations.
-2. **Retention.** The ~7-day media lifecycle is designed but not enforced. A full retention
-   pass is post-MVP and tracked on the issue tracker.
+2. **Retention.** Enforced by upload-state tags: pending/rejected one day,
+   registered two days, accepted seven days, and noncurrent media versions one day.
 3. **Analytics scope and metrics.** The Tier 2 S3-export lake is built
    ([ADR 0013](./adr/0013-analytics-read-plane.md)). Tier 1 live KPIs are post-MVP. Metric
    definitions are settled (see above).

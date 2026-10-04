@@ -331,7 +331,7 @@ export async function writeDocumentedUpdate(tableName, update) {
   );
 }
 
-/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, capturedAt: string }} input */
+/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string }} input */
 export async function writeTaskUpdateMedia(input) {
   const mediaKey = taskUpdateMediaKey(
     input.siteId,
@@ -351,6 +351,7 @@ export async function writeTaskUpdateMedia(input) {
               artifactId: input.artifactId,
               s3Key: input.s3Key,
               contentType: input.contentType,
+              contentLength: input.contentLength,
               capturedAt: input.capturedAt,
               purpose: "task_update",
               taskId: input.taskId,

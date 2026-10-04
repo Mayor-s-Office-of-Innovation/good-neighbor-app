@@ -5,8 +5,13 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, headObject, setObjectTags } = vi.hoisted(() => ({
+  send: vi.fn(),
+  headObject: vi.fn(),
+  setObjectTags: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../s3.js", () => ({ headObject, setObjectTags }));
 
 const { createTaskUpdate, getTaskUpdates, registerTaskUpdateMedia } =
   await import("./task-updates.js");
@@ -28,6 +33,12 @@ function event(body, pathParameters = { taskId: "task-1" }) {
 describe("task update handlers", () => {
   beforeEach(() => {
     send.mockReset();
+    headObject.mockReset().mockResolvedValue({
+      contentType: "image/jpeg",
+      contentLength: 1024,
+      metadata: { "declared-bytes": "1024" },
+    });
+    setObjectTags.mockReset().mockResolvedValue({});
     process.env.DYNAMO_TABLE = "tasks";
     process.env.S3_UPLOAD_BUCKET = "uploads";
     process.env.SQS_QUEUE_URL = "analysis";
@@ -62,6 +73,7 @@ describe("task update handlers", () => {
           artifactId: "photo-1",
           s3Key: "checks/site-1/check-1/photo-1",
           contentType: "image/jpeg",
+          contentLength: 1024,
         }),
       )
     );
@@ -74,6 +86,7 @@ describe("task update handlers", () => {
       purpose: "task_update",
       taskId: "task-1",
       artifactId: "photo-1",
+      contentLength: 1024,
     });
     expect(pointerPut.Put.Item).toMatchObject({
       sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",

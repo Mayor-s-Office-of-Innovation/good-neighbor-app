@@ -282,6 +282,36 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "uploads_tls_only" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.uploads.arn,
+      "${aws_s3_bucket.uploads.arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "uploads_tls_only" {
+  bucket = aws_s3_bucket.uploads.id
+  policy = data.aws_iam_policy_document.uploads_tls_only.json
+
+  depends_on = [aws_s3_bucket_public_access_block.uploads]
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
@@ -341,6 +371,66 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-registered-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "registered"
+      }
+    }
+
+    expiration {
+      days = 2
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-rejected-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "rejected"
+      }
+    }
+
+    expiration {
+      days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-accepted-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "accepted"
+      }
+    }
+
+    expiration {
+      days = 7
     }
 
     noncurrent_version_expiration {
@@ -529,11 +619,12 @@ resource "aws_dynamodb_table" "app" {
     kms_key_arn = aws_kms_key.app.arn
   }
 
-  # TTL attribute wired but inactive — activation deferred to the post-MVP
-  # retention pass (test data is disposable, cleared between cycles).
+  # Numeric operational expiries (upload reservations, quota counters, rate
+  # limits, and import staging) are reclaimed automatically. Legacy domain
+  # records that carry ISO strings in expiresAt are ignored by DynamoDB TTL.
   ttl {
     attribute_name = "expiresAt"
-    enabled        = false
+    enabled        = true
   }
 
   tags = var.tags

@@ -229,9 +229,9 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    sid       = "ReadUploads"
+    sid       = "ReadAndClassifyUploads"
     effect    = "Allow"
-    actions   = ["s3:GetObject"]
+    actions   = ["s3:GetObject", "s3:PutObjectTagging"]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 

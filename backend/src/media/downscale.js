@@ -42,6 +42,14 @@ const MAX_EDGE_PX = 1568;
 const JPEG_QUALITY = 80;
 /** Matte color alpha channels composite onto before JPEG drops them. */
 const FLATTEN_BACKGROUND = { r: 255, g: 255, b: 255 };
+const MAX_INPUT_PIXELS = 40_000_000;
+const MAX_INPUT_EDGE = 12_000;
+/** @type {Record<string, string>} */
+const TYPE_BY_FORMAT = {
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+};
 
 /**
  * Fit an image within the analyzer's max working size before encoding.
@@ -54,7 +62,29 @@ const FLATTEN_BACKGROUND = { r: 255, g: 255, b: 255 };
 export async function downscaleImage(bytes, contentType) {
   let result;
   try {
-    result = await sharp(bytes)
+    const input = sharp(bytes, {
+      failOn: "error",
+      limitInputPixels: MAX_INPUT_PIXELS,
+      animated: false,
+      pages: 1,
+    });
+    const metadata = await input.metadata();
+    const detectedType = TYPE_BY_FORMAT[metadata.format];
+    if (!detectedType || detectedType !== contentType) {
+      throw new Error(
+        `declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
+      );
+    }
+    if (
+      !metadata.width ||
+      !metadata.height ||
+      metadata.width > MAX_INPUT_EDGE ||
+      metadata.height > MAX_INPUT_EDGE ||
+      (metadata.pages ?? 1) > 1
+    ) {
+      throw new Error("image dimensions or page count exceed policy");
+    }
+    result = await input
       .rotate()
       .flatten({ background: FLATTEN_BACKGROUND })
       .resize({

@@ -16,7 +16,7 @@
 import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { getObjectBytes } from "../s3.js";
+import { getObjectBytes, setObjectTags } from "../s3.js";
 import { downscaleImage, DownscaleError } from "../media/downscale.js";
 import {
   AnalyzerError,
@@ -29,6 +29,7 @@ import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 
 // The analyzer requires a `position_descriptor` ("where was this taken"). The
 // perimeter check has no per-photo position (ADR 0014), and nothing downstream
@@ -199,6 +200,33 @@ async function analyzeArtifact(
       bucket: uploadBucket,
       key: msg.s3Key,
     });
+    if (
+      object.bytes.length > MAX_OBJECT_BYTES ||
+      (object.contentLength ?? object.bytes.length) > MAX_OBJECT_BYTES
+    ) {
+      await setObjectTags({
+        bucket: uploadBucket,
+        key: msg.s3Key,
+        tags: { state: "rejected" },
+      });
+      console.warn(
+        JSON.stringify({
+          marker: "MediaRejected",
+          siteId: msg.siteId,
+          checkId: msg.checkId,
+          artifactId: msg.artifactId,
+          reason: "input_too_large",
+        }),
+      );
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: new AnalyzerError("Uploaded media exceeds the byte limit.", {
+          code: "input_too_large",
+        }),
+      });
+      return;
+    }
     let downscaled;
     try {
       downscaled = await downscaleImage(
@@ -210,6 +238,20 @@ async function analyzeArtifact(
       // image content-type). Permanent — retrying can never succeed, so mark
       // the artifact failed rather than redelivering to the DLQ.
       if (!(err instanceof DownscaleError)) throw err;
+      await setObjectTags({
+        bucket: uploadBucket,
+        key: msg.s3Key,
+        tags: { state: "rejected" },
+      });
+      console.warn(
+        JSON.stringify({
+          marker: "MediaRejected",
+          siteId: msg.siteId,
+          checkId: msg.checkId,
+          artifactId: msg.artifactId,
+          reason: "undecodable_input",
+        }),
+      );
       await markFailed({
         dynamoTable,
         msg,
@@ -218,6 +260,11 @@ async function analyzeArtifact(
       return;
     }
     const { bytes, contentType } = downscaled;
+    await setObjectTags({
+      bucket: uploadBucket,
+      key: msg.s3Key,
+      tags: { state: "accepted" },
+    });
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —

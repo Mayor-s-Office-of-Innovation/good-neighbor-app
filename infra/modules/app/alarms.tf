@@ -240,6 +240,66 @@ resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "media_rejected" {
+  name           = "${local.name_prefix}-media-rejected"
+  log_group_name = aws_cloudwatch_log_group.worker.name
+  pattern        = "{ $.marker = \"MediaRejected\" }"
+
+  metric_transformation {
+    name          = "MediaRejected"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "media_rejected" {
+  alarm_name          = "${local.name_prefix}-media-rejected"
+  alarm_description   = "Uploaded media repeatedly failed byte, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "MediaRejected"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "media_quota_exceeded" {
+  name           = "${local.name_prefix}-media-quota-exceeded"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"MediaQuotaExceeded\" }"
+
+  metric_transformation {
+    name          = "MediaQuotaExceeded"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
+  alarm_name          = "${local.name_prefix}-media-quota-exceeded"
+  alarm_description   = "A device, check, Site, or global media quota is repeatedly exhausted. Follow docs/runbooks/media-safeguards.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "MediaQuotaExceeded"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
 # 311 app actions return a stored failure result rather than throwing. Capture
 # that explicit operational event from both execution paths: automatic filings
 # run in the worker, while user-confirmed filings run in the API Lambda.

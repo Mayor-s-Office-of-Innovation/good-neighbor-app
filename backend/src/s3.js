@@ -68,6 +68,7 @@ client.middlewareStack.use({
  * @param {string} params.bucket
  * @param {string} params.key
  * @param {string} params.contentType
+ * @param {number} [params.contentLength]
  * @param {string} [params.tagging] URL-encoded object tags
  * @param {number} [params.expiresIn] seconds (default 300)
  * @returns {Promise<string>}
@@ -76,6 +77,7 @@ export function presignPut({
   bucket,
   key,
   contentType,
+  contentLength,
   tagging,
   expiresIn = 300,
 }) {
@@ -83,6 +85,10 @@ export function presignPut({
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
+    IfNoneMatch: "*",
+    ...(Number.isInteger(contentLength)
+      ? { Metadata: { "declared-bytes": String(contentLength) } }
+      : {}),
     ...(tagging ? { Tagging: tagging } : {}),
   });
   return getSignedUrl(presignClient, command, { expiresIn });
@@ -91,7 +97,7 @@ export function presignPut({
 /**
  * Read upload metadata without downloading the object.
  * @param {{ bucket: string, key: string }} params
- * @returns {Promise<{ contentType?: string, contentLength?: number }>}
+ * @returns {Promise<{ contentType?: string, contentLength?: number, metadata?: Record<string, string> }>}
  */
 export async function headObject({ bucket, key }) {
   const out = await client.send(
@@ -100,6 +106,7 @@ export async function headObject({ bucket, key }) {
   return {
     contentType: out.ContentType,
     contentLength: out.ContentLength,
+    metadata: out.Metadata,
   };
 }
 

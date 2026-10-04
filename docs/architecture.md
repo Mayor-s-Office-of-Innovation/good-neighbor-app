@@ -208,16 +208,16 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   (ADR 0010) whose site claim scopes every later request to one partition. (The
   Cognito user pool in `main.tf` serves the separate central admin console, not
   the field device.)
-- `siteId` is derived server-side from the verified token/claim — never read from the request body — so a tenant can only ever address its own partition **at the application layer** (every handler resolves the partition via `deriveSiteId`).
-  The **platform-layer backstop** — an IAM `dynamodb:LeadingKeys` condition on the
-  Lambda role pinning key prefixes to `SITE#<siteId>` — is the **target design, not
-  the current deployment**: the deployed role carries table-wide DynamoDB actions
-  with no such condition (see [dynamodb-data-model.md](./dynamodb-data-model.md)
-  "Identity model"). Hardening it is the pre-real-data work tracked on the issue
-  tracker.
+- `siteId` is derived server-side from the verified token/claim — never read from the request body — so a tenant can only ever address its own partition **at the application layer** (every handler resolves the partition via `deriveSiteId`). Media registration additionally requires the exact server-issued Site/check/artifact key, and media reads revalidate the stored key's Site/check prefix before signing it.
+  A caller-dynamic IAM `dynamodb:LeadingKeys` condition cannot be attached to the
+  shared API Lambda execution role: DynamoDB sees that role, not the JWT/device
+  principal, and the same function performs central-admin/global-partition work.
+  A further platform backstop therefore requires a separate tenant-only data-plane
+  function/role or per-request tagged-role assumption; a static `SITE#*` condition
+  would not isolate one Site from another.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. (A ~7-day media-expiration lifecycle rule is designed but not yet enforced — a pre-launch TODO; see [security-review.md](./security-review.md).)
+- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Pending/rejected media expires after one day, registered-but-unprocessed media after two days, and accepted media after seven days; noncurrent media versions expire after one day.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)
