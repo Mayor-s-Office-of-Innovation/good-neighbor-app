@@ -251,6 +251,18 @@ export const adminApi = {
         body: JSON.stringify({ confirmation }),
       },
     ),
+  getPhysicalDevice: (physicalDeviceId) =>
+    adminFetch(
+      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}`,
+    ),
+  revokePhysicalDeviceEverywhere: (physicalDeviceId, confirmation) =>
+    adminFetch(
+      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}:revoke`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation }),
+      },
+    ),
   // Analytics (ADR 0013): the reporting lake, never the app database.
   /** The canned query catalog. */
   analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),

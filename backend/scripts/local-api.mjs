@@ -96,7 +96,9 @@ import {
   updateSite,
 } from "../src/handlers/admin.js";
 import {
+  getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
+  revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
 } from "../src/handlers/admin-device-revocation.js";
 import {
@@ -391,6 +393,16 @@ const routes = [
     "POST",
     "/admin/v1/sites/{siteId}/device-bindings:revoke-all",
     revokeAllSiteDeviceBindings,
+  ),
+  route(
+    "GET",
+    "/admin/v1/physical-devices/{physicalDeviceId}",
+    getPhysicalDeviceRevocationPreview,
+  ),
+  route(
+    "POST",
+    "/admin/v1/physical-devices/{physicalDeviceId}:revoke",
+    revokePhysicalDeviceEverywhere,
   ),
   route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
   route(

@@ -91,7 +91,9 @@ import {
   updateSite,
 } from "../handlers/admin.js";
 import {
+  getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
+  revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
 } from "../handlers/admin-device-revocation.js";
 import { jsonResponse } from "../http.js";
@@ -244,6 +246,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     revokeSelectedDeviceBindings,
   "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all":
     revokeAllSiteDeviceBindings,
+  "GET /admin/v1/physical-devices/{physicalDeviceId}":
+    getPhysicalDeviceRevocationPreview,
+  "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke":
+    revokePhysicalDeviceEverywhere,
 });
 
 /**

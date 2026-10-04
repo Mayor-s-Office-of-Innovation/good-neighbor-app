@@ -2,7 +2,8 @@
 
 ## Scope
 
-This runbook covers City individual-binding, selected-binding, and Site-wide revocation.
+This runbook covers City individual-binding, selected-binding, Site-wide, and
+physical-device-wide revocation.
 All operations preserve history. Re-enrollment creates a new binding; it never reactivates a
 revoked binding or lowers a credential generation.
 
@@ -14,6 +15,9 @@ revoked binding or lowers a credential generation.
   transaction. Either the complete selection changes or none does.
 - Site-wide revocation first advances `siteCredentialGeneration` transactionally. Current
   canonical credentials then fail authorization even while display rows are being reconciled.
+- Physical-device-wide revocation previews every affected Site, requires the exact device
+  label as typed confirmation, and changes the physical record plus up to 20 active Site
+  bindings in one transaction. It writes an audit event to every affected Site.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
@@ -53,4 +57,6 @@ binding in a selected operation returns `404` and changes none of the selection.
 
 A revoked or suspended Site binding is immutable. If an authorized Site Manager or City
 administrator issues a new valid enrollment link, redemption creates a new binding with the
-current Site and membership generations. Existing revoked rows remain visible for audit.
+current Site and membership generations. Existing revoked rows remain visible for audit. A
+physical-device-wide revocation also blocks that physical identity from redeeming a new
+grant; enrolling again requires a newly established physical-device identity.

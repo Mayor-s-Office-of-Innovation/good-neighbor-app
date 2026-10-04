@@ -47,6 +47,7 @@ import { currentRoute, navigate } from "./router.js";
  * @property {string} perimeterMessage
  * @property {string} perimeterError
  * @property {string} revocationMessage
+ * @property {any | null} physicalDeviceRevocationPreview
  */
 
 class AdminApp extends HTMLElement {
@@ -82,6 +83,7 @@ class AdminApp extends HTMLElement {
       perimeterMessage: "",
       perimeterError: "",
       revocationMessage: "",
+      physicalDeviceRevocationPreview: null,
     };
   }
 
@@ -116,6 +118,7 @@ class AdminApp extends HTMLElement {
       importBusy: false,
       importApplyKey: "",
       revocationMessage: "",
+      physicalDeviceRevocationPreview: null,
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -436,6 +439,7 @@ class AdminApp extends HTMLElement {
     this.state.perimeterSaving = true;
     this.state.perimeterMessage = "";
     this.state.perimeterError = "";
+    this.state.physicalDeviceRevocationPreview = null;
     this.state.revocationMessage = "";
     this.render();
     try {
@@ -808,6 +812,33 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  async beginPhysicalDeviceRevocation(physicalDeviceId) {
+    if (!this.state.site) return;
+    this.state.physicalDeviceRevocationPreview = (
+      await adminApi.getPhysicalDevice(physicalDeviceId)
+    ).physicalDevice;
+    this.render();
+    queueMicrotask(() =>
+      this.querySelector("#physical-device-confirmation")?.focus(),
+    );
+  }
+
+  async revokePhysicalDeviceEverywhere(form) {
+    if (!this.state.site || !this.state.physicalDeviceRevocationPreview) return;
+    const preview = this.state.physicalDeviceRevocationPreview;
+    const confirmation = formValue(new FormData(form), "confirmation");
+    const result = await adminApi.revokePhysicalDeviceEverywhere(
+      preview.physicalDeviceId,
+      confirmation,
+    );
+    const siteId = this.state.site.siteId;
+    await this.openSite(siteId, false);
+    this.state.revocationMessage = result.alreadyRevoked
+      ? "This physical device was already revoked."
+      : `Operation ${result.operationId}: physical device revoked across ${result.affectedCount} Site binding${result.affectedCount === 1 ? "" : "s"}.`;
+    this.render();
+  }
+
   /**
    * Bind event handlers to the currently rendered DOM.
    * @returns {void}
@@ -1060,6 +1091,35 @@ class AdminApp extends HTMLElement {
           this.state.error = err.message;
           this.render();
         });
+      },
+    );
+    this.querySelectorAll("[data-revoke-physical-device]").forEach((button) => {
+      button.addEventListener("click", () => {
+        this.beginPhysicalDeviceRevocation(
+          dataAttr(button, "data-revoke-physical-device"),
+        ).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      });
+    });
+    this.querySelector("#physical-device-revocation")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        this.revokePhysicalDeviceEverywhere(event.currentTarget).catch(
+          (err) => {
+            this.state.error = err.message;
+            this.render();
+          },
+        );
+      },
+    );
+    this.querySelector("#cancel-physical-device-revocation")?.addEventListener(
+      "click",
+      () => {
+        this.state.physicalDeviceRevocationPreview = null;
+        this.render();
       },
     );
     this.querySelectorAll("[data-unassign-site-user]").forEach((button) => {
@@ -1372,9 +1432,24 @@ function siteAccessView(state) {
     <h3>Devices</h3>
     ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
     <div class="row"><button id="revoke-selected-devices" class="btn-danger" type="button">Revoke selected</button><span class="muted">Up to 20 current bindings per operation.</span></div>
-    <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device: revoke individually" : ""}</p></div>${device.status === "revoked" ? "" : `<button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke</button>`}</div>`).join("")}</div>
+    <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device: revoke individually" : ""}</p></div>${device.status === "revoked" ? "" : `<div><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke this Site binding</button>${device.physicalDeviceId && !device.legacy ? `<button class="btn-danger" type="button" data-revoke-physical-device="${escapeHtml(device.physicalDeviceId)}">Revoke physical device everywhere</button>` : ""}</div>`}</div>`).join("")}</div>
+    ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
     <form id="revoke-all-site-devices" class="inline-form"><div><label for="revoke-all-confirmation">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke every device binding at this Site</label><input id="revoke-all-confirmation" name="confirmation" required autocomplete="off" /></div><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
   </section>`;
+}
+
+/** @param {any | null} preview */
+function physicalDeviceRevocationConfirmation(preview) {
+  if (!preview) return "";
+  return `<form id="physical-device-revocation" class="site-details-form" aria-labelledby="physical-device-revocation-title">
+    <fieldset>
+      <legend id="physical-device-revocation-title">Revoke ${escapeHtml(preview.label)} everywhere</legend>
+      <p>This permanently revokes ${escapeHtml(preview.bindings.length)} active Site binding${preview.bindings.length === 1 ? "" : "s"} on this physical device:</p>
+      ${preview.bindings.length ? `<ul>${preview.bindings.map((binding) => `<li>${escapeHtml(binding.siteName)} — ${escapeHtml(binding.accessLevel)}</li>`).join("")}</ul>` : "<p>No active Site bindings remain.</p>"}
+      <label for="physical-device-confirmation"><span>Type <strong>${escapeHtml(preview.label)}</strong> exactly to continue</span><input id="physical-device-confirmation" name="confirmation" required autocomplete="off" /></label>
+    </fieldset>
+    <div class="row"><button class="btn-danger" type="submit">Revoke physical device everywhere</button><button class="btn-secondary" id="cancel-physical-device-revocation" type="button">Cancel</button></div>
+  </form>`;
 }
 
 /** @param {any[]} memberships */

@@ -11,6 +11,132 @@ import { jsonResponse } from "../http.js";
 import { adminOnly } from "../lib/admin-auth.js";
 
 const MAX_SELECTED_BINDINGS = 20;
+const MAX_PHYSICAL_BINDINGS = 20;
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const getPhysicalDeviceRevocationPreview = (event) =>
+  adminOnly(event, async () => {
+    const physicalDeviceId = event.pathParameters?.physicalDeviceId ?? "";
+    const preview = await loadPhysicalDevicePreview(
+      getDynamoTableName(),
+      physicalDeviceId,
+    );
+    if (!preview)
+      return jsonResponse(404, { error: "physical_device_not_found" });
+    return jsonResponse(200, {
+      physicalDevice: {
+        physicalDeviceId: preview.physicalDeviceId,
+        label: preview.label,
+        status: preview.status,
+        bindings: preview.bindings.map((entry) => ({
+          bindingId: entry.binding.bindingId,
+          siteId: entry.binding.siteId,
+          siteName: entry.siteName,
+          accessLevel: entry.binding.accessLevel,
+          status: entry.binding.status,
+        })),
+      },
+    });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const revokePhysicalDeviceEverywhere = (event) =>
+  adminOnly(event, async (body) => {
+    const physicalDeviceId = event.pathParameters?.physicalDeviceId ?? "";
+    const tableName = getDynamoTableName();
+    const preview = await loadPhysicalDevicePreview(
+      tableName,
+      physicalDeviceId,
+    );
+    if (!preview)
+      return jsonResponse(404, { error: "physical_device_not_found" });
+    if (String(body.confirmation ?? "") !== preview.label) {
+      return jsonResponse(400, { error: "confirmation_mismatch" });
+    }
+    if (preview.status === "revoked") {
+      return jsonResponse(200, {
+        status: "complete",
+        affectedCount: 0,
+        alreadyRevoked: true,
+      });
+    }
+    if (preview.bindings.length > MAX_PHYSICAL_BINDINGS) {
+      return jsonResponse(409, {
+        error: "physical_device_binding_limit_exceeded",
+      });
+    }
+    const now = new Date().toISOString();
+    const operationId = randomUUID();
+    const actor = actorId(event);
+    /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
+    const items = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: { pk: `PHYSICAL_DEVICE#${physicalDeviceId}`, sk: "#META" },
+          UpdateExpression:
+            "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedBy = :actor, revokedReason = :reason",
+          ConditionExpression:
+            "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":revoked": "revoked",
+            ":now": now,
+            ":actor": actor,
+            ":reason": "physical_device_revoked_everywhere",
+          },
+        },
+      },
+      ...preview.bindings.flatMap((entry) => [
+        ...bindingRevocationItems(tableName, entry.binding, now, actor),
+        transactionPut(tableName, {
+          pk: `SITE#${entry.binding.siteId}`,
+          sk: `AUDIT#${now}#${randomUUID()}`,
+          type: "siteAuditEvent",
+          eventType: "physical_device_revoked_everywhere",
+          siteId: entry.binding.siteId,
+          operationId,
+          bindingId: entry.binding.bindingId,
+          physicalDeviceId,
+          actor,
+          createdAt: now,
+        }),
+      ]),
+      transactionPut(tableName, {
+        pk: `PHYSICAL_DEVICE#${physicalDeviceId}`,
+        sk: `REVOCATION_OPERATION#${now}#${operationId}`,
+        type: "revocationOperation",
+        operationId,
+        scope: "physical_device",
+        physicalDeviceId,
+        affectedSiteIds: preview.bindings.map((entry) => entry.binding.siteId),
+        affectedCount: preview.bindings.length,
+        status: "complete",
+        actor,
+        createdAt: now,
+        completedAt: now,
+      }),
+    ];
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+    } catch (error) {
+      if (isTransactionConflict(error)) {
+        return jsonResponse(409, {
+          error: "physical_device_revocation_conflict",
+        });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      operationId,
+      status: "complete",
+      affectedCount: preview.bindings.length,
+      affectedSites: preview.bindings.map((entry) => ({
+        siteId: entry.binding.siteId,
+        siteName: entry.siteName,
+      })),
+    });
+  });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const revokeSelectedDeviceBindings = (event) =>
@@ -238,6 +364,80 @@ export const revokeAllSiteDeviceBindings = (event) =>
       siteCredentialGeneration: nextSiteGeneration,
     });
   });
+
+/** @param {string} tableName @param {string} physicalDeviceId */
+async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(physicalDeviceId)) return null;
+  const [physicalResult, pointersResult] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `PHYSICAL_DEVICE#${physicalDeviceId}`, sk: "#META" },
+        ConsistentRead: true,
+      }),
+    ),
+    ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        ConsistentRead: true,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PHYSICAL_DEVICE#${physicalDeviceId}`,
+          ":prefix": "BINDING#",
+        },
+      }),
+    ),
+  ]);
+  const physical = physicalResult.Item;
+  if (!physical) return null;
+  const resolved = await Promise.all(
+    (pointersResult.Items ?? [])
+      .filter((pointer) => pointer.status === "active")
+      .map(async (pointer) => {
+        const [bindingResult, siteResult] = await Promise.all([
+          ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: {
+                pk: `SITE#${pointer.siteId}`,
+                sk: `DEVICE_BINDING#${pointer.bindingId}`,
+              },
+              ConsistentRead: true,
+            }),
+          ),
+          ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: { pk: `SITE#${pointer.siteId}`, sk: "#META" },
+            }),
+          ),
+        ]);
+        const binding = bindingResult.Item;
+        if (
+          !binding ||
+          binding.status === "revoked" ||
+          binding.physicalDeviceId !== physicalDeviceId
+        ) {
+          return null;
+        }
+        return {
+          binding,
+          siteName: String(siteResult.Item?.name ?? pointer.siteId),
+        };
+      }),
+  );
+  /** @type {Array<{binding:Record<string, any>, siteName:string}>} */
+  const bindings = [];
+  for (const entry of resolved) {
+    if (entry) bindings.push(entry);
+  }
+  return {
+    physicalDeviceId,
+    label: String(physical.label || "Unnamed device"),
+    status: String(physical.status || "active"),
+    bindings,
+  };
+}
 
 /** @param {unknown} value */
 function uniqueIds(value) {

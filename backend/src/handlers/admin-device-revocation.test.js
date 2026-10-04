@@ -9,8 +9,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { revokeAllSiteDeviceBindings, revokeSelectedDeviceBindings } =
-  await import("./admin-device-revocation.js");
+const {
+  getPhysicalDeviceRevocationPreview,
+  revokeAllSiteDeviceBindings,
+  revokePhysicalDeviceEverywhere,
+  revokeSelectedDeviceBindings,
+} = await import("./admin-device-revocation.js");
 
 beforeEach(() => {
   send.mockReset();
@@ -124,6 +128,141 @@ describe("City Site-wide revocation", () => {
   });
 });
 
+describe("City physical-device-wide revocation", () => {
+  it("returns a safe preview of every active Site binding", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          physicalDeviceId: "physical-1",
+          label: "Shared tablet",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-1",
+            bindingId: "binding-1",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          ...binding("binding-1", "physical-1", 2),
+          refreshJti: "must-not-leak",
+        },
+      })
+      .mockResolvedValueOnce({ Item: { name: "Site One" } });
+
+    const response = await call(
+      getPhysicalDeviceRevocationPreview,
+      event({}, { physicalDeviceId: "physical-1" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+    const payload = JSON.parse(String(response.body));
+    expect(payload.physicalDevice).toEqual({
+      physicalDeviceId: "physical-1",
+      label: "Shared tablet",
+      status: "active",
+      bindings: [
+        {
+          bindingId: "binding-1",
+          siteId: "site-1",
+          siteName: "Site One",
+          accessLevel: "general",
+          status: "active",
+        },
+      ],
+    });
+    expect(JSON.stringify(payload)).not.toContain("must-not-leak");
+  });
+
+  it("revokes the physical record and every binding in one transaction", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          physicalDeviceId: "physical-1",
+          label: "Shared tablet",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-1",
+            bindingId: "binding-1",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Item: binding("binding-1", "physical-1", 2),
+      })
+      .mockResolvedValueOnce({ Item: { name: "Site One" } })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      revokePhysicalDeviceEverywhere,
+      event(
+        { confirmation: "Shared tablet" },
+        { physicalDeviceId: "physical-1" },
+      ),
+    );
+
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[4][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(6);
+    expect(transaction.input.TransactItems[0].Update.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "#META",
+    });
+    expect(transaction.input.TransactItems[1].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE_BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+      type: "revocationOperation",
+      scope: "physical_device",
+      affectedSiteIds: ["site-1"],
+      affectedCount: 1,
+      status: "complete",
+    });
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      status: "complete",
+      affectedCount: 1,
+      affectedSites: [{ siteId: "site-1", siteName: "Site One" }],
+    });
+  });
+
+  it("requires the exact device label before changing any record", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          physicalDeviceId: "physical-1",
+          label: "Shared tablet",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] });
+
+    const response = await call(
+      revokePhysicalDeviceEverywhere,
+      event(
+        { confirmation: "shared tablet" },
+        { physicalDeviceId: "physical-1" },
+      ),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
 /** @param {string} bindingId @param {string} physicalDeviceId @param {number} tokenGeneration */
 function binding(bindingId, physicalDeviceId, tokenGeneration) {
   return {
@@ -138,11 +277,11 @@ function binding(bindingId, physicalDeviceId, tokenGeneration) {
   };
 }
 
-/** @param {Record<string, unknown>} body */
-function event(body) {
+/** @param {Record<string, unknown>} body @param {Record<string, string>} [pathParameters] */
+function event(body, pathParameters = { siteId: "site-1" }) {
   return /** @type {any} */ ({
     body: JSON.stringify(body),
-    pathParameters: { siteId: "site-1" },
+    pathParameters,
     requestContext: {
       authorizer: {
         jwt: {

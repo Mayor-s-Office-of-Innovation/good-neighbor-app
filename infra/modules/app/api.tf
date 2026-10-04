@@ -100,6 +100,8 @@ locals {
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
     "POST /admin/v1/sites/{siteId}/device-bindings:revoke",
     "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
+    "GET /admin/v1/physical-devices/{physicalDeviceId}",
+    "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke",
     "GET /health",
   ]
 
