@@ -14,8 +14,8 @@ strips metadata and applies orientation while enforcing byte, pixel, edge, and s
 - global per UTC day: 10,000 artifacts and 10 GiB
 
 Reservations are deliberately conservative: issuing a PUT URL consumes quota even if the client
-abandons the upload. Reservation records expire after 24 hours; daily counters expire with their
-quota window. Do not manually lower counters during an active incident—doing so weakens the cost
+abandons the upload. Reservation records and check/device/Site/global daily counters expire after
+24 hours, so an abandoned URL cannot permanently block its Check. Do not manually lower counters during an active incident—doing so weakens the cost
 control and can race in-flight uploads.
 
 ## Alarms

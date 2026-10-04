@@ -99,9 +99,8 @@ export const handler = async (event) => {
     return DENY({ reason: "site_inactive" });
   }
   if (
-    device.siteCredentialGeneration !== undefined &&
-    Number(device.siteCredentialGeneration) !==
-      Number(site.siteCredentialGeneration ?? 0)
+    Number(device.siteCredentialGeneration ?? 0) !==
+    Number(site.siteCredentialGeneration ?? 0)
   ) {
     return DENY({ reason: "revoked" });
   }

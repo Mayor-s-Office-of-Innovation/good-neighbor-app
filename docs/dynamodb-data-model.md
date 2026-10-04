@@ -167,7 +167,7 @@ as task update events and every GSI sort key.
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | finds an update by ID alone, for documentation and safe retries. Stores the event's full sort key. |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | photos attached to an update. Not analyzer input. A `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer lets the normal media route serve them. |
 | Upload reservation | `SITE#<siteId>` | `UPLOAD_RESERVATION#<checkId>#<artifactId>` | 24-hour record created before issuing a media PUT; binds key, type, and declared bytes. |
-| Daily device/Site media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#DEVICE#<actorId>` or `...#SITE` | conservative reserved byte and artifact counts; expires after the quota day. |
+| Daily check/device/Site media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#CHECK#<checkId>`, `...#DEVICE#<actorId>`, or `...#SITE` | conservative reserved byte and artifact counts; expires after the quota day so abandoned upload URLs cannot permanently exhaust a Check. |
 | Daily global media quota | `MEDIA_QUOTA#<yyyy-mm-dd>` | `#GLOBAL` | conservative global byte and artifact-count cost budget. This is operational, not tenant data. |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | `nextTaskDisplayNumber`, a counter that only goes up. Used to mint task `shortId` values. |
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |

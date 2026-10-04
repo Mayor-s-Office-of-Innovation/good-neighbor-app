@@ -22,8 +22,12 @@ vi.mock("../integrations/census-geocoder.js", () => ({
   geocodeAddress,
 }));
 
-const { applySiteImport, getSiteImportConflicts, previewSiteImport } =
-  await import("./admin-site-imports.js");
+const {
+  applySiteImport,
+  getSiteImport,
+  getSiteImportConflicts,
+  previewSiteImport,
+} = await import("./admin-site-imports.js");
 
 const csv = [
   "Provider,Program,Site name,Site address,Contact first name,Contact last name,Contact phone,Contact email",
@@ -63,7 +67,7 @@ describe("Site CSV import", () => {
   });
 
   it("blocks structurally contradictory duplicate Site rows", async () => {
-    const duplicate = `${csv}\nProvider Two,Program One,Main Site,2 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,sam@example.org`;
+    const duplicate = `${csv}\nProvider Two,Program One,Main Site,1 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,sam@example.org`;
     const response = await call(
       previewSiteImport,
       event({ fileName: "sites.csv", csv: duplicate }),
@@ -73,6 +77,156 @@ describe("Site CSV import", () => {
       "contradictory_duplicate_rows",
     );
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("allows the same Site name at different addresses", async () => {
+    const twoAddresses = `${csv}\nProvider One,Program One,Main Site,2 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,sam@example.org`;
+    send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv: twoAddresses }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    expect(JSON.parse(String(response.body)).counts.create).toBe(2);
+  });
+
+  it("reads every catalog query page before planning", async () => {
+    send
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { pk: "next" } })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    expect(send.mock.calls[3][0].input.ExclusiveStartKey).toEqual({
+      pk: "next",
+    });
+  });
+
+  it("reads every Program-contact page before classifying a row", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [{ providerId: "provider-one", name: "Provider One" }],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            programId: "program-one",
+            providerId: "provider-one",
+            name: "Program One",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [],
+        LastEvaluatedKey: { pk: "PROGRAM#program-one", sk: "USER#page-2" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            programId: "program-one",
+            userId: "contact-1",
+            firstName: "Different",
+            lastName: "Person",
+            phone: "415-555-9999",
+            email: "sam@example.org",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv }),
+    );
+
+    const body = JSON.parse(String(response.body));
+    expect(body.counts.conflict).toBe(1);
+    expect(body.rows[0].reasonCode).toBe("contact_exact_match_conflict");
+    expect(send.mock.calls[4][0].input.ExclusiveStartKey).toEqual({
+      pk: "PROGRAM#program-one",
+      sk: "USER#page-2",
+    });
+  });
+
+  it("reads every stored row page when reopening an import", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { importId: "import-1" } })
+      .mockResolvedValueOnce({
+        Items: [{ ...importRow(), rowNumber: 2 }],
+        LastEvaluatedKey: { pk: "SITE_IMPORT#import-1", sk: "ROW#000002" },
+      })
+      .mockResolvedValueOnce({ Items: [{ ...importRow(), rowNumber: 3 }] });
+
+    const response = await call(
+      getSiteImport,
+      event(undefined, { importId: "import-1" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).rows).toHaveLength(2);
+    expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual({
+      pk: "SITE_IMPORT#import-1",
+      sk: "ROW#000002",
+    });
+  });
+
+  it("conflicts when the same name-address Site belongs to another Provider", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          { providerId: "provider-one", name: "Provider One" },
+          { providerId: "provider-two", name: "Provider Two" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            programId: "program-one",
+            providerId: "provider-one",
+            name: "Program One",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [{ siteId: "existing-site" }] })
+      .mockResolvedValueOnce({
+        Responses: {
+          "gnp-test-app": [
+            {
+              siteId: "existing-site",
+              providerId: "provider-two",
+              leadProgramId: "other-program",
+              name: "Main Site",
+              address: "1 Main St San Francisco CA 94102",
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv }),
+    );
+
+    const body = JSON.parse(String(response.body));
+    expect(body.counts.conflict).toBe(1);
+    expect(body.rows[0].reasonCode).toBe("site_exact_match_conflict");
   });
 
   it("applies one valid row as one master-data transaction", async () => {

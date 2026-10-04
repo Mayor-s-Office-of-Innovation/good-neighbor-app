@@ -559,13 +559,11 @@ async function loadCatalog() {
       "PROGRAM_SEARCH#ACTIVE",
       "SITE_SEARCH#ACTIVE",
     ].map((pk) =>
-      ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: "pk = :pk",
-          ExpressionAttributeValues: { ":pk": pk },
-        }),
-      ),
+      queryAll({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": pk },
+      }),
     ),
   );
   const siteIds = (sites.Items ?? []).map((item) => String(item.siteId));
@@ -573,28 +571,24 @@ async function loadCatalog() {
   const siteItems = await batchGetSites(tableName, siteIds);
   const programItems = programs.Items ?? [];
   const users = await mapLimit(programItems, 10, (program) =>
-    ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `PROGRAM#${program.programId}`,
-          ":prefix": "USER#",
-        },
-      }),
-    ),
+    queryAll({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `PROGRAM#${program.programId}`,
+        ":prefix": "USER#",
+      },
+    }),
   );
   const assignments = await mapLimit(siteIds, 10, (siteId) =>
-    ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "ASSIGNED_USER#",
-        },
-      }),
-    ),
+    queryAll({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "ASSIGNED_USER#",
+      },
+    }),
   );
   return {
     providers: providers.Items ?? [],
@@ -614,7 +608,7 @@ function planRows(rows, catalog) {
     catalog.programs,
     (item) => `${item.providerId}|${normalized(item.name)}`,
   );
-  const sites = indexUnique(catalog.sites, (item) => normalized(item.name));
+  const sites = indexUnique(catalog.sites, (item) => siteIdentity(item));
   const users = indexUnique(
     catalog.users,
     (item) => `${item.programId}|${normalized(item.email)}`,
@@ -662,7 +656,10 @@ function planRows(rows, catalog) {
     };
     if (!programExisting)
       programs.set(programKey, { programId, providerId, name: source.Program });
-    const siteKey = normalized(source["Site name"]);
+    const siteKey = siteIdentity({
+      name: source["Site name"],
+      address: source["Site address"],
+    });
     const siteExisting = sites.get(siteKey);
     if (Array.isArray(siteExisting)) {
       return conflictRow(rowNumber, source, "duplicate_existing_site");
@@ -671,7 +668,7 @@ function planRows(rows, catalog) {
       siteExisting &&
       (siteExisting.providerId !== providerId ||
         siteExisting.leadProgramId !== programId ||
-        normalized(siteExisting.address) !== normalized(source["Site address"]))
+        siteIdentity(siteExisting) !== siteKey)
     ) {
       return conflictRow(
         rowNumber,
@@ -681,7 +678,8 @@ function planRows(rows, catalog) {
       );
     }
     const siteId =
-      siteExisting?.siteId || slug(`${providerId}-${source["Site name"]}`);
+      siteExisting?.siteId ||
+      slug(`${source["Site name"]}-${source["Site address"]}`);
     const site = {
       id: siteId,
       action: siteExisting ? "reuse" : "create",
@@ -775,16 +773,38 @@ function recordOutcome(importId, row, outcome, reasonCode, ids = {}) {
 
 /** @param {string} importId */
 function queryImportRows(importId) {
-  return ddb.send(
-    new QueryCommand({
-      TableName: getDynamoTableName(),
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE_IMPORT#${importId}`,
-        ":prefix": "ROW#",
-      },
-    }),
-  );
+  return queryAll({
+    TableName: getDynamoTableName(),
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE_IMPORT#${importId}`,
+      ":prefix": "ROW#",
+    },
+  });
+}
+
+/**
+ * Read every DynamoDB Query page. Import correctness depends on a complete
+ * catalog/ledger; silently accepting the first 1 MiB page can misclassify or
+ * skip rows.
+ * @param {import("@aws-sdk/lib-dynamodb").QueryCommandInput} input
+ * @returns {Promise<{Items: Record<string, any>[]} >}
+ */
+async function queryAll(input) {
+  const Items = [];
+  let ExclusiveStartKey;
+  do {
+    /** @type {any} */
+    const result = await ddb.send(
+      new QueryCommand({
+        ...input,
+        ...(ExclusiveStartKey ? { ExclusiveStartKey } : {}),
+      }),
+    );
+    Items.push(...(result.Items ?? []));
+    ExclusiveStartKey = result.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return { Items };
 }
 
 /** @param {Record<string, unknown>[]} items */
@@ -914,7 +934,10 @@ function findContradictoryDuplicate(rows) {
   const sites = new Map();
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const key = normalized(row["Site name"]);
+    const key = siteIdentity({
+      name: row["Site name"],
+      address: row["Site address"],
+    });
     const signature = HEADERS.map((header) => normalized(row[header])).join(
       "|",
     );
@@ -1018,6 +1041,14 @@ function clean(value) {
 /** @param {unknown} value */
 function normalized(value) {
   return clean(value).toLocaleLowerCase("en-US");
+}
+
+/**
+ * @param {{name?: unknown, siteName?: unknown, address?: unknown}} site
+ * @returns {string}
+ */
+function siteIdentity(site) {
+  return `${normalized(site.name ?? site.siteName)}|${normalized(site.address)}`;
 }
 /** @param {string} value */
 function slug(value) {

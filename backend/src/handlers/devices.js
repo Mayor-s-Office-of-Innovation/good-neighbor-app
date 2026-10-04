@@ -129,6 +129,7 @@ export const registerDevice = async (event) => {
     lastSeenAt: now,
     tokenGeneration: generation,
     refreshJti: refresh.jti,
+    siteCredentialGeneration: Number(validCode.siteCredentialGeneration ?? 0),
   });
 
   const consume = consumeSetupCodeTransactItem(validCode, now);
@@ -143,6 +144,21 @@ export const registerDevice = async (event) => {
             },
           },
           ...(consume ? [consume] : []),
+          {
+            ConditionCheck: {
+              TableName: dynamoTable,
+              Key: { pk: `SITE#${validCode.siteId}`, sk: "#META" },
+              ConditionExpression:
+                "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :inactive) AND (attribute_not_exists(siteCredentialGeneration) OR siteCredentialGeneration = :siteGeneration)",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":inactive": "inactive",
+                ":siteGeneration": Number(
+                  validCode.siteCredentialGeneration ?? 0,
+                ),
+              },
+            },
+          },
         ],
       }),
     );
@@ -150,7 +166,8 @@ export const registerDevice = async (event) => {
     if (
       err instanceof Error &&
       err.name === "TransactionCanceledException" &&
-      isSetupCodeConditionFailure(err, consume ? 1 : -1)
+      (isSetupCodeConditionFailure(err, consume ? 1 : -1) ||
+        isSetupCodeConditionFailure(err, consume ? 2 : 1))
     ) {
       return jsonResponse(401, { error: "invalid_site_code" });
     }
@@ -279,17 +296,14 @@ export const refreshDeviceToken = async (event) => {
 };
 
 /**
- * Recheck Site and Manager membership generations for new binding-backed
- * sessions. Legacy devices without these fields remain supported during the
- * bounded migration window.
+ * Recheck Site and Manager membership generations. A generation-less legacy
+ * device is generation zero: it remains compatible with an unadvanced Site,
+ * but fails closed immediately after any Site-wide generation bump.
  * @param {DeviceItem & Record<string, any>} device
  * @param {"general"|"manager"} role
  * @returns {Promise<boolean>}
  */
 async function bindingLifecycleValid(device, role) {
-  if (device.siteCredentialGeneration === undefined && !device.membershipId) {
-    return true;
-  }
   const tableName = getDynamoTableName();
   const siteResult = await ddb.send(
     new GetCommand({

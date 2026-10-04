@@ -199,7 +199,7 @@ class AdminApp extends HTMLElement {
       };
       this.state.importResult =
         result.import.status === "complete"
-          ? { outcomes: result.import.outcomes || {} }
+          ? { status: "complete", outcomes: result.import.outcomes || {} }
           : null;
       this.state.importApplyKey =
         sessionStorage.getItem(`site-import-key:${importId}`) ||

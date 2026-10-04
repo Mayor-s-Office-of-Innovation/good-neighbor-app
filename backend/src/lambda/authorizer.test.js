@@ -217,6 +217,33 @@ describe("authorizer", () => {
     }
   });
 
+  it("denies a generation-less legacy device after Site-wide revocation", async () => {
+    const token = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 7,
+      typ: "access",
+      iat: 1000,
+      exp: 3000,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
+        .mockResolvedValueOnce({
+          Item: { status: "active", siteCredentialGeneration: 1 },
+        });
+
+      const res = await invoke(event(`Bearer ${token}`));
+
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("revoked");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requires current membership and Site generations for Manager access", async () => {
     const { token } = await mintAccessToken(
       {

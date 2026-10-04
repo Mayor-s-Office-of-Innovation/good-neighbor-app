@@ -102,7 +102,27 @@ describe("presignUpload", () => {
     const payload = JSON.parse(res.body);
     expect(payload.uploadUrl).toBe("https://signed.example/put");
     expect(payload.expiresIn).toBe(300);
+    expect(payload.uploadHeaders).toEqual({
+      "content-type": "image/jpeg",
+      "if-none-match": "*",
+    });
+    expect(payload.uploadHeaders).not.toHaveProperty(
+      "x-amz-meta-declared-bytes",
+    );
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
+    const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
+    expect(reservation[0].ConditionCheck.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01",
+    });
+    expect(reservation[1].Update.Key).toMatchObject({
+      pk: "SITE#site-1",
+      sk: expect.stringMatching(/^MEDIA_QUOTA#\d{4}-\d{2}-\d{2}#CHECK#chk_01$/),
+    });
+    expect(reservation[1].Update.Key).not.toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01",
+    });
     expect(typeof payload.artifactId).toBe("string");
     expect(payload.s3Key).toBe(`checks/site-1/chk_01/${payload.artifactId}`);
     expect(payload).not.toHaveProperty("placeId");

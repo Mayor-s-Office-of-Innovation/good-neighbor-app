@@ -134,6 +134,13 @@ locals {
     "POST /v1/feedback"                   = true
     "POST /submissions"                   = true
   }
+
+  # Route keys are "METHOD /path". Determine admin scope from the path rather
+  # than enumerating methods so new PUT/HEAD/etc. admin routes fail closed onto
+  # Cognito instead of accidentally receiving the device authorizer.
+  route_is_admin = {
+    for route in local.api_routes : route => can(regex("^[A-Z]+ /admin/", route))
+  }
 }
 
 resource "aws_apigatewayv2_authorizer" "admin_jwt" {
@@ -208,8 +215,8 @@ resource "aws_apigatewayv2_route" "routes" {
   # unlisted route as protected — a bare map lookup on an absent key is a hard
   # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
-  authorization_type = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? "JWT" : "CUSTOM"
-  authorizer_id      = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+  authorization_type = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? "JWT" : "CUSTOM"
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
 }
 
 # Admin analytics routes: always the admin JWT authorizer, always the

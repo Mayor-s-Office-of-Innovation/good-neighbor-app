@@ -113,15 +113,30 @@ export const presignUpload = async (event) => {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: tableName,
+              Key: checkHeaderKey(siteId, checkId),
+              ConditionExpression:
+                "attribute_exists(pk) AND #status IN (:inProgress, :completed)",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":inProgress": "in_progress",
+                ":completed": "completed",
+              },
+            },
+          },
           quotaUpdate({
             tableName,
-            key: checkHeaderKey(siteId, checkId),
+            key: {
+              pk: sitePk(siteId),
+              sk: `MEDIA_QUOTA#${day}#CHECK#${checkId}`,
+            },
             bytes,
-            byteField: "reservedMediaBytes",
-            countField: "reservedArtifactCount",
             maxBytes: MAX_CHECK_BYTES,
+            countField: "reservedCount",
             maxCount: MAX_CHECK_ARTIFACTS,
-            requireCheck: true,
+            expiresAt,
           }),
           quotaUpdate({
             tableName,
@@ -209,10 +224,12 @@ export const presignUpload = async (event) => {
     s3Key: key,
     contentType,
     contentLength: bytes,
+    // The AWS presigner hoists declared-bytes metadata into the signed query
+    // string. Sending it again as an x-amz-meta-* request header makes MinIO
+    // reject the PUT as an unsigned duplicate header.
     uploadHeaders: {
       "content-type": contentType,
       "if-none-match": "*",
-      "x-amz-meta-declared-bytes": String(bytes),
     },
     uploadUrl,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
@@ -595,7 +612,6 @@ export const presignMedia = async (event) => {
  * @param {string} [input.byteField]
  * @param {string} [input.countField]
  * @param {number} [input.maxCount]
- * @param {boolean} [input.requireCheck]
  * @param {number} [input.expiresAt]
  * @returns {Record<string, any>}
  */
@@ -607,7 +623,6 @@ function quotaUpdate({
   byteField = "reservedBytes",
   countField,
   maxCount,
-  requireCheck = false,
   expiresAt,
 }) {
   /** @type {Record<string, string>} */
@@ -617,21 +632,14 @@ function quotaUpdate({
     ":bytes": bytes,
     ":remaining": maxBytes - bytes,
     ...(countField ? { ":one": 1, ":maxCount": maxCount } : {}),
-    ...(requireCheck
-      ? { ":inProgress": "in_progress", ":completed": "completed" }
-      : {}),
     ...(expiresAt ? { ":expiresAt": expiresAt } : {}),
   };
   if (countField) names["#count"] = countField;
-  if (requireCheck) names["#status"] = "status";
   const update = `ADD #bytes :bytes${countField ? ", #count :one" : ""}${expiresAt ? " SET expiresAt = :expiresAt" : ""}`;
   const conditions = [
     "(attribute_not_exists(#bytes) OR #bytes <= :remaining)",
     ...(countField
       ? ["(attribute_not_exists(#count) OR #count < :maxCount)"]
-      : []),
-    ...(requireCheck
-      ? ["attribute_exists(pk)", "#status IN (:inProgress, :completed)"]
       : []),
   ];
   return {
