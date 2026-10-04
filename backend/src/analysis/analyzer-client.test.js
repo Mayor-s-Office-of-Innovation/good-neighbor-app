@@ -68,6 +68,16 @@ describe("buildAnalyzeRequest", () => {
     expect(body).not.toHaveProperty("caller");
   });
 
+  it("omits language when none is given", () => {
+    const body = buildAnalyzeRequest({ metadata, media });
+    expect(body).not.toHaveProperty("language");
+  });
+
+  it("threads language into the request body", () => {
+    const body = buildAnalyzeRequest({ metadata, media, language: "zh-Hant" });
+    expect(body.language).toBe("zh-Hant");
+  });
+
   it("threads requestId and appId into caller", () => {
     const body = buildAnalyzeRequest({
       metadata,
@@ -135,6 +145,44 @@ describe("createAnalyzerClient", () => {
     const [call] = calls;
     expect(String(call.url)).toBe("https://analysis.example.org/v1/rubrics");
     expect(call.init.headers["x-api-key"]).toBeUndefined();
+  });
+
+  it("editCondition() forwards language when given", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: { analysis_id: "ana_1" } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+
+    await client.editCondition("ana_1", "cond_1", {
+      description: "Actually paint spilled here",
+      language: "es",
+    });
+
+    expect(JSON.parse(calls[0].init.body)).toMatchObject({
+      description: "Actually paint spilled here",
+      language: "es",
+    });
+  });
+
+  it("editCondition() omits language when not given", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: { analysis_id: "ana_1" } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+
+    await client.editCondition("ana_1", "cond_1", {
+      description: "Actually paint spilled here",
+    });
+
+    expect(JSON.parse(calls[0].init.body)).not.toHaveProperty("language");
   });
 
   it("classifyEvidence() sends text to the existing classifier endpoint", async () => {

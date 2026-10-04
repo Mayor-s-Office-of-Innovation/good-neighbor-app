@@ -22,7 +22,7 @@ import {
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
-import { t } from "../i18n/i18n.js";
+import { getLocale, t } from "../i18n/i18n.js";
 import {
   missingConditionMessage,
   problemFromCard,
@@ -441,6 +441,7 @@ class PerimeterCheck extends HTMLElement {
         problem.conditionId,
         {
           description,
+          language: getLocale(),
           caller: { request_id: this._requestId("edit", problem) },
         },
       );

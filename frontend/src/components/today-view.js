@@ -1603,6 +1603,7 @@ class TodayView extends HTMLElement {
         problem.conditionId,
         {
           description,
+          language: getLocale(),
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
