@@ -11,6 +11,7 @@ import {
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
 import { handler as processSubmission } from "../src/workers/process-submission.js";
 import { handler as analyzeArtifact } from "../src/workers/analyze-artifact.js";
+import { handler as reconcileSiteRevocation } from "../src/workers/reconcile-site-revocation.js";
 
 const sqs = new SQSClient({});
 let running = true;
@@ -50,6 +51,9 @@ function summarizeError(err) {
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "reconcile_site_revocation") {
+      return reconcileSiteRevocation;
+    }
     // Analyze messages carry an artifactId plus either an S3 key (photo) or text
     // (description). The demo /submissions flow carries neither.
     if (

@@ -96,6 +96,11 @@ import {
   revokePhysicalDeviceEverywhere,
   revokeSelectedDeviceBindings,
 } from "../handlers/admin-device-revocation.js";
+import {
+  listEmergencyRevocationSites,
+  previewEmergencySiteRevocation,
+  startEmergencySiteRevocation,
+} from "../handlers/admin-multi-site-revocation.js";
 import { jsonResponse } from "../http.js";
 import {
   createProgramUser,
@@ -250,6 +255,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     getPhysicalDeviceRevocationPreview,
   "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke":
     revokePhysicalDeviceEverywhere,
+  "GET /admin/v1/emergency-site-revocations/sites":
+    listEmergencyRevocationSites,
+  "POST /admin/v1/emergency-site-revocations:preview":
+    previewEmergencySiteRevocation,
+  "POST /admin/v1/emergency-site-revocations": startEmergencySiteRevocation,
 });
 
 /**

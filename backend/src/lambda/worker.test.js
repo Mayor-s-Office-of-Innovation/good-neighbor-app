@@ -2,14 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock both underlying workers so we assert only which one the dispatcher routes
 // a message to, by its shape — not what the worker itself does.
-const { processSubmission, analyzeArtifact } = vi.hoisted(() => ({
-  processSubmission: vi.fn(async () => {}),
-  analyzeArtifact: vi.fn(async () => {}),
-}));
+const { processSubmission, analyzeArtifact, reconcileSiteRevocation } =
+  vi.hoisted(() => ({
+    processSubmission: vi.fn(async () => {}),
+    analyzeArtifact: vi.fn(async () => {}),
+    reconcileSiteRevocation: vi.fn(async () => {}),
+  }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
 }));
 vi.mock("../workers/analyze-artifact.js", () => ({ handler: analyzeArtifact }));
+vi.mock("../workers/reconcile-site-revocation.js", () => ({
+  handler: reconcileSiteRevocation,
+}));
 
 const { handler } = await import("./worker.js");
 
@@ -27,6 +32,7 @@ describe("worker dispatch (pickHandler)", () => {
   beforeEach(() => {
     processSubmission.mockClear();
     analyzeArtifact.mockClear();
+    reconcileSiteRevocation.mockClear();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {
@@ -59,6 +65,17 @@ describe("worker dispatch (pickHandler)", () => {
       () => {},
     );
     expect(processSubmission).toHaveBeenCalledTimes(1);
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes emergency Site reconciliation to the revocation worker", async () => {
+    await handler(
+      event({ type: "reconcile_site_revocation", operationId: "operation-1" }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
+    expect(processSubmission).not.toHaveBeenCalled();
     expect(analyzeArtifact).not.toHaveBeenCalled();
   });
 });

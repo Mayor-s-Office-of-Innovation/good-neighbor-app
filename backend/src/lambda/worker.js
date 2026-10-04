@@ -8,6 +8,7 @@
 
 import { handler as processSubmission } from "../workers/process-submission.js";
 import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
+import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-revocation.js";
 import { logServerError } from "../lib/log-server-error.js";
 
 /**
@@ -22,6 +23,9 @@ import { logServerError } from "../lib/log-server-error.js";
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "reconcile_site_revocation") {
+      return reconcileSiteRevocation;
+    }
     if (
       typeof msg?.artifactId === "string" &&
       (typeof msg?.s3Key === "string" || typeof msg?.text === "string")

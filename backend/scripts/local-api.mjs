@@ -102,6 +102,11 @@ import {
   revokeSelectedDeviceBindings,
 } from "../src/handlers/admin-device-revocation.js";
 import {
+  listEmergencyRevocationSites,
+  previewEmergencySiteRevocation,
+  startEmergencySiteRevocation,
+} from "../src/handlers/admin-multi-site-revocation.js";
+import {
   createProgramUser,
   createProgram,
   deactivateProgramUser,
@@ -403,6 +408,21 @@ const routes = [
     "POST",
     "/admin/v1/physical-devices/{physicalDeviceId}:revoke",
     revokePhysicalDeviceEverywhere,
+  ),
+  route(
+    "GET",
+    "/admin/v1/emergency-site-revocations/sites",
+    listEmergencyRevocationSites,
+  ),
+  route(
+    "POST",
+    "/admin/v1/emergency-site-revocations:preview",
+    previewEmergencySiteRevocation,
+  ),
+  route(
+    "POST",
+    "/admin/v1/emergency-site-revocations",
+    startEmergencySiteRevocation,
   ),
   route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
   route(

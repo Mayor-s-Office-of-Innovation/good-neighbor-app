@@ -3,7 +3,7 @@
 ## Scope
 
 This runbook covers City individual-binding, selected-binding, Site-wide, and
-physical-device-wide revocation.
+physical-device-wide, and emergency multi-Site revocation.
 All operations preserve history. Re-enrollment creates a new binding; it never reactivates a
 revoked binding or lowers a credential generation.
 
@@ -18,12 +18,16 @@ revoked binding or lowers a credential generation.
 - Physical-device-wide revocation previews every affected Site, requires the exact device
   label as typed confirmation, and changes the physical record plus up to 20 active Site
   bindings in one transaction. It writes an audit event to every affected Site.
+- Emergency multi-Site revocation previews every current binding for 2–20 selected Sites and
+  requires the generated phrase. One transaction advances every selected Site generation
+  before one asynchronous reconciliation job is queued per Site.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
 
-Every successful request returns an operation ID. Site-wide operations retain counts and end
-in `complete` or `partial` state under the Site partition.
+Every successful request returns an operation ID. Site-wide operations retain counts under
+the Site partition. Emergency multi-Site operations also retain an aggregate operation and
+one idempotent Site-result row, ending in `complete` or `partial` state.
 
 ## Partial-operation alarm
 
@@ -46,6 +50,13 @@ fields @timestamp, marker, operationId, siteId, failedCount
 5. Test a previously active device: refresh and protected API access must fail. Do not use a
    production credential in logs or screenshots.
 6. Record aggregate outcomes and the operation ID, then confirm the alarm returns to OK.
+
+For an emergency multi-Site operation, first inspect
+`REVOCATION_OPERATION#<operationId> / #META`. An `enqueueFailedCount` means the affected Site
+generation still advanced, but its display-row reconciliation was not queued. Use the Site
+operation record to identify the Site, reconcile its remaining active rows, and never reduce
+the Site generation. A partial Site-result row identifies a job that ran but could not update
+every projection.
 
 ## Conflict response
 

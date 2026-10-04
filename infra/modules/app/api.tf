@@ -102,6 +102,9 @@ locals {
     "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
     "GET /admin/v1/physical-devices/{physicalDeviceId}",
     "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke",
+    "GET /admin/v1/emergency-site-revocations/sites",
+    "POST /admin/v1/emergency-site-revocations:preview",
+    "POST /admin/v1/emergency-site-revocations",
     "GET /health",
   ]
 

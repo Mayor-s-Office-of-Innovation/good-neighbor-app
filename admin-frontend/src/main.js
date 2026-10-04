@@ -48,6 +48,8 @@ import { currentRoute, navigate } from "./router.js";
  * @property {string} perimeterError
  * @property {string} revocationMessage
  * @property {any | null} physicalDeviceRevocationPreview
+ * @property {any[]} emergencyRevocationSites
+ * @property {any | null} emergencyRevocationPreview
  */
 
 class AdminApp extends HTMLElement {
@@ -84,6 +86,8 @@ class AdminApp extends HTMLElement {
       perimeterError: "",
       revocationMessage: "",
       physicalDeviceRevocationPreview: null,
+      emergencyRevocationSites: [],
+      emergencyRevocationPreview: null,
     };
   }
 
@@ -119,6 +123,8 @@ class AdminApp extends HTMLElement {
       importApplyKey: "",
       revocationMessage: "",
       physicalDeviceRevocationPreview: null,
+      emergencyRevocationSites: [],
+      emergencyRevocationPreview: null,
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -440,6 +446,8 @@ class AdminApp extends HTMLElement {
     this.state.perimeterMessage = "";
     this.state.perimeterError = "";
     this.state.physicalDeviceRevocationPreview = null;
+    this.state.emergencyRevocationSites = [];
+    this.state.emergencyRevocationPreview = null;
     this.state.revocationMessage = "";
     this.render();
     try {
@@ -839,6 +847,48 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  async beginEmergencySiteRevocation() {
+    const result = await adminApi.listEmergencyRevocationSites();
+    this.state.emergencyRevocationSites = result.sites || [];
+    this.state.emergencyRevocationPreview = null;
+    this.render();
+    queueMicrotask(() =>
+      this.querySelector("#emergency-site-selection")?.focus(),
+    );
+  }
+
+  async previewEmergencySiteRevocation(form) {
+    const siteIds = new FormData(form)
+      .getAll("site-id")
+      .map((value) => String(value));
+    if (siteIds.length < 2 || siteIds.length > 20) {
+      this.state.error =
+        "Select between two and 20 Sites for an emergency revocation.";
+      this.render();
+      return;
+    }
+    this.state.emergencyRevocationPreview =
+      await adminApi.previewEmergencySiteRevocation(siteIds);
+    this.render();
+    queueMicrotask(() =>
+      this.querySelector("#emergency-revocation-confirmation")?.focus(),
+    );
+  }
+
+  async startEmergencySiteRevocation(form) {
+    const preview = this.state.emergencyRevocationPreview;
+    if (!preview) return;
+    const confirmation = formValue(new FormData(form), "confirmation");
+    const result = await adminApi.startEmergencySiteRevocation(
+      preview.sites.map((site) => site.siteId),
+      confirmation,
+    );
+    this.state.emergencyRevocationSites = [];
+    this.state.emergencyRevocationPreview = null;
+    this.state.revocationMessage = `Operation ${result.operationId}: credentials invalidated across ${result.affectedSiteCount} Sites; ${result.queuedSiteCount} Site reconciliation job${result.queuedSiteCount === 1 ? "" : "s"} queued${result.enqueueFailedCount ? ` and ${result.enqueueFailedCount} require runbook follow-up` : ""}.`;
+    this.render();
+  }
+
   /**
    * Bind event handlers to the currently rendered DOM.
    * @returns {void}
@@ -1120,6 +1170,46 @@ class AdminApp extends HTMLElement {
       () => {
         this.state.physicalDeviceRevocationPreview = null;
         this.render();
+      },
+    );
+    this.querySelector("#begin-emergency-site-revocation")?.addEventListener(
+      "click",
+      () => {
+        this.beginEmergencySiteRevocation().catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelector("#emergency-site-selection")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        this.previewEmergencySiteRevocation(event.currentTarget).catch(
+          (err) => {
+            this.state.error = err.message;
+            this.render();
+          },
+        );
+      },
+    );
+    this.querySelector("#emergency-site-confirmation")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        this.startEmergencySiteRevocation(event.currentTarget).catch((err) => {
+          this.state.error = err.message;
+          this.render();
+        });
+      },
+    );
+    this.querySelectorAll("[data-cancel-emergency-revocation]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          this.state.emergencyRevocationSites = [];
+          this.state.emergencyRevocationPreview = null;
+          this.render();
+        });
       },
     );
     this.querySelectorAll("[data-unassign-site-user]").forEach((button) => {
@@ -1431,7 +1521,8 @@ function siteAccessView(state) {
     ${managerGrantList(state.managerGrants)}
     <h3>Devices</h3>
     ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
-    <div class="row"><button id="revoke-selected-devices" class="btn-danger" type="button">Revoke selected</button><span class="muted">Up to 20 current bindings per operation.</span></div>
+    <div class="row"><div><button id="revoke-selected-devices" class="btn-danger" type="button">Revoke selected</button><button id="begin-emergency-site-revocation" class="btn-danger" type="button">Emergency revoke across Sites</button></div><span class="muted">Up to 20 current bindings or 20 Sites per operation.</span></div>
+    ${emergencySiteRevocationPanel(state)}
     <div class="list">${state.devices.map((device) => `<div class="row">${device.status === "revoked" || device.legacy ? "" : `<label><input type="checkbox" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}" /> Select ${escapeHtml(device.label || "device")}</label>`}<div><p><strong>${escapeHtml(device.label || device.bindingId || device.deviceId)}</strong> <span class="status-badge">${escapeHtml(device.status || "active")}</span></p><p class="muted">${escapeHtml(device.accessLevel || "general")} · ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}${device.enrolledAt ? ` · Enrolled ${escapeHtml(formatTimestamp(device.enrolledAt))}` : ""}${device.lastSeenAt ? ` · Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}` : ""}${device.absoluteExpiresAt ? ` · Expires ${escapeHtml(formatTimestamp(device.absoluteExpiresAt))}` : ""}${device.revokedAt ? ` · Revoked ${escapeHtml(formatTimestamp(device.revokedAt))}` : ""}${device.legacy ? " · Legacy device: revoke individually" : ""}</p></div>${device.status === "revoked" ? "" : `<div><button class="btn-danger" type="button" data-revoke-device="${escapeHtml(device.bindingId || device.deviceId)}">Revoke this Site binding</button>${device.physicalDeviceId && !device.legacy ? `<button class="btn-danger" type="button" data-revoke-physical-device="${escapeHtml(device.physicalDeviceId)}">Revoke physical device everywhere</button>` : ""}</div>`}</div>`).join("")}</div>
     ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
     <form id="revoke-all-site-devices" class="inline-form"><div><label for="revoke-all-confirmation">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke every device binding at this Site</label><input id="revoke-all-confirmation" name="confirmation" required autocomplete="off" /></div><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
@@ -1449,6 +1540,34 @@ function physicalDeviceRevocationConfirmation(preview) {
       <label for="physical-device-confirmation"><span>Type <strong>${escapeHtml(preview.label)}</strong> exactly to continue</span><input id="physical-device-confirmation" name="confirmation" required autocomplete="off" /></label>
     </fieldset>
     <div class="row"><button class="btn-danger" type="submit">Revoke physical device everywhere</button><button class="btn-secondary" id="cancel-physical-device-revocation" type="button">Cancel</button></div>
+  </form>`;
+}
+
+/** @param {AdminState} state */
+function emergencySiteRevocationPanel(state) {
+  const preview = state.emergencyRevocationPreview;
+  if (preview) {
+    return `<form id="emergency-site-confirmation" class="site-details-form" aria-labelledby="emergency-confirmation-title">
+      <fieldset><legend id="emergency-confirmation-title">Confirm emergency revocation across Sites</legend>
+        <p>Credentials will be invalidated immediately for every selected Site. Device records will then be reconciled in the background.</p>
+        ${preview.sites
+          .map(
+            (site) =>
+              `<section><h4>${escapeHtml(site.siteName)}</h4><p>${escapeHtml(site.bindings.length)} active binding${site.bindings.length === 1 ? "" : "s"}</p>${site.bindings.length ? `<ul>${site.bindings.map((binding) => `<li>${escapeHtml(binding.label || shortOpaqueId(binding.bindingId))} — ${escapeHtml(binding.legacy ? "legacy device" : binding.accessLevel)}</li>`).join("")}</ul>` : ""}</section>`,
+          )
+          .join("")}
+        <label for="emergency-revocation-confirmation"><span>Type <strong>${escapeHtml(preview.confirmation)}</strong> exactly to continue</span><input id="emergency-revocation-confirmation" name="confirmation" required autocomplete="off" /></label>
+      </fieldset>
+      <div class="row"><button class="btn-danger" type="submit">Invalidate credentials across Sites</button><button class="btn-secondary" type="button" data-cancel-emergency-revocation>Cancel</button></div>
+    </form>`;
+  }
+  if (!state.emergencyRevocationSites.length) return "";
+  return `<form id="emergency-site-selection" class="site-details-form" aria-labelledby="emergency-selection-title">
+    <fieldset><legend id="emergency-selection-title">Choose Sites for emergency revocation</legend>
+      <p>Select between 2 and 20 Sites. You will review every active binding before confirming.</p>
+      <div class="list">${state.emergencyRevocationSites.map((site) => `<label class="checkbox-label"><input type="checkbox" name="site-id" value="${escapeHtml(site.siteId)}" ${site.siteId === state.site?.siteId ? "checked" : ""} /> <span>${escapeHtml(site.siteName)}${site.providerName ? ` — ${escapeHtml(site.providerName)}` : ""}</span></label>`).join("")}</div>
+    </fieldset>
+    <div class="row"><button class="btn-danger" type="submit">Review affected devices</button><button class="btn-secondary" type="button" data-cancel-emergency-revocation>Cancel</button></div>
   </form>`;
 }
 

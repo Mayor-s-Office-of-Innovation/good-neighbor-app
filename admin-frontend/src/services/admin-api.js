@@ -263,6 +263,18 @@ export const adminApi = {
         body: JSON.stringify({ confirmation }),
       },
     ),
+  listEmergencyRevocationSites: () =>
+    adminFetch("/admin/v1/emergency-site-revocations/sites"),
+  previewEmergencySiteRevocation: (siteIds) =>
+    adminFetch("/admin/v1/emergency-site-revocations:preview", {
+      method: "POST",
+      body: JSON.stringify({ siteIds }),
+    }),
+  startEmergencySiteRevocation: (siteIds, confirmation) =>
+    adminFetch("/admin/v1/emergency-site-revocations", {
+      method: "POST",
+      body: JSON.stringify({ siteIds, confirmation }),
+    }),
   // Analytics (ADR 0013): the reporting lake, never the app database.
   /** The canned query catalog. */
   analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
