@@ -7,6 +7,7 @@ vi.mock("../db.js", () => ({ ddb: { send } }));
 const {
   claimTaskResolution,
   readTimeline,
+  readTaskUpdateMediaRegistration,
   readUpdateById,
   readUpdatePointer,
   releaseTaskResolution,
@@ -83,6 +84,38 @@ describe("task update store", () => {
     ).resolves.toBeNull();
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+  });
+
+  it("consistently reads both task-media idempotency records", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { artifactId: "photo-1" } })
+      .mockResolvedValueOnce({
+        Item: { mediaSk: "TASK#task-1#MEDIA#photo-1" },
+      });
+
+    await expect(
+      readTaskUpdateMediaRegistration({
+        tableName: "tasks",
+        siteId: "site-1",
+        checkId: "check-1",
+        taskId: "task-1",
+        artifactId: "photo-1",
+      }),
+    ).resolves.toEqual({
+      media: { artifactId: "photo-1" },
+      pointer: { mediaSk: "TASK#task-1#MEDIA#photo-1" },
+    });
+    expect(send.mock.calls[0][0].input).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "TASK#task-1#MEDIA#photo-1" },
+      ConsistentRead: true,
+    });
+    expect(send.mock.calls[1][0].input).toMatchObject({
+      Key: {
+        pk: "SITE#site-1",
+        sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",
+      },
+      ConsistentRead: true,
+    });
   });
 
   it("claims resolution before a non-idempotent external close", async () => {

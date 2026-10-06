@@ -174,6 +174,7 @@ describe("registerDevice", () => {
     expect(item.sk).toBe(`DEVICE#${body.deviceId}`);
     expect(item.tokenGeneration).toBe(1);
     expect(item.accessLevel).toBe("general");
+    expect(item.siteCredentialGeneration).toBe(0);
 
     // Access token claims carry the Cognito-shaped claim the handlers read.
     const claims = JSON.parse(
@@ -189,6 +190,48 @@ describe("registerDevice", () => {
       Buffer.from(body.refreshToken.split(".")[1], "base64").toString("utf8"),
     );
     expect(item.refreshJti).toBe(refreshClaims.jti);
+  });
+
+  it("pins a new legacy-code registration to the Site's current credential generation", async () => {
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 3 },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await callRegister({ code: "123456" });
+
+    expect(res.statusCode).toBe(201);
+    expect(putItem().siteCredentialGeneration).toBe(3);
+    const transact = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find((cmd) => cmd instanceof TransactWriteCommand);
+    expect(
+      /** @type {any} */ (transact).input.TransactItems[1].ConditionCheck
+        .ExpressionAttributeValues[":siteGeneration"],
+    ).toBe(3);
+  });
+
+  it("rejects registration when the Site generation changes after code validation", async () => {
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 3 },
+      })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ]),
+      );
+
+    const res = await callRegister({ code: "123456" });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe("invalid_site_code");
   });
 
   it("is idempotent for a known deviceId: bumps generation, keeps registration", async () => {
@@ -279,6 +322,9 @@ describe("refreshDeviceToken", () => {
           refreshJti: jti,
         },
       })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 0 },
+      })
       .mockResolvedValueOnce({}); // UpdateItem (rotation)
     return token;
   }
@@ -296,7 +342,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);
@@ -313,7 +359,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 3, refreshJti: "whatever" },
@@ -333,7 +379,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 2, refreshJti: `old-${jti}` },
@@ -349,7 +395,7 @@ describe("refreshDeviceToken", () => {
   it("rotates: bumps generation, stores the NEW jti, returns a fresh pair", async () => {
     const oldToken = await setupRefresh({ generation: 2 });
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: oldToken });
 
@@ -412,9 +458,12 @@ describe("refreshDeviceToken", () => {
           refreshJti: "legacy-jti",
         },
       })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 0 },
+      })
       .mockResolvedValueOnce({});
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken });
 
@@ -447,6 +496,40 @@ describe("refreshDeviceToken", () => {
     }
   });
 
+  it("rejects a generation-less legacy refresh after Site-wide revocation", async () => {
+    const refreshToken = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "refresh",
+      jti: "legacy-jti",
+      iat: 1000,
+      exp: 3000,
+    });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          deviceId: "dev-1",
+          siteId: "site-1",
+          tokenGeneration: 2,
+          refreshJti: "legacy-jti",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 1 },
+      });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body).reason).toBe("revoked_or_replayed");
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("expired refresh token → 401 expired", async () => {
     const { mintRefreshToken } = await import("../lib/device-token.js");
     const { token } = await mintRefreshToken(
@@ -454,7 +537,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 60 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);

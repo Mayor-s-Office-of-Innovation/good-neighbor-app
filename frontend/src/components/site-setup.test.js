@@ -13,6 +13,8 @@ import { t } from "../i18n/i18n.js";
 const setup = vi.hoisted(() => ({
   validateSetupCode: vi.fn(),
   registerDevice: vi.fn(),
+  redeemEnrollmentGrant: vi.fn(),
+  getSite: vi.fn(),
   setSite: vi.fn(),
 }));
 vi.mock("../services/onboarding.js", () => ({
@@ -23,24 +25,123 @@ vi.mock("../services/onboarding.js", () => ({
 }));
 vi.mock("../services/devices.js", () => ({
   registerDevice: setup.registerDevice,
+  redeemEnrollmentGrant: setup.redeemEnrollmentGrant,
 }));
-vi.mock("../db.js", () => ({ setSite: setup.setSite }));
+vi.mock("../db.js", () => ({
+  getSite: setup.getSite,
+  setSite: setup.setSite,
+}));
 
 let readCodeFromUrl;
+let readEnrollmentFromUrl;
 let stripCodeFromUrl;
+let stripEnrollmentFromUrl;
 let SiteSetup;
+let codeEntryView;
 beforeAll(async () => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("customElements", { get: () => true });
-  ({ readCodeFromUrl, stripCodeFromUrl, SiteSetup } = await import(
-    "./site-setup.js"
-  ));
+  ({
+    readCodeFromUrl,
+    readEnrollmentFromUrl,
+    stripCodeFromUrl,
+    stripEnrollmentFromUrl,
+    SiteSetup,
+  } = await import("./site-setup.js"));
+  ({ codeEntryView } = await import("./site-setup.templates.js"));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
   setup.validateSetupCode.mockReset();
   setup.registerDevice.mockReset();
+  setup.redeemEnrollmentGrant.mockReset();
+  setup.getSite.mockReset();
   setup.setSite.mockReset();
+});
+
+describe("Manager enrollment URLs", () => {
+  it("keeps manager enrollment controls off the login page", () => {
+    const markup = codeEntryView();
+    expect(markup).toContain("Welcome to Good Neighbor.");
+    expect(markup).toContain('id="code-input"');
+    expect(markup).toContain('id="continue"');
+    expect(markup).toContain("Need a new code?");
+    expect(markup).not.toContain("Site Manager access");
+    expect(markup).not.toContain("Enrollment link");
+    expect(markup).not.toContain("Camera app");
+  });
+
+  it("reads both secret fragment fields", () => {
+    vi.stubGlobal(
+      "location",
+      new URL(
+        "/#enrollment_grant=grant-1&enrollment_token=secret&section=setup",
+        "https://goodneighborsf.org",
+      ),
+    );
+    expect(readEnrollmentFromUrl()).toEqual({
+      grantId: "grant-1",
+      token: "secret",
+    });
+  });
+
+  it("removes enrollment secrets while preserving other fragment state", () => {
+    vi.stubGlobal(
+      "location",
+      new URL(
+        "/?theme=dark#enrollment_grant=grant-1&enrollment_token=secret&section=setup",
+        "https://goodneighborsf.org",
+      ),
+    );
+    const replaceState = vi.fn();
+    vi.stubGlobal("history", { replaceState });
+    stripEnrollmentFromUrl();
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      "",
+      "/?theme=dark#section=setup",
+    );
+  });
+
+  it("persists a redeemed Manager binding", async () => {
+    setup.getSite.mockResolvedValue({ physicalDeviceId: "physical-1" });
+    setup.redeemEnrollmentGrant.mockResolvedValue({
+      deviceId: "binding-1",
+      bindingId: "binding-1",
+      physicalDeviceId: "physical-1",
+      site: { siteId: "site-1", name: "Site One" },
+      token: "access",
+      refreshToken: "refresh",
+      expiresIn: 900,
+      tokenGeneration: 1,
+      accessLevel: "manager",
+    });
+    setup.setSite.mockResolvedValue({ siteId: "site-1" });
+    vi.stubGlobal("CustomEvent", class {});
+    const component = new SiteSetup();
+    component._cancelled = false;
+    component._checking = true;
+    component._committingSite = false;
+    component._render = vi.fn();
+    component.dispatchEvent = vi.fn();
+
+    await component._redeemEnrollment({ grantId: "grant-1", token: "secret" });
+
+    expect(setup.redeemEnrollmentGrant).toHaveBeenCalledWith(
+      "grant-1",
+      "secret",
+      { physicalDeviceId: "physical-1" },
+    );
+    expect(setup.setSite).toHaveBeenCalledWith(
+      "Site One",
+      expect.objectContaining({
+        bindingId: "binding-1",
+        physicalDeviceId: "physical-1",
+        accessLevel: "manager",
+      }),
+    );
+    expect(component.dispatchEvent).toHaveBeenCalledOnce();
+  });
 });
 
 describe("setup code URLs", () => {

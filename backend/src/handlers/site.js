@@ -82,7 +82,7 @@ export const getSite = async (event) => {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const getSiteAdmin = async (event) => {
-  if (deriveAccessLevel(event) !== "admin") {
+  if (deriveAccessLevel(event) !== "manager") {
     return jsonResponse(403, { error: "admin_access_required" });
   }
   const site = await loadSite(deriveSiteId(event));
@@ -97,7 +97,7 @@ export const getSiteAdmin = async (event) => {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const updateSiteAdmin = async (event) => {
-  if (deriveAccessLevel(event) !== "admin") {
+  if (deriveAccessLevel(event) !== "manager") {
     return jsonResponse(403, { error: "admin_access_required" });
   }
   let body;

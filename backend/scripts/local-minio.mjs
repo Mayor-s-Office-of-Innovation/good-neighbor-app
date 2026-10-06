@@ -11,7 +11,7 @@
 // against MinIO. MinIO requires user >= 3 chars and password >= 8 chars, so those
 // env values must satisfy that (see .env.example).
 
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createWriteStream } from "node:fs";
@@ -28,17 +28,6 @@ const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const localDir = join(backendDir, ".local");
 const binPath = join(localDir, "minio");
 const dataDir = join(localDir, "minio-data");
-
-/**
- * @returns {Promise<string | null>}
- */
-async function installedBinary() {
-  return new Promise((resolve) => {
-    execFile("/bin/sh", ["-lc", "command -v minio"], (err, stdout) => {
-      resolve(err ? null : stdout.trim() || null);
-    });
-  });
-}
 
 /**
  * Map Node's platform/arch to MinIO's release asset segment (`<os>-<arch>`).
@@ -134,9 +123,11 @@ async function main() {
     );
   }
 
-  const installed = await installedBinary();
-  const minioBin = installed ?? binPath;
-  if (!installed) await ensureBinary();
+  // Always use the checksum-verified pinned release. A system-installed MinIO
+  // may be older or have incompatible conditional-PUT behavior; presigned
+  // uploads rely on If-None-Match to prevent overwrites.
+  await ensureBinary();
+  const minioBin = binPath;
   await mkdir(dataDir, { recursive: true });
 
   // A MinIO may already be bound to the port (an earlier `npm run dev` that

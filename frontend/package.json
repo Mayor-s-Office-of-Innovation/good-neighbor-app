@@ -18,12 +18,12 @@
     {
       "name": "main js",
       "path": "dist/assets/index-*.js",
-      "limit": "80 kB"
+      "limit": "77 kB"
     },
     {
       "name": "site admin js",
       "path": "dist/assets/site-admin-*.js",
-      "limit": "7 kB"
+      "limit": "9 kB"
     },
     {
       "name": "main css",

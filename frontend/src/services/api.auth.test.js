@@ -99,6 +99,32 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     );
   });
 
+  it("silently refreshes an API Gateway authorizer 403", async () => {
+    const fetch = stubFetch([
+      { status: 403, body: { message: "Forbidden" } },
+      { status: 200, body: { checks: [] } },
+    ]);
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(listChecks()).resolves.toMatchObject({ checks: [] });
+    expect(refreshDeviceToken).toHaveBeenCalledWith("refresh-1");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refresh an application-level 403", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubFetch([{ status: 403, body: { error: "admin_access_required" } }]),
+    );
+
+    await expect(listChecks()).rejects.toMatchObject({
+      status: 403,
+      body: { error: "admin_access_required" },
+    });
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("maps a rejected refresh (401) to ReauthRequiredError", async () => {
     vi.stubGlobal("fetch", stubFetch([{ status: 401 }]));
     vi.mocked(refreshDeviceToken).mockRejectedValue(
@@ -230,6 +256,19 @@ describe("request auth flow (listChecks as the vehicle)", () => {
 
     await expect(listChecks()).rejects.toBeInstanceOf(ReauthRequiredError);
     // One refresh only — the retry leg never re-arms the auth path.
+    expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a second authorizer 403 on the retry leg to ReauthRequiredError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      stubFetch([
+        { status: 403, body: { message: "Forbidden" } },
+        { status: 403, body: { message: "Forbidden" } },
+      ]),
+    );
+
+    await expect(listChecks()).rejects.toBeInstanceOf(ReauthRequiredError);
     expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
   });
 

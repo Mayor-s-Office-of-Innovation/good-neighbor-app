@@ -2,7 +2,7 @@
 
 **Scope:** the in-app "Send feedback" sheet (`frontend/src/components/feedback-dialog.js`) →
 `POST /v1/feedback` → intake Lambda (`backend/src/lambda/intake.js`, shared with the
-client-error and client-event intakes) → PostHog Surveys. 
+client-error and client-event intakes) → PostHog Surveys.
 
 CloudWatch carries **metadata only**. While forwarding is off, submitted text is
 discarded at intake because we don't want to risk recording sensitive information in 

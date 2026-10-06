@@ -14,6 +14,15 @@ locals {
     # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
+    "POST /app/v1/enrollment/redeem",
+    "POST /app/v1/manager-access/request",
+    "GET /app/v1/device-bindings",
+    "POST /app/v1/device-bindings/select",
+    "POST /app/v1/manager/staff-grants",
+    "GET /app/v1/manager/staff-grants/current",
+    "DELETE /app/v1/manager/staff-grants/{grantId}",
+    "GET /app/v1/manager/device-bindings",
+    "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
     "GET /v1/sites:search",
     "POST /v1/setup-codes:request",
     # Site config
@@ -50,8 +59,41 @@ locals {
     "GET /admin/v1/providers/{providerId}",
     "PATCH /admin/v1/providers/{providerId}",
     "DELETE /admin/v1/providers/{providerId}",
+    "GET /admin/v1/programs",
+    "GET /admin/v1/program-managers",
+    "POST /admin/v1/program-managers",
+    "GET /admin/v1/oversight-options",
+    "POST /admin/v1/oversight-options",
+    "POST /admin/v1/address-suggestions",
+    "POST /admin/v1/programs",
+    "GET /admin/v1/programs/{programId}",
+    "PATCH /admin/v1/programs/{programId}",
+    "DELETE /admin/v1/programs/{programId}",
+    "POST /admin/v1/programs/{programId}/users",
+    "PATCH /admin/v1/programs/{programId}/users/{userId}",
+    "DELETE /admin/v1/programs/{programId}/users/{userId}",
+    "POST /admin/v1/providers/{providerId}/programs",
     "POST /admin/v1/providers/{providerId}/sites",
     "GET /admin/v1/sites/{siteId}",
+    "POST /admin/v1/sites/{siteId}/reassign",
+    "POST /admin/v1/sites/{siteId}/users",
+    "DELETE /admin/v1/sites/{siteId}/users/{userId}",
+    "GET /admin/v1/sites/{siteId}/terms",
+    "POST /admin/v1/sites/{siteId}/terms",
+    "GET /admin/v1/sites/{siteId}/perimeter",
+    "PUT /admin/v1/sites/{siteId}/perimeter",
+    "GET /admin/v1/sites/{siteId}/manager-memberships",
+    "POST /admin/v1/sites/{siteId}/manager-memberships",
+    "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    "DELETE /admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    "GET /admin/v1/sites/{siteId}/grants",
+    "POST /admin/v1/sites/{siteId}/manager-grants",
+    "DELETE /admin/v1/sites/{siteId}/grants/{grantId}",
+    "POST /admin/v1/site-imports/preview",
+    "GET /admin/v1/site-imports",
+    "POST /admin/v1/site-imports/{importId}/apply",
+    "GET /admin/v1/site-imports/{importId}",
+    "GET /admin/v1/site-imports/{importId}/conflicts.csv",
     "PATCH /admin/v1/sites/{siteId}",
     "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",
@@ -64,6 +106,14 @@ locals {
     "POST /admin/v1/sites/{siteId}/setup-codes",
     "GET /admin/v1/sites/{siteId}/devices",
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
+    "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend",
+    "GET /admin/v1/physical-devices/{physicalDeviceId}",
+    "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke",
+    "GET /admin/v1/emergency-site-revocations/sites",
+    "POST /admin/v1/emergency-site-revocations:preview",
+    "POST /admin/v1/emergency-site-revocations",
     "GET /health",
   ]
 
@@ -90,13 +140,22 @@ locals {
   # `route_is_open[x]`. (The intakes above are open too, on their own route
   # resource.)
   route_is_open = {
-    "POST /site-code"                = true
-    "POST /v1/devices"               = true
-    "POST /v1/devices/token:refresh" = true
-    "GET /v1/sites:search"           = true
-    "POST /v1/setup-codes:request"   = true
-    "GET /health"                    = true
-    "POST /submissions"              = true
+    "POST /site-code"                     = true
+    "POST /v1/devices"                    = true
+    "POST /v1/devices/token:refresh"      = true
+    "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/manager-access/request" = true
+    "GET /v1/sites:search"                = true
+    "POST /v1/setup-codes:request"        = true
+    "GET /health"                         = true
+    "POST /submissions"                   = true
+  }
+
+  # Route keys are "METHOD /path". Determine admin scope from the path rather
+  # than enumerating methods so new PUT/HEAD/etc. admin routes fail closed onto
+  # Cognito instead of accidentally receiving the device authorizer.
+  route_is_admin = {
+    for route in local.api_routes : route => can(regex("^[A-Z]+ /admin/", route))
   }
 }
 
@@ -146,8 +205,8 @@ resource "aws_apigatewayv2_integration" "analytics_query" {
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
 # the claim-shaped context handlers read. Identity source = the Authorization
-# header, so API Gateway caches verdicts per token; the TTL bounds revocation
-# propagation.
+# header. Results are deliberately not cached: device revocation is a security
+# boundary and must take effect on the next request.
 resource "aws_apigatewayv2_authorizer" "device_token" {
   api_id                            = aws_apigatewayv2_api.http.id
   name                              = "${local.name_prefix}-device-token"
@@ -159,7 +218,7 @@ resource "aws_apigatewayv2_authorizer" "device_token" {
   # context }) — without this flag API Gateway expects an IAM policy and
   # rejects the verdict at runtime.
   enable_simple_responses          = true
-  authorizer_result_ttl_in_seconds = 60
+  authorizer_result_ttl_in_seconds = 0
 }
 
 resource "aws_apigatewayv2_route" "routes" {
@@ -180,8 +239,8 @@ resource "aws_apigatewayv2_route" "routes" {
   # unlisted route as protected — a bare map lookup on an absent key is a hard
   # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
-  authorization_type = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? "JWT" : "CUSTOM"
-  authorizer_id      = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+  authorization_type = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? "JWT" : "CUSTOM"
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
 }
 
 # Admin analytics routes: always the admin JWT authorizer, always the

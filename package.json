@@ -19,6 +19,8 @@
     "test:e2e": "npm run e2e -w e2e",
     "dev": "npm run dev --workspace backend",
     "dev:frontend": "npm run dev --workspace frontend",
+    "dev:admin": "vite --config admin-frontend/vite.config.js --host 127.0.0.1 --port 5175",
+    "build:admin": "vite build --config admin-frontend/vite.config.js",
     "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",
     "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate"
   },

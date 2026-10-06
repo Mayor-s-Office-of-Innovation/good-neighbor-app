@@ -250,11 +250,6 @@ class AdminAnalytics extends HTMLElement {
           </div>
           ${s.hasToken ? '<button id="clear-token" type="button">Sign out</button>' : ""}
         </header>
-        ${
-          getAdminConfig().localDebugAdmin
-            ? '<p class="muted">Local debug admin mode is active.</p>'
-            : ""
-        }
         ${s.hasToken ? "" : renderSignIn(s)}
         ${s.error ? `<p class="error" role="alert">${escapeHtml(s.error)}</p>` : ""}
         ${s.hasToken ? renderWorkspace(s) : ""}

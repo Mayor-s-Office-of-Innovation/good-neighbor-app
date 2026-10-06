@@ -14,7 +14,8 @@ variable "alarm_emails" {
 }
 
 locals {
-  error_namespace = "${local.name_prefix}-errors"
+  error_namespace    = "${local.name_prefix}-errors"
+  security_namespace = "${local.name_prefix}-security"
 }
 
 resource "aws_sns_topic" "alarms" {
@@ -324,6 +325,66 @@ resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "media_rejected" {
+  name           = "${local.name_prefix}-media-rejected"
+  log_group_name = aws_cloudwatch_log_group.worker.name
+  pattern        = "{ $.marker = \"MediaRejected\" }"
+
+  metric_transformation {
+    name          = "MediaRejected"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "media_rejected" {
+  alarm_name          = "${local.name_prefix}-media-rejected"
+  alarm_description   = "Uploaded media repeatedly failed byte, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "MediaRejected"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "media_quota_exceeded" {
+  name           = "${local.name_prefix}-media-quota-exceeded"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"MediaQuotaExceeded\" }"
+
+  metric_transformation {
+    name          = "MediaQuotaExceeded"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
+  alarm_name          = "${local.name_prefix}-media-quota-exceeded"
+  alarm_description   = "A device, check, Site, or global media quota is repeatedly exhausted. Follow docs/runbooks/media-safeguards.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "MediaQuotaExceeded"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
 # 311 app actions return a stored failure result rather than throwing. Capture
 # that explicit operational event from both execution paths: automatic filings
 # run in the worker, while user-confirmed filings run in the API Lambda.
@@ -383,6 +444,159 @@ resource "aws_cloudwatch_metric_alarm" "server_error_rate" {
   namespace           = local.error_namespace
   metric_name         = "ServerError"
   statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# --- Manager access recovery (docs/runbooks/manager-access.md) ---------------
+
+resource "aws_cloudwatch_log_metric_filter" "manager_access_throttled" {
+  name           = "${local.name_prefix}-manager-access-throttled"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerAccessThrottled\" }"
+
+  metric_transformation {
+    name          = "ManagerAccessThrottled"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_throttled" {
+  alarm_name          = "${local.name_prefix}-manager-access-throttled"
+  alarm_description   = "Manager recovery requests are repeatedly hitting application limits. Triage with docs/runbooks/manager-access.md; do not identify users from request logs."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerAccessThrottled"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 10
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "manager_access_delivery_failed" {
+  name           = "${local.name_prefix}-manager-access-delivery-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerAccessDelivery\" && $.status = \"failed\" }"
+
+  metric_transformation {
+    name          = "ManagerAccessDeliveryFailed"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_delivery_failed" {
+  alarm_name          = "${local.name_prefix}-manager-access-delivery-failed"
+  alarm_description   = "A Site Manager recovery email failed delivery. Inspect safe ManagerAccessDelivery and manager_access_email metadata using docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerAccessDeliveryFailed"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
+  alarm_name          = "${local.name_prefix}-manager-access-waf-blocked"
+  alarm_description   = "The WAF ManagerAccessRateLimit rule is blocking a burst of public recovery requests. Triage with docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "BlockedRequests"
+  namespace           = "AWS/WAFV2"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 10
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Region = "Global"
+    Rule   = "ManagerAccessRateLimit"
+    WebACL = aws_wafv2_web_acl.web.name
+  }
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "manager_security_notification_failed" {
+  name           = "${local.name_prefix}-manager-security-notification-failed"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"ManagerSecurityNotification\" && $.status = \"failed\" }"
+
+  metric_transformation {
+    name          = "ManagerSecurityNotificationFailed"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "manager_security_notification_failed" {
+  alarm_name          = "${local.name_prefix}-manager-security-notification-failed"
+  alarm_description   = "A post-enrollment Site Manager security notification failed. Enrollment remains valid; restore delivery and follow docs/runbooks/manager-access.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ManagerSecurityNotificationFailed"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "revocation_operation_partial" {
+  name           = "${local.name_prefix}-revocation-operation-partial"
+  log_group_name = aws_cloudwatch_log_group.api.name
+  pattern        = "{ $.marker = \"RevocationOperationPartial\" }"
+
+  metric_transformation {
+    name          = "RevocationOperationPartial"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
+  alarm_name          = "${local.name_prefix}-revocation-operation-partial"
+  alarm_description   = "A Site-wide revocation invalidated canonical credentials but did not reconcile every display/legacy record. Follow docs/runbooks/device-revocation.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "RevocationOperationPartial"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
   treat_missing_data  = "notBreaching"
 
   alarm_actions = [aws_sns_topic.alarms.arn]

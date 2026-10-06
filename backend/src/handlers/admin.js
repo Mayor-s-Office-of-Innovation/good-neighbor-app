@@ -6,6 +6,14 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import {
+  AdminAddUserToGroupCommand,
+  AdminCreateUserCommand,
+  AdminGetUserCommand,
+  AdminUpdateUserAttributesCommand,
+  CognitoIdentityProviderClient,
+  ListUsersCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
@@ -26,6 +34,161 @@ import {
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
 import { adminOnly } from "../lib/admin-auth.js";
+
+const cognito = new CognitoIdentityProviderClient({});
+
+/** GET /admin/v1/program-managers — directory of Cognito users marked as City program managers. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const listCityProgramManagers = (event) =>
+  adminOnly(event, async () => {
+    const userPoolId = getConfig().cognitoUserPoolId;
+    if (!userPoolId) {
+      const items = await queryAll({
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
+      });
+      return jsonResponse(200, {
+        programManagers: items.map(publicProgramManager),
+      });
+    }
+    /** @type {any[]} */
+    const programManagers = [];
+    let paginationToken;
+    do {
+      const result =
+        /** @type {import("@aws-sdk/client-cognito-identity-provider").ListUsersCommandOutput} */ (
+          await cognito.send(
+            new ListUsersCommand({
+              UserPoolId: userPoolId,
+              Limit: 60,
+              ...(paginationToken ? { PaginationToken: paginationToken } : {}),
+            }),
+          )
+        );
+      for (const user of result.Users || []) {
+        const attributes = Object.fromEntries(
+          (user.Attributes || []).map((attribute) => [
+            attribute.Name,
+            attribute.Value,
+          ]),
+        );
+        if (
+          user.Enabled === false ||
+          attributes["custom:program_manager"] !== "true"
+        )
+          continue;
+        const name =
+          [attributes.given_name, attributes.family_name]
+            .filter(Boolean)
+            .join(" ") ||
+          attributes.name ||
+          attributes.email ||
+          user.Username;
+        programManagers.push({
+          userId: attributes.sub || user.Username,
+          name,
+          email: attributes.email || "",
+        });
+      }
+      paginationToken = result.PaginationToken;
+    } while (paginationToken);
+    programManagers.sort((a, b) => a.name.localeCompare(b.name));
+    return jsonResponse(200, { programManagers });
+  });
+
+/** POST /admin/v1/program-managers — invite a Cognito admin marked as a Program manager. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const createCityProgramManager = (event) =>
+  adminOnly(event, async (body) => {
+    const firstName = cleanText(body.firstName);
+    const lastName = cleanText(body.lastName);
+    const email = cleanText(body.email).toLowerCase();
+    if (!firstName || !lastName) {
+      return jsonResponse(400, { error: "name_required" });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return jsonResponse(400, { error: "valid_email_required" });
+    }
+    const userPoolId = getConfig().cognitoUserPoolId;
+    if (!userPoolId) {
+      const now = new Date().toISOString();
+      const item = {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: `MANAGER#${email}`,
+        type: "cityProgramManager",
+        userId: randomUUID(),
+        firstName,
+        lastName,
+        name: `${firstName} ${lastName}`,
+        email,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await ddb.send(
+        new PutCommand({
+          TableName: getDynamoTableName(),
+          Item: item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+      return jsonResponse(201, { programManager: publicProgramManager(item) });
+    }
+    const attributes = [
+      { Name: "email", Value: email },
+      { Name: "email_verified", Value: "true" },
+      { Name: "given_name", Value: firstName },
+      { Name: "family_name", Value: lastName },
+      { Name: "name", Value: `${firstName} ${lastName}` },
+      { Name: "custom:program_manager", Value: "true" },
+    ];
+    try {
+      await cognito.send(
+        new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: email,
+          DesiredDeliveryMediums: ["EMAIL"],
+          UserAttributes: attributes,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "UsernameExistsException") {
+        await cognito.send(
+          new AdminUpdateUserAttributesCommand({
+            UserPoolId: userPoolId,
+            Username: email,
+            UserAttributes: attributes,
+          }),
+        );
+      } else {
+        throw error;
+      }
+    }
+    await cognito.send(
+      new AdminAddUserToGroupCommand({
+        UserPoolId: userPoolId,
+        Username: email,
+        GroupName: "central-admin",
+      }),
+    );
+    const user = await cognito.send(
+      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }),
+    );
+    const userAttributes = Object.fromEntries(
+      (user.UserAttributes || []).map((attribute) => [
+        attribute.Name,
+        attribute.Value,
+      ]),
+    );
+    return jsonResponse(201, {
+      programManager: {
+        userId: userAttributes.sub || user.Username || email,
+        name: `${firstName} ${lastName}`,
+        email,
+      },
+    });
+  });
 
 /**
  * GET /admin/v1/providers
@@ -140,11 +303,6 @@ export const deactivateProvider = (event) =>
   adminOnly(event, async () => {
     const providerId = event.pathParameters?.providerId ?? "";
     const now = new Date().toISOString();
-    const memberships = await listProviderSiteMemberships(providerId);
-    const activeMemberships = memberships.filter(
-      (membership) => membership.status !== "inactive",
-    );
-    await deactivateProviderSites(providerId, activeMemberships, now);
     const res = await ddb.send(
       new UpdateCommand({
         TableName: getDynamoTableName(),
@@ -164,15 +322,6 @@ export const deactivateProvider = (event) =>
         TableName: getDynamoTableName(),
         Key: { pk: "PROVIDER_SEARCH#ACTIVE", sk: providerId },
       }),
-    );
-    await Promise.all(
-      activeMemberships.map((membership) =>
-        cleanupDeactivatedSite(
-          String(membership.siteId),
-          "provider_deactivated",
-          now,
-        ),
-      ),
     );
     return jsonResponse(200, { provider: res.Attributes });
   });
@@ -197,6 +346,57 @@ export const createSite = (event) =>
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
+    const leadProgramId = cleanText(body.leadProgramId);
+    const primaryContactUserId = cleanText(body.primaryContactUserId);
+    const addressParts =
+      body.addressParts === undefined
+        ? null
+        : normalizeAddressParts(body.addressParts);
+    if (body.addressParts !== undefined && !addressParts) {
+      return jsonResponse(400, { error: "invalid_address" });
+    }
+    const publicContact =
+      body.publicContact === undefined
+        ? null
+        : normalizePublicContact(body.publicContact);
+    if (body.publicContact !== undefined && !publicContact) {
+      return jsonResponse(400, { error: "invalid_public_contact" });
+    }
+    let program = null;
+    let primaryContact = null;
+    if (leadProgramId) {
+      const result = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
+        }),
+      );
+      program = result.Item;
+      if (
+        !program ||
+        program.status === "inactive" ||
+        program.providerId !== providerId
+      ) {
+        return jsonResponse(400, { error: "incompatible_program" });
+      }
+      if (primaryContactUserId) {
+        const user = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: {
+              pk: `PROGRAM#${leadProgramId}`,
+              sk: `USER#${primaryContactUserId}`,
+            },
+          }),
+        );
+        primaryContact = user.Item;
+        if (!primaryContact || primaryContact.status === "inactive") {
+          return jsonResponse(400, { error: "invalid_internal_site_contact" });
+        }
+      }
+    } else if (primaryContactUserId) {
+      return jsonResponse(400, { error: "site_program_required" });
+    }
     const geocoded = await geocodeSiteAddress(address);
     if (geocoded instanceof GeocodingError) {
       return jsonResponse(422, { error: geocoded.code });
@@ -219,8 +419,22 @@ export const createSite = (event) =>
         longitude: geocoded.longitude,
       },
       geocodedAddress: geocoded.matchedAddress,
+      ...(addressParts ? { addressParts } : {}),
+      ...(publicContact ? { publicContact } : {}),
       providerId,
       providerName: provider.Item.name,
+      ...(program ? { leadProgramId, programName: String(program.name) } : {}),
+      ...(primaryContact
+        ? {
+            primaryContactUserId,
+            primaryContact: {
+              firstName: primaryContact.firstName,
+              lastName: primaryContact.lastName,
+              phone: primaryContact.phone,
+              email: primaryContact.email,
+            },
+          }
+        : {}),
       providerSiteId,
       status: "active",
       createdAt: now,
@@ -240,41 +454,108 @@ export const createSite = (event) =>
       updatedAt: now,
     };
     const tableName = getDynamoTableName();
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const transactItems = [
+      {
+        Put: {
+          TableName: tableName,
+          Item: site,
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: membership,
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: siteSearchItem(
+            siteId,
+            name,
+            providerId,
+            provider.Item.name,
+            providerSiteId,
+            now,
+          ),
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      },
+    ];
+    if (program) {
+      transactItems.push({
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROGRAM#${leadProgramId}`,
+            sk: `SITE#${siteId}`,
+            type: "programSiteMembership",
+            programId: leadProgramId,
+            programName: program.name,
+            siteId,
+            siteName: name,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+        },
+      });
+    }
+    if (primaryContact) {
+      transactItems.push(
+        {
+          Put: {
+            TableName: tableName,
+            Item: {
+              pk: `SITE#${siteId}`,
+              sk: `ASSIGNED_USER#${primaryContactUserId}`,
+              type: "siteUserAssignment",
+              siteId,
+              programId: leadProgramId,
+              userId: primaryContactUserId,
+              firstName: primaryContact.firstName,
+              lastName: primaryContact.lastName,
+              phone: primaryContact.phone,
+              email: primaryContact.email,
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            },
+            ConditionExpression:
+              "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+          },
+        },
+        {
+          Update: {
+            TableName: tableName,
+            Key: {
+              pk: `PROGRAM#${leadProgramId}`,
+              sk: `USER#${primaryContactUserId}`,
+            },
+            UpdateExpression:
+              "ADD siteAssignmentCount :one SET updatedAt = :now",
+            ConditionExpression: "attribute_exists(pk) AND #status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":one": 1,
+              ":now": now,
+              ":active": "active",
+            },
+          },
+        },
+      );
+    }
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [
-          {
-            Put: {
-              TableName: tableName,
-              Item: site,
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: tableName,
-              Item: membership,
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-          {
-            Put: {
-              TableName: tableName,
-              Item: siteSearchItem(
-                siteId,
-                name,
-                providerId,
-                provider.Item.name,
-                providerSiteId,
-                now,
-              ),
-              ConditionExpression:
-                "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-            },
-          },
-        ],
+        TransactItems: transactItems,
       }),
     );
     return jsonResponse(201, { site });
@@ -296,6 +577,173 @@ export const getAdminSite = (event) =>
     );
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
     return jsonResponse(200, { items: res.Items });
+  });
+
+/**
+ * POST /admin/v1/sites/{siteId}/reassign
+ * Changes only the Site's Provider/Program relationships. Site identity,
+ * device credentials, checks, tasks, and access generations are untouched.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const reassignSite = (event) =>
+  adminOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const providerId = cleanText(body.providerId);
+    const leadProgramId = cleanText(body.leadProgramId);
+    if (!providerId || !leadProgramId) {
+      return jsonResponse(400, { error: "provider_and_program_required" });
+    }
+    const tableName = getDynamoTableName();
+    const [siteResult, providerResult, programResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${providerId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
+        }),
+      ),
+    ]);
+    const site = siteResult.Item;
+    const provider = providerResult.Item;
+    const program = programResult.Item;
+    if (!site || site.status === "inactive") {
+      return jsonResponse(404, { error: "site_not_found" });
+    }
+    if (!provider || provider.status === "inactive") {
+      return jsonResponse(404, { error: "provider_not_found" });
+    }
+    if (
+      !program ||
+      program.status === "inactive" ||
+      program.providerId !== providerId
+    ) {
+      return jsonResponse(400, { error: "incompatible_program" });
+    }
+    if (
+      site.providerId === providerId &&
+      site.leadProgramId === leadProgramId
+    ) {
+      return jsonResponse(200, { site, unchanged: true });
+    }
+    const now = new Date().toISOString();
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const items = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          UpdateExpression:
+            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now REMOVE programMigrationRunId",
+          ConditionExpression: site.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
+            : "attribute_exists(pk)",
+          ExpressionAttributeValues: {
+            ":providerId": providerId,
+            ":providerName": provider.name,
+            ":programId": leadProgramId,
+            ":programName": program.name,
+            ":now": now,
+            ...(site.updatedAt ? { ":expectedUpdatedAt": site.updatedAt } : {}),
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROVIDER#${providerId}`,
+            sk: `SITE#${siteId}`,
+            type: "providerSiteMembership",
+            providerId,
+            providerName: provider.name,
+            siteId,
+            siteName: site.name,
+            providerSiteId: site.providerSiteId,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `PROGRAM#${leadProgramId}`,
+            sk: `SITE#${siteId}`,
+            type: "programSiteMembership",
+            programId: leadProgramId,
+            programName: program.name,
+            siteId,
+            siteName: site.name,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      },
+      {
+        Put: {
+          TableName: tableName,
+          Item: siteSearchItem(
+            siteId,
+            String(site.name),
+            providerId,
+            String(provider.name),
+            String(site.providerSiteId ?? ""),
+            now,
+          ),
+        },
+      },
+    ];
+    if (site.providerId && site.providerId !== providerId) {
+      items.push({
+        Delete: {
+          TableName: tableName,
+          Key: { pk: `PROVIDER#${site.providerId}`, sk: `SITE#${siteId}` },
+        },
+      });
+    }
+    if (site.leadProgramId && site.leadProgramId !== leadProgramId) {
+      items.push({
+        Delete: {
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: `SITE#${siteId}` },
+        },
+      });
+    }
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "site_reassignment_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      site: {
+        ...site,
+        providerId,
+        providerName: provider.name,
+        leadProgramId,
+        programName: program.name,
+        updatedAt: now,
+      },
+    });
   });
 
 const COMPLIANCE_LETTER_CONTENT_TYPE = "application/pdf";
@@ -390,6 +838,34 @@ export const updateSite = (event) =>
     if (body.contactPerson !== undefined && !contactPerson) {
       return jsonResponse(400, { error: "invalid_contact_person" });
     }
+    const publicContact =
+      body.publicContact === undefined
+        ? null
+        : normalizePublicContact(body.publicContact);
+    if (body.publicContact !== undefined && !publicContact) {
+      return jsonResponse(400, { error: "invalid_public_contact" });
+    }
+    const primaryContactUserId =
+      body.primaryContactUserId === undefined
+        ? undefined
+        : String(body.primaryContactUserId || "").trim();
+    /** @type {Record<string, unknown> | undefined} */
+    let selectedPrimaryContact;
+    if (primaryContactUserId) {
+      const assigned = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `SITE#${siteId}`,
+            sk: `ASSIGNED_USER#${primaryContactUserId}`,
+          },
+        }),
+      );
+      if (!assigned.Item || assigned.Item.programId !== site.leadProgramId) {
+        return jsonResponse(400, { error: "invalid_internal_site_contact" });
+      }
+      selectedPrimaryContact = assigned.Item;
+    }
     const oversight =
       body.oversight === undefined ? null : normalizeOversight(body.oversight);
     if (body.oversight !== undefined && !oversight) {
@@ -458,6 +934,10 @@ export const updateSite = (event) =>
       ...(address ? { address } : {}),
       ...(addressParts ? { addressParts } : {}),
       ...(contactPerson ? { contactPerson } : {}),
+      ...(publicContact ? { publicContact } : {}),
+      ...(primaryContactUserId !== undefined
+        ? { primaryContactUserId: primaryContactUserId || undefined }
+        : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
       ...(perimeter !== null ? { perimeter } : {}),
@@ -474,6 +954,7 @@ export const updateSite = (event) =>
       updatedAt: now,
     };
     const setExpressions = ["#name = :name", "updatedAt = :now"];
+    const removeExpressions = [];
     /** @type {Record<string, unknown>} */
     const expressionAttributeValues = {
       ":name": name,
@@ -500,6 +981,28 @@ export const updateSite = (event) =>
       setExpressions.push("contactPerson = :contactPerson");
       expressionAttributeValues[":contactPerson"] = contactPerson;
     }
+    if (publicContact) {
+      setExpressions.push("publicContact = :publicContact");
+      expressionAttributeValues[":publicContact"] = publicContact;
+    }
+    if (primaryContactUserId !== undefined) {
+      if (primaryContactUserId) {
+        setExpressions.push(
+          "primaryContactUserId = :primaryContactUserId",
+          "primaryContact = :primaryContact",
+        );
+        expressionAttributeValues[":primaryContactUserId"] =
+          primaryContactUserId;
+        expressionAttributeValues[":primaryContact"] = {
+          firstName: selectedPrimaryContact?.firstName || "",
+          lastName: selectedPrimaryContact?.lastName || "",
+          email: selectedPrimaryContact?.email || "",
+          phone: selectedPrimaryContact?.phone || "",
+        };
+      } else {
+        removeExpressions.push("primaryContactUserId", "primaryContact");
+      }
+    }
     if (oversight) {
       setExpressions.push("oversight = :oversight");
       expressionAttributeValues[":oversight"] = oversight;
@@ -522,7 +1025,7 @@ export const updateSite = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression: `SET ${setExpressions.join(", ")}`,
+          UpdateExpression: `SET ${setExpressions.join(", ")}${removeExpressions.length ? ` REMOVE ${removeExpressions.join(", ")}` : ""}`,
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
@@ -683,6 +1186,19 @@ export const deactivateSite = (event) =>
                 },
               ]
             : []),
+          ...(site.leadProgramId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `PROGRAM#${site.leadProgramId}`,
+                      sk: `SITE#${siteId}`,
+                    },
+                  },
+                },
+              ]
+            : []),
           {
             Delete: {
               TableName: tableName,
@@ -766,17 +1282,31 @@ export const issueAdminSetupCode = (event) =>
 export const listDevices = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const res = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
+    const [bindings, legacyDevices] = await Promise.all([
+      queryAll({
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":binding": "DEVICE_BINDING#",
+        },
+      }),
+      queryAll({
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
         ExpressionAttributeValues: {
           ":pk": `SITE#${siteId}`,
           ":device": "DEVICE#",
         },
       }),
-    );
-    return jsonResponse(200, { devices: res.Items ?? [] });
+    ]);
+    const canonicalIds = new Set(bindings.map((item) => item.bindingId));
+    return jsonResponse(200, {
+      devices: [
+        ...bindings.map((item) => publicDevice(item)),
+        ...legacyDevices
+          .filter((item) => !canonicalIds.has(item.bindingId ?? item.deviceId))
+          .map((item) => publicDevice({ ...item, legacy: true })),
+      ],
+    });
   });
 
 /**
@@ -787,17 +1317,119 @@ export const revokeDevice = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const deviceId = event.pathParameters?.deviceId ?? "";
+    const tableName = getDynamoTableName();
+    const bindingResult = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: `SITE#${siteId}`, sk: `DEVICE_BINDING#${deviceId}` },
+        ConsistentRead: true,
+      }),
+    );
+    const binding = bindingResult.Item;
+    if (!binding) {
+      return revokeLegacyDevice(tableName, siteId, deviceId);
+    }
+    if (binding.status === "revoked") {
+      return jsonResponse(200, {
+        device: publicDevice(binding),
+        alreadyRevoked: true,
+      });
+    }
     const now = new Date().toISOString();
+    const actor = String(
+      /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
+        "central-admin",
+    );
+    const nextGeneration = Number(binding.tokenGeneration ?? 0) + 1;
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            revokeBindingUpdate(
+              tableName,
+              binding.pk,
+              binding.sk,
+              nextGeneration,
+              now,
+              actor,
+            ),
+            revokeBindingUpdate(
+              tableName,
+              `SITE#${siteId}`,
+              `DEVICE#${deviceId}`,
+              nextGeneration,
+              now,
+              actor,
+            ),
+            {
+              Update: {
+                TableName: tableName,
+                Key: {
+                  pk: `PHYSICAL_DEVICE#${binding.physicalDeviceId}`,
+                  sk: `BINDING#${deviceId}`,
+                },
+                UpdateExpression:
+                  "SET #status = :revoked, revokedAt = :now, updatedAt = :now",
+                ConditionExpression: "attribute_exists(pk)",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":revoked": "revoked",
+                  ":now": now,
+                },
+              },
+            },
+            transactionPut(tableName, {
+              pk: `SITE#${siteId}`,
+              sk: `AUDIT#${now}#${randomUUID()}`,
+              type: "siteAuditEvent",
+              eventType: "device_binding_revoked",
+              siteId,
+              bindingId: deviceId,
+              physicalDeviceId: binding.physicalDeviceId,
+              accessLevel: binding.accessLevel,
+              reason: "city_admin_revocation",
+              actor,
+              createdAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "device_revocation_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      device: publicDevice({
+        ...binding,
+        status: "revoked",
+        tokenGeneration: nextGeneration,
+        revokedAt: now,
+        revokedBy: actor,
+        revokedReason: "city_admin_revocation",
+      }),
+    });
+  });
+
+/** @param {string} tableName @param {string} siteId @param {string} deviceId */
+async function revokeLegacyDevice(tableName, siteId, deviceId) {
+  const now = new Date().toISOString();
+  try {
     const res = await ddb.send(
       new UpdateCommand({
-        TableName: getDynamoTableName(),
+        TableName: tableName,
         Key: { pk: `SITE#${siteId}`, sk: `DEVICE#${deviceId}` },
         UpdateExpression:
-          "SET #status = :revoked, revokedAt = :now, updatedAt = :now, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
+          "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, tokenGeneration = if_not_exists(tokenGeneration, :zero) + :one",
         ConditionExpression: "attribute_exists(pk)",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":revoked": "revoked",
+          ":reason": "city_admin_revocation",
           ":now": now,
           ":zero": 0,
           ":one": 1,
@@ -805,8 +1437,19 @@ export const revokeDevice = (event) =>
         ReturnValues: "ALL_NEW",
       }),
     );
-    return jsonResponse(200, { device: res.Attributes });
-  });
+    return jsonResponse(200, {
+      device: publicDevice({ ...res.Attributes, legacy: true }),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "ConditionalCheckFailedException"
+    ) {
+      return jsonResponse(404, { error: "device_not_found" });
+    }
+    throw error;
+  }
+}
 
 /**
  * @param {string} prefix
@@ -896,20 +1539,47 @@ function normalizeContactPerson(value) {
 }
 
 /** @param {unknown} value */
+function normalizePublicContact(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const email = cleanText(input.email).toLowerCase();
+  const phoneDigits = cleanText(input.phone).replace(/\D/g, "");
+  const nationalPhone =
+    phoneDigits.length === 11 && phoneDigits.startsWith("1")
+      ? phoneDigits.slice(1)
+      : phoneDigits;
+  if (
+    (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ||
+    (cleanText(input.phone) && nationalPhone.length !== 10)
+  )
+    return null;
+  return {
+    email,
+    phone: nationalPhone
+      ? `${nationalPhone.slice(0, 3)}-${nationalPhone.slice(3, 6)}-${nationalPhone.slice(6)}`
+      : "",
+  };
+}
+
+/** @param {unknown} value */
 function normalizeOversight(value) {
   if (!value || typeof value !== "object") return null;
   const input = /** @type {Record<string, unknown>} */ (value);
   const managingCityDepartment = cleanText(input.managingCityDepartment);
-  if (!new Set(["DPH", "HSH"]).has(managingCityDepartment)) return null;
   return {
     managingCityDepartment,
     managingSystemOfCare: cleanText(input.managingSystemOfCare),
-    cityProgramManager: [
-      cleanText(input.cityProgramManagerFirstName),
-      cleanText(input.cityProgramManagerLastName),
-    ]
-      .filter(Boolean)
-      .join(" "),
+    ...(cleanText(input.cityProgramManagerId)
+      ? { cityProgramManagerId: cleanText(input.cityProgramManagerId) }
+      : {}),
+    cityProgramManager:
+      cleanText(input.cityProgramManager) ||
+      [
+        cleanText(input.cityProgramManagerFirstName),
+        cleanText(input.cityProgramManagerLastName),
+      ]
+        .filter(Boolean)
+        .join(" "),
   };
 }
 
@@ -981,6 +1651,19 @@ function supersedeComplianceLetter(siteId, existing, value) {
 /** @param {unknown} value */
 function cleanText(value) {
   return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+
+/** @param {Record<string, any>} item */
+function publicProgramManager(item) {
+  return {
+    userId: String(item.userId || ""),
+    name:
+      cleanText(item.name) ||
+      [cleanText(item.firstName), cleanText(item.lastName)]
+        .filter(Boolean)
+        .join(" "),
+    email: cleanText(item.email),
+  };
 }
 
 /** @param {unknown} value */
@@ -1089,77 +1772,6 @@ function contactDeactivator(prefix) {
 }
 
 /**
- * @param {string} providerId
- * @returns {Promise<Record<string, unknown>[]>}
- */
-function listProviderSiteMemberships(providerId) {
-  return queryAll({
-    KeyConditionExpression: "pk = :pk AND begins_with(sk, :site)",
-    ExpressionAttributeValues: {
-      ":pk": `PROVIDER#${providerId}`,
-      ":site": "SITE#",
-    },
-  });
-}
-
-/**
- * @param {string} providerId
- * @param {Record<string, unknown>[]} memberships
- * @param {string} now
- * @returns {Promise<void>}
- */
-async function deactivateProviderSites(providerId, memberships, now) {
-  if (!memberships.length) return;
-
-  await Promise.all(
-    memberships.map((membership) => {
-      const siteId = String(membership.siteId);
-      return ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: getDynamoTableName(),
-                Key: { pk: `SITE#${siteId}`, sk: "#META" },
-                UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-                ConditionExpression: "attribute_exists(pk)",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":inactive": "inactive",
-                  ":now": now,
-                },
-              },
-            },
-            {
-              Update: {
-                TableName: getDynamoTableName(),
-                Key: { pk: `PROVIDER#${providerId}`, sk: `SITE#${siteId}` },
-                UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-                ConditionExpression: "attribute_exists(pk)",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":inactive": "inactive",
-                  ":now": now,
-                },
-              },
-            },
-            {
-              Delete: {
-                TableName: getDynamoTableName(),
-                Key: {
-                  pk: "SITE_SEARCH#ACTIVE",
-                  sk: siteSearchSk(String(membership.siteName ?? ""), siteId),
-                },
-              },
-            },
-          ],
-        }),
-      );
-    }),
-  );
-}
-
-/**
  * @param {string} siteId
  * @param {string} reason
  * @param {string} now
@@ -1172,7 +1784,46 @@ function cleanupDeactivatedSite(siteId, reason, now) {
       reason,
     }),
     revokeSiteDevices(siteId, now),
+    deactivateSiteManagerAssociations(siteId, now),
   ]).then(() => undefined);
+}
+
+/**
+ * Archive Site-specific manager memberships without changing their Program users.
+ * @param {string} siteId
+ * @param {string} now
+ * @returns {Promise<void>}
+ */
+async function deactivateSiteManagerAssociations(siteId, now) {
+  const memberships = await queryAll({
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :membership)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":membership": "MANAGER_MEMBERSHIP#",
+    },
+  });
+  await Promise.all(
+    memberships
+      .filter((membership) => membership.status === "active")
+      .map((membership) =>
+        ddb.send(
+          new UpdateCommand({
+            TableName: getDynamoTableName(),
+            Key: { pk: membership.pk, sk: membership.sk },
+            UpdateExpression:
+              "SET #status = :inactive, deactivatedAt = :now, updatedAt = :now, generation = if_not_exists(generation, :zero) + :one",
+            ConditionExpression: "attribute_exists(pk)",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":inactive": "inactive",
+              ":now": now,
+              ":zero": 0,
+              ":one": 1,
+            },
+          }),
+        ),
+      ),
+  );
 }
 
 /**
@@ -1223,6 +1874,69 @@ function slug(provided, fallback) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
   return value || randomUUID();
+}
+
+/** @param {Record<string, any>} item */
+function publicDevice(item) {
+  const bindingId = String(item.bindingId ?? item.deviceId ?? "");
+  return {
+    bindingId,
+    deviceId: bindingId,
+    physicalDeviceId: item.physicalDeviceId,
+    siteId: item.siteId,
+    label: item.label,
+    accessLevel: item.accessLevel === "admin" ? "manager" : item.accessLevel,
+    status: item.status ?? "active",
+    enrolledAt: item.enrolledAt ?? item.registeredAt,
+    lastSeenAt: item.lastSeenAt,
+    absoluteExpiresAt: item.absoluteExpiresAt,
+    revokedAt: item.revokedAt,
+    revokedReason: item.revokedReason,
+    suspendedAt: item.suspendedAt,
+    suspendedReason: item.suspendedReason,
+    legacy: item.legacy === true,
+  };
+}
+
+/**
+ * @param {string} tableName
+ * @param {string} pk
+ * @param {string} sk
+ * @param {number} nextGeneration
+ * @param {string} now
+ * @param {string} actor
+ */
+function revokeBindingUpdate(tableName, pk, sk, nextGeneration, now, actor) {
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { pk, sk },
+      UpdateExpression:
+        "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, revokedBy = :actor, tokenGeneration = :next",
+      ConditionExpression:
+        "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+      ExpressionAttributeNames: { "#status": "status" },
+      ExpressionAttributeValues: {
+        ":revoked": "revoked",
+        ":reason": "city_admin_revocation",
+        ":actor": actor,
+        ":now": now,
+        ":next": nextGeneration,
+      },
+    },
+  };
+}
+
+/** @param {string} tableName @param {Record<string, unknown>} item */
+function transactionPut(tableName, item) {
+  return {
+    Put: {
+      TableName: tableName,
+      Item: item,
+      ConditionExpression:
+        "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+    },
+  };
 }
 
 /**

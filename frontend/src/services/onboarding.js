@@ -130,6 +130,35 @@ export async function requestSetupCode({ siteId, email }) {
 }
 
 /**
+ * Request Site Manager enrollment links without revealing membership state.
+ * @param {string} email
+ * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'}>}
+ */
+export async function requestManagerAccess(email) {
+  if (!isPlausibleEmail(email)) return { ok: false, reason: "invalid" };
+  let response;
+  try {
+    response = await fetch(`${BASE}/app/v1/manager-access/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: String(email).trim() }),
+    });
+  } catch {
+    return { ok: false, reason: "network" };
+  }
+  if (response.status === 400) return { ok: false, reason: "invalid" };
+  if (!response.ok) return { ok: false, reason: "network" };
+  const data = await response.json().catch(() => null);
+  return {
+    ok: true,
+    message:
+      typeof data?.message === "string"
+        ? data.message
+        : "If that email is authorized, enrollment instructions will arrive shortly.",
+  };
+}
+
+/**
  * @param {string} code
  * @returns {string}
  */

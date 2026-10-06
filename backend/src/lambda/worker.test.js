@@ -2,14 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock both underlying workers so we assert only which one the dispatcher routes
 // a message to, by its shape — not what the worker itself does.
-const { processSubmission, analyzeArtifact } = vi.hoisted(() => ({
+const {
+  processSubmission,
+  analyzeArtifact,
+  reconcileSiteRevocation,
+  dispatchRevocationOutbox,
+} = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
+  reconcileSiteRevocation: vi.fn(async () => {}),
+  dispatchRevocationOutbox: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
 }));
 vi.mock("../workers/analyze-artifact.js", () => ({ handler: analyzeArtifact }));
+vi.mock("../workers/reconcile-site-revocation.js", () => ({
+  handler: reconcileSiteRevocation,
+}));
+vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
+  handler: dispatchRevocationOutbox,
+}));
 
 const { handler } = await import("./worker.js");
 
@@ -27,6 +40,8 @@ describe("worker dispatch (pickHandler)", () => {
   beforeEach(() => {
     processSubmission.mockClear();
     analyzeArtifact.mockClear();
+    reconcileSiteRevocation.mockClear();
+    dispatchRevocationOutbox.mockClear();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {
@@ -60,5 +75,35 @@ describe("worker dispatch (pickHandler)", () => {
     );
     expect(processSubmission).toHaveBeenCalledTimes(1);
     expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes emergency Site reconciliation to the revocation worker", async () => {
+    await handler(
+      event({ type: "reconcile_site_revocation", operationId: "operation-1" }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
+    expect(processSubmission).not.toHaveBeenCalled();
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes DynamoDB stream records to the revocation outbox dispatcher", async () => {
+    const result = await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            eventSource: "aws:dynamodb",
+            eventName: "INSERT",
+            dynamodb: { SequenceNumber: "123" },
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+
+    expect(dispatchRevocationOutbox).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ batchItemFailures: [] });
   });
 });

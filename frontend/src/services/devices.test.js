@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api-error.js";
-import { refreshDeviceToken } from "./devices.js";
+import { redeemEnrollmentGrant, refreshDeviceToken } from "./devices.js";
 
 /**
  * A JSON Response stub. `ok` derives from status, matching the real Response.
@@ -85,5 +85,64 @@ describe("refreshDeviceToken", () => {
     const err = await refreshDeviceToken("refresh-1").catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(0);
+  });
+});
+
+describe("redeemEnrollmentGrant", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        jsonResponse({
+          status: 201,
+          body: {
+            ...session,
+            accessLevel: "manager",
+            physicalDeviceId: "physical-1",
+            bindingId: "binding-1",
+          },
+        }),
+      ),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("posts the fragment secrets and existing physical identity", async () => {
+    await expect(
+      redeemEnrollmentGrant("grant-1", "secret-token", {
+        physicalDeviceId: "physical-1",
+      }),
+    ).resolves.toMatchObject({ accessLevel: "manager" });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/app/v1/enrollment/redeem"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          grantId: "grant-1",
+          token: "secret-token",
+          physicalDeviceId: "physical-1",
+        }),
+      }),
+    );
+  });
+
+  it("maps a rejected grant to a non-specific link error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => jsonResponse({ status: 401 })),
+    );
+    await expect(redeemEnrollmentGrant("grant-1", "bad-token")).rejects.toThrow(
+      "invalid enrollment link",
+    );
+  });
+
+  it("does not misreport a missing API route as an expired link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => jsonResponse({ status: 404 })),
+    );
+    await expect(redeemEnrollmentGrant("grant-1", "token")).rejects.toThrow(
+      "enrollment failed (404)",
+    );
   });
 });

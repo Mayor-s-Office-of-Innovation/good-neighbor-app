@@ -28,6 +28,7 @@ import {
   validateSetupCode,
 } from "./setup-codes.js";
 import {
+  canonicalAccessLevel,
   DeviceTokenError,
   mintAccessToken,
   mintRefreshToken,
@@ -46,12 +47,18 @@ import {
  * @property {string} deviceId
  * @property {string} siteId
  * @property {string} siteName
- * @property {"general"|"admin"} accessLevel
+ * @property {"general"|"manager"|"admin"} accessLevel
  * @property {string} label
  * @property {string} registeredAt
  * @property {string} lastSeenAt
  * @property {number} tokenGeneration
  * @property {string} refreshJti
+ * @property {"active"|"suspended"|"revoked"} [status]
+ * @property {string} [absoluteExpiresAt]
+ * @property {number} [inactivityLimitDays]
+ * @property {string} [membershipId]
+ * @property {number} [membershipGeneration]
+ * @property {number} [siteCredentialGeneration]
  */
 
 /**
@@ -91,7 +98,7 @@ export const registerDevice = async (event) => {
   const existing = await getDevice(validCode.siteId, raw.deviceId);
   const deviceId = existing ? existing.deviceId : newDeviceId(raw.deviceId);
   const generation = (existing?.tokenGeneration ?? 0) + 1;
-  const accessLevel = validCode.accessLevel === "admin" ? "admin" : "general";
+  const accessLevel = canonicalAccessLevel(validCode.accessLevel);
   const [access, refresh] = await Promise.all([
     mintAccessToken({
       siteId: validCode.siteId,
@@ -122,6 +129,7 @@ export const registerDevice = async (event) => {
     lastSeenAt: now,
     tokenGeneration: generation,
     refreshJti: refresh.jti,
+    siteCredentialGeneration: Number(validCode.siteCredentialGeneration ?? 0),
   });
 
   const consume = consumeSetupCodeTransactItem(validCode, now);
@@ -136,6 +144,21 @@ export const registerDevice = async (event) => {
             },
           },
           ...(consume ? [consume] : []),
+          {
+            ConditionCheck: {
+              TableName: dynamoTable,
+              Key: { pk: `SITE#${validCode.siteId}`, sk: "#META" },
+              ConditionExpression:
+                "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :inactive) AND (attribute_not_exists(siteCredentialGeneration) OR siteCredentialGeneration = :siteGeneration)",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":inactive": "inactive",
+                ":siteGeneration": Number(
+                  validCode.siteCredentialGeneration ?? 0,
+                ),
+              },
+            },
+          },
         ],
       }),
     );
@@ -143,7 +166,8 @@ export const registerDevice = async (event) => {
     if (
       err instanceof Error &&
       err.name === "TransactionCanceledException" &&
-      isSetupCodeConditionFailure(err, consume ? 1 : -1)
+      (isSetupCodeConditionFailure(err, consume ? 1 : -1) ||
+        isSetupCodeConditionFailure(err, consume ? 2 : 1))
     ) {
       return jsonResponse(401, { error: "invalid_site_code" });
     }
@@ -211,13 +235,23 @@ export const refreshDeviceToken = async (event) => {
     }),
   );
   const device = /** @type {DeviceItem | undefined} */ (res.Item);
+  const now = new Date();
+  const canonicalRole = canonicalAccessLevel(device?.accessLevel);
+  const inactiveAfter = device?.lastSeenAt
+    ? new Date(device.lastSeenAt).getTime() +
+      Number(device.inactivityLimitDays ?? 60) * 24 * 60 * 60 * 1000
+    : Number.POSITIVE_INFINITY;
   if (
     !device ||
+    device.status === "revoked" ||
+    device.status === "suspended" ||
     device.tokenGeneration !== claims.ver || // revoked (generation bumped)
-    (device.accessLevel === "admin" ? "admin" : "general") !==
-      claims.accessLevel ||
+    canonicalRole !== claims.accessLevel ||
     !claims.jti ||
-    device.refreshJti !== claims.jti // already used / superseded
+    device.refreshJti !== claims.jti || // already used / superseded
+    (device.absoluteExpiresAt &&
+      device.absoluteExpiresAt <= now.toISOString()) ||
+    inactiveAfter <= now.getTime()
   ) {
     return jsonResponse(401, {
       error: "invalid_refresh_token",
@@ -225,7 +259,14 @@ export const refreshDeviceToken = async (event) => {
     });
   }
 
-  const now = new Date().toISOString();
+  const lifecycleValid = await bindingLifecycleValid(device, canonicalRole);
+  if (!lifecycleValid) {
+    return jsonResponse(401, {
+      error: "invalid_refresh_token",
+      reason: "revoked_or_replayed",
+    });
+  }
+  const nowIso = now.toISOString();
   // Conditional write: rotation applies ONLY from the observed generation +
   // jti. A concurrent refresh with the same token loses the swap here (one
   // winner) instead of both succeeding via last-write-wins.
@@ -233,9 +274,9 @@ export const refreshDeviceToken = async (event) => {
     siteId,
     deviceId,
     generation: device.tokenGeneration + 1,
-    accessLevel: device.accessLevel === "admin" ? "admin" : "general",
+    accessLevel: canonicalAccessLevel(device.accessLevel),
     dynamoTable,
-    now,
+    now: nowIso,
     expectGeneration: device.tokenGeneration,
     expectJti: claims.jti,
   });
@@ -249,10 +290,53 @@ export const refreshDeviceToken = async (event) => {
   return jsonResponse(200, {
     deviceId,
     site: { siteId, name: device.siteName },
-    accessLevel: device.accessLevel === "admin" ? "admin" : "general",
+    accessLevel: canonicalAccessLevel(device.accessLevel),
     ...session,
   });
 };
+
+/**
+ * Recheck Site and Manager membership generations. A generation-less legacy
+ * device is generation zero: it remains compatible with an unadvanced Site,
+ * but fails closed immediately after any Site-wide generation bump.
+ * @param {DeviceItem & Record<string, any>} device
+ * @param {"general"|"manager"} role
+ * @returns {Promise<boolean>}
+ */
+async function bindingLifecycleValid(device, role) {
+  const tableName = getDynamoTableName();
+  const siteResult = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
+    }),
+  );
+  const site = siteResult.Item;
+  if (
+    !site ||
+    site.status === "inactive" ||
+    Number(site.siteCredentialGeneration ?? 0) !==
+      Number(device.siteCredentialGeneration ?? 0)
+  ) {
+    return false;
+  }
+  if (role !== "manager" || !device.membershipId) return true;
+  const membershipResult = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: {
+        pk: `SITE#${device.siteId}`,
+        sk: `MANAGER_MEMBERSHIP#${device.membershipId}`,
+      },
+    }),
+  );
+  const membership = membershipResult.Item;
+  return Boolean(
+    membership?.status === "active" &&
+      Number(membership.generation ?? 0) ===
+        Number(device.membershipGeneration ?? -1),
+  );
+}
 
 /**
  * Mint the access + refresh pair and persist the new session state (generation
@@ -266,7 +350,7 @@ export const refreshDeviceToken = async (event) => {
  *   → the caller retries from a fresh read.
  * - fresh registration passes no expected state: the row was just Put, so the
  *   write is unconditional (nothing to race).
- * @param {{ siteId: string, deviceId: string, generation: number, accessLevel: "general"|"admin", dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
+ * @param {{ siteId: string, deviceId: string, generation: number, accessLevel: "general"|"manager", dynamoTable: string, now: string, expectGeneration?: number, expectJti?: string }} s
  * @returns {Promise<{ token: string, refreshToken: string, expiresIn: number, refreshExpiresIn: number, tokenGeneration: number } | null>} null when the CAS lost
  */
 async function mintSession({

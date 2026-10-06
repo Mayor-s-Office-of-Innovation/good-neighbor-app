@@ -5,7 +5,7 @@
   site this shared device should operate as.
 */
 import "./site-setup.css";
-import { setSite } from "../db.js";
+import { getSite, setSite } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -13,7 +13,7 @@ import {
   searchSites,
   validateSetupCode,
 } from "../services/onboarding.js";
-import { registerDevice } from "../services/devices.js";
+import { redeemEnrollmentGrant, registerDevice } from "../services/devices.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
@@ -37,10 +37,13 @@ export class SiteSetup extends HTMLElement {
     this._targetSiteName = this.getAttribute("data-target-site-name") || "";
     this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
+    const enrollment = readEnrollmentFromUrl();
     this._checking = false;
     this._error = "";
     this._mode =
-      this.getAttribute("data-mode") === "request" ? "request" : "code";
+      this.getAttribute("data-mode") === "request"
+        ? this.getAttribute("data-mode")
+        : "code";
     this._request = {
       query: "",
       email: "",
@@ -54,6 +57,14 @@ export class SiteSetup extends HTMLElement {
     this._siteSearchTimer = null;
     this._siteSearchGeneration = 0;
     this._render();
+
+    if (enrollment) {
+      stripEnrollmentFromUrl();
+      this._checking = true;
+      this._render();
+      this._redeemEnrollment(enrollment);
+      return;
+    }
 
     if (this._code.length === CODE_LENGTH) {
       this._validate();
@@ -92,7 +103,6 @@ export class SiteSetup extends HTMLElement {
       this._bindRequestForm();
       return;
     }
-
     this._form = this.querySelector("#code-form");
     this._otp = this.querySelector("#code-input");
     this._continue = this.querySelector("#continue");
@@ -101,7 +111,6 @@ export class SiteSetup extends HTMLElement {
       this._error = "";
       this._render();
     });
-
     this._form.addEventListener("submit", (e) => {
       e.preventDefault();
       this._validate();
@@ -440,6 +449,43 @@ export class SiteSetup extends HTMLElement {
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
   }
+
+  async _redeemEnrollment({ grantId, token }) {
+    try {
+      const current = await getSite();
+      const session = await redeemEnrollmentGrant(grantId, token, {
+        physicalDeviceId: current?.physicalDeviceId,
+      });
+      if (this._cancelled) return;
+      this._committingSite = true;
+      this._render();
+      const site = await setSite(session.site.name, {
+        siteId: session.site.siteId,
+        deviceId: session.deviceId,
+        bindingId: session.bindingId,
+        physicalDeviceId: session.physicalDeviceId,
+        token: session.token,
+        refreshToken: session.refreshToken,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
+        tokenGeneration: session.tokenGeneration,
+        accessLevel: session.accessLevel,
+      });
+      this.dispatchEvent(
+        new CustomEvent("sitebound", { bubbles: true, detail: site }),
+      );
+    } catch (err) {
+      if (this._cancelled) return;
+      this._committingSite = false;
+      this._checking = false;
+      this._error =
+        err instanceof Error && /invalid enrollment link/.test(err.message)
+          ? "This enrollment link is invalid or has expired. Ask a City administrator for a new link."
+          : "We couldn't enroll this device. Try again in a moment.";
+      this._render();
+    }
+  }
 }
 
 if (!customElements.get("site-setup")) {
@@ -470,6 +516,26 @@ export function stripCodeFromUrl() {
       }
       history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
+  } catch {
+    /* no-op */
+  }
+}
+
+export function readEnrollmentFromUrl() {
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const grantId = fragment.get("enrollment_grant")?.trim() || "";
+  const token = fragment.get("enrollment_token")?.trim() || "";
+  return grantId && token ? { grantId, token } : null;
+}
+
+export function stripEnrollmentFromUrl() {
+  try {
+    const url = new URL(location.href);
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    fragment.delete("enrollment_grant");
+    fragment.delete("enrollment_token");
+    url.hash = fragment.toString();
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
   } catch {
     /* no-op */
   }

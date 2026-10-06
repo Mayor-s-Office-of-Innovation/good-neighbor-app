@@ -189,11 +189,14 @@ const SITE_BINDING_FIELDS = [
   "providerSiteId",
   "code",
   "deviceId",
+  "bindingId",
+  "physicalDeviceId",
   "token",
   "refreshToken",
   "tokenExpiresAt",
   "tokenGeneration",
   "accessLevel",
+  "absoluteExpiresAt",
   "boundAt",
 ];
 
@@ -213,11 +216,12 @@ export function siteIdFromToken(token) {
  * Read the signed session's access level for client-side navigation decisions.
  * The backend remains authoritative and independently enforces admin access.
  * @param {unknown} token
- * @returns {"general"|"admin"|""}
+ * @returns {"general"|"manager"|""}
  */
 export function accessLevelFromToken(token) {
   const claim = tokenClaims(token)?.accessLevel;
-  return claim === "admin" || claim === "general" ? claim : "";
+  if (claim === "manager" || claim === "admin") return "manager";
+  return claim === "general" ? "general" : "";
 }
 
 /**
@@ -227,8 +231,8 @@ export function accessLevelFromToken(token) {
  * @returns {boolean}
  */
 export function hasAdminAccess(binding) {
-  return (
-    (binding?.accessLevel || accessLevelFromToken(binding?.token)) === "admin"
+  return ["manager", "admin"].includes(
+    binding?.accessLevel || accessLevelFromToken(binding?.token),
   );
 }
 
@@ -295,7 +299,7 @@ export async function clearSiteSession() {
  * Persist a refreshed device session onto the existing site record (Option 4
  * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
  * only the token fields are replaced. Returns the updated record.
- * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: "general"|"admin" }} session
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: "general"|"manager" }} session
  */
 export async function updateSiteSession(
   { deviceId, token, refreshToken, expiresIn, tokenGeneration, accessLevel },

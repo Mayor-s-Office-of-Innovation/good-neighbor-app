@@ -8,18 +8,20 @@ import { singleLowConcernResponse } from "../analysis/fixtures/single-low-concer
 const {
   ddbSend,
   getObjectBytes,
+  setObjectTags,
   analyze,
   createAnalyzerClient,
   reverseGeocodePhoto,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   getObjectBytes: vi.fn(),
+  setObjectTags: vi.fn(),
   analyze: vi.fn(),
   createAnalyzerClient: vi.fn(),
   reverseGeocodePhoto: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
-vi.mock("../s3.js", () => ({ getObjectBytes }));
+vi.mock("../s3.js", () => ({ getObjectBytes, setObjectTags }));
 vi.mock("../integrations/reverse-geocoder.js", () => ({ reverseGeocodePhoto }));
 vi.mock("../media/downscale.js", () => ({
   downscaleImage: vi.fn(
@@ -65,6 +67,7 @@ const invoke = (msg) =>
 beforeEach(() => {
   ddbSend.mockReset();
   getObjectBytes.mockReset();
+  setObjectTags.mockReset().mockResolvedValue({});
   analyze.mockReset();
   createAnalyzerClient.mockReset();
   reverseGeocodePhoto.mockReset();
@@ -386,6 +389,32 @@ describe("analyze-artifact worker", () => {
     expect(put.input.Item).toMatchObject({
       status: "failed",
       error: { code: "undecodable_input" },
+    });
+    expect(setObjectTags).toHaveBeenCalledWith({
+      bucket: "bucket",
+      key: baseMsg.s3Key,
+      tags: { state: "rejected" },
+    });
+  });
+
+  it("rejects an oversized object before decode or analysis", async () => {
+    const downscaleModule = await import("../media/downscale.js");
+    vi.mocked(downscaleModule.downscaleImage).mockClear();
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("small test body"),
+      contentType: "image/jpeg",
+      contentLength: 10 * 1024 * 1024 + 1,
+    });
+    ddbSend.mockResolvedValue({});
+
+    const res = await invoke(baseMsg);
+
+    expect(res).toEqual({ batchItemFailures: [] });
+    expect(downscaleModule.downscaleImage).not.toHaveBeenCalled();
+    expect(analyze).not.toHaveBeenCalled();
+    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+      status: "failed",
+      error: { code: "input_too_large" },
     });
   });
 

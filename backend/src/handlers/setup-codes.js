@@ -72,6 +72,7 @@ const setupCodeSecretCache = new Map();
  * @property {string} siteName
  * @property {string|undefined} providerSiteId
  * @property {"general"|"admin"} [accessLevel]
+ * @property {number} [siteCredentialGeneration]
  */
 
 /**
@@ -89,7 +90,8 @@ export async function validateSetupCode(rawCode, options = {}) {
   const setup = await getSetupCode(code, tableName);
   if (setup) {
     if (!isSetupCodeUsable(setup, now)) return null;
-    if (!(await isSiteActive(setup.siteId, tableName))) return null;
+    const site = await getActiveSite(setup.siteId, tableName);
+    if (!site) return null;
     if (!(await isCurrentSetupCode(setup, tableName))) return null;
     return {
       kind: "setupCode",
@@ -99,6 +101,7 @@ export async function validateSetupCode(rawCode, options = {}) {
       siteName: setup.siteName,
       providerSiteId: setup.providerSiteId,
       accessLevel: normalizeAccessLevel(setup.accessLevel),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     };
   }
 
@@ -106,7 +109,8 @@ export async function validateSetupCode(rawCode, options = {}) {
   // out. New production codes should use SETUP_CODE# verifier records.
   const legacy = await getLegacySiteCode(code, tableName);
   if (legacy?.active && legacy.siteId && legacy.siteName) {
-    if (!(await isSiteActive(legacy.siteId, tableName))) return null;
+    const site = await getActiveSite(legacy.siteId, tableName);
+    if (!site) return null;
     return {
       kind: "legacy",
       code,
@@ -115,6 +119,7 @@ export async function validateSetupCode(rawCode, options = {}) {
       siteName: legacy.siteName,
       providerSiteId: legacy.providerSiteId,
       accessLevel: normalizeAccessLevel(legacy.accessLevel),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     };
   }
 
@@ -550,17 +555,17 @@ async function queryPendingSetupCodesForSite(siteId) {
 /**
  * @param {string} siteId
  * @param {string} tableName
- * @returns {Promise<boolean>}
+ * @returns {Promise<Record<string, any> | null>}
  */
-async function isSiteActive(siteId, tableName) {
+async function getActiveSite(siteId, tableName) {
   const res = await ddb.send(
     new GetCommand({
       TableName: tableName,
       Key: { pk: `SITE#${siteId}`, sk: "#META" },
     }),
   );
-  const site = /** @type {{ status?: string } | undefined} */ (res.Item);
-  return Boolean(site && site.status !== "inactive");
+  const site = /** @type {Record<string, any> | undefined} */ (res.Item);
+  return site && site.status !== "inactive" ? site : null;
 }
 
 /**

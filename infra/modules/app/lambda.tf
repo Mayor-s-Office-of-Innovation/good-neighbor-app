@@ -102,6 +102,7 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = merge({
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       DEMO_SITE_ID                = "demo-site"
@@ -323,6 +324,36 @@ resource "aws_lambda_event_source_mapping" "worker" {
   scaling_config {
     maximum_concurrency = 20
   }
+}
+
+# Revocation requests and their outbox entries are committed atomically. This
+# filtered stream mapping forwards only new pending outbox entries to the worker,
+# which publishes the site reconciliation message to SQS and marks the entry as
+# dispatched. Stream retries close the former commit-then-send failure window.
+resource "aws_lambda_event_source_mapping" "revocation_outbox" {
+  event_source_arn = aws_dynamodb_table.app.stream_arn
+  function_name    = aws_lambda_function.worker.arn
+  # TRIM_HORIZON avoids a deployment-order gap: if the updated API writes an
+  # outbox row before this mapping becomes active, the retained INSERT still
+  # gets dispatched. The filter keeps unrelated table history out.
+  starting_position       = "TRIM_HORIZON"
+  batch_size              = 10
+  function_response_types = ["ReportBatchItemFailures"]
+
+  filter_criteria {
+    filter {
+      pattern = jsonencode({
+        eventName = ["INSERT"]
+        dynamodb = {
+          NewImage = {
+            entityType = { S = ["REVOCATION_OUTBOX"] }
+          }
+        }
+      })
+    }
+  }
+
+  depends_on = [aws_iam_role_policy.worker]
 }
 
 resource "aws_lambda_permission" "api_gateway" {

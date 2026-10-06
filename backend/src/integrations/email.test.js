@@ -1,6 +1,10 @@
 import { URLSearchParams } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sendSetupCodeEmail } from "./email.js";
+import {
+  sendManagerEnrollmentEmail,
+  sendManagerSecurityNotification,
+  sendSetupCodeEmail,
+} from "./email.js";
 
 const EMAIL = {
   to: "lead@example.org",
@@ -137,5 +141,82 @@ describe("sendSetupCodeEmail", () => {
       status: "failed",
     });
     expect(JSON.stringify(error.mock.calls)).not.toContain("Rejected");
+  });
+});
+
+describe("sendManagerEnrollmentEmail", () => {
+  it("sends a single-Site enrollment link without logging its token", async () => {
+    const enrollmentUrl =
+      "https://goodneighborsf.org/#enrollment_grant=grant-1&enrollment_token=secret-token";
+    await sendManagerEnrollmentEmail({
+      to: "manager@example.org",
+      managerName: "Alex Rivera",
+      siteName: "City Hall",
+      enrollmentUrl,
+      expiresAt: "2026-09-13T00:00:00.000Z",
+    });
+    const input = send.mock.calls[0][0].input;
+    expect(input.Content.Simple.Subject.Data).toBe(
+      "[dev] Enroll as a Good Neighbor Site Manager",
+    );
+    expect(input.Content.Simple.Body.Text.Data).toContain(enrollmentUrl);
+    expect(input.Content.Simple.Body.Text.Data).toContain("this Site only");
+    expect(JSON.stringify(info.mock.calls)).not.toContain("secret-token");
+    expect(JSON.stringify(info.mock.calls)).not.toContain(
+      "manager@example.org",
+    );
+  });
+});
+
+describe("sendManagerSecurityNotification", () => {
+  it("sends enrollment context and revocation guidance without credentials", async () => {
+    await sendManagerSecurityNotification({
+      to: "manager@example.org",
+      managerName: "Alex Rivera",
+      siteName: "City Hall",
+      deviceLabel: "<script>Manager tablet</script>",
+      clientDescription: "Safari on iOS/iPadOS",
+      enrolledAt: "2026-09-13T00:00:00.000Z",
+      revocationContact: "support@example.org",
+    });
+    const input = send.mock.calls[0][0].input;
+    expect(input.Content.Simple.Subject.Data).toBe(
+      "[dev] New Good Neighbor Manager device enrolled",
+    );
+    const text = input.Content.Simple.Body.Text.Data;
+    const html = input.Content.Simple.Body.Html.Data;
+    expect(text).toContain("Safari on iOS/iPadOS");
+    expect(text).toContain("support@example.org immediately");
+    expect(text).not.toContain("enrollment_token");
+    expect(html).toContain("&lt;script&gt;Manager tablet&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(JSON.stringify(info.mock.calls)).not.toContain(
+      "manager@example.org",
+    );
+  });
+
+  it("sanitizes delivery failures without logging recipient or device context", async () => {
+    send.mockRejectedValueOnce(
+      new Error("Rejected manager@example.org secret device"),
+    );
+    await expect(
+      sendManagerSecurityNotification({
+        to: "manager@example.org",
+        managerName: "Alex Rivera",
+        siteName: "City Hall",
+        deviceLabel: "secret device",
+        clientDescription: "Chrome on Android",
+        enrolledAt: "2026-09-13T00:00:00.000Z",
+      }),
+    ).rejects.toThrow("Manager security notification delivery failed");
+    expect(JSON.stringify(error.mock.calls)).not.toContain(
+      "manager@example.org",
+    );
+    expect(JSON.stringify(error.mock.calls)).not.toContain("secret device");
+    expect(JSON.parse(String(error.mock.calls[0][0]))).toMatchObject({
+      marker: "manager_security_notification_email",
+      level: "ERROR",
+      status: "failed",
+    });
   });
 });

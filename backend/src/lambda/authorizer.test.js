@@ -74,7 +74,7 @@ describe("authorizer", () => {
       { now: 1000, expiresIn: 60 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(false);
@@ -90,7 +90,7 @@ describe("authorizer", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(false);
@@ -106,12 +106,36 @@ describe("authorizer", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({ Item: { tokenGeneration: 2 } }); // revoked
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(false);
       expect(res.context.reason).toBe("revoked");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("denies a suspended binding even before its access token expires", async () => {
+    const { token } = await mintAccessToken(
+      { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 1 },
+      { now: 1000 },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send.mockResolvedValueOnce({
+        Item: {
+          tokenGeneration: 2,
+          status: "suspended",
+          suspendedReason: "security_review",
+        },
+      });
+      const res = await invoke(event(`Bearer ${token}`));
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("revoked");
+      expect(send).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -123,7 +147,7 @@ describe("authorizer", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({}); // no Item
       const res = await invoke(event(`Bearer ${token}`));
@@ -140,7 +164,7 @@ describe("authorizer", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send
         .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
@@ -178,7 +202,7 @@ describe("authorizer", () => {
       exp: 3000,
     });
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send
         .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
@@ -193,13 +217,116 @@ describe("authorizer", () => {
     }
   });
 
+  it("denies a generation-less legacy device after Site-wide revocation", async () => {
+    const token = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 7,
+      typ: "access",
+      iat: 1000,
+      exp: 3000,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
+        .mockResolvedValueOnce({
+          Item: { status: "active", siteCredentialGeneration: 1 },
+        });
+
+      const res = await invoke(event(`Bearer ${token}`));
+
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("revoked");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("requires current membership and Site generations for Manager access", async () => {
+    const { token } = await mintAccessToken(
+      {
+        siteId: "site-1",
+        deviceId: "binding-1",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+      },
+      { now: 1000 },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            tokenGeneration: 1,
+            accessLevel: "manager",
+            membershipId: "membership-1",
+            membershipGeneration: 2,
+            siteCredentialGeneration: 3,
+            status: "active",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: { status: "active", siteCredentialGeneration: 3 },
+        })
+        .mockResolvedValueOnce({
+          Item: { status: "active", generation: 2 },
+        });
+      const res = await invoke(event(`Bearer ${token}`));
+      expect(res.isAuthorized).toBe(true);
+      expect(res.context["claims.accessLevel"]).toBe("manager");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("denies Manager access after membership removal", async () => {
+    const { token } = await mintAccessToken(
+      {
+        siteId: "site-1",
+        deviceId: "binding-1",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+      },
+      { now: 1000 },
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            tokenGeneration: 1,
+            accessLevel: "manager",
+            membershipId: "membership-1",
+            membershipGeneration: 2,
+            siteCredentialGeneration: 3,
+            status: "active",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: { status: "active", siteCredentialGeneration: 3 },
+        })
+        .mockResolvedValueOnce({
+          Item: { status: "inactive", generation: 3 },
+        });
+      const res = await invoke(event(`Bearer ${token}`));
+      expect(res.isAuthorized).toBe(false);
+      expect(res.context.reason).toBe("revoked");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("denies valid device tokens for inactive sites", async () => {
     const { token } = await mintAccessToken(
       { siteId: "site-1", deviceId: "dev-1", tokenGeneration: 7 },
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send
         .mockResolvedValueOnce({ Item: { tokenGeneration: 7 } })
@@ -222,7 +349,7 @@ describe("authorizer", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send
         .mockResolvedValueOnce({ Item: { tokenGeneration: 1 } })

@@ -64,6 +64,19 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid    = "ManageCityProgramManagers"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:ListUsers",
+    ]
+    resources = [aws_cognito_user_pool.users.arn]
+  }
+
+  statement {
     sid    = "UploadsObjects"
     effect = "Allow"
     actions = [
@@ -269,9 +282,9 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    sid       = "ReadUploads"
+    sid       = "ReadAndClassifyUploads"
     effect    = "Allow"
-    actions   = ["s3:GetObject"]
+    actions   = ["s3:GetObject", "s3:PutObjectTagging"]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 
@@ -284,6 +297,25 @@ data "aws_iam_policy_document" "worker" {
       "sqs:GetQueueAttributes",
     ]
     resources = [aws_sqs_queue.submissions.arn]
+  }
+
+  statement {
+    sid       = "EnqueueRevocationReconciliation"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.submissions.arn]
+  }
+
+  statement {
+    sid    = "ReadRevocationOutboxStream"
+    effect = "Allow"
+    actions = [
+      "dynamodb:DescribeStream",
+      "dynamodb:GetRecords",
+      "dynamodb:GetShardIterator",
+      "dynamodb:ListStreams",
+    ]
+    resources = [aws_dynamodb_table.app.stream_arn]
   }
 
   statement {

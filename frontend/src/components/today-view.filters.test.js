@@ -57,10 +57,12 @@ vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
   hasAdminAccess: () => false,
   listBoundSites: async () => [],
+  setSite: vi.fn(async (_name, meta) => ({ ...meta, id: "current" })),
   clearSiteSession: logout.clearSiteSession,
 }));
 vi.mock("../services/api.js", () => ({
   listProviderSites: catalog.listProviderSites,
+  selectDeviceBinding: vi.fn(),
   listChecks: async () => ({ checks: [] }),
   listTasks: async () => ({ tasks: [] }),
 }));

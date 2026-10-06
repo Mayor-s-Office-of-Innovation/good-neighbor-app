@@ -50,6 +50,12 @@
 
 - **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
   and deployment troubleshooting.
+- **[Site Manager access recovery](./runbooks/manager-access.md)** — public recovery abuse,
+  delivery-failure, and WAF alarm triage without exposing email addresses or grant secrets.
+- **[Device revocation](./runbooks/device-revocation.md)** — individual, selected, and
+  Site-wide credential invalidation, partial reconciliation, and recovery checks.
+- **[Media safeguards](./runbooks/media-safeguards.md)** — upload validation, quota and
+  rejection alarms, retention, and incident triage without inspecting private media.
 
 ## Domain & policy reference
 

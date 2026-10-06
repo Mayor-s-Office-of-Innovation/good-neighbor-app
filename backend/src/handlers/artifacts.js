@@ -4,13 +4,14 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
-import { presignGet, presignPut } from "../s3.js";
+import { headObject, presignGet, presignPut, setObjectTags } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { deriveSiteId } from "../lib/principal.js";
+import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
   artifactKey,
   checkArtifactPrefix,
@@ -34,6 +35,15 @@ const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 // as an invalid request (permanent, non-retryable) — reject it here instead so
 // the client sees a 400 rather than a dead artifact.
 const MIN_ARTIFACT_TEXT_LENGTH = 5;
+const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
+const MAX_CHECK_ARTIFACTS = 20;
+const MAX_CHECK_BYTES = 50 * 1024 * 1024;
+const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
+const MAX_SITE_DAILY_BYTES = 1024 * 1024 * 1024;
+const MAX_GLOBAL_DAILY_BYTES = 10 * 1024 * 1024 * 1024;
+const MAX_DEVICE_DAILY_ARTIFACTS = 50;
+const MAX_SITE_DAILY_ARTIFACTS = 1000;
+const MAX_GLOBAL_DAILY_ARTIFACTS = 10000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -52,8 +62,9 @@ const mediaKey = (siteId, checkId, artifactId) =>
 /**
  * POST /v1/checks/{checkId}/artifacts:presign — mint an `artifactId` + S3 key
  * and return a presigned PUT so the device uploads media straight to S3 (bytes
- * never transit our API). No DB write happens here; the artifact becomes real
- * at `registerArtifact`. content-type is pinned into the signature.
+ * never transit our API). A conservative quota reservation is persisted before
+ * signing; the artifact becomes visible at `registerArtifact`. Content type,
+ * byte length, and no-overwrite semantics are pinned into the signature.
  *
  * Body: `contentType` (required, one of ALLOWED_CONTENT_TYPES). Legacy
  * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
@@ -72,7 +83,10 @@ export const presignUpload = async (event) => {
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
-  const { contentType } = /** @type {{ contentType?: unknown }} */ (body ?? {});
+  const { contentType, contentLength } =
+    /** @type {{ contentType?: unknown, contentLength?: unknown }} */ (
+      body ?? {}
+    );
 
   if (
     typeof contentType !== "string" ||
@@ -80,13 +94,128 @@ export const presignUpload = async (event) => {
   ) {
     return jsonResponse(400, { error: "Unsupported or missing contentType" });
   }
+  if (
+    !Number.isInteger(contentLength) ||
+    Number(contentLength) <= 0 ||
+    Number(contentLength) > MAX_OBJECT_BYTES
+  ) {
+    return jsonResponse(400, { error: "invalid_content_length" });
+  }
 
   const artifactId = randomUUID();
   const key = mediaKey(siteId, checkId, artifactId);
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const expiresAt = Math.floor(now.getTime() / 1000) + 24 * 60 * 60;
+  const bytes = Number(contentLength);
+  const tableName = getConfig().dynamoTable;
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: tableName,
+              Key: checkHeaderKey(siteId, checkId),
+              ConditionExpression:
+                "attribute_exists(pk) AND #status IN (:inProgress, :completed)",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":inProgress": "in_progress",
+                ":completed": "completed",
+              },
+            },
+          },
+          quotaUpdate({
+            tableName,
+            key: {
+              pk: sitePk(siteId),
+              sk: `MEDIA_QUOTA#${day}#CHECK#${checkId}`,
+            },
+            bytes,
+            maxBytes: MAX_CHECK_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_CHECK_ARTIFACTS,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: {
+              pk: sitePk(siteId),
+              sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
+            },
+            bytes,
+            maxBytes: MAX_DEVICE_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: { pk: sitePk(siteId), sk: `MEDIA_QUOTA#${day}#SITE` },
+            bytes,
+            maxBytes: MAX_SITE_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_SITE_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: { pk: `MEDIA_QUOTA#${day}`, sk: "#GLOBAL" },
+            bytes,
+            maxBytes: MAX_GLOBAL_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_GLOBAL_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+          {
+            Put: {
+              TableName: tableName,
+              Item: {
+                pk: sitePk(siteId),
+                sk: `UPLOAD_RESERVATION#${checkId}#${artifactId}`,
+                type: "uploadReservation",
+                siteId,
+                checkId,
+                artifactId,
+                s3Key: key,
+                contentType,
+                contentLength: bytes,
+                status: "pending",
+                createdAt: now.toISOString(),
+                expiresAt,
+              },
+              ConditionExpression: "attribute_not_exists(pk)",
+            },
+          },
+        ],
+      }),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      [
+        "TransactionCanceledException",
+        "ConditionalCheckFailedException",
+      ].includes(error.name)
+    ) {
+      console.warn(
+        JSON.stringify({
+          marker: "MediaQuotaExceeded",
+          siteId,
+          checkId,
+        }),
+      );
+      return jsonResponse(429, { error: "media_quota_exceeded" });
+    }
+    throw error;
+  }
   const uploadUrl = await presignPut({
     bucket: uploadBucket,
     key,
     contentType,
+    contentLength: bytes,
+    tagging: "state=pending",
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
 
@@ -94,6 +223,14 @@ export const presignUpload = async (event) => {
     artifactId,
     s3Key: key,
     contentType,
+    contentLength: bytes,
+    // The AWS presigner hoists declared-bytes metadata into the signed query
+    // string. Sending it again as an x-amz-meta-* request header makes MinIO
+    // reject the PUT as an unsigned duplicate header.
+    uploadHeaders: {
+      "content-type": contentType,
+      "if-none-match": "*",
+    },
     uploadUrl,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
@@ -106,9 +243,8 @@ export const presignUpload = async (event) => {
  * the S3 key, never the media bytes.
  *
  * Tenant isolation is the partition key (`SITE#<siteId>`, siteId derived from the
- * JWT, enforced at the application layer; the IAM LeadingKeys condition is the
- * target-design backstop, not yet in the deployed role) plus the s3Key prefix check
- * below — NOT a parent-header lookup. We deliberately do not read the CHECK header
+ * JWT) plus the exact, server-owned S3 key check below — NOT a parent-header lookup.
+ * We deliberately do not read the CHECK header
  * here. It used to be a ConditionCheck in a TransactWrite, but that routed every
  * one of a submit's parallel registrations through the same header item, and
  * DynamoDB cancels concurrent transactions contending on a shared item
@@ -139,13 +275,14 @@ export const registerArtifact = async (event) => {
     artifactId,
     s3Key,
     contentType,
+    contentLength,
     capturedAt,
     latitude,
     longitude,
     text,
     language,
   } =
-    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown, language?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown, language?: unknown }} */ (
       body ?? {}
     );
 
@@ -185,9 +322,50 @@ export const registerArtifact = async (event) => {
     return jsonResponse(400, { error: "invalid_location" });
   }
   // No-graft: the key the client hands back must live under this site + check.
-  if (hasS3Key && !s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
+  if (hasS3Key && s3Key !== mediaKey(siteId, checkId, artifactId)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
   }
+  let verifiedContentLength;
+  if (hasS3Key) {
+    if (
+      typeof contentType !== "string" ||
+      !ALLOWED_CONTENT_TYPES.has(contentType) ||
+      !Number.isInteger(contentLength) ||
+      Number(contentLength) <= 0 ||
+      Number(contentLength) > MAX_OBJECT_BYTES
+    ) {
+      return jsonResponse(400, { error: "invalid_media_metadata" });
+    }
+    let object;
+    try {
+      object = await headObject({
+        bucket: getConfig().uploadBucket,
+        key: s3Key,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ["NotFound", "NoSuchKey"].includes(error.name)
+      ) {
+        return jsonResponse(409, { error: "media_upload_missing" });
+      }
+      throw error;
+    }
+    if (
+      object.contentType !== contentType ||
+      object.contentLength !== Number(contentLength) ||
+      object.metadata?.["declared-bytes"] !== String(contentLength)
+    ) {
+      await setObjectTags({
+        bucket: getConfig().uploadBucket,
+        key: s3Key,
+        tags: { state: "rejected" },
+      });
+      return jsonResponse(422, { error: "media_metadata_mismatch" });
+    }
+    verifiedContentLength = Number(contentLength);
+  }
+
   // The requester's locale for analyzer-written text. The analyzer falls back
   // to English on unknown tags, so this is pass-through, not an allowlist.
   const languageValue =
@@ -207,6 +385,7 @@ export const registerArtifact = async (event) => {
     capturedAt: capturedAtValue,
     ...(hasCoordinates ? { latitude, longitude } : {}),
     ...(typeof contentType === "string" ? { contentType } : {}),
+    ...(verifiedContentLength ? { contentLength: verifiedContentLength } : {}),
     ...(hasText ? { text: normalizedText } : {}),
   };
 
@@ -239,6 +418,14 @@ export const registerArtifact = async (event) => {
     } else {
       throw err;
     }
+  }
+
+  if (hasS3Key) {
+    await setObjectTags({
+      bucket: getConfig().uploadBucket,
+      key: s3Key,
+      tags: { state: "registered" },
+    });
   }
 
   // Media bytes NEVER travel through the queue — only the S3 key the worker
@@ -396,6 +583,19 @@ export const presignMedia = async (event) => {
   if (!artifact || typeof artifact.s3Key !== "string") {
     return jsonResponse(404, { error: "Artifact not found" });
   }
+  // Stored data is still treated as untrusted. Never sign a key outside the
+  // caller's tenant even if a legacy/corrupt row points there.
+  if (!artifact.s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
+    console.error(
+      JSON.stringify({
+        marker: "MediaTenantMismatch",
+        siteId,
+        checkId,
+        artifactId,
+      }),
+    );
+    return jsonResponse(404, { error: "Artifact not found" });
+  }
 
   const downloadUrl = await presignGet({
     bucket: uploadBucket,
@@ -410,3 +610,55 @@ export const presignMedia = async (event) => {
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
 };
+
+/**
+ * Build one conditional quota reservation update for a DynamoDB transaction.
+ * @param {object} input
+ * @param {string} input.tableName
+ * @param {{pk:string, sk:string}} input.key
+ * @param {number} input.bytes
+ * @param {number} input.maxBytes
+ * @param {string} [input.byteField]
+ * @param {string} [input.countField]
+ * @param {number} [input.maxCount]
+ * @param {number} [input.expiresAt]
+ * @returns {Record<string, any>}
+ */
+function quotaUpdate({
+  tableName,
+  key,
+  bytes,
+  maxBytes,
+  byteField = "reservedBytes",
+  countField,
+  maxCount,
+  expiresAt,
+}) {
+  /** @type {Record<string, string>} */
+  const names = { "#bytes": byteField };
+  /** @type {Record<string, string | number | undefined>} */
+  const values = {
+    ":bytes": bytes,
+    ":remaining": maxBytes - bytes,
+    ...(countField ? { ":one": 1, ":maxCount": maxCount } : {}),
+    ...(expiresAt ? { ":expiresAt": expiresAt } : {}),
+  };
+  if (countField) names["#count"] = countField;
+  const update = `ADD #bytes :bytes${countField ? ", #count :one" : ""}${expiresAt ? " SET expiresAt = :expiresAt" : ""}`;
+  const conditions = [
+    "(attribute_not_exists(#bytes) OR #bytes <= :remaining)",
+    ...(countField
+      ? ["(attribute_not_exists(#count) OR #count < :maxCount)"]
+      : []),
+  ];
+  return {
+    Update: {
+      TableName: tableName,
+      Key: key,
+      UpdateExpression: update,
+      ConditionExpression: conditions.join(" AND "),
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    },
+  };
+}

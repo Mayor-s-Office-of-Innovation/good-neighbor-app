@@ -282,6 +282,36 @@ resource "aws_s3_bucket_public_access_block" "uploads" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "uploads_tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.uploads.arn,
+      "${aws_s3_bucket.uploads.arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "uploads_tls_only" {
+  bucket = aws_s3_bucket.uploads.id
+  policy = data.aws_iam_policy_document.uploads_tls_only.json
+
+  depends_on = [aws_s3_bucket_public_access_block.uploads]
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
@@ -341,6 +371,66 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-registered-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "registered"
+      }
+    }
+
+    expiration {
+      days = 2
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-rejected-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "rejected"
+      }
+    }
+
+    expiration {
+      days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-accepted-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "accepted"
+      }
+    }
+
+    expiration {
+      days = 7
     }
 
     noncurrent_version_expiration {
@@ -529,11 +619,12 @@ resource "aws_dynamodb_table" "app" {
     kms_key_arn = aws_kms_key.app.arn
   }
 
-  # TTL attribute wired but inactive — activation deferred to the post-MVP
-  # retention pass (test data is disposable, cleared between cycles).
+  # Numeric operational expiries (upload reservations, quota counters, rate
+  # limits, and import staging) are reclaimed automatically. Legacy domain
+  # records that carry ISO strings in expiresAt are ignored by DynamoDB TTL.
   ttl {
     attribute_name = "expiresAt"
-    enabled        = false
+    enabled        = true
   }
 
   tags = var.tags
@@ -590,6 +681,21 @@ resource "aws_cognito_user_pool" "users" {
     string_attribute_constraints {
       min_length = 1
       max_length = 128
+    }
+  }
+
+  # City program managers are selected from the Cognito directory by this
+  # operator-managed flag; it is optional and does not grant authorization.
+  schema {
+    name                     = "program_manager"
+    attribute_data_type      = "String"
+    mutable                  = true
+    required                 = false
+    developer_only_attribute = false
+
+    string_attribute_constraints {
+      min_length = 0
+      max_length = 5
     }
   }
 
@@ -704,7 +810,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
     items {
       header   = "Permissions-Policy"
       override = true
-      value    = "camera=(), microphone=(), geolocation=(self)"
+      value    = "camera=(self), microphone=(), geolocation=(self)"
     }
   }
 }
@@ -956,13 +1062,53 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
+  # Manager recovery is intentionally anonymous and non-enumerating. The
+  # application enforces the stricter email limits (3/hour and a 15-minute
+  # cooldown); this edge rule absorbs per-IP bursts before they consume
+  # Lambda/DynamoDB capacity.
+  rule {
+    name     = "ManagerAccessRateLimit"
+    priority = 7
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 20
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "EXACTLY"
+            search_string         = "/app/v1/manager-access/request"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-manager-access-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
   # Client analytics intake (POST /v1/client-events). Honest traffic is one
   # $pageview per route change plus a few app events per check, so even a
   # field team behind one NAT stays far below 1000/5min/IP; the cap bounds a
   # misbehaving client or a flood of forged events.
   rule {
     name     = "ClientEventsRateLimit"
-    priority = 7
+    priority = 8
 
     action {
       block {}

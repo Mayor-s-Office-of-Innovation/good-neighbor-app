@@ -4,11 +4,38 @@ import { t } from "../i18n/i18n.js";
 
 const {
   formatAdminDate,
+  formatDeviceEnrollmentSummary,
   formatAdminPhone,
   validateContact,
   validateSiteDetails,
   valuesChanged,
 } = await import("./site-admin.validation.js");
+
+describe("site admin device summary", () => {
+  it("prompts enrollment when no active devices exist", () => {
+    expect(formatDeviceEnrollmentSummary([{ status: "revoked" }])).toBe(
+      'Click "Manage" to enroll new team member devices.',
+    );
+  });
+
+  it("uses singular grammar for one active device", () => {
+    expect(formatDeviceEnrollmentSummary([{ status: "active" }])).toBe(
+      '1 device is enrolled. Click "Manage" to revoke access or add new devices.',
+    );
+  });
+
+  it("counts only active devices in the plural summary", () => {
+    expect(
+      formatDeviceEnrollmentSummary([
+        { status: "active" },
+        { status: "revoked" },
+        { status: "active" },
+      ]),
+    ).toBe(
+      '2 devices are enrolled. Click "Manage" to revoke access or add new devices.',
+    );
+  });
+});
 
 describe("site admin form decisions", () => {
   it("validates contact names, email, and US phone numbers", () => {

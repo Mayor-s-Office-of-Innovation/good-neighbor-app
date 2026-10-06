@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
+import { headObject, setObjectTags } from "../s3.js";
 import {
   eligibleTicketsForClosure,
   executeAppActions,
@@ -20,6 +21,7 @@ import {
   claimTaskResolution,
   readLegacyUpdateById,
   readTask,
+  readTaskUpdateMediaRegistration,
   readTimeline,
   readUpdateById,
   readUpdatePointer,
@@ -32,6 +34,7 @@ import {
 const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
 const MAX_TEXT = 4000;
+const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 const RESOLUTION_LEASE_MS = 5 * 60 * 1000;
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
@@ -340,7 +343,7 @@ export const documentTaskUpdate = async (event) => {
 export const registerTaskUpdateMedia = async (event) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
-  const { dynamoTable } = getConfig();
+  const { dynamoTable, uploadBucket } = getConfig();
   const siteId = deriveSiteId(event);
   const taskId = String(event.pathParameters?.taskId || "");
   const task = await readTask(dynamoTable, siteId, taskId);
@@ -351,14 +354,42 @@ export const registerTaskUpdateMedia = async (event) => {
   const checkId = String(input.checkId || "");
   const s3Key = String(input.s3Key || "");
   const contentType = String(input.contentType || "");
+  const contentLength = Number(input.contentLength);
   if (
     !artifactId ||
     !checkId ||
     checkId !== String(task.checkId || "") ||
-    !s3Key.startsWith(`checks/${siteId}/${checkId}/`) ||
-    !ALLOWED_CONTENT_TYPES.has(contentType)
+    s3Key !== `checks/${siteId}/${checkId}/${artifactId}` ||
+    !ALLOWED_CONTENT_TYPES.has(contentType) ||
+    !Number.isInteger(contentLength) ||
+    contentLength <= 0 ||
+    contentLength > MAX_OBJECT_BYTES
   )
     return jsonResponse(400, { error: "Invalid update media" });
+  let object;
+  try {
+    object = await headObject({ bucket: uploadBucket, key: s3Key });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      ["NotFound", "NoSuchKey"].includes(error.name)
+    )
+      return jsonResponse(409, { error: "media_upload_missing" });
+    throw error;
+  }
+  if (
+    object.contentType !== contentType ||
+    object.contentLength !== contentLength ||
+    object.metadata?.["declared-bytes"] !== String(contentLength)
+  ) {
+    await setObjectTags({
+      bucket: uploadBucket,
+      key: s3Key,
+      tags: { state: "rejected" },
+    });
+    return jsonResponse(422, { error: "media_metadata_mismatch" });
+  }
+  let alreadyRegistered = false;
   try {
     await writeTaskUpdateMedia({
       tableName: dynamoTable,
@@ -368,6 +399,7 @@ export const registerTaskUpdateMedia = async (event) => {
       artifactId,
       s3Key,
       contentType,
+      contentLength,
       capturedAt:
         typeof input.capturedAt === "string"
           ? input.capturedAt
@@ -380,9 +412,42 @@ export const registerTaskUpdateMedia = async (event) => {
         "ConditionalCheckFailedException",
         "TransactionCanceledException",
       ].includes(error.name)
-    )
-      return jsonResponse(200, { artifactId, status: "registered" });
-    throw error;
+    ) {
+      const existing = await readTaskUpdateMediaRegistration({
+        tableName: dynamoTable,
+        siteId,
+        checkId,
+        taskId,
+        artifactId,
+      });
+      const media = existing.media;
+      const pointer = existing.pointer;
+      const exactRetry =
+        media?.taskId === taskId &&
+        media?.checkId === checkId &&
+        media?.artifactId === artifactId &&
+        media?.s3Key === s3Key &&
+        media?.contentType === contentType &&
+        Number(media?.contentLength) === contentLength &&
+        pointer?.taskId === taskId &&
+        pointer?.checkId === checkId &&
+        pointer?.artifactId === artifactId &&
+        pointer?.mediaSk === media?.sk;
+      if (!exactRetry) {
+        return jsonResponse(409, { error: "task_update_media_conflict" });
+      }
+      alreadyRegistered = true;
+    } else {
+      throw error;
+    }
   }
-  return jsonResponse(201, { artifactId, status: "registered" });
+  await setObjectTags({
+    bucket: uploadBucket,
+    key: s3Key,
+    tags: { state: "accepted" },
+  });
+  return jsonResponse(alreadyRegistered ? 200 : 201, {
+    artifactId,
+    status: "registered",
+  });
 };
