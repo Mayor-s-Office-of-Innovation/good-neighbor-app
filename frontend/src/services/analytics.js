@@ -23,7 +23,12 @@
   (scrub-client-event.js); anything not listed there is dropped on arrival.
 */
 
-import { distinctId, release } from "./error-report.js";
+import {
+  distinctId,
+  flagEnabled,
+  release,
+  sendBeacon,
+} from "./error-report.js";
 
 const ENDPOINT = "/v1/client-events";
 const FLAG_KEY = "gnp:analytics";
@@ -50,19 +55,11 @@ function nav() {
 
 /**
  * Enablement: `gnp:analytics=off` wins; `on` overrides test mode; otherwise
- * on except under the test runner. Storage-less environments stay quiet.
+ * on except under the test runner (shared gate in error-report.js).
  * @returns {boolean}
  */
 export function analyticsEnabled() {
-  try {
-    const flag = localStorage.getItem(FLAG_KEY);
-    if (flag === "off") return false;
-    if (flag === "on") return true;
-  } catch {
-    return false;
-  }
-  const env = /** @type {{ env?: { MODE?: string } }} */ (import.meta).env;
-  return env?.MODE !== "test";
+  return flagEnabled(FLAG_KEY);
 }
 
 /**
@@ -77,13 +74,16 @@ export async function trackEvent(event, properties = {}) {
   if (!analyticsEnabled()) return false;
   try {
     const hints = await clientHints();
-    return send({
-      event,
-      properties: { ...deviceProperties(), ...hints, ...properties },
-      id: distinctId(),
-      release: release(),
-      ts: new Date().toISOString(),
-    });
+    return sendBeacon(
+      {
+        event,
+        properties: { ...deviceProperties(), ...hints, ...properties },
+        id: distinctId(),
+        release: release(),
+        ts: new Date().toISOString(),
+      },
+      ENDPOINT,
+    );
   } catch {
     return false;
   }
@@ -241,32 +241,4 @@ function currentUrl(pathname) {
   } catch {
     return "";
   }
-}
-
-/**
- * sendBeacon first; fetch keepalive fallback. Same-origin, so the JSON blob
- * type is allowed. Never throws.
- * @param {Record<string, unknown>} payload
- * @returns {boolean}
- */
-function send(payload) {
-  try {
-    const body = JSON.stringify(payload);
-    if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-      const blob = new Blob([body], { type: "application/json" });
-      if (navigator.sendBeacon(ENDPOINT, blob)) return true;
-    }
-    if (typeof fetch === "function") {
-      fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-        keepalive: true,
-      }).catch(() => {});
-      return true;
-    }
-  } catch {
-    // dropped: analytics must never create app errors
-  }
-  return false;
 }
