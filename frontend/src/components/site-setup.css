@@ -172,35 +172,6 @@
   line-height: 1.5;
 }
 
-.login__enrollment-options,
-.login__paste {
-  display: grid;
-  gap: 0.75rem;
-  width: 100%;
-}
-
-.login__enrollment-options {
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--c-line);
-}
-
-.login__paste label {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.login__paste input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 44px;
-  padding: 0.75rem;
-  border: 1px solid var(--c-line);
-  border-radius: 0.5rem;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-
 @media (max-width: 480px) {
   .login {
     padding-inline: 0;

@@ -35,12 +35,12 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
 };
 ```
 
-Start the backend, then serve this directory:
+Start the backend, then run the Vite admin dev server. Vite is needed here to
+bundle the shared Web Awesome form controls used by the admin UI:
 
 ```sh
 npm run dev --workspace backend
-cd admin-frontend
-python3 -m http.server 5175 --bind 127.0.0.1
+npm run dev:admin
 ```
 
 Open <http://127.0.0.1:5175/>.
@@ -48,6 +48,9 @@ Open <http://127.0.0.1:5175/>.
 In debug mode, the admin frontend sends `X-Debug-Groups: central-admin` and
 `X-Debug-Sub: local-admin`. The local API harness turns those headers into the
 same Cognito-shaped claims the deployed admin handlers read.
+
+The production admin site is built with `npm run build:admin`; its static output
+is written to `admin-frontend/dist` and published by the deployment workflow.
 
 ## Deployed Config
 

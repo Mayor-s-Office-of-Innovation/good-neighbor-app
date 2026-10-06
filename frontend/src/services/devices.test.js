@@ -135,4 +135,11 @@ describe("redeemEnrollmentGrant", () => {
       "invalid enrollment link",
     );
   });
+
+  it("does not misreport a missing API route as an expired link", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => jsonResponse({ status: 404 })));
+    await expect(redeemEnrollmentGrant("grant-1", "token")).rejects.toThrow(
+      "enrollment failed (404)",
+    );
+  });
 });

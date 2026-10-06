@@ -5,7 +5,7 @@
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request"|"manager", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }, managerRequest?: {email?:string, requesting?:boolean, message?:string, error?:string}}} state
+ * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
@@ -17,7 +17,6 @@ export const codeEntryView = ({
   canCancel = false,
   cancelDisabled = false,
   request = {},
-  managerRequest = {},
 } = {}) => html`
   <div class="login" aria-labelledby="login-title">
     <section class="login__panel" aria-busy="${checking ? "true" : "false"}">
@@ -28,9 +27,7 @@ export const codeEntryView = ({
         <p>
           ${mode === "request"
             ? "Request a new site code"
-            : mode === "manager"
-              ? "Request Site Manager access"
-              : targetSiteName
+            : targetSiteName
                 ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
                 : "Enter a site code"}
         </p>
@@ -38,9 +35,7 @@ export const codeEntryView = ({
 
       ${mode === "request"
         ? requestCodeView(request)
-        : mode === "manager"
-          ? managerAccessView(managerRequest)
-          : enterCodeView({ value, error, checking })}
+        : enterCodeView({ value, error, checking })}
       ${canCancel
         ? html`<button
             id="cancel-site-switch"
@@ -100,72 +95,7 @@ function enterCodeView({ value, error, checking }) {
     <button id="show-request-code" class="btn-link" type="button">
       Need a new code?
     </button>
-    <button id="show-manager-access" class="btn-link" type="button">
-      Site Manager access
-    </button>
-    <div class="login__enrollment-options">
-      <p class="login__hint">
-        To enroll from a QR code, scan it with this device's Camera app. You can
-        also paste an enrollment link below.
-      </p>
-      <form id="paste-enrollment-form" class="login__paste" novalidate>
-        <label for="enrollment-link">Enrollment link</label>
-        <input
-          id="enrollment-link"
-          name="enrollment-link"
-          type="url"
-          inputmode="url"
-          autocomplete="off"
-          placeholder="https://…"
-        />
-        <button class="btn-outline" type="submit">Open enrollment link</button>
-      </form>
-    </div>
   `;
-}
-
-/** @param {{email?:string, requesting?:boolean, message?:string, error?:string}} state */
-function managerAccessView({
-  email = "",
-  requesting = false,
-  message = "",
-  error = "",
-}) {
-  return html`<form id="manager-access-form" class="login__request" novalidate>
-      <label class="login__field">
-        <span>Work email</span>
-        <input
-          id="manager-access-email"
-          type="email"
-          autocomplete="email"
-          value="${escapeAttr(email)}"
-          ${requesting ? "disabled" : ""}
-        />
-      </label>
-      <p class="login__hint">
-        If your email has access to more than one Site, the email will contain a
-        separate enrollment link for each Site.
-      </p>
-      <p class="login__error" role="alert" ${error ? "" : "hidden"}>
-        ${escapeHtml(error)}
-      </p>
-      <p class="login__message" role="status" ${message ? "" : "hidden"}>
-        ${escapeHtml(message)}
-      </p>
-      <button
-        id="manager-access-submit"
-        class="btn-ink login__continue"
-        type="submit"
-        ${requesting || !email ? "disabled" : ""}
-      >
-        ${requesting
-          ? html`<wa-spinner aria-label="Requesting access"></wa-spinner>`
-          : "Email enrollment links"}
-      </button>
-    </form>
-    <button id="show-code-entry" class="btn-link" type="button">
-      Enter a site code instead
-    </button>`;
 }
 
 /**

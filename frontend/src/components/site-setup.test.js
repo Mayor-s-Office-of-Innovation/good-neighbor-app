@@ -10,7 +10,6 @@ import {
 
 const setup = vi.hoisted(() => ({
   validateSetupCode: vi.fn(),
-  requestManagerAccess: vi.fn(),
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
   getSite: vi.fn(),
@@ -18,7 +17,6 @@ const setup = vi.hoisted(() => ({
 }));
 vi.mock("../services/onboarding.js", () => ({
   formatSiteCode: (value) => value,
-  requestManagerAccess: setup.requestManagerAccess,
   requestSetupCode: vi.fn(),
   searchSites: vi.fn(),
   validateSetupCode: setup.validateSetupCode,
@@ -34,7 +32,6 @@ vi.mock("../db.js", () => ({
 
 let readCodeFromUrl;
 let readEnrollmentFromUrl;
-let parseEnrollmentLink;
 let stripCodeFromUrl;
 let stripEnrollmentFromUrl;
 let SiteSetup;
@@ -45,7 +42,6 @@ beforeAll(async () => {
   ({
     readCodeFromUrl,
     readEnrollmentFromUrl,
-    parseEnrollmentLink,
     stripCodeFromUrl,
     stripEnrollmentFromUrl,
     SiteSetup,
@@ -55,7 +51,6 @@ beforeAll(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   setup.validateSetupCode.mockReset();
-  setup.requestManagerAccess.mockReset();
   setup.registerDevice.mockReset();
   setup.redeemEnrollmentGrant.mockReset();
   setup.getSite.mockReset();
@@ -63,28 +58,15 @@ afterEach(() => {
 });
 
 describe("Manager enrollment URLs", () => {
-  it("directs QR users to the system Camera and provides only a paste fallback", () => {
+  it("keeps manager enrollment controls off the login page", () => {
     const markup = codeEntryView();
-    expect(markup).toContain("scan it with this device's Camera app");
-    expect(markup).toContain('id="paste-enrollment-form"');
-    expect(markup).not.toContain("scan-enrollment-qr");
-    expect(markup).not.toContain("enrollment-scanner");
-  });
-
-  it("accepts enrollment fragments and rejects malformed pasted values", () => {
-    vi.stubGlobal("location", new URL("https://goodneighborsf.org/"));
-    expect(
-      parseEnrollmentLink(
-        "https://goodneighborsf.org/#enrollment_grant=test-grant&enrollment_token=test_token_test_token_",
-      ),
-    ).toEqual({
-      grantId: "test-grant",
-      token: "test_token_test_token_",
-    });
-    expect(parseEnrollmentLink("javascript:alert(1)")).toBeNull();
-    expect(
-      parseEnrollmentLink("https://example.org/#enrollment_grant=x"),
-    ).toBeNull();
+    expect(markup).toContain("Welcome to Good Neighbor.");
+    expect(markup).toContain('id="code-input"');
+    expect(markup).toContain('id="continue"');
+    expect(markup).toContain("Need a new code?");
+    expect(markup).not.toContain("Site Manager access");
+    expect(markup).not.toContain("Enrollment link");
+    expect(markup).not.toContain("Camera app");
   });
 
   it("reads both secret fragment fields", () => {

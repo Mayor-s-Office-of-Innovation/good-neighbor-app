@@ -2,6 +2,7 @@ import {
   BatchGetCommand,
   BatchWriteCommand,
   GetCommand,
+  PutCommand,
   QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
@@ -13,6 +14,7 @@ import { geocodeSiteAddress, siteSearchItem } from "../domain/site-metadata.js";
 import { jsonResponse } from "../http.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
 import { adminOnly } from "../lib/admin-auth.js";
+import { emailHash } from "./setup-codes.js";
 
 const HEADERS = [
   "Provider",
@@ -22,8 +24,13 @@ const HEADERS = [
   "Contact first name",
   "Contact last name",
   "Contact phone",
+  "Contact extension",
   "Contact email",
 ];
+const REQUIRED_HEADERS = HEADERS.filter(
+  (header) => header !== "Contact phone" && header !== "Contact extension",
+);
+const OPTIONAL_HEADERS = ["Contact phone", "Contact extension"];
 const MAX_BYTES = 1024 * 1024;
 const MAX_ROWS = 500;
 const MAX_APPLY_ROWS = 20;
@@ -170,6 +177,8 @@ export const applySiteImport = (event) =>
     const complete = !finalItems.some(
       (row) => isApplicable(row) && !isTerminal(row),
     );
+    const now = new Date().toISOString();
+    const completedAt = complete ? clean(meta.completedAt) || now : "";
     await ddb.send(
       new UpdateCommand({
         TableName: tableName,
@@ -180,17 +189,76 @@ export const applySiteImport = (event) =>
         ExpressionAttributeValues: {
           ":status": complete ? "complete" : "applying",
           ":outcomes": outcomes,
-          ":completedAt": complete ? new Date().toISOString() : "",
-          ":now": new Date().toISOString(),
+          ":completedAt": completedAt,
+          ":now": now,
         },
       }),
     );
+    if (complete) {
+      const added = finalItems.filter(
+        (row) =>
+          row.outcome === "applied" && row.plan?.site?.action === "create",
+      ).length;
+      const updated = finalItems.filter(
+        (row) =>
+          row.outcome === "applied" && row.plan?.site?.action !== "create",
+      ).length;
+      const failed =
+        Number(outcomes.failed || 0) + Number(outcomes.skipped_conflict || 0);
+      const resultStatus =
+        failed === 0 ? "succeeded" : added + updated > 0 ? "partial" : "failed";
+      await ddb.send(
+        new PutCommand({
+          TableName: tableName,
+          Item: {
+            pk: `SITE_IMPORT_HISTORY#${requesterId(event)}`,
+            sk: `${completedAt}#${importId}`,
+            type: "siteImportHistory",
+            importId,
+            fileName: String(meta.fileName || "Imported CSV"),
+            completedAt,
+            recordsAdded: added,
+            recordsUpdated: updated,
+            recordsFailed: failed,
+            resultStatus,
+            outcomes,
+          },
+        }),
+      );
+    }
+    const failed =
+      Number(outcomes.failed || 0) + Number(outcomes.skipped_conflict || 0);
+    const applied = Number(outcomes.applied || 0);
     return jsonResponse(complete ? 200 : 202, {
       importId,
       status: complete ? "complete" : "applying",
+      resultStatus: complete
+        ? failed === 0
+          ? "succeeded"
+          : applied > 0
+            ? "partial"
+            : "failed"
+        : "applying",
       outcomes,
       rows: finalItems.map(publicRow),
     });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const listSiteImports = (event) =>
+  adminOnly(event, async () => {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: getDynamoTableName(),
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": `SITE_IMPORT_HISTORY#${requesterId(event)}`,
+        },
+        ScanIndexForward: false,
+        Limit: 25,
+      }),
+    );
+    return jsonResponse(200, { imports: result.Items ?? [] });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -263,8 +331,11 @@ export const getSiteImportConflicts = (event) =>
 async function applyOneRow(importId, row) {
   const plan = /** @type {Record<string, any>} */ (row.plan ?? {});
   const source = /** @type {Record<string, string>} */ (row.source ?? {});
+  const contactEmail =
+    clean(plan.contact?.email) || normalized(source["Contact email"]);
   const tableName = getDynamoTableName();
   const now = new Date().toISOString();
+  const actor = "site-import";
   /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
   const items = [];
   if (plan.provider.action === "reuse") {
@@ -287,7 +358,7 @@ async function applyOneRow(importId, row) {
       ),
     );
   }
-  if (plan.site.action === "reuse") {
+  if (plan.site.action === "reuse" && plan.assignment.action !== "create") {
     items.push(
       activeMatch(
         { pk: `SITE#${plan.site.id}`, sk: "#META" },
@@ -302,7 +373,11 @@ async function applyOneRow(importId, row) {
       ),
     );
   }
-  if (plan.contact.action === "reuse") {
+  if (
+    plan.contact.action === "reuse" &&
+    plan.assignment.action !== "create" &&
+    !plan.contact.promote
+  ) {
     items.push(
       activeMatch(
         {
@@ -311,7 +386,7 @@ async function applyOneRow(importId, row) {
         },
         "email = :email",
         {},
-        { ":email": plan.contact.email },
+        { ":email": contactEmail },
       ),
     );
   }
@@ -405,6 +480,12 @@ async function applyOneRow(importId, row) {
         leadProgramId: plan.program.id,
         programName: source.Program,
         providerSiteId,
+        ...(plan.assignment.action === "create"
+          ? {
+              primaryContactUserId: plan.contact.id,
+              primaryContact: contactDetails(source),
+            }
+          : {}),
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -458,14 +539,17 @@ async function applyOneRow(importId, row) {
         firstName: source["Contact first name"],
         lastName: source["Contact last name"],
         phone: source["Contact phone"],
+        phoneExtension: source["Contact extension"],
         email: normalized(source["Contact email"]),
+        siteManager: true,
         status: "active",
         siteAssignmentCount: 1,
         createdAt: now,
         updatedAt: now,
       }),
     );
-  } else if (plan.assignment.action === "create") {
+  } else if (plan.assignment.action === "create" || plan.contact.promote) {
+    const addsAssignment = plan.assignment.action === "create";
     items.push({
       Update: {
         TableName: tableName,
@@ -473,13 +557,16 @@ async function applyOneRow(importId, row) {
           pk: `PROGRAM#${plan.program.id}`,
           sk: `USER#${plan.contact.id}`,
         },
-        UpdateExpression: "ADD siteAssignmentCount :one SET updatedAt = :now",
-        ConditionExpression: "attribute_exists(pk) AND #status = :active",
+        UpdateExpression: `${addsAssignment ? "ADD siteAssignmentCount :one " : ""}SET siteManager = :true, updatedAt = :now`,
+        ConditionExpression:
+          "attribute_exists(pk) AND #status = :active AND email = :email",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
-          ":one": 1,
+          ...(addsAssignment ? { ":one": 1 } : {}),
+          ":true": true,
           ":now": now,
           ":active": "active",
+          ":email": contactEmail,
         },
       },
     });
@@ -497,25 +584,105 @@ async function applyOneRow(importId, row) {
         createdAt: now,
         updatedAt: now,
       }),
-      {
+    );
+    if (plan.site.action !== "create") {
+      items.push({
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
           UpdateExpression:
             "SET primaryContactUserId = if_not_exists(primaryContactUserId, :userId), primaryContact = if_not_exists(primaryContact, :contact), updatedAt = :now",
-          ConditionExpression: "attribute_exists(pk)",
+          ConditionExpression:
+            "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address",
+          ExpressionAttributeNames: {
+            "#status": "status",
+            "#name": "name",
+          },
           ExpressionAttributeValues: {
             ":userId": plan.contact.id,
-            ":contact": {
-              firstName: source["Contact first name"],
-              lastName: source["Contact last name"],
-              phone: source["Contact phone"],
-              email: normalized(source["Contact email"]),
-            },
+            ":contact": contactDetails(source),
             ":now": now,
+            ":active": "active",
+            ":providerId": plan.provider.id,
+            ":programId": plan.program.id,
+            ":name": plan.site.name,
+            ":address": plan.site.address,
           },
         },
-      },
+      });
+    }
+  }
+  const managerPlan = plan.manager || {
+    id: stableId(`${plan.site.id}|${plan.contact.id}|manager-membership`),
+    action: "create",
+  };
+  if (managerPlan.action === "reuse") {
+    items.push(
+      activeMatch(
+        {
+          pk: `SITE#${plan.site.id}`,
+          sk: `MANAGER_MEMBERSHIP#${managerPlan.id}`,
+        },
+        "programId = :programId AND userId = :userId AND email = :email",
+        {},
+        {
+          ":programId": plan.program.id,
+          ":userId": plan.contact.id,
+          ":email": contactEmail,
+        },
+      ),
+    );
+  } else {
+    const verifier = await emailHash(contactEmail);
+    const membership = {
+      pk: `SITE#${plan.site.id}`,
+      sk: `MANAGER_MEMBERSHIP#${managerPlan.id}`,
+      type: "managerMembership",
+      entityType: "MANAGER_MEMBERSHIP",
+      membershipId: managerPlan.id,
+      siteId: plan.site.id,
+      programId: plan.program.id,
+      userId: plan.contact.id,
+      name: `${source["Contact first name"]} ${source["Contact last name"]}`.trim(),
+      email: contactEmail,
+      emailHash: verifier,
+      role: "manager",
+      status: "active",
+      generation: 1,
+      createdAt: now,
+      createdBy: actor,
+      updatedAt: now,
+      updatedBy: actor,
+    };
+    items.push(
+      conditionalPut(membership),
+      conditionalPut({
+        pk: `SITE#${plan.site.id}`,
+        sk: `MANAGER_EMAIL#${verifier}`,
+        type: "managerMembershipEmail",
+        membershipId: managerPlan.id,
+        siteId: plan.site.id,
+        createdAt: now,
+      }),
+      conditionalPut({
+        pk: `MANAGER_EMAIL#${verifier}`,
+        sk: `SITE#${plan.site.id}#MEMBERSHIP#${managerPlan.id}`,
+        type: "managerMembershipDirectory",
+        membershipId: managerPlan.id,
+        siteId: plan.site.id,
+        status: "active",
+        createdAt: now,
+      }),
+      conditionalPut({
+        pk: `SITE#${plan.site.id}`,
+        sk: `AUDIT#${now}#${randomUUID()}`,
+        type: "siteAuditEvent",
+        eventType: "manager_membership_created",
+        siteId: plan.site.id,
+        membershipId: managerPlan.id,
+        actor,
+        createdAt: now,
+      }),
     );
   }
   try {
@@ -529,25 +696,111 @@ async function applyOneRow(importId, row) {
       userId: plan.contact.id,
     });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.name === "TransactionCanceledException"
-    ) {
+    const failure = classifyApplyError(error);
+    console.error("Site import row apply failed", {
+      importId,
+      rowNumber: row.rowNumber,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error),
+      statusCode: applyErrorStatusCode(error),
+      cancellationReasons: applyCancellationReasonCodes(error),
+      reasonCode: failure.reasonCode,
+      retryable: failure.retryable,
+    });
+    if (failure.reasonCode === "changed_after_preview") {
       return recordOutcome(
         importId,
         row,
         "skipped_conflict",
-        "changed_after_preview",
+        failure.reasonCode,
       );
     }
     const attempts = Number(row.applyAttempts || 0);
     return recordOutcome(
       importId,
       row,
-      attempts >= 2 ? "failed" : "retryable_failed",
-      "transient_apply_error",
+      failure.retryable && attempts < 2 ? "retryable_failed" : "failed",
+      failure.reasonCode,
     );
   }
+}
+
+/** @param {Record<string, string>} source */
+function contactDetails(source) {
+  return {
+    firstName: source["Contact first name"],
+    lastName: source["Contact last name"],
+    phone: source["Contact phone"],
+    phoneExtension: source["Contact extension"],
+    email: normalized(source["Contact email"]),
+  };
+}
+
+/** @param {unknown} error */
+function classifyApplyError(error) {
+  const name = error instanceof Error ? error.name : "";
+  if (name === "TransactionCanceledException") {
+    if (
+      applyCancellationReasonCodes(error).some((code) =>
+        [
+          "ProvisionedThroughputExceeded",
+          "ThrottlingError",
+          "TransactionConflict",
+        ].includes(code),
+      )
+    ) {
+      return { reasonCode: "retryable_apply_error", retryable: true };
+    }
+    return { reasonCode: "changed_after_preview", retryable: false };
+  }
+  if (
+    [
+      "InternalServerError",
+      "ProvisionedThroughputExceededException",
+      "RequestLimitExceeded",
+      "ServiceUnavailable",
+      "ThrottlingException",
+      "TransactionConflictException",
+      "TransactionInProgressException",
+    ].includes(name) ||
+    applyErrorStatusCode(error) >= 500
+  ) {
+    return { reasonCode: "retryable_apply_error", retryable: true };
+  }
+  if (name === "ValidationException") {
+    return { reasonCode: "invalid_apply_transaction", retryable: false };
+  }
+  if (["AccessDeniedException", "ResourceNotFoundException"].includes(name)) {
+    return {
+      reasonCode: "import_service_configuration_error",
+      retryable: false,
+    };
+  }
+  return { reasonCode: "unexpected_apply_error", retryable: false };
+}
+
+/** @param {unknown} error */
+function applyErrorStatusCode(error) {
+  if (!error || typeof error !== "object") return 0;
+  const metadata = /** @type {{ $metadata?: { httpStatusCode?: unknown } }} */ (
+    error
+  ).$metadata;
+  return Number(metadata?.httpStatusCode || 0);
+}
+
+/** @param {unknown} error */
+function applyCancellationReasonCodes(error) {
+  if (!error || typeof error !== "object") return [];
+  const reasons = /** @type {{ CancellationReasons?: unknown }} */ (error)
+    .CancellationReasons;
+  if (!Array.isArray(reasons)) return [];
+  return reasons
+    .map((reason) =>
+      reason && typeof reason === "object" && "Code" in reason
+        ? String(reason.Code || "")
+        : "",
+    )
+    .filter(Boolean);
 }
 
 /** @returns {Promise<Record<string, any>>} */
@@ -580,22 +833,27 @@ async function loadCatalog() {
       },
     }),
   );
-  const assignments = await mapLimit(siteIds, 10, (siteId) =>
+  const siteChildren = await mapLimit(siteIds, 10, (siteId) =>
     queryAll({
       TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      KeyConditionExpression: "pk = :pk",
       ExpressionAttributeValues: {
         ":pk": `SITE#${siteId}`,
-        ":prefix": "ASSIGNED_USER#",
       },
     }),
   );
+  const children = siteChildren.flatMap((result) => result.Items ?? []);
   return {
     providers: providers.Items ?? [],
     programs: programItems,
     sites: siteItems,
     users: users.flatMap((result) => result.Items ?? []),
-    assignments: assignments.flatMap((result) => result.Items ?? []),
+    assignments: children.filter((item) =>
+      String(item.sk || "").startsWith("ASSIGNED_USER#"),
+    ),
+    managerMemberships: children.filter((item) =>
+      String(item.sk || "").startsWith("MANAGER_MEMBERSHIP#"),
+    ),
   };
 }
 
@@ -617,9 +875,20 @@ function planRows(rows, catalog) {
     catalog.assignments,
     (item) => `${item.siteId}|${item.userId}`,
   );
+  const activeManagerMemberships = /** @type {any[]} */ (
+    catalog.managerMemberships
+  ).filter((item) => item.status === "active");
+  const managersByUser = indexUnique(
+    activeManagerMemberships,
+    (item) => `${item.siteId}|${item.userId}`,
+  );
+  const managersByEmail = indexUnique(
+    activeManagerMemberships,
+    (item) => `${item.siteId}|${item.programId}|${normalized(item.email)}`,
+  );
   return rows.map((source, index) => {
     const rowNumber = index + 2;
-    const missing = HEADERS.filter((header) => !clean(source[header]));
+    const missing = REQUIRED_HEADERS.filter((header) => !clean(source[header]));
     if (missing.length) {
       return {
         rowNumber,
@@ -629,6 +898,9 @@ function planRows(rows, catalog) {
         existingValue: missing.join(", "),
       };
     }
+    const missingOptional = OPTIONAL_HEADERS.filter(
+      (header) => !clean(source[header]),
+    );
     const providerKey = normalized(source.Provider);
     const providerExisting = providers.get(providerKey);
     if (Array.isArray(providerExisting)) {
@@ -712,6 +984,7 @@ function planRows(rows, catalog) {
       id: contactId,
       action: contactExisting ? "reuse" : "create",
       email: normalized(contactExisting?.email || source["Contact email"]),
+      promote: Boolean(contactExisting && contactExisting.siteManager !== true),
     };
     if (!contactExisting)
       users.set(contactKey, {
@@ -720,6 +993,7 @@ function planRows(rows, catalog) {
         firstName: source["Contact first name"],
         lastName: source["Contact last name"],
         phone: source["Contact phone"],
+        phoneExtension: source["Contact extension"],
         email: source["Contact email"],
       });
     const assignmentKey = `${siteId}|${contactId}`;
@@ -733,20 +1007,46 @@ function planRows(rows, catalog) {
     if (!assignmentExisting) {
       assignments.set(assignmentKey, { siteId, userId: contactId });
     }
-    const actions = [provider, program, site, contact, assignment];
+    const managerKey = `${siteId}|${contactId}`;
+    const managerEmailKey = `${siteId}|${programId}|${contact.email}`;
+    const managerExisting =
+      managersByUser.get(managerKey) || managersByEmail.get(managerEmailKey);
+    if (Array.isArray(managerExisting)) {
+      return conflictRow(rowNumber, source, "duplicate_existing_manager");
+    }
+    const manager = {
+      id: managerExisting?.membershipId || randomUUID(),
+      action: managerExisting ? "reuse" : "create",
+    };
+    if (!managerExisting) {
+      const plannedManager = {
+        membershipId: manager.id,
+        siteId,
+        programId,
+        userId: contactId,
+        email: contact.email,
+      };
+      managersByUser.set(managerKey, plannedManager);
+      managersByEmail.set(managerEmailKey, plannedManager);
+    }
+    const actions = [provider, program, site, contact, assignment, manager];
     return {
       rowNumber,
       source,
-      classification: actions.some((item) => item.action === "create")
-        ? "create"
-        : "reuse",
-      reasonCode: "",
+      classification: missingOptional.length
+        ? "acceptable"
+        : actions.some((item) => item.action === "create")
+          ? "create"
+          : "reuse",
+      reasonCode: missingOptional.length ? "missing_optional_value" : "",
+      existingValue: missingOptional.join(", "),
       plan: {
         provider,
         program,
         site,
         contact,
         assignment,
+        manager,
       },
     };
   });
@@ -955,7 +1255,7 @@ function countClassifications(rows) {
       ...counts,
       [row.classification]: (counts[row.classification] || 0) + 1,
     }),
-    { create: 0, reuse: 0, conflict: 0, invalid: 0 },
+    { create: 0, reuse: 0, acceptable: 0, conflict: 0, invalid: 0 },
   );
 }
 
@@ -969,6 +1269,14 @@ function countOutcomes(rows) {
           0) + 1,
     }),
     { applied: 0, skipped: 0, skipped_conflict: 0, failed: 0, pending: 0 },
+  );
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+function requesterId(event) {
+  return String(
+    /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
+      "central-admin",
   );
 }
 
@@ -987,7 +1295,7 @@ function publicRow(row) {
 
 /** @param {Record<string, any>} row */
 function isApplicable(row) {
-  return row.classification === "create" || row.classification === "reuse";
+  return ["create", "reuse", "acceptable"].includes(row.classification);
 }
 
 /** @param {Record<string, any>} row */
@@ -1018,7 +1326,11 @@ function sameContact(item, source) {
   return (
     normalized(item.firstName) === normalized(source["Contact first name"]) &&
     normalized(item.lastName) === normalized(source["Contact last name"]) &&
-    normalized(item.phone) === normalized(source["Contact phone"]) &&
+    (!clean(source["Contact phone"]) ||
+      normalized(item.phone) === normalized(source["Contact phone"])) &&
+    (!clean(source["Contact extension"]) ||
+      normalized(item.phoneExtension) ===
+        normalized(source["Contact extension"])) &&
     normalized(item.email) === normalized(source["Contact email"])
   );
 }
@@ -1081,5 +1393,13 @@ function guidance(reason) {
     ? "Complete every required column and upload again."
     : reason === "changed_after_preview"
       ? "Download current data, correct the source row, and preview again."
-      : "Compare the supplied and existing values, correct the source CSV, and preview again.";
+      : reason === "retryable_apply_error"
+        ? "Retry the apply operation. If it fails again, contact an administrator."
+        : [
+              "invalid_apply_transaction",
+              "import_service_configuration_error",
+              "unexpected_apply_error",
+            ].includes(reason)
+          ? "Contact an administrator. The source row does not need correction."
+          : "Compare the supplied and existing values, correct the source CSV, and preview again.";
 }

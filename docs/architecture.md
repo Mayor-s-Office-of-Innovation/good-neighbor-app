@@ -118,6 +118,21 @@ analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
 
+## Site address lookup and validation
+
+The City admin suggests Site addresses through an authenticated
+`POST /admin/v1/address-suggestions` endpoint. The browser debounces input and
+the API proxies the query to Photon's public OpenStreetMap-backed service,
+bounded to San Francisco and limited to five house-address results. The browser
+does not contact Photon directly, and a manual-entry path remains available
+because the public endpoint has no uptime guarantee.
+
+Selecting a suggestion only fills the editable Street address, City, State, and
+ZIP fields. Saving remains authoritative: the backend formats those fields and
+uses the U.S. Census geocoder to validate the complete address and derive the
+Site coordinates. Photon results are therefore suggestions, not trusted stored
+coordinates.
+
 ## Guidance workflow (rule-driven tasks)
 
 Guidance is evaluated **per evidence item** at capture time: `POST /v1/assessments:evaluate`

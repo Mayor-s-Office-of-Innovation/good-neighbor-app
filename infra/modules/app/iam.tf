@@ -64,6 +64,19 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid       = "ManageCityProgramManagers"
+    effect    = "Allow"
+    actions = [
+      "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:ListUsers",
+    ]
+    resources = [aws_cognito_user_pool.users.arn]
+  }
+
+  statement {
     sid    = "UploadsObjects"
     effect = "Allow"
     actions = [

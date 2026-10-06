@@ -70,6 +70,7 @@ import {
 } from "../handlers/analysis-amendments.js";
 import {
   createCodeContact,
+  createCityProgramManager,
   createMasterContact,
   createProvider,
   createSite,
@@ -81,6 +82,7 @@ import {
   getProvider,
   issueAdminSetupCode,
   listCodeContacts,
+  listCityProgramManagers,
   listDevices,
   listMasterContacts,
   listProviders,
@@ -90,6 +92,11 @@ import {
   updateProvider,
   updateSite,
 } from "../handlers/admin.js";
+import {
+  createOversightOption,
+  listOversightOptions,
+} from "../handlers/admin-oversight.js";
+import { suggestAddresses } from "../handlers/admin-addresses.js";
 import {
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
@@ -104,6 +111,7 @@ import {
 } from "../handlers/admin-multi-site-revocation.js";
 import { jsonResponse } from "../http.js";
 import {
+  assignProgramToProvider,
   createProgramUser,
   createProgram,
   deactivateProgramUser,
@@ -125,6 +133,7 @@ import {
   createManagerMembership,
   deactivateManagerMembership,
   listManagerMemberships,
+  updateManagerMembership,
 } from "../handlers/admin-manager-memberships.js";
 import {
   cancelManagerGrant,
@@ -135,6 +144,7 @@ import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
+  listSiteImports,
   previewSiteImport,
 } from "../handlers/admin-site-imports.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
@@ -206,6 +216,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PATCH /admin/v1/providers/{providerId}": updateProvider,
   "DELETE /admin/v1/providers/{providerId}": deactivateProvider,
   "GET /admin/v1/programs": listPrograms,
+  "GET /admin/v1/program-managers": listCityProgramManagers,
+  "POST /admin/v1/program-managers": createCityProgramManager,
+  "GET /admin/v1/oversight-options": listOversightOptions,
+  "POST /admin/v1/oversight-options": createOversightOption,
+  "POST /admin/v1/address-suggestions": suggestAddresses,
   "POST /admin/v1/programs": createProgram,
   "GET /admin/v1/programs/{programId}": getProgram,
   "PATCH /admin/v1/programs/{programId}": updateProgram,
@@ -213,6 +228,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/programs/{programId}/users": createProgramUser,
   "PATCH /admin/v1/programs/{programId}/users/{userId}": updateProgramUser,
   "DELETE /admin/v1/programs/{programId}/users/{userId}": deactivateProgramUser,
+  "POST /admin/v1/providers/{providerId}/programs": assignProgramToProvider,
   "POST /admin/v1/providers/{providerId}/sites": createSite,
   "GET /admin/v1/sites/{siteId}": getAdminSite,
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
@@ -224,12 +240,15 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
   "POST /admin/v1/sites/{siteId}/manager-memberships": createManagerMembership,
+  "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":
+    updateManagerMembership,
   "DELETE /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":
     deactivateManagerMembership,
   "GET /admin/v1/sites/{siteId}/grants": listManagerGrants,
   "POST /admin/v1/sites/{siteId}/manager-grants": createManagerGrant,
   "DELETE /admin/v1/sites/{siteId}/grants/{grantId}": cancelManagerGrant,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
+  "GET /admin/v1/site-imports": listSiteImports,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
   "GET /admin/v1/site-imports/{importId}": getSiteImport,
   "GET /admin/v1/site-imports/{importId}/conflicts.csv": getSiteImportConflicts,

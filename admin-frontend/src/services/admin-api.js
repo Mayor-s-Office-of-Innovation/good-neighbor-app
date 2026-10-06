@@ -35,8 +35,26 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  suggestAddresses: (query, signal) =>
+    adminFetch("/admin/v1/address-suggestions", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+      signal,
+    }),
   listProviders: () => adminFetch("/admin/v1/providers"),
   listPrograms: () => adminFetch("/admin/v1/programs"),
+  listCityProgramManagers: () => adminFetch("/admin/v1/program-managers"),
+  createCityProgramManager: (values) =>
+    adminFetch("/admin/v1/program-managers", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  listOversightOptions: () => adminFetch("/admin/v1/oversight-options"),
+  createOversightOption: (values) =>
+    adminFetch("/admin/v1/oversight-options", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
   createProgram: (values) =>
     adminFetch("/admin/v1/programs", {
       method: "POST",
@@ -71,6 +89,11 @@ export const adminApi = {
       `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
       { method: "DELETE" },
     ),
+  removeSiteManager: (programId, userId) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
   createProvider: (name) =>
     adminFetch("/admin/v1/providers", {
       method: "POST",
@@ -82,10 +105,23 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
-  createSite: (providerId, { name, address, leadProgramId }) =>
+  updateProvider: (providerId, values) =>
+    adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  assignProgramToProvider: (providerId, programId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/programs`,
+      {
+        method: "POST",
+        body: JSON.stringify({ programId }),
+      },
+    ),
+  createSite: (providerId, values) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/sites`, {
       method: "POST",
-      body: JSON.stringify({ name, address, leadProgramId }),
+      body: JSON.stringify(values),
     }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
@@ -127,11 +163,19 @@ export const adminApi = {
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
     ),
-  createManagerMembership: (siteId, name, email) =>
+  createManagerMembership: (siteId, name, email, programId = "", userId = "") =>
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
       {
         method: "POST",
+        body: JSON.stringify({ name, email, programId, userId }),
+      },
+    ),
+  updateManagerMembership: (siteId, membershipId, name, email) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      {
+        method: "PATCH",
         body: JSON.stringify({ name, email }),
       },
     ),
@@ -157,6 +201,7 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify({ fileName, csv }),
     }),
+  listSiteImports: () => adminFetch("/admin/v1/site-imports"),
   applySiteImport: (importId, previewVersion, idempotencyKey) =>
     adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}/apply`, {
       method: "POST",

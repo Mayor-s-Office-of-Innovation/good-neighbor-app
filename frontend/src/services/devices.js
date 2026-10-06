@@ -83,7 +83,7 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
       ...(opts.label ? { label: opts.label } : {}),
     }),
   });
-  if (res.status === 401 || res.status === 404) {
+  if (res.status === 401) {
     throw new Error("invalid enrollment link");
   }
   if (!res.ok) throw new Error(`enrollment failed (${res.status})`);

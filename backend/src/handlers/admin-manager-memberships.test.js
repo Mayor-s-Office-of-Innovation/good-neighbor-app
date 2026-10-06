@@ -12,6 +12,7 @@ const {
   createManagerMembership,
   deactivateManagerMembership,
   listManagerMemberships,
+  updateManagerMembership,
 } = await import("./admin-manager-memberships.js");
 
 beforeEach(() => {
@@ -57,7 +58,12 @@ describe("Site Manager memberships", () => {
     const response = await call(
       createManagerMembership,
       event(
-        { name: "  Alex Rivera  ", email: " ALEX@example.org " },
+        {
+          name: "  Alex Rivera  ",
+          email: " ALEX@example.org ",
+          programId: "program-1",
+          userId: "user-1",
+        },
         { siteId: "site-1" },
       ),
     );
@@ -74,6 +80,8 @@ describe("Site Manager memberships", () => {
       role: "manager",
       status: "active",
       generation: 1,
+      programId: "program-1",
+      userId: "user-1",
     });
     expect(transaction.input.TransactItems[1].Put.Item.sk).toMatch(
       /^MANAGER_EMAIL#[a-f0-9]{64}$/,
@@ -107,6 +115,44 @@ describe("Site Manager memberships", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "manager_membership_exists",
     });
+  });
+
+  it("updates manager contact details without revoking the membership", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "MANAGER_MEMBERSHIP#membership-1",
+          membershipId: "membership-1",
+          name: "Alex Rivera",
+          email: "alex@example.org",
+          emailHash:
+            "fda0a603d14a78130eb49b6289a5f71dd651e5c41dc310e45d7febaab92ca9b1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      updateManagerMembership,
+      event(
+        { name: "Alexis Rivera", email: "alexis@example.org" },
+        { siteId: "site-1", membershipId: "membership-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[1][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(6);
+    expect(
+      transaction.input.TransactItems[0].Update.UpdateExpression,
+    ).toContain("#name = :name");
+    expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "MANAGER_EMAIL#fda0a603d14a78130eb49b6289a5f71dd651e5c41dc310e45d7febaab92ca9b1",
+    });
+    expect(transaction.input.TransactItems[5].Put.Item.eventType).toBe(
+      "manager_membership_updated",
+    );
   });
 
   it("deactivates membership, advances its generation, and removes email uniqueness", async () => {

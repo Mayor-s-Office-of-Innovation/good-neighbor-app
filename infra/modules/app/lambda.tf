@@ -96,6 +96,7 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = merge({
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       DEMO_SITE_ID                = "demo-site"

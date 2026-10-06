@@ -684,6 +684,21 @@ resource "aws_cognito_user_pool" "users" {
     }
   }
 
+  # City program managers are selected from the Cognito directory by this
+  # operator-managed flag; it is optional and does not grant authorization.
+  schema {
+    name                     = "program_manager"
+    attribute_data_type      = "String"
+    mutable                  = true
+    required                 = false
+    developer_only_attribute = false
+
+    string_attribute_constraints {
+      min_length = 0
+      max_length = 5
+    }
+  }
+
   password_policy {
     minimum_length                   = 14
     require_lowercase                = true

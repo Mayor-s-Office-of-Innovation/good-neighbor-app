@@ -240,6 +240,25 @@ describe("Site perimeter text", () => {
     expect(response.statusCode).toBe(400);
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("rejects blank perimeter text without overwriting the stored value", async () => {
+    const response = await call(
+      putSitePerimeter,
+      event(
+        {
+          perimeter: "   ",
+          expectedUpdatedAt: "2026-10-03T12:00:00.000Z",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "perimeter_required",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
 });
 
 /**

@@ -11,6 +11,7 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
 const {
+  assignProgramToProvider,
   createProgram,
   createProgramUser,
   deactivateProgramUser,
@@ -24,6 +25,7 @@ const {
 beforeEach(() => {
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-verifier-secret");
 });
 
 describe("program administration", () => {
@@ -71,6 +73,65 @@ describe("program administration", () => {
     });
   });
 
+  it("assigns a Program without active Sites to another provider", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-2",
+          name: "Provider Two",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-1",
+          name: "Program One",
+          providerId: "provider-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      assignProgramToProvider,
+      event({ programId: "program-1" }, { providerId: "provider-2" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[3][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(4);
+  });
+
+  it("does not move a Program that has active Sites", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-2",
+          name: "Provider Two",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-1",
+          name: "Program One",
+          providerId: "provider-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", status: "active" }],
+      });
+    const response = await call(
+      assignProgramToProvider,
+      event({ programId: "program-1" }, { providerId: "provider-2" }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "program_has_sites",
+    });
+  });
+
   it("creates a non-authenticating program contact atomically", async () => {
     send
       .mockResolvedValueOnce({
@@ -84,7 +145,9 @@ describe("program administration", () => {
           firstName: "Sam",
           lastName: "Lee",
           phone: "415-555-0100",
+          phoneExtension: "123",
           email: "SAM@example.org",
+          siteManager: true,
         },
         { programId: "program-1" },
       ),
@@ -98,6 +161,8 @@ describe("program administration", () => {
       firstName: "Sam",
       lastName: "Lee",
       email: "sam@example.org",
+      phoneExtension: "123",
+      siteManager: true,
       status: "active",
       siteAssignmentCount: 0,
     });
@@ -139,13 +204,17 @@ describe("program administration", () => {
   });
 
   it("archives an unassigned program contact without deleting history", async () => {
-    send.mockResolvedValueOnce({ Attributes: { status: "inactive" } });
+    send
+      .mockResolvedValueOnce({
+        Item: { userId: "user-1", status: "active", siteManager: false },
+      })
+      .mockResolvedValueOnce({ Attributes: { status: "inactive" } });
     const response = await call(
       deactivateProgramUser,
       event(undefined, { programId: "program-1", userId: "user-1" }),
     );
     expect(response.statusCode).toBe(200);
-    const command = send.mock.calls[0][0];
+    const command = send.mock.calls[1][0];
     expect(command).toBeInstanceOf(UpdateCommand);
     expect(command.input.ConditionExpression).toContain(
       "siteAssignmentCount = :zero",
@@ -155,7 +224,11 @@ describe("program administration", () => {
   it("does not archive a program contact that still has Site dependencies", async () => {
     const conflict = new Error("assigned");
     conflict.name = "ConditionalCheckFailedException";
-    send.mockRejectedValueOnce(conflict);
+    send
+      .mockResolvedValueOnce({
+        Item: { userId: "user-1", status: "active", siteManager: false },
+      })
+      .mockRejectedValueOnce(conflict);
     const response = await call(
       deactivateProgramUser,
       event(undefined, { programId: "program-1", userId: "user-1" }),
@@ -163,6 +236,60 @@ describe("program administration", () => {
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(String(response.body))).toEqual({
       error: "program_user_in_use",
+    });
+  });
+
+  it("removes a Site Manager and clears the manager from assigned Sites", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          email: "manager@example.org",
+          status: "active",
+          siteManager: true,
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", status: "active" }],
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", primaryContactUserId: "user-1" },
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", userId: "user-1" },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      deactivateProgramUser,
+      event(undefined, { programId: "program-1", userId: "user-1" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      removed: true,
+      clearedSiteCount: 1,
+      revokedBindingCount: 0,
+    });
+    const siteTransaction = send.mock.calls[5][0];
+    expect(siteTransaction).toBeInstanceOf(TransactWriteCommand);
+    expect(siteTransaction.input.TransactItems[0].Delete.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "ASSIGNED_USER#user-1",
+    });
+    expect(siteTransaction.input.TransactItems[1].Update.UpdateExpression).toBe(
+      "REMOVE primaryContactUserId, primaryContact SET updatedAt = :now",
+    );
+    expect(siteTransaction.input.TransactItems[2].Put.Item.eventType).toBe(
+      "site_manager_removed",
+    );
+    const managerDelete = send.mock.calls[6][0];
+    expect(managerDelete).toBeInstanceOf(DeleteCommand);
+    expect(managerDelete.input.Key).toEqual({
+      pk: "PROGRAM#program-1",
+      sk: "USER#user-1",
     });
   });
 

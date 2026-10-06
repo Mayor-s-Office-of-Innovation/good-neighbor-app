@@ -42,6 +42,7 @@ vi.mock("../s3.js", () => ({
 }));
 
 const {
+  createCityProgramManager,
   createMasterContact,
   createProvider,
   createSite,
@@ -121,6 +122,29 @@ describe("admin authorization", () => {
     const res = await call(listProviders, event(undefined, ""));
     expect(res.statusCode).toBe(403);
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("City program manager administration", () => {
+  it("creates a local directory manager when Cognito is not configured", async () => {
+    vi.stubEnv("COGNITO_USER_POOL_ID", "");
+    send.mockResolvedValueOnce({});
+    const res = await call(
+      createCityProgramManager,
+      event({
+        firstName: "Jamie",
+        lastName: "Lee",
+        email: "jamie.lee@sfgov.org",
+      }),
+    );
+    expect(res.statusCode).toBe(201);
+    const command = send.mock.calls[0][0];
+    expect(command).toBeInstanceOf(PutCommand);
+    expect(command.input.Item).toMatchObject({
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: "MANAGER#jamie.lee@sfgov.org",
+      name: "Jamie Lee",
+    });
   });
 });
 
@@ -253,6 +277,82 @@ describe("provider and site management", () => {
       pk: "PROGRAM#program-one",
       sk: "SITE#provider-one-main-site",
       type: "programSiteMembership",
+    });
+  });
+
+  it("creates a complete Site record and primary Program staff assignment atomically", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-one",
+          name: "Provider One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-one",
+          providerId: "provider-one",
+          name: "Program One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-one",
+          firstName: "Jo",
+          lastName: "Ames",
+          phone: "415-555-0310",
+          email: "jo@example.org",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      createSite,
+      event(
+        {
+          name: "Main Site",
+          address: "1 Main St, San Francisco, CA 94102",
+          addressParts: {
+            streetNumber: "1",
+            streetAddress: "Main St",
+            secondLine: "",
+            city: "San Francisco",
+            state: "CA",
+            zip: "94102",
+          },
+          leadProgramId: "program-one",
+          primaryContactUserId: "user-one",
+          publicContact: {
+            email: "public@example.org",
+            phone: "415-555-0100",
+          },
+        },
+        "central-admin",
+        { providerId: "provider-one" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(201);
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
+    expect(tx.input.TransactItems).toHaveLength(6);
+    expect(tx.input.TransactItems?.[0]?.Put?.Item).toMatchObject({
+      addressParts: { city: "San Francisco", state: "CA", zip: "94102" },
+      publicContact: {
+        email: "public@example.org",
+        phone: "415-555-0100",
+      },
+      primaryContactUserId: "user-one",
+    });
+    expect(tx.input.TransactItems?.[4]?.Put?.Item).toMatchObject({
+      pk: "SITE#provider-one-main-site",
+      sk: "ASSIGNED_USER#user-one",
+      programId: "program-one",
+    });
+    expect(tx.input.TransactItems?.[5]?.Update).toMatchObject({
+      Key: { pk: "PROGRAM#program-one", sk: "USER#user-one" },
     });
   });
 
@@ -813,6 +913,60 @@ describe("provider and site management", () => {
         }),
       ]),
     );
+  });
+
+  it("removes the Program Site link and archives manager memberships", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "City Hall",
+          leadProgramId: "program-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "MANAGER_MEMBERSHIP#membership-1",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      deactivateSite,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[1][0]
+    );
+    expect(transaction.input.TransactItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Delete: expect.objectContaining({
+            Key: { pk: "PROGRAM#program-1", sk: "SITE#site-1" },
+          }),
+        }),
+      ]),
+    );
+    const membershipUpdate = send.mock.calls
+      .map(([command]) => command)
+      .find(
+        (command) =>
+          command instanceof UpdateCommand &&
+          command.input.Key?.sk === "MANAGER_MEMBERSHIP#membership-1",
+      );
+    expect(membershipUpdate?.input.ExpressionAttributeValues).toMatchObject({
+      ":inactive": "inactive",
+    });
   });
 
   it("updates provider membership and public search records when renaming sites", async () => {

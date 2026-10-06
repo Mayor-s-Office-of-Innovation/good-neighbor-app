@@ -8,7 +8,6 @@ import "./site-setup.css";
 import { getSite, setSite } from "../db.js";
 import {
   formatSiteCode,
-  requestManagerAccess,
   requestSetupCode,
   searchSites,
   validateSetupCode,
@@ -41,7 +40,7 @@ export class SiteSetup extends HTMLElement {
     const enrollment = readEnrollmentFromUrl();
     this._checking = false;
     this._error = "";
-    this._mode = ["request", "manager"].includes(this.getAttribute("data-mode"))
+    this._mode = this.getAttribute("data-mode") === "request"
       ? this.getAttribute("data-mode")
       : "code";
     this._request = {
@@ -51,12 +50,6 @@ export class SiteSetup extends HTMLElement {
       requesting: false,
       sites: [],
       selectedSiteId: "",
-      message: "",
-      error: "",
-    };
-    this._managerRequest = {
-      email: "",
-      requesting: false,
       message: "",
       error: "",
     };
@@ -99,7 +92,6 @@ export class SiteSetup extends HTMLElement {
       canCancel: this._canCancel,
       cancelDisabled: this._committingSite,
       request: this._request,
-      managerRequest: this._managerRequest,
     });
 
     this.querySelector("#cancel-site-switch")?.addEventListener("click", () => {
@@ -110,11 +102,6 @@ export class SiteSetup extends HTMLElement {
       this._bindRequestForm();
       return;
     }
-    if (this._mode === "manager") {
-      this._bindManagerRequestForm();
-      return;
-    }
-
     this._form = this.querySelector("#code-form");
     this._otp = this.querySelector("#code-input");
     this._continue = this.querySelector("#continue");
@@ -123,16 +110,6 @@ export class SiteSetup extends HTMLElement {
       this._error = "";
       this._render();
     });
-    this.querySelector("#show-manager-access")?.addEventListener(
-      "click",
-      () => {
-        this._mode = "manager";
-        this._error = "";
-        this._render();
-      },
-    );
-    this._bindEnrollmentOptions();
-
     this._form.addEventListener("submit", (e) => {
       e.preventDefault();
       this._validate();
@@ -149,61 +126,6 @@ export class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
-  }
-
-  _bindManagerRequestForm() {
-    const form = this.querySelector("#manager-access-form");
-    const input = this.querySelector("#manager-access-email");
-    const submit = this.querySelector("#manager-access-submit");
-    input?.addEventListener("input", () => {
-      this._managerRequest.email = input.value;
-      this._managerRequest.error = "";
-      this._managerRequest.message = "";
-      if (submit) submit.disabled = !input.value.trim();
-    });
-    form?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (this._managerRequest.requesting) return;
-      this._managerRequest.email = input?.value || "";
-      this._managerRequest.requesting = true;
-      this._managerRequest.error = "";
-      this._managerRequest.message = "";
-      this._render();
-      const result = await requestManagerAccess(this._managerRequest.email);
-      this._managerRequest.requesting = false;
-      if (result.ok) this._managerRequest.message = result.message;
-      else {
-        this._managerRequest.error =
-          result.reason === "invalid"
-            ? "Enter a valid work email."
-            : "We couldn't request access. Try again in a moment.";
-      }
-      this._render();
-    });
-    this.querySelector("#show-code-entry")?.addEventListener("click", () => {
-      this._mode = "code";
-      this._render();
-    });
-  }
-
-  _bindEnrollmentOptions() {
-    this.querySelector("#paste-enrollment-form")?.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        const input = this.querySelector("#enrollment-link");
-        const enrollment = parseEnrollmentLink(input?.value || "");
-        if (!enrollment) {
-          this._error = "That enrollment link is not valid.";
-          this._render();
-          return;
-        }
-        this._checking = true;
-        this._error = "";
-        this._render();
-        void this._redeemEnrollment(enrollment);
-      },
-    );
   }
 
   /**
@@ -600,32 +522,6 @@ export function readEnrollmentFromUrl() {
   const grantId = fragment.get("enrollment_grant")?.trim() || "";
   const token = fragment.get("enrollment_token")?.trim() || "";
   return grantId && token ? { grantId, token } : null;
-}
-
-/**
- * Parse a scanned or pasted enrollment URL without navigating to it.
- * @param {unknown} value
- * @returns {{grantId:string, token:string}|null}
- */
-export function parseEnrollmentLink(value) {
-  try {
-    const url = new URL(String(value).trim(), location.origin);
-    if (!/^https?:$/.test(url.protocol) || url.origin !== location.origin) {
-      return null;
-    }
-    const fragment = new URLSearchParams(url.hash.slice(1));
-    const grantId = fragment.get("enrollment_grant")?.trim() || "";
-    const token = fragment.get("enrollment_token")?.trim() || "";
-    if (
-      !/^[A-Za-z0-9-]{8,100}$/.test(grantId) ||
-      !/^[A-Za-z0-9_-]{20,200}$/.test(token)
-    ) {
-      return null;
-    }
-    return { grantId, token };
-  } catch {
-    return null;
-  }
 }
 
 export function stripEnrollmentFromUrl() {

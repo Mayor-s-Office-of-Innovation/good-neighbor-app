@@ -61,6 +61,8 @@ export const createManagerMembership = (event) =>
     const siteId = event.pathParameters?.siteId ?? "";
     const name = clean(body.name);
     const email = normalizeEmail(String(body.email ?? ""));
+    const programId = clean(body.programId);
+    const userId = clean(body.userId);
     if (!name || name.length > 200) {
       return jsonResponse(400, { error: "invalid_manager_name" });
     }
@@ -88,6 +90,8 @@ export const createManagerMembership = (event) =>
       entityType: "MANAGER_MEMBERSHIP",
       membershipId,
       siteId,
+      ...(programId ? { programId } : {}),
+      ...(userId ? { userId } : {}),
       name,
       email,
       emailHash: verifier,
@@ -144,12 +148,20 @@ export const createManagerMembership = (event) =>
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
-export const deactivateManagerMembership = (event) =>
-  adminOnly(event, async () => {
+export const updateManagerMembership = (event) =>
+  adminOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
+    const name = clean(body.name);
+    const email = normalizeEmail(String(body.email ?? ""));
+    if (!name || name.length > 200) {
+      return jsonResponse(400, { error: "invalid_manager_name" });
+    }
+    if (!isPlausibleEmail(email) || email.length > 320) {
+      return jsonResponse(400, { error: "invalid_manager_email" });
+    }
     const tableName = getDynamoTableName();
-    const result = await ddb.send(
+    const currentResult = await ddb.send(
       new GetCommand({
         TableName: tableName,
         Key: {
@@ -158,91 +170,91 @@ export const deactivateManagerMembership = (event) =>
         },
       }),
     );
-    const membership = result.Item;
-    if (!membership || membership.status !== "active") {
+    const current = currentResult.Item;
+    if (!current || current.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
+    const nextHash = await emailHash(email);
     const now = new Date().toISOString();
     const actor = actorId(event);
-    const bindingsResult = await ddb.send(
-      new QueryCommand({
+    const hashChanged = nextHash !== current.emailHash;
+    const update = {
+      Update: {
         TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        Key: { pk: current.pk, sk: current.sk },
+        UpdateExpression:
+          "SET #name = :name, email = :email, emailHash = :emailHash, updatedAt = :now, updatedBy = :actor",
+        ConditionExpression: "#status = :active",
+        ExpressionAttributeNames: { "#name": "name", "#status": "status" },
         ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "DEVICE_BINDING#",
+          ":name": name,
+          ":email": email,
+          ":emailHash": nextHash,
+          ":now": now,
+          ":actor": actor,
+          ":active": "active",
         },
-      }),
-    );
-    const bindings = (bindingsResult.Items ?? []).filter(
-      (binding) =>
-        binding.status === "active" &&
-        binding.membershipId === membershipId &&
-        binding.accessLevel === "manager",
-    );
-    if (bindings.length > 30) {
-      return jsonResponse(409, { error: "membership_binding_limit_exceeded" });
-    }
-    try {
-      await ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: tableName,
-                Key: { pk: membership.pk, sk: membership.sk },
-                UpdateExpression:
-                  "SET #status = :inactive, generation = generation + :one, deactivatedAt = :now, deactivatedBy = :actor, updatedAt = :now, updatedBy = :actor",
-                ConditionExpression: "#status = :active",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":active": "active",
-                  ":inactive": "inactive",
-                  ":one": 1,
-                  ":now": now,
-                  ":actor": actor,
-                },
-              },
-            },
-            {
-              Delete: {
-                TableName: tableName,
-                Key: {
-                  pk: `SITE#${siteId}`,
-                  sk: `MANAGER_EMAIL#${membership.emailHash}`,
-                },
-                ConditionExpression: "membershipId = :membershipId",
-                ExpressionAttributeValues: { ":membershipId": membershipId },
-              },
-            },
-            {
-              Delete: {
-                TableName: tableName,
-                Key: {
-                  pk: `MANAGER_EMAIL#${membership.emailHash}`,
-                  sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
-                },
-                ConditionExpression: "membershipId = :membershipId",
-                ExpressionAttributeValues: { ":membershipId": membershipId },
-              },
-            },
-            ...bindings.flatMap((binding) =>
-              managerBindingRevocationItems(tableName, binding, now, actor),
-            ),
-            put(tableName, {
+      },
+    };
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const items = [update];
+    if (hashChanged) {
+      items.push(
+        {
+          Delete: {
+            TableName: tableName,
+            Key: {
               pk: `SITE#${siteId}`,
-              sk: `AUDIT#${now}#${randomUUID()}`,
-              type: "siteAuditEvent",
-              eventType: "manager_membership_deactivated",
-              siteId,
-              membershipId,
-              revokedBindingCount: bindings.length,
-              actor,
-              createdAt: now,
-            }),
-          ],
+              sk: `MANAGER_EMAIL#${current.emailHash}`,
+            },
+            ConditionExpression: "membershipId = :membershipId",
+            ExpressionAttributeValues: { ":membershipId": membershipId },
+          },
+        },
+        {
+          Delete: {
+            TableName: tableName,
+            Key: {
+              pk: `MANAGER_EMAIL#${current.emailHash}`,
+              sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
+            },
+            ConditionExpression: "membershipId = :membershipId",
+            ExpressionAttributeValues: { ":membershipId": membershipId },
+          },
+        },
+        put(tableName, {
+          pk: `SITE#${siteId}`,
+          sk: `MANAGER_EMAIL#${nextHash}`,
+          type: "managerMembershipEmail",
+          membershipId,
+          siteId,
+          createdAt: now,
+        }),
+        put(tableName, {
+          pk: `MANAGER_EMAIL#${nextHash}`,
+          sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
+          type: "managerMembershipDirectory",
+          membershipId,
+          siteId,
+          status: "active",
+          createdAt: now,
         }),
       );
+    }
+    items.push(
+      put(tableName, {
+        pk: `SITE#${siteId}`,
+        sk: `AUDIT#${now}#${randomUUID()}`,
+        type: "siteAuditEvent",
+        eventType: "manager_membership_updated",
+        siteId,
+        membershipId,
+        actor,
+        createdAt: now,
+      }),
+    );
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
       if (isTransactionConflict(error)) {
         return jsonResponse(409, { error: "manager_membership_conflict" });
@@ -250,11 +262,152 @@ export const deactivateManagerMembership = (event) =>
       throw error;
     }
     return jsonResponse(200, {
-      deactivated: true,
-      membershipId,
-      revokedBindingCount: bindings.length,
+      membership: {
+        ...current,
+        name,
+        email,
+        emailHash: nextHash,
+        updatedAt: now,
+        updatedBy: actor,
+      },
     });
   });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const deactivateManagerMembership = (event) =>
+  adminOnly(event, async () => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const membershipId = event.pathParameters?.membershipId ?? "";
+    const result = await deactivateManagerMembershipRecord({
+      siteId,
+      membershipId,
+      actor: actorId(event),
+    });
+    if (!result) {
+      return jsonResponse(404, { error: "manager_membership_not_found" });
+    }
+    if (result.error) {
+      return jsonResponse(409, { error: result.error });
+    }
+    return jsonResponse(200, result);
+  });
+
+/**
+ * Deactivate one manager membership and revoke its active manager bindings.
+ * Returns null when the membership is already absent or inactive.
+ * @param {{ siteId: string, membershipId: string, actor: string }} input
+ */
+export async function deactivateManagerMembershipRecord({
+  siteId,
+  membershipId,
+  actor,
+}) {
+  const tableName = getDynamoTableName();
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: {
+        pk: `SITE#${siteId}`,
+        sk: `MANAGER_MEMBERSHIP#${membershipId}`,
+      },
+    }),
+  );
+  const membership = result.Item;
+  if (!membership || membership.status !== "active") {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const bindingsResult = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "DEVICE_BINDING#",
+      },
+    }),
+  );
+  const bindings = (bindingsResult.Items ?? []).filter(
+    (binding) =>
+      binding.status === "active" &&
+      binding.membershipId === membershipId &&
+      binding.accessLevel === "manager",
+  );
+  if (bindings.length > 30) {
+    return { error: "membership_binding_limit_exceeded" };
+  }
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: membership.pk, sk: membership.sk },
+              UpdateExpression:
+                "SET #status = :inactive, generation = generation + :one, deactivatedAt = :now, deactivatedBy = :actor, updatedAt = :now, updatedBy = :actor",
+              ConditionExpression: "#status = :active",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":active": "active",
+                ":inactive": "inactive",
+                ":one": 1,
+                ":now": now,
+                ":actor": actor,
+              },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: {
+                pk: `SITE#${siteId}`,
+                sk: `MANAGER_EMAIL#${membership.emailHash}`,
+              },
+              ConditionExpression: "membershipId = :membershipId",
+              ExpressionAttributeValues: { ":membershipId": membershipId },
+            },
+          },
+          {
+            Delete: {
+              TableName: tableName,
+              Key: {
+                pk: `MANAGER_EMAIL#${membership.emailHash}`,
+                sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
+              },
+              ConditionExpression: "membershipId = :membershipId",
+              ExpressionAttributeValues: { ":membershipId": membershipId },
+            },
+          },
+          ...bindings.flatMap((binding) =>
+            managerBindingRevocationItems(tableName, binding, now, actor),
+          ),
+          put(tableName, {
+            pk: `SITE#${siteId}`,
+            sk: `AUDIT#${now}#${randomUUID()}`,
+            type: "siteAuditEvent",
+            eventType: "manager_membership_deactivated",
+            siteId,
+            membershipId,
+            revokedBindingCount: bindings.length,
+            actor,
+            createdAt: now,
+          }),
+        ],
+      }),
+    );
+  } catch (error) {
+    if (isTransactionConflict(error)) {
+      return { error: "manager_membership_conflict" };
+    }
+    throw error;
+  }
+  return {
+    deactivated: true,
+    membershipId,
+    revokedBindingCount: bindings.length,
+  };
+}
 
 /** @param {string} tableName @param {Record<string, any>} binding @param {string} now @param {string} actor */
 function managerBindingRevocationItems(tableName, binding, now, actor) {

@@ -6,6 +6,14 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
+import {
+  AdminAddUserToGroupCommand,
+  AdminCreateUserCommand,
+  AdminGetUserCommand,
+  AdminUpdateUserAttributesCommand,
+  CognitoIdentityProviderClient,
+  ListUsersCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
@@ -26,6 +34,161 @@ import {
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
 import { adminOnly } from "../lib/admin-auth.js";
+
+const cognito = new CognitoIdentityProviderClient({});
+
+/** GET /admin/v1/program-managers — directory of Cognito users marked as City program managers. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const listCityProgramManagers = (event) =>
+  adminOnly(event, async () => {
+    const userPoolId = getConfig().cognitoUserPoolId;
+    if (!userPoolId) {
+      const items = await queryAll({
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
+      });
+      return jsonResponse(200, {
+        programManagers: items.map(publicProgramManager),
+      });
+    }
+    /** @type {any[]} */
+    const programManagers = [];
+    let paginationToken;
+    do {
+      const result =
+        /** @type {import("@aws-sdk/client-cognito-identity-provider").ListUsersCommandOutput} */ (
+          await cognito.send(
+            new ListUsersCommand({
+              UserPoolId: userPoolId,
+              Limit: 60,
+              ...(paginationToken ? { PaginationToken: paginationToken } : {}),
+            }),
+          )
+        );
+      for (const user of result.Users || []) {
+        const attributes = Object.fromEntries(
+          (user.Attributes || []).map((attribute) => [
+            attribute.Name,
+            attribute.Value,
+          ]),
+        );
+        if (
+          user.Enabled === false ||
+          attributes["custom:program_manager"] !== "true"
+        )
+          continue;
+        const name =
+          [attributes.given_name, attributes.family_name]
+            .filter(Boolean)
+            .join(" ") ||
+          attributes.name ||
+          attributes.email ||
+          user.Username;
+        programManagers.push({
+          userId: attributes.sub || user.Username,
+          name,
+          email: attributes.email || "",
+        });
+      }
+      paginationToken = result.PaginationToken;
+    } while (paginationToken);
+    programManagers.sort((a, b) => a.name.localeCompare(b.name));
+    return jsonResponse(200, { programManagers });
+  });
+
+/** POST /admin/v1/program-managers — invite a Cognito admin marked as a Program manager. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const createCityProgramManager = (event) =>
+  adminOnly(event, async (body) => {
+    const firstName = cleanText(body.firstName);
+    const lastName = cleanText(body.lastName);
+    const email = cleanText(body.email).toLowerCase();
+    if (!firstName || !lastName) {
+      return jsonResponse(400, { error: "name_required" });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return jsonResponse(400, { error: "valid_email_required" });
+    }
+    const userPoolId = getConfig().cognitoUserPoolId;
+    if (!userPoolId) {
+      const now = new Date().toISOString();
+      const item = {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: `MANAGER#${email}`,
+        type: "cityProgramManager",
+        userId: randomUUID(),
+        firstName,
+        lastName,
+        name: `${firstName} ${lastName}`,
+        email,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await ddb.send(
+        new PutCommand({
+          TableName: getDynamoTableName(),
+          Item: item,
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+      return jsonResponse(201, { programManager: publicProgramManager(item) });
+    }
+    const attributes = [
+      { Name: "email", Value: email },
+      { Name: "email_verified", Value: "true" },
+      { Name: "given_name", Value: firstName },
+      { Name: "family_name", Value: lastName },
+      { Name: "name", Value: `${firstName} ${lastName}` },
+      { Name: "custom:program_manager", Value: "true" },
+    ];
+    try {
+      await cognito.send(
+        new AdminCreateUserCommand({
+          UserPoolId: userPoolId,
+          Username: email,
+          DesiredDeliveryMediums: ["EMAIL"],
+          UserAttributes: attributes,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "UsernameExistsException") {
+        await cognito.send(
+          new AdminUpdateUserAttributesCommand({
+            UserPoolId: userPoolId,
+            Username: email,
+            UserAttributes: attributes,
+          }),
+        );
+      } else {
+        throw error;
+      }
+    }
+    await cognito.send(
+      new AdminAddUserToGroupCommand({
+        UserPoolId: userPoolId,
+        Username: email,
+        GroupName: "central-admin",
+      }),
+    );
+    const user = await cognito.send(
+      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }),
+    );
+    const userAttributes = Object.fromEntries(
+      (user.UserAttributes || []).map((attribute) => [
+        attribute.Name,
+        attribute.Value,
+      ]),
+    );
+    return jsonResponse(201, {
+      programManager: {
+        userId: userAttributes.sub || user.Username || email,
+        name: `${firstName} ${lastName}`,
+        email,
+      },
+    });
+  });
 
 /**
  * GET /admin/v1/providers
@@ -184,7 +347,23 @@ export const createSite = (event) =>
       return jsonResponse(404, { error: "provider_not_found" });
     }
     const leadProgramId = cleanText(body.leadProgramId);
+    const primaryContactUserId = cleanText(body.primaryContactUserId);
+    const addressParts =
+      body.addressParts === undefined
+        ? null
+        : normalizeAddressParts(body.addressParts);
+    if (body.addressParts !== undefined && !addressParts) {
+      return jsonResponse(400, { error: "invalid_address" });
+    }
+    const publicContact =
+      body.publicContact === undefined
+        ? null
+        : normalizePublicContact(body.publicContact);
+    if (body.publicContact !== undefined && !publicContact) {
+      return jsonResponse(400, { error: "invalid_public_contact" });
+    }
     let program = null;
+    let primaryContact = null;
     if (leadProgramId) {
       const result = await ddb.send(
         new GetCommand({
@@ -200,6 +379,23 @@ export const createSite = (event) =>
       ) {
         return jsonResponse(400, { error: "incompatible_program" });
       }
+      if (primaryContactUserId) {
+        const user = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: {
+              pk: `PROGRAM#${leadProgramId}`,
+              sk: `USER#${primaryContactUserId}`,
+            },
+          }),
+        );
+        primaryContact = user.Item;
+        if (!primaryContact || primaryContact.status === "inactive") {
+          return jsonResponse(400, { error: "invalid_internal_site_contact" });
+        }
+      }
+    } else if (primaryContactUserId) {
+      return jsonResponse(400, { error: "site_program_required" });
     }
     const geocoded = await geocodeSiteAddress(address);
     if (geocoded instanceof GeocodingError) {
@@ -223,9 +419,22 @@ export const createSite = (event) =>
         longitude: geocoded.longitude,
       },
       geocodedAddress: geocoded.matchedAddress,
+      ...(addressParts ? { addressParts } : {}),
+      ...(publicContact ? { publicContact } : {}),
       providerId,
       providerName: provider.Item.name,
       ...(program ? { leadProgramId, programName: String(program.name) } : {}),
+      ...(primaryContact
+        ? {
+            primaryContactUserId,
+            primaryContact: {
+              firstName: primaryContact.firstName,
+              lastName: primaryContact.lastName,
+              phone: primaryContact.phone,
+              email: primaryContact.email,
+            },
+          }
+        : {}),
       providerSiteId,
       status: "active",
       createdAt: now,
@@ -245,6 +454,7 @@ export const createSite = (event) =>
       updatedAt: now,
     };
     const tableName = getDynamoTableName();
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const transactItems = [
       {
         Put: {
@@ -298,6 +508,50 @@ export const createSite = (event) =>
             "attribute_not_exists(pk) AND attribute_not_exists(sk)",
         },
       });
+    }
+    if (primaryContact) {
+      transactItems.push(
+        {
+          Put: {
+            TableName: tableName,
+            Item: {
+              pk: `SITE#${siteId}`,
+              sk: `ASSIGNED_USER#${primaryContactUserId}`,
+              type: "siteUserAssignment",
+              siteId,
+              programId: leadProgramId,
+              userId: primaryContactUserId,
+              firstName: primaryContact.firstName,
+              lastName: primaryContact.lastName,
+              phone: primaryContact.phone,
+              email: primaryContact.email,
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            },
+            ConditionExpression:
+              "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+          },
+        },
+        {
+          Update: {
+            TableName: tableName,
+            Key: {
+              pk: `PROGRAM#${leadProgramId}`,
+              sk: `USER#${primaryContactUserId}`,
+            },
+            UpdateExpression:
+              "ADD siteAssignmentCount :one SET updatedAt = :now",
+            ConditionExpression: "attribute_exists(pk) AND #status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":one": 1,
+              ":now": now,
+              ":active": "active",
+            },
+          },
+        },
+      );
     }
     await ddb.send(
       new TransactWriteCommand({
@@ -584,6 +838,34 @@ export const updateSite = (event) =>
     if (body.contactPerson !== undefined && !contactPerson) {
       return jsonResponse(400, { error: "invalid_contact_person" });
     }
+    const publicContact =
+      body.publicContact === undefined
+        ? null
+        : normalizePublicContact(body.publicContact);
+    if (body.publicContact !== undefined && !publicContact) {
+      return jsonResponse(400, { error: "invalid_public_contact" });
+    }
+    const primaryContactUserId =
+      body.primaryContactUserId === undefined
+        ? undefined
+        : String(body.primaryContactUserId || "").trim();
+    /** @type {Record<string, unknown> | undefined} */
+    let selectedPrimaryContact;
+    if (primaryContactUserId) {
+      const assigned = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `SITE#${siteId}`,
+            sk: `ASSIGNED_USER#${primaryContactUserId}`,
+          },
+        }),
+      );
+      if (!assigned.Item || assigned.Item.programId !== site.leadProgramId) {
+        return jsonResponse(400, { error: "invalid_internal_site_contact" });
+      }
+      selectedPrimaryContact = assigned.Item;
+    }
     const oversight =
       body.oversight === undefined ? null : normalizeOversight(body.oversight);
     if (body.oversight !== undefined && !oversight) {
@@ -652,6 +934,10 @@ export const updateSite = (event) =>
       ...(address ? { address } : {}),
       ...(addressParts ? { addressParts } : {}),
       ...(contactPerson ? { contactPerson } : {}),
+      ...(publicContact ? { publicContact } : {}),
+      ...(primaryContactUserId !== undefined
+        ? { primaryContactUserId: primaryContactUserId || undefined }
+        : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
       ...(perimeter !== null ? { perimeter } : {}),
@@ -668,6 +954,7 @@ export const updateSite = (event) =>
       updatedAt: now,
     };
     const setExpressions = ["#name = :name", "updatedAt = :now"];
+    const removeExpressions = [];
     /** @type {Record<string, unknown>} */
     const expressionAttributeValues = {
       ":name": name,
@@ -694,6 +981,28 @@ export const updateSite = (event) =>
       setExpressions.push("contactPerson = :contactPerson");
       expressionAttributeValues[":contactPerson"] = contactPerson;
     }
+    if (publicContact) {
+      setExpressions.push("publicContact = :publicContact");
+      expressionAttributeValues[":publicContact"] = publicContact;
+    }
+    if (primaryContactUserId !== undefined) {
+      if (primaryContactUserId) {
+        setExpressions.push(
+          "primaryContactUserId = :primaryContactUserId",
+          "primaryContact = :primaryContact",
+        );
+        expressionAttributeValues[":primaryContactUserId"] =
+          primaryContactUserId;
+        expressionAttributeValues[":primaryContact"] = {
+          firstName: selectedPrimaryContact?.firstName || "",
+          lastName: selectedPrimaryContact?.lastName || "",
+          email: selectedPrimaryContact?.email || "",
+          phone: selectedPrimaryContact?.phone || "",
+        };
+      } else {
+        removeExpressions.push("primaryContactUserId", "primaryContact");
+      }
+    }
     if (oversight) {
       setExpressions.push("oversight = :oversight");
       expressionAttributeValues[":oversight"] = oversight;
@@ -716,7 +1025,7 @@ export const updateSite = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression: `SET ${setExpressions.join(", ")}`,
+          UpdateExpression: `SET ${setExpressions.join(", ")}${removeExpressions.length ? ` REMOVE ${removeExpressions.join(", ")}` : ""}`,
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
@@ -872,6 +1181,19 @@ export const deactivateSite = (event) =>
                     ExpressionAttributeValues: {
                       ":inactive": "inactive",
                       ":now": now,
+                    },
+                  },
+                },
+              ]
+            : []),
+          ...(site.leadProgramId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `PROGRAM#${site.leadProgramId}`,
+                      sk: `SITE#${siteId}`,
                     },
                   },
                 },
@@ -1217,20 +1539,47 @@ function normalizeContactPerson(value) {
 }
 
 /** @param {unknown} value */
+function normalizePublicContact(value) {
+  if (!value || typeof value !== "object") return null;
+  const input = /** @type {Record<string, unknown>} */ (value);
+  const email = cleanText(input.email).toLowerCase();
+  const phoneDigits = cleanText(input.phone).replace(/\D/g, "");
+  const nationalPhone =
+    phoneDigits.length === 11 && phoneDigits.startsWith("1")
+      ? phoneDigits.slice(1)
+      : phoneDigits;
+  if (
+    (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ||
+    (cleanText(input.phone) && nationalPhone.length !== 10)
+  )
+    return null;
+  return {
+    email,
+    phone: nationalPhone
+      ? `${nationalPhone.slice(0, 3)}-${nationalPhone.slice(3, 6)}-${nationalPhone.slice(6)}`
+      : "",
+  };
+}
+
+/** @param {unknown} value */
 function normalizeOversight(value) {
   if (!value || typeof value !== "object") return null;
   const input = /** @type {Record<string, unknown>} */ (value);
   const managingCityDepartment = cleanText(input.managingCityDepartment);
-  if (!new Set(["DPH", "HSH"]).has(managingCityDepartment)) return null;
   return {
     managingCityDepartment,
     managingSystemOfCare: cleanText(input.managingSystemOfCare),
-    cityProgramManager: [
-      cleanText(input.cityProgramManagerFirstName),
-      cleanText(input.cityProgramManagerLastName),
-    ]
-      .filter(Boolean)
-      .join(" "),
+    ...(cleanText(input.cityProgramManagerId)
+      ? { cityProgramManagerId: cleanText(input.cityProgramManagerId) }
+      : {}),
+    cityProgramManager:
+      cleanText(input.cityProgramManager) ||
+      [
+        cleanText(input.cityProgramManagerFirstName),
+        cleanText(input.cityProgramManagerLastName),
+      ]
+        .filter(Boolean)
+        .join(" "),
   };
 }
 
@@ -1302,6 +1651,19 @@ function supersedeComplianceLetter(siteId, existing, value) {
 /** @param {unknown} value */
 function cleanText(value) {
   return typeof value === "string" ? value.trim().slice(0, 250) : "";
+}
+
+/** @param {Record<string, any>} item */
+function publicProgramManager(item) {
+  return {
+    userId: String(item.userId || ""),
+    name:
+      cleanText(item.name) ||
+      [cleanText(item.firstName), cleanText(item.lastName)]
+        .filter(Boolean)
+        .join(" "),
+    email: cleanText(item.email),
+  };
 }
 
 /** @param {unknown} value */
@@ -1422,7 +1784,46 @@ function cleanupDeactivatedSite(siteId, reason, now) {
       reason,
     }),
     revokeSiteDevices(siteId, now),
+    deactivateSiteManagerAssociations(siteId, now),
   ]).then(() => undefined);
+}
+
+/**
+ * Archive Site-specific manager memberships without changing their Program users.
+ * @param {string} siteId
+ * @param {string} now
+ * @returns {Promise<void>}
+ */
+async function deactivateSiteManagerAssociations(siteId, now) {
+  const memberships = await queryAll({
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :membership)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":membership": "MANAGER_MEMBERSHIP#",
+    },
+  });
+  await Promise.all(
+    memberships
+      .filter((membership) => membership.status === "active")
+      .map((membership) =>
+        ddb.send(
+          new UpdateCommand({
+            TableName: getDynamoTableName(),
+            Key: { pk: membership.pk, sk: membership.sk },
+            UpdateExpression:
+              "SET #status = :inactive, deactivatedAt = :now, updatedAt = :now, generation = if_not_exists(generation, :zero) + :one",
+            ConditionExpression: "attribute_exists(pk)",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":inactive": "inactive",
+              ":now": now,
+              ":zero": 0,
+              ":one": 1,
+            },
+          }),
+        ),
+      ),
+  );
 }
 
 /**

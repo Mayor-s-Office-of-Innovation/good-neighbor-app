@@ -400,6 +400,9 @@ export const putSitePerimeter = (event) =>
       return jsonResponse(400, { error: "perimeter_required" });
     }
     const perimeter = body.perimeter.trim();
+    if (!perimeter) {
+      return jsonResponse(400, { error: "perimeter_required" });
+    }
     if (perimeter.length > 4000) {
       return jsonResponse(400, { error: "invalid_perimeter" });
     }
@@ -437,9 +440,7 @@ export const putSitePerimeter = (event) =>
               pk: `SITE#${siteId}`,
               sk: `AUDIT#${now}#${randomUUID()}`,
               type: "siteAuditEvent",
-              eventType: perimeter
-                ? "perimeter_text_updated"
-                : "perimeter_text_cleared",
+              eventType: "perimeter_text_updated",
               siteId,
               actor,
               createdAt: now,

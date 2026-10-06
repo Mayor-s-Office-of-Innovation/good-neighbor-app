@@ -75,6 +75,7 @@ import {
 } from "../src/handlers/analysis-amendments.js";
 import {
   createCodeContact,
+  createCityProgramManager,
   createMasterContact,
   createProvider,
   createSite,
@@ -86,6 +87,7 @@ import {
   getProvider,
   issueAdminSetupCode,
   listCodeContacts,
+  listCityProgramManagers,
   listDevices,
   listMasterContacts,
   listProviders,
@@ -95,6 +97,11 @@ import {
   updateProvider,
   updateSite,
 } from "../src/handlers/admin.js";
+import {
+  createOversightOption,
+  listOversightOptions,
+} from "../src/handlers/admin-oversight.js";
+import { suggestAddresses } from "../src/handlers/admin-addresses.js";
 import {
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
@@ -108,6 +115,7 @@ import {
   startEmergencySiteRevocation,
 } from "../src/handlers/admin-multi-site-revocation.js";
 import {
+  assignProgramToProvider,
   createProgramUser,
   createProgram,
   deactivateProgramUser,
@@ -129,6 +137,7 @@ import {
   createManagerMembership,
   deactivateManagerMembership,
   listManagerMemberships,
+  updateManagerMembership,
 } from "../src/handlers/admin-manager-memberships.js";
 import {
   cancelManagerGrant,
@@ -139,6 +148,7 @@ import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
+  listSiteImports,
   previewSiteImport,
 } from "../src/handlers/admin-site-imports.js";
 import {
@@ -308,10 +318,20 @@ const routes = [
   route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
   route("DELETE", "/admin/v1/providers/{providerId}", deactivateProvider),
   route("GET", "/admin/v1/programs", listPrograms),
+  route("GET", "/admin/v1/program-managers", listCityProgramManagers),
+  route("POST", "/admin/v1/program-managers", createCityProgramManager),
+  route("GET", "/admin/v1/oversight-options", listOversightOptions),
+  route("POST", "/admin/v1/oversight-options", createOversightOption),
+  route("POST", "/admin/v1/address-suggestions", suggestAddresses),
   route("POST", "/admin/v1/programs", createProgram),
   route("GET", "/admin/v1/programs/{programId}", getProgram),
   route("PATCH", "/admin/v1/programs/{programId}", updateProgram),
   route("DELETE", "/admin/v1/programs/{programId}", deactivateProgram),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/programs",
+    assignProgramToProvider,
+  ),
   route("POST", "/admin/v1/programs/{programId}/users", createProgramUser),
   route(
     "PATCH",
@@ -343,6 +363,11 @@ const routes = [
     createManagerMembership,
   ),
   route(
+    "PATCH",
+    "/admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    updateManagerMembership,
+  ),
+  route(
     "DELETE",
     "/admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
     deactivateManagerMembership,
@@ -355,6 +380,7 @@ const routes = [
     cancelManagerGrant,
   ),
   route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
+  route("GET", "/admin/v1/site-imports", listSiteImports),
   route("POST", "/admin/v1/site-imports/{importId}/apply", applySiteImport),
   route("GET", "/admin/v1/site-imports/{importId}", getSiteImport),
   route(
