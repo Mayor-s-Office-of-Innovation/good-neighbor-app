@@ -23,6 +23,7 @@ import {
 } from "../state/toasts.js";
 import {
   formatAdminDate,
+  formatDeviceEnrollmentSummary,
   formatAdminPhone,
   validateContact,
   validateSiteDetails,
@@ -48,7 +49,12 @@ class SiteAdminView extends HTMLElement {
     }
     this.innerHTML = loadingView("Site information");
     try {
-      this._site = (await getSiteAdmin()).site;
+      const [siteResult, deviceResult] = await Promise.all([
+        getSiteAdmin(),
+        listManagerDeviceBindings(),
+      ]);
+      this._site = siteResult.site;
+      this._bindings = deviceResult.bindings || [];
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
@@ -124,7 +130,7 @@ class SiteAdminView extends HTMLElement {
               <button type="button" data-access-devices>Manage</button>
             </div>
             <div class="site-admin-card site-admin-card--prose">
-              Enroll team devices and revoke individual general-access devices.
+              ${escapeHtml(formatDeviceEnrollmentSummary(this._bindings))}
             </div>
           </section>
           <section class="site-admin-section">
@@ -135,7 +141,9 @@ class SiteAdminView extends HTMLElement {
                   `Effective ${formatAdminDate(current.effectiveStart)}`,
                   current.url,
                 )
-              : html`<div class="site-admin-card">No current letter</div>`}
+              : html`<div class="site-admin-card site-admin-letters">
+                  <p class="site-admin-empty">No current letter</p>
+                </div>`}
           </section>
           <section class="site-admin-section">
             <h2>Past compliance letters</h2>
@@ -179,7 +187,7 @@ class SiteAccessView extends HTMLElement {
     this._site = binding;
     this._secretUrl = "";
     this._activeGrant = null;
-    this.innerHTML = loadingView("Access & devices");
+    this.innerHTML = loadingView("Manage access");
     await this._load();
   }
 
@@ -213,24 +221,25 @@ class SiteAccessView extends HTMLElement {
   _render() {
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader("Access & devices")}
+        ${adminHeader("Manage access")}
         <div class="site-admin-content">
           <section
             class="site-admin-section"
             aria-labelledby="enroll-team-title"
           >
-            <h2 id="enroll-team-title">Enroll a team member</h2>
+            <h2 id="enroll-team-title">Enroll a team member's device</h2>
             <form
               class="site-admin-card site-access-form"
               id="staff-grant-form"
             >
-              <label for="staff-device-label">Device label</label>
               <wa-input
                 id="staff-device-label"
                 name="label"
+                label="Give the new device a name, e.g., Amisha's iPhone"
                 maxlength="100"
                 autocomplete="off"
                 required
+                style="--wa-form-control-required-content: ''"
                 ${this._activeGrant ? "disabled" : ""}
               ></wa-input>
               <p class="site-access-help">
@@ -274,6 +283,48 @@ class SiteAccessView extends HTMLElement {
             </div>
           </section>
         </div>
+        <dialog
+          class="places-modal logout-dialog site-access-revoke-dialog"
+          id="site-access-revoke-dialog"
+          aria-labelledby="site-access-revoke-title"
+          aria-describedby="site-access-revoke-copy"
+        >
+          <form class="places-modal__card" method="dialog">
+            <div class="places-modal__copy">
+              <h2 class="places-modal__title" id="site-access-revoke-title">
+                Revoke this team member's device?
+              </h2>
+              <p
+                class="places-modal__text"
+                id="site-access-revoke-copy"
+                data-revoke-device-copy
+              ></p>
+              <p
+                class="logout-dialog__error"
+                data-revoke-device-error
+                role="alert"
+                hidden
+              ></p>
+            </div>
+            <div class="places-modal__actions logout-dialog__actions">
+              <button
+                class="btn-outline logout-dialog__cancel"
+                type="submit"
+                value="cancel"
+                data-cancel-device-revoke
+              >
+                Cancel
+              </button>
+              <button
+                class="logout-dialog__confirm"
+                type="button"
+                data-confirm-device-revoke
+              >
+                Revoke device
+              </button>
+            </div>
+          </form>
+        </dialog>
       </div>
     `;
     this._wireBack();
@@ -282,14 +333,29 @@ class SiteAccessView extends HTMLElement {
       (event) => void this._createGrant(event),
     );
     this.querySelectorAll("[data-revoke-team-device]").forEach((button) => {
-      button.addEventListener(
-        "click",
-        () =>
-          void this._revoke(
-            button.getAttribute("data-revoke-team-device") || "",
-          ),
+      button.addEventListener("click", () =>
+        this._openRevokeDialog(
+          button.getAttribute("data-revoke-team-device") || "",
+          button.getAttribute("data-revoke-team-device-label") || "Team device",
+        ),
       );
     });
+    this.querySelector("[data-confirm-device-revoke]")?.addEventListener(
+      "click",
+      () => void this._confirmRevoke(),
+    );
+    this.querySelector("#site-access-revoke-dialog")?.addEventListener(
+      "cancel",
+      (event) => {
+        if (this._revoking) event.preventDefault();
+      },
+    );
+    this.querySelector("#site-access-revoke-dialog")?.addEventListener(
+      "close",
+      () => {
+        if (!this._revoking) this._pendingRevokeBindingId = "";
+      },
+    );
     this.querySelector("[data-cancel-staff-grant]")?.addEventListener(
       "click",
       () => void this._cancelGrant(),
@@ -395,16 +461,64 @@ class SiteAccessView extends HTMLElement {
     if (button) button.textContent = "Enrollment link copied";
   }
 
-  async _revoke(bindingId) {
-    if (!bindingId || !window.confirm("Revoke access for this team device?"))
-      return;
+  _openRevokeDialog(bindingId, label) {
+    if (!bindingId) return;
+    this._pendingRevokeBindingId = bindingId;
+    const copy = this.querySelector("[data-revoke-device-copy]");
+    if (copy) {
+      copy.textContent = `“${label}” will immediately lose access to ${this._site?.name || "this Site"} on this device. They’ll need a new enrollment link to regain access.`;
+    }
+    const error = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-revoke-device-error]")
+    );
+    if (error) {
+      error.textContent = "";
+      error.hidden = true;
+    }
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#site-access-revoke-dialog")
+    );
+    if (dialog && !dialog.open) dialog.showModal();
+  }
+
+  async _confirmRevoke() {
+    const bindingId = this._pendingRevokeBindingId;
+    if (!bindingId || this._revoking) return;
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#site-access-revoke-dialog")
+    );
+    const confirm = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("[data-confirm-device-revoke]")
+    );
+    const cancel = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("[data-cancel-device-revoke]")
+    );
+    const error = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-revoke-device-error]")
+    );
+    this._revoking = true;
+    if (confirm) {
+      confirm.disabled = true;
+      confirm.textContent = "Revoking…";
+    }
+    if (cancel) cancel.disabled = true;
     try {
       await revokeManagerDeviceBinding(bindingId);
+      this._pendingRevokeBindingId = "";
+      dialog?.close("revoked");
       await this._load();
     } catch {
-      const error = this.querySelector("#staff-grant-error");
-      if (error)
-        error.textContent = "We couldn't revoke that device. Try again.";
+      if (error) {
+        error.textContent = "We couldn't revoke this device. Try again.";
+        error.hidden = false;
+      }
+      if (confirm) {
+        confirm.disabled = false;
+        confirm.textContent = "Revoke device";
+      }
+      if (cancel) cancel.disabled = false;
+    } finally {
+      this._revoking = false;
     }
   }
 }
@@ -836,6 +950,9 @@ function deviceRow(binding) {
           class="btn-outline"
           type="button"
           data-revoke-team-device="${escapeAttr(binding.bindingId)}"
+          data-revoke-team-device-label="${escapeAttr(
+            binding.label || "Team device",
+          )}"
         >
           Revoke
         </button>`

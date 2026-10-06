@@ -24,6 +24,18 @@ export function formatAdminPhone(value) {
   return `${national.slice(0, 3)}-${national.slice(3, 6)}-${national.slice(6)}`;
 }
 
+/** @param {Array<Record<string, unknown>>} bindings */
+export function formatDeviceEnrollmentSummary(bindings) {
+  const count = bindings.filter(
+    (binding) => binding.status === "active",
+  ).length;
+  if (count === 0) {
+    return 'Click "Manage" to enroll new team member devices.';
+  }
+  const subject = count === 1 ? "1 device is" : `${count} devices are`;
+  return `${subject} enrolled. Click "Manage" to revoke access or add new devices.`;
+}
+
 /** @param {Record<string, unknown>} value */
 export function validateContact(value) {
   if (!text(value.firstName) || !text(value.lastName)) {
