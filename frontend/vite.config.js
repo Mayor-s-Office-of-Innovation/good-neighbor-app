@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 
 const releaseSha =
@@ -28,6 +29,31 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: "/",
+    resolve: {
+      alias: [
+        // Web Awesome's built-in "system" icon library is ~40 kB of inlined
+        // Font Awesome SVGs registered at import time and looked up by name,
+        // so it cannot be tree-shaken. None of the components we load (icon,
+        // otp-input, textarea, spinner) draw a system icon. The replacement
+        // resolves system icon names to the same self-hosted set as our
+        // `default` library instead — see src/lib/wa-system-icons.js for the
+        // rule when adding a Web Awesome component that does use one.
+        // The regex must match the WHOLE specifier (hence the leading ^.*):
+        // a regex alias replaces only the matched part, so a bare filename
+        // match would leave a broken "../../chunks/<abs path>". Keyed on the
+        // vendor chunk's hashed filename; if a Web Awesome upgrade renames
+        // it, the build still succeeds and size-limit reports the ~8 kB
+        // brotli regression.
+        {
+          find: /^.*chunk\.LDM2MW63\.js$/,
+          // import.meta.url (not import.meta.dirname): Vite rewrites it to
+          // the real config path when it bundles this file to a temp dir.
+          replacement: fileURLToPath(
+            new URL("./src/lib/wa-system-icons.js", import.meta.url),
+          ),
+        },
+      ],
+    },
     plugins: [],
     define: {
       // Release stamp for error reports (services/error-report.js reads

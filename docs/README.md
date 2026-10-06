@@ -43,6 +43,8 @@
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
   folder is plans + history, see AGENTS.md).
+- **[Client analytics events](./runbooks/client-events.md)** — page views + device facts
+  to PostHog without an SDK: events, allowlists, kill switches, CloudWatch markers.
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
 

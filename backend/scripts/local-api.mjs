@@ -55,6 +55,7 @@ import {
   updateSiteAdmin,
 } from "../src/handlers/site.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
+import { handler as clientEventsHandler } from "../src/handlers/client-events.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
   editAnalysisCondition,
@@ -227,6 +228,8 @@ const routes = [
   route("GET", "/health", healthHandler),
   // Client error intake (best-effort; handler always 204s)
   route("POST", "/v1/client-errors", clientErrorsHandler),
+  // Client analytics intake (page views + app events; always 204s)
+  route("POST", "/v1/client-events", clientEventsHandler),
   // User feedback intake (log-based store; handler always 204s)
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),

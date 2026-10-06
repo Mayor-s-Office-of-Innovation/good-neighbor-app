@@ -1,7 +1,8 @@
 # Runbook: user feedback (enable, test, read, alarm triage)
 
 **Scope:** the in-app "Send feedback" sheet (`frontend/src/components/feedback-dialog.js`) →
-`POST /v1/feedback` → api Lambda → PostHog Surveys. 
+`POST /v1/feedback` → intake Lambda (`backend/src/lambda/intake.js`, shared with the
+client-error and client-event intakes) → PostHog Surveys. 
 
 CloudWatch carries **metadata only**. While forwarding is off, submitted text is
 discarded at intake because we don't want to risk recording sensitive information in 
@@ -101,7 +102,7 @@ The above json provides survey ids (which are also visible in the url when viewi
 
 ## Reading the signals
 
-**CloudWatch** (api log group, `/aws/lambda/gnp-<env>-api`) — metadata only:
+**CloudWatch** (intake log group, `/aws/lambda/gnp-<env>-intake`) — metadata only:
 
 ```
 filter marker = "FeedbackReceived" or marker = "FeedbackLogOnly"

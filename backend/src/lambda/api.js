@@ -49,8 +49,6 @@ import {
   listProviderSites,
   updateSiteAdmin,
 } from "../handlers/site.js";
-import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
-import { handler as feedbackHandler } from "../handlers/feedback.js";
 import {
   editAnalysisCondition,
   rejectAnalysisCondition,
@@ -126,10 +124,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // Legacy demo submission loop + health
   "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,
-  // Client error intake (best-effort; handler always 204s — see handlers/client-errors.js)
-  "POST /v1/client-errors": clientErrorsHandler,
-  // User feedback intake (log-based store; handler always 204s — see handlers/feedback.js)
-  "POST /v1/feedback": feedbackHandler,
+  // The best-effort intakes (client-errors, client-events, feedback) are
+  // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
+  // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
   "POST /admin/v1/providers": createProvider,
   "GET /admin/v1/providers/{providerId}": getProvider,

@@ -38,6 +38,20 @@ describe("scrubClientErrorReport", () => {
     expect(JSON.stringify(out)).not.toContain("37.77");
   });
 
+  it("accepts every app-level incident type error-report.js emits", () => {
+    for (const type of [
+      "non_json_response",
+      "backend_unreachable",
+      "auth_reauth_required",
+      "auth_forbidden",
+      "in_app_browser",
+    ]) {
+      expect(
+        scrubClientErrorReport({ type, message: "x", id: "u" })?.type,
+      ).toBe(type);
+    }
+  });
+
   it("rejects non-objects, arrays, and null", () => {
     expect(scrubClientErrorReport(null)).toBeNull();
     expect(scrubClientErrorReport("nope")).toBeNull();

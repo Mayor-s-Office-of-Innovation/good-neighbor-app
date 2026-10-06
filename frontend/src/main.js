@@ -12,6 +12,9 @@
   small icon set in /public/icons and register it as the `default` library below, so
   every <wa-icon> resolves locally — no kit fetch (the ka-*.fontawesome.com strings
   left in the WA bundle are its default resolver, never reached once we override it).
+  WA's built-in "system" icon library (40 kB of inlined SVGs for its components'
+  own icons) is aliased to the same self-hosted set in vite.config.js — see
+  src/lib/wa-system-icons.js for the rule when adding a WA component.
   The default theme and palette use system fonts and are imported from the installed
   package, so the app remains fully CDN-free at runtime while matching the official
   Web Awesome Figma kit.
@@ -70,3 +73,10 @@ import "./components/describe-instead.js";
 import "./components/site-setup.js";
 import "./components/app-toasts.js";
 import "./components/app-root.js";
+
+// Page views + app events (services/analytics.js): one `$pageview` per route
+// change, beaconed to our own intake and forwarded to PostHog server-side
+// with browser/OS/device properties. No vendor SDK ships.
+import { currentRoute, onRouteChange } from "./router.js";
+import { startPageViewTracking } from "./services/analytics.js";
+startPageViewTracking({ currentRoute, onRouteChange });
