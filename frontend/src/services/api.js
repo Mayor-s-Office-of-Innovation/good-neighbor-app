@@ -38,8 +38,9 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 
 /*
   Device-token plumbing (Option 4 device auth, docs/adr/0010): every request
-  rides `Authorization: Bearer <token>` from the stored site record. On a 401 —
-  or pre-emptively when the access token is near expiry — the session is
+  rides `Authorization: Bearer <token>` from the stored site record. On an
+  authentication rejection — a 401 locally, or API Gateway's authorizer-level
+  403 in AWS — or pre-emptively when the access token is near expiry, the session is
   refreshed silently with the single-use rotating refresh token (never the site
   code; the code-holder may not be around). One in-flight refresh is shared by
   concurrent requests; failures surface as `ReauthRequiredError`.
@@ -126,10 +127,36 @@ function is401(err) {
 }
 
 /**
+ * API Gateway returns a bare 403 for requests rejected by its authorizer,
+ * including an expired access token. Application-level authorization failures
+ * use structured `error` codes and must not trigger a token rotation.
+ * @param {number} status
+ * @param {unknown} body
+ * @returns {boolean}
+ */
+function isAccessTokenRejection(status, body) {
+  if (status === 401) return true;
+  if (status !== 403 || !body || typeof body !== "object") return false;
+  const response = /** @type {Record<string, unknown>} */ (body);
+  return (
+    !("error" in response) &&
+    (response.message === "Forbidden" ||
+      response.message === "User is not authorized to access this resource")
+  );
+}
+
+/** @param {unknown} err */
+function isAccessTokenError(err) {
+  return (
+    err instanceof ApiError && isAccessTokenRejection(err.status, err.body)
+  );
+}
+
+/**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
  * failure. Attaches the device token when a session exists and retries once
- * through a silent refresh on a 401.
+ * through a silent refresh on an access-token rejection.
  * @param {string} method
  * @param {string} path        path beginning with `/` (joined onto BASE)
  * @param {object} [opts]
@@ -208,9 +235,9 @@ async function request(
 
   if (!res.ok) {
     // Expired/revoked access token → ONE silent refresh, then retry. A second
-    // 401 (or a rejected refresh) is fatal UNLESS the stored session was
+    // auth rejection (or a rejected refresh) is fatal UNLESS the stored session was
     // superseded mid-flight (see the retry leg below).
-    if (res.status === 401 && allowAuthRetry) {
+    if (isAccessTokenRejection(res.status, parsed) && allowAuthRetry) {
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
@@ -239,7 +266,7 @@ async function request(
           originSiteId: requestSiteId,
         });
       } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
+        if (isAccessTokenError(err)) {
           const nowToken = (await getSite().catch(() => null))?.token;
           if (nowToken && nowToken !== retryToken) {
             // Superseded mid-flight: the LATEST persisted session is newer
@@ -722,15 +749,15 @@ export async function dataUrlToBlob(dataUrl) {
 
 /**
  * Upload one captured photo end-to-end: presign → PUT bytes to S3 → register
- * (which enqueues the async analysis). Returns the registered artifactId + the
- * pinned S3 key, so callers can persist enough state to re-drive the analysis
+ * (which enqueues the async analysis). Returns the registered artifactId, the
+ * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
  * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
- * @returns {Promise<{ artifactId: string, s3Key: string }>}
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number }>}
  */
 export async function uploadArtifact(
   checkId,
@@ -773,7 +800,7 @@ export async function uploadArtifact(
   onLeg?.("register");
 
   done({ artifactId });
-  return { artifactId, s3Key };
+  return { artifactId, s3Key, contentType, contentLength: blob.size };
 }
 
 /**

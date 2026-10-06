@@ -38,13 +38,12 @@ export const requestManagerAccess = async (event) => {
   }
 
   const verifier = await emailHash(email);
-  const sourceIp = String(event.requestContext?.http?.sourceIp ?? "unknown");
-  const ipHash = createHash("sha256").update(sourceIp).digest("hex");
   const now = new Date();
   let limitedBy = "";
-  if (!(await acquireHourlyLimit(`IP#${ipHash}`, 5, now))) {
-    limitedBy = "ip_hour";
-  } else if (!(await acquireHourlyLimit(`EMAIL#${verifier}`, 3, now))) {
+  // CloudFront does not reliably preserve the viewer IP in API Gateway's
+  // sourceIp field; rate-limiting that value can throttle unrelated users who
+  // share an edge. The keyed email verifier is stable and non-enumerating.
+  if (!(await acquireHourlyLimit(`EMAIL#${verifier}`, 3, now))) {
     limitedBy = "email_hour";
   } else if (!(await acquireCooldown(verifier, now))) {
     limitedBy = "email_cooldown";
@@ -175,24 +174,46 @@ async function issueRecoveryLinks(email, verifier, now) {
 /** @param {string} tableName @param {Record<string, any>} site @param {Record<string, any>} membership @param {Date} now */
 async function issueGrant(tableName, site, membership, now) {
   const nowIso = now.toISOString();
-  const existing = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${site.siteId}`,
-        ":prefix": "MANAGER_GRANT#",
-      },
-      ScanIndexForward: false,
-      Limit: 25,
-    }),
-  );
-  const replaced = (existing.Items ?? []).find(
-    (item) =>
-      item.membershipId === membership.membershipId &&
-      item.status === "pending" &&
-      item.expiresAt > nowIso,
-  );
+  const currentKey = {
+    pk: `SITE#${site.siteId}`,
+    sk: `MANAGER_RECOVERY_GRANT_CURRENT#${membership.membershipId}`,
+  };
+  const [existing, currentResult] = await Promise.all([
+    ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${site.siteId}`,
+          ":prefix": "MANAGER_GRANT#",
+        },
+        ScanIndexForward: false,
+        Limit: 25,
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: currentKey,
+        ConsistentRead: true,
+      }),
+    ),
+  ]);
+  const currentGrant = currentResult.Item;
+  const replaced =
+    currentGrant && String(currentGrant.expiresAt) > nowIso
+      ? {
+          ...currentGrant,
+          pk: currentGrant.grantPk,
+          sk: currentGrant.grantSk,
+        }
+      : (existing.Items ?? []).find(
+          (item) =>
+            item.membershipId === membership.membershipId &&
+            item.issuedBy === "manager-email-recovery" &&
+            item.status === "pending" &&
+            item.expiresAt > nowIso,
+        );
   const grantId = randomUUID();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -228,6 +249,29 @@ async function issueGrant(tableName, site, membership, now) {
       siteId: site.siteId,
       expiresAt,
     }),
+    {
+      Put: {
+        TableName: tableName,
+        Item: {
+          ...currentKey,
+          type: "currentManagerRecoveryGrant",
+          siteId: site.siteId,
+          membershipId: membership.membershipId,
+          grantId,
+          grantPk: grant.pk,
+          grantSk: grant.sk,
+          tokenHash,
+          expiresAt,
+          updatedAt: nowIso,
+        },
+        ConditionExpression: replaced
+          ? "attribute_not_exists(pk) OR grantId = :replacedGrantId"
+          : "attribute_not_exists(pk) OR expiresAt <= :now",
+        ExpressionAttributeValues: replaced
+          ? { ":replacedGrantId": replaced.grantId }
+          : { ":now": nowIso },
+      },
+    },
     put(tableName, {
       pk: `SITE#${site.siteId}`,
       sk: `AUDIT#${nowIso}#${randomUUID()}`,

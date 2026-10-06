@@ -40,20 +40,18 @@ describe("public Manager access recovery", () => {
     mocks.send
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [] });
     const response = await call("unknown@example.org");
     expect(response.statusCode).toBe(202);
     expect(JSON.parse(String(response.body))).toEqual(generic);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(mocks.send.mock.calls[0][0]).toBeInstanceOf(UpdateCommand);
-    expect(mocks.send.mock.calls[2][0]).toBeInstanceOf(PutCommand);
-    expect(mocks.send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
+    expect(mocks.send.mock.calls[1][0]).toBeInstanceOf(PutCommand);
+    expect(mocks.send.mock.calls[2][0]).toBeInstanceOf(QueryCommand);
   });
 
   it("issues one single-Site link per active membership in one email", async () => {
     mocks.send
-      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
@@ -73,6 +71,7 @@ describe("public Manager access recovery", () => {
       })
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
     mocks.sendEmail.mockResolvedValue({ provider: "ses", messageId: "msg-1" });
 
@@ -89,7 +88,63 @@ describe("public Manager access recovery", () => {
     expect(JSON.stringify(response)).not.toContain("enrollment_token");
   });
 
-  it("silently absorbs an IP rate limit without looking up memberships", async () => {
+  it("keeps an unredeemed administrator invitation when issuing recovery", async () => {
+    const adminGrant = {
+      pk: "SITE#site-1",
+      sk: "MANAGER_GRANT#2026-10-06T00:00:00.000Z#admin-grant",
+      grantId: "admin-grant",
+      membershipId: "membership-1",
+      issuedBy: "admin@example.org",
+      tokenHash: "admin-token-hash",
+      status: "pending",
+      expiresAt: "2999-10-06T00:15:00.000Z",
+    };
+    mocks.send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", membershipId: "membership-1" }],
+      })
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", name: "Site One", status: "active" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          membershipId: "membership-1",
+          name: "Alex Rivera",
+          email: "alex@example.org",
+          emailHash: await verifier("alex@example.org"),
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [adminGrant] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    mocks.sendEmail.mockResolvedValue({ provider: "ses", messageId: "msg-1" });
+
+    await call("alex@example.org");
+
+    const transaction = mocks.send.mock.calls[7][0];
+    const writes = transaction.input.TransactItems;
+    expect(
+      writes.some(
+        /** @param {any} write */
+        (write) =>
+          write.Update?.Key?.sk === adminGrant.sk ||
+          write.Delete?.Key?.pk === "ENROLLMENT_TOKEN#admin-token-hash",
+      ),
+    ).toBe(false);
+    expect(
+      writes.some(
+        /** @param {any} write */
+        (write) =>
+          write.Put?.Item?.sk === "MANAGER_RECOVERY_GRANT_CURRENT#membership-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("silently absorbs an email rate limit without looking up memberships", async () => {
     const limited = new Error("limited");
     limited.name = "ConditionalCheckFailedException";
     mocks.send.mockRejectedValueOnce(limited);
@@ -100,7 +155,7 @@ describe("public Manager access recovery", () => {
     expect(console.warn).toHaveBeenCalledWith(
       JSON.stringify({
         marker: "ManagerAccessThrottled",
-        limitedBy: "ip_hour",
+        limitedBy: "email_hour",
       }),
     );
   });

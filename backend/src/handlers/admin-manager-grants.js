@@ -133,6 +133,7 @@ export const createManagerGrant = (event) =>
         : (grantsResult.Items ?? []).find(
             (item) =>
               item.membershipId === membershipId &&
+              item.issuedBy !== "manager-email-recovery" &&
               item.status === "pending" &&
               item.expiresAt > nowIso,
           );
@@ -326,7 +327,7 @@ export const cancelManagerGrant = (event) =>
                 TableName: tableName,
                 Key: {
                   pk: `SITE#${siteId}`,
-                  sk: `MANAGER_GRANT_CURRENT#${grant.membershipId}`,
+                  sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${grant.membershipId}`,
                 },
                 ConditionExpression:
                   "attribute_not_exists(pk) OR grantId = :grantId",

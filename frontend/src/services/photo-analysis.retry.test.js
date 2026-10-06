@@ -9,6 +9,8 @@ vi.mock("./api.js", () => ({
   submitConditionAnswers: vi.fn(),
   uploadArtifact: vi.fn(),
   registerTextArtifact: vi.fn(),
+  contentTypeFromDataUrl: vi.fn(() => "image/png"),
+  dataUrlToBlob: vi.fn(async () => new Blob(["old-session-photo"])),
   ApiError: class ApiError extends Error {
     constructor(message, opts = {}) {
       super(message);
@@ -65,7 +67,12 @@ function session(checkItem) {
 describe("retryEvidenceItem", () => {
   it("resumes polling directly when the artifact was already registered", async () => {
     const item = sessionItem({
-      upload: { status: "uploaded", artifactId: "artifact-1" },
+      upload: {
+        status: "uploaded",
+        artifactId: "artifact-1",
+        contentType: "image/jpeg",
+        contentLength: 1234,
+      },
       analysis: { status: "failed", artifactId: "artifact-1" },
     });
     vi.mocked(getCurrentCheck).mockReturnValue(session(item));
@@ -178,7 +185,12 @@ describe("retryEvidenceItem", () => {
     vi.useFakeTimers();
     try {
       const item = sessionItem({
-        upload: { status: "uploaded", artifactId: "artifact-1" },
+        upload: {
+          status: "uploaded",
+          artifactId: "artifact-1",
+          contentType: "image/jpeg",
+          contentLength: 1234,
+        },
         analysis: { status: "failed", artifactId: "artifact-1" },
       });
       vi.mocked(getCurrentCheck).mockReturnValue(session(item));
@@ -221,6 +233,8 @@ describe("retryEvidenceItem", () => {
         status: "uploaded",
         artifactId: "artifact-1",
         s3Key: "checks/s/c/a",
+        contentType: "image/jpeg",
+        contentLength: 1234,
       },
       analysis: {
         status: "failed",
@@ -241,6 +255,8 @@ describe("retryEvidenceItem", () => {
         expect.objectContaining({
           artifactId: "artifact-1",
           s3Key: "checks/s/c/a",
+          contentType: "image/jpeg",
+          contentLength: 1234,
         }),
       );
     });
@@ -258,6 +274,8 @@ describe("retryEvidenceItem", () => {
         status: "uploaded",
         artifactId: "artifact-1",
         s3Key: "checks/s/c/a",
+        contentType: "image/webp",
+        contentLength: 5678,
       },
       analysis: {
         status: "failed",
@@ -273,7 +291,11 @@ describe("retryEvidenceItem", () => {
     await vi.waitFor(() => {
       expect(registerArtifact).toHaveBeenCalledWith(
         "check",
-        expect.objectContaining({ artifactId: "artifact-1" }),
+        expect.objectContaining({
+          artifactId: "artifact-1",
+          contentType: "image/webp",
+          contentLength: 5678,
+        }),
       );
     });
     // upload.artifactId is adopted into analysis so run()/poll can see it.
@@ -281,6 +303,39 @@ describe("retryEvidenceItem", () => {
       item.id,
       expect.objectContaining({ artifactId: "artifact-1" }),
     );
+  });
+
+  it("derives required media metadata for an older persisted session", async () => {
+    const item = sessionItem({
+      dataUrl: "data:image/png;base64,b2xkLXNlc3Npb24tcGhvdG8=",
+      upload: {
+        status: "uploaded",
+        artifactId: "artifact-legacy",
+        s3Key: "checks/s/c/legacy",
+      },
+      analysis: {
+        status: "failed",
+        artifactId: "artifact-legacy",
+        failure: { leg: "analyze", uploaded: true, enqueued: true },
+      },
+    });
+    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
+    vi.mocked(registerArtifact).mockResolvedValue(
+      /** @type {any} */ ({ artifactId: "artifact-legacy", status: "queued" }),
+    );
+
+    retryEvidenceItem(item.id);
+
+    await vi.waitFor(() => {
+      expect(registerArtifact).toHaveBeenCalledWith(
+        "check",
+        expect.objectContaining({
+          artifactId: "artifact-legacy",
+          contentType: "image/png",
+          contentLength: 17,
+        }),
+      );
+    });
   });
 
   it("records a re-register failure back onto the failed card", async () => {

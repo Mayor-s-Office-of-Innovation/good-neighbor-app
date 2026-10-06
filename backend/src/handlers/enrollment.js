@@ -278,7 +278,7 @@ export const redeemEnrollmentGrant = async (event) => {
                     TableName: tableName,
                     Key: {
                       pk: `SITE#${siteId}`,
-                      sk: `MANAGER_GRANT_CURRENT#${membershipId}`,
+                      sk: `${grant.issuedBy === "manager-email-recovery" ? "MANAGER_RECOVERY_GRANT_CURRENT" : "MANAGER_GRANT_CURRENT"}#${membershipId}`,
                     },
                     ConditionExpression:
                       "attribute_not_exists(pk) OR grantId = :grantId",
