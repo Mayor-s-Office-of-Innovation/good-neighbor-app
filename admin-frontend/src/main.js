@@ -77,6 +77,7 @@ import {
  * @property {any[]} emergencyRevocationSites
  * @property {any | null} emergencyRevocationPreview
  * @property {any | null} suspensionTarget
+ * @property {any | null} managerMembershipRemovalTarget
  */
 
 class AdminApp extends HTMLElement {
@@ -125,6 +126,7 @@ class AdminApp extends HTMLElement {
       emergencyRevocationSites: [],
       emergencyRevocationPreview: null,
       suspensionTarget: null,
+      managerMembershipRemovalTarget: null,
     };
   }
 
@@ -172,6 +174,7 @@ class AdminApp extends HTMLElement {
       emergencyRevocationSites: [],
       emergencyRevocationPreview: null,
       suspensionTarget: null,
+      managerMembershipRemovalTarget: null,
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -1301,14 +1304,6 @@ class AdminApp extends HTMLElement {
     const membership = this.state.managerMemberships.find(
       (item) => item.membershipId === membershipId,
     );
-    const bindingCount = Number(membership?.activeBindingCount || 0);
-    if (
-      !globalThis.confirm(
-        `Remove ${membership?.name || "this Site Manager"} from ${this.state.site.name}? This revokes ${bindingCount} active Manager binding${bindingCount === 1 ? "" : "s"} at this Site. Memberships at other Sites remain active.`,
-      )
-    ) {
-      return;
-    }
     const result = await adminApi.deactivateManagerMembership(
       this.state.site.siteId,
       membershipId,
@@ -1317,6 +1312,17 @@ class AdminApp extends HTMLElement {
     await this.openSite(siteId, false);
     this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;
     this.render();
+  }
+
+  /** @param {string} membershipId */
+  openManagerMembershipRemoval(membershipId) {
+    const membership = this.state.managerMemberships.find(
+      (item) => item.membershipId === membershipId,
+    );
+    if (!membership) return;
+    this.state.managerMembershipRemovalTarget = membership;
+    this.render();
+    this.querySelector("#remove-manager-membership-dialog")?.showModal();
   }
 
   /** @param {string} membershipId */
@@ -2161,16 +2167,30 @@ class AdminApp extends HTMLElement {
     });
     this.querySelectorAll("[data-remove-manager-membership]").forEach(
       (button) => {
-        button.addEventListener("click", () =>
-          this.deactivateManagerMembership(
+        button.addEventListener("click", () => {
+          this.openManagerMembershipRemoval(
             dataAttr(button, "data-remove-manager-membership"),
-          ).catch((err) => {
-            this.state.error = err.message;
-            this.render();
-          }),
-        );
+          );
+        });
       },
     );
+    const removeManagerMembershipDialog = this.querySelector(
+      "#remove-manager-membership-dialog",
+    );
+    removeManagerMembershipDialog?.addEventListener("close", () => {
+      const target = this.state.managerMembershipRemovalTarget;
+      this.state.managerMembershipRemovalTarget = null;
+      if (
+        removeManagerMembershipDialog.returnValue !== "confirm" ||
+        !target?.membershipId
+      ) {
+        return;
+      }
+      this.deactivateManagerMembership(target.membershipId).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
     this.querySelectorAll("[data-issue-manager-grant]").forEach((button) => {
       button.addEventListener("click", () =>
         this.issueManagerGrant(
@@ -2755,15 +2775,20 @@ function siteAccessView(state) {
   return `<section class="subsection site-access" aria-label="App access">
     <h3>Current site manager</h3>
     ${managerMembershipList(state.managerMemberships)}
-    <form id="manager-membership-form" class="inline-form manager-membership-form">
-      <wa-select name="manager-user-id" aria-label="${hasCurrentManager ? "Change site manager" : "Choose site manager"}" placeholder="${hasCurrentManager ? "Change site manager" : "Choose site manager"}">
+    ${
+      hasCurrentManager
+        ? ""
+        : `<form id="manager-membership-form" class="inline-form manager-membership-form">
+      <wa-select name="manager-user-id" aria-label="Choose site manager" placeholder="Choose site manager">
         ${state.availableSiteUsers.map((user) => `<wa-option value="${escapeHtml(user.userId)}">${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
       </wa-select>
-      <button class="btn-primary" type="submit" hidden>${hasCurrentManager ? "Change site manager" : "Add Site Manager"}</button>
-    </form>
-    ${state.availableSiteUsers.length ? "" : '<p class="muted">Assign a Lead Program and add Program staff before enrolling a Site Manager.</p>'}
+      <button class="btn-primary" type="submit" hidden>Select as manager</button>
+    </form>`
+    }
+    ${hasCurrentManager || state.availableSiteUsers.length ? "" : '<p class="muted">Assign a Lead Program and add Program staff before enrolling a Site Manager.</p>'}
     <h3>Enrollment links</h3>
     <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
+    ${managerEnrollmentActions(state.managerMemberships)}
     ${managerGrantList(state.managerGrants)}
     <h3>Devices</h3>
     ${revocableDevices.length ? "" : '<p class="empty-state">No devices in use.</p>'}
@@ -2773,6 +2798,7 @@ function siteAccessView(state) {
     ${deviceSuspensionForm(state.suspensionTarget)}
     ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
     <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" required autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
+    ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
 }
 
@@ -2850,16 +2876,45 @@ function emergencySiteRevocationPanel(state) {
 /** @param {any[]} memberships */
 function managerMembershipList(memberships) {
   if (!memberships.length) {
-    return '<p class="empty-state">No Site Managers have been added.</p>';
+    return '<p class="empty-state">No site manager has been assigned. Choose one from the dropdown.</p>';
   }
   return `<ul class="contact-list">${memberships
     .map(
       (membership) => `<li>
-        <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">${escapeHtml(membership.activeBindingCount || 0)} active Manager binding${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} at this Site</span></div>
-        <div class="contact-list__actions"><span class="status-badge">Active</span><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">Email enrollment link</button><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
+        <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">Has ${escapeHtml(membership.activeBindingCount || 0)} active device${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} in use at this site</span></div>
+        <div class="contact-list__actions"><button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
       </li>`,
     )
     .join("")}</ul>`;
+}
+
+/** @param {any[]} memberships */
+function managerEnrollmentActions(memberships) {
+  if (!memberships.length) return "";
+  return `<div class="row">${memberships
+    .map(
+      (membership) =>
+        `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">${memberships.length === 1 ? "Email enrollment link" : `Email enrollment link to ${escapeHtml(membership.name)}`}</button>`,
+    )
+    .join("")}</div>`;
+}
+
+/** @param {any | null} membership @param {string} siteName */
+function removeManagerMembershipDialog(membership, siteName) {
+  if (!membership) return "";
+  const deviceCount = Number(membership.activeBindingCount || 0);
+  return `<dialog id="remove-manager-membership-dialog" class="places-modal" aria-labelledby="remove-manager-membership-title" aria-describedby="remove-manager-membership-copy">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="remove-manager-membership-title">Remove ${escapeHtml(membership.name)} as site manager?</h2>
+        <p class="places-modal__text" id="remove-manager-membership-copy">This will remove them from ${escapeHtml(siteName)} and immediately revoke access for ${escapeHtml(deviceCount)} active device${deviceCount === 1 ? "" : "s"} at this site. Their assignments at other sites will remain active.</p>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-danger" value="confirm">Remove site manager</button>
+        <button class="btn-outline" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 /** @param {any[]} grants */
