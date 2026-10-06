@@ -2,32 +2,19 @@ import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
-  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { ddbSend, sqsSend } = vi.hoisted(() => ({
+const { ddbSend } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
-  sqsSend: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
-vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
-  const actual = /** @type {any} */ (await importOriginal());
-  return {
-    ...actual,
-    SQSClient: class {
-      send = sqsSend;
-    },
-  };
-});
 
 const { previewEmergencySiteRevocation, startEmergencySiteRevocation } =
   await import("./admin-multi-site-revocation.js");
 
 beforeEach(() => {
   ddbSend.mockReset();
-  sqsSend.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/revocations");
   vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
@@ -71,8 +58,7 @@ describe("emergency multi-Site revocation", () => {
 
   it("invalidates all Site generations before queuing reconciliation", async () => {
     mockTwoSitePreview();
-    ddbSend.mockResolvedValueOnce({}).mockResolvedValueOnce({});
-    sqsSend.mockResolvedValue({});
+    ddbSend.mockResolvedValueOnce({});
 
     const response = await call(
       startEmergencySiteRevocation,
@@ -85,7 +71,7 @@ describe("emergency multi-Site revocation", () => {
     expect(response.statusCode).toBe(202);
     const transaction = ddbSend.mock.calls[6][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(7);
+    expect(transaction.input.TransactItems).toHaveLength(9);
     expect(transaction.input.TransactItems[0].Update.Key).toEqual({
       pk: "SITE#site-1",
       sk: "#META",
@@ -93,19 +79,20 @@ describe("emergency multi-Site revocation", () => {
     expect(
       transaction.input.TransactItems[0].Update.ExpressionAttributeValues,
     ).toMatchObject({ ":current": 3, ":next": 4 });
-    expect(transaction.input.TransactItems[3].Update.Key).toEqual({
+    expect(transaction.input.TransactItems[4].Update.Key).toEqual({
       pk: "SITE#site-2",
       sk: "#META",
     });
-    expect(sqsSend).toHaveBeenCalledTimes(2);
-    expect(sqsSend.mock.calls[0][0]).toBeInstanceOf(SendMessageCommand);
-    expect(
-      JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody),
-    ).toMatchObject({
-      type: "reconcile_site_revocation",
+    expect(transaction.input.TransactItems[3].Put.Item).toMatchObject({
+      entityType: "REVOCATION_OUTBOX",
       siteId: "site-1",
+      status: "pending",
     });
-    expect(ddbSend.mock.calls[7][0]).toBeInstanceOf(UpdateCommand);
+    expect(transaction.input.TransactItems[8].Put.Item).toMatchObject({
+      status: "applying",
+      queuedSiteCount: 2,
+    });
+    expect(ddbSend).toHaveBeenCalledTimes(7);
     expect(JSON.parse(String(response.body))).toMatchObject({
       status: "applying",
       affectedSiteCount: 2,

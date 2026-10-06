@@ -101,6 +101,8 @@ export const createSiteTerms = (event) =>
       )[0];
     const now = new Date().toISOString();
     const termsVersionId = randomUUID();
+    const observedLatestVersion =
+      siteResult.Item.latestComplianceTermsVersionId;
     const actor = String(
       /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
         "central-admin",
@@ -130,11 +132,17 @@ export const createSiteTerms = (event) =>
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression:
             "SET latestComplianceTermsVersionId = :version, complianceTermsUpdatedAt = :now, letterState = :dirty, updatedAt = :now",
-          ConditionExpression: "attribute_exists(pk)",
+          ConditionExpression:
+            observedLatestVersion === undefined
+              ? "attribute_exists(pk) AND attribute_not_exists(latestComplianceTermsVersionId)"
+              : "attribute_exists(pk) AND latestComplianceTermsVersionId = :observedLatest",
           ExpressionAttributeValues: {
             ":version": termsVersionId,
             ":now": now,
             ":dirty": "draft_pending",
+            ...(observedLatestVersion === undefined
+              ? {}
+              : { ":observedLatest": observedLatestVersion }),
           },
         },
       },

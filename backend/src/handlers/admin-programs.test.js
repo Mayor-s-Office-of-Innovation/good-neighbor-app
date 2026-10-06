@@ -36,6 +36,24 @@ describe("program administration", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
   });
 
+  it("paginates the complete active program list", async () => {
+    const cursor = { pk: "PROGRAM_SEARCH#ACTIVE", sk: "middle#p-1" };
+    send
+      .mockResolvedValueOnce({
+        Items: [{ programId: "p-1" }],
+        LastEvaluatedKey: cursor,
+      })
+      .mockResolvedValueOnce({ Items: [{ programId: "p-2" }] });
+
+    const response = await call(listPrograms, event());
+
+    expect(JSON.parse(String(response.body)).programs).toEqual([
+      { programId: "p-1" },
+      { programId: "p-2" },
+    ]);
+    expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(cursor);
+  });
+
   it("creates a program and both relationship projections atomically", async () => {
     send
       .mockResolvedValueOnce({
@@ -71,6 +89,42 @@ describe("program administration", () => {
       sites: [{ siteId: "site-1" }],
       users: [{ userId: "user-1" }],
     });
+  });
+
+  it("paginates program Site and user projections", async () => {
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand) {
+        return { Item: { programId: "program-1" } };
+      }
+      const prefix = command.input.ExpressionAttributeValues[":prefix"];
+      if (!command.input.ExclusiveStartKey) {
+        return {
+          Items: [
+            prefix === "SITE#" ? { siteId: "site-1" } : { userId: "user-1" },
+          ],
+          LastEvaluatedKey: {
+            pk: "PROGRAM#program-1",
+            sk: `${prefix}cursor`,
+          },
+        };
+      }
+      return {
+        Items: [
+          prefix === "SITE#" ? { siteId: "site-2" } : { userId: "user-2" },
+        ],
+      };
+    });
+
+    const response = await call(
+      getProgram,
+      event(undefined, { programId: "program-1" }),
+    );
+
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      sites: [{ siteId: "site-1" }, { siteId: "site-2" }],
+      users: [{ userId: "user-1" }, { userId: "user-2" }],
+    });
+    expect(send).toHaveBeenCalledTimes(5);
   });
 
   it("assigns a Program without active Sites to another provider", async () => {
@@ -294,13 +348,36 @@ describe("program administration", () => {
   });
 
   it("updates program details", async () => {
-    send.mockResolvedValueOnce({ Attributes: { programId: "program-1" } });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-1",
+          name: "Program One",
+          providerId: "provider-1",
+          providerName: "Provider One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
     const response = await call(
       updateProgram,
       event({ name: "Renamed" }, { programId: "program-1" }),
     );
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    const transaction = send.mock.calls[1][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems[1].Update.Key).toEqual({
+      pk: "PROVIDER#provider-1",
+      sk: "PROGRAM#program-1",
+    });
+    expect(transaction.input.TransactItems[2].Delete.Key.sk).toBe(
+      "program one#program-1",
+    );
+    expect(transaction.input.TransactItems[3].Put.Item).toMatchObject({
+      sk: "renamed#program-1",
+      name: "Renamed",
+    });
   });
 
   it("archives only the program and search row", async () => {

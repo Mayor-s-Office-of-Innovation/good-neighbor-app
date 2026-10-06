@@ -70,6 +70,7 @@ describe("City-issued Manager enrollment grants", () => {
       })
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
     const response = await call(
       createManagerGrant,
@@ -77,9 +78,9 @@ describe("City-issued Manager enrollment grants", () => {
     );
     expect(response.statusCode).toBe(201);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = send.mock.calls[3][0];
+    const transaction = send.mock.calls[4][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(3);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     const grant = transaction.input.TransactItems[0].Put.Item;
     expect(grant).toMatchObject({
       siteId: "site-1",
@@ -97,7 +98,10 @@ describe("City-issued Manager enrollment grants", () => {
     const email = sendManagerEnrollmentEmail.mock.calls[0][0];
     expect(email.enrollmentUrl).toContain("#enrollment_grant=");
     expect(email.enrollmentUrl).toContain("enrollment_token=");
-    expect(send.mock.calls[4][0]).toBeInstanceOf(UpdateCommand);
+    expect(transaction.input.TransactItems[3].Put.Item.sk).toBe(
+      "MANAGER_GRANT_CURRENT#membership-1",
+    );
+    expect(send.mock.calls[5][0]).toBeInstanceOf(UpdateCommand);
   });
 
   it("records failed delivery without exposing a provider error", async () => {
@@ -112,6 +116,7 @@ describe("City-issued Manager enrollment grants", () => {
         },
       })
       .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
     sendManagerEnrollmentEmail.mockRejectedValueOnce(
@@ -153,21 +158,51 @@ describe("City-issued Manager enrollment grants", () => {
         ],
       })
       .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
     const response = await call(
       createManagerGrant,
       event({ membershipId: "membership-1" }, { siteId: "site-1" }),
     );
     expect(response.statusCode).toBe(201);
-    const transaction = send.mock.calls[3][0];
-    expect(transaction.input.TransactItems).toHaveLength(5);
-    expect(transaction.input.TransactItems[3].Update).toMatchObject({
+    const transaction = send.mock.calls[4][0];
+    expect(transaction.input.TransactItems).toHaveLength(6);
+    expect(transaction.input.TransactItems[4].Update).toMatchObject({
       Key: { pk: "SITE#site-1", sk: "MANAGER_GRANT#old#grant-old" },
     });
-    expect(transaction.input.TransactItems[4].Delete.Key).toEqual({
+    expect(transaction.input.TransactItems[5].Delete.Key).toEqual({
       pk: "ENROLLMENT_TOKEN#old-token-hash",
       sk: "#META",
     });
+  });
+
+  it("returns a conflict when another grant wins the current pointer", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
+      .mockResolvedValueOnce({
+        Item: {
+          membershipId: "membership-1",
+          status: "active",
+          name: "Alex Rivera",
+          email: "alex@example.org",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(conflict);
+
+    const response = await call(
+      createManagerGrant,
+      event({ membershipId: "membership-1" }, { siteId: "site-1" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "manager_grant_conflict",
+    });
+    expect(sendManagerEnrollmentEmail).not.toHaveBeenCalled();
   });
 
   it("cancels a pending grant and removes its token lookup atomically", async () => {
@@ -195,6 +230,10 @@ describe("City-issued Manager enrollment grants", () => {
     expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
       pk: "ENROLLMENT_TOKEN#token-hash",
       sk: "#META",
+    });
+    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "MANAGER_GRANT_CURRENT#membership-1",
     });
   });
 });

@@ -41,37 +41,19 @@ async function reconcileSite(message) {
   const now = new Date().toISOString();
   const results = await Promise.allSettled([
     ...activeBindings.map((binding) =>
-      ddb.send(
-        new TransactWriteCommand({
-          TransactItems: bindingItems(tableName, binding, now, message.actor),
-        }),
-      ),
+      revokeBinding(tableName, binding, now, message.actor),
     ),
     ...legacyOnly.map((device) =>
-      ddb.send(
-        new UpdateCommand({
-          TableName: tableName,
-          Key: { pk: `SITE#${message.siteId}`, sk: device.sk },
-          UpdateExpression:
-            "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, revokedBy = :actor, tokenGeneration = :next",
-          ConditionExpression:
-            "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":revoked": "revoked",
-            ":reason": "emergency_multi_site_revocation",
-            ":actor": message.actor,
-            ":now": now,
-            ":next": Number(device.tokenGeneration ?? 0) + 1,
-          },
-        }),
-      ),
+      revokeLegacyDevice(tableName, message.siteId, device, now, message.actor),
     ),
   ]);
-  const failedCount = results.filter(
-    (result) => result.status === "rejected",
-  ).length;
-  const status = failedCount ? "partial" : "complete";
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length) {
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      `Failed to reconcile ${failures.length} device records`,
+    );
+  }
   try {
     await ddb.send(
       new TransactWriteCommand({
@@ -85,9 +67,9 @@ async function reconcileSite(message) {
                 type: "revocationOperationSiteResult",
                 operationId: message.operationId,
                 siteId: message.siteId,
-                status,
-                reconciledCount: results.length - failedCount,
-                failedCount,
+                status: "complete",
+                reconciledCount: results.length,
+                failedCount: 0,
                 completedAt: now,
               },
               ConditionExpression: "attribute_not_exists(pk)",
@@ -97,9 +79,8 @@ async function reconcileSite(message) {
             Update: {
               TableName: tableName,
               Key: { pk: message.operationPk, sk: "#META" },
-              UpdateExpression: failedCount
-                ? "ADD partialSiteCount :one SET updatedAt = :now"
-                : "ADD completedSiteCount :one SET updatedAt = :now",
+              UpdateExpression:
+                "ADD completedSiteCount :one SET updatedAt = :now",
               ConditionExpression: "attribute_exists(pk)",
               ExpressionAttributeValues: { ":one": 1, ":now": now },
             },
@@ -116,10 +97,10 @@ async function reconcileSite(message) {
               ConditionExpression: "attribute_exists(pk)",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
-                ":status": status,
+                ":status": "complete",
                 ":now": now,
-                ":failed": failedCount,
-                ":reconciled": results.length - failedCount,
+                ":failed": 0,
+                ":reconciled": results.length,
               },
             },
           },
@@ -128,19 +109,61 @@ async function reconcileSite(message) {
     );
   } catch (error) {
     if (!isConditionalConflict(error)) throw error;
+    await finalizeOperationIfReady(tableName, message.operationPk);
     return;
   }
   await finalizeOperationIfReady(tableName, message.operationPk);
-  if (failedCount) {
-    console.error(
-      JSON.stringify({
-        marker: "RevocationOperationPartial",
-        level: "ERROR",
-        operationId: message.operationId,
-        siteId: message.siteId,
-        failedCount,
+}
+
+/** @param {string} tableName @param {Record<string, any>} binding @param {string} now @param {string} actor */
+async function revokeBinding(tableName, binding, now, actor) {
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: bindingItems(tableName, binding, now, actor),
       }),
     );
+  } catch (error) {
+    if (!isConditionalConflict(error)) throw error;
+    const current = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk: binding.pk, sk: binding.sk },
+        ConsistentRead: true,
+      }),
+    );
+    if (current.Item?.status !== "revoked") throw error;
+  }
+}
+
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>} device @param {string} now @param {string} actor */
+async function revokeLegacyDevice(tableName, siteId, device, now, actor) {
+  const key = { pk: `SITE#${siteId}`, sk: device.sk };
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: key,
+        UpdateExpression:
+          "SET #status = :revoked, revokedAt = :now, updatedAt = :now, revokedReason = :reason, revokedBy = :actor, tokenGeneration = :next",
+        ConditionExpression:
+          "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status <> :revoked)",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":revoked": "revoked",
+          ":reason": "emergency_multi_site_revocation",
+          ":actor": actor,
+          ":now": now,
+          ":next": Number(device.tokenGeneration ?? 0) + 1,
+        },
+      }),
+    );
+  } catch (error) {
+    if (!isConditionalConflict(error)) throw error;
+    const current = await ddb.send(
+      new GetCommand({ TableName: tableName, Key: key, ConsistentRead: true }),
+    );
+    if (current.Item?.status !== "revoked") throw error;
   }
 }
 

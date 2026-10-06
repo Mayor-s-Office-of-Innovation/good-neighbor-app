@@ -21,6 +21,7 @@ import {
   claimTaskResolution,
   readLegacyUpdateById,
   readTask,
+  readTaskUpdateMediaRegistration,
   readTimeline,
   readUpdateById,
   readUpdatePointer,
@@ -412,6 +413,29 @@ export const registerTaskUpdateMedia = async (event) => {
         "TransactionCanceledException",
       ].includes(error.name)
     ) {
+      const existing = await readTaskUpdateMediaRegistration({
+        tableName: dynamoTable,
+        siteId,
+        checkId,
+        taskId,
+        artifactId,
+      });
+      const media = existing.media;
+      const pointer = existing.pointer;
+      const exactRetry =
+        media?.taskId === taskId &&
+        media?.checkId === checkId &&
+        media?.artifactId === artifactId &&
+        media?.s3Key === s3Key &&
+        media?.contentType === contentType &&
+        Number(media?.contentLength) === contentLength &&
+        pointer?.taskId === taskId &&
+        pointer?.checkId === checkId &&
+        pointer?.artifactId === artifactId &&
+        pointer?.mediaSk === media?.sk;
+      if (!exactRetry) {
+        return jsonResponse(409, { error: "task_update_media_conflict" });
+      }
       alreadyRegistered = true;
     } else {
       throw error;

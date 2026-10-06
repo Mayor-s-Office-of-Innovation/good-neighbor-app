@@ -1,14 +1,13 @@
-// SQS event-source entrypoint for the async worker. Both the demo /submissions
-// flow and the per-artifact analyze flow share one queue (and so, one worker
-// Lambda), exactly as the local pump does — see `scripts/local-worker.mjs`. We
-// pick the underlying handler by message shape, process records one at a time,
-// and return `batchItemFailures` so only the messages that actually threw get
-// redriven (partial-batch-failure reporting; requires the event-source mapping's
-// `function_response_types = ["ReportBatchItemFailures"]`).
+// Event-source entrypoint for the async worker. The demo /submissions, artifact
+// analysis, and Site-revocation flows share one SQS queue; a filtered DynamoDB
+// stream also invokes this Lambda to dispatch durable revocation outbox rows.
+// Records run concurrently and `batchItemFailures` ensures only failures are
+// redriven by the originating event source.
 
 import { handler as processSubmission } from "../workers/process-submission.js";
 import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
 import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-revocation.js";
+import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
 import { logServerError } from "../lib/log-server-error.js";
 
 /**
@@ -39,7 +38,9 @@ function pickHandler(body) {
 }
 
 /**
- * @type {import("aws-lambda").SQSHandler}
+ * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent} event
+ * @param {import("aws-lambda").Context} context
+ * @param {import("aws-lambda").Callback} callback
  */
 export const handler = async (event, context, callback) => {
   // Fan out: each record is an independent unit of work whose latency is almost
@@ -49,9 +50,19 @@ export const handler = async (event, context, callback) => {
   // per-artifact analyzer calls: a 3-photo check paid ~3× one ~11s call ≈ 33s.)
   const settled = await Promise.allSettled(
     event.Records.map((record) => {
-      const fn = pickHandler(record.body);
+      if (record.eventSource === "aws:dynamodb") {
+        return dispatchRevocationOutbox(
+          /** @type {import("aws-lambda").DynamoDBStreamEvent} */ ({
+            Records: [record],
+          }),
+          context,
+          callback,
+        );
+      }
+      const sqsRecord = /** @type {import("aws-lambda").SQSRecord} */ (record);
+      const fn = pickHandler(sqsRecord.body);
       return fn(
-        /** @type {import("aws-lambda").SQSEvent} */ ({ Records: [record] }),
+        /** @type {import("aws-lambda").SQSEvent} */ ({ Records: [sqsRecord] }),
         context,
         callback,
       );
@@ -65,7 +76,13 @@ export const handler = async (event, context, callback) => {
   const batchItemFailures = [];
   settled.forEach((result, index) => {
     if (result.status === "rejected") {
-      const { messageId } = event.Records[index];
+      const failedRecord = event.Records[index];
+      const messageId =
+        ("messageId" in failedRecord ? failedRecord.messageId : undefined) ??
+        ("dynamodb" in failedRecord
+          ? failedRecord.dynamodb?.SequenceNumber
+          : undefined) ??
+        "";
       // Structured error convention (logServerError) — groupable + alarmable;
       // then batchItemFailures drives the SQS redrive as before.
       logServerError(`worker ${messageId}`, result.reason, {

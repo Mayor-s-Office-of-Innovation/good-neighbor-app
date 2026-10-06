@@ -44,34 +44,45 @@ export const createManagerGrant = (event) =>
       return jsonResponse(400, { error: "manager_membership_required" });
     }
     const tableName = getDynamoTableName();
-    const [siteResult, membershipResult, grantsResult] = await Promise.all([
-      ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: `SITE#${siteId}`, sk: "#META" },
-        }),
-      ),
-      ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            pk: `SITE#${siteId}`,
-            sk: `MANAGER_MEMBERSHIP#${membershipId}`,
-          },
-        }),
-      ),
-      ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `SITE#${siteId}`,
-            ":prefix": "MANAGER_GRANT#",
-          },
-          ScanIndexForward: false,
-        }),
-      ),
-    ]);
+    const [siteResult, membershipResult, grantsResult, currentGrantResult] =
+      await Promise.all([
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          }),
+        ),
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              pk: `SITE#${siteId}`,
+              sk: `MANAGER_MEMBERSHIP#${membershipId}`,
+            },
+          }),
+        ),
+        ddb.send(
+          new QueryCommand({
+            TableName: tableName,
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": "MANAGER_GRANT#",
+            },
+            ScanIndexForward: false,
+          }),
+        ),
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              pk: `SITE#${siteId}`,
+              sk: `MANAGER_GRANT_CURRENT#${membershipId}`,
+            },
+            ConsistentRead: true,
+          }),
+        ),
+      ]);
     const site = siteResult.Item;
     const membership = membershipResult.Item;
     if (!site || site.status === "inactive") {
@@ -111,12 +122,20 @@ export const createManagerGrant = (event) =>
       createdAt: nowIso,
       expiresAt,
     };
-    const replaced = (grantsResult.Items ?? []).find(
-      (item) =>
-        item.membershipId === membershipId &&
-        item.status === "pending" &&
-        item.expiresAt > nowIso,
-    );
+    const currentGrant = currentGrantResult.Item;
+    const replaced =
+      currentGrant && String(currentGrant.expiresAt) > nowIso
+        ? {
+            ...currentGrant,
+            pk: currentGrant.grantPk,
+            sk: currentGrant.grantSk,
+          }
+        : (grantsResult.Items ?? []).find(
+            (item) =>
+              item.membershipId === membershipId &&
+              item.status === "pending" &&
+              item.expiresAt > nowIso,
+          );
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const transactItems = [
       put(tableName, grant),
@@ -142,6 +161,30 @@ export const createManagerGrant = (event) =>
         actor,
         createdAt: nowIso,
       }),
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: `SITE#${siteId}`,
+            sk: `MANAGER_GRANT_CURRENT#${membershipId}`,
+            type: "currentManagerEnrollmentGrant",
+            siteId,
+            membershipId,
+            grantId,
+            grantPk: grant.pk,
+            grantSk: grant.sk,
+            tokenHash,
+            expiresAt,
+            updatedAt: nowIso,
+          },
+          ConditionExpression: replaced
+            ? "attribute_not_exists(pk) OR grantId = :replacedGrantId"
+            : "attribute_not_exists(pk) OR expiresAt <= :now",
+          ExpressionAttributeValues: replaced
+            ? { ":replacedGrantId": replaced.grantId }
+            : { ":now": nowIso },
+        },
+      },
     ];
     if (replaced) {
       transactItems.push(
@@ -172,11 +215,21 @@ export const createManagerGrant = (event) =>
         },
       );
     }
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: transactItems,
-      }),
-    );
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: transactItems,
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "manager_grant_conflict" });
+      }
+      throw error;
+    }
 
     let deliveryStatus = "accepted";
     let deliveryProvider = "ses";
@@ -266,6 +319,18 @@ export const cancelManagerGrant = (event) =>
               Delete: {
                 TableName: tableName,
                 Key: { pk: `ENROLLMENT_TOKEN#${grant.tokenHash}`, sk: "#META" },
+              },
+            },
+            {
+              Delete: {
+                TableName: tableName,
+                Key: {
+                  pk: `SITE#${siteId}`,
+                  sk: `MANAGER_GRANT_CURRENT#${grant.membershipId}`,
+                },
+                ConditionExpression:
+                  "attribute_not_exists(pk) OR grantId = :grantId",
+                ExpressionAttributeValues: { ":grantId": grantId },
               },
             },
             put(tableName, {

@@ -260,6 +260,25 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
+    sid       = "EnqueueRevocationReconciliation"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.submissions.arn]
+  }
+
+  statement {
+    sid    = "ReadRevocationOutboxStream"
+    effect = "Allow"
+    actions = [
+      "dynamodb:DescribeStream",
+      "dynamodb:GetRecords",
+      "dynamodb:GetShardIterator",
+      "dynamodb:ListStreams",
+    ]
+    resources = [aws_dynamodb_table.app.stream_arn]
+  }
+
+  statement {
     sid       = "SendToDlq"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]

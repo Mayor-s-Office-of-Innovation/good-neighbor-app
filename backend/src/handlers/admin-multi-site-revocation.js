@@ -1,17 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
-  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { getConfig, getDynamoTableName } from "../config.js";
+import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import { adminOnly } from "../lib/admin-auth.js";
 
-const sqs = new SQSClient({});
 const MAX_SITES = 20;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -103,6 +100,19 @@ export const startEmergencySiteRevocation = (event) =>
           actor,
           createdAt: startedAt,
         }),
+        putItem(tableName, {
+          pk: operationPk,
+          sk: `OUTBOX#${site.siteId}`,
+          type: "revocationOutbox",
+          entityType: "REVOCATION_OUTBOX",
+          operationId,
+          operationPk,
+          siteId: site.siteId,
+          startedAt,
+          actor,
+          status: "pending",
+          createdAt: startedAt,
+        }),
       ];
     });
     items.push(
@@ -114,13 +124,14 @@ export const startEmergencySiteRevocation = (event) =>
         scope: "multi_site",
         siteIds,
         requestedSiteCount: sites.length,
-        queuedSiteCount: 0,
+        queuedSiteCount: sites.length,
         enqueueFailedCount: 0,
         completedSiteCount: 0,
         partialSiteCount: 0,
-        status: "starting",
+        status: "applying",
         actor,
         createdAt: startedAt,
+        enqueueCompletedAt: startedAt,
       }),
     );
     try {
@@ -132,58 +143,12 @@ export const startEmergencySiteRevocation = (event) =>
       throw error;
     }
 
-    const queueUrl = getConfig().queueUrl;
-    const queued = await Promise.allSettled(
-      sites.map((site) =>
-        sqs.send(
-          new SendMessageCommand({
-            QueueUrl: queueUrl,
-            MessageBody: JSON.stringify({
-              type: "reconcile_site_revocation",
-              operationId,
-              operationPk,
-              siteId: site.siteId,
-              startedAt,
-              actor,
-            }),
-          }),
-        ),
-      ),
-    );
-    const enqueueFailedCount = queued.filter(
-      (result) => result.status === "rejected",
-    ).length;
-    await ddb.send(
-      new UpdateCommand({
-        TableName: tableName,
-        Key: { pk: operationPk, sk: "#META" },
-        UpdateExpression:
-          "SET #status = :status, queuedSiteCount = :queued, enqueueFailedCount = :failed, enqueueCompletedAt = :now",
-        ExpressionAttributeNames: { "#status": "status" },
-        ExpressionAttributeValues: {
-          ":status": enqueueFailedCount ? "partial" : "applying",
-          ":queued": sites.length - enqueueFailedCount,
-          ":failed": enqueueFailedCount,
-          ":now": new Date().toISOString(),
-        },
-      }),
-    );
-    if (enqueueFailedCount) {
-      console.error(
-        JSON.stringify({
-          marker: "RevocationOperationPartial",
-          level: "ERROR",
-          operationId,
-          enqueueFailedCount,
-        }),
-      );
-    }
     return jsonResponse(202, {
       operationId,
-      status: enqueueFailedCount ? "partial" : "applying",
+      status: "applying",
       affectedSiteCount: sites.length,
-      queuedSiteCount: sites.length - enqueueFailedCount,
-      enqueueFailedCount,
+      queuedSiteCount: sites.length,
+      enqueueFailedCount: 0,
     });
   });
 

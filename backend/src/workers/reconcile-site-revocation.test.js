@@ -76,6 +76,89 @@ describe("emergency Site revocation reconciliation", () => {
       { ":status": "complete" },
     );
   });
+
+  it("treats an already-revoked canonical binding as a successful retry", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "DEVICE_BINDING#binding-1",
+            siteId: "site-1",
+            bindingId: "binding-1",
+            physicalDeviceId: "physical-1",
+            status: "active",
+            tokenGeneration: 4,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [{ sk: "DEVICE#binding-1", bindingId: "binding-1" }],
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ Item: { status: "revoked" } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: { queuedSiteCount: 1 } });
+
+    await expect(
+      handler(event(), /** @type {any} */ ({}), () => {}),
+    ).resolves.toBeUndefined();
+
+    expect(send.mock.calls[3][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
+  });
+
+  it("throws transient device-write failures so SQS can retry", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "DEVICE_BINDING#binding-1",
+            siteId: "site-1",
+            bindingId: "binding-1",
+            physicalDeviceId: "physical-1",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(new Error("temporary DynamoDB failure"));
+
+    await expect(
+      handler(event(), /** @type {any} */ ({}), () => {}),
+    ).rejects.toThrow("Failed to reconcile 1 device records");
+
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("still finalizes after an idempotent Site-result conflict", async () => {
+    const conflict = new Error("already recorded");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          queuedSiteCount: 1,
+          completedSiteCount: 1,
+          partialSiteCount: 0,
+          enqueueFailedCount: 0,
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    await handler(event(), /** @type {any} */ ({}), () => {});
+
+    expect(send.mock.calls[3][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[4][0].input.ExpressionAttributeValues).toMatchObject(
+      { ":status": "complete" },
+    );
+  });
 });
 
 function event() {

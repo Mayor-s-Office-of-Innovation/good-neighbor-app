@@ -95,6 +95,100 @@ describe("task update handlers", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts an exact retry after a conditional media conflict", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({
+        Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1#MEDIA#photo-1",
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/photo-1",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          mediaSk: "TASK#task-1#MEDIA#photo-1",
+        },
+      });
+
+    const response = await /** @type {any} */ (
+      registerTaskUpdateMedia(
+        event({
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/photo-1",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        }),
+      )
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(setObjectTags).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: { state: "accepted" } }),
+    );
+  });
+
+  it("rejects a media conflict whose stored registration differs", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "ConditionalCheckFailedException";
+    send
+      .mockResolvedValueOnce({
+        Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          sk: "TASK#task-1#MEDIA#photo-1",
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/different-photo",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          mediaSk: "TASK#task-1#MEDIA#photo-1",
+        },
+      });
+
+    const response = await /** @type {any} */ (
+      registerTaskUpdateMedia(
+        event({
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/photo-1",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        }),
+      )
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({
+      error: "task_update_media_conflict",
+    });
+    expect(setObjectTags).not.toHaveBeenCalled();
+  });
+
   it("reads a bounded timeline without sealing open documentation events", async () => {
     const openUpdate = {
       updateId: "update-1",

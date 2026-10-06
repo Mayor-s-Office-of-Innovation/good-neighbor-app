@@ -37,7 +37,13 @@ describe("effective-dated Site terms", () => {
 
   it("creates terms, closes the prior open version, and queues a letter", async () => {
     send
-      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          status: "active",
+          latestComplianceTermsVersionId: "old",
+        },
+      })
       .mockResolvedValueOnce({
         Items: [
           {
@@ -65,6 +71,13 @@ describe("effective-dated Site terms", () => {
     const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems[1].Update).toMatchObject({
+      ConditionExpression:
+        "attribute_exists(pk) AND latestComplianceTermsVersionId = :observedLatest",
+      ExpressionAttributeValues: expect.objectContaining({
+        ":observedLatest": "old",
+      }),
+    });
     expect(
       transaction.input.TransactItems.some(
         (/** @type {any} */ item) =>

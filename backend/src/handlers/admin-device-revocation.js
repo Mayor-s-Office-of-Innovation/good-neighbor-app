@@ -135,6 +135,7 @@ export const getPhysicalDeviceRevocationPreview = (event) =>
         physicalDeviceId: preview.physicalDeviceId,
         label: preview.label,
         status: preview.status,
+        bindingLimitExceeded: preview.bindingLimitExceeded,
         bindings: preview.bindings.map((entry) => ({
           bindingId: entry.binding.bindingId,
           siteId: entry.binding.siteId,
@@ -167,7 +168,10 @@ export const revokePhysicalDeviceEverywhere = (event) =>
         alreadyRevoked: true,
       });
     }
-    if (preview.bindings.length > MAX_PHYSICAL_BINDINGS) {
+    if (
+      preview.bindingLimitExceeded ||
+      preview.bindings.length > MAX_PHYSICAL_BINDINGS
+    ) {
       return jsonResponse(409, {
         error: "physical_device_binding_limit_exceeded",
       });
@@ -475,7 +479,7 @@ export const revokeAllSiteDeviceBindings = (event) =>
 /** @param {string} tableName @param {string} physicalDeviceId */
 async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
   if (!/^[A-Za-z0-9_-]{8,100}$/.test(physicalDeviceId)) return null;
-  const [physicalResult, pointersResult] = await Promise.all([
+  const [physicalResult, pointerPage] = await Promise.all([
     ddb.send(
       new GetCommand({
         TableName: tableName,
@@ -483,55 +487,43 @@ async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
         ConsistentRead: true,
       }),
     ),
-    ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        ConsistentRead: true,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `PHYSICAL_DEVICE#${physicalDeviceId}`,
-          ":prefix": "BINDING#",
-        },
-      }),
-    ),
+    queryPhysicalBindingPointers(tableName, physicalDeviceId),
   ]);
   const physical = physicalResult.Item;
   if (!physical) return null;
   const resolved = await Promise.all(
-    (pointersResult.Items ?? [])
-      .filter((pointer) => pointer.status !== "revoked")
-      .map(async (pointer) => {
-        const [bindingResult, siteResult] = await Promise.all([
-          ddb.send(
-            new GetCommand({
-              TableName: tableName,
-              Key: {
-                pk: `SITE#${pointer.siteId}`,
-                sk: `DEVICE_BINDING#${pointer.bindingId}`,
-              },
-              ConsistentRead: true,
-            }),
-          ),
-          ddb.send(
-            new GetCommand({
-              TableName: tableName,
-              Key: { pk: `SITE#${pointer.siteId}`, sk: "#META" },
-            }),
-          ),
-        ]);
-        const binding = bindingResult.Item;
-        if (
-          !binding ||
-          binding.status === "revoked" ||
-          binding.physicalDeviceId !== physicalDeviceId
-        ) {
-          return null;
-        }
-        return {
-          binding,
-          siteName: String(siteResult.Item?.name ?? pointer.siteId),
-        };
-      }),
+    pointerPage.items.map(async (pointer) => {
+      const [bindingResult, siteResult] = await Promise.all([
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              pk: `SITE#${pointer.siteId}`,
+              sk: `DEVICE_BINDING#${pointer.bindingId}`,
+            },
+            ConsistentRead: true,
+          }),
+        ),
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: { pk: `SITE#${pointer.siteId}`, sk: "#META" },
+          }),
+        ),
+      ]);
+      const binding = bindingResult.Item;
+      if (
+        !binding ||
+        binding.status === "revoked" ||
+        binding.physicalDeviceId !== physicalDeviceId
+      ) {
+        return null;
+      }
+      return {
+        binding,
+        siteName: String(siteResult.Item?.name ?? pointer.siteId),
+      };
+    }),
   );
   /** @type {Array<{binding:Record<string, any>, siteName:string}>} */
   const bindings = [];
@@ -542,8 +534,48 @@ async function loadPhysicalDevicePreview(tableName, physicalDeviceId) {
     physicalDeviceId,
     label: String(physical.label || "Unnamed device"),
     status: String(physical.status || "active"),
+    bindingLimitExceeded: pointerPage.bindingLimitExceeded,
     bindings,
   };
+}
+
+/**
+ * Read until all active pointers are known or enough are found to reject the
+ * transaction safely. Revoked history can fill early DynamoDB pages, so a
+ * single query page is not a valid binding limit.
+ * @param {string} tableName
+ * @param {string} physicalDeviceId
+ */
+async function queryPhysicalBindingPointers(tableName, physicalDeviceId) {
+  const items = [];
+  let ExclusiveStartKey;
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        ConsistentRead: true,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PHYSICAL_DEVICE#${physicalDeviceId}`,
+          ":prefix": "BINDING#",
+        },
+        Limit: MAX_PHYSICAL_BINDINGS + 1,
+        ...(ExclusiveStartKey ? { ExclusiveStartKey } : {}),
+      }),
+    );
+    items.push(
+      ...(page.Items ?? []).filter((pointer) => pointer.status !== "revoked"),
+    );
+    if (items.length > MAX_PHYSICAL_BINDINGS) {
+      return {
+        items: items.slice(0, MAX_PHYSICAL_BINDINGS),
+        bindingLimitExceeded: true,
+      };
+    }
+    ExclusiveStartKey = page.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return { items, bindingLimitExceeded: false };
 }
 
 /** @param {unknown} value */

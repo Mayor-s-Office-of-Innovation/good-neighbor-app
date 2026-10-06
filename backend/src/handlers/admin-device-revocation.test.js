@@ -169,6 +169,7 @@ describe("City physical-device-wide revocation", () => {
       physicalDeviceId: "physical-1",
       label: "Shared tablet",
       status: "active",
+      bindingLimitExceeded: false,
       bindings: [
         {
           bindingId: "binding-1",
@@ -180,6 +181,43 @@ describe("City physical-device-wide revocation", () => {
       ],
     });
     expect(JSON.stringify(payload)).not.toContain("must-not-leak");
+  });
+
+  it("continues past pages containing only revoked binding pointers", async () => {
+    const cursor = {
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "BINDING#revoked",
+    };
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          physicalDeviceId: "physical-1",
+          label: "Shared tablet",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ bindingId: "revoked", status: "revoked" }],
+        LastEvaluatedKey: cursor,
+      })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", bindingId: "binding-1", status: "active" }],
+      })
+      .mockResolvedValueOnce({
+        Item: binding("binding-1", "physical-1", 2),
+      })
+      .mockResolvedValueOnce({ Item: { name: "Site One" } });
+
+    const response = await call(
+      getPhysicalDeviceRevocationPreview,
+      event({}, { physicalDeviceId: "physical-1" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual(cursor);
+    expect(JSON.parse(String(response.body)).physicalDevice.bindings).toEqual([
+      expect.objectContaining({ bindingId: "binding-1" }),
+    ]);
   });
 
   it("revokes the physical record and every binding in one transaction", async () => {

@@ -121,12 +121,16 @@ describe("Manager enrollment redemption", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[5][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(8);
-    expect(transaction.input.TransactItems[3].Update.Key).toEqual({
+    expect(transaction.input.TransactItems).toHaveLength(9);
+    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "MANAGER_GRANT_CURRENT#membership-1",
+    });
+    expect(transaction.input.TransactItems[4].Update.Key).toEqual({
       pk: "PHYSICAL_DEVICE#physical_device_1",
       sk: "#META",
     });
-    const binding = transaction.input.TransactItems[4].Put.Item;
+    const binding = transaction.input.TransactItems[5].Put.Item;
     expect(binding).toMatchObject({
       type: "deviceBinding",
       physicalDeviceId: "physical_device_1",
@@ -137,12 +141,12 @@ describe("Manager enrollment redemption", () => {
       inactivityLimitDays: 60,
     });
     expect(binding.bindingId).not.toBe("suspended-binding-1");
-    const compatibility = transaction.input.TransactItems[5].Put.Item;
+    const compatibility = transaction.input.TransactItems[6].Put.Item;
     expect(compatibility).toMatchObject({
       type: "device",
       accessLevel: "manager",
     });
-    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
+    expect(transaction.input.TransactItems[7].Put.Item).toMatchObject({
       type: "physicalDeviceBindingPointer",
       physicalDeviceId: "physical_device_1",
       bindingId: binding.bindingId,

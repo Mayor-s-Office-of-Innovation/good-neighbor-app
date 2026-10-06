@@ -18,15 +18,12 @@ const SEARCH_PK = "PROGRAM_SEARCH#ACTIVE";
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listPrograms = (event) =>
   adminOnly(event, async () => {
-    const result = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": SEARCH_PK },
-        Limit: 100,
-      }),
-    );
-    return jsonResponse(200, { programs: result.Items ?? [] });
+    const programs = await queryAll({
+      TableName: getDynamoTableName(),
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": SEARCH_PK },
+    });
+    return jsonResponse(200, { programs });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -524,25 +521,104 @@ export const updateProgram = (event) =>
     const programId = event.pathParameters?.programId ?? "";
     const name = clean(body.name);
     if (!name) return jsonResponse(400, { error: "name_required" });
-    const now = new Date().toISOString();
-    const result = await ddb.send(
-      new UpdateCommand({
-        TableName: getDynamoTableName(),
+    const tableName = getDynamoTableName();
+    const currentResult = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
         Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
-        UpdateExpression:
-          "SET #name = :name, contact = :contact, updatedAt = :now",
-        ConditionExpression: "attribute_exists(pk) AND #status = :active",
-        ExpressionAttributeNames: { "#name": "name", "#status": "status" },
-        ExpressionAttributeValues: {
-          ":name": name,
-          ":contact": normalizeContact(body.contact),
-          ":now": now,
-          ":active": "active",
-        },
-        ReturnValues: "ALL_NEW",
+        ConsistentRead: true,
       }),
     );
-    return jsonResponse(200, { program: result.Attributes });
+    const current = currentResult.Item;
+    if (!current || current.status === "inactive") {
+      return jsonResponse(404, { error: "program_not_found" });
+    }
+    const now = new Date().toISOString();
+    const contact = normalizeContact(body.contact);
+    const oldName = String(current.name ?? "");
+    const oldSearchSk = programSearchSk(oldName, programId);
+    const newSearchSk = programSearchSk(name, programId);
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const items = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+          UpdateExpression:
+            "SET #name = :name, contact = :contact, updatedAt = :now",
+          ConditionExpression:
+            "attribute_exists(pk) AND #status = :active AND #name = :oldName",
+          ExpressionAttributeNames: { "#name": "name", "#status": "status" },
+          ExpressionAttributeValues: {
+            ":name": name,
+            ":oldName": oldName,
+            ":contact": contact,
+            ":now": now,
+            ":active": "active",
+          },
+        },
+      },
+      {
+        Update: {
+          TableName: tableName,
+          Key: {
+            pk: `PROVIDER#${String(current.providerId)}`,
+            sk: `PROGRAM#${programId}`,
+          },
+          UpdateExpression: "SET programName = :name, updatedAt = :now",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeValues: { ":name": name, ":now": now },
+        },
+      },
+    ];
+    const searchItem = {
+      pk: SEARCH_PK,
+      sk: newSearchSk,
+      type: "programSearch",
+      programId,
+      name,
+      providerId: current.providerId,
+      providerName: current.providerName,
+      migrationPlaceholder: current.migrationPlaceholder === true,
+      needsReview: current.needsReview === true,
+      updatedAt: now,
+    };
+    if (oldSearchSk === newSearchSk) {
+      items.push({
+        Put: { TableName: tableName, Item: searchItem },
+      });
+    } else {
+      items.push(
+        {
+          Delete: {
+            TableName: tableName,
+            Key: { pk: SEARCH_PK, sk: oldSearchSk },
+          },
+        },
+        {
+          Put: {
+            TableName: tableName,
+            Item: searchItem,
+            ConditionExpression:
+              "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+          },
+        },
+      );
+    }
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "program_update_conflict" });
+      }
+      throw error;
+    }
+    return jsonResponse(200, {
+      program: { ...current, name, contact, updatedAt: now },
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -580,17 +656,42 @@ export const deactivateProgram = (event) =>
   });
 
 /** @param {string} programId @param {string} prefix */
-function queryChildren(programId, prefix) {
-  return ddb.send(
-    new QueryCommand({
-      TableName: getDynamoTableName(),
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `PROGRAM#${programId}`,
-        ":prefix": prefix,
-      },
-    }),
-  );
+async function queryChildren(programId, prefix) {
+  const Items = await queryAll({
+    TableName: getDynamoTableName(),
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `PROGRAM#${programId}`,
+      ":prefix": prefix,
+    },
+  });
+  return { Items };
+}
+
+/**
+ * @param {import("@aws-sdk/lib-dynamodb").QueryCommandInput} input
+ * @returns {Promise<Record<string, any>[]>}
+ */
+async function queryAll(input) {
+  const items = [];
+  let ExclusiveStartKey;
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const page = await ddb.send(
+      new QueryCommand({
+        ...input,
+        ...(ExclusiveStartKey ? { ExclusiveStartKey } : {}),
+      }),
+    );
+    items.push(...(page.Items ?? []));
+    ExclusiveStartKey = page.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return items;
+}
+
+/** @param {string} name @param {string} programId */
+function programSearchSk(name, programId) {
+  return `${name.toLocaleLowerCase("en-US")}#${programId}`;
 }
 
 /** @param {Record<string, unknown>} Item */

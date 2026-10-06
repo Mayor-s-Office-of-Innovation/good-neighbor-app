@@ -271,6 +271,22 @@ export const redeemEnrollmentGrant = async (event) => {
               ExpressionAttributeValues: { ":grantId": grantId },
             },
           },
+          ...(accessLevel === "manager"
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_GRANT_CURRENT#${membershipId}`,
+                    },
+                    ConditionExpression:
+                      "attribute_not_exists(pk) OR grantId = :grantId",
+                    ExpressionAttributeValues: { ":grantId": grantId },
+                  },
+                },
+              ]
+            : []),
           {
             ConditionCheck: {
               TableName: tableName,

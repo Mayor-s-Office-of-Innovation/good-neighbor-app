@@ -381,3 +381,36 @@ export async function writeTaskUpdateMedia(input) {
     }),
   );
 }
+
+/**
+ * @param {{tableName:string, siteId:string, checkId:string, taskId:string, artifactId:string}} input
+ */
+export async function readTaskUpdateMediaRegistration(input) {
+  const mediaKey = taskUpdateMediaKey(
+    input.siteId,
+    input.taskId,
+    input.artifactId,
+  );
+  const pointerKey = taskUpdateMediaPointerKey(
+    input.siteId,
+    input.checkId,
+    input.artifactId,
+  );
+  const [media, pointer] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: input.tableName,
+        Key: mediaKey,
+        ConsistentRead: true,
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: input.tableName,
+        Key: pointerKey,
+        ConsistentRead: true,
+      }),
+    ),
+  ]);
+  return { media: media.Item ?? null, pointer: pointer.Item ?? null };
+}
