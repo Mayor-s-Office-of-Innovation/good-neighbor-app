@@ -164,6 +164,58 @@ body:has(dialog:modal) {
   outline-offset: -3px;
 }
 
+/* Shared Figma photo action tile. The native button/label remains the actual
+   control; Web Awesome supplies only the camera glyph. */
+.photo-capture-tile {
+  appearance: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 0;
+  border: 2px solid var(--wa-color-neutral-90, #e4e5e9);
+  border-radius: var(--wa-border-radius-l, 16px);
+  padding: 0;
+  background: var(--wa-color-neutral-fill-loud, #2f323f);
+  color: var(--wa-color-neutral-on-loud, #fff);
+  box-shadow: none;
+  cursor: pointer;
+  font-family: var(--wa-font-family-body, var(--font-sans));
+  text-align: center;
+}
+
+.photo-capture-tile__icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: var(--wa-border-radius-pill, 9999px);
+  background: transparent;
+  color: inherit;
+}
+
+.photo-capture-tile__icon wa-icon {
+  font-size: var(--wa-font-size-2xl, 32px);
+}
+
+.photo-capture-tile__label {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 18.64%;
+  color: inherit;
+  font-size: var(--wa-font-size-l, 20px);
+  font-weight: var(--wa-form-control-label-font-weight, 500);
+  line-height: 1.2;
+}
+
+.photo-capture-tile:focus-visible,
+.photo-capture-tile:focus-within {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
 /* ---- App shell ----
    Sizing contract: the document is the only scroll surface. <app-root> holds
    the single viewport-height reference in the app; everything below it (shell,

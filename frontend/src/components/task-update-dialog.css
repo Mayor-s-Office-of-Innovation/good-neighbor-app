@@ -218,30 +218,11 @@
   width: 100%;
 }
 .task-update__photo-picker {
-  display: flex;
   flex: 0 0 12.5rem;
   min-height: 12.5rem;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2rem;
-  border-radius: var(--wa-border-radius-l, 1rem);
-  background: var(--wa-color-neutral-95, #f1f2f3);
-  color: var(--wa-color-text-normal, #24262b);
-  cursor: pointer;
-}
-.task-update__photo-picker:focus-within {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
 }
 .task-update__camera {
-  display: grid;
-  place-items: center;
-  width: 2.6875rem;
-  height: 2.6875rem;
-  border-radius: 50%;
-  background: var(--wa-color-neutral-fill-quiet);
-  color: var(--wa-color-neutral-fill-loud);
+  flex: 0 0 auto;
 }
 .task-update__photo--draft {
   width: 12.5rem;

@@ -375,7 +375,7 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
 /** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] */
 function photoPicker(previews, kind, files = []) {
   return html`<div class="task-update__photo-grid">
-    <label class="task-update__photo-picker"
+    <label class="photo-capture-tile task-update__photo-picker"
       ><input
         class="visually-hidden"
         type="file"
@@ -383,9 +383,13 @@ function photoPicker(previews, kind, files = []) {
         capture="environment"
         multiple
         data-photos
-      /><span class="task-update__camera" aria-hidden="true"
+      /><span
+        class="photo-capture-tile__icon task-update__camera"
+        aria-hidden="true"
         ><wa-icon name="camera"></wa-icon></span
-      ><span>${escapeHtml(t("taskUpdate.photo.add"))}</span></label
+      ><span class="photo-capture-tile__label"
+        >${escapeHtml(t("check.photo.take"))}</span
+      ></label
     >
     ${previews
       .map(
