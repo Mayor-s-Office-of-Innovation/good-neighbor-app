@@ -64,8 +64,8 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
-    sid       = "ManageCityProgramManagers"
-    effect    = "Allow"
+    sid    = "ManageCityProgramManagers"
+    effect = "Allow"
     actions = [
       "cognito-idp:AdminAddUserToGroup",
       "cognito-idp:AdminCreateUser",
