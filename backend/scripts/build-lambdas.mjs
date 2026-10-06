@@ -66,6 +66,12 @@ const entries = [
     entry: resolve(backendRoot, "src/lambda/authorizer.js"),
   },
   {
+    // Best-effort public intakes (client errors/events, feedback) — their own
+    // function so PostHog latency is isolated from the app api's concurrency.
+    name: "intake",
+    entry: resolve(backendRoot, "src/lambda/intake.js"),
+  },
+  {
     name: "worker",
     entry: resolve(backendRoot, "src/lambda/worker.js"),
     // Native addons can't be bundled — keep the import as a runtime require

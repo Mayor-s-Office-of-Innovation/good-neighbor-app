@@ -556,6 +556,40 @@ describe("card deletion events", () => {
 });
 
 describe("in-progress card actions", () => {
+  it.each(["completed", "in_progress"])(
+    "accepts a saved %s action despite a failed informational 311 closure",
+    async (status) => {
+      await import("./today-view.js");
+      const { getToasts } = await import("../state/toasts.js");
+      const registration = vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "today-view");
+      const View = /** @type {any} */ (registration[1]);
+      const view = new View();
+      const button = { disabled: false };
+      const card = {
+        querySelectorAll: () => [button],
+        querySelector: () => null,
+      };
+      const response = {
+        task: {
+          status,
+          completionMethod: "manual",
+          appActionResults: [
+            { code: "create_311_ticket", status: "submitted" },
+            { code: "close_311_ticket", status: "failed", reason: "21" },
+          ],
+        },
+      };
+      try {
+        expect(await view._run(card, async () => response)).toBe(response);
+        expect(getToasts()).toHaveLength(0);
+      } finally {
+        getToasts().forEach((toast) => toast.close());
+      }
+    },
+  );
+
   it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");
     const registration = vi

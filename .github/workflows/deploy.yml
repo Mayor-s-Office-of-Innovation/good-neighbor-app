@@ -88,7 +88,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: npm ci
 
-      # Bundle the api + worker Lambdas into backend/dist/{api,worker} BEFORE
+      # Bundle every Lambda entrypoint into backend/dist/<name> BEFORE
       # terraform plan — data.archive_file zips these dirs and its hash drives
       # Lambda redeploys, so the artifacts must exist before plan reads them.
       - name: Build Lambda bundles

@@ -8,6 +8,52 @@ import {
 } from "./task-actions.js";
 
 describe("task action helpers", () => {
+  it.each(["completed", "in_progress", "cannot_do"])(
+    "does not report a saved %s action as failed because of background 311 results",
+    (status) => {
+      for (const code of ["create_311_ticket", "close_311_ticket"]) {
+        expect(
+          appActionFailureMessage({
+            status,
+            appActionResults: [{ code, status: "failed", reason: "21" }],
+          }),
+        ).toBeNull();
+      }
+    },
+  );
+
+  it("still reports an action failure that leaves the task open", () => {
+    expect(
+      appActionFailureMessage({
+        status: "open",
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "failed",
+            reason: "sf311_timeout",
+          },
+        ],
+      }),
+    ).toContain("didn't respond in time");
+  });
+
+  it("still rejects explicit filing without a submitted ticket on a completed task", () => {
+    const task = {
+      status: "completed",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "missing_location",
+        },
+      ],
+    };
+    expect(isFiled311Completion(task)).toBe(false);
+    expect(
+      appActionFailureMessage(task, { includeUnsubmitted311: true }),
+    ).toContain("no location set");
+  });
+
   it("requires an acted-on task with a submitted 311 result", () => {
     expect(
       isFiled311Completion({

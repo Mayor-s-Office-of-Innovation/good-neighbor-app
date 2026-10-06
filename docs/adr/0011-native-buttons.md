@@ -52,3 +52,33 @@ production anyway.
   UX that our loading pattern can't cover), revisit.
 - wa-select/wa-option remain approved form controls for future screens — this
   ADR only moves their *imports* to the consumer that uses them.
+
+## Addendum (2026-10-06): icon libraries
+
+The same bundle probe approach found the next largest vendor item: Web
+Awesome's built-in **"system" icon library**, ~40 KB minified (~8 KB brotli,
+11% of the main chunk) of Font Awesome SVG markup inlined as JavaScript. The
+icon module registers it at import time and WA components look icons up in it
+by name (the chevron on `<wa-select>`, the clear button on an input, the eye on
+a password field), so the bundler cannot tree-shake it. None of the components
+this app loads (icon, otp-input, textarea, spinner) draw a system icon.
+
+**Decision.** Two icon libraries, both backed by the one self-hosted set in
+`frontend/public/icons/`:
+
+- `default` — registered in `main.js`; every `<wa-icon name="…">` in our
+  templates resolves to `/icons/<name>.svg`.
+- `system` — Web Awesome's internal library is swapped out by a `resolve.alias`
+  in `vite.config.js` for `src/lib/wa-system-icons.js`, which resolves the same
+  way. No vendor icon markup ships; the app only carries icons it chose.
+
+**Rule when adding a Web Awesome component.** Check its docs for the system
+icons it renders and add each as `public/icons/<name>.svg` (Font Awesome Free
+SVGs, `fill` is set to `currentColor` by the library mutator). A missing icon
+renders as an empty box in dev, never a crash — the failure is visible at the
+moment the component is added, instead of being masked by 40 KB of fallbacks.
+
+**Consequences.** Main chunk 349.7 → 310.8 KB minified (76.3 → 68.0 KB
+brotli); the size-limit budget tightened to 69 KB. The alias is keyed on the
+vendor chunk's hashed filename; a Web Awesome upgrade that renames it does not
+break the build — size-limit flags the regression and the alias is re-pointed.

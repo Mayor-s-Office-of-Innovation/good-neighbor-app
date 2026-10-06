@@ -22,7 +22,18 @@ import {
   stopHealthMonitoring,
   clearAuthState,
 } from "../services/backend-health.js";
-import { currentRoute, onRouteChange, navigate } from "../router.js";
+import {
+  currentRoute,
+  onRouteChange,
+  navigate,
+  replaceRoute,
+} from "../router.js";
+import { hasDraft } from "../state/check-session.js";
+import {
+  captureRouteToRestore,
+  captureResumeProperties,
+} from "../state/capture-resume.js";
+import { trackEvent } from "../services/analytics.js";
 import { setupView, appShell } from "./app-root.templates.js";
 import "./connection-status.js";
 import { isInAppBrowser } from "../services/browser-context.js";
@@ -116,6 +127,7 @@ class AppRoot extends HTMLElement {
       return;
     }
     await this._refreshSiteSettings();
+    await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     this._renderView();
@@ -203,6 +215,9 @@ class AppRoot extends HTMLElement {
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state
+      void trackEvent("site_setup_completed", {
+        switching_site: switchingSite,
+      });
       await this._refreshSiteSettings();
       this._renderApp();
       if (switchingSite) showSiteSwitchSuccessToast();
@@ -232,6 +247,29 @@ class AppRoot extends HTMLElement {
     void import("./webview-warning.js").then(({ showWebviewWarning }) =>
       showWebviewWarning(this),
     );
+  }
+
+  /**
+   * Field fix (2026-10): on older Android devices the browser is killed while
+   * the camera is open and relaunches at the entry URL, so the user lands on
+   * home mid-check. The capture screen left a marker when it opened the
+   * camera; if it is fresh and the draft is still there, replace home with
+   * the capture route before the first render. The analytics event records
+   * how the relaunch looked so the field pattern can be confirmed in PostHog.
+   */
+  async _restoreInterruptedCapture() {
+    let restore = null;
+    try {
+      restore = await captureRouteToRestore({
+        route: currentRoute(),
+        hasDraft,
+      });
+    } catch (err) {
+      console.error("capture resume check failed", err);
+    }
+    if (!restore) return;
+    void trackEvent("capture_resumed", captureResumeProperties(restore));
+    replaceRoute(restore.route);
   }
 
   _renderView() {

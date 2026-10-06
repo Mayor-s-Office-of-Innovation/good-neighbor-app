@@ -55,8 +55,20 @@ export function installErrorReporting() {
  * @returns {boolean}
  */
 function enabledFor() {
+  return flagEnabled("gnp:errors");
+}
+
+/**
+ * Shared kill-switch gate for the client telemetry modules (error-report,
+ * analytics): `<key>=off` wins over everything; `on` overrides test mode;
+ * otherwise on except under the test runner. Storage-less environments stay
+ * quiet.
+ * @param {string} key localStorage key holding "on" | "off"
+ * @returns {boolean}
+ */
+export function flagEnabled(key) {
   try {
-    const flag = localStorage.getItem("gnp:errors");
+    const flag = localStorage.getItem(key);
     if (flag === "off") return false;
     if (flag === "on") return true;
   } catch {
@@ -241,7 +253,7 @@ function cap(value, max) {
  * are unavailable — never throws.
  * @returns {string}
  */
-function distinctId() {
+export function distinctId() {
   try {
     const existing = localStorage.getItem("gnp:distinct-id");
     if (existing) return existing;
@@ -289,7 +301,7 @@ function randomId() {
  * identifier with a guarded typeof.
  * @returns {string} "dev" locally; CI injects the sha via vite.config.js
  */
-function release() {
+export function release() {
   try {
     // @ts-expect-error -- build-time define (vite.config.js `define`); not a
     // runtime global, so it has no ambient declaration.
@@ -302,28 +314,31 @@ function release() {
 /**
  * sendBeacon first (survives unload, no preflight possible); fetch keepalive
  * fallback for the rare beacon-less browser. Never throws; failures dropped.
- * @param {Record<string, string>} payload scrubbed report
- * @returns {void}
+ * Shared with services/analytics.js (same-origin intakes only).
+ * @param {Record<string, unknown>} payload scrubbed report
+ * @param {string} [endpoint] same-origin intake path
+ * @returns {boolean} true when a beacon or request was handed to the browser
  */
-function sendBeacon(payload) {
+export function sendBeacon(payload, endpoint = "/v1/client-errors") {
   try {
+    const body = JSON.stringify(payload);
     if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-      const blob = new Blob([JSON.stringify(payload)], {
-        type: "application/json",
-      });
-      if (navigator.sendBeacon("/v1/client-errors", blob)) return;
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon(endpoint, blob)) return true;
     }
     if (typeof fetch === "function") {
-      fetch("/v1/client-errors", {
+      fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body,
         keepalive: true,
       }).catch(() => {});
+      return true;
     }
   } catch {
-    // Quietly dropped — error reporting must never create user-visible errors.
+    // Quietly dropped — telemetry must never create user-visible errors.
   }
+  return false;
 }
 
 // Self-install at import time. main.js imports this module first — before any
