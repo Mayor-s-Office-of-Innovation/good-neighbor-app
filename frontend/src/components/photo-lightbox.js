@@ -104,9 +104,10 @@ customElements.define("photo-lightbox", PhotoLightbox);
  * Create the singleton lazily and open the selected thumbnail.
  * @param {HTMLElement & { _site?: { address?: string } }} host
  * @param {HTMLElement} trigger
+ * @param {Element | null} [screen] Screen that owned the trigger when clicked.
  */
-export function openPhotoLightbox(host, trigger) {
-  if (!host.isConnected || !trigger.isConnected || !host.contains(trigger))
+export function openPhotoLightbox(host, trigger, screen = trigger) {
+  if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
     return;
   const image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;

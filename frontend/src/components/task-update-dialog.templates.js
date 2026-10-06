@@ -1,3 +1,4 @@
+import { taskRoute } from "../domain/task-route.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { getLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -130,13 +131,7 @@ export function taskUpdateTimeline({
         ]
       : [];
   const isCall = task.kind === "non_actionable_escalation";
-  const emergency =
-    task.inProgressActionKind === "called_911" ||
-    (task.appActions || []).some(
-      (action) =>
-        action?.code === "open_phone" &&
-        String(action.payload?.phoneNumber || "").replace(/\D/g, "") === "911",
-    );
+  const route = taskRoute(task);
   const showAgencyMetadata =
     task.kind === "escalation" || isCall || Boolean(task.notifiedAt);
   const timeline = [
@@ -162,28 +157,8 @@ export function taskUpdateTimeline({
     rulebookText(task.category) ||
     t("taskUpdate.fallbackTitle");
   return html`<section class="task-update__summary">
-      <p
-        class="task-update__route task-update__route--${task.kind ===
-        "escalation"
-          ? "311"
-          : isCall
-            ? emergency
-              ? "emergency"
-              : "non-emergency"
-            : "onsite"}"
-      >
-        <span class="task-update__route-label"
-          >${escapeHtml(
-            task.kind === "escalation"
-              ? t("card.route.ticket")
-              : isCall
-                ? t(
-                    emergency
-                      ? "card.route.emergency"
-                      : "card.route.nonEmergency",
-                  )
-                : t("card.route.onsite"),
-          )}</span
+      <p class="task-update__route task-update__route--${route.tone}">
+        <span class="task-update__route-label">${escapeHtml(route.label)}</span
         >${latestUpdateLabel
           ? html`<span class="task-update__route-separator" aria-hidden="true"
                 >·</span

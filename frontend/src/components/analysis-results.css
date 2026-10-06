@@ -1146,14 +1146,14 @@ html.wa-dark .analysis-card__clear-copy a {
   order: 0;
 }
 #history-grouping::part(form-control-label) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+#history-grouping::part(form-control) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 @media (prefers-reduced-motion: reduce) {
   /* Retain the specified layout collapse while eliminating lateral motion. */

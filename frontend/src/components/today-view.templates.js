@@ -403,9 +403,7 @@ export function homeResults({
       ${taskTabs({ activeId: homeFilter })}
       ${homeFilter === "history"
         ? html`<div class="history-grouping">
-            <span id="history-group-label"
-              >${escapeHtml(t("card.history.groupBy"))}</span
-            ><wa-select
+            <wa-select
               id="history-grouping"
               label="${escapeAttr(t("card.history.groupBy"))}"
               value="${escapeAttr(historyGrouping)}"

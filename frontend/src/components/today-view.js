@@ -444,12 +444,15 @@ class TodayView extends HTMLElement {
     if (grouping) {
       void import("./history-grouping.js");
     }
-    grouping?.addEventListener("change", () => {
+    grouping?.addEventListener("change", async () => {
       this._historyGrouping = /** @type {any} */ (grouping).value;
       this._renderHome(this._homeModel);
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#history-grouping")
-      )?.focus();
+      const replacement =
+        /** @type {HTMLElement & { updateComplete?: Promise<boolean> }} */ (
+          this.querySelector("#history-grouping")
+        );
+      await replacement?.updateComplete;
+      if (replacement?.isConnected) replacement.focus({ preventScroll: true });
     });
     const start = this.querySelector("#start-check");
     if (start) {

@@ -6,6 +6,44 @@ import { setAnalyzerFixture } from "../helpers/analyzer-control.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 test.describe("photo lightbox", () => {
+  test("opens the clicked photo when its thumbnail is replaced during lazy loading", async ({
+    page,
+  }) => {
+    await startCheck(page);
+    await setAnalyzerFixture("excellent");
+    await addPhoto(page, PHOTO_CLEAR);
+    const thumbnail = page.locator(".shot [data-photo-lightbox]");
+    await expect(thumbnail).toBeVisible({ timeout: 30_000 });
+    let release = () => {};
+    /** @type {Promise<void>} */
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let requested = () => {};
+    /** @type {Promise<void>} */
+    const requestSeen = new Promise((resolve) => {
+      requested = resolve;
+    });
+    await page.route("**/components/photo-lightbox.js", async (route) => {
+      requested();
+      await gate;
+      await route.continue();
+    });
+    try {
+      await thumbnail.click();
+      await requestSeen;
+      // Model an upload/poll render replacing the clicked node, not navigation.
+      await thumbnail.evaluate((element) =>
+        element.replaceWith(element.cloneNode(true)),
+      );
+    } finally {
+      release();
+    }
+    await expect(
+      page.getByRole("dialog", { name: t("lightbox.dialog.aria") }),
+    ).toBeVisible();
+  });
+
   test("a capture thumbnail survives reload and supports every dismissal path", async ({
     page,
   }) => {

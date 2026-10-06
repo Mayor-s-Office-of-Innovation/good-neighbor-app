@@ -10,17 +10,21 @@ test.describe("today view", () => {
     const selector = lead.locator("site-switcher");
     await expect(selector).toBeVisible();
 
-    const centers = await lead.evaluate((element) => {
-      const selector = element.querySelector("site-switcher");
-      if (!selector) throw new Error("Site selector disappeared");
-      const leadBox = element.getBoundingClientRect();
-      const selectorBox = selector.getBoundingClientRect();
-      return {
-        lead: leadBox.left + leadBox.width / 2,
-        selector: selectorBox.left + selectorBox.width / 2,
-      };
-    });
-
-    expect(Math.abs(centers.lead - centers.selector)).toBeLessThan(1);
+    await expect
+      .poll(() =>
+        selector.evaluate((selector) => {
+          const element = selector.closest(".home-lead");
+          if (!element) return Infinity;
+          const leadBox = element.getBoundingClientRect();
+          const selectorBox = selector.getBoundingClientRect();
+          return Math.abs(
+            leadBox.left +
+              leadBox.width / 2 -
+              selectorBox.left -
+              selectorBox.width / 2,
+          );
+        }),
+      )
+      .toBeLessThan(1);
   });
 });
