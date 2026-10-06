@@ -87,56 +87,16 @@
 
 /* Camera tile shared by the capture flows. */
 .addshot {
-  appearance: none;
-  position: relative;
-  width: 100%;
   height: auto;
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--wa-border-radius-l, 16px);
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
-  box-shadow: none;
-  margin: 0;
-  padding: 0;
   min-width: 0;
-  text-align: center;
 }
 
 .addshot__icon {
-  display: grid;
-  place-items: center;
-  width: 43px;
-  height: 43px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  color: var(--ink);
-}
-
-.addshot__icon wa-icon {
-  font-size: 1rem;
-}
-
-.addshot__label {
-  position: absolute;
-  bottom: 10%;
-  inset-inline: 0;
-  font-weight: 500;
-  font-size: 1rem;
-  line-height: 1.2;
+  flex: 0 0 auto;
 }
 
 .addshot--empty {
   width: min(100%, 200px);
-}
-
-.addshot:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
 }
 
 /* Bottom action row shared by check/report flows. The perimeter flow adds a

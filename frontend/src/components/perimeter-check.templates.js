@@ -248,13 +248,17 @@ export const shotTile = (item, index) => html`
 
 export const addTile = (empty) => html`
   <button
-    class="btn-photo addshot ${empty ? "addshot--empty" : ""}"
+    class="btn-photo photo-capture-tile addshot ${empty
+      ? "addshot--empty"
+      : ""}"
     id="add-photo"
     type="button"
   >
-    <span class="addshot__icon" aria-hidden="true"
+    <span class="photo-capture-tile__icon addshot__icon" aria-hidden="true"
       ><wa-icon name="camera"></wa-icon
     ></span>
-    <span class="addshot__label">${escapeHtml(t("check.photo.take"))}</span>
+    <span class="photo-capture-tile__label addshot__label"
+      >${escapeHtml(t("check.photo.take"))}</span
+    >
   </button>
 `;
