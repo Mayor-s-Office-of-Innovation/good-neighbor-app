@@ -270,8 +270,8 @@ resource "aws_lambda_event_source_mapping" "worker" {
 # which publishes the site reconciliation message to SQS and marks the entry as
 # dispatched. Stream retries close the former commit-then-send failure window.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
-  event_source_arn        = aws_dynamodb_table.app.stream_arn
-  function_name           = aws_lambda_function.worker.arn
+  event_source_arn = aws_dynamodb_table.app.stream_arn
+  function_name    = aws_lambda_function.worker.arn
   # TRIM_HORIZON avoids a deployment-order gap: if the updated API writes an
   # outbox row before this mapping becomes active, the retained INSERT still
   # gets dispatched. The filter keeps unrelated table history out.
