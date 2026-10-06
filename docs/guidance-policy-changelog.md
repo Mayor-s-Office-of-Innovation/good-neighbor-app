@@ -2,6 +2,14 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v5 - 2026-10-06
+
+- Source asset: `GNP rubrics.csv` (36 rules).
+- Updated 27 user-facing button labels to action instructions for the checklist.
+- Routing, agencies, eligibility for In progress, and all other rule fields are unchanged.
+- Existing open cards display the current label by rule ID; their original policy
+  snapshots and execution behavior remain unchanged. Prior catalogs remain registered.
+
 ## actions-escalations-v4 - 2026-10-01
 
 - Source asset: `GNP rubrics-2.csv`.

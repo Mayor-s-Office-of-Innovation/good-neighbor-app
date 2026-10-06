@@ -278,6 +278,49 @@ describe("clear perimeter checks on home", () => {
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
+  it("groups newest-check history tasks by the selected date or issue type", async () => {
+    freezeClock();
+    const view = await mount("?filter=history");
+    const check = {
+      id: "latest",
+      status: "submitted",
+      submittedAt: NEWER_TODAY,
+      issueCount: 1,
+    };
+    const model = {
+      last: check,
+      checks: [check],
+      captureSession: null,
+      pendingSession: null,
+      tasks: [
+        {
+          taskId: "completed-litter",
+          checkId: "latest",
+          status: "completed",
+          category: "Litter",
+          createdAt: YESTERDAY,
+          completedAt: NEWER_TODAY,
+        },
+      ],
+    };
+    for (const [mode, title] of [
+      ["resolved", "Today · Oct 2"],
+      ["opened", "Yesterday · Oct 1"],
+      ["type", "Litter"],
+    ]) {
+      view._historyGrouping = mode;
+      const markup = view._render(model);
+      const headings = [
+        ...markup.matchAll(
+          /<h2 class="analysis-tray__check-title">\s*([^<]+)<\/h2>/g,
+        ),
+      ].map((match) => match[1].trim());
+      expect(headings).toContain(title);
+      expect(markup).not.toContain(todayTitle(NEWER_TODAY));
+      expect(markup).toContain("history-card__row");
+    }
+  });
+
   it("moves an active clear check to History after a newer check completes", async () => {
     freezeClock();
     const view = await mount("?filter=history");
@@ -584,5 +627,35 @@ describe("site switcher", () => {
       { siteId: "site-2", name: "Second site" },
     ]);
     errorLog.mockRestore();
+  });
+});
+
+describe("worklist refresh focus", () => {
+  it("announces initial arrival without moving focus or scroll on a card refresh", async () => {
+    window.location.search = "?filter=todo";
+    let scrollTop = 0;
+    const heading = new HTMLElement();
+    heading.focus = vi.fn(() => {
+      scrollTop = 0;
+    });
+    const view = new TodayView();
+    view.isConnected = true;
+    view.querySelector = () => heading;
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
+    view._hydrateVisibleHomeTasks = vi.fn();
+    view._hydrate311CardStatuses = vi.fn();
+
+    await view.connectedCallback();
+    expect(heading.focus).toHaveBeenCalledOnce();
+    scrollTop = 850;
+
+    // Checklist completion refreshes via this same callback after collapsing.
+    await view.connectedCallback();
+    expect(view._renderHome).toHaveBeenCalledTimes(2);
+    expect(heading.focus).toHaveBeenCalledOnce();
+    expect(scrollTop).toBe(850);
+    view.disconnectedCallback();
   });
 });

@@ -1,3 +1,5 @@
+import { taskActionLabel } from "../domain/task-action-labels.js";
+import { historyDuration, historyEnteredAt } from "../domain/task-history.js";
 import "./analysis-results.css";
 import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
@@ -32,6 +34,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 /**
  * @typedef {object} AnalysisTask
  * @property {string} [taskId]
+ * @property {string} [status]
  * @property {string} [shortId]
  * @property {string} [displayId]
  * @property {string} [display_id]
@@ -409,6 +412,13 @@ function analysisCardEntries(
             displayDescription(condition) ||
             t("card.description.fallback"),
           action: taskButtonLabel(task) || actionLabel(task.kind),
+          includeEditDelete: ![
+            "in_progress",
+            "completing",
+            "resolving",
+            "completed",
+            "cannot_do",
+          ].includes(task.status),
           actionKind: task.kind || "",
           routeType: routeType(task),
           taskId: task.taskId || "",
@@ -493,6 +503,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
  * @param {HomeTask} params.task
  * @param {CardAction | null} params.action
  * @param {string} params.statusLabel
+ * @param {boolean} [params.history]
  * @param {boolean} [params.isNew]
  * @param {boolean} [params.includeControls]
  * @param {string} [params.siteName] caption when the task's evidence has no place name
@@ -505,7 +516,18 @@ export function taskAnalysisCard({
   isNew = false,
   includeControls = true,
   siteName = "",
+  history = false,
 }) {
+  if (history) return historyCard(task);
+  includeControls =
+    includeControls &&
+    ![
+      "in_progress",
+      "completing",
+      "resolving",
+      "completed",
+      "cannot_do",
+    ].includes(task.status);
   const mediaUrl = taskMediaUrl(task);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.
@@ -547,7 +569,10 @@ export function taskAnalysisCard({
           rulebookText(task.category) ||
           "",
     editableDescription: task.description || "",
-    action: action?.label || (includeControls ? t("common.done") : ""),
+    action:
+      action?.kind === "done"
+        ? taskActionLabel(task) || action.label
+        : action?.label || (includeControls ? t("common.done") : ""),
     actionVariant: action?.variant || "",
     actionKind:
       task.kind || (action?.variant === "blue" ? "escalation" : "action"),
@@ -856,6 +881,16 @@ function completedEvidenceCard(
       data-card-edit-description="${escapeAttr(editableDescription)}"
     >
       <div class="analysis-card__panel">
+        ${includeDelete
+          ? html`<button
+              class="btn-icon analysis-card__dismiss"
+              type="button"
+              aria-label="${escapeAttr(t("card.delete.aria"))}"
+              data-analysis-action="delete"
+            >
+              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            </button>`
+          : ""}
         <p
           class="analysis-card__route analysis-card__route--${escapeAttr(
             route.tone,
@@ -885,56 +920,62 @@ function completedEvidenceCard(
         </p>
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
-            <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
             <h3>${escapeHtml(title)}</h3>
+            <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
             <p>${escapeHtml(description)}</p>
             ${question ? clarifyingQuestion(question, conditionId) : ""}
-            <div class="analysis-card__actions">
-              ${action
-                ? html`<button
-                    class="analysis-card__primary${actionClass} wa-plain"
-                    type="button"
-                    ${actionAttribute}="${escapeAttr(actionValue)}"
-                  >
-                    ${actionVariant === "outline"
-                      ? ""
-                      : html`<wa-icon
-                          name="circle-check"
-                          aria-hidden="true"
-                        ></wa-icon>`}
-                    ${escapeHtml(action)}
-                  </button>`
-                : ""}
-              ${includeEditDelete
-                ? html`
-                    <button
-                      class="analysis-card__icon wa-plain"
-                      type="button"
-                      aria-label="${escapeAttr(t("card.edit.aria"))}"
-                      data-analysis-action="edit"
-                    >
-                      <wa-icon name="pen" aria-hidden="true"></wa-icon>
-                    </button>
-                  `
-                : ""}
-              ${includeDelete
-                ? html`
-                    <button
-                      class="analysis-card__icon analysis-card__icon--danger wa-plain"
-                      type="button"
-                      aria-label="${escapeAttr(t("card.delete.aria"))}"
-                      data-analysis-action="delete"
-                    >
-                      <wa-icon name="trash" aria-hidden="true"></wa-icon>
-                    </button>
-                  `
-                : ""}
-            </div>
+            ${includeEditDelete
+              ? html`<button
+                  class="btn-card analysis-card__edit"
+                  type="button"
+                  data-analysis-action="edit"
+                >
+                  <wa-icon name="pen" aria-hidden="true"></wa-icon
+                  ><span>${escapeHtml(t("card.editDetails"))}</span>
+                </button>`
+              : ""}
             <p class="actioncard__error" role="alert" hidden></p>
           </div>
           ${evidencePreview(item, mediaPlaceholder)}
         </div>
       </div>
+      ${action
+        ? html`<div class="analysis-card__action-area analysis-card__actions">
+            ${["update", "view311"].includes(actionValue)
+              ? html`<button
+                  class="btn-card analysis-card__updates"
+                  type="button"
+                  ${actionAttribute}="${escapeAttr(actionValue)}"
+                >
+                  ${escapeHtml(t("card.viewUpdates"))}<wa-icon
+                    name="chevron-right"
+                    aria-hidden="true"
+                  ></wa-icon>
+                </button>`
+              : actionKind !== "escalation" &&
+                  ["done", "resolve"].includes(actionValue)
+                ? html`<button
+                    class="btn-card analysis-card__check"
+                    type="button"
+                    role="checkbox"
+                    aria-checked="false"
+                    ${actionAttribute}="${escapeAttr(actionValue)}"
+                  >
+                    <span class="analysis-card__check-circle" aria-hidden="true"
+                      ><span class="analysis-card__check-tick"></span></span
+                    ><span class="analysis-card__check-label"
+                      >${escapeHtml(action)}</span
+                    >
+                  </button>`
+                : html`<button
+                    class="btn-blue analysis-card__primary${actionClass}"
+                    type="button"
+                    ${actionAttribute}="${escapeAttr(actionValue)}"
+                  >
+                    ${escapeHtml(action)}
+                  </button>`}
+          </div>`
+        : ""}
       <footer class="analysis-card__footer">
         <span>${escapeHtml(footerLabel)}</span>
         ${shortId ? html`<span>${escapeHtml(shortId)}</span>` : ""}
@@ -1160,9 +1201,7 @@ function routeType(task) {
 }
 
 function taskButtonLabel(task) {
-  return Array.isArray(task.buttons) && task.buttons[0]
-    ? rulebookText(String(task.buttons[0]))
-    : "";
+  return taskActionLabel(task);
 }
 
 function actionLabel(kind) {
@@ -1390,3 +1429,58 @@ export const analysisDialogs = () => html`
     </form>
   </dialog>
 `;
+
+function historyCard(task) {
+  const route = routeType(task);
+  const title =
+    displayCategory(task) ||
+    rulebookText(task.label) ||
+    t("card.title.fallback");
+  const status =
+    route.status ||
+    (task.status === "cannot_do"
+      ? t("card.history.cannotDo")
+      : t("card.history.completed"));
+  const entered = historyEnteredAt(task);
+  const media = taskMediaUrl(task);
+  return html`<article
+    class="analysis-card analysis-card--history"
+    data-task-id="${escapeAttr(task.taskId)}"
+  >
+    <button
+      class="btn-card history-card__row"
+      type="button"
+      data-action="update"
+    >
+      <span class="history-card__photo"
+        >${media
+          ? html`<img src="${escapeAttr(media)}" alt="" loading="lazy" />`
+          : html`<wa-icon name="image" aria-hidden="true"></wa-icon>`}</span
+      >
+      <span class="history-card__copy"
+        ><span
+          class="analysis-card__route analysis-card__route--${escapeAttr(
+            route.tone,
+          )}"
+          ><span class="analysis-card__route-dot" aria-hidden="true"></span
+          ><span>${escapeHtml(route.label)}</span
+          ><span aria-hidden="true">·</span
+          ><span class="history-card__status"
+            >${escapeHtml(rulebookText(status))}</span
+          ></span
+        >
+        <span class="history-card__title">${escapeHtml(title)}</span
+        ><span class="history-card__time"
+          >${escapeHtml(
+            entered
+              ? formatMonthDay(entered) + ", " + formatTime(entered)
+              : t("card.history.unknownDate"),
+          )}${historyDuration(task)
+            ? html` · ${escapeHtml(historyDuration(task))}`
+            : ""}</span
+        ></span
+      >
+      <wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
+    </button>
+  </article>`;
+}

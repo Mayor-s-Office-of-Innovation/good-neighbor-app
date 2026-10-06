@@ -9,6 +9,62 @@ import {
 } from "./task-update-dialog.templates.js";
 
 describe("task update dialog templates", () => {
+  it("shows legacy direct completion without call metadata and avoids duplicate events", () => {
+    const view = {
+      task: {
+        kind: "onsite",
+        status: "completed",
+        createdAt: "2026-10-06T20:00:00Z",
+        completedAt: "2026-10-06T20:05:00Z",
+      },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+    };
+    const markup = taskUpdateTimeline(view);
+    expect(markup).toContain(t("card.route.onsite"));
+    expect(markup).not.toContain(t("card.route.nonEmergency"));
+    expect(markup).not.toContain("task-update__metadata");
+    expect(markup).toContain('datetime="2026-10-06T20:05:00Z"');
+    expect(markup.match(/Marked as complete/g)).toHaveLength(1);
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        updates: [
+          {
+            type: "task_completed",
+            label: "Marked as complete",
+            occurredAt: view.task.completedAt,
+          },
+        ],
+      }).match(/Marked as complete/g),
+    ).toHaveLength(1);
+    expect(taskUpdateTimeline({ ...view, nextToken: "older" })).not.toContain(
+      "Marked as complete",
+    );
+    expect(taskUpdateTimelineTone("task_completed")).toBe("resolved");
+  });
+
+  it("identifies phone actions from their route and configured phone number", () => {
+    const view = {
+      task: {
+        kind: "non_actionable_escalation",
+        appActions: [{ code: "open_phone", payload: { phoneNumber: "911" } }],
+      },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+    };
+    expect(taskUpdateTimeline(view)).toContain(t("card.route.emergency"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { kind: "non_actionable_escalation" },
+      }),
+    ).toContain(t("card.route.nonEmergency"));
+  });
   it("renders the timeline independently of the controller", () => {
     const markup = taskUpdateTimeline({
       task: {

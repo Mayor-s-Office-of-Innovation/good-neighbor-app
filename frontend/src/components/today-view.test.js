@@ -556,7 +556,7 @@ describe("card deletion events", () => {
 });
 
 describe("in-progress card actions", () => {
-  it("labels 311 request cards as View details", async () => {
+  it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");
     const registration = vi
       .mocked(customElements.define)
@@ -578,7 +578,7 @@ describe("in-progress card actions", () => {
       false,
     );
 
-    expect(card.markup).toContain(escapeHtml(t("today.card.viewDetails")));
+    expect(card.markup).toContain(escapeHtml(t("card.viewUpdates")));
     expect(card.markup).not.toContain(
       `>${escapeHtml(t("today.card.update"))}<`,
     );

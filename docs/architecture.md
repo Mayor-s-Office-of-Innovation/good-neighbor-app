@@ -167,7 +167,11 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   `canBeInProgress` and `primaryInProgressAgency` onto its task. After the first
   successful card action, eligible tasks move from `open` to `in_progress` and
   append an immutable, actor-attributed task-update event; ineligible tasks move
-  directly to `completed`. Routing never depends on user-facing button text.
+  directly to `completed` and append a `task_completed` event labeled "Marked as
+  complete" with the completion timestamp and actor. The event and task status
+  are committed in one transaction. History timelines derive this entry from
+  `completedAt` for older direct completions without an event, once all event
+  pages are loaded. Routing never depends on user-facing button text.
   The issue timeline derives non-stacking presence prompts from fixed four-hour
   periods beginning at `inProgressAt`. Resolving normally moves the task
   irreversibly to `completed`; when an app-owned informational 311 ticket must

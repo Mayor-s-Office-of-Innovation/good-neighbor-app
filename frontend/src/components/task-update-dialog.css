@@ -1,5 +1,5 @@
 .task-update {
-  width: min(100% - 2rem, 52rem);
+  width: min(100% - 2rem, var(--app-content-max-width));
   max-height: 94vh;
   border: 0;
   border-radius: var(--wa-font-size-2xl, 2rem);
@@ -58,8 +58,10 @@
   outline-offset: 3px;
 }
 .task-update__sheet {
+  width: 100%;
+  box-sizing: border-box;
   min-height: min(70rem, 88vh);
-  padding: 1.5rem clamp(1.5rem, 8vw, 8rem) 4rem;
+  padding: 1.5rem 1.5rem 4rem;
   overflow: auto;
 }
 .task-update__header {
@@ -67,7 +69,7 @@
   justify-content: space-between;
   align-items: center;
   min-height: 2.6875rem;
-  margin-inline: calc(-1 * clamp(1.5rem, 8vw, 8rem));
+  margin-inline: -1.5rem;
   padding-inline: 1.5rem;
 }
 .task-update__summary h2,
@@ -83,11 +85,18 @@
   content: "";
   width: 1rem;
   height: 1rem;
+  flex: 0 0 1rem;
   border-radius: 50%;
-  background: var(--wa-color-warning-60);
+  background: var(--wa-color-neutral-60, #9194a2);
 }
-.task-update__route--bare::before {
-  content: none;
+.task-update__route--311::before {
+  background: var(--wa-color-blue-60, #0071ec);
+}
+.task-update__route--non-emergency::before {
+  background: var(--wa-color-warning-70, #ef9d00);
+}
+.task-update__route--emergency::before {
+  background: var(--wa-color-danger-60, #f3676c);
 }
 .task-update__location,
 .task-update__description,
@@ -95,6 +104,7 @@
   color: var(--wa-color-text-quiet);
 }
 .task-update__photo {
+  display: block;
   width: 7.5rem;
   height: 7.5rem;
   object-fit: cover;
@@ -103,10 +113,11 @@
 
 .task-update__photo-trigger {
   width: fit-content;
+  /* Photo buttons must reserve the image height, not the form-control height. */
+  height: auto;
   border-radius: var(--radius-sm);
 }
-.task-update__photo--original {
-  display: block;
+.task-update__photo-trigger:has(.task-update__photo--original) {
   margin-block: 1rem;
 }
 .task-update__metadata div {
@@ -373,6 +384,23 @@
 }
 
 @media (max-width: 32rem) {
+  .task-update__route {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    column-gap: 0.55rem;
+    row-gap: 0.25rem;
+  }
+  .task-update__route::before {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .task-update__route-label,
+  .task-update__route > strong {
+    grid-column: 2;
+  }
+  .task-update__route-separator {
+    display: none;
+  }
   .task-update__sheet {
     min-height: 88vh;
     padding: 1.25rem;

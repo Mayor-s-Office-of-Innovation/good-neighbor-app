@@ -140,14 +140,38 @@
   background: var(--wa-color-surface-default, #fff);
 }
 
-.analysis-tray--recent .analysis-card__panel,
-.analysis-tray--history .analysis-card__panel {
-  border: 1px solid var(--wa-color-neutral-90, #e4e5e9);
+.analysis-tray--recent,
+.analysis-tray--history {
+  --analysis-card-outline: var(--wa-color-neutral-90, #e4e5e9);
 }
 
-html.wa-dark .analysis-tray--recent .analysis-card__panel,
-html.wa-dark .analysis-tray--history .analysis-card__panel {
-  border-color: var(--wa-color-neutral-border-quiet, #545868);
+html.wa-dark .analysis-tray--history {
+  --analysis-card-outline: var(--wa-color-neutral-border-quiet, #545868);
+}
+
+/* Latest-check outlines blend into the tray in either theme. The separate
+   action area's neutral top border remains the content divider. */
+.analysis-tray--recent {
+  --analysis-card-outline: var(--wa-color-brand-fill-quiet, #e8f3ff);
+}
+
+.analysis-tray--recent .analysis-card__panel,
+.analysis-tray--history .analysis-card__panel {
+  border: 1px solid var(--analysis-card-outline);
+}
+
+.analysis-tray--recent .analysis-card__action-area,
+.analysis-tray--history .analysis-card__action-area {
+  border-inline: 1px solid var(--wa-color-neutral-90);
+  border-bottom: 1px solid var(--wa-color-neutral-90);
+}
+
+.analysis-card__panel:has(+ .analysis-card__action-area) {
+  border-bottom: 0;
+}
+
+.analysis-tray .analysis-card--done {
+  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
 }
 
 .analysis-card__layout {
@@ -344,6 +368,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__footer {
+  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -825,4 +850,314 @@ html.wa-dark .analysis-card__clear-copy a {
   margin: 0.6rem 0 0;
   color: var(--danger, #b42318);
   font-size: 0.9rem;
+}
+
+.btn-card {
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  height: auto;
+  font: inherit;
+  cursor: pointer;
+}
+.btn-card:focus-visible,
+.analysis-card__dismiss:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -3px;
+}
+.btn-card:disabled {
+  cursor: default;
+}
+.analysis-card__check-tick {
+  width: 0.45rem;
+  height: 0.8rem;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  rotate: 45deg;
+  margin-top: -0.2rem;
+}
+/* Card controls and the separated action area are shared by all capture views. */
+.analysis-card__panel {
+  position: relative;
+  padding: 1.25rem;
+  border-radius: 1.5rem 1.5rem 0 0;
+}
+.analysis-card__panel:has(.analysis-card__dismiss) > .analysis-card__route {
+  padding-right: 2rem;
+}
+.analysis-card__dismiss {
+  position: absolute;
+  right: 0.4375rem;
+  top: 0.4375rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--text-secondary);
+}
+.analysis-card__edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  margin-top: 0.5rem;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.analysis-card__edit span {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+.analysis-card__action-area {
+  margin: 0;
+  padding: 0.875rem 1.25rem 1.25rem;
+  border-top: 1px solid var(--wa-color-neutral-90);
+  background: var(--wa-color-surface-default);
+  border-radius: 0 0 1.5rem 1.5rem;
+}
+.analysis-card__check,
+.analysis-card__updates {
+  display: flex;
+  width: 100%;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0;
+  text-align: start;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: normal;
+}
+.analysis-card__updates {
+  justify-content: space-between;
+}
+.analysis-card__check-circle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 1.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid var(--text-secondary);
+  border-radius: 50%;
+}
+.analysis-card__check-tick {
+  transform: scale(0);
+  transition: transform 250ms ease;
+  font-size: 1rem;
+}
+.analysis-card__check[aria-checked="true"] .analysis-card__check-circle {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--wa-color-surface-default);
+}
+.analysis-card__check[aria-checked="true"] .analysis-card__check-tick {
+  transform: scale(1);
+}
+.analysis-card__check-label {
+  background: linear-gradient(currentColor, currentColor) left 55% / 0 1px
+    no-repeat;
+  transition:
+    background-size 300ms ease,
+    color 300ms ease;
+}
+.analysis-card__check[aria-checked="true"] .analysis-card__check-label {
+  background-size: 100% 1px;
+  color: var(--text-secondary);
+}
+.analysis-card__check:disabled {
+  opacity: 1;
+}
+.analysis-card--completing {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  overflow: clip;
+  flex-shrink: 0;
+  animation: analysis-card-collapse 1s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+.analysis-card__completion-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+.analysis-card--completing .analysis-card {
+  animation: analysis-card-slide 1s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+@keyframes analysis-card-slide {
+  to {
+    transform: translateX(115%);
+  }
+}
+.analysis-card--completing:only-child {
+  --analysis-card-gap: 0px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .analysis-card--completing .analysis-card {
+    animation: none;
+  }
+  .analysis-card__check-tick,
+  .analysis-card__check-label {
+    transition-duration: 1ms;
+  }
+}
+.history-grouping {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  color: var(--text-secondary);
+}
+#history-grouping {
+  width: max-content;
+  min-width: 0;
+}
+#history-grouping::part(combobox) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+#history-grouping::part(display-input) {
+  field-sizing: content;
+  width: auto;
+  font-weight: 600;
+  color: var(--text);
+}
+.history-card-list {
+  border-radius: 1.5rem;
+  overflow: hidden;
+}
+.analysis-card.analysis-card--history {
+  border-radius: 1.5rem;
+  background: var(--wa-color-surface-default);
+}
+.history-card-list > .analysis-card--history {
+  border-radius: 0;
+}
+.analysis-card--history + .analysis-card--history {
+  border-top: 1px solid var(--wa-color-neutral-90);
+}
+.history-card__row {
+  display: flex;
+  border-radius: inherit;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.875rem;
+  text-align: start;
+  color: var(--text);
+  white-space: normal;
+}
+.history-card__photo {
+  display: grid;
+  place-items: center;
+  flex: 0 0 4.6875rem;
+  width: 4.6875rem;
+  height: 4.6875rem;
+  background: var(--wa-color-surface-lowered);
+  border: 1px solid var(--wa-color-neutral-90);
+  border-radius: 0.625rem;
+  overflow: hidden;
+  color: var(--text-secondary);
+}
+.history-card__photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.history-card__copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.history-card__copy .analysis-card__route {
+  flex-wrap: wrap;
+  gap: 0.4375rem;
+  margin: 0 0 0.5rem;
+  font-weight: 400;
+}
+.history-card__title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.history-card__time,
+.history-card__status {
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.history-card__time {
+  margin-top: 0.25rem;
+}
+.history-card__row > wa-icon {
+  flex-shrink: 0;
+}
+.analysis-card__check {
+  justify-content: flex-start;
+}
+.analysis-card__dismiss {
+  background: transparent;
+}
+.analysis-card--done h3 {
+  font-size: 1.5625rem;
+  line-height: 1.2;
+  margin: 0 0 1rem;
+}
+.analysis-card--done .analysis-card__media {
+  width: 6.5rem;
+  height: 6.5rem;
+  flex: 0 0 6.5rem;
+  margin-top: 2.875rem;
+}
+.analysis-card--done .analysis-card__route {
+  margin-bottom: 1rem;
+}
+.analysis-card__panel:not(:has(+ .analysis-card__action-area)) {
+  border-radius: 1.5rem;
+}
+@media (max-width: 360px) {
+  .analysis-card--done .analysis-card__media {
+    width: 4.5rem;
+    height: 4.5rem;
+    flex-basis: 4.5rem;
+  }
+  .history-card__photo {
+    width: 3.5rem;
+    height: 3.5rem;
+    flex-basis: 3.5rem;
+  }
+}
+/* Preserve the side-by-side design on phones; older cards stacked evidence first. */
+.analysis-card--done .analysis-card__panel {
+  display: block;
+  padding: 1.25rem;
+}
+.analysis-card--done .analysis-card__layout {
+  display: flex;
+}
+.analysis-card--done .analysis-card__content {
+  display: block;
+}
+.history-card__copy .analysis-card__route {
+  order: 0;
+}
+#history-grouping::part(form-control-label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Retain the specified layout collapse while eliminating lateral motion. */
+  .analysis-card--completing {
+    animation-duration: 1s !important;
+  }
 }

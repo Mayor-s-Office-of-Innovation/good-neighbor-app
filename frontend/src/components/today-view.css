@@ -96,7 +96,7 @@
 }
 
 .home-top-actions {
-  width: min(100%, 550px);
+  width: min(100%, var(--app-content-max-width));
   min-height: 2.75rem;
   margin: 0 auto 0.75rem;
   padding-inline: 0.25rem;
@@ -274,8 +274,8 @@
 }
 
 .home {
-  width: min(100%, 550px);
-  max-width: 550px;
+  width: min(100%, var(--app-content-max-width));
+  max-width: var(--app-content-max-width);
   margin-inline: auto;
 }
 

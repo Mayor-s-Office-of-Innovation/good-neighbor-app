@@ -1,3 +1,7 @@
+import {
+  toggleCardCompletion,
+  isCompletingAnalysisCard,
+} from "./analysis-card-completion.js";
 /*
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
@@ -353,7 +357,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _render() {
-    if (isDeletingAnalysisCard(this)) return;
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
     this._renderAnalysis();
@@ -414,7 +418,12 @@ class ProblemReport extends HTMLElement {
         } else if (action === "edit") {
           this._openEditProblem(problem);
         } else if (action === "resolve") {
-          this._resolveProblem(problem);
+          if (target.getAttribute("role") === "checkbox") {
+            toggleCardCompletion(this, card, target, {
+              onSaved: () => this._markProblemResolved(problem),
+              render: () => this._render(),
+            });
+          } else this._resolveProblem(problem);
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
         } else if (action === "retry") {

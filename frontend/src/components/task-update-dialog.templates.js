@@ -15,7 +15,11 @@ export function taskUpdateTimelineTone(type) {
     type === "additional_action_still_present"
   )
     return "still-there";
-  if (type === "presence_resolved" || type === "additional_action_resolved")
+  if (
+    type === "task_completed" ||
+    type === "presence_resolved" ||
+    type === "additional_action_resolved"
+  )
     return "resolved";
   return "general";
 }
@@ -102,9 +106,46 @@ export function taskUpdateTimeline({
         : t("taskUpdate.created.perimeter"),
     occurredAt: task.createdAt || task.created_at || task.notifiedAt,
   });
-  const timeline = [...updates, ...(nextToken ? [] : [creation])].filter(
-    (update) => update.occurredAt,
-  );
+  // Older direct completions saved the timestamp but no timeline event.
+  /** @type {Array<Record<string, any>>} */
+  const legacyCompletion =
+    !nextToken &&
+    task.status === "completed" &&
+    !task.inProgressAt &&
+    task.completedAt &&
+    !updates.some((update) =>
+      [
+        "task_completed",
+        "presence_resolved",
+        "additional_action_resolved",
+        "311_ticket_filed",
+      ].includes(update.type),
+    )
+      ? [
+          {
+            type: "task_completed",
+            label: "Marked as complete",
+            occurredAt: task.completedAt,
+          },
+        ]
+      : [];
+  const isCall = task.kind === "non_actionable_escalation";
+  const emergency =
+    task.inProgressActionKind === "called_911" ||
+    (task.appActions || []).some(
+      (action) =>
+        action?.code === "open_phone" &&
+        String(action.payload?.phoneNumber || "").replace(/\D/g, "") === "911",
+    );
+  const showAgencyMetadata =
+    task.kind === "escalation" || isCall || Boolean(task.notifiedAt);
+  const timeline = [
+    ...updates,
+    ...legacyCompletion,
+    ...(nextToken ? [] : [creation]),
+  ]
+    .filter((update) => update.occurredAt)
+    .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
   const analyzerTitle = (() => {
     const translations = task?.translations;
     if (translations && translations.language === getLocale()) {
@@ -122,18 +163,31 @@ export function taskUpdateTimeline({
     t("taskUpdate.fallbackTitle");
   return html`<section class="task-update__summary">
       <p
-        class="task-update__route${latestUpdateLabel
-          ? ""
-          : " task-update__route--bare"}"
+        class="task-update__route task-update__route--${task.kind ===
+        "escalation"
+          ? "311"
+          : isCall
+            ? emergency
+              ? "emergency"
+              : "non-emergency"
+            : "onsite"}"
       >
-        ${escapeHtml(
-          task.kind === "escalation"
-            ? t("card.route.ticket")
-            : task.inProgressActionKind === "called_911"
-              ? t("card.route.emergency")
-              : t("card.route.nonEmergency"),
-        )}${latestUpdateLabel
-          ? html` ·
+        <span class="task-update__route-label"
+          >${escapeHtml(
+            task.kind === "escalation"
+              ? t("card.route.ticket")
+              : isCall
+                ? t(
+                    emergency
+                      ? "card.route.emergency"
+                      : "card.route.nonEmergency",
+                  )
+                : t("card.route.onsite"),
+          )}</span
+        >${latestUpdateLabel
+          ? html`<span class="task-update__route-separator" aria-hidden="true"
+                >·</span
+              >
               <strong
                 >${escapeHtml(
                   rulebookText(latestUpdateLabel, "server.taskUpdate"),
@@ -174,33 +228,37 @@ export function taskUpdateTimeline({
             />
           </button>`
         : ""}
-      <dl class="task-update__metadata">
-        <div>
-          <dt>${escapeHtml(t("taskUpdate.metadata.agency"))}</dt>
-          <dd>
-            ${escapeHtml(
-              rulebookText(task.agency, "rulebook.agency") ||
-                t("taskUpdate.metadata.unknown"),
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>${escapeHtml(t("taskUpdate.metadata.notified"))}</dt>
-          <dd>
-            ${escapeHtml(
-              task.notifiedAt
-                ? formatPacificDateTime(task.notifiedAt)
-                : t("taskUpdate.metadata.unknown"),
-            )}
-          </dd>
-        </div>
-        ${expected
-          ? html`<div>
-              <dt>${escapeHtml(t("taskUpdate.metadata.responseExpected"))}</dt>
-              <dd>${escapeHtml(formatPacificDateTime(expected))}</dd>
-            </div>`
-          : ""}
-      </dl>
+      ${showAgencyMetadata
+        ? html`<dl class="task-update__metadata">
+            <div>
+              <dt>${escapeHtml(t("taskUpdate.metadata.agency"))}</dt>
+              <dd>
+                ${escapeHtml(
+                  rulebookText(task.agency, "rulebook.agency") ||
+                    t("taskUpdate.metadata.unknown"),
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>${escapeHtml(t("taskUpdate.metadata.notified"))}</dt>
+              <dd>
+                ${escapeHtml(
+                  task.notifiedAt
+                    ? formatPacificDateTime(task.notifiedAt)
+                    : t("taskUpdate.metadata.unknown"),
+                )}
+              </dd>
+            </div>
+            ${expected
+              ? html`<div>
+                  <dt>
+                    ${escapeHtml(t("taskUpdate.metadata.responseExpected"))}
+                  </dt>
+                  <dd>${escapeHtml(formatPacificDateTime(expected))}</dd>
+                </div>`
+              : ""}
+          </dl>`
+        : ""}
       ${overdue && !task.resolvedAt
         ? html`<p class="task-update__overdue">
             <strong>${escapeHtml(t("taskUpdate.overdue"))}</strong>

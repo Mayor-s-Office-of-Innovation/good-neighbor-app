@@ -358,7 +358,8 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCount: number,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
  *   hasPendingClearResult: boolean,
- *   historyGroups: Array<{ checkTime: string | Date, cards: string }>,
+ *   historyGrouping?: string,
+ *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }>,
  * }} vm
  */
 export function homeResults({
@@ -375,6 +376,7 @@ export function homeResults({
   activeClearCheck,
   hasPendingClearResult,
   historyGroups,
+  historyGrouping = "resolved",
 }) {
   const hasVisibleCards =
     recentItems.length ||
@@ -399,6 +401,27 @@ export function homeResults({
           ? clearCheckTray(activeClearCheck, true)
           : ""}
       ${taskTabs({ activeId: homeFilter })}
+      ${homeFilter === "history"
+        ? html`<div class="history-grouping">
+            <span id="history-group-label"
+              >${escapeHtml(t("card.history.groupBy"))}</span
+            ><wa-select
+              id="history-grouping"
+              label="${escapeAttr(t("card.history.groupBy"))}"
+              value="${escapeAttr(historyGrouping)}"
+              >${["resolved", "opened", "type"]
+                .map(
+                  (value) =>
+                    html`<wa-option value="${value}"
+                      >${escapeHtml(
+                        t(`card.history.group.${value}`),
+                      )}</wa-option
+                    >`,
+                )
+                .join("")}</wa-select
+            >
+          </div>`
+        : ""}
       ${recentItems.length && !hasPendingClearResult
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
         : ""}
@@ -465,19 +488,23 @@ export function clearCheckTray(check, recent = false) {
 /**
  * One past check's tray: its task cards, or the clear-check card when the
  * check found nothing.
- * @param {{ checkTime: string | Date, cards: string }} group
+ * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }} group
  */
-export function historyTray({ checkTime, cards }) {
+export function historyTray({ checkTime, cards, title = "", compact = false }) {
   return html`
     <section
-      class="analysis-tray analysis-tray--history"
-      aria-label="${escapeAttr(historicalCheckTitle(checkTime))}"
+      class="analysis-tray analysis-tray--history ${compact
+        ? "analysis-tray--compact"
+        : ""}"
+      aria-label="${escapeAttr(title || historicalCheckTitle(checkTime))}"
     >
       <div class="analysis-tray__cards">
         <h2 class="analysis-tray__check-title">
-          ${escapeHtml(historicalCheckTitle(checkTime))}
+          ${escapeHtml(title || historicalCheckTitle(checkTime))}
         </h2>
-        ${cards || clearCheckCard()}
+        ${compact
+          ? html`<div class="history-card-list">${cards}</div>`
+          : cards || clearCheckCard()}
       </div>
     </section>
   `;
