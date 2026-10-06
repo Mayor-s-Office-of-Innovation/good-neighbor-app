@@ -1,7 +1,9 @@
 # API Gateway v2 HTTP API fronting the api Lambda. One integration for the app
 # routes — every key in api_routes targets it, and the Lambda dispatches on
 # event.routeKey — plus a second integration for the admin analytics routes,
-# which a dedicated DuckDB-carrying Lambda serves (analytics.tf). No authorizer for
+# which a dedicated DuckDB-carrying Lambda serves (analytics.tf), and a third
+# for the anonymous best-effort intakes (intake_routes → the intake Lambda,
+# lambda.tf), isolated so PostHog latency never consumes api concurrency. No authorizer for
 # MVP — the site-code flow mints no Cognito JWT, so requests resolve to
 # DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
 # route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
@@ -52,8 +54,6 @@ locals {
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     "POST /submissions",
-    "POST /v1/client-errors",
-    "POST /v1/feedback",
     "GET /admin/v1/providers",
     "POST /admin/v1/providers",
     "GET /admin/v1/providers/{providerId}",
@@ -126,9 +126,19 @@ locals {
     "POST /admin/v1/analytics/query",
   ]
 
-  # Routes an anonymous caller may reach: bootstrap + health + best-effort
-  # intakes. Everything else gets the device-token authorizer (Option 4).
-  # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
+  # Best-effort public intakes, served by the intake Lambda (lambda.tf) and
+  # always anonymous. Mirrors backend/src/lambda/intake.js.
+  intake_routes = [
+    "POST /v1/client-errors",
+    "POST /v1/client-events",
+    "POST /v1/feedback",
+  ]
+
+  # api_routes an anonymous caller may reach: bootstrap + health + the legacy
+  # submissions loop. Everything else gets the device-token authorizer
+  # (Option 4). As a MAP keyed by route, so the route resource can do
+  # `route_is_open[x]`. (The intakes above are open too, on their own route
+  # resource.)
   route_is_open = {
     "POST /site-code"                     = true
     "POST /v1/devices"                    = true
@@ -138,8 +148,6 @@ locals {
     "GET /v1/sites:search"                = true
     "POST /v1/setup-codes:request"        = true
     "GET /health"                         = true
-    "POST /v1/client-errors"              = true
-    "POST /v1/feedback"                   = true
     "POST /submissions"                   = true
   }
 
@@ -174,6 +182,14 @@ resource "aws_apigatewayv2_integration" "api" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.api.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_integration" "intake" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.intake.invoke_arn
   integration_method     = "POST"
   payload_format_version = "2.0"
 }
@@ -238,6 +254,17 @@ resource "aws_apigatewayv2_route" "analytics" {
   target             = "integrations/${aws_apigatewayv2_integration.analytics_query.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.admin_jwt.id
+}
+
+# Best-effort intakes: anonymous by design (sendBeacon from the field app
+# carries no credentials), always the intake integration.
+resource "aws_apigatewayv2_route" "intake" {
+  #checkov:skip=CKV_AWS_309:Public best-effort intakes (client errors/events, feedback) are anonymous by design; payloads are allowlist-scrubbed and the Lambda's reserved concurrency bounds abuse.
+  for_each = toset(local.intake_routes)
+
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = each.value
+  target    = "integrations/${aws_apigatewayv2_integration.intake.id}"
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

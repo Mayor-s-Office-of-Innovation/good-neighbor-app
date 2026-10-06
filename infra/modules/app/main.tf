@@ -1063,9 +1063,9 @@ resource "aws_wafv2_web_acl" "web" {
   }
 
   # Manager recovery is intentionally anonymous and non-enumerating. The
-  # application enforces the stricter rolling business limits (5/IP/hour,
-  # 3/email/hour, 15-minute email cooldown); this edge rule absorbs bursts
-  # before they consume Lambda/DynamoDB capacity.
+  # application enforces the stricter email limits (3/hour and a 15-minute
+  # cooldown); this edge rule absorbs per-IP bursts before they consume
+  # Lambda/DynamoDB capacity.
   rule {
     name     = "ManagerAccessRateLimit"
     priority = 7
@@ -1098,6 +1098,46 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-manager-access-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Client analytics intake (POST /v1/client-events). Honest traffic is one
+  # $pageview per route change plus a few app events per check, so even a
+  # field team behind one NAT stays far below 1000/5min/IP; the cap bounds a
+  # misbehaving client or a flood of forged events.
+  rule {
+    name     = "ClientEventsRateLimit"
+    priority = 8
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 1000
+
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/client-events"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-client-events-rate"
       sampled_requests_enabled   = true
     }
   }

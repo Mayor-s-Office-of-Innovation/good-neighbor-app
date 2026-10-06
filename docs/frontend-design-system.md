@@ -126,6 +126,22 @@ Form controls are **Web Awesome** components (`wa-input`, `wa-select`, `wa-texta
 in the module that actually renders it — blanket imports in `main.js` ship the whole
 component graph to production even when only a dev screen uses it.
 
+## Icons — `<wa-icon>` from the self-hosted set only (ADR 0011 addendum)
+
+- Every icon is an SVG file in `frontend/public/icons/`, rendered as
+  `<wa-icon name="camera">` (name = filename without `.svg`). Nothing loads
+  from a CDN or a Font Awesome kit.
+- **Adding an icon:** drop the Font Awesome Free SVG into `public/icons/` and
+  use its name. The library mutator sets `fill="currentColor"`, so icons take
+  the surrounding text color.
+- **Web Awesome's own icons** (the chevron on `<wa-select>`, the clear button
+  on an input, the eye on a password field) come from the same folder: its
+  built-in "system" library is aliased to ours in `vite.config.js`
+  (`src/lib/wa-system-icons.js`). When you add a WA component, check its docs
+  for the system icons it renders and add each one to `public/icons/`. A
+  missing icon shows as an empty box in dev — fix it by adding the file, never
+  by re-enabling the vendor library.
+
 ## Non-negotiable rules
 
 1. **Tokens only** — no raw hex/rgb in component CSS, so dark mode stays correct.

@@ -29,6 +29,8 @@ import {
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
+import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
+import { trackEvent } from "../services/analytics.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -105,6 +107,8 @@ class ProblemReport extends HTMLElement {
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
+    // A boot that lands here directly has no interrupted hand-off to resume.
+    clearCameraOpen();
     /** @type {SiteRecord | null} */
     this._site = await getSite();
     if (!this._isCurrentInit(initGeneration)) return;
@@ -232,15 +236,25 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _openCamera() {
     if (!this._fileInput) return;
+    // Survives a process kill while the camera is up: app-root reads it at
+    // boot and re-enters /problem instead of home (state/capture-resume.js).
+    markCameraOpen("/problem");
+    void trackEvent("camera_opened", { flow: "single-problem" });
     this._fileInput.value = "";
     this._fileInput.click();
   }
 
   /** @returns {void} */
   _onFilePicked() {
+    clearCameraOpen();
     if (!this._fileInput) return;
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    void trackEvent("photo_picked", {
+      flow: "single-problem",
+      photo_bytes: file.size,
+      photo_type: file.type,
+    });
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
@@ -668,6 +682,8 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   disconnectedCallback() {
+    // Only an abnormal document death leaves the marker behind.
+    clearCameraOpen();
     this._initGeneration += 1;
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
