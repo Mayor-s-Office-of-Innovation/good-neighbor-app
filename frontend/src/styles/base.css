@@ -167,6 +167,7 @@ body:has(dialog:modal) {
 /* Shared Figma photo action tile. The native button/label remains the actual
    control; Web Awesome supplies only the camera glyph. */
 .photo-capture-tile {
+  container-type: inline-size;
   appearance: none;
   position: relative;
   display: grid;
@@ -214,6 +215,28 @@ body:has(dialog:modal) {
 .photo-capture-tile:focus-within {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+
+/* In three-column phone grids the tile can be narrower than the Figma
+   component. Give the icon and wrapping translation their own rows instead of
+   letting the absolutely positioned label cross the centered icon. */
+@container (max-width: 10rem) {
+  .photo-capture-tile__icon {
+    width: clamp(32px, 27cqi, 43px);
+    height: clamp(32px, 27cqi, 43px);
+  }
+
+  .photo-capture-tile__icon wa-icon {
+    font-size: clamp(24px, 20cqi, 32px);
+  }
+
+  .photo-capture-tile__label {
+    position: static;
+    max-width: calc(100% - 8px);
+    padding-inline: 4px;
+    font-size: clamp(14px, 12cqi, 18px);
+    overflow-wrap: anywhere;
+  }
 }
 
 /* ---- App shell ----

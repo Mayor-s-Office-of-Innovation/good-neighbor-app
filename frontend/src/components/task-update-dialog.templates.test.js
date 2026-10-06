@@ -35,14 +35,17 @@ describe("task update dialog templates", () => {
   });
 
   it("renders capture and action states from view data", () => {
-    expect(
-      taskUpdateCapture({
-        pendingEvent: null,
-        files: [],
-        notes: ["", "", ""],
-        previews: [],
-      }),
-    ).toContain(t("taskUpdate.capture.addNote"));
+    const capture = taskUpdateCapture({
+      pendingEvent: null,
+      files: [],
+      notes: ["", "", ""],
+      previews: [],
+    });
+    expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).toContain("photo-capture-tile");
+    expect(capture).toContain("photo-capture-tile__icon");
+    expect(capture).toContain("photo-capture-tile__label");
+    expect(capture).toContain(t("check.photo.take"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',

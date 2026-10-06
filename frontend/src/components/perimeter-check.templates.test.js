@@ -120,6 +120,9 @@ describe("photoGrid", () => {
     const markup = photoGrid([]);
 
     expect(markup).toContain("addshot--empty");
+    expect(markup).toContain("photo-capture-tile");
+    expect(markup).toContain("photo-capture-tile__icon");
+    expect(markup).toContain("photo-capture-tile__label");
     expect(markup).toContain(t("check.photo.take"));
     expect(markup).toContain('name="camera"');
   });
