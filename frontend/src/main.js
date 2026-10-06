@@ -70,3 +70,10 @@ import "./components/describe-instead.js";
 import "./components/site-setup.js";
 import "./components/app-toasts.js";
 import "./components/app-root.js";
+
+// Page views + app events (services/analytics.js): one `$pageview` per route
+// change, beaconed to our own intake and forwarded to PostHog server-side
+// with browser/OS/device properties. No vendor SDK ships.
+import { currentRoute, onRouteChange } from "./router.js";
+import { startPageViewTracking } from "./services/analytics.js";
+startPageViewTracking({ currentRoute, onRouteChange });

@@ -50,6 +50,7 @@ import {
   updateSiteAdmin,
 } from "../handlers/site.js";
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";
+import { handler as clientEventsHandler } from "../handlers/client-events.js";
 import { handler as feedbackHandler } from "../handlers/feedback.js";
 import {
   editAnalysisCondition,
@@ -128,6 +129,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /health": healthHandler,
   // Client error intake (best-effort; handler always 204s — see handlers/client-errors.js)
   "POST /v1/client-errors": clientErrorsHandler,
+  // Client analytics intake (page views + app events; always 204s — see handlers/client-events.js)
+  "POST /v1/client-events": clientEventsHandler,
   // User feedback intake (log-based store; handler always 204s — see handlers/feedback.js)
   "POST /v1/feedback": feedbackHandler,
   "GET /admin/v1/providers": listProviders,

@@ -89,6 +89,8 @@ import {
   analyzingSection,
 } from "./perimeter-check.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
+import { trackEvent } from "../services/analytics.js";
 
 class PerimeterCheck extends HTMLElement {
   constructor() {
@@ -98,6 +100,8 @@ class PerimeterCheck extends HTMLElement {
 
   async connectedCallback() {
     this._finishing = false;
+    // A boot that lands here directly has no interrupted hand-off to resume.
+    clearCameraOpen();
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -628,14 +632,24 @@ class PerimeterCheck extends HTMLElement {
     // webview, OS restriction), the logs show the tap with no "picked" line
     // after it — the field demo "photo button did nothing" signature.
     mark("camera:open");
+    // Survives a process kill while the camera is up: app-root reads it at
+    // boot and re-enters /check instead of home (state/capture-resume.js).
+    markCameraOpen("/check");
+    void trackEvent("camera_opened", { flow: "perimeter" });
     this._fileInput.value = "";
     this._fileInput.click();
   }
 
   _onFilePicked() {
+    clearCameraOpen();
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
     mark("camera:picked", { bytes: file.size, type: file.type });
+    void trackEvent("photo_picked", {
+      flow: "perimeter",
+      photo_bytes: file.size,
+      photo_type: file.type,
+    });
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
@@ -708,6 +722,8 @@ class PerimeterCheck extends HTMLElement {
   }
 
   disconnectedCallback() {
+    // Only an abnormal document death leaves the marker behind.
+    clearCameraOpen();
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }

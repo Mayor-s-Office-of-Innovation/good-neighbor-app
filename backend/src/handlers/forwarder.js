@@ -230,7 +230,7 @@ function warnForwardFailed(reason, err, report) {
  * @param {Promise<T>} promise
  * @returns {Promise<T>}
  */
-async function withTimeout(promise) {
+export async function withTimeout(promise) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
   try {

@@ -241,7 +241,7 @@ function cap(value, max) {
  * are unavailable — never throws.
  * @returns {string}
  */
-function distinctId() {
+export function distinctId() {
   try {
     const existing = localStorage.getItem("gnp:distinct-id");
     if (existing) return existing;
@@ -289,7 +289,7 @@ function randomId() {
  * identifier with a guarded typeof.
  * @returns {string} "dev" locally; CI injects the sha via vite.config.js
  */
-function release() {
+export function release() {
   try {
     // @ts-expect-error -- build-time define (vite.config.js `define`); not a
     // runtime global, so it has no ambient declaration.

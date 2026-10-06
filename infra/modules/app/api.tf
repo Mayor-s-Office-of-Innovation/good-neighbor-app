@@ -44,6 +44,7 @@ locals {
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     "POST /submissions",
     "POST /v1/client-errors",
+    "POST /v1/client-events",
     "POST /v1/feedback",
     "GET /admin/v1/providers",
     "POST /admin/v1/providers",
@@ -87,6 +88,7 @@ locals {
     "POST /v1/setup-codes:request"   = true
     "GET /health"                    = true
     "POST /v1/client-errors"         = true
+    "POST /v1/client-events"         = true
     "POST /v1/feedback"              = true
     "POST /submissions"              = true
   }
