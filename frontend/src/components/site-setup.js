@@ -40,9 +40,10 @@ export class SiteSetup extends HTMLElement {
     const enrollment = readEnrollmentFromUrl();
     this._checking = false;
     this._error = "";
-    this._mode = this.getAttribute("data-mode") === "request"
-      ? this.getAttribute("data-mode")
-      : "code";
+    this._mode =
+      this.getAttribute("data-mode") === "request"
+        ? this.getAttribute("data-mode")
+        : "code";
     this._request = {
       query: "",
       email: "",

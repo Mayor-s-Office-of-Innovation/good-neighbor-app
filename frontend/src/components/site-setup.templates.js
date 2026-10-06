@@ -28,8 +28,8 @@ export const codeEntryView = ({
           ${mode === "request"
             ? "Request a new site code"
             : targetSiteName
-                ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
-                : "Enter a site code"}
+              ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
+              : "Enter a site code"}
         </p>
       </div>
 
