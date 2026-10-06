@@ -5,6 +5,7 @@
   The location dialog (today-view.templates.js) reuses the
   .home-site-switcher__item / __check classes for its site list.
 */
+import { t } from "../i18n/i18n.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 
 /**
@@ -47,7 +48,11 @@ export function siteSwitcher({
         aria-expanded="${open ? "true" : "false"}"
         aria-controls="site-switcher-list"
       >
-        <span>${escapeHtml(providerName || "Your provider")}</span>
+        <span
+          >${escapeHtml(
+            providerName || t("siteSwitcher.providerFallback"),
+          )}</span
+        >
         <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
       </button>
       ${open
@@ -75,13 +80,13 @@ export function siteSwitcher({
               .join("")}
             ${status === "loading"
               ? html`<p class="home-site-switcher__status" role="status">
-                  Loading sites…
+                  ${escapeHtml(t("siteSwitcher.loading"))}
                 </p>`
               : ""}
             ${status === "error"
               ? html`<div class="home-site-switcher__failure">
                   <button id="site-catalog-retry" type="button">
-                    Retry loading sites
+                    ${escapeHtml(t("siteSwitcher.retry"))}
                   </button>
                 </div>`
               : ""}

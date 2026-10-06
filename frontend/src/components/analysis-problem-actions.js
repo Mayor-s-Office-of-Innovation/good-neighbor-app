@@ -11,6 +11,7 @@
 import { ApiError, rejectAnalysisCondition } from "../services/api.js";
 import { refreshEvidenceAnalysis } from "../services/photo-analysis.js";
 import { getCurrentCheck } from "../state/check-session.js";
+import { t } from "../i18n/i18n.js";
 
 /**
  * @typedef {object} CardProblem
@@ -37,7 +38,8 @@ export function problemFromCard(card) {
     taskId: card.getAttribute("data-task-id") || "",
     conditionId: card.getAttribute("data-condition-id") || "",
     actionKind: card.getAttribute("data-action-kind") || "",
-    title: card.getAttribute("data-card-title") || "problem",
+    title:
+      card.getAttribute("data-card-title") || t("card.title.problemFallback"),
     description: card.getAttribute("data-card-description") || "",
   };
 }
@@ -46,14 +48,15 @@ export function problemFromCard(card) {
  * Why a card cannot be deleted / edited: no condition behind it, or a
  * condition whose evidence coordinates are missing.
  * @param {{ conditionId?: string }} problem
- * @param {string} action past-tense verb, e.g. "deleted"
+ * @param {"deleted" | "edited"} action which flow was attempted; selects the
+ *   sentence (each is a whole translated sentence, not a verb spliced in)
  * @returns {string}
  */
 export function missingConditionMessage(problem, action) {
   if (!problem.conditionId) {
-    return `This card does not have a problem condition that can be ${action}.`;
+    return t(`analysis.missingCondition.noCondition.${action}`);
   }
-  return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
+  return t(`analysis.missingCondition.noCoordinates.${action}`);
 }
 
 /**

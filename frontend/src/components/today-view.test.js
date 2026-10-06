@@ -1,5 +1,9 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { formatTime, formatWeekday } from "../i18n/dates.js";
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
+
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("window", {
@@ -36,16 +40,19 @@ describe("formatOverdueElapsed", () => {
     const expected = "2026-09-24T09:00:00.000Z";
 
     expect(formatOverdueElapsed(expected, "2026-09-24T10:00:00.000Z")).toBe(
-      "1 hour",
+      t("home.overdue.hours", { count: 1 }),
     );
     expect(formatOverdueElapsed(expected, "2026-09-24T14:00:00.000Z")).toBe(
-      "5 hours",
+      t("home.overdue.hours", { count: 5 }),
     );
     expect(formatOverdueElapsed(expected, "2026-09-25T09:00:00.000Z")).toBe(
-      "1 day",
+      t("home.overdue.days", { count: 1 }),
     );
     expect(formatOverdueElapsed(expected, "2026-09-26T10:00:00.000Z")).toBe(
-      "2 days",
+      t("home.overdue.days", { count: 2 }),
+    );
+    expect(t("home.overdue.hours", { count: 1 })).not.toBe(
+      t("home.overdue.hours", { count: 5 }),
     );
   });
 });
@@ -147,10 +154,8 @@ describe("home task status helpers", () => {
     const { homeAllDonePanel } = await import("./today-view.templates.js");
     const markup = homeAllDonePanel();
 
-    expect(markup).toContain("All done!");
-    expect(markup).toContain(
-      "Your site is in great shape. Nothing needs your attention right now.",
-    );
+    expect(markup).toContain(escapeHtml(t("today.allDone.title")));
+    expect(markup).toContain(escapeHtml(t("today.allDone.text")));
     expect(markup).toContain('data-start-capture="single-problem"');
   });
 
@@ -305,8 +310,9 @@ describe("home task status helpers", () => {
     const { issueCountLabel } = await import("../domain/home-tasks.js");
 
     expect(issueCountLabel(0)).toBe("");
-    expect(issueCountLabel(1)).toBe("1 issue found");
-    expect(issueCountLabel(2)).toBe("2 issues found");
+    expect(issueCountLabel(1)).toBe(t("home.issueCount", { count: 1 }));
+    expect(issueCountLabel(2)).toBe(t("home.issueCount", { count: 2 }));
+    expect(issueCountLabel(1)).not.toBe(issueCountLabel(2));
   });
 
   it("summarizes only the latest check's issues and pending actions", async () => {
@@ -317,6 +323,12 @@ describe("home task status helpers", () => {
       submittedAt: new Date(2026, 8, 23, 9, 5).toISOString(),
       issueCount: 2,
     };
+    const summary = (outcome) =>
+      t("home.lastLog.summary", {
+        day: t("date.today"),
+        time: formatTime(last.submittedAt),
+        outcome,
+      });
 
     expect(
       lastLogSummary(
@@ -327,7 +339,7 @@ describe("home task status helpers", () => {
         ],
         now,
       ),
-    ).toBe("Last log: today at 9:05 AM · 2 issues found");
+    ).toBe(summary(t("home.issueCount", { count: 2 })));
     expect(
       lastLogSummary(
         last,
@@ -337,12 +349,12 @@ describe("home task status helpers", () => {
         ],
         now,
       ),
-    ).toBe("Last log: today at 9:05 AM · All issues handled");
+    ).toBe(summary(t("home.lastLog.allHandled")));
     expect(lastLogSummary(last, [], now)).toBe(
-      "Last log: today at 9:05 AM · All issues handled",
+      summary(t("home.lastLog.allHandled")),
     );
     expect(lastLogSummary({ ...last, issueCount: 0 }, [], now)).toBe(
-      "Last log: today at 9:05 AM · No issues found",
+      summary(t("home.lastLog.noIssues")),
     );
   });
 
@@ -355,16 +367,28 @@ describe("home task status helpers", () => {
       issueCount: 1,
     });
 
-    expect(lastLogSummary(check(new Date(2026, 8, 22, 18, 0)), [], now)).toBe(
-      "Last log: yesterday at 6:00 PM · All issues handled",
+    const yesterday = new Date(2026, 8, 22, 18, 0);
+    expect(lastLogSummary(check(yesterday), [], now)).toBe(
+      t("home.lastLog.summary", {
+        day: t("date.yesterday"),
+        time: formatTime(yesterday),
+        outcome: t("home.lastLog.allHandled"),
+      }),
     );
+    const monday = new Date(2026, 8, 21, 9, 30);
     expect(
       lastLogSummary(
-        check(new Date(2026, 8, 21, 9, 30)),
+        check(monday),
         [{ task: { checkId: "check" }, homeStatus: "needs_action" }],
         now,
       ),
-    ).toBe("Last log: Monday at 9:30 AM · 1 issue found");
+    ).toBe(
+      t("home.lastLog.summary", {
+        day: formatWeekday(monday),
+        time: formatTime(monday),
+        outcome: t("home.issueCount", { count: 1 }),
+      }),
+    );
   });
 
   it("keeps the newest task-bearing check blue only while it is today", async () => {
@@ -554,8 +578,10 @@ describe("in-progress card actions", () => {
       false,
     );
 
-    expect(card.markup).toContain("View details");
-    expect(card.markup).not.toContain(">Update<");
+    expect(card.markup).toContain(escapeHtml(t("today.card.viewDetails")));
+    expect(card.markup).not.toContain(
+      `>${escapeHtml(t("today.card.update"))}<`,
+    );
     expect(card.markup).toContain('data-action="update"');
   });
 });

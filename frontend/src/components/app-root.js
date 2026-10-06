@@ -46,6 +46,7 @@ import {
   showQueuedSiteSwitchSuccessToast,
   showSiteSwitchSuccessToast,
 } from "../state/toasts.js";
+import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
   ["/site-admin/edit", "site-admin-edit"],
@@ -74,6 +75,24 @@ class AppRoot extends HTMLElement {
     if (this._isDevResetRoute()) {
       await this._resetFirstLaunch();
       return;
+    }
+    // The stored language's catalog must be in place before any template
+    // runs; English resolves immediately, other locales await their chunk.
+    await i18nReady;
+    if (!this._onLocaleChange) {
+      // Every screen renders from state, so a language switch is a full
+      // re-render of the shell and the current view (or the setup screen).
+      this._onLocaleChange = () => {
+        if (!this.isConnected) return;
+        if (!this._site) {
+          this._renderSetup();
+          return;
+        }
+        // Only the view: the shell chrome is hidden, and re-creating it would
+        // re-show a dismissed in-app-browser banner and replay queued toasts.
+        this._renderView();
+      };
+      window.addEventListener("localechange", this._onLocaleChange);
     }
     requestLocationPermissionEarly();
     this._site = await getSite();
@@ -118,6 +137,8 @@ class AppRoot extends HTMLElement {
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
+    window.removeEventListener("localechange", this._onLocaleChange);
+    this._onLocaleChange = null;
     this.removeEventListener("siterequested", this._onSiteRequested);
     this._stopKeyboardViewportSync();
     this.removeEventListener("click", this._onPhotoLightbox);

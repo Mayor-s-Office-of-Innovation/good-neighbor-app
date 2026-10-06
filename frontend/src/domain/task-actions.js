@@ -2,6 +2,7 @@
  * @typedef {{ code?: string, status?: string, reason?: string, payload?: {tickets?: Array<{srNum?: string}>} }} AppActionResult
  * @typedef {{ status?: string, appActionResults?: AppActionResult[] }} TaskActionState
  */
+import { t } from "../i18n/i18n.js";
 
 /**
  * @param {TaskActionState | null | undefined} task
@@ -62,18 +63,12 @@ export function appActionFailureMessage(
       : null) || results.find((candidate) => candidate?.status === "failed");
   if (!result) return null;
   if (result.status === "submitted") return null;
-  const messages = {
-    missing_location:
-      "We couldn't file this ticket - the site has no location set. Ask an admin to add the site location, then try again.",
-    missing_service_code:
-      "We couldn't file this ticket - it has no 311 service code. Please try again.",
-    feature_disabled:
-      "We couldn't complete the 311 submission. Please try again.",
-    sf311_timeout:
-      "The 311 system didn't respond in time. Please try again in a moment.",
+  /** Backend failure reason -> translation key. */
+  const messageKeys = {
+    missing_location: "taskAction.failure.missingLocation",
+    missing_service_code: "taskAction.failure.missingServiceCode",
+    feature_disabled: "taskAction.failure.featureDisabled",
+    sf311_timeout: "taskAction.failure.sf311Timeout",
   };
-  return (
-    messages[result.reason] ||
-    "We couldn't file this ticket right now. Please try again."
-  );
+  return t(messageKeys[result.reason] || "taskAction.failure.default");
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "../i18n/i18n.js";
 import { siteSwitcher, switcherSites } from "./site-switcher.templates.js";
 
 const sites = [
@@ -40,7 +41,7 @@ describe("siteSwitcher", () => {
       open: true,
       status: "loaded",
     });
-    expect(open).toContain("Your provider");
+    expect(open).toContain(t("siteSwitcher.providerFallback"));
     expect(open).toContain('data-switch-site="site-a"');
     expect(open).toContain('aria-current="page"');
     expect(open).toContain("Beta &lt;Hall&gt;");
@@ -55,7 +56,7 @@ describe("siteSwitcher", () => {
       open: true,
     };
     expect(siteSwitcher({ ...base, status: "loading" })).toContain(
-      "Loading sites…",
+      t("siteSwitcher.loading"),
     );
     expect(siteSwitcher({ ...base, status: "error" })).toContain(
       'id="site-catalog-retry"',

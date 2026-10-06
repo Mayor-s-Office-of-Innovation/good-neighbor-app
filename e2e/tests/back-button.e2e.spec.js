@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
+import { t } from "../helpers/i18n.js";
 import { bindSite } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
@@ -41,7 +42,7 @@ test.describe("back button handling", () => {
     await expect(page.locator("#start-check")).toBeVisible({ timeout: 30_000 });
     // The draft survives for later resume.
     await expect(
-      page.getByRole("button", { name: /Resume a check/i }),
+      page.getByRole("button", { name: t("today.actions.resumeCheck") }),
     ).toBeVisible();
   });
 
@@ -57,14 +58,12 @@ test.describe("back button handling", () => {
 
     await page.locator("#start-check").click();
     const locationDialog = page.getByRole("dialog", {
-      name: "Is your app set to the right location?",
+      name: t("location.title"),
     });
     await expect(locationDialog).toBeVisible();
     await expect(page).toHaveURL(/\/today#location$/);
 
-    await page
-      .getByRole("button", { name: "I'm in the right location" })
-      .click();
+    await page.getByRole("button", { name: t("location.stay") }).click();
     await expect(page).toHaveURL(/\/check$/);
 
     await page.goBack();
@@ -76,7 +75,9 @@ test.describe("back button handling", () => {
     page,
   }) => {
     await page.locator("#home-settings").click();
-    await page.getByRole("menuitem", { name: "Attributions" }).click();
+    await page
+      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .click();
     const attributions = page.locator("#attributions-dialog");
     await expect(attributions).toBeVisible();
     // The dialog sub-state is visible in the URL as a short-lived hash.
@@ -91,7 +92,9 @@ test.describe("back button handling", () => {
 
   test("refresh mid-dialog does not re-open the dialog", async ({ page }) => {
     await page.locator("#home-settings").click();
-    await page.getByRole("menuitem", { name: "Attributions" }).click();
+    await page
+      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .click();
     await expect(page.locator("#attributions-dialog")).toBeVisible();
 
     await page.reload();

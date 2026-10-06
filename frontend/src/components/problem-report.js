@@ -16,6 +16,7 @@ import {
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
+import { getLocale, t } from "../i18n/i18n.js";
 import {
   missingConditionMessage,
   problemFromCard,
@@ -375,7 +376,9 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {string} */
   _titleText() {
-    return getItems().length ? "Flag another issue" : "Flag a single issue";
+    return getItems().length
+      ? t("problem.title.another")
+      : t("problem.title.single");
   }
 
   /** @returns {void} */
@@ -448,7 +451,10 @@ class ProblemReport extends HTMLElement {
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
-    if (title) title.textContent = `Delete "${problem.title}"?`;
+    if (title)
+      title.textContent = t("analysis.deleteDialog.titleFor", {
+        title: problem.title,
+      });
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",
@@ -519,7 +525,7 @@ class ProblemReport extends HTMLElement {
     if (description.length < 5) {
       this._setDialogError(
         "analysis-edit-error",
-        "Description must be at least 5 characters.",
+        t("analysis.editDialog.tooShort"),
       );
       return;
     }
@@ -555,6 +561,7 @@ class ProblemReport extends HTMLElement {
           problem.conditionId,
           {
             description,
+            language: getLocale(),
             caller: { request_id: this._requestId("edit", problem) },
           },
         );

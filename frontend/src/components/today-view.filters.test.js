@@ -8,6 +8,31 @@ import {
   vi,
 } from "vitest";
 
+import { lastLogSummary } from "../domain/home-tasks.js";
+import { formatTime } from "../i18n/dates.js";
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
+
+/*
+  Frozen clock with Pacific-anchored fixtures. The app renders every check
+  time in Pacific (i18n/dates.js), so runner-local setHours() raced between a
+  Pacific laptop and a UTC CI runner. Oct 2026 is PDT (-07:00); the instants
+  are fixed so labels are deterministic on every machine and every day.
+*/
+const FROZEN_NOW = new Date("2026-10-02T17:30:00-07:00");
+const OLDER_TODAY = new Date("2026-10-02T09:00:00-07:00").toISOString();
+const NEWER_TODAY = new Date("2026-10-02T10:00:00-07:00").toISOString();
+const YESTERDAY = new Date("2026-10-01T17:30:00-07:00").toISOString();
+
+function freezeClock() {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW.getTime());
+}
+
+/** Same-day check title exactly as a template renders it (escaped). */
+const todayTitle = (iso) =>
+  escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
+
 const session = vi.hoisted(() => ({ current: null }));
 const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
 vi.mock("../services/device-location.js", () => ({
@@ -105,6 +130,7 @@ beforeAll(async () => {
   await import("./today-view.js");
 });
 afterEach(() => {
+  vi.useRealTimers();
   session.current = null;
   devicePosition.current = null;
   logout.clearSiteSession.mockClear();
@@ -124,8 +150,9 @@ async function mount(search) {
 
 describe("clear perimeter checks on home", () => {
   it("keeps a just-finished clear check in the newest blue group", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const startedAt = new Date().toISOString();
+    const startedAt = FROZEN_NOW.toISOString();
     const pendingSession = {
       id: "clear-check",
       status: "capture-complete",
@@ -173,25 +200,24 @@ describe("clear perimeter checks on home", () => {
   });
 
   it("shows the active clear check above every filter and superseded checks in History", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const older = new Date();
-    older.setHours(9, 0, 0, 0);
-    const newer = new Date();
-    newer.setHours(10, 0, 0, 0);
     const checks = [
       {
         id: "newer-clear",
         status: "submitted",
-        submittedAt: newer.toISOString(),
+        submittedAt: NEWER_TODAY,
         issueCount: 0,
       },
       {
         id: "older-clear",
         status: "submitted",
-        submittedAt: older.toISOString(),
+        submittedAt: OLDER_TODAY,
         issueCount: 0,
       },
     ];
+    const newerTitle = todayTitle(NEWER_TODAY);
+    const olderTitle = todayTitle(OLDER_TODAY);
     const model = {
       last: checks[0],
       checks,
@@ -202,8 +228,8 @@ describe("clear perimeter checks on home", () => {
 
     const todoMarkup = view._render(model);
     expect(todoMarkup).toContain("analysis-tray--new");
-    expect(todoMarkup).toContain("From today&#39;s 10:00 AM check");
-    expect(todoMarkup).not.toContain("From today&#39;s 9:00 AM check");
+    expect(todoMarkup).toContain(newerTitle);
+    expect(todoMarkup).not.toContain(olderTitle);
     expect(todoMarkup.match(/Your check was clear!/g)).toHaveLength(1);
     expect(todoMarkup.indexOf("analysis-tray--new")).toBeLessThan(
       todoMarkup.indexOf("home-tabs"),
@@ -216,19 +242,18 @@ describe("clear perimeter checks on home", () => {
       historyMarkup.indexOf("home-tabs"),
     );
     expect(historyMarkup).toContain("analysis-tray--history");
-    expect(historyMarkup).toContain("From today&#39;s 9:00 AM check");
-    expect(historyMarkup).toContain("From today&#39;s 10:00 AM check");
+    expect(historyMarkup).toContain(olderTitle);
+    expect(historyMarkup).toContain(newerTitle);
     expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(2);
   });
 
   it("keeps the latest clear check active across days until another check completes", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
     const check = {
       id: "yesterday-clear",
       status: "submitted",
-      submittedAt: yesterday.toISOString(),
+      submittedAt: YESTERDAY,
       issueCount: 0,
     };
     const model = {
@@ -245,27 +270,28 @@ describe("clear perimeter checks on home", () => {
     view._homeFilter = "history";
     const markup = view._render(model);
     expect(markup).toContain("analysis-tray--new");
-    expect(markup).toContain("From yesterday&#39;s");
+    expect(markup).toContain(
+      escapeHtml(
+        t("analysis.checkTitle.yesterdayTime", { time: formatTime(YESTERDAY) }),
+      ),
+    );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
   it("moves an active clear check to History after a newer check completes", async () => {
+    freezeClock();
     const view = await mount("?filter=history");
-    const older = new Date();
-    older.setHours(9, 0, 0, 0);
-    const newer = new Date();
-    newer.setHours(10, 0, 0, 0);
     const checks = [
       {
         id: "newer-with-issues",
         status: "submitted",
-        submittedAt: newer.toISOString(),
+        submittedAt: NEWER_TODAY,
         issueCount: 1,
       },
       {
         id: "older-clear",
         status: "submitted",
-        submittedAt: older.toISOString(),
+        submittedAt: OLDER_TODAY,
         issueCount: 0,
       },
     ];
@@ -277,7 +303,7 @@ describe("clear perimeter checks on home", () => {
         {
           taskId: "task-1",
           checkId: "newer-with-issues",
-          createdAt: newer.toISOString(),
+          createdAt: NEWER_TODAY,
           status: "completed",
         },
       ],
@@ -286,8 +312,8 @@ describe("clear perimeter checks on home", () => {
     });
 
     expect(markup).toContain("analysis-tray--history");
-    expect(markup).toContain("From today&#39;s 9:00 AM check");
-    expect(markup.indexOf("From today&#39;s 9:00 AM check")).toBeGreaterThan(
+    expect(markup).toContain(todayTitle(OLDER_TODAY));
+    expect(markup.indexOf(todayTitle(OLDER_TODAY))).toBeGreaterThan(
       markup.indexOf("home-tabs"),
     );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
@@ -337,14 +363,21 @@ describe("site location prompt", () => {
       location: { latitude: 37.7749, longitude: -122.4194 },
     };
     view._deviceLocation = { latitude: 37.78, longitude: -122.4194 };
-    const summary = view._summaryBlock(
-      { id: "check-1", submittedAt: new Date().toISOString(), issueCount: 1 },
-      [{ task: { checkId: "check-1" }, homeStatus: "needs_action" }],
-    );
-    expect(summary).toContain("Looks like you're not near this site.");
+    const last = {
+      id: "check-1",
+      submittedAt: new Date().toISOString(),
+      issueCount: 1,
+    };
+    const entries = [
+      { task: { checkId: "check-1" }, homeStatus: "needs_action" },
+    ];
+    const summary = view._summaryBlock(last, entries);
+    expect(summary).toContain(escapeHtml(t("today.summary.outsideRadius")));
     expect(summary).toContain('id="lastlog-change-site"');
     expect(summary).toContain('appearance="plain"');
-    expect(summary).not.toContain("Last log:");
+    const label = lastLogSummary(last, entries);
+    expect(label).not.toBe("");
+    expect(summary).not.toContain(escapeHtml(label));
     view._deviceLocation = null;
     expect(view._summaryBlock(null, [])).toBe("");
   });
@@ -495,9 +528,7 @@ describe("logout", () => {
     expect(logout.discardInMemorySession).not.toHaveBeenCalled();
     expect(window.dispatchEvent).not.toHaveBeenCalled();
     expect(view._logoutPending).toBe(false);
-    expect(view._logoutError).toBe(
-      "We couldn't log you out. Please try again.",
-    );
+    expect(view._logoutError).toBe(t("today.logout.error"));
     expect(view._renderHome).toHaveBeenCalledTimes(2);
   });
 });

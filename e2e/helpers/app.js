@@ -5,6 +5,7 @@
   proxy on :5173).
 */
 import { expect } from "@playwright/test";
+import { t } from "./i18n.js";
 import { SITE_CODE, SITE_NAME, PHOTO_CLEAR } from "./fixtures.js";
 import { setAnalyzerFixture } from "./analyzer-control.js";
 import { typeDelay, isSlowMo } from "./pace.js";
@@ -101,7 +102,7 @@ export async function finishCheck(page) {
  * @param {import("@playwright/test").Page} page
  */
 export function newResultsTray(page) {
-  return page.locator('section[aria-label="New analysis results"]');
+  return page.locator(`section[aria-label="${t("today.newResults.aria")}"]`);
 }
 
 /**
@@ -224,7 +225,7 @@ export async function openHistoryWithTrays(page) {
   // isCurrentSession). Wait until the CTA reads "Start a full check" again —
   // the draft is fully drained.
   await expect(page.locator("#start-check")).toContainText(
-    "Start a full check",
+    t("today.actions.startCheck"),
     { timeout: 30_000 },
   );
 
