@@ -23,6 +23,9 @@
  * @property {string} [userFriendlyLabel]
  * @property {string} explanation
  * @property {number[]} evidenceIndices
+ * @property {import("./contract.js").ConditionTranslations} [translations]
+ *   localized copies of userFriendlyLabel/explanation, present only when the
+ *   analyze request carried a supported non-English `language`
  */
 
 /**
@@ -57,6 +60,7 @@ export function adaptAssessment(response) {
     if (c.user_friendly_label !== undefined) {
       concern.userFriendlyLabel = c.user_friendly_label;
     }
+    if (c.translations !== undefined) concern.translations = c.translations;
     return concern;
   });
 

@@ -14,7 +14,8 @@
   failure re-enables it and preserves the draft. Both outcomes use app toasts.
 */
 import "./feedback-dialog.css";
-import { html } from "../lib/html.js";
+import { html, escapeAttr, escapeHtml } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 import { openOverlayDialog } from "../dialog-history.js";
 import { sendFeedback } from "../services/feedback.js";
 import {
@@ -116,8 +117,8 @@ class FeedbackDialog extends HTMLElement {
             class="feedback__open"
             id="feedback-open"
             type="button"
-            aria-label="Send feedback about this app"
-            title="Send feedback"
+            aria-label="${escapeAttr(t("feedback.open.aria"))}"
+            title="${escapeAttr(t("feedback.open.title"))}"
           >
             <wa-icon name="comment" aria-hidden="true"></wa-icon>
           </button>`}
@@ -125,15 +126,14 @@ class FeedbackDialog extends HTMLElement {
       <dialog
         class="sheet"
         id="feedback-dialog"
-        aria-label="Send feedback about this app"
+        aria-label="${escapeAttr(t("feedback.dialog.title"))}"
       >
         <div class="sheet__panel feedback__panel">
           <div class="feedback__pane feedback__pane--form">
-            <h2 class="visually-hidden">Send feedback about this app</h2>
-            <p class="feedback__intro">
-              What's working? What's not? Your note goes straight to the team
-              building this app.
-            </p>
+            <h2 class="visually-hidden">
+              ${escapeHtml(t("feedback.dialog.title"))}
+            </h2>
+            <p class="feedback__intro">${escapeHtml(t("feedback.intro"))}</p>
             <form id="feedback-form">
               <wa-textarea
                 id="feedback-text"
@@ -142,16 +142,16 @@ class FeedbackDialog extends HTMLElement {
                 rows="4"
                 maxlength="2000"
                 required
-                placeholder="Share an idea, a bug, or a frustration…"
-                label="Your feedback"
+                placeholder="${escapeAttr(t("feedback.textarea.placeholder"))}"
+                label="${escapeAttr(t("feedback.textarea.label"))}"
                 resize="vertical"
               ></wa-textarea>
               <div class="feedback__actions">
                 <button class="btn-outline" id="feedback-cancel" type="button">
-                  Cancel
+                  ${escapeHtml(t("common.cancel"))}
                 </button>
                 <button class="btn-ink" id="feedback-send" type="submit">
-                  Send
+                  ${escapeHtml(t("feedback.send"))}
                 </button>
               </div>
             </form>

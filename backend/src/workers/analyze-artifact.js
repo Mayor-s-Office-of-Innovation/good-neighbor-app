@@ -46,6 +46,9 @@ export const POSITION_DESCRIPTOR = "perimeter";
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
  * @property {number} [latitude] device latitude at capture
  * @property {number} [longitude] device longitude at capture
+ * @property {string} [language] the requester's locale, forwarded to the
+ *   analyzer as its per-request `language` so model-written labels/descriptions
+ *   also get translations the device can display
  */
 
 /**
@@ -279,6 +282,7 @@ async function analyzeArtifact(
       media,
       requestId: `${msg.checkId}#${msg.artifactId}`,
       appId: "good-neighbor-app",
+      ...(msg.language ? { language: msg.language } : {}),
     });
   } catch (err) {
     if (err instanceof AnalyzerError && !err.retryable) {

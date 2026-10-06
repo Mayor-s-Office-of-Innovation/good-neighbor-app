@@ -3,6 +3,7 @@
   (data) → HTML string; route → view mounting stays in app-root.js. The `html` tag
   drives editor highlighting + Prettier formatting (see src/lib/html.js).
 */
+import { t } from "../i18n/i18n.js";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /* first-run: mount the onboarding flow */
@@ -28,9 +29,13 @@ export const setupView = ({
 export const appShell = ({ siteName }) => html`
   <div class="app">
     <header class="app__header">
-      <a class="app__home" href="/today" aria-label="Home">
+      <a
+        class="app__home"
+        href="/today"
+        aria-label="${escapeAttr(t("app.home.aria"))}"
+      >
         <span class="app__title">${escapeHtml(siteName)}</span>
-        <span class="app__kicker">Good Neighbor</span>
+        <span class="app__kicker">${escapeHtml(t("app.name"))}</span>
       </a>
       <span class="app__spacer"></span>
     </header>

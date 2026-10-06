@@ -4,6 +4,7 @@
   bound site. Logic lives in location-dialog.js.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 
 /**
  * The site options the prompt offers: the provider catalog with the bound
@@ -36,18 +37,15 @@ export function locationDialog({ siteName, sites, currentSiteId }) {
   >
     <div class="location-dialog__card">
       <div class="location-dialog__copy">
-        <h2 id="location-dialog-title">
-          Is your app set to the right location?
-        </h2>
+        <h2 id="location-dialog-title">${escapeHtml(t("location.title"))}</h2>
         <p id="location-dialog-copy">
-          It looks like you're not near ${escapeHtml(siteName)}. Consider
-          changing your app's site.
+          ${escapeHtml(t("location.text", { site: siteName }))}
         </p>
       </div>
       <div
         class="location-dialog__sites"
         role="group"
-        aria-label="Choose a site"
+        aria-label="${escapeAttr(t("location.sites.aria"))}"
       >
         ${sites
           .map(
@@ -77,7 +75,7 @@ export function locationDialog({ siteName, sites, currentSiteId }) {
           type="button"
           disabled
         >
-          Confirm site change
+          ${escapeHtml(t("location.confirm"))}
         </button>
         <button
           class="location-dialog__stay"
@@ -85,7 +83,7 @@ export function locationDialog({ siteName, sites, currentSiteId }) {
           id="location-stay"
           type="button"
         >
-          I'm in the right location
+          ${escapeHtml(t("location.stay"))}
         </button>
       </div>
     </div>

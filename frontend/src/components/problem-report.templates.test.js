@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { t } from "../i18n/i18n.js";
 import { shell } from "./problem-report.templates.js";
 
 describe("single-issue capture template", () => {
@@ -9,6 +10,6 @@ describe("single-issue capture template", () => {
     expect(markup).toContain('class="btn-outline check-roll__describe"');
     expect(markup).toContain('class="check-timeline__done"');
     expect(markup).toMatch(/id="submit-report"[\s\S]*?disabled/);
-    expect(markup).toContain(">\n        Done\n");
+    expect(markup).toContain(`>\n        ${t("common.done")}\n`);
   });
 });

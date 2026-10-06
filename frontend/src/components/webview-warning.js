@@ -1,5 +1,7 @@
 import { escapeUrlForPlatform } from "../services/browser-context.js";
 import { reportClientEvent } from "../services/error-report.js";
+import { escapeAttr, escapeHtml } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 
 /** @param {HTMLElement} root */
 export function showWebviewWarning(root) {
@@ -9,10 +11,9 @@ export function showWebviewWarning(root) {
   host.insertAdjacentHTML(
     "afterbegin",
     `<div class="webview-banner" role="status">
-      <p><strong>Camera may not open here.</strong> You're inside another app's
-      browser. Open in your browser instead for the camera to work.</p>
-      <button class="webview-banner__open" type="button">Open in browser</button>
-      <button class="webview-banner__close" type="button" aria-label="Dismiss">✕</button>
+      <p><strong>${escapeHtml(t("webview.banner.title"))}</strong> ${escapeHtml(t("webview.banner.message"))}</p>
+      <button class="webview-banner__open" type="button">${escapeHtml(t("webview.banner.open"))}</button>
+      <button class="webview-banner__close" type="button" aria-label="${escapeAttr(t("webview.banner.dismiss.aria"))}">✕</button>
     </div>`,
   );
   root.querySelector(".webview-banner__open")?.addEventListener("click", () => {

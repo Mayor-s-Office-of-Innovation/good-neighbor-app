@@ -1,6 +1,7 @@
 import "./site-admin.css";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
+import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import {
   backOrNavigate,
@@ -39,13 +40,13 @@ class SiteAdminView extends HTMLElement {
       navigate("/today");
       return;
     }
-    this.innerHTML = loadingView("Site information");
+    this.innerHTML = loadingView(t("siteAdmin.title"));
     try {
       this._site = (await getSiteAdmin()).site;
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
-      this.innerHTML = errorView("We couldn't load the site information.");
+      this.innerHTML = errorView(t("siteAdmin.loadError"));
       this._wireBack();
     }
   }
@@ -76,64 +77,88 @@ class SiteAdminView extends HTMLElement {
       .filter(Boolean)
       .join(" ");
     const tier = compliance.currentTier
-      ? `Tier ${compliance.currentTier}`
+      ? t("siteAdmin.compliance.tier", { tier: compliance.currentTier })
       : EMPTY;
     const period = compliance.periodStart
-      ? `${formatAdminDate(compliance.periodStart)} – ${formatAdminDate(compliance.periodEnd)}`
+      ? t("siteAdmin.dateRange", {
+          start: formatAdminDate(compliance.periodStart),
+          end: formatAdminDate(compliance.periodEnd),
+        })
       : EMPTY;
 
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader("Site information")}
+        ${adminHeader(t("siteAdmin.title"))}
         <div class="site-admin-content">
-          ${editableSection("Site details", "site", [
-            ["Site name", site.name],
-            ["Address", addressLine],
+          ${editableSection(t("siteAdmin.siteDetails.title"), "site", [
+            [t("siteAdmin.field.siteName"), site.name],
+            [t("siteAdmin.siteDetails.address"), addressLine],
           ])}
-          ${editableSection("Contact person", "contact", [
-            ["Name", contactName],
-            ["Email", contact.email],
-            ["Phone", formatAdminPhone(contact.phone)],
+          ${editableSection(t("siteAdmin.contact.title"), "contact", [
+            [t("siteAdmin.contact.name"), contactName],
+            [t("siteAdmin.field.email"), contact.email],
+            [t("siteAdmin.field.phone"), formatAdminPhone(contact.phone)],
           ])}
-          ${readOnlySection("Oversight", [
-            ["Managing City department", oversight.managingCityDepartment],
-            ["Managing system of care", oversight.managingSystemOfCare],
-            ["City program manager", oversight.cityProgramManager],
+          ${readOnlySection(t("siteAdmin.oversight.title"), [
+            [
+              t("siteAdmin.oversight.department"),
+              oversight.managingCityDepartment,
+            ],
+            [
+              t("siteAdmin.oversight.systemOfCare"),
+              oversight.managingSystemOfCare,
+            ],
+            [
+              t("siteAdmin.oversight.programManager"),
+              oversight.cityProgramManager,
+            ],
           ])}
-          ${readOnlySection("Compliance", [
-            ["Current tier", tier],
-            ["Tier period", period],
-            ["Required checks per day", compliance.requiredChecksPerDay],
+          ${readOnlySection(t("siteAdmin.compliance.title"), [
+            [t("siteAdmin.compliance.currentTier"), tier],
+            [t("siteAdmin.compliance.tierPeriod"), period],
+            [
+              t("siteAdmin.compliance.checksPerDay"),
+              compliance.requiredChecksPerDay,
+            ],
           ])}
           <section class="site-admin-section">
-            <h2>Perimeter</h2>
+            <h2>${escapeHtml(t("siteAdmin.perimeter.title"))}</h2>
             <div class="site-admin-card site-admin-card--prose">
               ${display(site.perimeter)}
             </div>
           </section>
           <section class="site-admin-section">
-            <h2>Compliance letters</h2>
+            <h2>${escapeHtml(t("siteAdmin.letters.title"))}</h2>
             ${current
               ? letterCard(
-                  "Current letter",
-                  `Effective ${formatAdminDate(current.effectiveStart)}`,
+                  t("siteAdmin.letters.current"),
+                  t("siteAdmin.letters.effective", {
+                    date: formatAdminDate(current.effectiveStart),
+                  }),
                   current.url,
                 )
-              : html`<div class="site-admin-card">No current letter</div>`}
+              : html`<div class="site-admin-card">
+                  ${escapeHtml(t("siteAdmin.letters.noCurrent"))}
+                </div>`}
           </section>
           <section class="site-admin-section">
-            <h2>Past compliance letters</h2>
+            <h2>${escapeHtml(t("siteAdmin.letters.pastTitle"))}</h2>
             <div class="site-admin-card site-admin-letters">
               ${(letters.past || []).length
                 ? letters.past
                     .map((letter) =>
                       letterRow(
-                        `${formatAdminDate(letter.effectiveStart)} – ${formatAdminDate(letter.effectiveEnd)}`,
+                        t("siteAdmin.dateRange", {
+                          start: formatAdminDate(letter.effectiveStart),
+                          end: formatAdminDate(letter.effectiveEnd),
+                        }),
                         letter.url,
                       ),
                     )
                     .join("")
-                : html`<p class="site-admin-empty">No past letters</p>`}
+                : html`<p class="site-admin-empty">
+                    ${escapeHtml(t("siteAdmin.letters.noPast"))}
+                  </p>`}
             </div>
           </section>
         </div>
@@ -166,7 +191,7 @@ class SiteAdminEdit extends HTMLElement {
       this._installLeaveGuards();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
-      this.innerHTML = errorView("We couldn't load this form.");
+      this.innerHTML = errorView(t("siteAdmin.formLoadError"));
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
         backOrNavigate("/site-admin"),
       );
@@ -182,8 +207,8 @@ class SiteAdminEdit extends HTMLElement {
 
   _title() {
     return this._kind === "contact"
-      ? "Edit contact person"
-      : "Edit site details";
+      ? t("siteAdmin.edit.contactTitle")
+      : t("siteAdmin.edit.siteTitle");
   }
 
   _sectionValue() {
@@ -228,7 +253,7 @@ class SiteAdminEdit extends HTMLElement {
             ></p>
             <div class="site-admin-edit-actions">
               <button class="btn-outline" id="site-admin-cancel" type="button">
-                Cancel
+                ${escapeHtml(t("common.cancel"))}
               </button>
               <button
                 class="btn-ink"
@@ -236,7 +261,7 @@ class SiteAdminEdit extends HTMLElement {
                 type="submit"
                 disabled
               >
-                Save changes
+                ${escapeHtml(t("siteAdmin.edit.save"))}
               </button>
             </div>
           </form>
@@ -247,19 +272,23 @@ class SiteAdminEdit extends HTMLElement {
         >
           <form class="places-modal__card" method="dialog">
             <div class="places-modal__copy">
-              <h2 class="places-modal__title">Discard your changes?</h2>
-              <p class="places-modal__text">Your edits haven't been saved.</p>
+              <h2 class="places-modal__title">
+                ${escapeHtml(t("siteAdmin.discard.title"))}
+              </h2>
+              <p class="places-modal__text">
+                ${escapeHtml(t("siteAdmin.discard.text"))}
+              </p>
             </div>
             <div class="places-modal__actions">
               <button class="btn-outline" id="site-admin-keep" value="keep">
-                Keep editing
+                ${escapeHtml(t("common.keepEditing"))}
               </button>
               <button
                 class="places-modal__danger"
                 id="site-admin-discard"
                 value="discard"
               >
-                Discard changes
+                ${escapeHtml(t("common.discardChanges"))}
               </button>
             </div>
           </form>
@@ -390,7 +419,7 @@ class SiteAdminEdit extends HTMLElement {
     );
     if (save) {
       save.disabled = true;
-      save.textContent = "Saving…";
+      save.textContent = t("siteAdmin.edit.saving");
     }
     try {
       await updateSiteAdmin(
@@ -407,7 +436,7 @@ class SiteAdminEdit extends HTMLElement {
       showSiteAdminErrorToast();
       if (save) {
         save.disabled = false;
-        save.textContent = "Save changes";
+        save.textContent = t("siteAdmin.edit.save");
       }
     }
   }
@@ -416,7 +445,11 @@ class SiteAdminEdit extends HTMLElement {
 /** @param {string} title */
 function adminHeader(title) {
   return html`<header class="site-admin-header">
-    <button data-admin-back type="button" aria-label="Back">
+    <button
+      data-admin-back
+      type="button"
+      aria-label="${escapeAttr(t("common.back"))}"
+    >
       <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
     </button>
     <h1 tabindex="-1">${escapeHtml(title)}</h1>
@@ -428,14 +461,16 @@ function adminHeader(title) {
 function loadingView(title) {
   return html`<div class="site-admin-page">
     ${adminHeader(title)}
-    <div class="site-admin-loading"><wa-spinner></wa-spinner> Loading…</div>
+    <div class="site-admin-loading">
+      <wa-spinner></wa-spinner> ${escapeHtml(t("common.loading"))}
+    </div>
   </div>`;
 }
 
 /** @param {string} message */
 function errorView(message) {
   return html`<div class="site-admin-page">
-    ${adminHeader("Site information")}
+    ${adminHeader(t("siteAdmin.title"))}
     <p class="site-admin-load-error" role="alert">${escapeHtml(message)}</p>
   </div>`;
 }
@@ -446,7 +481,8 @@ function editableSection(title, route, rows) {
     <div class="site-admin-section-heading">
       <h2>${escapeHtml(title)}</h2>
       <button type="button" data-edit-section="${escapeAttr(route)}">
-        <wa-icon name="pen" aria-hidden="true"></wa-icon> Edit
+        <wa-icon name="pen" aria-hidden="true"></wa-icon>
+        ${escapeHtml(t("common.edit"))}
       </button>
     </div>
     ${rowsCard(rows)}
@@ -483,7 +519,9 @@ function letterCard(title, detail, url) {
     <div>
       <strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>
     </div>
-    <a href="${escapeAttr(url)}" target="_blank" rel="noopener">Open PDF</a>
+    <a href="${escapeAttr(url)}" target="_blank" rel="noopener"
+      >${escapeHtml(t("siteAdmin.letters.openPdf"))}</a
+    >
   </div>`;
 }
 
@@ -491,7 +529,9 @@ function letterCard(title, detail, url) {
 function letterRow(dateRange, url) {
   return html`<div class="site-admin-letter-row">
     <strong>${escapeHtml(dateRange)}</strong>
-    <a href="${escapeAttr(url)}" target="_blank" rel="noopener">Open PDF</a>
+    <a href="${escapeAttr(url)}" target="_blank" rel="noopener"
+      >${escapeHtml(t("siteAdmin.letters.openPdf"))}</a
+    >
   </div>`;
 }
 
@@ -500,20 +540,26 @@ function contactFields(value) {
   return [
     field(
       "admin-first-name",
-      "First name",
+      t("siteAdmin.field.firstName"),
       value.firstName,
       "given-name",
       "text",
     ),
     field(
       "admin-last-name",
-      "Last name",
+      t("siteAdmin.field.lastName"),
       value.lastName,
       "family-name",
       "text",
     ),
-    field("admin-email", "Email", value.email, "email", "email"),
-    field("admin-phone", "Phone", value.phone, "tel", "tel"),
+    field(
+      "admin-email",
+      t("siteAdmin.field.email"),
+      value.email,
+      "email",
+      "email",
+    ),
+    field("admin-phone", t("siteAdmin.field.phone"), value.phone, "tel", "tel"),
   ].join("");
 }
 
@@ -521,32 +567,56 @@ function contactFields(value) {
 function siteFields(value) {
   const address = value.address;
   return [
-    field("admin-site-name", "Site name", value.name, "organization", "text"),
+    field(
+      "admin-site-name",
+      t("siteAdmin.field.siteName"),
+      value.name,
+      "organization",
+      "text",
+    ),
     field(
       "admin-street-number",
-      "Street number",
+      t("siteAdmin.field.streetNumber"),
       address.streetNumber,
       "address-line1",
       "text",
     ),
     field(
       "admin-street-address",
-      "Street address",
+      t("siteAdmin.field.streetAddress"),
       address.streetAddress,
       "address-line1",
       "text",
     ),
     field(
       "admin-second-line",
-      "Second line",
+      t("siteAdmin.field.secondLine"),
       address.secondLine,
       "address-line2",
       "text",
       false,
     ),
-    field("admin-city", "City", address.city, "address-level2", "text"),
-    field("admin-state", "State", address.state, "address-level1", "text"),
-    field("admin-zip", "ZIP", address.zip, "postal-code", "text"),
+    field(
+      "admin-city",
+      t("siteAdmin.field.city"),
+      address.city,
+      "address-level2",
+      "text",
+    ),
+    field(
+      "admin-state",
+      t("siteAdmin.field.state"),
+      address.state,
+      "address-level1",
+      "text",
+    ),
+    field(
+      "admin-zip",
+      t("siteAdmin.field.zip"),
+      address.zip,
+      "postal-code",
+      "text",
+    ),
   ].join("");
 }
 

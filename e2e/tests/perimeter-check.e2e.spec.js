@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { t, tPattern } from "../helpers/i18n.js";
 import {
   addPhoto,
   dismissAllNewResults,
@@ -51,9 +52,9 @@ test.describe("perimeter check", () => {
       ".home-results .analysis-tray--new .analysis-card--clear",
     );
     await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
-    await expect(newClearCard).toContainText("Your check was clear!");
+    await expect(newClearCard).toContainText(t("card.clear.title"));
     await expect(page.locator(".analysis-tray--new")).toContainText(
-      "From today's",
+      tPattern("analysis.checkTitle.today"),
     );
 
     await page.reload();
@@ -69,11 +70,11 @@ test.describe("perimeter check", () => {
     const done = page.locator("#done-check");
     const shots = page.locator(".shot img");
     const analyzingTray = page.locator(
-      'section[aria-label="Analyzing evidence"]',
+      `section[aria-label="${t("check.analyzing.aria")}"]`,
     );
 
     await expect(photoCount).toHaveText(
-      `0 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+      t("check.progress.count", { photos: 0, recommended: RECOMMENDED_PHOTOS }),
     );
     await expect(done).toBeDisabled();
 
@@ -84,7 +85,7 @@ test.describe("perimeter check", () => {
     // Upload leg: the photo tile lands in the roll.
     await expect(shots).toHaveCount(1, { timeout: 30_000 });
     await expect(photoCount).toHaveText(
-      `1 of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+      t("check.progress.count", { photos: 1, recommended: RECOMMENDED_PHOTOS }),
     );
     await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
@@ -102,13 +103,16 @@ test.describe("perimeter check", () => {
 
     // The first photo satisfies the completion rule.
     await expect(photoCount).toHaveText(
-      `${MIN_PHOTOS} of ${RECOMMENDED_PHOTOS} recommended photos taken`,
+      t("check.progress.count", {
+        photos: MIN_PHOTOS,
+        recommended: RECOMMENDED_PHOTOS,
+      }),
     );
 
     // Wait for the photo's analysis to finish. An issue check must not add a
     // clear-check card alongside its issue cards.
     await expect(page.locator("#toggle-analyzing")).not.toContainText(
-      "Analyzing...",
+      t("card.pending.title"),
       { timeout: 90_000 },
     );
     await expect(analyzingTray.locator(".analysis-card--pending")).toHaveCount(

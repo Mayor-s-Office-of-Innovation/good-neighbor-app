@@ -33,6 +33,56 @@ describe("buildTicketDetail", () => {
     expect(detail.mediaUrl).toBe("https://cdn.example/photo.jpg");
   });
 
+  it("uses the analyzer translations matching the active locale", async () => {
+    vi.resetModules();
+    vi.doMock("../i18n/locale.js", async (importOriginal) => ({
+      ...(await importOriginal()),
+      getLocale: () => "es",
+    }));
+    const { buildTicketDetail } = await import("./ticket-detail-dialog.js");
+    const detail = buildTicketDetail(
+      {
+        userFriendlyLabel: "Trash in tree well",
+        description: "Card text",
+        translations: {
+          language: "es",
+          user_friendly_label: "Basura en el pozo del árbol",
+          description: "Texto de tarjeta",
+        },
+      },
+      {},
+      { problemType: "Litter", description: "311 text" },
+    );
+    expect(detail.title).toBe("Basura en el pozo del árbol");
+    expect(detail.description).toBe("Texto de tarjeta");
+    vi.doUnmock("../i18n/locale.js");
+  });
+
+  it("ignores analyzer translations for a different locale", async () => {
+    vi.resetModules();
+    vi.doMock("../i18n/locale.js", async (importOriginal) => ({
+      ...(await importOriginal()),
+      getLocale: () => "en",
+    }));
+    const { buildTicketDetail } = await import("./ticket-detail-dialog.js");
+    const detail = buildTicketDetail(
+      {
+        userFriendlyLabel: "Trash in tree well",
+        description: "Card text",
+        translations: {
+          language: "es",
+          user_friendly_label: "Basura en el pozo del árbol",
+          description: "Texto de tarjeta",
+        },
+      },
+      {},
+      { problemType: "Litter" },
+    );
+    expect(detail.title).toBe("Trash in tree well");
+    expect(detail.description).toBe("Card text");
+    vi.doUnmock("../i18n/locale.js");
+  });
+
   it("falls back to the request's problem type and description", async () => {
     const { buildTicketDetail } = await import("./ticket-detail-dialog.js");
     const detail = buildTicketDetail(

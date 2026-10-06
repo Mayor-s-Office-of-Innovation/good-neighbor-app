@@ -1,14 +1,17 @@
-import { html, escapeHtml } from "../lib/html.js";
+import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { t } from "../i18n/i18n.js";
 import { analysisResultsTray } from "./analysis-results.templates.js";
 import { analysisDialogs } from "./analysis-results.templates.js";
 
-export const shell = ({ title = "Flag a single issue" } = {}) => html`
+export const shell = ({ title = t("problem.title.single") } = {}) => html`
   <div class="flow view-check check check-timeline single-issue">
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">
         <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden">Close report</span>
+        <span class="visually-hidden"
+          >${escapeHtml(t("problem.close.aria"))}</span
+        >
       </button>
     </div>
 
@@ -19,7 +22,7 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
     <div
       class="shotgrid"
       id="shotgrid"
-      aria-label="Photos for this report"
+      aria-label="${escapeAttr(t("problem.grid.aria"))}"
     ></div>
 
     <button
@@ -27,7 +30,7 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
       id="describe-instead"
       type="button"
     >
-      Describe instead
+      ${escapeHtml(t("check.describeInstead"))}
     </button>
 
     <input
@@ -49,19 +52,19 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
         type="button"
         disabled
       >
-        Done
+        ${escapeHtml(t("common.done"))}
       </button>
     </div>
 
     <dialog
       class="sheet"
       id="cancel-report-dialog"
-      aria-label="Leave this report?"
+      aria-label="${escapeAttr(t("problem.cancelDialog.aria"))}"
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
           <button class="sheet__cancel" type="button" id="cancel-report-save">
-            Save draft and exit
+            ${escapeHtml(t("problem.cancelDialog.save"))}
           </button>
         </div>
         <ul class="sheet__opts">
@@ -71,7 +74,7 @@ export const shell = ({ title = "Flag a single issue" } = {}) => html`
               id="cancel-report-discard"
               type="button"
             >
-              Discard draft and exit
+              ${escapeHtml(t("problem.cancelDialog.discard"))}
             </button>
           </li>
         </ul>
@@ -88,8 +91,8 @@ export const analysisSection = (
   siteAddress = "",
 ) =>
   analysisResultsTray(items, checkId, {
-    ariaLabel: "Single issue analysis results",
-    emptyText: "All problems were resolved or deleted.",
+    ariaLabel: t("problem.analysis.aria"),
+    emptyText: t("analysis.tray.empty"),
     siteName,
     siteAddress,
   });
