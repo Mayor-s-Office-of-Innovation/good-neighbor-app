@@ -361,6 +361,70 @@ describe("clear perimeter checks on home", () => {
     );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
+
+  it.each(["resolved", "opened"])(
+    "orders historical clear checks alongside %s day groups",
+    async (mode) => {
+      const view = await mount("?filter=history");
+      view._historyGrouping = mode;
+      view._taskCardEntry = () => ({ markup: "task-card" });
+      const groups = view._historyGroups(
+        [
+          {
+            task: {
+              taskId: "old",
+              createdAt: "2026-09-01T12:00:00Z",
+              completedAt: "2026-09-02T12:00:00Z",
+            },
+          },
+          {
+            task: {
+              taskId: "new",
+              createdAt: "2026-10-04T12:00:00Z",
+              completedAt: "2026-10-05T12:00:00Z",
+            },
+          },
+        ],
+        [],
+        [
+          { startedAt: "2026-09-10T12:00:00Z" },
+          {
+            submittedAt: "2026-10-02T12:00:00Z",
+            startedAt: "2026-08-01T12:00:00Z",
+          },
+        ],
+      );
+      expect(groups.map((group) => group.dateKey)).toEqual([
+        mode === "opened" ? "2026-10-04" : "2026-10-05",
+        "2026-10-02",
+        "2026-09-10",
+        mode === "opened" ? "2026-09-01" : "2026-09-02",
+      ]);
+      expect(groups.map((group) => group.compact)).toEqual([
+        true,
+        false,
+        false,
+        true,
+      ]);
+    },
+  );
+
+  it("keeps clear checks separate after issue-type groups", async () => {
+    const view = await mount("?filter=history");
+    view._historyGrouping = "type";
+    view._taskCardEntry = () => ({ markup: "task-card" });
+    const groups = view._historyGroups(
+      [{ task: { category: "Litter" } }, { task: { category: "Graffiti" } }],
+      [],
+      [{ submittedAt: NEWER_TODAY }],
+    );
+    expect(groups.map((group) => group.title)).toEqual([
+      "Graffiti",
+      "Litter",
+      "",
+    ]);
+    expect(groups[2].checkTime).toBe(NEWER_TODAY);
+  });
 });
 
 describe("site location prompt", () => {

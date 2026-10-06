@@ -1466,7 +1466,7 @@ function historyCard(task) {
           ><span>${escapeHtml(route.label)}</span
           ><span aria-hidden="true">·</span
           ><span class="history-card__status"
-            >${escapeHtml(rulebookText(status))}</span
+            >${escapeHtml(rulebookText(status, route.statusScope))}</span
           ></span
         >
         <span class="history-card__title">${escapeHtml(title)}</span

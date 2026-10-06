@@ -3,6 +3,7 @@ import {
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 import { groupHistory } from "../domain/task-history.js";
+import { pacificDateKey } from "../i18n/dates.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
 
@@ -978,6 +979,7 @@ class TodayView extends HTMLElement {
         entries,
         this._historyGrouping || "resolved",
       ).map((group) => ({
+        dateKey: group.key,
         title: group.title,
         checkTime: "",
         compact: true,
@@ -986,14 +988,23 @@ class TodayView extends HTMLElement {
           .join(""),
       }));
       // Preserve checks with no findings; they have no task resolution time.
-      for (const check of clearChecks)
+      for (const check of [...clearChecks].sort((a, b) =>
+        String(b.submittedAt || b.startedAt || "").localeCompare(
+          String(a.submittedAt || a.startedAt || ""),
+        ),
+      ))
         groups.push({
+          dateKey: pacificDateKey(check.submittedAt || check.startedAt || ""),
           title: "",
           checkTime: check.submittedAt || check.startedAt,
           compact: false,
           cards: "",
         });
-      return groups;
+      // Clear checks have no resolution event: use their check day for both
+      // date modes. Type mode keeps them separate after the issue categories.
+      return this._historyGrouping === "type"
+        ? groups
+        : groups.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
     }
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),

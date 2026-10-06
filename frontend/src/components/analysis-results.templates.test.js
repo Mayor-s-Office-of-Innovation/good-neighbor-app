@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { t } from "../i18n/i18n.js";
+import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
 import { escapeHtml } from "../lib/html.js";
 import {
@@ -1020,6 +1020,26 @@ describe("evidence captions without a place name", () => {
 });
 
 describe("card redesign", () => {
+  it("uses the Spanish task-update translation for an ambiguous History status", async () => {
+    await setLocale("es");
+    try {
+      const card = taskAnalysisCard({
+        task: {
+          taskId: "resolved",
+          kind: "escalation",
+          status: "completed",
+          latestUpdateLabel: "Resolved",
+        },
+        history: true,
+        action: null,
+        statusLabel: "",
+      });
+      expect(card).toContain("Resuelto");
+      expect(card).not.toContain("Resuelta");
+    } finally {
+      await setLocale("en");
+    }
+  });
   const task = {
     taskId: "task_1",
     ruleId: "LITTER-1",
