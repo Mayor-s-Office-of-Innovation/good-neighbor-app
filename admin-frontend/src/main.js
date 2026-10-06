@@ -227,8 +227,18 @@ class AdminApp extends HTMLElement {
   };
 
   hasUnsavedSiteChanges() {
-    return Boolean(
-      this.querySelector("[data-dirty-form][data-is-dirty='true']"),
+    const siteDetailsForm = this.querySelector("#site-details-form");
+    const siteDetailsDirty =
+      siteDetailsForm instanceof HTMLFormElement
+        ? syncSiteDetailsForm(siteDetailsForm)
+        : false;
+    return (
+      siteDetailsDirty ||
+      Boolean(
+        this.querySelector(
+          "[data-dirty-form]:not(#site-details-form)[data-is-dirty='true']",
+        ),
+      )
     );
   }
 
@@ -741,8 +751,11 @@ class AdminApp extends HTMLElement {
     await this.loadProviders();
   }
 
-  /** @param {HTMLFormElement} form */
-  async updateSite(form) {
+  /**
+   * @param {HTMLFormElement} form
+   * @param {"all" | "details" | "address" | "lead-program" | "site-manager"} [section]
+   */
+  async updateSite(form, section = "all") {
     if (!this.state.site) return;
     const data = new FormData(form);
     const name = formValue(data, "site-name");
@@ -757,17 +770,29 @@ class AdminApp extends HTMLElement {
     };
     /** @type {Record<string, unknown>} */
     const values = {
-      name,
-      publicContact,
-      primaryContactUserId: internalContactUserId,
+      name:
+        section === "all" || section === "details"
+          ? name
+          : this.state.site.name,
     };
-    if (addressParts && hasEnteredValues(addressParts))
+    if (section === "all" || section === "details")
+      values.publicContact = publicContact;
+    if (section === "all" || section === "site-manager")
+      values.primaryContactUserId = internalContactUserId;
+    if (
+      (section === "all" || section === "address") &&
+      addressParts &&
+      hasEnteredValues(addressParts)
+    )
       values.addressParts = addressParts;
     this.state.siteSaving = true;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     try {
-      if (leadProgramId !== String(this.state.site.leadProgramId || "")) {
+      if (
+        (section === "all" || section === "lead-program") &&
+        leadProgramId !== String(this.state.site.leadProgramId || "")
+      ) {
         const leadProgram = selectedLeadProgram(
           this.state.programs,
           leadProgramId,
@@ -783,14 +808,21 @@ class AdminApp extends HTMLElement {
         this.state.site = { ...this.state.site, ...reassignment.site };
       }
       if (
+        (section === "all" || section === "site-manager") &&
         internalContactUserId &&
         internalContactUserId !== this.state.site.primaryContactUserId
       ) {
-        await adminApi.assignSiteUser(
-          this.state.site.siteId,
-          internalContactUserId,
-          true,
-        );
+        const siteId = this.state.site.siteId;
+        await adminApi.assignSiteUser(siteId, internalContactUserId, true);
+        if (section === "site-manager") {
+          await this.openSite(siteId, false);
+          this.state.siteSaveMessage = "Site manager saved successfully.";
+          return true;
+        }
+      }
+      if (section === "lead-program") {
+        this.state.siteSaveMessage = "Lead program saved successfully.";
+        return true;
       }
       const result = await adminApi.updateSite(this.state.site.siteId, values);
       this.state.site = { ...this.state.site, ...result.site };
@@ -804,7 +836,12 @@ class AdminApp extends HTMLElement {
           "The address was saved, but geocoding did not return coordinates. Try saving it again.";
         return false;
       }
-      this.state.siteSaveMessage = "Site saved successfully.";
+      this.state.siteSaveMessage =
+        section === "site-manager"
+          ? "Site manager saved successfully."
+          : section === "address"
+            ? "Address saved successfully."
+            : "Site details saved successfully.";
       return true;
     } catch (error) {
       this.state.siteSaveError = siteSaveErrorMessage(error);
@@ -1683,6 +1720,25 @@ class AdminApp extends HTMLElement {
         );
       },
     );
+    const providerProgramForm = this.querySelector("#provider-program-form");
+    if (providerProgramForm instanceof HTMLFormElement) {
+      const programSelect = providerProgramForm.querySelector(
+        "wa-select[name='program-id']",
+      );
+      const addProgramButton = providerProgramForm.querySelector(
+        "[data-add-program-button]",
+      );
+      const syncAddProgramButton = () => {
+        if (addProgramButton instanceof HTMLButtonElement) {
+          addProgramButton.disabled = !String(
+            programSelect?.value || "",
+          ).trim();
+        }
+      };
+      syncAddProgramButton();
+      programSelect?.addEventListener("change", syncAddProgramButton);
+      programSelect?.addEventListener("input", syncAddProgramButton);
+    }
     this.querySelector("#program-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.createProgram(asForm(e.currentTarget)).catch((err) => {
@@ -1846,16 +1902,79 @@ class AdminApp extends HTMLElement {
       control.addEventListener("input", sync);
       control.addEventListener("change", sync);
     });
-    this.querySelector("#site-details-form")?.addEventListener(
-      "submit",
-      (e) => {
-        e.preventDefault();
-        this.updateSite(asForm(e.currentTarget)).catch((err) => {
-          this.state.error = err.message;
-          this.render();
-        });
-      },
+    const siteDetailsForm = this.querySelector("#site-details-form");
+    siteDetailsForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = asForm(event.currentTarget);
+      if (
+        !reportNamedControlsValidity(form, [
+          "site-name",
+          "public-contact-email",
+          "public-contact-phone",
+        ])
+      )
+        return;
+      this.updateSite(form, "details").catch((error) => {
+        this.state.error = error.message;
+        this.render();
+      });
+    });
+    this.querySelector("[data-save-address]")?.addEventListener("click", () => {
+      if (
+        !(siteDetailsForm instanceof HTMLFormElement) ||
+        !reportNamedControlsValidity(siteDetailsForm, [
+          "street-address",
+          "city",
+          "state",
+          "zip",
+        ])
+      )
+        return;
+      this.updateSite(siteDetailsForm, "address").catch((error) => {
+        this.state.error = error.message;
+        this.render();
+      });
+    });
+    this.querySelector("[data-save-lead-program]")?.addEventListener(
+      "click",
+      () =>
+        this.querySelector("#lead-program-confirmation-dialog")?.showModal(),
     );
+    this.querySelector("[data-save-site-manager]")?.addEventListener(
+      "click",
+      () =>
+        this.querySelector("#site-manager-confirmation-dialog")?.showModal(),
+    );
+    const leadProgramDialog = this.querySelector(
+      "#lead-program-confirmation-dialog",
+    );
+    leadProgramDialog?.addEventListener("close", () => {
+      if (
+        leadProgramDialog.returnValue !== "confirm" ||
+        !(siteDetailsForm instanceof HTMLFormElement) ||
+        !reportNamedControlsValidity(siteDetailsForm, ["lead-program-id"])
+      )
+        return;
+      this.updateSite(siteDetailsForm, "lead-program").catch((error) => {
+        this.state.error = error.message;
+        this.render();
+      });
+    });
+    const siteManagerDialog = this.querySelector(
+      "#site-manager-confirmation-dialog",
+    );
+    siteManagerDialog?.addEventListener("close", () => {
+      if (
+        siteManagerDialog.returnValue !== "confirm" ||
+        !(siteDetailsForm instanceof HTMLFormElement) ||
+        !reportNamedControlsValidity(siteDetailsForm, ["site-manager-user-id"])
+      )
+        return;
+      this.updateSite(siteDetailsForm, "site-manager").catch((error) => {
+        this.state.error = error.message;
+        this.render();
+      });
+    });
     this.querySelector("#site-oversight-form")?.addEventListener(
       "submit",
       (e) => {
@@ -1923,7 +2042,7 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
     this.querySelectorAll(
-      "#site-details-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form",
+      "#site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form",
     ).forEach((form) => {
       const sync = () => syncDirtyForm(form);
       syncDirtyForm(form, true);
@@ -1931,6 +2050,24 @@ class AdminApp extends HTMLElement {
       form.addEventListener("change", sync);
       form.addEventListener("reset", () => queueMicrotask(sync));
     });
+    const providerDetailsForm = this.querySelector("#provider-details-form");
+    if (providerDetailsForm instanceof HTMLFormElement) {
+      const sync = () => syncProviderDetailsForm(providerDetailsForm);
+      sync();
+      providerDetailsForm.addEventListener("input", sync);
+      providerDetailsForm.addEventListener("change", sync);
+      providerDetailsForm.addEventListener("reset", () => queueMicrotask(sync));
+    }
+    if (siteDetailsForm instanceof HTMLFormElement) {
+      const sync = (event) => {
+        markSiteDetailsSectionEdited(siteDetailsForm, event);
+        syncSiteDetailsForm(siteDetailsForm);
+      };
+      syncSiteDetailsForm(siteDetailsForm, true);
+      siteDetailsForm.addEventListener("input", sync);
+      siteDetailsForm.addEventListener("change", sync);
+      siteDetailsForm.addEventListener("reset", () => queueMicrotask(sync));
+    }
     this.querySelector("wa-select[name='lead-program-id']")?.addEventListener(
       "change",
       async (event) => {
@@ -1974,7 +2111,8 @@ class AdminApp extends HTMLElement {
           this.state.siteSaveError = error.message;
           this.render();
         }
-        syncDirtyForm(this.querySelector("#site-details-form"));
+        if (siteDetailsForm instanceof HTMLFormElement)
+          syncSiteDetailsForm(siteDetailsForm);
       },
     );
     this.querySelector(
@@ -1985,6 +2123,8 @@ class AdminApp extends HTMLElement {
       );
       const target = this.querySelector("#site-manager-contact-details");
       if (target) target.innerHTML = siteManagerContactDetails(user);
+      if (siteDetailsForm instanceof HTMLFormElement)
+        syncSiteDetailsForm(siteDetailsForm);
     });
     const leaveDialog = this.querySelector("#site-unsaved-dialog");
     leaveDialog?.addEventListener("close", () => {
@@ -2131,9 +2271,26 @@ class AdminApp extends HTMLElement {
       );
     });
     this.querySelectorAll("[data-deactivate-provider]").forEach((button) => {
-      button.addEventListener("click", () =>
-        this.deactivateProvider(dataAttr(button, "data-deactivate-provider")),
-      );
+      button.addEventListener("click", () => {
+        this.querySelector("#deactivate-provider-dialog")?.showModal();
+      });
+    });
+    const deactivateProviderDialog = this.querySelector(
+      "#deactivate-provider-dialog",
+    );
+    deactivateProviderDialog?.addEventListener("close", () => {
+      if (deactivateProviderDialog.returnValue !== "confirm") return;
+      const button = this.querySelector("[data-deactivate-provider]");
+      if (!button) return;
+      this.deactivateProvider(
+        dataAttr(button, "data-deactivate-provider"),
+      ).catch((error) => {
+        this.state.error =
+          error instanceof Error
+            ? error.message
+            : "The provider could not be deactivated.";
+        this.render();
+      });
     });
     this.querySelectorAll("[data-site]").forEach((button) => {
       button.addEventListener("click", () =>
@@ -2252,16 +2409,31 @@ class AdminApp extends HTMLElement {
         );
       },
     );
-    this.querySelector("#revoke-all-site-devices")?.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        this.revokeAllSiteDevices(event.currentTarget).catch((err) => {
-          this.state.error = err.message;
-          this.render();
-        });
-      },
+    const revokeAllSiteDevicesForm = this.querySelector(
+      "#revoke-all-site-devices",
     );
+    const revokeAllConfirmation = revokeAllSiteDevicesForm?.querySelector(
+      "#revoke-all-confirmation",
+    );
+    const revokeAllSubmit = revokeAllSiteDevicesForm?.querySelector(
+      "button[type='submit']",
+    );
+    const syncRevokeAllSubmit = () => {
+      if (revokeAllSubmit instanceof HTMLButtonElement) {
+        revokeAllSubmit.disabled =
+          String(revokeAllConfirmation?.value || "") !==
+          String(this.state.site?.name || "");
+      }
+    };
+    syncRevokeAllSubmit();
+    revokeAllConfirmation?.addEventListener("input", syncRevokeAllSubmit);
+    revokeAllSiteDevicesForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      this.revokeAllSiteDevices(event.currentTarget).catch((err) => {
+        this.state.error = err.message;
+        this.render();
+      });
+    });
     this.querySelectorAll("[data-suspend-device]").forEach((button) => {
       button.addEventListener("click", () => {
         this.beginDeviceSuspension(dataAttr(button, "data-suspend-device"));
@@ -2485,14 +2657,57 @@ class AdminApp extends HTMLElement {
     });
 
     this.querySelectorAll("[data-edit-address]").forEach((button) => {
+      const container = button.closest("[data-address-container]");
+      const display = container?.querySelector("[data-address-display]");
+      const editor = container?.querySelector("[data-address-editor]");
+      const originalValues = new Map(
+        [...(editor?.querySelectorAll("[name]") || [])].map((control) => [
+          control,
+          control.getAttribute("value") ?? String(control.value || ""),
+        ]),
+      );
       button.addEventListener("click", () => {
-        const container = button.closest("[data-address-container]");
-        container
-          ?.querySelector("[data-address-display]")
-          ?.setAttribute("hidden", "");
-        const editor = container?.querySelector("[data-address-editor]");
-        editor?.removeAttribute("hidden");
-        editor?.querySelector("[data-address-query]")?.focus();
+        if (!editor) return;
+        const isEditing = !editor.hasAttribute("hidden");
+        if (isEditing) {
+          editor.setAttribute("hidden", "");
+          display?.removeAttribute("hidden");
+          button.textContent = "Edit address";
+          button.setAttribute("aria-expanded", "false");
+          for (const [control, value] of originalValues) control.value = value;
+          const fields = editor.querySelector("[data-address-fields]");
+          fields?.setAttribute("hidden", "");
+          fields?.removeAttribute("data-expanded");
+          fields?.querySelectorAll("wa-input").forEach((field) => {
+            field.disabled = true;
+          });
+          const manualButton = editor.querySelector(
+            "[data-enter-address-manually]",
+          );
+          if (manualButton) {
+            manualButton.textContent = "Enter address manually";
+            manualButton.setAttribute("aria-expanded", "false");
+          }
+          editor.querySelector("[data-address-results]")?.replaceChildren();
+          const status = editor.querySelector("[data-address-status]");
+          if (status) status.textContent = "";
+          const form = button.closest("form");
+          if (form instanceof HTMLFormElement) {
+            const editedSections = new Set(
+              JSON.parse(form.dataset.editedSections || "[]"),
+            );
+            editedSections.delete("address");
+            form.dataset.editedSections = JSON.stringify([...editedSections]);
+            syncSiteDetailsForm(form);
+          }
+          button.focus();
+          return;
+        }
+        display?.setAttribute("hidden", "");
+        editor.removeAttribute("hidden");
+        button.textContent = "Cancel edit";
+        button.setAttribute("aria-expanded", "true");
+        editor.querySelector("[data-address-query]")?.focus();
       });
     });
   }
@@ -2611,7 +2826,7 @@ function discardChangesDialog() {
       </div>
       <div class="places-modal__actions">
         <button class="btn-outline" value="keep">Keep editing</button>
-        <button class="places-modal__danger" value="discard">Discard changes</button>
+        <button class="btn-danger" value="discard">Discard changes</button>
       </div>
     </form>
   </dialog>`;
@@ -2708,7 +2923,7 @@ function sitePerimeterView(state) {
       <p class="muted">Plain language description of the perimeter that staff should check.</p>
     </div>
     <form id="site-perimeter-form" class="site-details-form" data-dirty-form>
-      <wa-textarea label="Perimeter description" name="perimeter" rows="8" maxlength="4000" value="${escapeHtml(site.perimeter || "")}" placeholder="e.g., &quot;16th Street between #1456 and #1756&quot;" required></wa-textarea>
+      <wa-textarea class="perimeter-description" label="Perimeter description" name="perimeter" rows="8" maxlength="4000" value="${escapeHtml(site.perimeter || "")}" placeholder="e.g., &quot;16th Street between #1456 and #1756&quot;" required></wa-textarea>
       <div class="form-actions">
         <button class="btn-primary" type="submit" data-save-button disabled>${state.perimeterSaving ? "Saving…" : "Save perimeter"}</button>
       </div>
@@ -2725,7 +2940,7 @@ function siteTermsView(state) {
     String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
   );
   return `<section class="subsection" aria-labelledby="terms-title">
-    <div><h2 id="terms-title">Past compliance terms</h2><p class="muted">Dates are inclusive at the start and exclusive at expiry. Saving a term schedules a new draft letter.</p></div>
+    <div><h2 id="terms-title">Past compliance terms</h2><p class="muted">Adding a new compliance term generates a new draft compliance letter.</p></div>
     ${termsHistory(terms.slice(1), "No past compliance terms.")}
   </section>`;
 }
@@ -2736,7 +2951,7 @@ function siteLettersView(state) {
   const past = site?.complianceLetters?.past || [];
   return `<section class="subsection" aria-labelledby="letters-title">
     <h2 id="letters-title">Compliance letters</h2>
-    <p>Current letter: ${current ? escapeHtml(current.fileName || current.status || "Generated") : "No generated letter yet"}</p>
+    <p>${current ? `Current letter: ${escapeHtml(current.fileName || current.status || "Generated")}` : "No letter has been generated yet"}</p>
     <h3>Past letters</h3>
     ${past.length ? `<ul>${past.map((letter) => `<li>${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="muted">No past letters.</p>'}
   </section>`;
@@ -2773,7 +2988,7 @@ function siteAccessView(state) {
   );
   const hasCurrentManager = state.managerMemberships.length > 0;
   return `<section class="subsection site-access" aria-label="App access">
-    <h3>Current site manager</h3>
+    <h2>Current site manager</h2>
     ${managerMembershipList(state.managerMemberships)}
     ${
       hasCurrentManager
@@ -2786,18 +3001,18 @@ function siteAccessView(state) {
     </form>`
     }
     ${hasCurrentManager || state.availableSiteUsers.length ? "" : '<p class="muted">Assign a Lead Program and add Program staff before enrolling a Site Manager.</p>'}
-    <h3>Enrollment links</h3>
+    <h2>Enrollment links</h2>
     <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
     ${managerEnrollmentActions(state.managerMemberships)}
     ${managerGrantList(state.managerGrants)}
-    <h3>Devices</h3>
+    <h2>Devices</h2>
     ${revocableDevices.length ? "" : '<p class="empty-state">No devices in use.</p>'}
     ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
     ${selectableDevices.length ? '<div id="device-selection-actions" class="device-selection-actions" hidden><button id="remove-device-this-site" class="btn-danger" type="button">Remove access to this site</button><button id="remove-device-all-sites" class="btn-danger" type="button">Remove access to all sites</button></div>' : ""}
     <div class="device-list">${revocableDevices.map((device) => `<div class="device-row">${device.legacy ? "" : `<wa-checkbox aria-label="Select device ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}">Select</wa-checkbox>`}<div class="device-row__details"><strong>ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}</strong><span>Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}</span></div></div>`).join("")}</div>
     ${deviceSuspensionForm(state.suspensionTarget)}
     ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
-    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" required autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit">Revoke all devices at this Site</button></form>
+    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" required autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit" disabled>Revoke all devices at this Site</button></form>
     ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
 }
@@ -2921,12 +3136,12 @@ function removeManagerMembershipDialog(membership, siteName) {
 function managerGrantList(grants) {
   if (!grants.length)
     return '<p class="empty-state">No enrollment links issued.</p>';
-  return `<div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Link delivery</th><th>Security notice</th><th>Action</th></tr></thead><tbody>${grants
+  return `<details class="table-disclosure"><summary>Enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Link delivery</th><th>Security notice</th><th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
         `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
-    .join("")}</tbody></table></div>`;
+    .join("")}</tbody></table></div></details>`;
 }
 
 /** @param {unknown} value */
@@ -2972,9 +3187,9 @@ function directoryView(state, route) {
       </div>
     </form>
     <nav class="entity-tabs" aria-label="Site administration sections">
-      ${directoryTab("providers", "Providers & Programs", section, search)}
       ${directoryTab("sites", "Sites", section, search)}
       ${directoryTab("managers", "Site managers", section, search)}
+      ${directoryTab("providers", "Providers & Programs", section, search)}
     </nav>
     ${search && section !== "managers" ? globalDirectorySearch(state, search) : ""}
     ${!search && section === "sites" ? siteDirectory(state, filterParams) : ""}
@@ -3625,9 +3840,9 @@ function providerView(state) {
       <h1 id="provider-title" tabindex="-1">${escapeHtml(provider.name)}</h1>
       <button class="btn-danger" type="button" data-deactivate-provider="${escapeHtml(provider.providerId)}">Deactivate provider</button>
     </div>
-    <form id="provider-details-form" class="site-details-form">
+    <form id="provider-details-form" class="site-details-form" data-dirty-form>
       ${formInput("provider-name", "Provider name", provider.name, { required: true, autocomplete: "organization" })}
-      <button class="btn-primary" type="submit">Save changes</button>
+      <button class="btn-primary" type="submit" data-save-button disabled>Save changes</button>
     </form>
     ${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
     <section class="subsection" aria-labelledby="provider-programs-title">
@@ -3639,12 +3854,29 @@ function providerView(state) {
         <wa-select name="program-id" label="Add program" required placeholder="Choose a program">
           ${availablePrograms.map((program) => `<wa-option value="${escapeHtml(program.programId)}">${escapeHtml(program.name)}</wa-option>`).join("")}
         </wa-select>
-        <button class="btn-primary" type="submit" ${availablePrograms.length ? "" : "disabled"}>Add program</button>
+        <button class="btn-primary" type="submit" data-add-program-button disabled>Add program</button>
       </form>
       ${availablePrograms.length ? "" : '<p class="muted">Every active Program is already linked to this provider.</p>'}
       ${linkedPrograms.length ? `<ul class="site-directory-list">${linkedPrograms.map((program) => `<li><a class="site-directory-row" href="/programs/${encodeURIComponent(program.programId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(program.name)}</strong><span>Program</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : '<p class="muted">No programs are linked to this provider.</p>'}
     </section>
+    ${deactivateProviderDialog(provider.name)}
   </section>`;
+}
+
+/** @param {string} providerName */
+function deactivateProviderDialog(providerName) {
+  return `<dialog id="deactivate-provider-dialog" class="places-modal" aria-labelledby="deactivate-provider-title" aria-describedby="deactivate-provider-copy">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="deactivate-provider-title">Deactivate ${escapeHtml(providerName)}?</h2>
+        <p class="places-modal__text" id="deactivate-provider-copy">This will remove the provider from the active Providers &amp; Programs list. Its programs, sites, and app access will not be changed.</p>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-danger" value="confirm">Deactivate provider</button>
+        <button class="btn-outline" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 /** @param {any} program */
@@ -3751,13 +3983,14 @@ function siteEditor(state) {
   const hasAddress = Boolean(site.address || streetLineFromParts(address));
   return `<form id="site-details-form" class="site-details-form" data-dirty-form>
     <fieldset>
-      <legend>Site details</legend>
-      <div class="form-grid form-grid--one">
+      <legend>Site name and public contact</legend>
+      <div class="form-grid form-grid--one" data-site-details-fields>
         ${formInput("site-name", "Site name", site.name, { required: true, autocomplete: "organization" })}
-        <wa-select name="lead-program-id" label="Lead program" placeholder="No lead program assigned">
-          <wa-option value="" ${site.leadProgramId ? "" : "selected"}>No lead program assigned</wa-option>
-          ${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === site.leadProgramId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}
-        </wa-select>
+        <div class="form-grid form-grid--two">
+          ${formInput("public-contact-email", "Public contact email", publicContact.email, { type: "email", autocomplete: "email" })}
+          ${formInput("public-contact-phone", "Public contact phone", publicContact.phone, { type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
+        </div>
+        <button class="btn-primary" type="submit" data-save-site-details disabled>${state.siteSaving ? "Saving…" : "Save changes"}</button>
       </div>
     </fieldset>
     <fieldset>
@@ -3765,36 +3998,73 @@ function siteEditor(state) {
       <div data-address-container>
         ${
           hasAddress
-            ? `<div class="address-display" data-address-display>
-                <p>${escapeHtml(site.address || formatAddressParts(address))}</p>
-                <button class="btn-secondary" type="button" data-edit-address>Edit address</button>
+            ? `<div class="address-display">
+                <p data-address-display>${escapeHtml(site.address || formatAddressParts(address))}</p>
+                <button class="btn-secondary" type="button" data-edit-address aria-controls="site-address-editor" aria-expanded="false">Edit address</button>
               </div>
-              <div data-address-editor hidden>
+              <div id="site-address-editor" data-address-editor hidden>
                 ${addressEditor(address)}
+                <button class="btn-primary" type="button" data-save-address disabled>Save address</button>
               </div>`
             : `<div data-address-editor>
                 ${addressEditor(address)}
+                <button class="btn-primary" type="button" data-save-address disabled>Save address</button>
               </div>`
         }
       </div>
     </fieldset>
     <fieldset>
+      <legend>Lead program</legend>
+      <div class="form-grid form-grid--one">
+        <wa-select name="lead-program-id" aria-label="Lead program" placeholder="No lead program assigned" data-initial-value="${escapeHtml(site.leadProgramId || "")}">
+          <wa-option value="" ${site.leadProgramId ? "" : "selected"}>No lead program assigned</wa-option>
+          ${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === site.leadProgramId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}
+        </wa-select>
+        <button class="btn-primary" type="button" data-save-lead-program disabled>Save lead program</button>
+      </div>
+    </fieldset>
+    <fieldset>
       <legend>Site manager</legend>
-      <wa-select name="site-manager-user-id" aria-label="Site manager" placeholder="Choose program staff" ${siteManagerUnavailableMessage ? "disabled" : ""}><span slot="label" data-site-manager-label>${siteManagerUnavailableMessage || "Lead Program staff member"}</span>
+      <wa-select name="site-manager-user-id" aria-label="Site manager" placeholder="Choose program staff" data-initial-value="${escapeHtml(site.primaryContactUserId || "")}" ${siteManagerUnavailableMessage ? "disabled" : ""}><span slot="label" data-site-manager-label>${siteManagerUnavailableMessage || "Lead Program staff member"}</span>
         ${staff.map((user) => `<wa-option value="${escapeHtml(user.userId)}" ${user.userId === site.primaryContactUserId ? "selected" : ""}>${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
       </wa-select>
       <div id="site-manager-contact-details">${siteManagerContactDetails(staff.find((user) => user.userId === site.primaryContactUserId))}</div>
-    </fieldset>
-    <fieldset>
-      <legend>Public site contact</legend>
-      <div class="form-grid form-grid--two">
-        ${formInput("public-contact-email", "Email", publicContact.email, { type: "email", autocomplete: "email" })}
-        ${formInput("public-contact-phone", "Phone", publicContact.phone, { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" })}
-      </div>
+      <button class="btn-primary" type="button" data-save-site-manager disabled>Save site manager</button>
     </fieldset>
     ${state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
-    <button class="btn-primary" type="submit" data-save-button ${state.siteSaving ? "disabled" : "disabled"}>${state.siteSaving ? "Saving…" : "Save changes"}</button>
-  </form>`;
+  </form>
+  ${leadProgramConfirmationDialog()}
+  ${siteManagerConfirmationDialog()}`;
+}
+
+function leadProgramConfirmationDialog() {
+  return `<dialog id="lead-program-confirmation-dialog" class="places-modal" aria-labelledby="lead-program-confirmation-title" aria-describedby="lead-program-confirmation-copy">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="lead-program-confirmation-title">Save lead program change?</h2>
+        <p class="places-modal__text" id="lead-program-confirmation-copy">This will move the site to the selected lead program. The available site managers will change to that program's staff.</p>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-primary" value="confirm">Save lead program</button>
+        <button class="btn-outline" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>`;
+}
+
+function siteManagerConfirmationDialog() {
+  return `<dialog id="site-manager-confirmation-dialog" class="places-modal" aria-labelledby="site-manager-confirmation-title" aria-describedby="site-manager-confirmation-copy">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="site-manager-confirmation-title">Save site manager change?</h2>
+        <p class="places-modal__text" id="site-manager-confirmation-copy">This will assign the selected staff member as the site's manager.</p>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-primary" value="confirm">Save site manager</button>
+        <button class="btn-outline" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 function siteManagerContactDetails(user) {
@@ -3976,11 +4246,8 @@ function siteComplianceSummaryView(state) {
   const siteId = state.site?.siteId || "";
   const newTermPath = `/sites/${encodeURIComponent(siteId)}?section=compliance&view=new-term`;
   return `<section class="site-details-form" aria-labelledby="compliance-title">
-    <h2 id="compliance-title">Compliance</h2>
-    <section aria-labelledby="current-compliance-term-title">
-      <h3 id="current-compliance-term-title" class="section-label">Current compliance term</h3>
-      ${termsHistory(latestTerms ? [latestTerms] : [], "No current compliance term has been saved.")}
-    </section>
+    <h2 id="compliance-title">Current compliance term</h2>
+    ${termsHistory(latestTerms ? [latestTerms] : [], "No current compliance term has been saved.")}
     <div>
       <button class="btn-primary" type="button" data-navigate="${escapeHtml(newTermPath)}">Add a new compliance term</button>
     </div>
@@ -4033,7 +4300,7 @@ function formInput(name, label, value, options = {}) {
   ]
     .filter(Boolean)
     .join(" ");
-  return `<wa-input label="${escapeHtml(label)}" name="${escapeHtml(name)}" type="${escapeHtml(options.type || "text")}" value="${escapeHtml(value ?? "")}" ${attributes}></wa-input>`;
+  return `<wa-input label="${escapeHtml(label)}" name="${escapeHtml(name)}" type="${escapeHtml(options.type || "text")}" value="${escapeHtml(value ?? "")}" data-initial-value="${escapeHtml(value ?? "")}" ${attributes}></wa-input>`;
 }
 
 /** Enable a form's Save action only while its current values differ from its initial values. */
@@ -4059,6 +4326,132 @@ function syncDirtyForm(form, initialize = false) {
   }
 }
 
+/** @param {HTMLFormElement} form */
+function syncProviderDetailsForm(form) {
+  const nameInput = form.querySelector("wa-input[name='provider-name']");
+  const initialValue = nameInput?.getAttribute("data-initial-value") || "";
+  const isDirty = String(nameInput?.value || "") !== initialValue;
+  form.dataset.isDirty = String(isDirty);
+  const saveButton = form.querySelector("[data-save-button]");
+  if (saveButton instanceof HTMLButtonElement) {
+    saveButton.disabled = !isDirty;
+  }
+}
+
+/**
+ * Keep each independently saved Site details section tied only to its own edits.
+ * @param {HTMLFormElement} form
+ * @param {boolean} [initialize]
+ * @returns {boolean}
+ */
+function syncSiteDetailsForm(form, initialize = false) {
+  const sections = {
+    details: ["site-name", "public-contact-email", "public-contact-phone"],
+    address: ["street-address", "city", "state", "zip"],
+    leadProgram: ["lead-program-id"],
+    siteManager: ["site-manager-user-id"],
+  };
+  /** @param {string[]} names @param {boolean} [useDeclaredInitialValue] */
+  const snapshot = (names, useDeclaredInitialValue = false) =>
+    JSON.stringify(
+      names.map((name) => {
+        const control = form.querySelector(`[name='${name}']`);
+        const declaredInitialValue =
+          control?.getAttribute("data-initial-value");
+        return [
+          name,
+          useDeclaredInitialValue && declaredInitialValue !== null
+            ? declaredInitialValue
+            : String(control?.value || ""),
+        ];
+      }),
+    );
+  if (initialize || !form.dataset.sectionInitialValues) {
+    form.dataset.sectionInitialValues = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(sections).map(([name, fields]) => [
+          name,
+          snapshot(fields, true),
+        ]),
+      ),
+    );
+    form.dataset.editedSections = "[]";
+  }
+  const initial = JSON.parse(form.dataset.sectionInitialValues || "{}");
+  const dirty = Object.fromEntries(
+    Object.entries(sections).map(([name, fields]) => [
+      name,
+      snapshot(fields) !== initial[name],
+    ]),
+  );
+  const editedSections = new Set(
+    JSON.parse(form.dataset.editedSections || "[]"),
+  );
+  const isDirty = Object.entries(dirty).some(
+    ([name, sectionIsDirty]) => sectionIsDirty && editedSections.has(name),
+  );
+  form.dataset.isDirty = String(isDirty);
+  const controls = {
+    details: form.querySelector("[data-save-site-details]"),
+    address: form.querySelector("[data-save-address]"),
+    leadProgram: form.querySelector("[data-save-lead-program]"),
+    siteManager: form.querySelector("[data-save-site-manager]"),
+  };
+  for (const [name, control] of Object.entries(controls)) {
+    if (control instanceof HTMLButtonElement)
+      control.disabled = !dirty[name] || !editedSections.has(name);
+  }
+  if (controls.siteManager instanceof HTMLButtonElement && dirty.leadProgram) {
+    controls.siteManager.disabled = true;
+  }
+  return isDirty;
+}
+
+/**
+ * Record the section touched by a genuine user interaction. Web components can
+ * emit setup events while upgrading, which must not enable Save actions.
+ * @param {HTMLFormElement} form
+ * @param {Event} event
+ */
+function markSiteDetailsSectionEdited(form, event) {
+  if (!event.isTrusted) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const name = target.getAttribute("name") || "";
+  const section = {
+    "site-name": "details",
+    "public-contact-email": "details",
+    "public-contact-phone": "details",
+    "address-query": "address",
+    "street-address": "address",
+    city: "address",
+    state: "address",
+    zip: "address",
+    "lead-program-id": "leadProgram",
+    "site-manager-user-id": "siteManager",
+  }[name];
+  if (!section) return;
+  const editedSections = new Set(
+    JSON.parse(form.dataset.editedSections || "[]"),
+  );
+  editedSections.add(section);
+  form.dataset.editedSections = JSON.stringify([...editedSections]);
+}
+
+/**
+ * Report validity only for the controls saved by the current section action.
+ * @param {HTMLFormElement} form
+ * @param {string[]} names
+ */
+function reportNamedControlsValidity(form, names) {
+  return names.every((name) => {
+    const control = form.querySelector(`[name='${name}']`);
+    return (
+      typeof control?.reportValidity !== "function" || control.reportValidity()
+    );
+  });
+}
+
 function showFormSaveError(form, message) {
   let error = form.querySelector("[data-form-save-error]");
   if (!error) {
@@ -4066,7 +4459,11 @@ function showFormSaveError(form, message) {
     error.className = "error site-details-form__message";
     error.setAttribute("role", "alert");
     error.setAttribute("data-form-save-error", "");
-    form.querySelector("[data-save-button]")?.before(error);
+    const saveControl = form.querySelector(
+      "[data-save-button], [data-save-site-details]",
+    );
+    if (saveControl) saveControl.before(error);
+    else form.append(error);
   }
   error.textContent = message;
 }

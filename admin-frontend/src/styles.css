@@ -365,6 +365,7 @@ h3 {
 
 .site-page .site-access {
   border-top: 0;
+  padding-top: 0;
 }
 
 .empty-state {
@@ -431,6 +432,16 @@ h3 {
   background: transparent;
 }
 
+.site-admin-discard-dialog {
+  width: fit-content;
+  max-width: calc(100vw - 32px);
+}
+
+.site-admin-discard-dialog .places-modal__card {
+  box-sizing: border-box;
+  width: min(400px, calc(100vw - 32px));
+}
+
 .places-modal__copy {
   display: flex;
   flex-direction: column;
@@ -472,10 +483,8 @@ h3 {
   color: var(--text);
 }
 
-.places-modal__danger {
-  border: 0;
-  background: var(--ink);
-  color: var(--on-ink);
+.perimeter-description {
+  --wa-form-control-required-content: "";
 }
 
 .inline-form {
@@ -574,7 +583,7 @@ h3 {
 .destructive-confirmation {
   gap: 16px;
   margin-top: 32px;
-  border: 1px solid #a40000;
+  border: 2px solid #a40000;
   border-radius: 8px;
   padding: 20px;
 }
@@ -745,6 +754,10 @@ h3 {
   font-size: 0.875rem;
 }
 
+#site-manager-contact-details p {
+  margin-block: 8px 14px;
+}
+
 .section-label {
   margin: 0 0 12px;
   font-size: 1rem;
@@ -766,10 +779,19 @@ h3 {
   margin: 0;
 }
 
+.address-display [data-edit-address] {
+  margin-inline-start: auto;
+}
+
 .address-editor,
 .address-lookup {
   display: grid;
   gap: 10px;
+}
+
+[data-address-editor] {
+  display: grid;
+  gap: 16px;
 }
 
 .address-fields {
@@ -935,6 +957,10 @@ button:disabled,
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.entity-list > li {
+  margin: 0;
 }
 
 .entity-link {
@@ -1218,6 +1244,16 @@ select {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+.table-disclosure summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.table-disclosure[open] summary {
+  margin-block-end: 12px;
 }
 
 table {
