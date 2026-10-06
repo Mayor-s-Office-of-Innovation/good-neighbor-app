@@ -183,6 +183,7 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
         severityLabel: concern.ratingLabel,
         userFriendlyLabel: concern.userFriendlyLabel,
         description: concern.explanation || "",
+        translations: concern.translations,
         sourceArtifactIds: [artifactId],
         evidenceIndices: concern.evidenceIndices || [],
       })),
@@ -241,6 +242,7 @@ function concernsFromAssessment(assessment) {
     ratingLabel: condition.severity_label,
     userFriendlyLabel: condition.user_friendly_label,
     explanation: condition.description || "",
+    ...(condition.translations ? { translations: condition.translations } : {}),
     evidenceIndices: condition.evidence_indices || [],
   }));
 }

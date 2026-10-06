@@ -6,11 +6,13 @@
   Nothing here touches the DOM, storage, or the network; today-view.js owns
   the element and calls into this module.
 */
+import { t } from "../i18n/i18n.js";
+import { formatTime, formatWeekday, pacificDaysAgo } from "../i18n/dates.js";
 
 export const HOME_TABS = [
-  { id: "todo", label: "To do" },
-  { id: "in_progress", label: "In progress" },
-  { id: "history", label: "History" },
+  { id: "todo", labelKey: "home.tab.todo" },
+  { id: "in_progress", labelKey: "home.tab.inProgress" },
+  { id: "history", labelKey: "home.tab.history" },
 ];
 const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
 const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
@@ -28,10 +30,10 @@ export function formatOverdueElapsed(expectedAt, now = Date.now()) {
     ),
   );
   if (elapsedHours < 24) {
-    return `${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"}`;
+    return t("home.overdue.hours", { count: elapsedHours });
   }
   const elapsedDays = Math.floor(elapsedHours / 24);
-  return `${elapsedDays} ${elapsedDays === 1 ? "day" : "days"}`;
+  return t("home.overdue.days", { count: elapsedDays });
 }
 
 export function submitted311Ticket(task) {
@@ -200,7 +202,7 @@ export function displayTaskId(task) {
 
 export function issueCountLabel(count) {
   if (!count) return "";
-  return `${count} ${count === 1 ? "issue" : "issues"} found`;
+  return t("home.issueCount", { count });
 }
 
 /**
@@ -213,18 +215,14 @@ export function lastLogSummary(last, entries, now = new Date()) {
   if (!last?.submittedAt) return "";
   const date = new Date(last.submittedAt);
   if (Number.isNaN(date.getTime())) return "";
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
+  const ago = pacificDaysAgo(date, now);
   const day =
-    date.toDateString() === now.toDateString()
-      ? "today"
-      : date.toDateString() === yesterday.toDateString()
-        ? "yesterday"
-        : new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+    ago === 0
+      ? t("date.today")
+      : ago === 1
+        ? t("date.yesterday")
+        : formatWeekday(date);
+  const time = formatTime(date);
   const count = Number(last.issueCount) || 0;
   const needsAction = entries.some(
     (entry) =>
@@ -232,11 +230,11 @@ export function lastLogSummary(last, entries, now = new Date()) {
   );
   const outcome =
     count === 0
-      ? "No issues found"
+      ? t("home.lastLog.noIssues")
       : last.id && !needsAction
-        ? "All issues handled"
+        ? t("home.lastLog.allHandled")
         : issueCountLabel(count);
-  return `Last log: ${day} at ${time} · ${outcome}`;
+  return t("home.lastLog.summary", { day, time, outcome });
 }
 
 function ageMs(iso, now) {
@@ -378,10 +376,7 @@ export function newestBlueCheckGroup(
   )[0];
   if (!newest) return { id: "", time: "" };
   const date = new Date(newest[1]);
-  if (
-    Number.isNaN(date.getTime()) ||
-    date.toDateString() !== now.toDateString()
-  ) {
+  if (Number.isNaN(date.getTime()) || pacificDaysAgo(date, now) !== 0) {
     return { id: "", time: "" };
   }
   return { id: newest[0], time: newest[1] };
@@ -394,22 +389,15 @@ export function visibleTaskEntriesForHydration(entries, homeFilter) {
 }
 
 export function timeOf(iso) {
-  return new Date(iso)
-    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    .replace(/\s/g, "")
-    .toUpperCase();
+  return formatTime(iso).replace(/\s/g, "").toUpperCase();
 }
 
 // "TODAY" / "YESTERDAY" for the last 2 days, else the uppercase weekday.
 export function relativeDay(iso) {
-  const d = new Date(iso);
-  const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const ago = Math.round((todayStart.getTime() - dStart.getTime()) / 86400000);
-  if (ago <= 0) return "TODAY";
-  if (ago === 1) return "YESTERDAY";
-  return d.toLocaleDateString([], { weekday: "long" }).toUpperCase();
+  const ago = pacificDaysAgo(iso);
+  if (ago !== null && ago <= 0) return t("date.today").toUpperCase();
+  if (ago === 1) return t("date.yesterday").toUpperCase();
+  return formatWeekday(iso).toUpperCase();
 }
 
 export function splitSiteIdentity(name) {

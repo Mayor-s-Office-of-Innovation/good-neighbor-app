@@ -1,5 +1,6 @@
 import { stageDeletion } from "../state/pending-deletions.js";
 import { showToast } from "../state/toasts.js";
+import { t } from "../i18n/i18n.js";
 
 /** Hosts whose card DOM must survive session notifications during deletion. */
 const deletingHosts = new Set();
@@ -43,7 +44,7 @@ export async function deleteAnalysisCard(
       card
         ?.querySelector(".analysis-card__meta")
         ?.textContent?.trim()
-        .replace(/^(NEW|NEEDS ACTION)\s*•?\s*/, "");
+        .replace(metaLabelPrefix(), "");
     pending = stageDeletion({ ...problem, reference }, commit);
     if (!pending) return;
     const dialog = /** @type {HTMLDialogElement | null} */ (
@@ -77,12 +78,15 @@ export async function deleteAnalysisCard(
     }
     if (pending) {
       showToast({
-        title: "Issue deleted",
+        title: t("card.deleteToast.title"),
         message: deletionSummary(problem.title, address),
         icon: "circle-check",
         tone: "success",
         focusAction: focusUndo,
-        action: { label: "Undo", run: () => pending.undo() },
+        action: {
+          label: t("common.undo"),
+          run: () => pending.undo(),
+        },
         onDismiss: () => {
           void pending.save();
         },
@@ -91,12 +95,26 @@ export async function deleteAnalysisCard(
   }
 }
 
+/**
+ * Strips the card's "NEW" / "NEEDS ACTION" meta prefix (and its separator) so
+ * only the reference remains, in whatever language the card was rendered.
+ * @returns {RegExp}
+ */
+function metaLabelPrefix() {
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const labels = [t("card.meta.new"), t("card.meta.needsAction")].map(escape);
+  return new RegExp(`^(${labels.join("|")})\\s*•?\\s*`);
+}
+
 /** @param {string | undefined} label @param {string} address */
 function deletionSummary(label, address) {
-  const friendlyLabel = label || "Issue";
+  const friendlyLabel = label || t("card.deleteToast.issueFallback");
   const firstAddressLine = address.split(/[\n,]/, 1)[0].trim();
   return firstAddressLine
-    ? `${friendlyLabel} at ${firstAddressLine}`
+    ? t("card.deleteToast.messageAt", {
+        label: friendlyLabel,
+        address: firstAddressLine,
+      })
     : friendlyLabel;
 }
 

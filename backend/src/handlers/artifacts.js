@@ -280,8 +280,9 @@ export const registerArtifact = async (event) => {
     latitude,
     longitude,
     text,
+    language,
   } =
-    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown, language?: unknown }} */ (
       body ?? {}
     );
 
@@ -365,6 +366,13 @@ export const registerArtifact = async (event) => {
     verifiedContentLength = Number(contentLength);
   }
 
+  // The requester's locale for analyzer-written text. The analyzer falls back
+  // to English on unknown tags, so this is pass-through, not an allowlist.
+  const languageValue =
+    typeof language === "string" && language.trim()
+      ? language.trim()
+      : undefined;
+
   const now = new Date().toISOString();
   // Per-photo capture time. The worker forwards this as the analyzer's
   // `reported_at`, so it must describe THIS artifact, not the batch.
@@ -434,6 +442,7 @@ export const registerArtifact = async (event) => {
         ...(hasCoordinates ? { latitude, longitude } : {}),
         ...(hasS3Key ? { s3Key } : {}),
         ...(hasText ? { text: normalizedText } : {}),
+        ...(languageValue ? { language: languageValue } : {}),
       }),
     }),
   );

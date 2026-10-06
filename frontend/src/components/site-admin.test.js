@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "../i18n/i18n.js";
+
 const {
   formatAdminDate,
   formatDeviceEnrollmentSummary,
@@ -52,7 +54,7 @@ describe("site admin form decisions", () => {
         email: "not-an-email",
         phone: "123",
       }),
-    ).toMatch(/First and last name/);
+    ).toBe(t("siteAdmin.validation.nameRequired"));
   });
 
   it("validates required site and address fields", () => {
@@ -77,7 +79,7 @@ describe("site admin form decisions", () => {
 
   it("formats letter dates for display", () => {
     expect(formatAdminDate("2026-01-15")).toBe("Jan 15, 2026");
-    expect(formatAdminDate("")).toBe("Present");
+    expect(formatAdminDate("")).toBe(t("siteAdmin.datePresent"));
   });
 
   it("formats valid US phone numbers consistently", () => {

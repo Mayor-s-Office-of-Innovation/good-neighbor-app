@@ -11,6 +11,8 @@
   the host can return focus to the right card button.
 */
 import "./timeline.css";
+import { rulebookText } from "../i18n/rulebook.js";
+import { getLocale } from "../i18n/locale.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
 import { get311RequestDetail } from "../services/api.js";
@@ -28,15 +30,29 @@ import { ticketDetailDialog } from "./ticket-detail-dialog.templates.js";
  * @returns {Record<string, any>}
  */
 export function buildTicketDetail(task, site, request) {
+  const analyzerText = (flat, key) => {
+    const translations = task?.translations;
+    if (translations && translations.language === getLocale()) {
+      const localized = translations[key];
+      if (typeof localized === "string" && localized) return localized;
+    }
+    return flat;
+  };
   return {
     ...request,
     title:
-      task.userFriendlyLabel ||
-      task.user_friendly_label ||
-      task.category ||
-      task.analyzerCategory ||
-      request.problemType,
-    description: task.description || request.description || "",
+      task.userFriendlyLabel || task.user_friendly_label
+        ? analyzerText(
+            task.userFriendlyLabel || task.user_friendly_label,
+            "user_friendly_label",
+          )
+        : rulebookText(task.category) ||
+          rulebookText(task.analyzerCategory) ||
+          request.problemType,
+    description: analyzerText(
+      task.description || request.description || "",
+      "description",
+    ),
     location: ticketDetailLocation(task, site || {}, request),
     mediaUrl: taskMediaUrl(task),
   };

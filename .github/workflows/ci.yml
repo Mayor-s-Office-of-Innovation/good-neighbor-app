@@ -52,6 +52,9 @@ jobs:
       - name: Validate guidance policy
         run: npm run policy:validate --workspace backend
 
+      - name: Validate translation catalogs
+        run: npm run i18n:check --workspace frontend
+
       - name: Test
         run: npm test
 

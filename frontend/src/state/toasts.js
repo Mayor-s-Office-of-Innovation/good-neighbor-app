@@ -11,6 +11,7 @@
  * @property {number} [duration]
  * @property {boolean} [focusAction]
  */
+import { t } from "../i18n/i18n.js";
 
 /** @type {Set<() => void>} */
 const listeners = new Set();
@@ -90,10 +91,10 @@ export function onToastsChange(listener) {
 /** @param {string} [serviceRequestNumber] */
 export function show311SuccessToast(serviceRequestNumber = "") {
   return showToast({
-    title: "Ticket filed",
+    title: t("toast.ticketFiled.title"),
     message: serviceRequestNumber
-      ? `311 ticket #${serviceRequestNumber}`
-      : "311 ticket filed",
+      ? t("toast.ticketFiled.message", { number: serviceRequestNumber })
+      : t("toast.ticketFiled.messageNoNumber"),
     icon: "circle-check",
     tone: "success",
   });
@@ -101,8 +102,8 @@ export function show311SuccessToast(serviceRequestNumber = "") {
 
 export function show311ErrorToast() {
   return showToast({
-    title: "Ticket filing failed",
-    message: "We could not file your 311 ticket. Please try again later.",
+    title: t("toast.ticketFailed.title"),
+    message: t("toast.ticketFailed.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -110,8 +111,8 @@ export function show311ErrorToast() {
 
 export function showEditSavedToast() {
   return showToast({
-    title: "Edits saved",
-    message: "The issue description has been successfully updated",
+    title: t("toast.editSaved.title"),
+    message: t("toast.editSaved.message"),
     icon: "circle-check",
     tone: "success",
   });
@@ -119,8 +120,8 @@ export function showEditSavedToast() {
 
 export function showActionSaveErrorToast() {
   return showToast({
-    title: "Save failed",
-    message: "We couldn't save your action. Please try again.",
+    title: t("toast.actionSaveError.title"),
+    message: t("toast.actionSaveError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -128,8 +129,8 @@ export function showActionSaveErrorToast() {
 
 export function showAnswerSaveErrorToast() {
   return showToast({
-    title: "Save failed",
-    message: "We couldn't save your answer. Please try again.",
+    title: t("toast.answerSaveError.title"),
+    message: t("toast.answerSaveError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -137,8 +138,8 @@ export function showAnswerSaveErrorToast() {
 
 export function showDeletionRefreshToast() {
   return showToast({
-    title: "Deletion saved",
-    message: "Please reload the page.",
+    title: t("toast.deletionRefresh.title"),
+    message: t("toast.deletionRefresh.message"),
     icon: "circle-info",
     tone: "info",
   });
@@ -146,8 +147,8 @@ export function showDeletionRefreshToast() {
 
 export function showSavedForLaterToast() {
   return showToast({
-    title: "Saved for later",
-    message: "You're offline. We'll sync this later.",
+    title: t("toast.savedForLater.title"),
+    message: t("toast.savedForLater.message"),
     icon: "circle-info",
     tone: "info",
   });
@@ -155,8 +156,8 @@ export function showSavedForLaterToast() {
 
 export function showOfflinePhotosToast() {
   return showToast({
-    title: "You're offline",
-    message: "Your photos are saved. We'll retry later.",
+    title: t("toast.offlinePhotos.title"),
+    message: t("toast.offlinePhotos.message"),
     icon: "circle-info",
     tone: "info",
   });
@@ -164,8 +165,8 @@ export function showOfflinePhotosToast() {
 
 export function showDeleteErrorToast() {
   return showToast({
-    title: "Item could not be deleted",
-    message: "We could not delete your item. Please try again.",
+    title: t("toast.deleteError.title"),
+    message: t("toast.deleteError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -173,8 +174,8 @@ export function showDeleteErrorToast() {
 
 export function showEditErrorToast() {
   return showToast({
-    title: "Edits could not be saved",
-    message: "Please try again.",
+    title: t("toast.editError.title"),
+    message: t("toast.editError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -182,8 +183,8 @@ export function showEditErrorToast() {
 
 export function showEditRefreshErrorToast() {
   return showToast({
-    title: "Edits saved but could not refresh",
-    message: "Please reload your page.",
+    title: t("toast.editRefreshError.title"),
+    message: t("toast.editRefreshError.message"),
     icon: "circle-info",
     tone: "info",
   });
@@ -191,8 +192,8 @@ export function showEditRefreshErrorToast() {
 
 export function showReanalysisErrorToast() {
   return showToast({
-    title: "Changes could not be analyzed",
-    message: "We were unable to re-analyze this description.",
+    title: t("toast.reanalysisError.title"),
+    message: t("toast.reanalysisError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -200,8 +201,8 @@ export function showReanalysisErrorToast() {
 
 export function showTaskUpdateErrorToast() {
   return showToast({
-    title: "Failed to save",
-    message: "Please try again later.",
+    title: t("toast.taskUpdateError.title"),
+    message: t("toast.taskUpdateError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -209,8 +210,8 @@ export function showTaskUpdateErrorToast() {
 
 export function showFeedbackErrorToast() {
   return showToast({
-    title: "Feedback failed to send",
-    message: "Please try again later.",
+    title: t("toast.feedbackError.title"),
+    message: t("toast.feedbackError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -218,8 +219,8 @@ export function showFeedbackErrorToast() {
 
 export function showFeedbackSuccessToast() {
   return showToast({
-    title: "Feedback sent",
-    message: "Thanks for sharing!",
+    title: t("toast.feedbackSuccess.title"),
+    message: t("toast.feedbackSuccess.message"),
     icon: "circle-check",
     tone: "success",
   });
@@ -227,8 +228,8 @@ export function showFeedbackSuccessToast() {
 
 export function showSiteAdminErrorToast() {
   return showToast({
-    title: "Save failed",
-    message: "Please try again.",
+    title: t("toast.siteAdminError.title"),
+    message: t("toast.siteAdminError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -236,8 +237,8 @@ export function showSiteAdminErrorToast() {
 
 export function showSiteAdminSuccessToast() {
   return showToast({
-    title: "Changes saved",
-    message: "Your site administration changes have been saved",
+    title: t("toast.siteAdminSuccess.title"),
+    message: t("toast.siteAdminSuccess.message"),
     icon: "circle-check",
     tone: "success",
   });
@@ -245,8 +246,8 @@ export function showSiteAdminSuccessToast() {
 
 export function showSiteSwitchErrorToast() {
   return showToast({
-    title: "Could not switch sites",
-    message: "Please try again.",
+    title: t("toast.siteSwitchError.title"),
+    message: t("toast.siteSwitchError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -254,8 +255,8 @@ export function showSiteSwitchErrorToast() {
 
 export function showSiteCatalogErrorToast() {
   return showToast({
-    title: "Sites could not be loaded",
-    message: "Please try again.",
+    title: t("toast.siteCatalogError.title"),
+    message: t("toast.siteCatalogError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
@@ -263,16 +264,25 @@ export function showSiteCatalogErrorToast() {
 
 export function showSiteSwitchBlockedToast() {
   return showToast({
-    title: "Site switch unavailable",
-    message: "Wait for your check to finish analyzing, then try again.",
+    title: t("toast.siteSwitchBlocked.title"),
+    message: t("toast.siteSwitchBlocked.message"),
     icon: "circle-info",
     tone: "info",
   });
 }
 
+export function showLanguageErrorToast() {
+  return showToast({
+    title: t("toast.languageError.title"),
+    message: t("toast.languageError.message"),
+    icon: "triangle-exclamation",
+    tone: "error",
+  });
+}
+
 export function showSiteSwitchSuccessToast() {
   return showToast({
-    title: "Successfully switched sites",
+    title: t("toast.siteSwitchSuccess.title"),
     message: "",
     icon: "circle-check",
     tone: "success",

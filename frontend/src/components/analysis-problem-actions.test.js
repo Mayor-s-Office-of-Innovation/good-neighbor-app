@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "../i18n/i18n.js";
+
 const api = vi.hoisted(() => ({
   rejectAnalysisCondition: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -54,7 +56,7 @@ describe("problemFromCard", () => {
       taskId: "",
       conditionId: "c",
       actionKind: "",
-      title: "problem",
+      title: t("card.title.problemFallback"),
       description: "",
     });
   });
@@ -65,11 +67,11 @@ describe("missingConditionMessage", () => {
     const { missingConditionMessage } = await import(
       "./analysis-problem-actions.js"
     );
-    expect(missingConditionMessage({ conditionId: "" }, "deleted")).toMatch(
-      /does not have a problem condition that can be deleted/,
+    expect(missingConditionMessage({ conditionId: "" }, "deleted")).toBe(
+      t("analysis.missingCondition.noCondition.deleted"),
     );
-    expect(missingConditionMessage({ conditionId: "c" }, "edited")).toMatch(
-      /cannot be edited\. Take a new photo/,
+    expect(missingConditionMessage({ conditionId: "c" }, "edited")).toBe(
+      t("analysis.missingCondition.noCoordinates.edited"),
     );
   });
 });

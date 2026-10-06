@@ -3,6 +3,7 @@
   which provider site it binds to; the frontend only formats the prompt and stores
   the returned binding after a successful check.
 */
+import { t } from "../i18n/i18n.js";
 
 // Same-origin everywhere: in dev the Vite proxy forwards `/site-code` → the local
 // API (no CORS — see vite.config.js); in production the SPA and API share one
@@ -124,7 +125,7 @@ export async function requestSetupCode({ siteId, email }) {
     message:
       typeof data?.message === "string"
         ? data.message
-        : "If that email is authorized for this site, we will send a new setup code.",
+        : t("onboarding.setupCodeRequested.message"),
   };
 }
 

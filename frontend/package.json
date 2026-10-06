@@ -11,7 +11,8 @@
     "perf": "node scripts/run-lighthouse.mjs && node scripts/print-lighthouse.mjs",
     "size": "size-limit",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "i18n:check": "node scripts/i18n-check.mjs"
   },
   "size-limit": [
     {

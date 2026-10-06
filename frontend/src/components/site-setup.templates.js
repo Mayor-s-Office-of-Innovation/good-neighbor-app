@@ -2,6 +2,7 @@
   Presentational template for <site-setup>. Logic and input handling stay in
   site-setup.js; this file owns only the login screen markup.
 */
+import { t } from "../i18n/i18n.js";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
@@ -23,13 +24,15 @@ export const codeEntryView = ({
       <div class="login__mark" aria-hidden="true"></div>
 
       <div class="login__copy">
-        <h1 id="login-title">Welcome to Good Neighbor.</h1>
+        <h1 id="login-title">${escapeHtml(t("setup.welcome"))}</h1>
         <p>
-          ${mode === "request"
-            ? "Request a new site code"
-            : targetSiteName
-              ? html`Enter the site code for ${escapeHtml(targetSiteName)}`
-              : "Enter a site code"}
+          ${escapeHtml(
+            mode === "request"
+              ? t("setup.requestIntro")
+              : targetSiteName
+                ? t("setup.enterCodeFor", { site: targetSiteName })
+                : t("setup.enterCode"),
+          )}
         </p>
       </div>
 
@@ -43,7 +46,7 @@ export const codeEntryView = ({
             type="button"
             ${cancelDisabled ? "disabled" : ""}
           >
-            Back to current site
+            ${escapeHtml(t("setup.backToCurrentSite"))}
           </button>`
         : ""}
     </section>
@@ -64,7 +67,7 @@ function enterCodeView({ value, error, checking }) {
       <wa-otp-input
         id="code-input"
         class="login__otp ${error ? "login__otp--error" : ""}"
-        label="Site code"
+        label="${escapeAttr(t("setup.codeLabel"))}"
         length="6"
         type="alphanumeric"
         case="upper"
@@ -88,12 +91,14 @@ function enterCodeView({ value, error, checking }) {
         ${checking || value.length < 6 ? "disabled" : ""}
       >
         ${checking
-          ? html`<wa-spinner aria-label="Checking site code"></wa-spinner>`
-          : "Continue"}
+          ? html`<wa-spinner
+              aria-label="${escapeAttr(t("setup.checking.aria"))}"
+            ></wa-spinner>`
+          : escapeHtml(t("common.continue"))}
       </button>
     </form>
     <button id="show-request-code" class="btn-link" type="button">
-      Need a new code?
+      ${escapeHtml(t("setup.needNewCode"))}
     </button>
   `;
 }
@@ -115,7 +120,7 @@ function requestCodeView({
   return html`
     <form id="request-code-form" class="login__request" novalidate>
       <label class="login__field">
-        <span>Search for a site</span>
+        <span>${escapeHtml(t("setup.searchLabel"))}</span>
         <input
           id="site-search"
           type="search"
@@ -124,7 +129,11 @@ function requestCodeView({
           ${requesting ? "disabled" : ""}
         />
       </label>
-      <div class="login__results" role="listbox" aria-label="Matching sites">
+      <div
+        class="login__results"
+        role="listbox"
+        aria-label="${escapeAttr(t("setup.results.aria"))}"
+      >
         ${sites
           .map(
             (site) => html`
@@ -145,7 +154,7 @@ function requestCodeView({
       ${selectedSiteId
         ? html`
             <label class="login__field">
-              <span>Now enter your email</span>
+              <span>${escapeHtml(t("setup.emailLabel"))}</span>
               <input
                 id="work-email"
                 type="email"
@@ -169,13 +178,17 @@ function requestCodeView({
         ${requesting || !selectedSiteId || !email ? "disabled" : ""}
       >
         ${requesting
-          ? html`<wa-spinner aria-label="Requesting setup code"></wa-spinner>`
-          : "Send code"}
+          ? html`<wa-spinner
+              aria-label="${escapeAttr(t("setup.requesting.aria"))}"
+            ></wa-spinner>`
+          : escapeHtml(t("setup.sendCode"))}
       </button>
     </form>
     <button id="show-code-entry" class="btn-link" type="button">
-      Enter a code instead
+      ${escapeHtml(t("setup.enterCodeInstead"))}
     </button>
-    <p class="login__hint" ${searching ? "" : "hidden"}>Searching...</p>
+    <p class="login__hint" ${searching ? "" : "hidden"}>
+      ${escapeHtml(t("setup.searching"))}
+    </p>
   `;
 }

@@ -41,6 +41,10 @@ New here? Get your bearings in this order:
   `<wa-button>`. Form controls (wa-input, wa-select, wa-textarea, wa-checkbox,
   wa-otp-input), icons, spinners, badges, callouts, and alerts stay Web Awesome.
   See [ADR 0011](./docs/adr/0011-native-buttons.md).
+- All user-visible copy goes through the translation catalogs (`t("key")`; see
+  [docs/localization.md](./docs/localization.md)). No English literals in templates; dates only
+  through `frontend/src/i18n/dates.js` (the one place a fixed locale is allowed, for
+  calendar arithmetic); tests assert via `t()` and locate by ids / data attributes.
 - Use Workbox for offline capture and sync.
 - Use AWS Lambda, API Gateway, SQS, Bedrock, Cognito, S3, CloudFront, WAF, and DynamoDB.
 - Use a single-table DynamoDB design accessed through the AWS SDK (`@aws-sdk/lib-dynamodb`

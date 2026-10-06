@@ -148,6 +148,39 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     );
   });
 
+  it("edit forwards language from the request body", async () => {
+    send.mockResolvedValueOnce({ Item: analysisItem() });
+
+    const res = await invoke(
+      amendEvent({
+        body: {
+          description: "Actually paint spilled here",
+          language: "vi",
+        },
+      }),
+      editAnalysisCondition,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(analyzeEdit).toHaveBeenCalledWith(
+      "ana_20260907_ab12cd34",
+      expect.any(String),
+      expect.objectContaining({ language: "vi" }),
+    );
+  });
+
+  it("edit omits language when the request body has none", async () => {
+    send.mockResolvedValueOnce({ Item: analysisItem() });
+
+    await invoke(
+      amendEvent({ body: { description: "Actually paint spilled here" } }),
+      editAnalysisCondition,
+    );
+
+    const call = analyzeEdit.mock.calls[0][2];
+    expect(call).not.toHaveProperty("language");
+  });
+
   it("reject resolves by key, passes the reason through, and retires its open task", async () => {
     send.mockResolvedValueOnce({ Item: analysisItem() });
     send.mockResolvedValueOnce({

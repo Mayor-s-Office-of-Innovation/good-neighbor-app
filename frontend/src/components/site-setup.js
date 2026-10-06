@@ -6,6 +6,7 @@
 */
 import "./site-setup.css";
 import { getSite, setSite } from "../db.js";
+import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
   requestSetupCode,
@@ -16,7 +17,6 @@ import { redeemEnrollmentGrant, registerDevice } from "../services/devices.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
-const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 const SITE_SEARCH_DELAY_MS = 250;
 
 export class SiteSetup extends HTMLElement {
@@ -282,9 +282,7 @@ export class SiteSetup extends HTMLElement {
     }
     this._request.searching = false;
     this._request.sites = result.ok ? result.sites : [];
-    this._request.error = result.ok
-      ? ""
-      : "We couldn't search sites. Try again in a moment.";
+    this._request.error = result.ok ? "" : t("setup.error.search");
     this._renderRequestPreservingFocus();
   }
 
@@ -361,8 +359,8 @@ export class SiteSetup extends HTMLElement {
     } else {
       this._request.error =
         result.reason === "invalid"
-          ? "Choose a site and enter a work email."
-          : "We couldn't request a code. Try again in a moment.";
+          ? t("setup.error.requestInvalid")
+          : t("setup.error.request");
     }
     this._render();
   }
@@ -383,8 +381,8 @@ export class SiteSetup extends HTMLElement {
       this._checking = false;
       this._error =
         result.reason === "network"
-          ? "We couldn't check the code. Try again in a moment."
-          : INVALID_MESSAGE;
+          ? t("setup.error.network")
+          : t("setup.error.invalidCode");
       this._render();
       return;
     }
@@ -392,7 +390,12 @@ export class SiteSetup extends HTMLElement {
     const providerSite = result.providerSite;
     if (this._targetSiteId && providerSite.siteId !== this._targetSiteId) {
       this._checking = false;
-      this._error = `This code is for ${providerSite.name}, not ${this._targetSiteName || "the selected site"}.`;
+      this._error = this._targetSiteName
+        ? t("setup.error.wrongSite", {
+            site: providerSite.name,
+            target: this._targetSiteName,
+          })
+        : t("setup.error.wrongSiteUnknown", { site: providerSite.name });
       this._render();
       return;
     }
@@ -405,14 +408,14 @@ export class SiteSetup extends HTMLElement {
       session = await registerDevice(result.code);
       if (this._cancelled || generation !== this._validationGeneration) return;
     } catch (err) {
-      if (err instanceof Error && /invalid site code/.test(err.message)) {
+      if (err instanceof Error && err.name === "InvalidSiteCodeError") {
         this._checking = false;
-        this._error = INVALID_MESSAGE;
+        this._error = t("setup.error.invalidCode");
         this._render();
         return;
       }
       this._checking = false;
-      this._error = "We couldn't set up this device. Try again in a moment.";
+      this._error = t("setup.error.register");
       this._render();
       return;
     }
@@ -438,7 +441,7 @@ export class SiteSetup extends HTMLElement {
     } catch {
       this._committingSite = false;
       this._checking = false;
-      this._error = "We couldn't save this site. Try again in a moment.";
+      this._error = t("setup.error.save");
       this._render();
       return;
     }

@@ -8,6 +8,8 @@ import {
   vi,
 } from "vitest";
 
+import { t } from "../i18n/i18n.js";
+
 const setup = vi.hoisted(() => ({
   validateSetupCode: vi.fn(),
   registerDevice: vi.fn(),
@@ -379,6 +381,6 @@ describe("site-switch validation", () => {
 
     expect(component._committingSite).toBe(false);
     expect(component._checking).toBe(false);
-    expect(component._error).toMatch(/couldn't save this site/);
+    expect(component._error).toBe(t("setup.error.save"));
   });
 });

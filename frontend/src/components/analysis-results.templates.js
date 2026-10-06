@@ -3,6 +3,16 @@ import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
+import { getLocale, t } from "../i18n/i18n.js";
+import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
+import {
+  formatMonthDay,
+  formatNumericDate,
+  formatTime,
+  formatWeekday,
+  pacificDaysAgo,
+  pacificWeekdayIndex,
+} from "../i18n/dates.js";
 
 const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 
@@ -15,7 +25,8 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [userFriendlyLabel]
  * @property {string} [user_friendly_label]
  * @property {string} [description]
- * @property {{ key?: string, prompt?: string, options?: { label?: string, value?: boolean }[] } | null} [needsAnswer]
+ * @property {{ language?: string, user_friendly_label?: string, description?: string }} [translations]
+ * @property {{ key?: string, prompt?: string, options: { label?: string, value?: boolean }[] } | null} [needsAnswer]
  */
 
 /**
@@ -32,6 +43,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [user_friendly_label]
  * @property {string} [label]
  * @property {string} [description]
+ * @property {{ language?: string, user_friendly_label?: string, description?: string }} [translations]
  * @property {string} [guidance]
  * @property {string} [kind]
  * @property {string[]} [buttons]
@@ -222,9 +234,9 @@ export function analysisResultsTray(
   sessionCheckId,
   {
     id = "analysis-tray",
-    title = "Analysis results",
-    ariaLabel = "Analysis results",
-    emptyText = "All problems were resolved or deleted.",
+    title = t("analysis.tray.title"),
+    ariaLabel = t("analysis.tray.aria"),
+    emptyText = t("analysis.tray.empty"),
     tone = "new",
     footer = "",
     siteName = "",
@@ -290,61 +302,40 @@ export function analysisResultsTray(
  * @returns {string}
  */
 export function recentCheckTitle(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "From today's check";
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  const day =
-    date.toDateString() === today.toDateString()
-      ? "today's"
-      : date.toDateString() === yesterday.toDateString()
-        ? "yesterday's"
-        : `${new Intl.DateTimeFormat(undefined, {
-            month: "short",
-            day: "numeric",
-          }).format(date)}'s`;
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-  return `From ${day} ${time} check`;
+  const daysAgo = pacificDaysAgo(value);
+  if (daysAgo === null) return t("analysis.checkTitle.todayFallback");
+  const time = formatTime(value);
+  if (daysAgo === 0) return t("analysis.checkTitle.today", { time });
+  if (daysAgo === 1) return t("analysis.checkTitle.yesterdayTime", { time });
+  return t("analysis.checkTitle.dateTime", {
+    date: formatMonthDay(value),
+    time,
+  });
 }
 
+/**
+ * Sunday-based weekday index (0–6) of an instant in Pacific calendar terms.
+ * Computation only — the display name comes from formatWeekday.
+ * @param {Date} date
+ * @returns {number}
+ */
 /**
  * @param {string | Date} value date/time of the check
  * @param {Date} [now]
  * @returns {string}
  */
 export function historicalCheckTitle(value, now = new Date()) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "From an earlier check";
-  if (date.toDateString() === now.toDateString()) {
-    const time = new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(date);
-    return `From today's ${time} check`;
+  const daysAgo = pacificDaysAgo(value, now);
+  if (daysAgo === null) return t("analysis.checkTitle.earlier");
+  if (daysAgo === 0) {
+    return t("analysis.checkTitle.today", { time: formatTime(value) });
   }
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) {
-    return "From yesterday's check";
+  if (daysAgo === 1) return t("analysis.checkTitle.yesterday");
+  // Within the current Sunday-based calendar week (and not in the future).
+  if (daysAgo > 1 && daysAgo <= (pacificWeekdayIndex(now) ?? 0)) {
+    return t("analysis.checkTitle.weekday", { weekday: formatWeekday(value) });
   }
-  const weekStart = new Date(now);
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(now.getDate() - now.getDay());
-  if (date >= weekStart && date < now) {
-    const weekday = new Intl.DateTimeFormat(undefined, {
-      weekday: "long",
-    }).format(date);
-    return `From ${weekday}'s check`;
-  }
-  return `From the check on ${new Intl.DateTimeFormat("en-US", {
-    month: "2-digit",
-    day: "2-digit",
-    year: "2-digit",
-  }).format(date)}`;
+  return t("analysis.checkTitle.date", { date: formatNumericDate(value) });
 }
 
 /**
@@ -412,9 +403,11 @@ function analysisCardEntries(
           title:
             displayCategory(task) ||
             displayCategory(condition) ||
-            "Condition found",
+            t("card.title.fallback"),
           description:
-            task.guidance || condition.description || "Review this condition.",
+            rulebookText(task.guidance) ||
+            displayDescription(condition) ||
+            t("card.description.fallback"),
           action: taskButtonLabel(task) || actionLabel(task.kind),
           actionKind: task.kind || "",
           routeType: routeType(task),
@@ -445,6 +438,21 @@ function analysisCardEntries(
   }));
 }
 
+/**
+ * The clear-check sentence with its "Add a problem" link spliced in at the
+ * {link} placeholder, so translators see one whole sentence.
+ * @returns {string}
+ */
+function clearCheckCopy() {
+  const link = html`<a href="/problem"
+    >${escapeHtml(t("card.clear.addProblem"))}</a
+  >`;
+  return t("card.clear.copy")
+    .split("{link}")
+    .map((part) => escapeHtml(part))
+    .join(link);
+}
+
 /** @returns {string} */
 export function clearCheckCard() {
   return html`
@@ -452,12 +460,9 @@ export function clearCheckCard() {
       <div class="analysis-card__panel">
         <div class="analysis-card__clear-title">
           <img src="${escapeAttr(CLEAR_CHECK_ICON)}" alt="" />
-          <h3>Your check was clear!</h3>
+          <h3>${escapeHtml(t("card.clear.title"))}</h3>
         </div>
-        <p class="analysis-card__clear-copy">
-          We didn't identify any perimeter issues in this check.
-          <a href="/problem">Add a problem</a> if we missed something
-        </p>
+        <p class="analysis-card__clear-copy">${clearCheckCopy()}</p>
       </div>
     </article>
   `;
@@ -472,9 +477,10 @@ export function clearCheckCard() {
 function conditionEvidenceCard(item, sessionCheckId, condition) {
   return completedEvidenceCard(item, sessionCheckId, {
     title: condition.needsAnswer
-      ? "More details needed"
-      : displayCategory(condition) || "Condition found",
-    description: condition.description || "Review this condition.",
+      ? t("card.title.moreDetails")
+      : displayCategory(condition) || t("card.title.fallback"),
+    description:
+      displayDescription(condition) || t("card.description.fallback"),
     action: "",
     actionKind: "",
     conditionId: condition.conditionId || "",
@@ -512,7 +518,7 @@ export function taskAnalysisCard({
     dataUrl: mediaUrl,
     fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
-    placeName: placeName || siteName || "Site",
+    placeName: placeName || siteName || t("card.place.fallback"),
     georeferencedAddress:
       task.georeferencedAddress || task.evidence?.georeferencedAddress || "",
     address: task.address || "",
@@ -526,13 +532,22 @@ export function taskAnalysisCard({
     },
   };
   return completedEvidenceCard(pseudoItem, task.checkId || "", {
-    title: displayCategory(task) || task.label || "Condition found",
+    title:
+      displayCategory(task) ||
+      rulebookText(task.label) ||
+      t("card.title.fallback"),
     description:
       task.status === "in_progress" || task.status === "completed"
-        ? task.description || task.guidance || task.category || ""
-        : task.guidance || task.description || task.category || "",
+        ? displayDescription(task) ||
+          rulebookText(task.guidance) ||
+          rulebookText(task.category) ||
+          ""
+        : rulebookText(task.guidance) ||
+          displayDescription(task) ||
+          rulebookText(task.category) ||
+          "",
     editableDescription: task.description || "",
-    action: action?.label || (includeControls ? "Done" : ""),
+    action: action?.label || (includeControls ? t("common.done") : ""),
     actionVariant: action?.variant || "",
     actionKind:
       task.kind || (action?.variant === "blue" ? "escalation" : "action"),
@@ -583,7 +598,9 @@ function taskDisplayReference(task) {
  */
 function newTaskMetaLabel(task) {
   const reference = taskDisplayReference(task);
-  return reference ? `NEW • ${reference}` : "NEW";
+  return reference
+    ? t("card.meta.newWithReference", { reference })
+    : t("card.meta.new");
 }
 
 /**
@@ -594,7 +611,9 @@ function newTaskMetaLabel(task) {
 function taskMetaLabel(task, isNew) {
   if (isNew) return newTaskMetaLabel(task);
   const reference = taskDisplayReference(task);
-  return reference ? `NEEDS ACTION • ${reference}` : "NEEDS ACTION";
+  return reference
+    ? t("card.meta.needsActionWithReference", { reference })
+    : t("card.meta.needsAction");
 }
 
 function pendingCard(item) {
@@ -608,8 +627,10 @@ function pendingCard(item) {
         ></span>
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
-            <p class="analysis-card__place">${escapeHtml(place || "Place")}</p>
-            <h3>Analyzing...</h3>
+            <p class="analysis-card__place">
+              ${escapeHtml(place || t("card.place.placeholder"))}
+            </p>
+            <h3>${escapeHtml(t("card.pending.title"))}</h3>
             <div class="analysis-card__skeleton-copy" aria-hidden="true">
               <span
                 class="analysis-card__skeleton analysis-card__skeleton--wide"
@@ -651,7 +672,11 @@ function stageRow(label, stamp, reached) {
       <span class="analysis-card__stage-mark" aria-hidden="true"
         >${stamp ? "✓" : "•"}</span
       >
-      <span class="visually-hidden">${stamp ? "Done. " : "In progress. "}</span>
+      <span class="visually-hidden"
+        >${escapeHtml(
+          stamp ? t("card.stage.done") : t("card.stage.inProgress"),
+        )}
+      </span>
       <span>${escapeHtml(label)}</span>
     </li>
   `;
@@ -683,28 +708,34 @@ function failedCard(item) {
             alt=""
             aria-hidden="true"
           />
-          COULDN'T FINISH
+          ${escapeHtml(t("card.failed.meta"))}
         </p>
         <h3>
-          ${failure.leg === "upload"
-            ? "Upload failed"
-            : "Analysis didn't finish"}
+          ${escapeHtml(
+            failure.leg === "upload"
+              ? t("card.failed.uploadTitle")
+              : t("card.failed.analysisTitle"),
+          )}
         </h3>
         <ul class="analysis-card__stages">
           ${stageRow(
-            item.kind === "text" ? "Note saved" : "Photo uploaded",
+            item.kind === "text"
+              ? t("card.stage.noteSaved")
+              : t("card.stage.photoUploaded"),
             uploaded ? new Date().toISOString() : "",
             true,
           )}
           ${stageRow(
-            "Sent to analyzer",
+            t("card.stage.sentToAnalyzer"),
             sent ? new Date().toISOString() : "",
             uploaded,
           )}
         </ul>
         <p class="analysis-card__failure-reason">
           ${escapeHtml(reason)}${waited
-            ? html` Waited ${escapeHtml(waited)}.`
+            ? html` ${escapeHtml(
+                t("card.failed.waited", { duration: waited }),
+              )}`
             : ""}
         </p>
         <div class="analysis-card__actions">
@@ -714,13 +745,13 @@ function failedCard(item) {
             data-analysis-action="retry"
           >
             <wa-icon name="arrow-rotate-right" aria-hidden="true"></wa-icon>
-            Try again
+            ${escapeHtml(t("common.retry"))}
           </button>
           ${item.kind === "photo" && !uploaded
             ? html`<button
                 class="analysis-card__icon analysis-card__icon--danger wa-plain"
                 type="button"
-                aria-label="Remove photo"
+                aria-label="${escapeAttr(t("card.failed.removePhoto.aria"))}"
                 data-analysis-action="remove-item"
               >
                 <wa-icon name="trash" aria-hidden="true"></wa-icon>
@@ -743,17 +774,17 @@ function failedCard(item) {
 function failureReasonLine(failure, item) {
   switch (failure.leg) {
     case "upload":
-      return "We couldn't reach the server to upload. Check your connection and try again.";
+      return t("card.failed.reason.upload");
     case "analyze":
       return failure.backendError
-        ? "The analysis service couldn't process this one."
+        ? t("card.failed.reason.analyzeBackend")
         : item.kind === "text"
-          ? "The analysis is taking longer than expected."
-          : "The analysis is taking longer than expected. Your photo is saved — trying again picks up where it left off.";
+          ? t("card.failed.reason.analyzeText")
+          : t("card.failed.reason.analyzePhoto");
     case "evaluate":
-      return "We got the results but couldn't finish the guidance step.";
+      return t("card.failed.reason.evaluate");
     default:
-      return "We couldn't start this one. Check your connection and try again.";
+      return t("card.failed.reason.default");
   }
 }
 
@@ -766,7 +797,9 @@ function formatWaited(ms) {
   const total = Math.round(ms / 1000);
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  return minutes > 0
+    ? t("date.elapsed.minutes", { minutes, seconds })
+    : t("date.elapsed.seconds", { seconds });
 }
 
 function completedEvidenceCard(
@@ -782,7 +815,7 @@ function completedEvidenceCard(
     taskId = "",
     conditionId = "",
     question = null,
-    metaLabel = "NEW",
+    metaLabel = t("card.meta.new"),
     actionAttribute = "data-analysis-action",
     actionValue = "resolve",
     includeEditDelete = true,
@@ -840,9 +873,13 @@ function completedEvidenceCard(
                   class="analysis-card__ticket-status analysis-card__ticket-status--${escapeAttr(
                     route.statusTone,
                   )}"
-                  >${escapeHtml(route.status)}${route.statusDetail
-                    ? html`: ${escapeHtml(route.statusDetail)}`
-                    : ""}</span
+                  >${escapeHtml(
+                    statusLine(
+                      route.status,
+                      route.statusDetail,
+                      route.statusScope,
+                    ),
+                  )}</span
                 >`
             : ""}
         </p>
@@ -873,7 +910,7 @@ function completedEvidenceCard(
                     <button
                       class="analysis-card__icon wa-plain"
                       type="button"
-                      aria-label="Edit problem"
+                      aria-label="${escapeAttr(t("card.edit.aria"))}"
                       data-analysis-action="edit"
                     >
                       <wa-icon name="pen" aria-hidden="true"></wa-icon>
@@ -885,7 +922,7 @@ function completedEvidenceCard(
                     <button
                       class="analysis-card__icon analysis-card__icon--danger wa-plain"
                       type="button"
-                      aria-label="Remove problem"
+                      aria-label="${escapeAttr(t("card.delete.aria"))}"
                       data-analysis-action="delete"
                     >
                       <wa-icon name="trash" aria-hidden="true"></wa-icon>
@@ -906,13 +943,52 @@ function completedEvidenceCard(
   `;
 }
 
+// The AI's scene label wins; the category fallbacks are rulebook text and
+// render in the active language.
+/**
+ * "Status: detail" for a 311 route, each part shown in the active language.
+ * Composed here (not in the template) so the formatter cannot split it.
+ * @param {string} status
+ * @param {string} [detail]
+ * @param {string} [scope] key-prefix scope for the status text
+ */
+export function statusLine(status, detail = "", scope = "server.sf311") {
+  if (!status) return "";
+  const head = rulebookText(status, scope);
+  return detail ? `${head}: ${rulebookText(detail, "server.sf311")}` : head;
+}
+
+// Prefer the active-locale analyzer translation when present; fall back to the
+// canonical English wire fields, then rulebook text.
+function localizedAnalyzerText(record, flat, translationsKey) {
+  const translations = record?.translations;
+  if (translations && translations.language === getLocale()) {
+    const localized = translations[translationsKey];
+    if (typeof localized === "string" && localized) return localized;
+  }
+  return flat;
+}
+
 function displayCategory(record) {
   return (
+    localizedAnalyzerText(
+      record,
+      record?.userFriendlyLabel,
+      "user_friendly_label",
+    ) ||
     record?.userFriendlyLabel ||
     record?.user_friendly_label ||
-    record?.category ||
-    record?.analyzerCategory ||
-    record?.canonicalCategory ||
+    rulebookText(record?.category) ||
+    rulebookText(record?.analyzerCategory) ||
+    rulebookText(record?.canonicalCategory) ||
+    ""
+  );
+}
+
+function displayDescription(record) {
+  return (
+    localizedAnalyzerText(record, record?.description, "description") ||
+    record?.description ||
     ""
   );
 }
@@ -924,7 +1000,9 @@ function clarifyingQuestion(question, conditionId) {
   if (!key || !prompt || !options.length) return "";
   return html`
     <div class="analysis-card__question">
-      <p class="analysis-card__question-prompt">${escapeHtml(prompt)}</p>
+      <p class="analysis-card__question-prompt">
+        ${escapeHtml(rulebookText(prompt))}
+      </p>
       <div class="analysis-card__question-actions">
         ${options
           .map(
@@ -937,7 +1015,7 @@ function clarifyingQuestion(question, conditionId) {
                 data-answer-value="${escapeAttr(String(option.value))}"
                 data-condition-id="${escapeAttr(conditionId)}"
               >
-                ${escapeHtml(option.label || String(option.value))}
+                ${escapeHtml(rulebookOptionLabel(option))}
               </button>
             `,
           )
@@ -962,7 +1040,7 @@ function evidencePreview(item, placeholder = false) {
 }
 
 function imagePreview(item) {
-  const placeName = item.placeName || "Site";
+  const placeName = item.placeName || t("card.place.fallback");
   const address =
     item.georeferencedAddress || item.address || item.siteAddress || "";
   const capturedAt = item.uploadedAt || item.createdAt || "";
@@ -977,7 +1055,11 @@ function imagePreview(item) {
       >
         <img
           src="${escapeAttr(item.dataUrl)}"
-          alt="Evidence from ${escapeAttr(placeName || "the site")}"
+          alt="${escapeAttr(
+            t("card.evidence.alt", {
+              place: placeName || t("card.evidence.siteFallback"),
+            }),
+          )}"
         />
       </button>
     </div>
@@ -998,25 +1080,22 @@ function cardPlace(record) {
     record?.siteAddress ||
     record?.address ||
     record?.placeName ||
-    "Site";
+    t("card.place.fallback");
   return (
     String(value)
       .split(/\r?\n|,/)[0]
-      .trim() || "Site"
+      .trim() || t("card.place.fallback")
   );
 }
 
 function cardTime(value) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-  return `${sameDay ? "Today" : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date)}, ${time}`;
+  const daysAgo = pacificDaysAgo(value);
+  if (daysAgo === null) return "";
+  const time = formatTime(value);
+  return daysAgo === 0
+    ? t("card.time.today", { time })
+    : t("card.time.date", { date: formatMonthDay(value), time });
 }
 
 function routeType(task) {
@@ -1037,9 +1116,12 @@ function routeType(task) {
       : "";
     const status = task.latestUpdateLabel || ticketStatus;
     return {
-      label: "311 request",
+      label: t("card.route.ticket"),
       tone: "311",
       status,
+      statusScope: task.latestUpdateLabel
+        ? "server.taskUpdate"
+        : "server.sf311",
       statusDetail: status ? task.ticketStatusDetail || "" : "",
       statusTone: task.ticketResponseOverdue
         ? "overdue"
@@ -1056,35 +1138,37 @@ function routeType(task) {
     );
     return emergency
       ? {
-          label: "Emergency call",
+          label: t("card.route.emergency"),
           tone: "emergency",
           status: task.latestUpdateLabel || "",
+          statusScope: "server.taskUpdate",
           statusDetail: "",
           statusTone:
             task.latestUpdateLabel === "Resolved" ? "closed" : "default",
         }
       : {
-          label: "Non-emergency call",
+          label: t("card.route.nonEmergency"),
           tone: "non-emergency",
           status: task.latestUpdateLabel || "",
+          statusScope: "server.taskUpdate",
           statusDetail: "",
           statusTone:
             task.latestUpdateLabel === "Resolved" ? "closed" : "default",
         };
   }
-  return { label: "On-site action", tone: "onsite", status: "" };
+  return { label: t("card.route.onsite"), tone: "onsite", status: "" };
 }
 
 function taskButtonLabel(task) {
   return Array.isArray(task.buttons) && task.buttons[0]
-    ? String(task.buttons[0])
+    ? rulebookText(String(task.buttons[0]))
     : "";
 }
 
 function actionLabel(kind) {
-  if (kind === "non_actionable_escalation") return "Escalate";
-  if (kind === "escalation") return "Escalate";
-  if (kind === "action") return "Log action";
+  if (kind === "non_actionable_escalation") return t("card.action.escalate");
+  if (kind === "escalation") return t("card.action.escalate");
+  if (kind === "action") return t("card.action.logAction");
   return "";
 }
 
@@ -1130,11 +1214,9 @@ export function problemSummary(items) {
  * @returns {string}
  */
 export function problemSummaryLabel({ visible, hidden }) {
-  if (visible > 0) {
-    return `${visible} ${visible === 1 ? "problem" : "problems"} found`;
-  }
-  if (hidden > 0) return "All problems resolved";
-  return "No problems found";
+  if (visible > 0) return t("analysis.summary.found", { count: visible });
+  if (hidden > 0) return t("analysis.summary.allResolved");
+  return t("analysis.summary.none");
 }
 
 function hiddenConditionIdSet(item) {
@@ -1169,6 +1251,21 @@ function visibleProblemSelection(item) {
 }
 
 /**
+ * The success sentence with its emphasised ending spliced in at the
+ * {resolved} placeholder, so translators see one whole sentence.
+ * @returns {string}
+ */
+function successDialogCopy() {
+  const resolved = html`<span
+    >${escapeHtml(t("analysis.successDialog.resolved"))}</span
+  >`;
+  return t("analysis.successDialog.text")
+    .split("{resolved}")
+    .map((part) => escapeHtml(part))
+    .join(resolved);
+}
+
+/**
  * The delete / edit / progress / success dialogs every analysis card action
  * uses. Rendered once per host element; the hosts wire the buttons.
  */
@@ -1183,7 +1280,7 @@ export const analysisDialogs = () => html`
       <div class="analysis-dialog__copy">
         <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
         <p class="analysis-dialog__text" id="analysis-delete-copy">
-          This action can't be undone. The issue details won't be saved.
+          ${escapeHtml(t("analysis.deleteDialog.text"))}
         </p>
         <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
       </div>
@@ -1193,9 +1290,11 @@ export const analysisDialogs = () => html`
           id="analysis-delete-confirm"
           type="button"
         >
-          Delete
+          ${escapeHtml(t("common.delete"))}
         </button>
-        <button class="analysis-dialog__button" type="submit">Cancel</button>
+        <button class="analysis-dialog__button" type="submit">
+          ${escapeHtml(t("common.cancel"))}
+        </button>
       </div>
     </form>
   </dialog>
@@ -1209,11 +1308,10 @@ export const analysisDialogs = () => html`
     <form class="analysis-dialog__card" method="dialog">
       <div class="analysis-dialog__copy">
         <h2 class="analysis-dialog__title" id="analysis-success-title">
-          Great work!
+          ${escapeHtml(t("analysis.successDialog.title"))}
         </h2>
         <p class="analysis-dialog__text" id="analysis-success-copy">
-          We've recorded your action. This item is now
-          <span>marked as resolved.</span>
+          ${successDialogCopy()}
         </p>
       </div>
       <div class="analysis-dialog__actions">
@@ -1221,14 +1319,14 @@ export const analysisDialogs = () => html`
           class="analysis-dialog__button analysis-dialog__button--success"
           type="submit"
         >
-          Continue
+          ${escapeHtml(t("common.continue"))}
         </button>
         <button
           class="analysis-dialog__button"
           id="analysis-success-undo"
           type="button"
         >
-          Undo
+          ${escapeHtml(t("common.undo"))}
         </button>
       </div>
     </form>
@@ -1241,7 +1339,7 @@ export const analysisDialogs = () => html`
   >
     <div class="analysis-dialog__card analysis-dialog__card--progress">
       <h2 class="analysis-dialog__title" id="analysis-progress-title">
-        Filing ticket...
+        ${escapeHtml(t("analysis.progressDialog.title"))}
       </h2>
       <div class="analysis-progress-ring" aria-hidden="true"></div>
       <button
@@ -1249,7 +1347,7 @@ export const analysisDialogs = () => html`
         id="analysis-progress-cancel"
         type="button"
       >
-        Cancel
+        ${escapeHtml(t("common.cancel"))}
       </button>
     </div>
   </dialog>
@@ -1263,15 +1361,15 @@ export const analysisDialogs = () => html`
     <form class="analysis-dialog__card" method="dialog">
       <div class="analysis-dialog__copy">
         <h2 class="analysis-dialog__title" id="analysis-edit-title">
-          Edit problem
+          ${escapeHtml(t("analysis.editDialog.title"))}
         </h2>
         <p class="analysis-dialog__text" id="analysis-edit-copy">
-          Change the description to match what you see
+          ${escapeHtml(t("analysis.editDialog.text"))}
         </p>
         <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
       </div>
       <label class="analysis-edit-dialog__field">
-        <span>Description</span>
+        <span>${escapeHtml(t("analysis.editDialog.descriptionLabel"))}</span>
         <textarea id="analysis-edit-description" rows="5"></textarea>
       </label>
       <div class="analysis-dialog__actions">
@@ -1280,13 +1378,13 @@ export const analysisDialogs = () => html`
           id="analysis-edit-save"
           type="button"
         >
-          Save
+          ${escapeHtml(t("common.save"))}
         </button>
         <button
           class="analysis-dialog__button analysis-dialog__button--danger-text"
           type="submit"
         >
-          Discard
+          ${escapeHtml(t("analysis.editDialog.discard"))}
         </button>
       </div>
     </form>

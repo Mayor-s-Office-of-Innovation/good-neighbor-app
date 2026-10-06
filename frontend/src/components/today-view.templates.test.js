@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
 import {
   actionButton,
   attributionDialog,
@@ -38,8 +40,8 @@ describe("attributionDialog", () => {
 
     expect(markup).toContain('id="attributions-dialog"');
     expect(markup).toContain('aria-labelledby="attributions-title"');
-    expect(markup).toContain("Amazon Location Service data attribution");
-    expect(markup).toContain("U.S. Census Bureau Geocoder");
+    expect(markup).toContain(escapeHtml(t("today.attributions.aws")));
+    expect(markup).toContain(escapeHtml(t("today.attributions.census")));
     expect(markup.match(/target="_blank"/g)).toHaveLength(2);
     expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(2);
   });
@@ -48,11 +50,11 @@ describe("attributionDialog", () => {
 describe("logoutDialog", () => {
   it("disables the confirm button and shows the error while pending", () => {
     const idle = logoutDialog({ error: "", pending: false });
-    expect(idle).toContain("Log me out");
+    expect(idle).toContain(escapeHtml(t("today.logout.confirm")));
     expect(idle).not.toContain('role="alert"');
 
     const pending = logoutDialog({ error: "Nope", pending: true });
-    expect(pending).toContain("Logging out...");
+    expect(pending).toContain(escapeHtml(t("today.logout.pending")));
     expect(pending).toMatch(/id="logout-confirm"[^>]*disabled/);
     expect(pending).toContain('class="logout-dialog__error" role="alert"');
   });
@@ -71,6 +73,8 @@ describe("summaryBlock", () => {
   it("offers a site change when the device is far away", () => {
     const markup = summaryBlock({ outsideRadius: true, label: "ignored" });
     expect(markup).toContain('id="lastlog-change-site"');
+    expect(markup).toContain(escapeHtml(t("today.summary.outsideRadius")));
+    expect(markup).toContain(escapeHtml(t("today.summary.changeSite")));
     expect(markup).not.toContain("ignored");
   });
 
@@ -86,8 +90,14 @@ describe("taskTabs", () => {
   it("uses accessible filter buttons rather than incomplete tab semantics", () => {
     const markup = taskTabs({ activeId: "todo" });
     expect(markup).toContain('role="group"');
+    expect(markup).toContain(
+      `aria-label="${escapeHtml(t("today.tabs.aria"))}"`,
+    );
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain("home-tabs__tab--active");
+    expect(markup).toContain(escapeHtml(t("home.tab.todo")));
+    expect(markup).toContain(escapeHtml(t("home.tab.inProgress")));
+    expect(markup).toContain(escapeHtml(t("home.tab.history")));
     expect(markup).not.toContain('role="tab"');
     expect(markup).not.toContain('role="tablist"');
     expect(markup).not.toContain('tabindex="-1"');
@@ -117,13 +127,13 @@ describe("homeResults", () => {
 
   it("shows the plain empty message while a session is pending or on other tabs", () => {
     expect(homeResults({ ...base, hasPendingSession: true })).toContain(
-      "No tasks to do.",
+      escapeHtml(t("today.empty.todo")),
     );
     expect(homeResults({ ...base, homeFilter: "history" })).toContain(
-      "No task history yet.",
+      escapeHtml(t("today.empty.history")),
     );
     expect(emptyResults({ homeFilter: "in_progress" })).toContain(
-      "No tasks in progress.",
+      escapeHtml(t("today.empty.inProgress")),
     );
   });
 
@@ -195,10 +205,18 @@ describe("actionButton", () => {
 
 describe("reasonPicker", () => {
   it("lists each reason and a cancel", () => {
-    const markup = reasonPicker({ reasons: ["Locked", "No access"] });
+    const markup = reasonPicker({
+      reasons: [
+        { value: "Locked", label: "Cerrado" },
+        { value: "No access", label: "Sin acceso" },
+      ],
+    });
     expect(markup.match(/data-action="cant-reason"/g)).toHaveLength(2);
     expect(markup).toContain('data-reason="No access"');
+    expect(markup).toMatch(/>\s*Sin acceso\s*</);
+    expect(markup).not.toMatch(/>\s*No access\s*</);
     expect(markup).toContain('data-action="cant-cancel"');
+    expect(markup).toContain(escapeHtml(t("common.cancel")));
   });
 });
 
@@ -210,11 +228,21 @@ describe("errorView", () => {
     const markup = errorView({ identity: { org: "Org", site: "Site" } });
     expect(markup).toContain("home-identity__org");
     expect(markup).toContain('id="retry"');
+    expect(markup).toContain(escapeHtml(t("today.error.title")));
+    expect(markup).toContain(escapeHtml(t("today.error.text")));
+    expect(markup).toContain(escapeHtml(t("common.retry")));
   });
 });
 
 describe("homeAllDonePanel", () => {
   it("links to the single-issue flow", () => {
-    expect(homeAllDonePanel()).toContain('data-start-capture="single-problem"');
+    const markup = homeAllDonePanel();
+    expect(markup).toContain('data-start-capture="single-problem"');
+    expect(markup).toContain(escapeHtml(t("card.clear.addProblem")));
+    // The sentence around the link stays one translatable unit.
+    const [before, after] = t("today.allDone.note").split("{link}");
+    expect(markup).toContain(escapeHtml(before));
+    expect(markup).toContain(escapeHtml(after));
+    expect(markup).not.toContain("{link}");
   });
 });

@@ -10,7 +10,7 @@
   rotating refresh token.
 */
 
-import { ApiError } from "./api-error.js";
+import { ApiError, InvalidSiteCodeError } from "./api-error.js";
 
 // Same-origin everywhere (shared strategy with services/api.js): in dev the
 // Vite proxy forwards `/v1/*` → the local API; in production the SPA and API
@@ -39,7 +39,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
  * @param {string} code
  * @param {{ deviceId?: string, label?: string }} [opts]
  * @returns {Promise<DeviceSession>}
- * @throws {Error} "invalid site code" (401) or a network/5xx failure
+ * @throws {InvalidSiteCodeError} on 401/404, else a network/5xx failure
  */
 export async function registerDevice(code, opts = {}) {
   const res = await fetch(`${BASE}/v1/devices`, {
@@ -52,7 +52,7 @@ export async function registerDevice(code, opts = {}) {
     }),
   });
   if (res.status === 401 || res.status === 404) {
-    throw new Error("invalid site code");
+    throw new InvalidSiteCodeError(res.status);
   }
   if (!res.ok) {
     throw new Error(`device registration failed (${res.status})`);

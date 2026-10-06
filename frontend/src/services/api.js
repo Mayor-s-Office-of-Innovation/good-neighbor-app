@@ -20,6 +20,7 @@ import { refreshDeviceToken } from "./devices.js";
 import { ApiError, ReauthRequiredError } from "./api-error.js";
 import { reportClientEvent } from "./error-report.js";
 import { classifyApiFailure } from "./backend-health.js";
+import { getLocale } from "../i18n/locale.js";
 
 // Public error surface stays on api.js (existing importers); the classes live
 // in api-error.js because devices.js needs them too and importing api.js from
@@ -444,7 +445,7 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ description: string, caller?: { request_id?: string } }} body
+ * @param {{ description: string, language?: string, caller?: { request_id?: string } }} body
  * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
  */
 export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
@@ -516,8 +517,10 @@ export function presignArtifact(checkId, body) {
 /**
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
+ * Stamps the active UI locale so the analyzer writes translated
+ * labels/descriptions the device can show.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string, language?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -525,7 +528,7 @@ export function registerArtifact(checkId, body) {
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
     {
-      body,
+      body: { language: getLocale(), ...body },
     },
   );
 }
