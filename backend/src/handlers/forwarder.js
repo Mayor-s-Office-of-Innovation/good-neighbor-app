@@ -228,16 +228,18 @@ function warnForwardFailed(reason, err, report) {
  * Reject with a timeout error if the fetch doesn't settle in time.
  * @template T
  * @param {Promise<T>} promise
+ * @param {number} [ms] budget; the error forwarder keeps the 3 s default,
+ *   the higher-volume event forwarder passes a tighter one
  * @returns {Promise<T>}
  */
-export async function withTimeout(promise) {
+export async function withTimeout(promise, ms = 3000) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
   try {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("forwarder timeout")), 3000);
+        timer = setTimeout(() => reject(new Error("forwarder timeout")), ms);
       }),
     ]);
   } finally {

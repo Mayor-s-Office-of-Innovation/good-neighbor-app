@@ -20,6 +20,13 @@ const DEFAULT_HOST = "https://us.i.posthog.com";
 export const FORWARD_FAILED_MARKER = "ClientEventForwardFailed";
 export const FORWARD_OK_MARKER = "ClientEventForwarded";
 export const LOG_ONLY_MARKER = "ClientEventLogOnly";
+/**
+ * Egress budget per event. Page views fire on every route change, and the
+ * intake answers only after the forward settles, so a slow PostHog must cost
+ * a dropped event rather than a held Lambda execution. 1 s is generous for a
+ * healthy ingest (typically ~100-300 ms) and a third of the error forwarder's.
+ */
+export const EVENT_FORWARD_TIMEOUT_MS = 1000;
 
 /**
  * Browser/OS/device properties derived from the request's user-agent.
@@ -83,7 +90,7 @@ export async function forwardClientEvent(report, ctx, deps = {}) {
   try {
     apiKey = await getPosthogApiKey(deps.config ?? getConfig());
   } catch (err) {
-    warnForwardFailed("secret_fetch_failed", err, report);
+    warnForwardFailed("secret_fetch_failed", err, logFields);
     return "failed";
   }
 
@@ -109,6 +116,7 @@ export async function forwardClientEvent(report, ctx, deps = {}) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
+      EVENT_FORWARD_TIMEOUT_MS,
     );
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);
@@ -122,23 +130,26 @@ export async function forwardClientEvent(report, ctx, deps = {}) {
     );
     return "forwarded";
   } catch (err) {
-    warnForwardFailed("forward_failed", err, report);
+    warnForwardFailed("forward_failed", err, logFields);
     return "failed";
   }
 }
 
 /**
+ * The WARN line carries the same event + device properties as the OK and
+ * log-only lines: during a PostHog outage it is the only record of the
+ * event, and the browser/OS/model detail is what an investigation needs.
  * @param {string} reason
  * @param {unknown} err
- * @param {import("./scrub-client-event.js").ScrubbedClientEvent} report
+ * @param {{ event: string, properties: unknown }} logFields
  */
-function warnForwardFailed(reason, err, report) {
+function warnForwardFailed(reason, err, logFields) {
   console.warn(
     JSON.stringify({
       level: "warn",
       marker: FORWARD_FAILED_MARKER,
       reason,
-      event: report.event,
+      ...logFields,
       error: err instanceof Error ? err.message : String(err),
     }),
   );

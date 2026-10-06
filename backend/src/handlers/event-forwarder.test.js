@@ -13,6 +13,7 @@ const {
   forwardClientEvent,
   toPosthogEvent,
   userAgentProperties,
+  EVENT_FORWARD_TIMEOUT_MS,
   FORWARD_FAILED_MARKER,
   FORWARD_OK_MARKER,
   LOG_ONLY_MARKER,
@@ -167,6 +168,44 @@ describe("forwardClientEvent", () => {
     ).toBe("failed");
     for (const call of warn.mock.calls) {
       expect(JSON.parse(String(call[0])).marker).toBe(FORWARD_FAILED_MARKER);
+    }
+  });
+
+  it("keeps the event and its device properties on the failure line", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await forwardClientEvent(
+      report(),
+      { userAgent: ANDROID_UA },
+      { fetchImpl: vi.fn().mockRejectedValue(new Error("boom")), config },
+    );
+    const line = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(line.event).toBe("$pageview");
+    expect(line.properties.$os_version).toBe("8.0.0");
+    expect(line.properties.$pathname).toBe("/check");
+    expect(line.error).toBe("boom");
+  });
+
+  it("gives up on a slow ingest after its own 1 s budget", async () => {
+    expect(EVENT_FORWARD_TIMEOUT_MS).toBe(1000);
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve(response(true, 200)), 10_000);
+          }),
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const promise = forwardClientEvent(report(), {}, { fetchImpl, config });
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(await promise).toBe("failed");
+      expect(JSON.parse(String(warn.mock.calls[0]?.[0])).error).toBe(
+        "forwarder timeout",
+      );
+    } finally {
+      vi.useRealTimers();
     }
   });
 

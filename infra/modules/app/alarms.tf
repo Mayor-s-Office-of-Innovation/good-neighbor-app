@@ -30,12 +30,15 @@ resource "aws_sns_topic_subscription" "alarm_emails" {
   endpoint  = each.value
 }
 
-# --- api Lambda filters -------------------------------------------------------
+# --- intake Lambda filters (client errors / client events / feedback) ---------
+# The three best-effort intakes run in the intake Lambda (lambda.tf), so every
+# marker-based filter below reads its log group; only the generic ServerError
+# filters read the api/worker groups.
 
 # PostHog forwarder failures (ingest down, egress broken, secret errors).
 resource "aws_cloudwatch_log_metric_filter" "client_error_forward_failed" {
   name           = "${local.name_prefix}-client-error-forward-failed"
-  log_group_name = aws_cloudwatch_log_group.api.name
+  log_group_name = aws_cloudwatch_log_group.intake.name
   pattern        = "{ $.marker = \"ClientErrorForwardFailed\" }"
 
   metric_transformation {
@@ -69,7 +72,7 @@ resource "aws_cloudwatch_metric_alarm" "client_error_forward_failed" {
 # alarm only at a clearly abusive level).
 resource "aws_cloudwatch_log_metric_filter" "client_error_dropped" {
   name           = "${local.name_prefix}-client-error-dropped"
-  log_group_name = aws_cloudwatch_log_group.api.name
+  log_group_name = aws_cloudwatch_log_group.intake.name
   pattern        = "{ $.marker = \"ClientErrorDropped\" }"
 
   metric_transformation {
@@ -98,6 +101,88 @@ resource "aws_cloudwatch_metric_alarm" "client_error_dropped" {
   tags = var.tags
 }
 
+# Client analytics event forwarder failures — the events twin of
+# client_error_forward_failed. Events are best-effort, so this is visibility
+# rather than data loss: the WARN line still carries the event + device
+# properties (event-forwarder.js), but nothing reaches PostHog while it fires.
+resource "aws_cloudwatch_log_metric_filter" "client_event_forward_failed" {
+  name           = "${local.name_prefix}-client-event-forward-failed"
+  log_group_name = aws_cloudwatch_log_group.intake.name
+  pattern        = "{ $.marker = \"ClientEventForwardFailed\" }"
+
+  metric_transformation {
+    name          = "ClientEventForwardFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "client_event_forward_failed" {
+  alarm_name          = "${local.name_prefix}-client-event-forward-failed"
+  alarm_description   = "Client analytics forwarder to PostHog is failing (ingest slow/down, egress broken, or secret misread). Events still land in CloudWatch with their device properties; fix forwarding so PostHog page views resume. Threshold is higher than the error twin because page views are frequent and the forwarder's 1 s budget trips first under PostHog latency."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ClientEventForwardFailed"
+  namespace           = local.error_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 10
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# Validation drops on the events intake, mirroring client_error_dropped.
+resource "aws_cloudwatch_log_metric_filter" "client_event_dropped" {
+  name           = "${local.name_prefix}-client-event-dropped"
+  log_group_name = aws_cloudwatch_log_group.intake.name
+  pattern        = "{ $.marker = \"ClientEventDropped\" }"
+
+  metric_transformation {
+    name          = "ClientEventDropped"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "client_event_dropped" {
+  alarm_name          = "${local.name_prefix}-client-event-dropped"
+  alarm_description   = "Unusually many invalid client-event payloads — possible abuse of the public intake (high threshold; single drops are normal noise)."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  threshold           = 100
+  period              = 300
+  namespace           = local.error_namespace
+  metric_name         = "ClientEventDropped"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+# Uncaught server errors (intake), same logServerError convention.
+resource "aws_cloudwatch_log_metric_filter" "intake_server_errors" {
+  name           = "${local.name_prefix}-intake-server-errors"
+  log_group_name = aws_cloudwatch_log_group.intake.name
+  pattern        = "{ $.level = \"ERROR\" }"
+
+  metric_transformation {
+    name          = "ServerError"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
 # Uncaught server errors (api), via the logServerError convention: single-line
 # JSON with "level":"ERROR".
 resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
@@ -120,7 +205,7 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
 # console-managed per environment — see the plan's Decisions).
 resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
   name           = "${local.name_prefix}-feedback-received"
-  log_group_name = aws_cloudwatch_log_group.api.name
+  log_group_name = aws_cloudwatch_log_group.intake.name
   pattern        = "{ $.marker = \"FeedbackReceived\" }"
 
   metric_transformation {
@@ -159,7 +244,7 @@ resource "aws_cloudwatch_metric_alarm" "feedback_received" {
 # alarm only at a clearly abusive level), mirroring client_error_dropped.
 resource "aws_cloudwatch_log_metric_filter" "feedback_dropped" {
   name           = "${local.name_prefix}-feedback-dropped"
-  log_group_name = aws_cloudwatch_log_group.api.name
+  log_group_name = aws_cloudwatch_log_group.intake.name
   pattern        = "{ $.marker = \"FeedbackDropped\" }"
 
   metric_transformation {
@@ -194,7 +279,7 @@ resource "aws_cloudwatch_metric_alarm" "feedback_dropped" {
 # metadata), so it pages.
 resource "aws_cloudwatch_log_metric_filter" "feedback_forward_failed" {
   name           = "${local.name_prefix}-feedback-forward-failed"
-  log_group_name = aws_cloudwatch_log_group.api.name
+  log_group_name = aws_cloudwatch_log_group.intake.name
   pattern        = "{ $.marker = \"FeedbackForwardFailed\" }"
 
   metric_transformation {

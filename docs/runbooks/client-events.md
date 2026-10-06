@@ -1,7 +1,7 @@
 # Runbook: client analytics events (page views, device facts, camera hand-offs)
 
-**Scope:** `frontend/src/services/analytics.js` → `POST /v1/client-events` → api Lambda
-(`backend/src/handlers/client-events.js`) → PostHog as plain named events. No vendor SDK ships
+**Scope:** `frontend/src/services/analytics.js` → `POST /v1/client-events` → **intake Lambda**
+(`backend/src/lambda/intake.js` → `handlers/client-events.js`) → PostHog as plain named events. No vendor SDK ships
 in the app. This is the sibling of the error-tracking pipeline (`/v1/client-errors`, `$exception`
 events) and the feedback pipeline (`/v1/feedback`, see [feedback-ops.md](./feedback-ops.md)); all
 three share the same PostHog project key and the same log-only default.
@@ -52,8 +52,13 @@ values are query-stripped again server-side. Adding an event or property means a
   error tracking, [feedback-ops.md §2](./feedback-ops.md)). Log-only still writes every event and
   its device properties to CloudWatch, so the device picture is available before egress is on.
 - WAF: `ClientEventsRateLimit` blocks an IP above 1000 requests per 5 minutes on this path.
+- Concurrency: the three intakes (errors, events, feedback) run in their own `gnp-<env>-intake`
+  Lambda with a reservation of 3, separate from the app api function. Each handler awaits its
+  PostHog forward before answering, so this reservation — not the per-IP WAF rule — is the
+  aggregate bound: a flood or a slow PostHog costs dropped beacons, never api capacity. The
+  event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
 
-## Is it working? (CloudWatch, api Lambda log group)
+## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/gnp-<env>-intake`)
 
 One structured line per event:
 
@@ -61,7 +66,7 @@ One structured line per event:
 |---|---|
 | `ClientEventLogOnly` | Key not set. Validated and logged with properties, never sent. |
 | `ClientEventForwarded` | PostHog accepted the batch. |
-| `ClientEventForwardFailed` | Secret read or PostHog ingest failed (WARN). |
+| `ClientEventForwardFailed` | Secret read, PostHog ingest, or the 1 s budget failed (WARN). Carries the event and its device properties, so nothing is lost for investigation. Alarms at ≥10 per 5 min. |
 | `ClientEventDropped` | Payload rejected by the scrubber (WARN). |
 
 Logs Insights:
