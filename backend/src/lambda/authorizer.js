@@ -7,8 +7,8 @@
 // shape lib/principal.js (deriveSiteId) reads.
 //
 // Attached to every route except the bootstrap/intake set (see api.tf). API
-// Gateway caches by the Authorization header value; the TTL (set in Terraform,
-// kept small) bounds how long a revocation takes to propagate.
+// API Gateway caching is disabled in Terraform so every protected request sees
+// the current binding, Site, and Manager membership state.
 
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";

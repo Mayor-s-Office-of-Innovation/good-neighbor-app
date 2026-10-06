@@ -40,7 +40,8 @@ JWT dependency), signed with a server-side key:
   `tokenGeneration`, which also kills the previous access token immediately.
 - **Revocation:** bump `tokenGeneration` (or delete the device). The
   authorizer's live `GetItem` check makes a still-cryptographically-valid token
-  dead instantly; API Gateway's 60 s verdict cache is the propagation bound.
+  dead on the next protected request; REQUEST-authorizer verdict caching is
+  disabled so no stale allow decision survives a revocation.
 - **Routing:** `POST /v1/devices` (register) and
   `POST /v1/devices/token:refresh` are the only device routes reachable
   anonymously; everything else attaches a REQUEST authorizer

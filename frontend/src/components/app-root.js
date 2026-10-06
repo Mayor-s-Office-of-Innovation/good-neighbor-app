@@ -12,6 +12,7 @@
 import { requestLocationPermissionEarly } from "../services/device-location.js";
 import {
   hasAdminAccess,
+  clearSite,
   getSite,
   resetLocalAppState,
   saveSiteSettings,
@@ -35,6 +36,10 @@ import {
   showQueuedSiteSwitchSuccessToast,
   showSiteSwitchSuccessToast,
 } from "../state/toasts.js";
+import {
+  hasEnrollmentCredentials,
+  isFatalSessionError,
+} from "../services/startup-auth.js";
 
 const ROUTE_VIEW = [
   ["/site-admin/edit", "site-admin-edit"],
@@ -47,7 +52,7 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
-class AppRoot extends HTMLElement {
+export class AppRoot extends HTMLElement {
   async connectedCallback() {
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
@@ -80,6 +85,10 @@ class AppRoot extends HTMLElement {
       this._renderSetup();
     };
     window.addEventListener("authsignout", this._onAuthSignout);
+    this._onEnrollmentUrlChange = () => {
+      if (hasEnrollmentCredentials()) this._beginEnrollmentFromUrl();
+    };
+    window.addEventListener("hashchange", this._onEnrollmentUrlChange);
     this._onSiteRequested = (event) => {
       const { siteId = "", siteName = "", mode = "code" } = event.detail || {};
       this._renderSetup({
@@ -93,11 +102,15 @@ class AppRoot extends HTMLElement {
     // Health monitoring starts regardless of binding state: /health is
     // authorizer-free, and the AUTH dialog is meaningful before setup too.
     startHealthMonitoring();
+    if (hasEnrollmentCredentials()) {
+      this._beginEnrollmentFromUrl();
+      return;
+    }
     if (!this._site) {
       this._renderSetup();
       return;
     }
-    await this._refreshSiteSettings();
+    if (!(await this._refreshSiteSettings())) return;
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     this._renderView();
@@ -107,6 +120,7 @@ class AppRoot extends HTMLElement {
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
+    window.removeEventListener("hashchange", this._onEnrollmentUrlChange);
     this.removeEventListener("siterequested", this._onSiteRequested);
     this._stopKeyboardViewportSync();
     this.removeEventListener("click", this._onPhotoLightbox);
@@ -183,13 +197,22 @@ class AppRoot extends HTMLElement {
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state
-      await this._refreshSiteSettings();
+      if (!(await this._refreshSiteSettings())) return;
       this._renderApp();
       if (switchingSite) showSiteSwitchSuccessToast();
       this._unsub = onRouteChange(() => this._renderView());
       navigate("/today");
       this._renderView();
     });
+  }
+
+  _beginEnrollmentFromUrl() {
+    // A one-time enrollment link is an explicit request to replace the cached
+    // binding. Mount setup even when IndexedDB still holds an older (possibly
+    // revoked) session. Clearing an earlier AUTH presentation keeps its modal
+    // from covering the automatic redemption state.
+    clearAuthState();
+    this._renderSetup();
   }
 
   _renderApp() {
@@ -298,7 +321,9 @@ class AppRoot extends HTMLElement {
   /**
    * Pull the site's settings (name etc.) from the backend and merge them onto
    * the local binding record. Best-effort: the app runs on the stored record
-   * when the request fails.
+   * when a transient request fails. A rejected or revoked session is fatal:
+   * clear the current binding and return to setup before rendering app data.
+   * @returns {Promise<boolean>} whether the app shell may be rendered
    */
   async _refreshSiteSettings() {
     try {
@@ -309,8 +334,17 @@ class AppRoot extends HTMLElement {
           providerSiteId: this._site.providerSiteId || site.providerSiteId,
         });
       }
+      return true;
     } catch (err) {
+      if (isFatalSessionError(err)) {
+        await clearSite();
+        this._site = null;
+        clearAuthState();
+        this._renderSetup();
+        return false;
+      }
       console.error("getSiteSettings failed", err);
+      return true;
     }
   }
 

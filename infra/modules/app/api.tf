@@ -189,8 +189,8 @@ resource "aws_apigatewayv2_integration" "analytics_query" {
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
 # the claim-shaped context handlers read. Identity source = the Authorization
-# header, so API Gateway caches verdicts per token; the TTL bounds revocation
-# propagation.
+# header. Results are deliberately not cached: device revocation is a security
+# boundary and must take effect on the next request.
 resource "aws_apigatewayv2_authorizer" "device_token" {
   api_id                            = aws_apigatewayv2_api.http.id
   name                              = "${local.name_prefix}-device-token"
@@ -202,7 +202,7 @@ resource "aws_apigatewayv2_authorizer" "device_token" {
   # context }) — without this flag API Gateway expects an IAM policy and
   # rejects the verdict at runtime.
   enable_simple_responses          = true
-  authorizer_result_ttl_in_seconds = 60
+  authorizer_result_ttl_in_seconds = 0
 }
 
 resource "aws_apigatewayv2_route" "routes" {

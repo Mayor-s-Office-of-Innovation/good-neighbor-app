@@ -9,6 +9,7 @@
 
 import { createServer } from "node:http";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
 import {
   createCheck,
@@ -168,33 +169,6 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-headers":
     "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
 };
-
-// Local device-token verification (mirrors lambda/authorizer.js): when a
-// request carries `Authorization: Bearer <jwt>`, verify it and use its claims
-// INSTEAD of the X-Debug stubs — so local dev exercises the production claim
-// contract. Unset DEVICE_TOKEN_SECRET disables verification (stub-only mode).
-async function resolveClaims(flatHeaders) {
-  const bearer = /^(?:authorization)$/i;
-  const header = Object.keys(flatHeaders).find((k) => bearer.test(k));
-  const value = header ? flatHeaders[header] : "";
-  const m = /^Bearer\s+(.+)$/i.exec(value.trim());
-  if (m && process.env.DEVICE_TOKEN_SECRET) {
-    try {
-      const { verifyDeviceToken } = await import("../src/lib/device-token.js");
-      const claims = await verifyDeviceToken(m[1]);
-      if (claims.typ !== "access") throw new Error("not an access token");
-      return {
-        sub: claims.sub,
-        siteId: claims.siteId,
-        ver: claims.ver,
-        accessLevel: claims.accessLevel,
-      };
-    } catch (err) {
-      return { error: /** @type {Error} */ (err).message };
-    }
-  }
-  return null;
-}
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -533,13 +507,14 @@ const server = createServer(async (req, res) => {
     }
     const hasQuery = Object.keys(queryStringParameters).length > 0;
 
-    // Local token verification (production claim contract): a Bearer token
-    // overrides the X-Debug stubs; a BAD token 401s like the real authorizer.
+    // Run the production authorizer locally. A Bearer token overrides the
+    // X-Debug stubs, and signature, expiry, live binding status/generation,
+    // Site state, and Manager membership are all checked before dispatch.
     const flat = {};
     for (const [k, v] of Object.entries(req.headers)) {
       flat[k] = Array.isArray(v) ? v.join(",") : v;
     }
-    const claims = await resolveClaims(flat);
+    const claims = await resolveDeviceClaims(flat);
     if (claims?.error) {
       res.writeHead(401, {
         "content-type": "application/json",
