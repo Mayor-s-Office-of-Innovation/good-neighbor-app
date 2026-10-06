@@ -53,6 +53,15 @@ export function appActionFailureMessage(
   task,
   { includeUnsubmitted311 = false } = {},
 ) {
+  // Completion is authoritative for the user's action. Background 311
+  // notification/closure failures remain in the audit results even when the
+  // action saved successfully. Explicit filing still requires a submitted SR.
+  if (
+    !includeUnsubmitted311 &&
+    ["completed", "in_progress", "cannot_do"].includes(task?.status || "")
+  ) {
+    return null;
+  }
   const results = Array.isArray(task?.appActionResults)
     ? task.appActionResults
     : [];
