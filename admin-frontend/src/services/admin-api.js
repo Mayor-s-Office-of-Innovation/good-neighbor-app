@@ -298,7 +298,7 @@ export const adminApi = {
     ),
   suspendDeviceBinding: (siteId, bindingId, reason) =>
     adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings/${encodeURIComponent(bindingId)}:suspend`,
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings/${encodeURIComponent(bindingId)}/suspend`,
       {
         method: "POST",
         body: JSON.stringify({ reason }),
@@ -310,7 +310,7 @@ export const adminApi = {
     ),
   revokePhysicalDeviceEverywhere: (physicalDeviceId, confirmation) =>
     adminFetch(
-      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}:revoke`,
+      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}/revoke`,
       {
         method: "POST",
         body: JSON.stringify({ confirmation }),
