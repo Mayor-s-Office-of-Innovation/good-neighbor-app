@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
 import {
   descriptionCard,
   footer,
@@ -161,5 +162,45 @@ describe("footer", () => {
     expect(markup).not.toMatch(/id="done-check"[^>]*disabled/);
     expect(markup).toContain('id="toggle-analyzing"');
     expect(markup).toContain(t("card.pending.title"));
+  });
+
+  it("supports the single-issue completion control", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", analysis: { status: "complete" } }],
+      analyzingOpen: true,
+      complete: true,
+      doneId: "submit-report",
+      doneLabel: t("common.done"),
+    });
+
+    expect(markup).toContain('id="submit-report"');
+    expect(markup).toContain(t("common.done"));
+    expect(markup).toContain('id="toggle-analyzing"');
+    expect(markup).toContain('aria-expanded="true"');
+  });
+
+  it("reports failed analysis instead of saying no problems were found", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", analysis: { status: "failed" } }],
+      analyzingOpen: true,
+      complete: true,
+    });
+
+    expect(markup).toContain(escapeHtml(t("card.failed.analysisTitle")));
+    expect(markup).not.toContain(t("analysis.summary.none"));
+  });
+
+  it("keeps the analyzing label while another item remains active", () => {
+    const markup = footer({
+      items: [
+        { id: "photo-1", analysis: { status: "failed" } },
+        { id: "photo-2", analysis: { status: "analyzing" } },
+      ],
+      analyzingOpen: true,
+      complete: true,
+    });
+
+    expect(markup).toContain(t("card.pending.title"));
+    expect(markup).not.toContain(escapeHtml(t("card.failed.analysisTitle")));
   });
 });
