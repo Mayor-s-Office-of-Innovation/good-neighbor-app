@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { t } from "../i18n/i18n.js";
+import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
 import { escapeHtml } from "../lib/html.js";
 import {
@@ -829,9 +829,9 @@ describe("taskAnalysisCard", () => {
       includeControls: false,
     });
 
-    expect(card).toContain("View details");
+    expect(card).toContain(t("card.viewUpdates"));
     expect(card).toContain('data-action="view311"');
-    expect(card).toContain("analysis-card__primary--outline");
+    expect(card).toContain("analysis-card__updates");
     expect(card).not.toContain('name="circle-check"');
     expect(card).toContain("analysis-card__media--placeholder");
     expect(card).toContain('name="image"');
@@ -1016,5 +1016,72 @@ describe("evidence captions without a place name", () => {
 
     expect(card).toContain("Civic Center Annex");
     expect(card).not.toContain(">perimeter<");
+  });
+});
+
+describe("card redesign", () => {
+  it("uses the Spanish task-update translation for an ambiguous History status", async () => {
+    await setLocale("es");
+    try {
+      const card = taskAnalysisCard({
+        task: {
+          taskId: "resolved",
+          kind: "escalation",
+          status: "completed",
+          latestUpdateLabel: "Resolved",
+        },
+        history: true,
+        action: null,
+        statusLabel: "",
+      });
+      expect(card).toContain("Resuelto");
+      expect(card).not.toContain("Resuelta");
+    } finally {
+      await setLocale("en");
+    }
+  });
+  const task = {
+    taskId: "task_1",
+    ruleId: "LITTER-1",
+    kind: "action",
+    category: "Litter",
+    buttons: ["We picked this up"],
+    createdAt: "2026-10-01T12:00:00Z",
+    completedAt: "2026-10-01T13:00:00Z",
+  };
+  it("shows the new rubric label on an existing to-do card with one edit target and an X", () => {
+    const card = taskAnalysisCard({
+      task,
+      action: { kind: "done", label: "We picked this up" },
+      statusLabel: "",
+    });
+    expect(card).toContain('role="checkbox"');
+    expect(card).toContain('aria-checked="false"');
+    expect(card).toContain("Pick up the litter");
+    expect(card).not.toContain("We picked this up");
+    expect(card).toContain('name="xmark"');
+    expect(card).toContain(t("card.editDetails"));
+  });
+  it("retains a filing button for 311 escalations", () => {
+    const card = taskAnalysisCard({
+      task: { ...task, kind: "escalation" },
+      action: { kind: "file311", label: "File 311 ticket" },
+      statusLabel: "",
+    });
+    expect(card).toContain('data-action="file311"');
+    expect(card).not.toContain('role="checkbox"');
+  });
+  it("renders history as a timeline row without editing controls or guidance", () => {
+    const card = taskAnalysisCard({
+      task: { ...task, status: "completed", guidance: "Guidance omitted" },
+      history: true,
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).toContain('data-action="update"');
+    expect(card).toContain(t("card.history.hours", { count: 1 }));
+    expect(card).not.toContain('data-analysis-action="edit"');
+    expect(card).not.toContain('data-analysis-action="delete"');
+    expect(card).not.toContain("Guidance omitted");
   });
 });

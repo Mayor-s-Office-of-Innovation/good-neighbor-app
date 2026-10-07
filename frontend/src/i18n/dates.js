@@ -130,3 +130,9 @@ export function pacificWeekdayIndex(value) {
   if (!date) return null;
   return new Date(pacificDayStamp(date)).getUTCDay();
 }
+
+/** Stable Pacific calendar grouping key, independent of display language. */
+export function pacificDateKey(value) {
+  const date = toDate(value);
+  return date ? new Date(pacificDayStamp(date)).toISOString().slice(0, 10) : "";
+}

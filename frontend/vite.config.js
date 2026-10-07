@@ -66,6 +66,20 @@ export default defineConfig(({ mode }) => {
       // error-tracking plan). deploy.yml uploads them to PostHog and EXCLUDES
       // them from the public S3 sync — public maps would leak full source.
       sourcemap: true,
+      rollupOptions: {
+        output: {
+          // Keep shared localization/escaping separate from the application
+          // entry as lazy card controls and dialogs are added to the graph.
+          manualChunks(id) {
+            if (
+              /\/src\/(i18n\/(i18n|locale)\.js|i18n\/catalogs\/en\.json|lib\/html\.js)$/.test(
+                id,
+              )
+            )
+              return "shared-ui";
+          },
+        },
+      },
     },
     server: {
       // HTTPS tunnel used for camera/location testing on physical devices. The

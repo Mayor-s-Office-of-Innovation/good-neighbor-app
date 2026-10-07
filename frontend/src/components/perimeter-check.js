@@ -1,4 +1,8 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import {
+  toggleCardCompletion,
+  isCompletingAnalysisCard,
+} from "./analysis-card-completion.js";
 /*
   perimeter-check — flat photo roll capture flow (docs/plan-remove-places.md).
 
@@ -310,7 +314,12 @@ class PerimeterCheck extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      this._resolveProblem(problem);
+      if (button.getAttribute("role") === "checkbox") {
+        toggleCardCompletion(this, card, button, {
+          onSaved: () => this._markProblemResolved(problem),
+          render: () => this._render(),
+        });
+      } else this._resolveProblem(problem);
     } else if (action === "answer") {
       this._answerProblemQuestion(problem, button);
     }
@@ -693,7 +702,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _render() {
-    if (isDeletingAnalysisCard(this)) return;
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
     const status = completionStatus(check);

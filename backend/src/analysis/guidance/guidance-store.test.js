@@ -114,7 +114,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v4",
+      policyVersion: "actions-escalations-v5",
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -134,7 +134,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v4",
+      policyVersion: "actions-escalations-v5",
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
@@ -148,7 +148,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v4",
+      policyVersion: "actions-escalations-v5",
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
@@ -521,6 +521,16 @@ describe("completeTaskWithAppActions", () => {
       gsi2sk: "2026-08-18T12:02:00.000Z#escalation#3#task-1",
     });
     expect(task).toMatchObject({ status: "completed" });
+    expect(finalTx.input.TransactItems[1].Put.Item).toMatchObject({
+      entityType: "task_update",
+      type: "task_completed",
+      label: "Marked as complete",
+      occurredAt: "2026-08-18T12:02:00.000Z",
+    });
+    expect(finalTx.input.TransactItems[2].Put.Item).toMatchObject({
+      entityType: "task_update_pointer",
+      updateId: finalTx.input.TransactItems[1].Put.Item.updateId,
+    });
   });
 
   it("moves an eligible task to in progress on its first card action", async () => {

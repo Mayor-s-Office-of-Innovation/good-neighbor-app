@@ -71,8 +71,11 @@ export class AppRoot extends HTMLElement {
         const trigger = event.target?.closest?.("[data-photo-lightbox]");
         if (!trigger) return;
         event.preventDefault();
+        // Polling may replace the thumbnail while the lazy module loads.
+        // Keep the originating screen as the navigation guard instead.
+        const screen = trigger.closest(".app__main > *");
         void import("./photo-lightbox.js").then(({ openPhotoLightbox }) =>
-          openPhotoLightbox(this, trigger),
+          openPhotoLightbox(this, trigger, screen),
         );
       };
       this.addEventListener("click", this._onPhotoLightbox);

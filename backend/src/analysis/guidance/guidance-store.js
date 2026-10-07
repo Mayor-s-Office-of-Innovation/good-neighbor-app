@@ -1558,11 +1558,12 @@ export async function completeTaskWithAppActions(opts) {
     (opts.completionMethod === "311_filed" &&
       !hasSubmitted311ActionResult(executedAppActionResults));
   const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
-  const actionUpdateId =
-    !appActionFailed && (canBeInProgress || filed311) ? randomUUID() : "";
+  const actionUpdateId = !appActionFailed ? randomUUID() : "";
   const actionLabel = filed311
     ? "311 ticket filed"
-    : String(existing.Item.buttons?.[0] ?? "Action taken");
+    : canBeInProgress
+      ? String(existing.Item.buttons?.[0] ?? "Action taken")
+      : "Marked as complete";
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1669,7 +1670,9 @@ export async function completeTaskWithAppActions(opts) {
                     updateId: actionUpdateId,
                     type: filed311
                       ? "311_ticket_filed"
-                      : "escalation_action_taken",
+                      : canBeInProgress
+                        ? "escalation_action_taken"
+                        : "task_completed",
                     label: actionLabel,
                     occurredAt: now,
                     actorId: opts.actorId ?? "site-team",

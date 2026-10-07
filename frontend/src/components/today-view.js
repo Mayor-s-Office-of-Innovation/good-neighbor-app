@@ -1,3 +1,9 @@
+import {
+  toggleCardCompletion,
+  isCompletingAnalysisCard,
+} from "./analysis-card-completion.js";
+import { groupHistory } from "../domain/task-history.js";
+import { pacificDateKey } from "../i18n/dates.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
 
@@ -211,7 +217,7 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
@@ -252,6 +258,9 @@ class TodayView extends HTMLElement {
       document.addEventListener("click", this._settingsDocumentClick);
     }
 
+    // Refreshing a completed card is not a new screen arrival. Re-focusing
+    // the heading after that refresh would scroll the worklist to the top.
+    const announceArrival = !this._homeModel;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -355,7 +364,7 @@ class TodayView extends HTMLElement {
     });
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
-    announceScreenHeading(this, ".home-identity__site");
+    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
   _taskWith311CardStatus(task) {
@@ -417,7 +426,7 @@ class TodayView extends HTMLElement {
       this._pendingLocationRender = true;
       return;
     }
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
@@ -433,6 +442,20 @@ class TodayView extends HTMLElement {
     );
     if (feedbackDialog) feedbackDialog.siteId = this._siteId;
 
+    const grouping = this.querySelector("#history-grouping");
+    if (grouping) {
+      void import("./history-grouping.js");
+    }
+    grouping?.addEventListener("change", async () => {
+      this._historyGrouping = /** @type {any} */ (grouping).value;
+      this._renderHome(this._homeModel);
+      const replacement =
+        /** @type {HTMLElement & { updateComplete?: Promise<boolean> }} */ (
+          this.querySelector("#history-grouping")
+        );
+      await replacement?.updateComplete;
+      if (replacement?.isConnected) replacement.focus({ preventScroll: true });
+    });
     const start = this.querySelector("#start-check");
     if (start) {
       // Routed capture: the check screen (routed variant) owns the flow from
@@ -689,10 +712,14 @@ class TodayView extends HTMLElement {
       ),
     );
     const newTaskEntries = selectedTaskEntries.filter(
-      (entry) => taskCheckGroupId(entry.task) === newestCheck.id,
+      (entry) =>
+        this._homeFilter !== "history" &&
+        taskCheckGroupId(entry.task) === newestCheck.id,
     );
     const visibleTasks = selectedTaskEntries.filter(
-      (entry) => taskCheckGroupId(entry.task) !== newestCheck.id,
+      (entry) =>
+        this._homeFilter === "history" ||
+        taskCheckGroupId(entry.task) !== newestCheck.id,
     );
     const latestSubmittedCheck = [...checks].sort((a, b) =>
       String(b.submittedAt || b.startedAt || "").localeCompare(
@@ -890,6 +917,7 @@ class TodayView extends HTMLElement {
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
     return homeResults({
+      historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
@@ -919,6 +947,7 @@ class TodayView extends HTMLElement {
   _taskCardEntry(entry, isNew) {
     return {
       markup: taskAnalysisCard({
+        history: ["resolved", "archived"].includes(entry.homeStatus),
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
@@ -931,10 +960,7 @@ class TodayView extends HTMLElement {
             : entry.homeStatus === "in_progress"
               ? {
                   kind: "update",
-                  label:
-                    entry.task.kind === "escalation"
-                      ? t("today.card.viewDetails")
-                      : t("today.card.update"),
+                  label: t("card.viewUpdates"),
                   variant: "outline",
                 }
               : null,
@@ -950,9 +976,41 @@ class TodayView extends HTMLElement {
     };
   }
 
-  // One history tray per past check, newest first. A clear check (no
-  // findings) gets an entry with no cards so its tray shows the clear card.
+  // Active work stays grouped by check; History uses the selected grouping.
+  // Preserve no-findings check records alongside the task history.
   _historyGroups(entries, checks, clearChecks = []) {
+    if (this._homeFilter === "history") {
+      const groups = groupHistory(
+        entries,
+        this._historyGrouping || "resolved",
+      ).map((group) => ({
+        dateKey: group.key,
+        title: group.title,
+        checkTime: "",
+        compact: true,
+        cards: group.entries
+          .map((entry) => this._taskCardEntry(entry, false).markup)
+          .join(""),
+      }));
+      // Preserve checks with no findings; they have no task resolution time.
+      for (const check of [...clearChecks].sort((a, b) =>
+        String(b.submittedAt || b.startedAt || "").localeCompare(
+          String(a.submittedAt || a.startedAt || ""),
+        ),
+      ))
+        groups.push({
+          dateKey: pacificDateKey(check.submittedAt || check.startedAt || ""),
+          title: "",
+          checkTime: check.submittedAt || check.startedAt,
+          compact: false,
+          cards: "",
+        });
+      // Clear checks have no resolution event: use their check day for both
+      // date modes. Type mode keeps them separate after the issue categories.
+      return this._historyGrouping === "type"
+        ? groups
+        : groups.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    }
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
     );
@@ -1442,7 +1500,16 @@ class TodayView extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      this._resolveAnalysisProblem(problem);
+      if (btn.getAttribute("role") === "checkbox") {
+        toggleCardCompletion(this, card, btn, {
+          onSaved: (task) =>
+            this._markAnalysisProblemResolved(problem, {
+              taskStatus:
+                task.status === "in_progress" ? "in_progress" : "resolved",
+            }),
+          render: () => this.connectedCallback(),
+        });
+      } else this._resolveAnalysisProblem(problem);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
     } else if (action === "retry") {
@@ -1779,18 +1846,13 @@ class TodayView extends HTMLElement {
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
-      this._run(card, () =>
-        completeTask(task.taskId, {
-          completionMethod: "manual",
-        }),
-      ).then((result) => {
-        if (result) {
+      toggleCardCompletion(this, card, btn, {
+        onSaved: (taskResult) =>
           this._setTaskOverride(
             task.taskId,
-            result.task?.status === "in_progress" ? "in_progress" : "resolved",
-          );
-          this.connectedCallback();
-        }
+            taskResult.status === "in_progress" ? "in_progress" : "resolved",
+          ),
+        render: () => this.connectedCallback(),
       });
     } else if (action === "file311") {
       this._run(
@@ -1903,7 +1965,7 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
