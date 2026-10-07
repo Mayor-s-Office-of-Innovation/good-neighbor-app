@@ -1,6 +1,7 @@
 import {
   toggleCardCompletion,
   isCompletingAnalysisCard,
+  slideCompletedCard,
 } from "./analysis-card-completion.js";
 import { groupHistory } from "../domain/task-history.js";
 import { pacificDateKey } from "../i18n/dates.js";
@@ -1509,7 +1510,7 @@ class TodayView extends HTMLElement {
             }),
           render: () => this.connectedCallback(),
         });
-      } else this._resolveAnalysisProblem(problem);
+      } else this._resolveAnalysisProblem(problem, card);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
     } else if (action === "retry") {
@@ -1720,8 +1721,9 @@ class TodayView extends HTMLElement {
     rejectConditionLocally(problem);
   }
 
-  async _resolveAnalysisProblem(problem) {
+  async _resolveAnalysisProblem(problem, card) {
     if (!problem.taskId) {
+      if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem);
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
@@ -1742,6 +1744,7 @@ class TodayView extends HTMLElement {
         return;
       }
       show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
@@ -1751,6 +1754,7 @@ class TodayView extends HTMLElement {
       const result = await completeTask(problem.taskId, {
         completionMethod: "manual",
       });
+      if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, {
         taskStatus:
           result?.task?.status === "in_progress" ? "in_progress" : "resolved",
@@ -1861,7 +1865,7 @@ class TodayView extends HTMLElement {
           completeTask(task.taskId, {
             completionMethod: "311_filed",
           }),
-        { requireSubmitted311: true },
+        { requireSubmitted311: true, animateOnSuccess: true },
       ).then((result) => {
         if (result) {
           show311SuccessToast(submitted311ServiceRequestNumber(result.task));
@@ -1872,14 +1876,14 @@ class TodayView extends HTMLElement {
       this._renderReasonPicker(card, task);
     } else if (action === "cant-reason") {
       const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason })).then(
-        (ok) => {
-          if (ok) {
-            this._setTaskOverride(task.taskId, "resolved");
-            this.connectedCallback();
-          }
-        },
-      );
+      this._run(card, () => cannotDoTask(task.taskId, { reason }), {
+        animateOnSuccess: true,
+      }).then((ok) => {
+        if (ok) {
+          this._setTaskOverride(task.taskId, "resolved");
+          this.connectedCallback();
+        }
+      });
     } else if (action === "cant-cancel") {
       this._restoreActions(card, task);
     }
@@ -1930,7 +1934,11 @@ class TodayView extends HTMLElement {
   // re-enable the card. Failures use the standardized app toast. A 200 with a
   // failed app action still counts as a failure and leaves the task available
   // to retry.
-  async _run(card, fn, { requireSubmitted311 = false } = {}) {
+  async _run(
+    card,
+    fn,
+    { requireSubmitted311 = false, animateOnSuccess = false } = {},
+  ) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
     buttons.forEach((b) => (b.disabled = true));
@@ -1951,6 +1959,9 @@ class TodayView extends HTMLElement {
         if (requireSubmitted311) show311ErrorToast();
         else showActionSaveErrorToast();
         return;
+      }
+      if (animateOnSuccess && card.isConnected) {
+        await slideCompletedCard(card);
       }
       return result || true;
     } catch (e) {

@@ -976,14 +976,15 @@ html.wa-dark .analysis-card__clear-copy a {
   min-height: 0;
   overflow: clip;
   flex-shrink: 0;
-  animation: analysis-card-collapse 1s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  animation: analysis-card-collapse 500ms cubic-bezier(0.65, 0, 0.35, 1)
+    forwards;
 }
 .analysis-card__completion-clip {
   min-height: 0;
   overflow: hidden;
 }
 .analysis-card--completing .analysis-card {
-  animation: analysis-card-slide 1s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  animation: analysis-card-slide 500ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
 }
 @keyframes analysis-card-slide {
   to {
