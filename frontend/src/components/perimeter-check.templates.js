@@ -172,10 +172,13 @@ export function footer({
   const active = items.some((item) =>
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
+  const failed = items.some((item) => item.analysis?.status === "failed");
   const problems = problemSummary(items);
   const problemLabel = active
     ? t("card.pending.title")
-    : problemSummaryLabel(problems);
+    : failed
+      ? t("card.failed.analysisTitle")
+      : problemSummaryLabel(problems);
   return html`
     <button
       class="check-timeline__done"

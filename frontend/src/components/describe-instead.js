@@ -18,6 +18,7 @@ import {
   getFlowType,
   getCurrentCheck,
   loadDraft,
+  setAnalyzingOpen,
   updateItem,
 } from "../state/check-session.js";
 import {
@@ -179,6 +180,7 @@ class DescribeInstead extends HTMLElement {
     // it and the backend never misses a text-only check.
     const record = addItem({ kind: "text", text });
     updateItem(record.id, { upload: { status: "uploaded" } });
+    if (this._flowType === "single-problem") setAnalyzingOpen(true);
     analyzeEvidenceItem(record.id);
     navigate(this._routeBase);
   }

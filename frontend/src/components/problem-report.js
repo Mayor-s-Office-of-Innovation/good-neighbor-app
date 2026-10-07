@@ -309,9 +309,13 @@ class ProblemReport extends HTMLElement {
       this._done();
       return;
     }
-    if (target.closest("#toggle-analyzing")) {
+    const toggle = target.closest("#toggle-analyzing");
+    if (toggle) {
       setAnalyzingOpen(!getAnalyzingOpen());
-      this._render();
+      const replacement = this.querySelector("#toggle-analyzing");
+      if (replacement instanceof HTMLElement) {
+        replacement.focus({ preventScroll: true });
+      }
     }
   }
 

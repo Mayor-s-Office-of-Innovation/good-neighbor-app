@@ -30,3 +30,9 @@
 .single-issue__analysis {
   width: 100%;
 }
+
+/* A collapsed tray must not reserve the flow's inter-item gap below the
+   footer; this keeps Done aligned with Finish check in the perimeter flow. */
+.single-issue__analysis:empty {
+  display: none;
+}

@@ -124,6 +124,18 @@ test.describe("perimeter check", () => {
     await expect(analyzingTray.locator(".analysis-card--clear")).toHaveCount(0);
     await expect(issueCards.first()).toBeVisible();
 
+    // The state update rebuilds the shared footer; focus must follow the
+    // replacement toggle so keyboard users can reopen it immediately.
+    const analysisToggle = page.locator("#toggle-analyzing");
+    await analysisToggle.click();
+    await expect(analysisToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(analysisToggle).toBeFocused();
+    await expect(analyzingTray).toHaveCount(0);
+    await analysisToggle.click();
+    await expect(analysisToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(analysisToggle).toBeFocused();
+    await expect(analyzingTray).toBeVisible();
+
     // --- Finish check → home ----------------------------------------------
     // No confirm dialog: the rule is met, so Finish goes straight home.
     await finishCheck(page);

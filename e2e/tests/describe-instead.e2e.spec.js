@@ -239,5 +239,50 @@ test.describe("describe instead", () => {
     await cont.click();
     await expect(page).toHaveURL(/\/problem$/);
     await expect(page.locator("#submit-report")).toBeEnabled();
+
+    // Text evidence has no photo tile, so its analysis opens automatically.
+    // Re-rendering the shared footer must preserve keyboard focus on its
+    // replacement toggle in both directions.
+    const analysisToggle = page.locator("#toggle-analyzing");
+    await expect(analysisToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.locator("#single-issue-analysis #analysis-tray"),
+    ).toBeVisible();
+    await analysisToggle.click();
+    await expect(analysisToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(analysisToggle).toBeFocused();
+    await expect(
+      page.locator("#single-issue-analysis #analysis-tray"),
+    ).toHaveCount(0);
+    await analysisToggle.click();
+    await expect(analysisToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(analysisToggle).toBeFocused();
+  });
+
+  test("failed single-issue analysis is not reported as problem-free", async ({
+    page,
+  }) => {
+    await page.locator("#report-problem").click();
+    await expect(page).toHaveURL(/\/problem$/);
+
+    await page.evaluate(async () => {
+      // @ts-expect-error -- this URL is resolved by the Vite browser server.
+      const session = await import("/src/state/check-session.js");
+      const item = session.addItem({
+        kind: "text",
+        text: "There is debris blocking the building entrance.",
+      });
+      if (!item) throw new Error("Could not add failure-state evidence");
+      session.updateItem(item.id, {
+        upload: { status: "uploaded" },
+        analysis: { status: "failed" },
+      });
+      session.setAnalyzingOpen(true);
+    });
+
+    const analysisToggle = page.locator("#toggle-analyzing");
+    await expect(analysisToggle).toContainText(t("card.failed.analysisTitle"));
+    await expect(analysisToggle).not.toContainText(t("analysis.summary.none"));
+    await expect(page.locator(".analysis-card--failed")).toBeVisible();
   });
 });

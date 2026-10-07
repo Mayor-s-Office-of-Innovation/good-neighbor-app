@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const addItem = vi.fn(() => ({ id: "item-1" }));
 const updateItem = vi.fn();
 const getFlowType = vi.fn(() => "single-problem");
+const setAnalyzingOpen = vi.fn();
 const analyzeEvidenceItem = vi.fn();
 const removeEvidenceItem = vi.fn(async () => {});
 const navigate = vi.fn();
@@ -18,6 +19,7 @@ vi.mock("../state/check-session.js", () => ({
   getFlowType,
   getCurrentCheck: vi.fn(() => null),
   loadDraft: vi.fn(async () => null),
+  setAnalyzingOpen,
 }));
 
 vi.mock("../services/photo-analysis.js", () => ({
@@ -93,6 +95,7 @@ describe("describe-instead (single-problem)", () => {
       upload: { status: "uploaded" },
     });
     expect(analyzeEvidenceItem).toHaveBeenCalledWith("item-1");
+    expect(setAnalyzingOpen).toHaveBeenCalledWith(true);
     expect(removeEvidenceItem).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/problem");
   });
@@ -132,6 +135,7 @@ describe("describe-instead (perimeter)", () => {
       text: LONG_TEXT,
     });
     expect(analyzeEvidenceItem).toHaveBeenCalledWith("item-1");
+    expect(setAnalyzingOpen).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/check");
   });
 
