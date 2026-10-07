@@ -33,6 +33,8 @@ export const shell = ({ title = t("problem.title.single") } = {}) => html`
       ${escapeHtml(t("check.describeInstead"))}
     </button>
 
+    <div class="check-timeline__footer" id="problem-footer"></div>
+
     <input
       type="file"
       id="file-input"
@@ -44,17 +46,6 @@ export const shell = ({ title = t("problem.title.single") } = {}) => html`
     />
 
     <div class="single-issue__analysis" id="single-issue-analysis"></div>
-
-    <div class="check-timeline__footer">
-      <button
-        class="check-timeline__done"
-        id="submit-report"
-        type="button"
-        disabled
-      >
-        ${escapeHtml(t("common.done"))}
-      </button>
-    </div>
 
     <dialog
       class="sheet"

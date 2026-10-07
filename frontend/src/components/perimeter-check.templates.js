@@ -159,10 +159,16 @@ export function photoGrid(photos, description = null) {
 }
 
 /**
- * @param {{ items: any[], analyzingOpen: boolean, complete: boolean }} props
+ * @param {{ items: any[], analyzingOpen: boolean, complete: boolean, doneId?: string, doneLabel?: string }} props
  * @returns {string}
  */
-export function footer({ items, analyzingOpen, complete }) {
+export function footer({
+  items,
+  analyzingOpen,
+  complete,
+  doneId = "done-check",
+  doneLabel = t("check.footer.finish"),
+}) {
   const active = items.some((item) =>
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
@@ -173,11 +179,11 @@ export function footer({ items, analyzingOpen, complete }) {
   return html`
     <button
       class="check-timeline__done"
-      id="done-check"
+      id="${escapeAttr(doneId)}"
       type="button"
       ${complete ? "" : "disabled"}
     >
-      ${escapeHtml(t("check.footer.finish"))}
+      ${escapeHtml(doneLabel)}
     </button>
     ${items.length
       ? html`

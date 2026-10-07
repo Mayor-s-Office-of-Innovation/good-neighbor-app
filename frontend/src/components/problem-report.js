@@ -65,15 +65,17 @@ import {
   addItem,
   removeItem,
   getFlowType,
+  getAnalyzingOpen,
   isCurrentSession,
   rejectConditionLocally,
   resolveConditionLocally,
   markCaptureComplete,
   onCheckSessionChange,
   pauseCheck,
+  setAnalyzingOpen,
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
-import { shotTile, addTile } from "./perimeter-check.templates.js";
+import { shotTile, addTile, footer } from "./perimeter-check.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
@@ -180,8 +182,8 @@ class ProblemReport extends HTMLElement {
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
-    this.querySelector("#submit-report").addEventListener("click", () =>
-      this._done(),
+    this.querySelector("#problem-footer").addEventListener("click", (event) =>
+      this._onFooterClick(event),
     );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-delete-dialog")
@@ -292,8 +294,25 @@ class ProblemReport extends HTMLElement {
     const record = addItem(
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
-    if (record) analyzeEvidenceItem(record.id);
+    if (record) {
+      setAnalyzingOpen(true);
+      analyzeEvidenceItem(record.id);
+    }
     this._render();
+  }
+
+  /** @param {Event} event */
+  _onFooterClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("#submit-report")) {
+      this._done();
+      return;
+    }
+    if (target.closest("#toggle-analyzing")) {
+      setAnalyzingOpen(!getAnalyzingOpen());
+      this._render();
+    }
   }
 
   /** @param {Event} e */
@@ -352,14 +371,15 @@ class ProblemReport extends HTMLElement {
     const container = this.querySelector("#single-issue-analysis");
     if (!container) return;
     const items = getItems();
-    container.innerHTML = items.length
-      ? analysisSection(
-          items,
-          this._checkId,
-          this._site?.name || "",
-          this._site?.address || "",
-        )
-      : "";
+    container.innerHTML =
+      getAnalyzingOpen() && items.length
+        ? analysisSection(
+            items,
+            this._checkId,
+            this._site?.name || "",
+            this._site?.address || "",
+          )
+        : "";
     this._wireAnalysisCards();
   }
 
@@ -387,9 +407,16 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _syncControls() {
-    const submit = this.querySelector("#submit-report");
-    if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = !hasLiveEvidence(getCurrentCheck());
+    const container = this.querySelector("#problem-footer");
+    if (!container) return;
+    const items = getItems();
+    container.innerHTML = footer({
+      items,
+      analyzingOpen: getAnalyzingOpen(),
+      complete: hasLiveEvidence(getCurrentCheck()),
+      doneId: "submit-report",
+      doneLabel: t("common.done"),
+    });
   }
 
   /** @returns {Promise<void>} */

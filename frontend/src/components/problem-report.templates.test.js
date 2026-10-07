@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { t } from "../i18n/i18n.js";
 import { shell } from "./problem-report.templates.js";
 
 describe("single-issue capture template", () => {
@@ -8,8 +7,12 @@ describe("single-issue capture template", () => {
 
     expect(markup).toContain("check-timeline single-issue");
     expect(markup).toContain('class="btn-outline check-roll__describe"');
-    expect(markup).toContain('class="check-timeline__done"');
-    expect(markup).toMatch(/id="submit-report"[\s\S]*?disabled/);
-    expect(markup).toContain(`>\n        ${t("common.done")}\n`);
+    expect(markup).toContain('id="problem-footer"');
+    expect(markup.indexOf('id="describe-instead"')).toBeLessThan(
+      markup.indexOf('id="problem-footer"'),
+    );
+    expect(markup.indexOf('id="problem-footer"')).toBeLessThan(
+      markup.indexOf('id="single-issue-analysis"'),
+    );
   });
 });

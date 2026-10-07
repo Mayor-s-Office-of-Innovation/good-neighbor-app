@@ -162,4 +162,19 @@ describe("footer", () => {
     expect(markup).toContain('id="toggle-analyzing"');
     expect(markup).toContain(t("card.pending.title"));
   });
+
+  it("supports the single-issue completion control", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", analysis: { status: "complete" } }],
+      analyzingOpen: true,
+      complete: true,
+      doneId: "submit-report",
+      doneLabel: t("common.done"),
+    });
+
+    expect(markup).toContain('id="submit-report"');
+    expect(markup).toContain(t("common.done"));
+    expect(markup).toContain('id="toggle-analyzing"');
+    expect(markup).toContain('aria-expanded="true"');
+  });
 });
