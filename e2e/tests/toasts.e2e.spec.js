@@ -75,6 +75,12 @@ test.describe("standardized app toasts", () => {
     await expect(undo).toBeFocused();
     await expect(close).toBeVisible();
 
+    // Some top-layer implementations intermittently resolve the popover host
+    // to the viewport height. Its grid rows must still remain content-sized.
+    await region.evaluate((element) => {
+      element.style.blockSize = "100dvh";
+    });
+
     const metrics = await toast.evaluate((element) => {
       const undoButton = element.querySelector(".app-toast__undo");
       const closeButton = element.querySelector(".app-toast__close");
@@ -86,6 +92,7 @@ test.describe("standardized app toasts", () => {
       return {
         top: toastBox.top,
         width: toastBox.width,
+        height: toastBox.height,
         undoWidth: undoBox.width,
         undoHeight: undoBox.height,
         closeWidth: closeBox.width,
@@ -95,6 +102,7 @@ test.describe("standardized app toasts", () => {
 
     expect(metrics.top).toBe(0);
     expect(metrics.width).toBeLessThanOrEqual(430);
+    expect(metrics.height).toBeLessThan(200);
     expect(
       Math.max(metrics.undoWidth, metrics.undoHeight),
     ).toBeGreaterThanOrEqual(43);
