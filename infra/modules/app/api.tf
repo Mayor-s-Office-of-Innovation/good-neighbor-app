@@ -108,9 +108,9 @@ locals {
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
     "POST /admin/v1/sites/{siteId}/device-bindings:revoke",
     "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
-    "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend",
+    "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}/suspend",
     "GET /admin/v1/physical-devices/{physicalDeviceId}",
-    "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke",
+    "POST /admin/v1/physical-devices/{physicalDeviceId}/revoke",
     "GET /admin/v1/emergency-site-revocations/sites",
     "POST /admin/v1/emergency-site-revocations:preview",
     "POST /admin/v1/emergency-site-revocations",
@@ -241,6 +241,13 @@ resource "aws_apigatewayv2_route" "routes" {
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
   authorization_type = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? "JWT" : "CUSTOM"
   authorizer_id      = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+
+  lifecycle {
+    precondition {
+      condition     = length(regexall("\\{[^}/]+\\}[^/]+", each.value)) == 0
+      error_message = "API Gateway path parameters must occupy an entire path segment: ${each.value}"
+    }
+  }
 }
 
 # Admin analytics routes: always the admin JWT authorizer, always the

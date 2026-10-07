@@ -268,11 +268,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     revokeSelectedDeviceBindings,
   "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all":
     revokeAllSiteDeviceBindings,
-  "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend":
+  "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}/suspend":
     suspendDeviceBinding,
   "GET /admin/v1/physical-devices/{physicalDeviceId}":
     getPhysicalDeviceRevocationPreview,
-  "POST /admin/v1/physical-devices/{physicalDeviceId}:revoke":
+  "POST /admin/v1/physical-devices/{physicalDeviceId}/revoke":
     revokePhysicalDeviceEverywhere,
   "GET /admin/v1/emergency-site-revocations/sites":
     listEmergencyRevocationSites,

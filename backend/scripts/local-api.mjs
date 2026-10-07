@@ -405,7 +405,7 @@ const routes = [
   ),
   route(
     "POST",
-    "/admin/v1/sites/{siteId}/device-bindings/{bindingId}:suspend",
+    "/admin/v1/sites/{siteId}/device-bindings/{bindingId}/suspend",
     suspendDeviceBinding,
   ),
   route(
@@ -415,7 +415,7 @@ const routes = [
   ),
   route(
     "POST",
-    "/admin/v1/physical-devices/{physicalDeviceId}:revoke",
+    "/admin/v1/physical-devices/{physicalDeviceId}/revoke",
     revokePhysicalDeviceEverywhere,
   ),
   route(
