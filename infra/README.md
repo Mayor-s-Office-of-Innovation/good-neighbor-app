@@ -73,8 +73,9 @@ different `AWS_DEPLOY_ROLE_ARN` in each job: the export job uses `dev`; the migr
 
 ## Production DNS bootstrap
 
-The **Provision goodneighbor.sf.gov DNS zone** workflow must be dispatched from `main`.
-It checks out the immutable commit recorded by that dispatch. The `prod`
+The **Provision goodneighbor.sf.gov DNS zone** and
+**Provision goodneighbor-compliance.sf.gov DNS zone** workflows must be dispatched from `main`.
+Each checks out the immutable commit recorded by that dispatch. The `prod`
 GitHub Environment is the external enforcement boundary: its selected-ref
 policy allows the `main` branch and the existing `v*` release tags, with required
 reviewer approval retained. Other branches and tags are rejected. The DNS
@@ -85,8 +86,8 @@ The DNS-only plan includes the hosted zone, DNSSEC signing and its asymmetric
 KMS key, plus query logging to an encrypted CloudWatch log group in `us-east-1`
 with 365-day retention. The workflow allowlist permits only those eight resources
 and only create/no-op actions, with one recovery exception: Terraform may replace
-`aws_route53_hosted_zone_dnssec.goodneighbor` after a failed initial signing
-attempt leaves that toggle resource tainted and `NOT_SIGNING`. This exception is
+the corresponding `aws_route53_hosted_zone_dnssec` resource after a failed initial
+signing attempt leaves that toggle resource tainted and `NOT_SIGNING`. This exception is
 safe only before DT publishes the parent DS record; it does not replace the hosted
 zone, KMS keys, or key-signing key. Other changes to existing resources require a
 normal reviewed infrastructure deployment.
@@ -96,6 +97,12 @@ delegation and zone signing are confirmed, coordinate publication of
 `goodneighbor_dnssec_ds_record` in `sf.gov` to establish the DNSSEC chain of
 trust. Signing alone does not establish that parent trust. The workflow summary
 reports both outputs.
+
+For the admin app, use the equivalent `admin_dns_name_servers` and
+`admin_dnssec_ds_record` outputs reported by its workflow. This bootstrap creates
+only the delegated `goodneighbor-compliance.sf.gov` zone and its DNS controls;
+the ACM certificate, CloudFront alias, and application records are added only
+after DT delegation resolves publicly.
 
 The earlier `gn.sf.gov` hosted zone and its DNS controls remain in the DEV
 account pending a separately reviewed retirement. They are deliberately absent
