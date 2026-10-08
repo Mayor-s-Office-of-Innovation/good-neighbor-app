@@ -77,3 +77,23 @@ output "analyzer_secret_arn" {
   description = "Secrets Manager ARN holding the analyzer x-api-key (value set out-of-band)."
   value       = aws_secretsmanager_secret.analyzer_api_key.arn
 }
+
+output "city_smtp_relay_secret_arn" {
+  description = "Secrets Manager container for City Proofpoint SMTP credentials; populate out-of-band."
+  value       = var.provision_city_smtp_relay_foundation ? aws_secretsmanager_secret.city_smtp_relay[0].arn : null
+}
+
+output "mail_manager_ingress_secret_arn" {
+  description = "Secrets Manager container for the Mail Manager ingress password; populate out-of-band."
+  value       = var.provision_city_smtp_relay_foundation ? aws_secretsmanager_secret.mail_manager_ingress[0].arn : null
+}
+
+output "mail_manager_ingress_hostname" {
+  description = "Public authenticated SMTP ingress hostname; null until the relay stack is enabled."
+  value       = var.enable_city_smtp_relay ? aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"] : null
+}
+
+output "mail_manager_ingress_username" {
+  description = "Mail Manager SMTP AUTH username (the ingress point ID); null until enabled."
+  value       = var.enable_city_smtp_relay ? aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"] : null
+}

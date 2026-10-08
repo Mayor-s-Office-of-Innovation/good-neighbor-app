@@ -6,6 +6,61 @@ locals {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# SMTP credentials use a purpose-specific key because SES Mail Manager, rather
+# than an application role, must decrypt them through Secrets Manager.
+resource "aws_kms_key" "smtp_secrets" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  description             = "KMS key for ${var.application} ${var.environment} SMTP credentials"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Standard KMS account-administration statement. Granting the account
+        # principal full key administration keeps IAM delegation and key
+        # recovery possible and prevents an unrecoverable key lockout; it does
+        # not grant Mail Manager runtime access. The following statement grants
+        # that service only Decrypt/Describe through Secrets Manager and scopes
+        # it to this environment's two SMTP secrets.
+        Sid       = "EnableIamUserPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowMailManagerSmtpSecretDecrypt"
+        Effect    = "Allow"
+        Principal = { Service = "ses.amazonaws.com" }
+        Action    = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            "kms:ViaService"    = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+          }
+          ArnLike = {
+            "kms:EncryptionContext:SecretARN" = [
+              "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${local.name_prefix}-city-smtp-relay-*",
+              "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${local.name_prefix}-mail-manager-ingress-*",
+            ]
+          }
+        }
+      }
+    ]
+  })
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "smtp_secrets" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  name          = "alias/${local.name_prefix}-smtp-secrets"
+  target_key_id = aws_kms_key.smtp_secrets[0].key_id
+}
+
 resource "aws_kms_key" "app" {
   description             = "KMS key for ${var.application} ${var.environment} application data"
   deletion_window_in_days = 30
