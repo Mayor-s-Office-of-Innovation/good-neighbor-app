@@ -37,12 +37,17 @@ registerIconLibrary("default", {
   mutator: (svg) => svg.setAttribute("fill", "currentColor"),
 });
 
-// Web Awesome base styles, imported piecewise instead of `webawesome.css` so the
-// unused styles and components never ship. Keep this list in sync with
-// webawesome.css's own import list.
+// Web Awesome base styles and component behavior utilities. Layout, spacing,
+// and typography use our own styles; importing utilities.css also ships those
+// unused utility classes and exceeds the main CSS budget.
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
-import "@awesome.me/webawesome/dist/styles/utilities.css";
+import "@awesome.me/webawesome/dist/styles/utilities/fouce.css";
+import "@awesome.me/webawesome/dist/styles/utilities/visually-hidden.css";
+import "@awesome.me/webawesome/dist/styles/utilities/scroll-lock.css";
+import "@awesome.me/webawesome/dist/styles/utilities/placeholder.css";
+import "@awesome.me/webawesome/dist/styles/utilities/size.css";
+import "@awesome.me/webawesome/dist/styles/utilities/variants.css";
 // Match the official Figma kit: Default theme + Default palette. The theme
 // stylesheet imports the palette and uses only local/system font stacks.
 import "@awesome.me/webawesome/dist/styles/themes/default.css";

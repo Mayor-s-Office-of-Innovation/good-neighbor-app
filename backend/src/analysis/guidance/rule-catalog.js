@@ -1,6 +1,9 @@
 /** @typedef {"Low" | "Moderate" | "High"} RuleWeighting */
 /** @typedef {"action" | "escalation" | "non_actionable_escalation" | "manual_review"} OutcomeKind */
-/** @typedef {{ kind: "always" } | { kind: "daily", startMinute: number, endMinute: number, timeZone: "America/Los_Angeles" }} RuleTimeRange */
+/** @typedef {{ kind: "always" } | { kind: "daily", startMinute: number, endMinute: number, timeZone: "America/Los_Angeles", daysOfWeek?: number[] }} RuleTimeRange */
+
+// Sunday = 0, matching the Pacific-local calendar day used by the evaluator.
+const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 /**
  * @typedef {object} RuleQuestion
@@ -93,9 +96,17 @@ export function parseSeverityRange(raw) {
 export function parseValidTimeRange(raw) {
   const value = cleanCell(raw);
   if (value.toLowerCase() === "24 hours") return { kind: "always" };
-  const match = value.match(/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/);
+  const match = value.match(
+    /^(\d{2}):(\d{2})-(\d{2}):(\d{2})(?:,\s*((?:Mo|Tu|We|Th|Fr|Sa|Su)(?:\+(?:Mo|Tu|We|Th|Fr|Sa|Su))*))?$/,
+  );
   if (!match) throw new Error(`Invalid valid time range: ${raw}`);
-  const [, startHour, startMinute, endHour, endMinute] = match.map(Number);
+  const [startHour, startMinute, endHour, endMinute] = match
+    .slice(1, 5)
+    .map(Number);
+  const daysOfWeek = match[5]?.split("+").map((day) => WEEKDAYS.indexOf(day));
+  if (daysOfWeek && new Set(daysOfWeek).size !== daysOfWeek.length) {
+    throw new Error(`Invalid valid time range: ${raw}`);
+  }
   if (startHour > 23 || endHour > 23 || startMinute > 59 || endMinute > 59) {
     throw new Error(`Invalid valid time range: ${raw}`);
   }
@@ -104,6 +115,7 @@ export function parseValidTimeRange(raw) {
     startMinute: startHour * 60 + startMinute,
     endMinute: endHour * 60 + endMinute,
     timeZone: "America/Los_Angeles",
+    ...(daysOfWeek ? { daysOfWeek } : {}),
   };
 }
 
@@ -402,13 +414,14 @@ function validationPredicateMatches(rule, answers) {
 }
 
 /**
- * @param {GuidanceRule} rule
+ * @param {RuleTimeRange} range
  * @param {number} minute
+ * @param {number} weekday Sunday = 0; the report's local day, including overnight ranges.
  * @returns {boolean}
  */
-function validationTimeMatches(rule, minute) {
-  const range = rule.validTimeRange;
+export function timeRangeContains(range, minute, weekday) {
   if (!range || range.kind === "always") return true;
+  if (range.daysOfWeek && !range.daysOfWeek.includes(weekday)) return false;
   return range.startMinute <= range.endMinute
     ? minute >= range.startMinute && minute <= range.endMinute
     : minute >= range.startMinute || minute <= range.endMinute;
@@ -428,7 +441,7 @@ function booleanAnswerCombinations(keys) {
 
 /**
  * Ensure every fully answered, positive-severity path resolves to exactly one
- * rule for every Pacific-local minute. This catches both predicate and daily
+ * rule for every Pacific-local minute and weekday. This catches predicate and weekly
  * time-window gaps before a catalog can become active.
  * @param {GuidanceCatalog} catalog
  * @returns {string[]}
@@ -459,30 +472,39 @@ function validateRuleCoverage(catalog) {
         const answerLabel = questionKeys.length
           ? questionKeys.map((key) => `${key}=${answers[key]}`).join(", ")
           : "no answers";
-        let gapMinute = null;
-        for (let minute = 0; minute < 24 * 60; minute += 1) {
-          const matching = candidates.filter(
-            (rule) =>
-              validationPredicateMatches(rule, answers) &&
-              validationTimeMatches(rule, minute),
-          );
-          if (!matching.length) {
-            gapMinute ??= minute;
-            continue;
+        const weekdays = candidates.some(
+          (rule) =>
+            rule.validTimeRange?.kind === "daily" &&
+            rule.validTimeRange.daysOfWeek,
+        )
+          ? WEEKDAYS.map((_, day) => day)
+          : [0];
+        for (const weekday of weekdays) {
+          let gapMinute = null;
+          for (let minute = 0; minute < 24 * 60; minute += 1) {
+            const matching = candidates.filter(
+              (rule) =>
+                validationPredicateMatches(rule, answers) &&
+                timeRangeContains(rule.validTimeRange, minute, weekday),
+            );
+            if (!matching.length) {
+              gapMinute ??= minute;
+              continue;
+            }
           }
-        }
-        /**
-         * @param {number} minute
-         * @returns {string}
-         */
-        const formatMinute = (minute) =>
-          `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(
-            minute % 60,
-          ).padStart(2, "0")}`;
-        if (gapMinute !== null) {
-          errors.add(
-            `${category} severity ${severity} (${answerLabel}) has no rule at ${formatMinute(gapMinute)}`,
-          );
+          /**
+           * @param {number} minute
+           * @returns {string}
+           */
+          const formatMinute = (minute) =>
+            `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(
+              minute % 60,
+            ).padStart(2, "0")}`;
+          if (gapMinute !== null) {
+            errors.add(
+              `${category} severity ${severity} (${answerLabel}) has no rule at ${formatMinute(gapMinute)}${weekdays.length > 1 ? ` on ${WEEKDAYS[weekday]}` : ""}`,
+            );
+          }
         }
       }
     }

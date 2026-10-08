@@ -264,9 +264,7 @@ test.describe("describe instead", () => {
   }) => {
     await page.locator("#report-problem").click();
     await expect(page).toHaveURL(/\/problem$/);
-    // The URL changes before ProblemReport's async connectedCallback finishes
-    // loading the Site and creating its single-problem session. UI locators
-    // normally auto-wait for that render; page.evaluate() below does not.
+    // The route changes before the async draft/site load creates the session.
     await expect(page.locator("#submit-report")).toBeVisible();
 
     await page.evaluate(async () => {

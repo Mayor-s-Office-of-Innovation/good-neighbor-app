@@ -1,3 +1,4 @@
+import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
   isCompletingAnalysisCard,
@@ -362,7 +363,7 @@ class ProblemReport extends HTMLElement {
     grid.classList.toggle("shotgrid--empty", items.length === 0);
     const tile = addTile(items.length === 0);
     grid.innerHTML =
-      items.map((item, index) => shotTile(item, index)).join("") + tile;
+      tile + items.map((item, index) => shotTile(item, index)).join("");
   }
 
   /** @returns {EvidenceItem[]} */
@@ -398,6 +399,7 @@ class ProblemReport extends HTMLElement {
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
+    this.querySelector("#capture-labels").innerHTML = captureLabels(getItems());
     this._renderAnalysis();
     this._syncControls();
   }
