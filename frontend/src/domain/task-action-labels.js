@@ -41,5 +41,10 @@ const LABELS = {
 };
 
 export function taskActionLabel(task) {
+  // v6 reuses some rule IDs for different actions. Its persisted button label
+  // must win over the cosmetic v5 overrides used for older tasks.
+  if (task.policyVersion === "actions-escalations-v6") {
+    return rulebookText(task.buttons?.[0] || "");
+  }
   return rulebookText(LABELS[task.ruleId] || task.buttons?.[0] || "");
 }

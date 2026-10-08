@@ -12,6 +12,7 @@
     "migrate:cognito-admin-groups": "node scripts/migrate-cognito-admin-groups.mjs",
     "backfill:transitional-programs": "node scripts/backfill-transitional-programs.mjs",
     "seed:dev-site-codes": "node scripts/seed-dev-site-codes.mjs",
+    "test:mail-relay": "node scripts/test-mail-manager-smtp.mjs",
     "lint": "eslint src",
     "policy:diff": "node scripts/policy-diff.mjs",
     "policy:import": "node scripts/policy-import.mjs",

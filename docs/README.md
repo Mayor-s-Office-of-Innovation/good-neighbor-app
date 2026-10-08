@@ -50,6 +50,8 @@
   to PostHog without an SDK: events, allowlists, kill switches, CloudWatch markers.
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
+- **[City SMTP relay operations](./runbooks/city-smtp.md)** — Proofpoint credentials,
+  SES Mail Manager bootstrap, connectivity verification, rotation, and failure triage.
 
 - **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
   and deployment troubleshooting.

@@ -136,6 +136,9 @@ matrix(
         await expect(
           page.getByRole("heading", { name: t("siteAdmin.title") }),
         ).toBeVisible();
+        // The heading also appears in the loading view. Scan the loaded page,
+        // after the site data and its edit controls have rendered.
+        await expect(page.locator('[data-edit-section="site"]')).toBeVisible();
         await a11y.check("site admin");
       },
     );

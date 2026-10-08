@@ -264,9 +264,7 @@ test.describe("describe instead", () => {
   }) => {
     await page.locator("#report-problem").click();
     await expect(page).toHaveURL(/\/problem$/);
-    // The route changes before <problem-report> finishes its async Site lookup
-    // and creates the single-problem session. Wait for its rendered controls
-    // before injecting the failed-analysis state below.
+    // The route changes before the async draft/site load creates the session.
     await expect(page.locator("#submit-report")).toBeVisible();
 
     await page.evaluate(async () => {
