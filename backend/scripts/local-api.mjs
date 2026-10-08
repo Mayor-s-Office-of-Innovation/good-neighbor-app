@@ -293,7 +293,11 @@ const routes = [
   route("POST", "/admin/v1/admin-users", inviteAdminUser),
   route("PUT", "/admin/v1/admin-users/{username}/role", updateAdminUserRole),
   route("POST", "/admin/v1/admin-users/{username}/suspend", suspendAdminUser),
-  route("POST", "/admin/v1/admin-users/{username}/reinstate", reinstateAdminUser),
+  route(
+    "POST",
+    "/admin/v1/admin-users/{username}/reinstate",
+    reinstateAdminUser,
+  ),
   route("POST", "/admin/v1/providers", createProvider),
   route("GET", "/admin/v1/providers/{providerId}", getProvider),
   route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),

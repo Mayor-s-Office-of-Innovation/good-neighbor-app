@@ -40,6 +40,19 @@ const plan = users.map((user) => ({
 }));
 
 if (apply) {
+  const enabledLegacyUsers = new Set(
+    users
+      .filter((user) => user.Enabled !== false)
+      .map((user) => String(user.Username).toLowerCase()),
+  );
+  const matchedSupervisors = [...supervisors].filter((username) =>
+    enabledLegacyUsers.has(username),
+  );
+  if (matchedSupervisors.length === 0) {
+    throw new Error(
+      "No requested supervisor matches an enabled central-admin user; no memberships were changed.",
+    );
+  }
   for (const entry of plan) {
     await cognito.send(
       new AdminAddUserToGroupCommand({

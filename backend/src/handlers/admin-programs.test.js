@@ -240,7 +240,16 @@ describe("program administration", () => {
   });
 
   it("updates a program contact in place", async () => {
-    send.mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          status: "active",
+          email: "sam@example.org",
+          siteManager: false,
+        },
+      })
+      .mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
     const response = await call(
       updateProgramUser,
       event(
@@ -254,8 +263,85 @@ describe("program administration", () => {
       ),
     );
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
   });
+
+  it("lets managers edit contact details while preserving identity and role", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          status: "active",
+          email: "sam@example.org",
+          siteManager: true,
+        },
+      })
+      .mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
+    const response = await call(
+      updateProgramUser,
+      event(
+        {
+          firstName: "Samuel",
+          lastName: "Lee",
+          phone: "415-555-0102",
+          email: "sam@example.org",
+          siteManager: true,
+        },
+        { programId: "program-1", userId: "user-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+  });
+
+  it.each([
+    [
+      "change the contact email",
+      true,
+      { email: "other@example.org", siteManager: true },
+    ],
+    [
+      "clear the Site manager role",
+      true,
+      { email: "sam@example.org", siteManager: false },
+    ],
+    [
+      "set the Site manager role",
+      false,
+      { email: "sam@example.org", siteManager: true },
+    ],
+  ])(
+    "does not let managers %s",
+    async (_label, currentRole, restrictedValues) => {
+      send.mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          status: "active",
+          email: "sam@example.org",
+          siteManager: currentRole,
+        },
+      });
+      const response = await call(
+        updateProgramUser,
+        event(
+          {
+            firstName: "Sam",
+            lastName: "Lee",
+            phone: "415-555-0101",
+            ...restrictedValues,
+          },
+          { programId: "program-1", userId: "user-1" },
+          "compliance-manager",
+        ),
+      );
+      expect(response.statusCode).toBe(403);
+      expect(JSON.parse(String(response.body))).toEqual({
+        error: "supervisor_required",
+      });
+      expect(send).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("archives an unassigned program contact without deleting history", async () => {
     send
@@ -403,14 +489,18 @@ describe("program administration", () => {
   });
 });
 
-/** @param {unknown} body @param {Record<string, string>} pathParameters */
-function event(body = undefined, pathParameters = {}) {
+/** @param {unknown} body @param {Record<string, string>} pathParameters @param {string} groups */
+function event(
+  body = undefined,
+  pathParameters = {},
+  groups = "compliance-supervisor",
+) {
   return {
     body: body === undefined ? undefined : JSON.stringify(body),
     pathParameters,
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": "compliance-supervisor" } },
+        jwt: { claims: { "cognito:groups": groups } },
       },
     },
   };

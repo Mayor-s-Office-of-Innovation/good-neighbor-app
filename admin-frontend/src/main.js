@@ -1203,17 +1203,25 @@ class AdminApp extends HTMLElement {
   async saveSiteManager(form) {
     const data = new FormData(form);
     const current = this.state.siteManager;
-    const programId = formValue(data, "manager-program-id");
+    const canManageAssignments =
+      this.state.capabilities.createEntities === true;
+    const programId = canManageAssignments
+      ? formValue(data, "manager-program-id")
+      : current?.programId || "";
     const programChanged = Boolean(current && current.programId !== programId);
     const values = {
       firstName: formValue(data, "manager-first-name"),
       lastName: formValue(data, "manager-last-name"),
       phone: formValue(data, "manager-phone"),
       phoneExtension: formValue(data, "manager-phone-extension"),
-      email: formValue(data, "manager-email"),
+      email: canManageAssignments
+        ? formValue(data, "manager-email")
+        : current?.email || "",
       siteManager: true,
     };
-    const siteIds = data.getAll("manager-site-id").map(String);
+    const siteIds = canManageAssignments
+      ? data.getAll("manager-site-id").map(String)
+      : (current?.assignedSites || []).map((site) => site.siteId);
     const fullName = `${values.firstName} ${values.lastName}`.trim();
     try {
       let response;
@@ -3826,6 +3834,8 @@ function entityList(items, href, title, detail, emptyMessage) {
 /** @param {AdminState} state @param {any | null} manager */
 function siteManagerEditorView(state, manager) {
   const isNew = !manager;
+  const canManageAssignments = state.capabilities.createEntities === true;
+  const assignmentDisabled = canManageAssignments ? "" : "disabled";
   const programId = manager?.programId || "";
   const assigned = new Set(
     (manager?.assignedSites || []).map((site) => site.siteId),
@@ -3848,14 +3858,14 @@ function siteManagerEditorView(state, manager) {
     <form id="site-manager-record-form" class="site-details-form" data-dirty-form>
       <fieldset>
         <legend>Manager details</legend>
-        <wa-select name="manager-program-id" label="Program" placeholder="Choose a program" required>${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === programId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}</wa-select>
+        <wa-select name="manager-program-id" label="Program" placeholder="Choose a program" required ${assignmentDisabled}>${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === programId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}</wa-select>
         <p class="field-help">Changing the Program changes which Sites can be assigned.</p>
         <div class="form-grid form-grid--one">
           ${formInput("manager-first-name", "First name", manager?.firstName || "", { required: true, autocomplete: "given-name" })}
           ${formInput("manager-last-name", "Last name", manager?.lastName || "", { required: true, autocomplete: "family-name" })}
           ${formInput("manager-phone", "Contact phone", manager?.phone || "", { required: true, type: "tel", autocomplete: "tel" })}
           ${formInput("manager-phone-extension", "Contact phone extension", manager?.phoneExtension || "", { autocomplete: "tel-extension" })}
-          ${formInput("manager-email", "Contact email", manager?.email || "", { required: true, type: "email", autocomplete: "email" })}
+          ${formInput("manager-email", "Contact email", manager?.email || "", { required: true, type: "email", autocomplete: "email", disabled: !canManageAssignments })}
         </div>
       </fieldset>
       <fieldset>
@@ -3865,7 +3875,7 @@ function siteManagerEditorView(state, manager) {
           ${sites
             .map((site) => {
               const matches = site.leadProgramId === programId;
-              return `<label class="manager-site-option" data-manager-site-program="${escapeHtml(site.leadProgramId || "")}" ${matches ? "" : "hidden"}><wa-checkbox name="manager-site-id" value="${escapeHtml(site.siteId)}" ${assigned.has(site.siteId) ? "checked" : ""} ${matches ? "" : "disabled"}>${escapeHtml(siteLabel(site))}</wa-checkbox></label>`;
+              return `<label class="manager-site-option" data-manager-site-program="${escapeHtml(site.leadProgramId || "")}" ${matches ? "" : "hidden"}><wa-checkbox name="manager-site-id" value="${escapeHtml(site.siteId)}" ${assigned.has(site.siteId) ? "checked" : ""} ${matches && canManageAssignments ? "" : "disabled"}>${escapeHtml(siteLabel(site))}</wa-checkbox></label>`;
             })
             .join("")}
           <p class="empty-state" data-manager-sites-empty ${programId && sites.some((site) => site.leadProgramId === programId) ? "hidden" : ""}>${programId ? "This Program has no Sites to assign." : "Choose a Program to see available Sites."}</p>
@@ -4350,11 +4360,12 @@ function siteComplianceTermView(state) {
  * @param {string} name
  * @param {string} label
  * @param {unknown} value
- * @param {{ required?: boolean, type?: string, autocomplete?: string, pattern?: string, maxlength?: number, min?: number, max?: number, step?: number }} [options]
+ * @param {{ required?: boolean, disabled?: boolean, type?: string, autocomplete?: string, pattern?: string, maxlength?: number, min?: number, max?: number, step?: number }} [options]
  */
 function formInput(name, label, value, options = {}) {
   const attributes = [
     options.required ? "required" : "",
+    options.disabled ? "disabled" : "",
     options.autocomplete
       ? `autocomplete="${escapeHtml(options.autocomplete)}"`
       : "",

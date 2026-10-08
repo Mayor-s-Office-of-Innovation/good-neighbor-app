@@ -1,14 +1,19 @@
 import {
   AdminAddUserToGroupCommand,
   AdminCreateUserCommand,
+  AdminDeleteUserCommand,
   AdminDisableUserCommand,
   AdminEnableUserCommand,
   AdminGetUserCommand,
   AdminRemoveUserFromGroupCommand,
   CognitoIdentityProviderClient,
+  AdminListGroupsForUserCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { getConfig } from "../config.js";
+import { randomUUID } from "node:crypto";
+import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { getConfig, getDynamoTableName } from "../config.js";
+import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import {
   ADMIN_GROUPS,
@@ -19,6 +24,12 @@ import {
 
 const cognito = new CognitoIdentityProviderClient({});
 const ROLES = [ADMIN_GROUPS.manager, ADMIN_GROUPS.supervisor];
+const ADMIN_GROUP_SET = new Set([...ROLES, ADMIN_GROUPS.legacyManager]);
+const SUPERVISOR_MUTATION_LOCK = {
+  pk: "ADMIN_LOCK#SUPERVISOR_MUTATION",
+  sk: "#LOCK",
+};
+const LOCK_SECONDS = 30;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const getAdminSession = (event) =>
@@ -78,6 +89,8 @@ export const inviteAdminUser = (event) =>
       return jsonResponse(400, { error: "name_required" });
     if (!(/** @type {string[]} */ (ROLES).includes(role)))
       return jsonResponse(400, { error: "invalid_role" });
+    let created = false;
+    let existingUser;
     try {
       await cognito.send(
         new AdminCreateUserCommand({
@@ -92,6 +105,16 @@ export const inviteAdminUser = (event) =>
           ],
         }),
       );
+      created = true;
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== "UsernameExistsException")
+        throw error;
+      existingUser = await getUser(pool, email);
+      const existingGroups = await groupsForUser(pool, email);
+      if (existingUser.Enabled === false || existingGroups.length > 0)
+        return jsonResponse(409, { error: "admin_user_exists" });
+    }
+    try {
       await cognito.send(
         new AdminAddUserToGroupCommand({
           UserPoolId: pool,
@@ -99,12 +122,31 @@ export const inviteAdminUser = (event) =>
           GroupName: role,
         }),
       );
-    } catch (error) {
-      if (error instanceof Error && error.name === "UsernameExistsException")
-        return jsonResponse(409, { error: "admin_user_exists" });
-      throw error;
+    } catch {
+      let rollback = "not_applicable";
+      if (created) {
+        try {
+          await cognito.send(
+            new AdminDeleteUserCommand({
+              UserPoolId: pool,
+              Username: email,
+            }),
+          );
+          rollback = "completed";
+        } catch (rollbackError) {
+          rollback = "failed";
+          console.error("Failed to roll back ungrouped Cognito user", {
+            username: email,
+            error: rollbackError,
+          });
+        }
+      }
+      return jsonResponse(502, {
+        error: "admin_group_assignment_failed",
+        rollback,
+      });
     }
-    const user = await getUser(pool, email);
+    const user = existingUser ?? (await getUser(pool, email));
     return jsonResponse(201, { user: publicUser(user, role) });
   });
 
@@ -117,46 +159,50 @@ export const updateAdminUserRole = (event) =>
     const role = clean(body.role);
     if (!username || !(/** @type {string[]} */ (ROLES).includes(role)))
       return jsonResponse(400, { error: "invalid_role" });
-    const target = await getUser(pool, username);
-    const principal = adminPrincipal(event);
-    if (sameUser(principal, target) && role !== ADMIN_GROUPS.supervisor)
-      return jsonResponse(409, { error: "cannot_demote_self" });
-    if (
-      role !== ADMIN_GROUPS.supervisor &&
-      (await isLastEnabledSupervisor(pool, target))
-    )
-      return jsonResponse(409, { error: "last_active_supervisor" });
-    await Promise.all(
-      [
-        ADMIN_GROUPS.manager,
-        ADMIN_GROUPS.supervisor,
-        ADMIN_GROUPS.legacyManager,
-      ].map((group) =>
-        cognito
-          .send(
+    return withSupervisorMutationLock(async () => {
+      const target = await getUser(pool, username);
+      const principal = adminPrincipal(event);
+      if (sameUser(principal, target) && role !== ADMIN_GROUPS.supervisor)
+        return jsonResponse(409, { error: "cannot_demote_self" });
+      if (
+        role !== ADMIN_GROUPS.supervisor &&
+        (await isLastEnabledSupervisor(pool, target))
+      )
+        return jsonResponse(409, { error: "last_active_supervisor" });
+      await cognito.send(
+        new AdminAddUserToGroupCommand({
+          UserPoolId: pool,
+          Username: username,
+          GroupName: role,
+        }),
+      );
+      const cleanupFailures = [];
+      for (const group of ADMIN_GROUP_SET) {
+        if (group === role) continue;
+        try {
+          await cognito.send(
             new AdminRemoveUserFromGroupCommand({
               UserPoolId: pool,
               Username: username,
               GroupName: group,
             }),
-          )
-          .catch((error) => {
-            if (
-              !(error instanceof Error) ||
-              error.name !== "ResourceNotFoundException"
-            )
-              throw error;
-          }),
-      ),
-    );
-    await cognito.send(
-      new AdminAddUserToGroupCommand({
-        UserPoolId: pool,
-        Username: username,
-        GroupName: role,
-      }),
-    );
-    return jsonResponse(200, { user: publicUser(target, role) });
+          );
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.name !== "ResourceNotFoundException"
+          ) {
+            cleanupFailures.push(group);
+          }
+        }
+      }
+      return jsonResponse(200, {
+        user: publicUser(target, role),
+        ...(cleanupFailures.length
+          ? { warning: "role_cleanup_incomplete", cleanupFailures }
+          : {}),
+      });
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -173,17 +219,69 @@ async function setEnabled(event, enabled) {
   if (!pool) return unavailable();
   const username = decodeURIComponent(event.pathParameters?.username ?? "");
   if (!username) return jsonResponse(400, { error: "username_required" });
-  const target = await getUser(pool, username);
-  const principal = adminPrincipal(event);
-  if (!enabled && sameUser(principal, target))
-    return jsonResponse(409, { error: "cannot_suspend_self" });
-  if (!enabled && (await isLastEnabledSupervisor(pool, target)))
-    return jsonResponse(409, { error: "last_active_supervisor" });
-  const Command = enabled ? AdminEnableUserCommand : AdminDisableUserCommand;
-  await cognito.send(new Command({ UserPoolId: pool, Username: username }));
-  return jsonResponse(200, {
-    user: { ...publicUser(target, ""), enabled },
-  });
+  const changeEnabled = async () => {
+    const target = await getUser(pool, username);
+    const principal = adminPrincipal(event);
+    if (!enabled && sameUser(principal, target))
+      return jsonResponse(409, { error: "cannot_suspend_self" });
+    if (!enabled && (await isLastEnabledSupervisor(pool, target)))
+      return jsonResponse(409, { error: "last_active_supervisor" });
+    const Command = enabled ? AdminEnableUserCommand : AdminDisableUserCommand;
+    await cognito.send(new Command({ UserPoolId: pool, Username: username }));
+    return jsonResponse(200, {
+      user: { ...publicUser(target, ""), enabled },
+    });
+  };
+  return enabled ? changeEnabled() : withSupervisorMutationLock(changeEnabled);
+}
+
+/**
+ * Serialize changes that could remove the final active supervisor.
+ * @param {() => Promise<import("aws-lambda").APIGatewayProxyStructuredResultV2>} fn
+ */
+async function withSupervisorMutationLock(fn) {
+  const token = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: getDynamoTableName(),
+        Item: {
+          ...SUPERVISOR_MUTATION_LOCK,
+          type: "adminMutationLock",
+          token,
+          expiresAt: now + LOCK_SECONDS,
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) OR expiresAt < :currentTime",
+        ExpressionAttributeValues: { ":currentTime": now },
+      }),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "ConditionalCheckFailedException"
+    ) {
+      return jsonResponse(409, { error: "admin_user_change_in_progress" });
+    }
+    throw error;
+  }
+  try {
+    return await fn();
+  } finally {
+    try {
+      await ddb.send(
+        new DeleteCommand({
+          TableName: getDynamoTableName(),
+          Key: SUPERVISOR_MUTATION_LOCK,
+          ConditionExpression: "token = :token",
+          ExpressionAttributeValues: { ":token": token },
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to release supervisor mutation lock", { error });
+    }
+  }
 }
 
 /** @param {string} pool @param {any} target */
@@ -216,6 +314,19 @@ async function usersInGroup(pool, group) {
     NextToken = result.NextToken;
   } while (NextToken);
   return users;
+}
+
+/** @param {string} pool @param {string} username */
+async function groupsForUser(pool, username) {
+  const result = await cognito.send(
+    new AdminListGroupsForUserCommand({
+      UserPoolId: pool,
+      Username: username,
+    }),
+  );
+  return (result.Groups ?? [])
+    .map((group) => group.GroupName ?? "")
+    .filter(Boolean);
 }
 
 /** @param {string} pool @param {string} username */

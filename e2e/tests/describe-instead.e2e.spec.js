@@ -264,6 +264,10 @@ test.describe("describe instead", () => {
   }) => {
     await page.locator("#report-problem").click();
     await expect(page).toHaveURL(/\/problem$/);
+    // The route changes before <problem-report> finishes its async Site lookup
+    // and creates the single-problem session. Wait for its rendered controls
+    // before injecting the failed-analysis state below.
+    await expect(page.locator("#submit-report")).toBeVisible();
 
     await page.evaluate(async () => {
       // @ts-expect-error -- this URL is resolved by the Vite browser server.

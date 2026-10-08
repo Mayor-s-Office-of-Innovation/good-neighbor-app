@@ -7,7 +7,12 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  supervisorOnly,
+} from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -173,6 +178,13 @@ export const updateManagerMembership = (event) =>
     const current = currentResult.Item;
     if (!current || current.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
+    }
+    const principal = adminPrincipal(event);
+    if (
+      principal.role !== ADMIN_GROUPS.supervisor &&
+      email !== normalizeEmail(String(current.email ?? ""))
+    ) {
+      return jsonResponse(403, { error: "supervisor_required" });
     }
     const nextHash = await emailHash(email);
     const now = new Date().toISOString();
