@@ -52,10 +52,7 @@ import {
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
 import { requestManagerAccess } from "../handlers/manager-access-requests.js";
-import {
-  requestSetupCode,
-  searchSites,
-} from "../handlers/setup-code-requests.js";
+import { searchSites } from "../handlers/setup-code-requests.js";
 import {
   getSite,
   getSiteAdmin,
@@ -67,22 +64,16 @@ import {
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
 import {
-  createCodeContact,
   createCityProgramManager,
-  createMasterContact,
   createProvider,
   createSite,
-  deactivateCodeContact,
-  deactivateMasterContact,
   deactivateProvider,
   deactivateSite,
   getAdminSite,
   getProvider,
   issueAdminSetupCode,
-  listCodeContacts,
   listCityProgramManagers,
   listDevices,
-  listMasterContacts,
   listProviders,
   presignComplianceLetter,
   reassignSite,
@@ -90,6 +81,14 @@ import {
   updateProvider,
   updateSite,
 } from "../handlers/admin.js";
+import {
+  getAdminSession,
+  inviteAdminUser,
+  listAdminUsers,
+  reinstateAdminUser,
+  suspendAdminUser,
+  updateAdminUserRole,
+} from "../handlers/admin-users.js";
 import {
   createOversightOption,
   listOversightOptions,
@@ -167,7 +166,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /app/v1/manager/device-bindings/{bindingId}/revoke":
     revokeGeneralBinding,
   "GET /v1/sites:search": searchSites,
-  "POST /v1/setup-codes:request": requestSetupCode,
   // Site config
   "GET /v1/site": getSite,
   "GET /v1/site-admin": getSiteAdmin,
@@ -208,6 +206,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/session": getAdminSession,
+  "GET /admin/v1/admin-users": listAdminUsers,
+  "POST /admin/v1/admin-users": inviteAdminUser,
+  "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,
+  "POST /admin/v1/admin-users/{username}/suspend": suspendAdminUser,
+  "POST /admin/v1/admin-users/{username}/reinstate": reinstateAdminUser,
   "POST /admin/v1/providers": createProvider,
   "GET /admin/v1/providers/{providerId}": getProvider,
   "PATCH /admin/v1/providers/{providerId}": updateProvider,
@@ -253,14 +257,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
     presignComplianceLetter,
   "DELETE /admin/v1/sites/{siteId}": deactivateSite,
-  "GET /admin/v1/sites/{siteId}/master-contacts": listMasterContacts,
-  "POST /admin/v1/sites/{siteId}/master-contacts": createMasterContact,
-  "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}":
-    deactivateMasterContact,
-  "GET /admin/v1/sites/{siteId}/code-contacts": listCodeContacts,
-  "POST /admin/v1/sites/{siteId}/code-contacts": createCodeContact,
-  "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}":
-    deactivateCodeContact,
   "POST /admin/v1/sites/{siteId}/setup-codes": issueAdminSetupCode,
   "GET /admin/v1/sites/{siteId}/devices": listDevices,
   "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}": revokeDevice,

@@ -34,11 +34,14 @@ Use the matching environment's CLI profile, region, and pool ID. First check
 for an existing user. Create new users with their email address as their
 username, an email attribute, and `--desired-delivery-mediums EMAIL`. Cognito
 generates and emails the temporary password; do not print, store, or commit it.
-Add the user to `central-admin` with `admin-add-user-to-group`. Keep user
-accounts and temporary passwords out of Terraform state.
+New administrators are normally invited from the supervisor-only
+Administrators screen. Assign exactly one of `compliance-manager` or
+`compliance-supervisor`. Keep user accounts and temporary passwords out of
+Terraform state. `central-admin` is a temporary migration alias for
+`compliance-manager`; do not add new users to it.
 
 Creating a user alone does not grant admin API access: backend handlers require
-membership in `central-admin`. Public self-sign-up is disabled. Do not mark an
+one of the two Compliance groups. Public self-sign-up is disabled. Do not mark an
 email verified until control of that address has been established.
 
 The invited user opens the admin console, chooses Sign in, enters the exact
@@ -67,6 +70,16 @@ Terraform configuration in sync.
 - Token exchange blocked by CSP: check the admin-only response headers policy's
   `connect-src` Cognito origin.
 - Admin API 403 after login: verify `central-admin` membership and obtain fresh
-  tokens by signing out and back in.
+  tokens by signing out and back in. During migration, move the user to
+`compliance-manager` or `compliance-supervisor`.
+
+For the dev migration, first deploy the Terraform groups. Dry-run the migration
+with `npm run migrate:cognito-admin-groups --workspace backend`, providing
+`COGNITO_USER_POOL_ID`. Apply only after reviewing the plan, with
+`ENVIRONMENT=dev`, `--apply`, and at least one
+`--supervisor=<existing-username>`. The script retains `central-admin`
+membership for rollback; users must sign out and back in to refresh claims.
+- The app rejects self-suspension, self-demotion, and any attempt to suspend or
+  demote the last enabled Compliance supervisor.
 - Invitation expired: use `admin-create-user --message-action RESEND` for that
   existing username after authorization to resend the invitation.

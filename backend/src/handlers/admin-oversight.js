@@ -2,7 +2,7 @@ import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
 
 const DIRECTORY_PK = "ADMIN_DIRECTORY#OVERSIGHT";
 const DEFAULT_DEPARTMENTS = ["DPH", "HSH"];
@@ -35,7 +35,7 @@ export const listOversightOptions = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createOversightOption = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const type = String(body.type || "").trim();
     const name = String(body.name || "")
       .trim()

@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listSiteTerms = (event) =>
@@ -197,7 +197,7 @@ export const createSiteTerms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const assignSiteUser = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = clean(body.userId);
     if (!userId) return jsonResponse(400, { error: "user_required" });
@@ -308,7 +308,7 @@ export const assignSiteUser = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const unassignSiteUser = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = event.pathParameters?.userId ?? "";
     const tableName = getDynamoTableName();

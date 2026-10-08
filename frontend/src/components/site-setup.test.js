@@ -65,7 +65,7 @@ describe("Manager enrollment URLs", () => {
     expect(markup).toContain("Welcome to Good Neighbor.");
     expect(markup).toContain('id="code-input"');
     expect(markup).toContain('id="continue"');
-    expect(markup).toContain("Need a new code?");
+    expect(markup).not.toContain("Need a new code?");
     expect(markup).not.toContain("Site Manager access");
     expect(markup).not.toContain("Enrollment link");
     expect(markup).not.toContain("Camera app");

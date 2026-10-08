@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -57,7 +57,7 @@ export const listManagerMemberships = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerMembership = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const name = clean(body.name);
     const email = normalizeEmail(String(body.email ?? ""));
@@ -275,7 +275,7 @@ export const updateManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateManagerMembership = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const result = await deactivateManagerMembershipRecord({

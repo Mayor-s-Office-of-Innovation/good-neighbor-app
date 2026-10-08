@@ -15,7 +15,7 @@ async function adminFetch(path, init = {}) {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(config.localDebugAdmin
         ? {
-            "x-debug-groups": "central-admin",
+            "x-debug-groups": "compliance-supervisor",
             "x-debug-sub": "local-admin",
           }
         : {}),
@@ -35,6 +35,32 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  getSession: () => adminFetch("/admin/v1/session"),
+  listAdminUsers: () => adminFetch("/admin/v1/admin-users"),
+  inviteAdminUser: (values) =>
+    adminFetch("/admin/v1/admin-users", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updateAdminUserRole: (username, role) =>
+    adminFetch(`/admin/v1/admin-users/${encodeURIComponent(username)}/role`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
+  suspendAdminUser: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/suspend`,
+      {
+        method: "POST",
+      },
+    ),
+  reinstateAdminUser: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/reinstate`,
+      {
+        method: "POST",
+      },
+    ),
   suggestAddresses: (query, signal) =>
     adminFetch("/admin/v1/address-suggestions", {
       method: "POST",
@@ -219,7 +245,7 @@ export const adminApi = {
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(config.localDebugAdmin
             ? {
-                "x-debug-groups": "central-admin",
+                "x-debug-groups": "compliance-supervisor",
                 "x-debug-sub": "local-admin",
               }
             : {}),
@@ -253,21 +279,6 @@ export const adminApi = {
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "DELETE",
     }),
-  listMasterContacts: (siteId) =>
-    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts`),
-  addMasterContact: (siteId, email, name) =>
-    adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts`,
-      {
-        method: "POST",
-        body: JSON.stringify({ email, name }),
-      },
-    ),
-  removeMasterContact: (siteId, emailHash) =>
-    adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts/${encodeURIComponent(emailHash)}`,
-      { method: "DELETE" },
-    ),
   issueSetupCode: (siteId, email, accessLevel = "general") =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/setup-codes`, {
       method: "POST",

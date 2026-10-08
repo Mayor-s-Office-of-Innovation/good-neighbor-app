@@ -24,7 +24,6 @@ locals {
     "GET /app/v1/manager/device-bindings",
     "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
     "GET /v1/sites:search",
-    "POST /v1/setup-codes:request",
     # Site config
     "GET /v1/site",
     "GET /v1/site-admin",
@@ -55,6 +54,12 @@ locals {
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     "POST /submissions",
     "GET /admin/v1/providers",
+    "GET /admin/v1/session",
+    "GET /admin/v1/admin-users",
+    "POST /admin/v1/admin-users",
+    "PUT /admin/v1/admin-users/{username}/role",
+    "POST /admin/v1/admin-users/{username}/suspend",
+    "POST /admin/v1/admin-users/{username}/reinstate",
     "POST /admin/v1/providers",
     "GET /admin/v1/providers/{providerId}",
     "PATCH /admin/v1/providers/{providerId}",
@@ -97,12 +102,6 @@ locals {
     "PATCH /admin/v1/sites/{siteId}",
     "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",
-    "GET /admin/v1/sites/{siteId}/master-contacts",
-    "POST /admin/v1/sites/{siteId}/master-contacts",
-    "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}",
-    "GET /admin/v1/sites/{siteId}/code-contacts",
-    "POST /admin/v1/sites/{siteId}/code-contacts",
-    "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}",
     "POST /admin/v1/sites/{siteId}/setup-codes",
     "GET /admin/v1/sites/{siteId}/devices",
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
@@ -146,7 +145,6 @@ locals {
     "POST /app/v1/enrollment/redeem"      = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
-    "POST /v1/setup-codes:request"        = true
     "GET /health"                         = true
     "POST /submissions"                   = true
   }

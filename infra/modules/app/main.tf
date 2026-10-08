@@ -758,7 +758,21 @@ resource "aws_cognito_user_pool_domain" "managed_login" {
 resource "aws_cognito_user_group" "central_admin" {
   name         = "central-admin"
   user_pool_id = aws_cognito_user_pool.users.id
-  description  = "Central support and program administrators for Good Neighbor."
+  description  = "Legacy Compliance manager group retained during migration."
+}
+
+resource "aws_cognito_user_group" "compliance_manager" {
+  name         = "compliance-manager"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Compliance managers with routine edit and device-management access."
+  precedence   = 20
+}
+
+resource "aws_cognito_user_group" "compliance_supervisor" {
+  name         = "compliance-supervisor"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Compliance supervisors with entity, assignment, import, and administrator-management access."
+  precedence   = 10
 }
 
 resource "aws_cloudfront_response_headers_policy" "security" {

@@ -43,12 +43,10 @@ vi.mock("../s3.js", () => ({
 
 const {
   createCityProgramManager,
-  createMasterContact,
   createProvider,
   createSite,
   deactivateProvider,
   deactivateSite,
-  deactivateMasterContact,
   issueAdminSetupCode,
   listDevices,
   listProviders,
@@ -499,72 +497,6 @@ describe("provider and site management", () => {
 
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
-  });
-
-  it("adds master contacts to a site", async () => {
-    send.mockResolvedValue({});
-
-    const res = await call(
-      createMasterContact,
-      event({ email: "Lead@Example.org", name: "Site Lead" }, "central-admin", {
-        siteId: "site-1",
-      }),
-    );
-
-    expect(res.statusCode).toBe(201);
-    const put = /** @type {PutCommand} */ (send.mock.calls[0][0]);
-    expect(put.input.Item).toMatchObject({
-      pk: "SITE#site-1",
-      type: "masterContact",
-      email: "lead@example.org",
-      status: "active",
-    });
-  });
-
-  it("revokes pending setup codes when removing master contacts", async () => {
-    send
-      .mockResolvedValueOnce({
-        Attributes: {
-          pk: "SITE#site-1",
-          sk: "MASTER_CONTACT#contact-hash",
-          emailHash: "contact-hash",
-          status: "inactive",
-        },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            pk: "SETUP_CODE#old",
-            sk: "#META",
-            status: "pending",
-            gsi6pk: "SETUP_CODE_PENDING#site-1#contact-hash",
-            gsi6sk: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-
-    const res = await call(
-      deactivateMasterContact,
-      event(undefined, "central-admin", {
-        siteId: "site-1",
-        emailHash: "contact-hash",
-      }),
-    );
-
-    expect(res.statusCode).toBe(200);
-    const query = /** @type {QueryCommand} */ (send.mock.calls[1][0]);
-    expect(query).toBeInstanceOf(QueryCommand);
-    expect(query.input.ExpressionAttributeValues).toMatchObject({
-      ":pk": "SETUP_CODE_PENDING#site-1#contact-hash",
-    });
-    const revoke = /** @type {PutCommand} */ (send.mock.calls[2][0]);
-    expect(revoke.input.Item).toMatchObject({
-      pk: "SETUP_CODE#old",
-      status: "revoked",
-      revokedReason: "contact_removed",
-    });
-    expect(revoke.input.Item?.gsi6pk).toBeUndefined();
   });
 
   it("lists providers from the provider search partition", async () => {
@@ -1342,7 +1274,7 @@ describe("provider and site management", () => {
  * @param {Record<string,string>} [pathParameters]
  * @returns {any}
  */
-function event(body, groups = "central-admin", pathParameters = {}) {
+function event(body, groups = "compliance-supervisor", pathParameters = {}) {
   return {
     body: body === undefined ? undefined : JSON.stringify(body),
     pathParameters,
@@ -1350,7 +1282,8 @@ function event(body, groups = "central-admin", pathParameters = {}) {
       authorizer: {
         jwt: {
           claims: {
-            "cognito:groups": groups,
+            "cognito:groups":
+              groups === "central-admin" ? "compliance-supervisor" : groups,
           },
         },
       },

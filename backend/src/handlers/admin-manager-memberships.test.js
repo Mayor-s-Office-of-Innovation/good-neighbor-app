@@ -236,7 +236,7 @@ function event(body = undefined, pathParameters = {}) {
       authorizer: {
         jwt: {
           claims: {
-            "cognito:groups": "central-admin",
+            "cognito:groups": "compliance-supervisor",
             sub: "admin-1",
           },
         },
