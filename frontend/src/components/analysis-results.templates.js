@@ -1218,7 +1218,7 @@ function hiddenConditionIdSet(item) {
  * @param {AnalysisItem} item
  * @returns {VisibleProblemSelection}
  */
-function visibleProblemSelection(item) {
+export function visibleProblemSelection(item) {
   const hiddenConditionIds = hiddenConditionIdSet(item);
   const visibleTasks = (item.analysis?.tasks || []).filter(
     (task) => !hiddenConditionIds.has(task.conditionId),
