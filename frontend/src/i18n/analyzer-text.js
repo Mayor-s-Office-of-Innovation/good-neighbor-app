@@ -13,16 +13,13 @@
 import { getLocale } from "./locale.js";
 
 /**
- * The active-locale translation of one analyzer field, or undefined when the
- * record has none (callers fall back to the canonical English field).
- * @param {{ translations?: unknown } | null | undefined} record a concern, condition, or task
- * @param {"user_friendly_label" | "description"} key
- * @returns {string | undefined}
+ * One locale's entry from either stored shape, or undefined.
+ * @param {unknown} translations
+ * @param {string} locale
+ * @returns {Record<string, unknown> | undefined}
  */
-export function analyzerTranslation(record, key) {
-  const translations = record?.translations;
+function entryFor(translations, locale) {
   if (!translations || typeof translations !== "object") return undefined;
-  const locale = getLocale();
   const map = /** @type {Record<string, unknown>} */ (translations);
   const entry =
     typeof map.language === "string"
@@ -30,7 +27,36 @@ export function analyzerTranslation(record, key) {
         ? map
         : undefined
       : map[locale];
-  if (!entry || typeof entry !== "object") return undefined;
-  const text = /** @type {Record<string, unknown>} */ (entry)[key];
+  return entry && typeof entry === "object"
+    ? /** @type {Record<string, unknown>} */ (entry)
+    : undefined;
+}
+
+/**
+ * The active-locale translation of one analyzer field, or undefined when the
+ * record has none (callers fall back to the canonical English field).
+ * @param {{ translations?: unknown } | null | undefined} record a concern, condition, or task
+ * @param {"user_friendly_label" | "description"} key
+ * @returns {string | undefined}
+ */
+export function analyzerTranslation(record, key) {
+  const text = entryFor(record?.translations, getLocale())?.[key];
   return typeof text === "string" && text ? text : undefined;
+}
+
+/**
+ * Whether a record already holds both translated fields for a locale.
+ * @param {{ translations?: unknown } | null | undefined} record
+ * @param {string} locale
+ * @returns {boolean}
+ */
+export function hasAnalyzerTranslation(record, locale) {
+  const entry = entryFor(record?.translations, locale);
+  return Boolean(
+    entry &&
+      typeof entry.user_friendly_label === "string" &&
+      entry.user_friendly_label &&
+      typeof entry.description === "string" &&
+      entry.description,
+  );
 }

@@ -49,14 +49,15 @@ describe("normalizeTranslations", () => {
 });
 
 describe("mergeTranslations", () => {
-  it("merges per locale, incoming entries replacing prior ones", () => {
+  it("merges per locale and per field, incoming fields replacing prior ones", () => {
     expect(
       mergeTranslations(
         { language: "es", user_friendly_label: "Viejo", description: "a" },
         { es: { user_friendly_label: "Nuevo" }, fil: { description: "b" } },
       ),
     ).toEqual({
-      es: { user_friendly_label: "Nuevo" },
+      // The prior description survives: only the label was replaced.
+      es: { user_friendly_label: "Nuevo", description: "a" },
       fil: { description: "b" },
     });
   });
@@ -70,7 +71,7 @@ describe("mergeTranslations", () => {
 });
 
 describe("missingTranslationLocales", () => {
-  it("lists every target locale with no entry", () => {
+  it("lists every target locale without a complete entry", () => {
     expect(TRANSLATION_TARGET_LOCALES).toEqual(["es", "fil", "vi", "zh-Hant"]);
     expect(missingTranslationLocales(undefined)).toEqual([
       "es",
@@ -80,12 +81,19 @@ describe("missingTranslationLocales", () => {
     ]);
     expect(
       missingTranslationLocales({
-        es: { user_friendly_label: "x" },
+        es: { user_friendly_label: "x", description: "y" },
         "zh-Hant": { description: "y" },
       }),
-    ).toEqual(["fil", "vi"]);
+    ).toEqual(["fil", "vi", "zh-Hant"]);
+    // A half entry still counts as missing so the other field gets filled.
     expect(
       missingTranslationLocales({ language: "vi", description: "z" }, ["vi"]),
+    ).toEqual(["vi"]);
+    expect(
+      missingTranslationLocales(
+        { language: "vi", user_friendly_label: "a", description: "z" },
+        ["vi"],
+      ),
     ).toEqual([]);
   });
 });

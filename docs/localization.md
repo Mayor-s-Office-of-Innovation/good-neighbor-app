@@ -60,10 +60,17 @@ English by design.
     idempotent (a redelivery finds nothing missing), best-effort (a failed
     enqueue leaves English), and never retries into the analysis idempotency
     gate.
+  A locale counts as filled only when both fields are present; a half answer
+  is requested again by the next job, and maps merge per field.
   The UI reads `translations[activeLocale]` through
   `frontend/src/i18n/analyzer-text.js` — card titles (`h3`),
   in-progress/completed card descriptions, the ticket detail and task-update
-  dialogs — and falls back to the canonical English field. On amendment
+  dialogs — and falls back to the canonical English field. Cards in an
+  active capture render from session state captured when the analysis
+  landed, so a language switch also refetches the check once (and once more
+  a few seconds later if the worker is still running) and merges the new
+  locales into the session's concerns, conditions, and tasks by text
+  (`frontend/src/services/session-translations.js`). On amendment
   refreshes, conditions the rulebase considers unchanged keep their stored
   answers and tasks and the maps merge per locale (one DynamoDB `Update` per
   task that differs); a condition whose English text changed is a new

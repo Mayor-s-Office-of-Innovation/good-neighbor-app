@@ -87,8 +87,10 @@ export function normalizeTranslations(value) {
 }
 
 /**
- * Per-locale merge: `incoming` entries replace `prior` entries for the same
- * locale; locales only one side has are kept. Both inputs may be either shape.
+ * Per-locale, per-field merge: an `incoming` field replaces the `prior` field
+ * for the same locale, and fields or locales only one side has are kept. So a
+ * later job that fills in a missing `description` never drops the
+ * `user_friendly_label` already stored. Both inputs may be either shape.
  * @param {unknown} prior
  * @param {unknown} incoming
  * @returns {TranslationsMap | undefined}
@@ -98,11 +100,27 @@ export function mergeTranslations(prior, incoming) {
   const next = normalizeTranslations(incoming);
   if (!base) return next;
   if (!next) return base;
-  return { ...base, ...next };
+  /** @type {TranslationsMap} */
+  const merged = { ...base };
+  for (const [locale, entry] of Object.entries(next)) {
+    merged[locale] = { ...base[locale], ...entry };
+  }
+  return merged;
 }
 
 /**
- * Locales from `targets` that `value` has no entry for.
+ * Whether a locale's entry carries BOTH translated fields. A half entry (the
+ * service answered with only one field) still counts as missing, so a later
+ * job asks for that locale again instead of leaving the other field English.
+ * @param {TranslationEntry | undefined} entry
+ * @returns {boolean}
+ */
+export function isCompleteTranslation(entry) {
+  return Boolean(entry?.user_friendly_label && entry?.description);
+}
+
+/**
+ * Locales from `targets` that `value` has no complete entry for.
  * @param {unknown} value
  * @param {readonly string[]} [targets]
  * @returns {string[]}
@@ -112,7 +130,7 @@ export function missingTranslationLocales(
   targets = TRANSLATION_TARGET_LOCALES,
 ) {
   const map = normalizeTranslations(value) ?? {};
-  return targets.filter((locale) => !map[locale]);
+  return targets.filter((locale) => !isCompleteTranslation(map[locale]));
 }
 
 /**
