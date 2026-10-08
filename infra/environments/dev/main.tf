@@ -59,7 +59,7 @@ module "app" {
   # Bootstrap in two applies: leave false until the secret containers created
   # by the first apply have been populated per docs/runbooks/city-smtp.md.
   provision_city_smtp_relay_foundation = true
-  enable_city_smtp_relay               = false
+  enable_city_smtp_relay               = true
   city_smtp_from_address               = "goodneighbor-dev@sf.gov"
 
   providers = {

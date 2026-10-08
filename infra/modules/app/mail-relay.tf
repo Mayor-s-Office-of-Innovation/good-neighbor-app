@@ -41,7 +41,8 @@ resource "aws_cloudwatch_log_resource_policy" "mail_manager" {
 resource "aws_cloudformation_stack" "city_smtp_relay" {
   count = var.enable_city_smtp_relay ? 1 : 0
 
-  name = "${local.name_prefix}-city-smtp-relay"
+  name              = "${local.name_prefix}-city-smtp-relay"
+  notification_arns = [aws_sns_topic.alarms.arn]
   template_body = jsonencode({
     AWSTemplateFormatVersion = "2010-09-09"
     Description              = "Authenticated SES Mail Manager gateway to the City Proofpoint SMTP relay."
