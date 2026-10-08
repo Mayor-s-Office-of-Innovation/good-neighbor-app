@@ -1064,13 +1064,13 @@ describe("card redesign", () => {
         action: null,
         statusLabel: "Today",
       });
-      expect(card).toContain(
-        "<h3>Basura que bloquea la acera</h3>",
-      );
+      expect(card).toContain("<h3>Basura que bloquea la acera</h3>");
       expect(card).toContain("<p>Descripción en español</p>");
       // The visible description is localized; the canonical English stays on
       // the edit-target attribute the edit dialog seeds from.
-      expect(card).toContain('data-card-edit-description="English description"');
+      expect(card).toContain(
+        'data-card-edit-description="English description"',
+      );
       expect(card).not.toContain("<p>English description</p>");
       expect(card).not.toContain("Trash blocking the sidewalk");
     } finally {
