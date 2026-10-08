@@ -577,6 +577,8 @@ export async function storeEvaluatedAssessment(input, options) {
   const retainedConditionIds = new Set();
   /** @type {Record<string, unknown>[]} */
   const retainedTasks = [];
+  /** @type {{ taskId: string, translations: ConditionTranslationsInput | undefined }[]} */
+  const retainedTaskTranslationUpdates = [];
 
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
@@ -614,8 +616,18 @@ export async function storeEvaluatedAssessment(input, options) {
       priorTasks.length === priorTaskIds.length &&
       priorTasks.every((task) => task.status !== "superseded")
     ) {
+      // Last-write-wins for the translations block: a refresh that carries one
+      // applies it to the retained condition (and its tasks below). A refresh
+      // without one keeps the prior block — the UI locale-checks it anyway.
+      /** @type {ConditionTranslationsInput | undefined} */
+      const translations =
+        condition.translations ??
+        /** @type {ConditionTranslationsInput | undefined} */ (
+          prior.translations
+        );
       const preserved = {
         ...prior,
+        ...(translations ? { translations } : {}),
         ...conditionKey(input.siteId, input.assessmentId, conditionId),
         assessmentId: input.assessmentId,
         ...conditionTimelineGsi(
@@ -639,7 +651,23 @@ export async function storeEvaluatedAssessment(input, options) {
         );
       retainedConditionIds.add(conditionId);
       conditionItems.push(preserved);
-      retainedTasks.push(...priorTasks);
+      for (const task of priorTasks) {
+        if (
+          JSON.stringify(task.translations ?? null) ===
+          JSON.stringify(translations ?? null)
+        ) {
+          retainedTasks.push(task);
+          continue;
+        }
+        const updatedTranslations = { ...task };
+        if (translations) updatedTranslations.translations = translations;
+        else delete updatedTranslations.translations;
+        retainedTasks.push(updatedTranslations);
+        retainedTaskTranslationUpdates.push({
+          taskId: String(task.taskId),
+          translations,
+        });
+      }
       continue;
     }
     const evaluation = evaluateCondition({
@@ -863,6 +891,24 @@ export async function storeEvaluatedAssessment(input, options) {
           ":open": "open",
           ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
         },
+      },
+    });
+  }
+  // Keep a retained task's translations block in step with its retained
+  // condition (last-write-wins); only tasks that actually differ get an Update.
+  for (const { taskId, translations } of retainedTaskTranslationUpdates) {
+    transactItems.push({
+      Update: {
+        TableName: options.tableName,
+        Key: taskKey(input.siteId, taskId),
+        ...(translations
+          ? {
+              UpdateExpression: "SET translations = :translations",
+              ExpressionAttributeValues: { ":translations": translations },
+            }
+          : {
+              UpdateExpression: "REMOVE translations",
+            }),
       },
     });
   }

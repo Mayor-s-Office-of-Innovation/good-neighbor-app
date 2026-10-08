@@ -1700,6 +1700,189 @@ describe("assessment refresh preserves unchanged conditions", () => {
     expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
   });
 
+  /** Spanish block stored on the prior condition/task before the refresh. */
+  const priorSpanish = {
+    language: "es",
+    user_friendly_label: "Sofá en la acera",
+    description: "Sofá",
+  };
+  /** Filipino block carried by the refreshed assessment. */
+  const refreshedFilipino = {
+    language: "fil",
+    user_friendly_label: "Nakatagilid na sofa sa bangketa",
+    description: "Nakatagilid na sofa",
+  };
+
+  /** Read path with a translated prior condition + task for the refresh diffs. */
+  function mockTranslatedPrevious() {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof QueryCommand)
+        return {
+          Items: [{ ...previousCondition, translations: priorSpanish }],
+        };
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: {
+            table: [{ ...mockPreviousTask() }],
+          },
+        };
+      return original?.(command);
+    });
+  }
+
+  /** @returns {Record<string, unknown>} The prior stored task fixture. */
+  function mockPreviousTask() {
+    return {
+      pk: "SITE#site-1",
+      sk: "TASK#existing-task",
+      taskId: "existing-task",
+      conditionId: "couch",
+      assessmentId: "original",
+      kind: "action",
+      status: "open",
+      translations: priorSpanish,
+    };
+  }
+
+  /**
+   * Task-key Update entries in the refresh transaction (excludes the
+   * predecessor supersede marker, which is always an Update too).
+   * @param {any[] | undefined} tx
+   * @returns {any[]}
+   */
+  function taskTranslationUpdates(tx) {
+    return (tx ?? []).filter(
+      (entry) => entry.Update?.Key?.sk === "TASK#existing-task",
+    );
+  }
+
+  it("applies a refreshed translations block to a retained condition and task", async () => {
+    mockTranslatedPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    // The refreshed block wins regardless of what was stored before.
+    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
+    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(tx).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "SITE#site-1", sk: "TASK#existing-task" },
+            UpdateExpression: "SET translations = :translations",
+            ExpressionAttributeValues: { ":translations": refreshedFilipino },
+          }),
+        }),
+      ]),
+    );
+    // Changing display language must not retire the open task.
+    expect(
+      tx.filter(
+        (/** @type {any} */ entry) =>
+          entry.Put?.Item?.supersessionReason === "assessment_refreshed",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps a retained condition's prior block when the refresh has none", async () => {
+    mockTranslatedPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [{ ...input.conditions[0], translations: undefined }],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(priorSpanish);
+    expect(result.taskItems[0].translations).toEqual(priorSpanish);
+    // Prior blocks already match, so the transaction carries no task Updates.
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(taskTranslationUpdates(tx)).toHaveLength(0);
+  });
+
+  it("applies a refreshed block to a retained condition that had none", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: { table: [{ ...mockPreviousTask() }] },
+        };
+      return original?.(command);
+    });
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
+    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(taskTranslationUpdates(tx)).toHaveLength(1);
+  });
+
+  it("mirrors a translated block onto a retained task that had none", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: {
+            table: [
+              {
+                ...mockPreviousTask(),
+                translations: undefined,
+              },
+            ],
+          },
+        };
+      return original?.(command);
+    });
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
+    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(tx).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "SITE#site-1", sk: "TASK#existing-task" },
+            UpdateExpression: "SET translations = :translations",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("pins refreshed assessments and condition evaluation to the original report time", async () => {
     mockPrevious();
     const result = await storeEvaluatedAssessment(input, {

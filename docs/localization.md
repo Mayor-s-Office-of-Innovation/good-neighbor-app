@@ -41,6 +41,12 @@ English by design.
   titles (`h3`), in-progress/completed card descriptions, and the ticket
   detail / task-update dialogs. Text captured in another locale (or tasks
   stored before the block existed) renders the canonical English fields.
+  On amendment refreshes, conditions the rulebase considers unchanged keep
+  their stored answers and tasks; the block is last-write-wins — a refresh
+  that carries one applies it to the retained condition and its retained tasks
+  (one DynamoDB `Update` per changed task), and a refresh without one keeps the
+  prior block. The UI locale-checks the block, so stale languages degrade to
+  the canonical English rather than rendering mismatched text.
 
 ## Key naming
 
