@@ -26,13 +26,15 @@ import {
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
 
-class TaskUpdateDialog extends HTMLElement {
+export class TaskUpdateDialog extends HTMLElement {
   constructor() {
     super();
     /** @type {Record<string, any> | null} */
     this._task = null;
     /** @type {Record<string, any> | null} */
     this._detail = null;
+    this._savingNotes = false;
+    this._results = false;
     this._mode = "timeline";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
@@ -62,6 +64,23 @@ class TaskUpdateDialog extends HTMLElement {
     this._open = true;
     this._mode = "timeline";
     await this._load();
+  }
+
+  /** Collect documentation for the action that just completed this task.
+   * @param {Record<string, any>} task
+   */
+  openResults(task) {
+    this._resetDraft();
+    this._task = task;
+    this._results = true;
+    this._pendingEvent = {
+      updateId: task.latestUpdateId,
+      type: "task_completed",
+    };
+    this._mode = "document";
+    this._state = "ready";
+    this._open = true;
+    this._render();
   }
 
   /** @param {string} [nextToken] */
@@ -122,6 +141,7 @@ class TaskUpdateDialog extends HTMLElement {
     if (this._mode === "notes" || this._mode === "document")
       return taskUpdateCapture({
         pendingEvent: this._pendingEvent,
+        results: this._results,
         files: this._files,
         notes: this._noteDrafts,
         previews: this._filePreviews,
@@ -369,6 +389,19 @@ class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLElement} root */
   async _saveNotes(root) {
+    if (this._savingNotes) return;
+    this._savingNotes = true;
+    root.inert = true;
+    try {
+      await this._persistNotes(root);
+    } finally {
+      this._savingNotes = false;
+      root.inert = false;
+    }
+  }
+
+  /** @param {HTMLElement} root */
+  async _persistNotes(root) {
     if (!this._task) return;
     const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
     const photos = await this._uploadFiles();
@@ -408,6 +441,11 @@ class TaskUpdateDialog extends HTMLElement {
     this._pendingEvent = null;
     this._noteDrafts = emptyTaskUpdateNotes();
     this._resetFiles();
+    if (this._results) {
+      this._mode = "timeline";
+      await this._close(true);
+      return;
+    }
     this._mode = "timeline";
     await this._load();
   }
@@ -510,9 +548,21 @@ class TaskUpdateDialog extends HTMLElement {
 
   /** @param {boolean} [discardConfirmed] */
   async _close(discardConfirmed = false) {
+    if (this._savingNotes && !discardConfirmed) return;
     if (!discardConfirmed && this._hasUnsavedDraft()) {
       this._showDiscardConfirmation();
       return;
+    }
+    if (this._results) {
+      const root = /** @type {HTMLElement} */ (
+        this.querySelector("dialog.task-update")
+      );
+      if (this._pendingEvent) {
+        await this._finishDocumentation(root, [], []);
+        return;
+      }
+      this._resetDraft();
+      this._results = false;
     }
     if (this._mode !== "timeline") {
       await this._sealPendingEvent();

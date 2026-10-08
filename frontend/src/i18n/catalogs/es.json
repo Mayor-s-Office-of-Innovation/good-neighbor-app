@@ -512,6 +512,7 @@
   "taskUpdate.actionPhotos.title": "Documente su acción",
   "taskUpdate.capture.addNote": "Agregar una nota escrita",
   "taskUpdate.capture.pendingTitle": "Actualice este problema con una foto",
+  "taskUpdate.capture.resultsTitle": "Comparte los resultados",
   "taskUpdate.capture.successTitle": "Documente su logro",
   "taskUpdate.capture.title": "Agregue una foto o una nota a este problema",
   "taskUpdate.created.perimeter": "Problema agregado durante una revisión del perímetro",

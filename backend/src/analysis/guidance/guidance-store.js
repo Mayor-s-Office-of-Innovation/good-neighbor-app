@@ -1671,6 +1671,9 @@ export async function completeTaskWithAppActions(opts) {
           lastAnsweredPresencePeriod: 0,
         }
       : {}),
+    ...(!appActionFailed && existing.Item.canBeInProgress === false
+      ? { latestUpdateId: actionUpdateId }
+      : {}),
     appActionStatus,
     appActionResults,
     ...(filed311
@@ -1735,7 +1738,10 @@ export async function completeTaskWithAppActions(opts) {
                     label: actionLabel,
                     occurredAt: now,
                     actorId: opts.actorId ?? "site-team",
-                    documentationState: "closed",
+                    documentationState:
+                      existing.Item.canBeInProgress === false
+                        ? "open_for_documentation"
+                        : "closed",
                   },
                   ConditionExpression: "attribute_not_exists(pk)",
                 },

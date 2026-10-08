@@ -512,6 +512,7 @@
   "taskUpdate.actionPhotos.title": "記錄您的行動",
   "taskUpdate.capture.addNote": "新增文字備註",
   "taskUpdate.capture.pendingTitle": "為此問題新增相片",
+  "taskUpdate.capture.resultsTitle": "分享結果",
   "taskUpdate.capture.successTitle": "記錄您的成果",
   "taskUpdate.capture.title": "為此問題新增相片或備註",
   "taskUpdate.created.perimeter": "在周邊巡檢中新增的問題",

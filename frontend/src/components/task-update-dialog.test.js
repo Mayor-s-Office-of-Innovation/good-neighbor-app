@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   uploadTaskUpdatePhoto: vi.fn(),
+  documentTaskUpdate: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({
   showTaskUpdateErrorToast: vi.fn(),
@@ -9,7 +10,7 @@ const toasts = vi.hoisted(() => ({
 vi.mock("../services/api.js", () => ({
   ApiError: class ApiError extends Error {},
   createTaskUpdate: vi.fn(),
-  documentTaskUpdate: vi.fn(),
+  documentTaskUpdate: api.documentTaskUpdate,
   getMediaUrl: vi.fn(),
   getTaskUpdates: vi.fn(),
   uploadTaskUpdatePhoto: api.uploadTaskUpdatePhoto,
@@ -117,3 +118,34 @@ describe("task-update-dialog controller", () => {
     expect(api.uploadTaskUpdatePhoto).toHaveBeenCalledTimes(1);
   });
 });
+
+it.each(["save", "skip", "failure"])(
+  "handles completion results: %s",
+  async (kind) => {
+    const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+    const dialog = /** @type {any} */ (new TaskUpdateDialog());
+    dialog._render = vi.fn();
+    dialog.dispatchEvent = vi.fn();
+    const modal = {
+      close: vi.fn(),
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    dialog.querySelector = vi.fn(() => modal);
+    dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
+    dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
+    dialog._noteDrafts = [" Work completed ", "", ""];
+    api.documentTaskUpdate.mockReset();
+    if (kind === "failure")
+      api.documentTaskUpdate.mockRejectedValue(new Error("offline"));
+    else api.documentTaskUpdate.mockResolvedValue({ update: {} });
+    if (kind === "skip") await dialog._finishDocumentation(modal, [], []);
+    else await dialog._saveNotes(modal);
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
+      notes: kind === "skip" ? [] : ["Work completed"],
+      photoKeys: kind === "skip" ? [] : ["photo-1"],
+    });
+    expect(dialog._open).toBe(kind === "failure");
+    expect(dialog._pendingEvent === null).toBe(kind !== "failure");
+  },
+);

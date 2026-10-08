@@ -48,7 +48,9 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
       card.setAttribute("aria-busy", "true");
       const taskId = card.getAttribute("data-task-id");
       if (!taskId) throw new Error("Task is not ready to complete");
-      const result = await completeTask(taskId, { completionMethod: "manual" });
+      const result = await completeCardAction(taskId, {
+        completionMethod: "manual",
+      });
       if (
         !["completed", "in_progress", "cannot_do"].includes(
           result?.task?.status,
@@ -113,4 +115,34 @@ function focusChecklistControl(host, taskId) {
   if (!control) return;
   if (control.tagName === "H2") control.setAttribute("tabindex", "-1");
   control.focus({ preventScroll: true });
+}
+
+/** Complete a card action, then collect optional results before removing the card. */
+export async function completeCardAction(taskId, body) {
+  const result = await completeTask(taskId, body);
+  const task = result?.task;
+  if (
+    task?.status === "completed" &&
+    task.canBeInProgress === false &&
+    task.latestUpdateId
+  ) {
+    await import("./task-update-dialog.js");
+    await new Promise((resolve) => {
+      const dialog =
+        /** @type {import("./task-update-dialog.js").TaskUpdateDialog} */ (
+          document.createElement("task-update-dialog")
+        );
+      dialog.addEventListener(
+        "taskupdateclosed",
+        () => {
+          dialog.remove();
+          resolve(undefined);
+        },
+        { once: true },
+      );
+      document.body.append(dialog);
+      dialog.openResults(task);
+    });
+  }
+  return result;
 }

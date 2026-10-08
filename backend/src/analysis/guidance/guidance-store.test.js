@@ -473,6 +473,40 @@ describe("completeTaskWithAppActions", () => {
     send.mockReset();
   });
 
+  it("opens completion documentation for tasks that cannot be in progress", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "onsite",
+          severity: 1,
+          canBeInProgress: false,
+          appActions: [],
+        },
+      })
+      .mockResolvedValue({});
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
+    });
+    const transaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+    expect(task.status).toBe("completed");
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      updateId: task.latestUpdateId,
+      type: "task_completed",
+      actorId: "device-1",
+      documentationState: "open_for_documentation",
+    });
+    expect(task.latestUpdateId).toBeTruthy();
+  });
+
   it("marks a task completed and records app action results", async () => {
     send.mockResolvedValueOnce({
       Item: {

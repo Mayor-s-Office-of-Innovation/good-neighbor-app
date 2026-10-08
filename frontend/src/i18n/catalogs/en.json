@@ -512,6 +512,7 @@
   "taskUpdate.actionPhotos.title": "Document your action",
   "taskUpdate.capture.addNote": "Add a typed note",
   "taskUpdate.capture.pendingTitle": "Update this issue with a photo",
+  "taskUpdate.capture.resultsTitle": "Share the results",
   "taskUpdate.capture.successTitle": "Document your success",
   "taskUpdate.capture.title": "Add a photo or note to this issue",
   "taskUpdate.created.perimeter": "Issue added during a perimeter check",

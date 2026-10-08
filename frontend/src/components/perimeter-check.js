@@ -2,6 +2,7 @@
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 /*
@@ -51,7 +52,7 @@ import {
   refreshEvidenceAnalysis,
   removeEvidenceItem,
 } from "../services/photo-analysis.js";
-import { completeTask, editAnalysisCondition } from "../services/api.js";
+import { editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -499,7 +500,7 @@ class PerimeterCheck extends HTMLElement {
         "analysis-progress",
       );
       try {
-        const result = await completeTask(problem.taskId, {
+        const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
         });
         this._analysisProgressDialog?.close();
@@ -518,7 +519,7 @@ class PerimeterCheck extends HTMLElement {
     }
 
     try {
-      await completeTask(problem.taskId, { completionMethod: "manual" });
+      await completeCardAction(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),

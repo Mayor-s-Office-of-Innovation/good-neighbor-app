@@ -349,10 +349,17 @@ export function taskUpdateTimeline({
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 
-/** @param {{ pendingEvent: Record<string, any> | null, files: File[], notes: string[], previews: string[] }} view */
-export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
-  const title =
-    pendingEvent?.type === "presence_resolved"
+/** @param {{ pendingEvent: Record<string, any> | null, results?: boolean, files: File[], notes: string[], previews: string[] }} view */
+export function taskUpdateCapture({
+  pendingEvent,
+  results = false,
+  files,
+  notes,
+  previews,
+}) {
+  const title = results
+    ? t("taskUpdate.capture.resultsTitle")
+    : pendingEvent?.type === "presence_resolved"
       ? t("taskUpdate.capture.successTitle")
       : pendingEvent
         ? t("taskUpdate.capture.pendingTitle")
