@@ -67,6 +67,10 @@ Terraform configuration in sync.
 - Missing admin assets / 403 from CloudFront: check the admin S3 publication and
   the required root Terraform outputs in the deployment job.
 - Callback assets fail: check that the index references `/src/` and `/config.js`.
+- `invalid_login_state` after credentials and MFA: confirm the deployed admin
+  bundle includes the expiry-bound OAuth transaction fallback. Access and ID
+  tokens remain session-scoped; only the one-time PKCE state/verifier uses the
+  30-minute fallback needed when hosted MFA replaces the browser session.
 - Token exchange blocked by CSP: check the admin-only response headers policy's
   `connect-src` Cognito origin.
 - Admin API 403 after login: verify `central-admin` membership and obtain fresh

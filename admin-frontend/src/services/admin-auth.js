@@ -5,6 +5,8 @@ const ID_TOKEN_KEY = "good-neighbor-admin-id-token";
 const EXPIRES_AT_KEY = "good-neighbor-admin-expires-at";
 const PKCE_VERIFIER_KEY = "good-neighbor-admin-pkce-verifier";
 const OAUTH_STATE_KEY = "good-neighbor-admin-oauth-state";
+const OAUTH_TRANSACTION_KEY = "good-neighbor-admin-oauth-transaction";
+const OAUTH_TRANSACTION_TTL_MS = 30 * 60 * 1000;
 
 /**
  * @returns {string}
@@ -32,6 +34,7 @@ export function clearAdminSession() {
   sessionStorage.removeItem(EXPIRES_AT_KEY);
   sessionStorage.removeItem(PKCE_VERIFIER_KEY);
   sessionStorage.removeItem(OAUTH_STATE_KEY);
+  removeOAuthTransaction();
 }
 
 /**
@@ -42,8 +45,10 @@ export async function startAdminLogin() {
   const verifier = randomUrlSafe(64);
   const state = randomUrlSafe(24);
   const challenge = await sha256Base64Url(verifier);
+  const transaction = { state, verifier, createdAt: Date.now() };
   sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
   sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  writeOAuthTransaction(transaction);
 
   const url = new URL(`${config.cognitoDomain}/oauth2/authorize`);
   url.searchParams.set("response_type", "code");
@@ -68,12 +73,18 @@ export async function completeAdminLoginFromUrl() {
   if (!code) return { handled: false };
 
   const state = params.get("state") || "";
-  const expectedState = sessionStorage.getItem(OAUTH_STATE_KEY) || "";
-  const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || "";
+  const transaction = readOAuthTransaction();
+  const expectedState = transaction?.state || "";
+  const verifier = transaction?.verifier || "";
   if (!state || state !== expectedState || !verifier) {
-    clearAdminSession();
+    removeOAuthTransaction();
+    clearCallbackParameters();
     return { handled: true, error: "invalid_login_state" };
   }
+  // Consume the one-time state before exchanging the one-time code. This also
+  // prevents a reconnecting custom element from processing the callback twice.
+  removeOAuthTransaction();
+  clearCallbackParameters();
 
   const config = requireAuthConfig();
   const body = new URLSearchParams({
@@ -100,11 +111,60 @@ export async function completeAdminLoginFromUrl() {
     EXPIRES_AT_KEY,
     String(Date.now() + Number(token.expires_in || 3600) * 1000),
   );
+  return { handled: true };
+}
+
+/**
+ * Keep the PKCE transaction across Cognito's MFA navigation without moving
+ * access or ID tokens out of sessionStorage. localStorage is a fallback for
+ * browsers that replace the session context during the hosted-login journey.
+ * @param {{ state: string, verifier: string, createdAt: number }} transaction
+ */
+function writeOAuthTransaction(transaction) {
+  try {
+    localStorage.setItem(OAUTH_TRANSACTION_KEY, JSON.stringify(transaction));
+  } catch {
+    // sessionStorage above remains the fallback in restricted browser modes.
+  }
+}
+
+/** @returns {{ state: string, verifier: string } | null} */
+function readOAuthTransaction() {
+  const sessionState = sessionStorage.getItem(OAUTH_STATE_KEY) || "";
+  const sessionVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || "";
+  if (sessionState && sessionVerifier) {
+    return { state: sessionState, verifier: sessionVerifier };
+  }
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(OAUTH_TRANSACTION_KEY) || "null",
+    );
+    if (
+      typeof value?.state === "string" &&
+      typeof value?.verifier === "string" &&
+      Number.isFinite(value?.createdAt) &&
+      Date.now() - value.createdAt <= OAUTH_TRANSACTION_TTL_MS
+    ) {
+      return { state: value.state, verifier: value.verifier };
+    }
+  } catch {
+    // Malformed or inaccessible storage is treated as an invalid transaction.
+  }
+  return null;
+}
+
+function removeOAuthTransaction() {
   sessionStorage.removeItem(PKCE_VERIFIER_KEY);
   sessionStorage.removeItem(OAUTH_STATE_KEY);
+  try {
+    localStorage.removeItem(OAUTH_TRANSACTION_KEY);
+  } catch {
+    // Ignore storage restrictions; there is no recoverable login transaction.
+  }
+}
 
+function clearCallbackParameters() {
   history.replaceState(null, "", location.pathname || "/");
-  return { handled: true };
 }
 
 export function signOutAdmin() {
