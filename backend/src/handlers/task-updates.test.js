@@ -59,6 +59,98 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each([
+    [false, true],
+    [false, false],
+    [true, true],
+    [true, false],
+  ])(
+    "handles documentation replay (race: %s, identical: %s)",
+    async (race, identical) => {
+      const closed = {
+        pk: "SITE#site-1",
+        sk: "event-1",
+        actorId: "device-1",
+        documentationState: "closed",
+        notes: ["Saved note"],
+        photoKeys: ["photo-1"],
+      };
+      send
+        .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+        .mockResolvedValueOnce({
+          Item: {
+            ...closed,
+            documentationState: race ? "open_for_documentation" : "closed",
+          },
+        });
+      if (race)
+        send
+          .mockRejectedValueOnce(
+            Object.assign(new Error("race"), {
+              name: "TransactionCanceledException",
+            }),
+          )
+          .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+          .mockResolvedValueOnce({ Item: closed });
+      const response = await documentTaskUpdate(
+        event(
+          {
+            notes: [identical ? "Saved note" : "Different note"],
+            photoKeys: ["photo-1"],
+          },
+          { taskId: "task-1", updateId: "update-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(identical ? 200 : 409);
+      if (!identical)
+        expect(JSON.parse(response.body).code).toBe("DocumentationConflict");
+      expect(
+        send.mock.calls.filter(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toHaveLength(race ? 1 : 0);
+    },
+  );
+
+  it("treats a retry of a skipped event as success but rejects new content", async () => {
+    const closed = {
+      actorId: "device-1",
+      documentationState: "closed",
+      notes: [],
+      photoKeys: [],
+    };
+    for (const notes of [[], ["New note"]]) {
+      send
+        .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+        .mockResolvedValueOnce({ Item: closed });
+      const response = await documentTaskUpdate(
+        event(
+          { notes, photoKeys: [] },
+          { taskId: "task-1", updateId: "update-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(notes.length ? 409 : 200);
+    }
+  });
+
+  it.each(["completed", "in_progress", "missing", "deleted"])(
+    "reports photo availability from the actual check: %s",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({
+          Item: { taskId: "task-1", checkId: "check-1", status: "completed" },
+        })
+        .mockResolvedValueOnce({ Items: [] })
+        .mockResolvedValueOnce({
+          Item: status === "missing" ? undefined : { status },
+        });
+      const response = await getTaskUpdates(event({}));
+      expect(JSON.parse(response.body).task.canUploadPhotos).toBe(
+        ["completed", "in_progress"].includes(status),
+      );
+    },
+  );
+
   it.each([true, false])(
     "persists completion documentation (skip: %s)",
     async (skip) => {

@@ -681,7 +681,7 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
- * @returns {Promise<{ task: any }>}
+ * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
 export function completeTask(taskId, body = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
@@ -807,11 +807,11 @@ export async function uploadArtifact(
  * Upload documentation for a task update without registering it for analysis.
  * @param {string} taskId
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string }} item
+ * @param {{ file: File, capturedAt?: string }} item
  */
 export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
-  const contentType = contentTypeFromDataUrl(item.dataUrl);
-  const blob = await dataUrlToBlob(item.dataUrl);
+  const blob = item.file;
+  const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {

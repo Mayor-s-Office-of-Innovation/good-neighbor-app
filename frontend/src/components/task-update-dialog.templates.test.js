@@ -196,3 +196,31 @@ it("reuses capture with the results title and skip, then renders saved content i
   expect(timeline).toContain("Area cleaned");
   expect(timeline).toContain('src="https://example.test/photo.jpg"');
 });
+
+it("keeps notes and skip available without an uploadable check", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: { updateId: "update-1" },
+    results: true,
+    photosAllowed: false,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  expect(markup).not.toContain("data-photos");
+  expect(markup).toContain(t("taskUpdate.photo.unavailable"));
+  expect(markup).toContain("data-add-note");
+  expect(markup).toContain("data-skip");
+});
+it("preserves a conflicted draft with an explanation and disabled save", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: null,
+    results: true,
+    files: [],
+    notes: ["Unsaved note"],
+    previews: [],
+  });
+  expect(markup).toContain("Unsaved note");
+  expect(markup).toContain(t("taskUpdate.capture.conflict"));
+  expect(markup).toMatch(/data-save-notes\s+disabled/);
+  expect(markup).toContain("data-skip");
+});

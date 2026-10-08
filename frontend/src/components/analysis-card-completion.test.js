@@ -120,7 +120,7 @@ it("keeps a completed card waiting until the results dialog closes", async () =>
     canBeInProgress: false,
     latestUpdateId: "update",
   };
-  vi.mocked(completeTask).mockResolvedValue({ task });
+  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
   let close = () => {};
   const dialog = {
     addEventListener: vi.fn((type, callback) => {
@@ -144,5 +144,22 @@ it("keeps a completed card waiting until the results dialog closes", async () =>
   close();
   await saving;
   expect(dialog.remove).toHaveBeenCalledOnce();
-  expect(finished).toHaveBeenCalledWith({ task });
+  expect(finished).toHaveBeenCalledWith({ task, resultsPending: true });
+});
+
+it("does not reopen capture for a replay whose results are closed", async () => {
+  const result = {
+    task: {
+      status: "completed",
+      canBeInProgress: false,
+      latestUpdateId: "update",
+    },
+    resultsPending: false,
+  };
+  vi.mocked(completeTask).mockResolvedValue(result);
+  const create = vi.spyOn(document, "createElement");
+  await expect(
+    completeCardAction("task", { completionMethod: "manual" }),
+  ).resolves.toEqual(result);
+  expect(create).not.toHaveBeenCalled();
 });

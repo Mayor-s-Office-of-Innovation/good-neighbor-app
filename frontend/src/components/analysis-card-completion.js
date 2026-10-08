@@ -121,11 +121,7 @@ function focusChecklistControl(host, taskId) {
 export async function completeCardAction(taskId, body) {
   const result = await completeTask(taskId, body);
   const task = result?.task;
-  if (
-    task?.status === "completed" &&
-    task.canBeInProgress === false &&
-    task.latestUpdateId
-  ) {
+  if (result.resultsPending) {
     await import("./task-update-dialog.js");
     await new Promise((resolve) => {
       const dialog =

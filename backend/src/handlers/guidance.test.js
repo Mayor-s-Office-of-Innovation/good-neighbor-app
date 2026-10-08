@@ -139,6 +139,7 @@ describe("guidance handlers", () => {
     });
     expect(writes[2].Put.Item).toMatchObject({
       ruleId: "LITTER-2",
+      checkId: "chk-1",
       shortId: "MOI-CIT-001",
       userFriendlyLabel: "Lots of trash in tree well",
       translations: {
@@ -578,6 +579,49 @@ describe("guidance handlers", () => {
       ],
     });
   });
+
+  it.each([
+    ["open_for_documentation", "site-team", "completed", true, true],
+    ["closed", "site-team", "completed", false, true],
+    ["open_for_documentation", "another-device", "completed", false, true],
+    ["open_for_documentation", "site-team", "missing", true, false],
+    ["open_for_documentation", "site-team", "no-id", true, false],
+  ])(
+    "returns current result capabilities: %s / %s / %s",
+    async (documentationState, actorId, checkStatus, pending, photos) => {
+      const task = {
+        taskId: "task-1",
+        status: "completed",
+        canBeInProgress: false,
+        completionMethod: "manual",
+        latestUpdateId: "update-1",
+        ...(checkStatus === "no-id" ? {} : { checkId: "check-1" }),
+      };
+      send.mockResolvedValueOnce({ Item: task });
+      send.mockImplementation(async (command) => {
+        const key = command.input.Key;
+        if (key.sk === "event-1")
+          return { Item: { documentationState, actorId } };
+        if (key.sk.startsWith("CHECK#"))
+          return {
+            Item:
+              checkStatus === "missing" ? undefined : { status: checkStatus },
+          };
+        return { Item: { updateSk: "event-1" } };
+      });
+      const response = await invoke(
+        completeTask,
+        event({
+          pathParameters: { taskId: "task-1" },
+          body: { completionMethod: "manual" },
+        }),
+      );
+      expect(parse(response)).toMatchObject({
+        resultsPending: pending,
+        task: { canUploadPhotos: photos },
+      });
+    },
+  );
 
   it("reports an active task completion lease as in progress", async () => {
     send.mockResolvedValueOnce({
