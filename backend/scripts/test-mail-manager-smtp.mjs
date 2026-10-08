@@ -135,7 +135,7 @@ try {
   await exchange(secure, reader.read, "DATA", [354]);
 
   const messageId = `<${randomUUID()}@dev.goodneighborsf.org>`;
-  const body = [
+  const message = [
     `From: Good Neighbor dev <${sender}>`,
     `To: <${recipient}>`,
     "Subject: [dev] Good Neighbor SMTP connectivity test",
