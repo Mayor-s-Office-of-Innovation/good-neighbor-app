@@ -59,10 +59,9 @@ function mockStore({ concerns = [], conditions = [], tasks = [] }) {
       return { Item: { status: "analyzed", concerns } };
     }
     if (command instanceof QueryCommand) {
-      expect(command.input.ExpressionAttributeValues).toEqual({
-        ":pk": "SITE#site-1",
-        ":prefix": "ASSESSMENT#chk_01-art_1",
-      });
+      const values = command.input.ExpressionAttributeValues ?? {};
+      expect(values[":pk"]).toBe("SITE#site-1");
+      expect(values[":prefix"]).toMatch(/^ASSESSMENT#chk_01-art_/);
       return { Items: conditions };
     }
     if (command instanceof BatchGetCommand) {
@@ -79,6 +78,38 @@ function mockStore({ concerns = [], conditions = [], tasks = [] }) {
     throw new Error(`unexpected command ${command.constructor.name}`);
   });
 }
+
+/**
+ * Answer every per-locale call with that locale's entry from `everything`,
+ * for every item in the call.
+ * @returns {void}
+ */
+function mockTranslateFromEverything() {
+  translate.mockImplementation(
+    async (
+      /** @type {{ items: { id: string }[], languages: string[] }} */ {
+        items,
+        languages,
+      },
+    ) => ({
+      items: items.map((item) => ({
+        id: item.id,
+        translations: Object.fromEntries(
+          languages.map((locale) => [locale, localeEntry(locale)]),
+        ),
+      })),
+    }),
+  );
+}
+
+/**
+ * @param {string} locale
+ * @returns {{ user_friendly_label: string, description: string }}
+ */
+const localeEntry = (locale) =>
+  /** @type {Record<string, { user_friendly_label: string, description: string }>} */ (
+    everything
+  )[locale];
 
 /** @returns {UpdateCommand[]} */
 const updates = () =>
@@ -138,38 +169,39 @@ describe("translateArtifact", () => {
         },
       ],
     });
-    translate.mockResolvedValue({
-      items: [
-        {
-          id: "0",
-          translations: {
-            fil: everything.fil,
-            vi: everything.vi,
-            "zh-Hant": everything["zh-Hant"],
-          },
-        },
-        { id: "1", translations: everything },
-      ],
-    });
+    mockTranslateFromEverything();
 
     const result = await translateArtifact(msg, {
       client: /** @type {any} */ ({ translate }),
       dynamoTable: "gnp-test-app",
     });
 
-    expect(translate).toHaveBeenCalledTimes(1);
-    expect(translate).toHaveBeenCalledWith({
-      items: [
-        { id: "0", ...trash },
-        { id: "1", ...tent },
-      ],
-      languages: ["es", "fil", "vi", "zh-Hant"],
-      requestId: "chk_01#art_1#translate",
+    // One call per locale, in flight together. Spanish is only missing for
+    // the tent (the trash copies already hold it), so that call carries one
+    // item; the other three locales carry both.
+    expect(translate).toHaveBeenCalledTimes(4);
+    const calls = translate.mock.calls.map(([args]) => args);
+    expect(calls.map((call) => call.languages)).toEqual([
+      ["es"],
+      ["fil"],
+      ["vi"],
+      ["zh-Hant"],
+    ]);
+    expect(calls[0]).toEqual({
+      items: [{ id: "0", ...tent }],
+      languages: ["es"],
+      requestId: "chk_01#art_1#translate#es#0",
       appId: "good-neighbor-app",
     });
+    expect(calls[1].items).toEqual([
+      { id: "0", ...trash },
+      { id: "1", ...tent },
+    ]);
+    expect(calls[3].requestId).toBe("chk_01#art_1#translate#zh-Hant#3");
     expect(result).toEqual({
       requestedLocales: ["es", "fil", "vi", "zh-Hant"],
       updatedTargets: 4,
+      skippedOverCap: 0,
     });
 
     const writes = updates();
@@ -217,7 +249,180 @@ describe("translateArtifact", () => {
 
     expect(translate).not.toHaveBeenCalled();
     expect(updates()).toHaveLength(0);
-    expect(result).toEqual({ requestedLocales: [], updatedTargets: 0 });
+    expect(result).toEqual({
+      requestedLocales: [],
+      updatedTargets: 0,
+      skippedOverCap: 0,
+    });
+  });
+
+  it("chunks a large artifact to the service's item cap, per locale", async () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      userFriendlyLabel: `Label ${i}`,
+      explanation: `Description ${i}.`,
+    }));
+    mockStore({ concerns: many });
+    mockTranslateFromEverything();
+
+    const result = await translateArtifact(
+      {
+        ...msg,
+        items: many.map((c) => ({
+          user_friendly_label: c.userFriendlyLabel,
+          description: c.explanation,
+        })),
+      },
+      {
+        client: /** @type {any} */ ({ translate }),
+        dynamoTable: "gnp-test-app",
+      },
+    );
+
+    // 4 locales × (10 + 1) items.
+    expect(translate).toHaveBeenCalledTimes(8);
+    const sizes = translate.mock.calls.map(([args]) => args.items.length);
+    expect(sizes).toEqual([10, 1, 10, 1, 10, 1, 10, 1]);
+    expect(result.updatedTargets).toBe(11);
+    // All 11 concerns land in the single ANALYSIS# update.
+    const analysisWrite = updates().find(
+      (w) => w.input.Key?.sk === "CHECK#chk_01#ANALYSIS#art_1",
+    );
+    expect(analysisWrite?.input.UpdateExpression).toContain(
+      "#c[10].translations = :t10",
+    );
+  });
+
+  it("skips items over the service's text caps without failing the rest", async () => {
+    const long = {
+      user_friendly_label: "Fine label",
+      description: "x".repeat(4001),
+    };
+    mockStore({
+      concerns: [
+        {
+          userFriendlyLabel: trash.user_friendly_label,
+          explanation: trash.description,
+        },
+        {
+          userFriendlyLabel: long.user_friendly_label,
+          explanation: long.description,
+        },
+      ],
+    });
+    mockTranslateFromEverything();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await translateArtifact(
+        { ...msg, items: [trash, long] },
+        {
+          client: /** @type {any} */ ({ translate }),
+          dynamoTable: "gnp-test-app",
+        },
+      );
+      expect(result.skippedOverCap).toBe(1);
+      expect(result.updatedTargets).toBe(1);
+      for (const [args] of translate.mock.calls) {
+        expect(args.items).toEqual([{ id: "0", ...trash }]);
+      }
+      expect(warning).toHaveBeenCalledWith(
+        "translateArtifact: skipped items over the service caps",
+        { checkId: "chk_01", artifactId: "art_1", skippedOverCap: 1 },
+      );
+      // The over-cap text never appears in the log payload.
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("xxxx");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("writes the locales that succeeded when one locale is rejected permanently", async () => {
+    mockStore({
+      concerns: [
+        {
+          userFriendlyLabel: trash.user_friendly_label,
+          explanation: trash.description,
+        },
+      ],
+    });
+    translate.mockImplementation(
+      async (/** @type {any} */ { items, languages }) => {
+        if (languages[0] === "vi") {
+          throw new AnalyzerError("bad", {
+            status: 400,
+            code: "invalid_request",
+          });
+        }
+        return {
+          items: items.map((/** @type {{ id: string }} */ item) => ({
+            id: item.id,
+            translations: { [languages[0]]: localeEntry(languages[0]) },
+          })),
+        };
+      },
+    );
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await translateArtifact(
+        { ...msg, items: [trash] },
+        {
+          client: /** @type {any} */ ({ translate }),
+          dynamoTable: "gnp-test-app",
+        },
+      );
+      expect(result.updatedTargets).toBe(1);
+      const withoutVi = { ...everything };
+      delete (/** @type {Partial<typeof everything>} */ (withoutVi).vi);
+      expect(updates()[0].input.ExpressionAttributeValues).toEqual({
+        ":t0": withoutVi,
+      });
+      expect(warning).toHaveBeenCalledWith(
+        "translateArtifact: analyzer rejected a locale",
+        expect.objectContaining({ locale: "vi", status: 400 }),
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("writes what succeeded, then rethrows a transient locale failure for redelivery", async () => {
+    mockStore({
+      concerns: [
+        {
+          userFriendlyLabel: trash.user_friendly_label,
+          explanation: trash.description,
+        },
+      ],
+    });
+    translate.mockImplementation(
+      async (/** @type {any} */ { items, languages }) => {
+        if (languages[0] === "fil") {
+          throw new AnalyzerError("busy", { status: 503, retryable: true });
+        }
+        return {
+          items: items.map((/** @type {{ id: string }} */ item) => ({
+            id: item.id,
+            translations: { [languages[0]]: localeEntry(languages[0]) },
+          })),
+        };
+      },
+    );
+
+    await expect(
+      translateArtifact(
+        { ...msg, items: [trash] },
+        {
+          client: /** @type {any} */ ({ translate }),
+          dynamoTable: "gnp-test-app",
+        },
+      ),
+    ).rejects.toThrow("busy");
+    const withoutFil = { ...everything };
+    delete (/** @type {Partial<typeof everything>} */ (withoutFil).fil);
+    expect(updates()[0].input.ExpressionAttributeValues).toEqual({
+      ":t0": withoutFil,
+    });
   });
 
   it("shares locales one copy already holds without asking the service for them", async () => {
@@ -396,11 +601,19 @@ describe("handler", () => {
         },
       ],
     });
-    translate
-      .mockResolvedValueOnce({ items: [{ id: "0", translations: everything }] })
-      .mockRejectedValueOnce(
-        new AnalyzerError("busy", { status: 503, retryable: true }),
-      );
+    translate.mockImplementation(
+      async (/** @type {any} */ { items, languages, requestId }) => {
+        if (requestId.startsWith("chk_01#art_2#")) {
+          throw new AnalyzerError("busy", { status: 503, retryable: true });
+        }
+        return {
+          items: items.map((/** @type {{ id: string }} */ item) => ({
+            id: item.id,
+            translations: { [languages[0]]: localeEntry(languages[0]) },
+          })),
+        };
+      },
+    );
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
@@ -414,7 +627,11 @@ describe("handler", () => {
               },
               {
                 messageId: "m2",
-                body: JSON.stringify({ ...msg, items: [trash] }),
+                body: JSON.stringify({
+                  ...msg,
+                  artifactId: "art_2",
+                  items: [trash],
+                }),
               },
             ],
           }),

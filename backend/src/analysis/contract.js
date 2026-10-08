@@ -116,6 +116,17 @@
  * @property {{ s3_uri: string }} [result_storage]
  */
 
+/**
+ * `POST /v1/translations` request bounds, pinned to
+ * `contract/schemas/translate-request.schema.json`. The worker chunks to
+ * `maxItems` and skips items over the text caps before calling.
+ */
+export const TRANSLATE_LIMITS = Object.freeze({
+  maxItems: 10,
+  maxLabelLength: 200,
+  maxDescriptionLength: 4000,
+});
+
 /** @type {string} */
 export const RUBRIC_ID = "good-neighbor-app";
 

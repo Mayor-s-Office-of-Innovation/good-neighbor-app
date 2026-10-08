@@ -49,11 +49,17 @@ English by design.
     copies it stores (covering edited, added, and described conditions). The
     translate worker (`backend/src/workers/translate-artifact.js`) asks the
     service's text-only `POST /v1/translations` for the locales still
-    missing and writes the merged map onto every stored copy of that exact
+    missing — one call per locale per chunk of 10 items, in parallel, since
+    output tokens dominate the service's latency behind its 29 s gateway
+    budget — and writes the merged map onto every stored copy of that exact
     English text — the concern, the conditions, and their tasks — whether the
-    user has evaluated yet or not. It is idempotent (a redelivery finds
-    nothing missing), best-effort (a failed enqueue leaves English), and
-    never retries into the analysis idempotency gate.
+    user has evaluated yet or not. Items over the service's text caps are
+    skipped (they keep English) rather than failing their batch; a locale the
+    service rejects permanently is skipped the same way, while a transient
+    failure writes what did succeed and then redelivers for the rest. It is
+    idempotent (a redelivery finds nothing missing), best-effort (a failed
+    enqueue leaves English), and never retries into the analysis idempotency
+    gate.
   The UI reads `translations[activeLocale]` through
   `frontend/src/i18n/analyzer-text.js` — card titles (`h3`),
   in-progress/completed card descriptions, the ticket detail and task-update
