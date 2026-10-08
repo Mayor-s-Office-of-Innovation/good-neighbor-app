@@ -72,6 +72,11 @@ describe("storeEvaluatedAssessment", () => {
             severity: 3,
             userFriendlyLabel: "Lots of trash in tree well",
             description: "trash",
+            translations: {
+              language: "es",
+              user_friendly_label: "Montón de basura",
+              description: "basura",
+            },
             sourceArtifactIds: ["art-1"],
           },
           {
@@ -138,6 +143,11 @@ describe("storeEvaluatedAssessment", () => {
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        language: "es",
+        user_friendly_label: "Montón de basura",
+        description: "basura",
+      },
       taskIds: ["task-1"],
       resolvedToTasks: true,
       gsi4pk: "SITE#site-1#CONDITION#SEV#3",
@@ -156,6 +166,7 @@ describe("storeEvaluatedAssessment", () => {
       gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
       gsi5sk: "2026-08-18T12:00:00.000Z#SEV#2#asm-1#002-graffiti",
     });
+    expect(graffiti).not.toHaveProperty("translations");
 
     const task = writes[3].Put.Item;
     expect(task).toMatchObject({
@@ -175,6 +186,11 @@ describe("storeEvaluatedAssessment", () => {
       category: "Litter",
       severity: 3,
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        language: "es",
+        user_friendly_label: "Montón de basura",
+        description: "basura",
+      },
       appActionStatus: "pending",
       appActionResults: [],
       gsi2pk: "SITE#site-1#TASK#open",
@@ -362,6 +378,10 @@ describe("answerCondition", () => {
       canonicalCategory: "Graffiti",
       severity: 2,
       userFriendlyLabel: "Tag covers most of wall",
+      translations: {
+        language: "fil",
+        user_friendly_label: "Pinta ang mukha ng pader",
+      },
       answers: {},
       taskIds: [],
       source: { artifactIds: ["art-1"] },
@@ -440,6 +460,10 @@ describe("answerCondition", () => {
       taskId: "task-2",
       shortId: "MOI-CIT-042",
       userFriendlyLabel: "Tag covers most of wall",
+      translations: {
+        language: "fil",
+        user_friendly_label: "Pinta ang mukha ng pader",
+      },
     });
   });
 });

@@ -1040,6 +1040,74 @@ describe("card redesign", () => {
       await setLocale("en");
     }
   });
+
+  it("renders the analyzer's localized label and in-progress description", async () => {
+    await setLocale("es");
+    try {
+      const task = {
+        taskId: "task_es",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          language: "es",
+          user_friendly_label: "Basura que bloquea la acera",
+          description: "Descripción en español",
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain(
+        "<h3>Basura que bloquea la acera</h3>",
+      );
+      expect(card).toContain("<p>Descripción en español</p>");
+      // The visible description is localized; the canonical English stays on
+      // the edit-target attribute the edit dialog seeds from.
+      expect(card).toContain('data-card-edit-description="English description"');
+      expect(card).not.toContain("<p>English description</p>");
+      expect(card).not.toContain("Trash blocking the sidewalk");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
+  it("keeps English analyzer text when the translations target another locale", async () => {
+    await setLocale("es");
+    try {
+      const task = {
+        taskId: "task_mismatch",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          language: "fil",
+          user_friendly_label: "Basura na naghaharang ng bangketa",
+          description: "Paglalarawan sa Filipino",
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain("<h3>Trash blocking the sidewalk</h3>");
+      expect(card).toContain("English description");
+      expect(card).not.toContain("Basura na naghaharang ng bangketa");
+    } finally {
+      await setLocale("en");
+    }
+  });
   const task = {
     taskId: "task_1",
     ruleId: "LITTER-1",

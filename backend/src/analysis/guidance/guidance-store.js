@@ -268,6 +268,13 @@ function applyAssessmentConditionDelta({
 }
 
 /**
+ * @typedef {object} ConditionTranslationsInput
+ * @property {string} language
+ * @property {string} [user_friendly_label]
+ * @property {string} [description]
+ */
+
+/**
  * @typedef {object} AssessmentConditionInput
  * @property {string} [conditionId]
  * @property {string} category
@@ -275,6 +282,7 @@ function applyAssessmentConditionDelta({
  * @property {string} [severityLabel]
  * @property {string} [userFriendlyLabel]
  * @property {string} [description]
+ * @property {ConditionTranslationsInput} [translations]
  * @property {string[]} [sourceArtifactIds]
  * @property {number[]} [evidenceIndices]
  * @property {Record<string, unknown>} [source]
@@ -363,6 +371,7 @@ function buildConditionItem({
     severityLabel: condition.severityLabel,
     userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
+    ...(condition.translations ? { translations: condition.translations } : {}),
     answers: {},
     status:
       evaluation.kind === "needs_answer"
@@ -455,6 +464,7 @@ function buildTaskItem({
     userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
+    ...(condition.translations ? { translations: condition.translations } : {}),
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
@@ -1183,6 +1193,9 @@ export async function answerCondition(opts) {
             typeof conditionItem.userFriendlyLabel === "string"
               ? conditionItem.userFriendlyLabel
               : undefined,
+          ...(conditionItem.translations
+            ? { translations: conditionItem.translations }
+            : {}),
           sourceArtifactIds:
             /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
               ?.artifactIds ?? [],

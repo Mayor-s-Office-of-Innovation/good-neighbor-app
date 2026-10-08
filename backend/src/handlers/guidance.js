@@ -15,7 +15,18 @@ const MAX_ASSESSMENT_CONDITIONS = 49;
 
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
+ * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: NormalizedConditionInput[] }}
+ * @typedef {object} NormalizedConditionInput
+ * @property {string} [conditionId]
+ * @property {string} category
+ * @property {number} severity
+ * @property {string} [severityLabel]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [description]
+ * @property {NormalizedTranslations} [translations]
+ * @property {string[]} [sourceArtifactIds]
+ * @property {number[]} [evidenceIndices]
+ * @property {{ latitude: unknown, longitude: unknown, positionDescriptor: unknown }} source
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -96,6 +107,9 @@ function normalizeAssessmentBody(body) {
         : Array.isArray(item.evidenceIndices)
           ? item.evidenceIndices.filter((id) => typeof id === "number")
           : [],
+      ...(normalizeTranslations(item.translations)
+        ? { translations: normalizeTranslations(item.translations) }
+        : {}),
       source: {
         latitude: metadata.latitude,
         longitude: metadata.longitude,
@@ -138,6 +152,51 @@ function normalizeAssessmentBody(body) {
     rawAssessment,
     conditions,
   };
+}
+
+/**
+ * @typedef {object} NormalizedTranslations
+ * @property {string} language
+ * @property {string} [user_friendly_label]
+ * @property {string} [description]
+ */
+
+/**
+ * Accept the analyzer's optional per-condition `translations` block (localizer
+ * copies of `user_friendly_label`/`description`; see analysis/contract.js) or
+ * undefined. Malformed shapes are dropped rather than rejected: translations
+ * are display sugar, so bad input degrades to the canonical English fields
+ * instead of failing the assessment. Fields the service omitted (or sent
+ * malformed) are left off — readers fall back to the canonical English.
+ * @param {unknown} value
+ * @returns {NormalizedTranslations | undefined}
+ */
+function normalizeTranslations(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const translations = /** @type {Record<string, unknown>} */ (value);
+  const language = translations.language;
+  if (typeof language !== "string" || !language) return undefined;
+  /** @param {string} key */
+  const stringField = (key) => {
+    const text = translations[key];
+    return typeof text === "string" && text ? text : undefined;
+  };
+  const user_friendly_label = stringField("user_friendly_label");
+  const description = stringField("description");
+  if (user_friendly_label === undefined && description === undefined) {
+    return undefined;
+  }
+  /** @type {NormalizedTranslations} */
+  const normalized = { language };
+  if (user_friendly_label !== undefined) {
+    normalized.user_friendly_label = user_friendly_label;
+  }
+  if (description !== undefined) {
+    normalized.description = description;
+  }
+  return normalized;
 }
 
 /**

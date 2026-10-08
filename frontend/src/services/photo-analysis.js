@@ -294,6 +294,7 @@ function assessmentFromRefreshedAnalysis({
         severityLabel: concern.ratingLabel,
         userFriendlyLabel: concern.userFriendlyLabel,
         description: concern.explanation || "",
+        ...(concern.translations ? { translations: concern.translations } : {}),
         sourceArtifactIds: [artifactId],
         evidenceIndices: concern.evidenceIndices || [],
       })),

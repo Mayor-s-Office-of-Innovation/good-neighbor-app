@@ -32,9 +32,15 @@ English by design.
   reason and a task-update label), so callers pass a key-prefix `scope` such as
   `"server.sf311"` where the context is known. The API wire format is
   unchanged: the UI still submits and compares the stored English.
-- **Analyzer text:** the model-written task title and description are not
-  translated by the app yet. See the analyzer service for the per-request
-  language option.
+- **Analyzer text:** the analyzer service writes a per-condition `translations`
+  block (`language`, `user_friendly_label`, `description`) when the capture
+  request carries a `language` (stamped from the active locale at
+  `registerArtifact`). The backend carries the block through
+  `assessments:evaluate`, persists it on CONDITION and TASK items, and the UI
+  prefers it whenever `translations.language` matches the active locale — card
+  titles (`h3`), in-progress/completed card descriptions, and the ticket
+  detail / task-update dialogs. Text captured in another locale (or tasks
+  stored before the block existed) renders the canonical English fields.
 
 ## Key naming
 
