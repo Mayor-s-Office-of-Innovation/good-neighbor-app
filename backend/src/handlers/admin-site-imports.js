@@ -13,7 +13,7 @@ import { ddb } from "../db.js";
 import { geocodeSiteAddress, siteSearchItem } from "../domain/site-metadata.js";
 import { jsonResponse } from "../http.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { supervisorOnly } from "../lib/admin-auth.js";
 import { emailHash } from "./setup-codes.js";
 
 const HEADERS = [
@@ -38,7 +38,7 @@ const REVIEW_SECONDS = 7 * 24 * 60 * 60;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const previewSiteImport = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const csv = String(body.csv ?? "");
     if (!csv || Buffer.byteLength(csv, "utf8") > MAX_BYTES) {
       return jsonResponse(400, { error: "invalid_file_size" });
@@ -118,7 +118,7 @@ export const previewSiteImport = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const applySiteImport = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const importId = event.pathParameters?.importId ?? "";
     const previewVersion = clean(body.previewVersion);
     const idempotencyKey = clean(body.idempotencyKey);
@@ -246,7 +246,7 @@ export const applySiteImport = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listSiteImports = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const result = await ddb.send(
       new QueryCommand({
         TableName: getDynamoTableName(),
@@ -263,7 +263,7 @@ export const listSiteImports = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const getSiteImport = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const importId = event.pathParameters?.importId ?? "";
     const [meta, rows] = await Promise.all([
       ddb.send(
@@ -283,7 +283,7 @@ export const getSiteImport = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const getSiteImportConflicts = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const importId = event.pathParameters?.importId ?? "";
     const rows = await queryImportRows(importId);
     const conflicts = (rows.Items ?? []).filter(

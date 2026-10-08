@@ -6,14 +6,6 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import {
-  AdminAddUserToGroupCommand,
-  AdminCreateUserCommand,
-  AdminGetUserCommand,
-  AdminUpdateUserAttributesCommand,
-  CognitoIdentityProviderClient,
-  ListUsersCommand,
-} from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
@@ -27,81 +19,31 @@ import {
   siteSearchSk,
 } from "../domain/site-metadata.js";
 import {
-  emailHash,
   issueSetupCode,
   normalizeEmail,
-  revokePendingSetupCodes,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
 
-const cognito = new CognitoIdentityProviderClient({});
-
-/** GET /admin/v1/program-managers — directory of Cognito users marked as City program managers. */
+/** GET /admin/v1/program-managers — non-authenticating domain directory. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listCityProgramManagers = (event) =>
   adminOnly(event, async () => {
-    const userPoolId = getConfig().cognitoUserPoolId;
-    if (!userPoolId) {
-      const items = await queryAll({
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: {
-          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
-        },
-      });
-      return jsonResponse(200, {
-        programManagers: items.map(publicProgramManager),
-      });
-    }
-    /** @type {any[]} */
-    const programManagers = [];
-    let paginationToken;
-    do {
-      const result =
-        /** @type {import("@aws-sdk/client-cognito-identity-provider").ListUsersCommandOutput} */ (
-          await cognito.send(
-            new ListUsersCommand({
-              UserPoolId: userPoolId,
-              Limit: 60,
-              ...(paginationToken ? { PaginationToken: paginationToken } : {}),
-            }),
-          )
-        );
-      for (const user of result.Users || []) {
-        const attributes = Object.fromEntries(
-          (user.Attributes || []).map((attribute) => [
-            attribute.Name,
-            attribute.Value,
-          ]),
-        );
-        if (
-          user.Enabled === false ||
-          attributes["custom:program_manager"] !== "true"
-        )
-          continue;
-        const name =
-          [attributes.given_name, attributes.family_name]
-            .filter(Boolean)
-            .join(" ") ||
-          attributes.name ||
-          attributes.email ||
-          user.Username;
-        programManagers.push({
-          userId: attributes.sub || user.Username,
-          name,
-          email: attributes.email || "",
-        });
-      }
-      paginationToken = result.PaginationToken;
-    } while (paginationToken);
-    programManagers.sort((a, b) => a.name.localeCompare(b.name));
-    return jsonResponse(200, { programManagers });
+    const items = await queryAll({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: {
+        ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      },
+    });
+    return jsonResponse(200, {
+      programManagers: items.map(publicProgramManager),
+    });
   });
 
-/** POST /admin/v1/program-managers — invite a Cognito admin marked as a Program manager. */
+/** POST /admin/v1/program-managers — add a non-authenticating domain contact. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createCityProgramManager = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const firstName = cleanText(body.firstName);
     const lastName = cleanText(body.lastName);
     const email = cleanText(body.email).toLowerCase();
@@ -111,82 +53,28 @@ export const createCityProgramManager = (event) =>
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
-    const userPoolId = getConfig().cognitoUserPoolId;
-    if (!userPoolId) {
-      const now = new Date().toISOString();
-      const item = {
-        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
-        sk: `MANAGER#${email}`,
-        type: "cityProgramManager",
-        userId: randomUUID(),
-        firstName,
-        lastName,
-        name: `${firstName} ${lastName}`,
-        email,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: item,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      );
-      return jsonResponse(201, { programManager: publicProgramManager(item) });
-    }
-    const attributes = [
-      { Name: "email", Value: email },
-      { Name: "email_verified", Value: "true" },
-      { Name: "given_name", Value: firstName },
-      { Name: "family_name", Value: lastName },
-      { Name: "name", Value: `${firstName} ${lastName}` },
-      { Name: "custom:program_manager", Value: "true" },
-    ];
-    try {
-      await cognito.send(
-        new AdminCreateUserCommand({
-          UserPoolId: userPoolId,
-          Username: email,
-          DesiredDeliveryMediums: ["EMAIL"],
-          UserAttributes: attributes,
-        }),
-      );
-    } catch (error) {
-      if (error instanceof Error && error.name === "UsernameExistsException") {
-        await cognito.send(
-          new AdminUpdateUserAttributesCommand({
-            UserPoolId: userPoolId,
-            Username: email,
-            UserAttributes: attributes,
-          }),
-        );
-      } else {
-        throw error;
-      }
-    }
-    await cognito.send(
-      new AdminAddUserToGroupCommand({
-        UserPoolId: userPoolId,
-        Username: email,
-        GroupName: "central-admin",
+    const now = new Date().toISOString();
+    const item = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: `MANAGER#${email}`,
+      type: "cityProgramManager",
+      userId: randomUUID(),
+      firstName,
+      lastName,
+      name: `${firstName} ${lastName}`,
+      email,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ddb.send(
+      new PutCommand({
+        TableName: getDynamoTableName(),
+        Item: item,
+        ConditionExpression: "attribute_not_exists(pk)",
       }),
     );
-    const user = await cognito.send(
-      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }),
-    );
-    const userAttributes = Object.fromEntries(
-      (user.UserAttributes || []).map((attribute) => [
-        attribute.Name,
-        attribute.Value,
-      ]),
-    );
     return jsonResponse(201, {
-      programManager: {
-        userId: userAttributes.sub || user.Username || email,
-        name: `${firstName} ${lastName}`,
-        email,
-      },
+      programManager: publicProgramManager(item),
     });
   });
 
@@ -209,7 +97,7 @@ export const listProviders = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const createProvider = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
     const providerId = slug(body.providerId, name);
@@ -300,7 +188,7 @@ export const updateProvider = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const deactivateProvider = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const providerId = event.pathParameters?.providerId ?? "";
     const now = new Date().toISOString();
     const res = await ddb.send(
@@ -331,7 +219,7 @@ export const deactivateProvider = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const createSite = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const providerId = event.pathParameters?.providerId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
@@ -586,7 +474,7 @@ export const getAdminSite = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const reassignSite = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const providerId = cleanText(body.providerId);
     const leadProgramId = cleanText(body.leadProgramId);
@@ -1136,7 +1024,7 @@ async function deleteComplianceLetterUpload(key) {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const deactivateSite = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const now = new Date().toISOString();
     const tableName = getDynamoTableName();
@@ -1221,16 +1109,6 @@ export const deactivateSite = (event) =>
     });
   });
 
-export const listMasterContacts = contactLister("MASTER_CONTACT#");
-export const createMasterContact = contactCreator(
-  "MASTER_CONTACT#",
-  "masterContact",
-);
-export const deactivateMasterContact = contactDeactivator("MASTER_CONTACT#");
-export const listCodeContacts = contactLister("CODE_CONTACT#");
-export const createCodeContact = contactCreator("CODE_CONTACT#", "codeContact");
-export const deactivateCodeContact = contactDeactivator("CODE_CONTACT#");
-
 /**
  * POST /admin/v1/sites/{siteId}/setup-codes
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
@@ -1239,7 +1117,7 @@ export const issueAdminSetupCode = (event) =>
   adminOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const email = normalizeEmail(String(body.email ?? ""));
-    const accessLevel = body.accessLevel === "admin" ? "admin" : "general";
+    const accessLevel = body.accessLevel === "manager" ? "manager" : "general";
     if (!email) return jsonResponse(400, { error: "email_required" });
     const siteRes = await ddb.send(
       new GetCommand({
@@ -1449,30 +1327,6 @@ async function revokeLegacyDevice(tableName, siteId, deviceId) {
     }
     throw error;
   }
-}
-
-/**
- * @param {string} prefix
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactLister(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async () => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const res = await ddb.send(
-          new QueryCommand({
-            TableName: getDynamoTableName(),
-            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-            ExpressionAttributeValues: {
-              ":pk": `SITE#${siteId}`,
-              ":prefix": prefix,
-            },
-          }),
-        );
-        return jsonResponse(200, { contacts: res.Items ?? [] });
-      })
-  );
 }
 
 /** @param {unknown} value */
@@ -1697,78 +1551,6 @@ function normalizeAddress(value) {
   const address =
     typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
   return address.length >= 3 && address.length <= 240 ? address : "";
-}
-
-/**
- * @param {string} prefix
- * @param {string} type
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactCreator(prefix, type) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async (body) => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const email = normalizeEmail(String(body.email ?? ""));
-        if (!email) return jsonResponse(400, { error: "email_required" });
-        const now = new Date().toISOString();
-        const hash = await emailHash(email);
-        const item = {
-          pk: `SITE#${siteId}`,
-          sk: `${prefix}${hash}`,
-          type,
-          email,
-          emailHash: hash,
-          name: String(body.name ?? "").trim() || undefined,
-          siteId,
-          status: "active",
-          createdAt: now,
-          updatedAt: now,
-        };
-        await ddb.send(
-          new PutCommand({
-            TableName: getDynamoTableName(),
-            Item: item,
-          }),
-        );
-        return jsonResponse(201, { contact: item });
-      })
-  );
-}
-
-/**
- * @param {string} prefix
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactDeactivator(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async () => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const hash = event.pathParameters?.emailHash ?? "";
-        const now = new Date().toISOString();
-        const res = await ddb.send(
-          new UpdateCommand({
-            TableName: getDynamoTableName(),
-            Key: { pk: `SITE#${siteId}`, sk: `${prefix}${hash}` },
-            UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-            ConditionExpression: "attribute_exists(pk)",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":inactive": "inactive",
-              ":now": now,
-            },
-            ReturnValues: "ALL_NEW",
-          }),
-        );
-        await revokePendingSetupCodes({
-          siteId,
-          contactHash: hash,
-          reason: "contact_removed",
-        });
-        return jsonResponse(200, { contact: res.Attributes });
-      })
-  );
 }
 
 /**

@@ -7,7 +7,12 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  supervisorOnly,
+} from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -57,7 +62,7 @@ export const listManagerMemberships = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerMembership = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const name = clean(body.name);
     const email = normalizeEmail(String(body.email ?? ""));
@@ -174,6 +179,13 @@ export const updateManagerMembership = (event) =>
     if (!current || current.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
+    const principal = adminPrincipal(event);
+    if (
+      principal.role !== ADMIN_GROUPS.supervisor &&
+      email !== normalizeEmail(String(current.email ?? ""))
+    ) {
+      return jsonResponse(403, { error: "supervisor_required" });
+    }
     const nextHash = await emailHash(email);
     const now = new Date().toISOString();
     const actor = actorId(event);
@@ -275,7 +287,7 @@ export const updateManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateManagerMembership = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const result = await deactivateManagerMembershipRecord({

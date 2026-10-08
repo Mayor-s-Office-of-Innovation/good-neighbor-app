@@ -97,9 +97,6 @@ function enterCodeView({ value, error, checking }) {
           : escapeHtml(t("common.continue"))}
       </button>
     </form>
-    <button id="show-request-code" class="btn-link" type="button">
-      ${escapeHtml(t("setup.needNewCode"))}
-    </button>
   `;
 }
 

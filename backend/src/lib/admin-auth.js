@@ -1,38 +1,92 @@
-// Central-admin gate shared by every /admin/v1/* handler. The admin JWT
-// authorizer (api.tf) injects Cognito claims; HTTP API stringifies the
-// `cognito:groups` list in more than one shape, so membership is matched on
-// whole group names in every shape rather than by substring.
 import { jsonResponse, readJsonBody } from "../http.js";
+
+export const ADMIN_GROUPS = Object.freeze({
+  manager: "compliance-manager",
+  supervisor: "compliance-supervisor",
+  legacyManager: "central-admin",
+});
+
+const SUPERVISOR_CAPABILITIES = Object.freeze({
+  manageAdminUsers: true,
+  createEntities: true,
+  deactivateEntities: true,
+  changeLeadProgram: true,
+  manageSiteManagers: true,
+  runImports: true,
+});
+const MANAGER_CAPABILITIES = Object.freeze({
+  manageAdminUsers: false,
+  createEntities: false,
+  deactivateEntities: false,
+  changeLeadProgram: false,
+  manageSiteManagers: false,
+  runImports: false,
+});
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+export function adminPrincipal(event) {
+  const claims = /** @type {Record<string, any>} */ (
+    /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims ??
+      /** @type {any} */ (event.requestContext)?.authorizer ??
+      {}
+  );
+  const groups = parseGroups(
+    claims["cognito:groups"] ?? claims["claims.cognito:groups"] ?? "",
+  );
+  const supervisor = groups.includes(ADMIN_GROUPS.supervisor);
+  const manager =
+    supervisor ||
+    groups.includes(ADMIN_GROUPS.manager) ||
+    groups.includes(ADMIN_GROUPS.legacyManager);
+  return {
+    authenticated: manager,
+    role: supervisor
+      ? ADMIN_GROUPS.supervisor
+      : manager
+        ? ADMIN_GROUPS.manager
+        : "",
+    groups,
+    subject: String(claims.sub ?? ""),
+    username: String(claims["cognito:username"] ?? claims.username ?? ""),
+    capabilities: supervisor ? SUPERVISOR_CAPABILITIES : MANAGER_CAPABILITIES,
+  };
+}
+
+/** @param {unknown} raw */
+function parseGroups(raw) {
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw !== "string") return [];
+  const value = raw.trim();
+  if (!value) return [];
+  if (value.startsWith("[") && value.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch {
+      return value
+        .slice(1, -1)
+        .split(",")
+        .map((group) => group.trim())
+        .filter(Boolean);
+    }
+  }
+  return value
+    .split(",")
+    .map((group) => group.trim())
+    .filter(Boolean);
+}
 
 /**
  * @param {import("aws-lambda").APIGatewayProxyEventV2} event
  * @returns {boolean}
  */
 export function isCentralAdmin(event) {
-  const authorizer =
-    /** @type {any} */ (event.requestContext)?.authorizer ?? {};
-  const groups =
-    authorizer.jwt?.claims?.["cognito:groups"] ??
-    authorizer["claims.cognito:groups"] ??
-    "";
-  if (Array.isArray(groups)) return groups.includes("central-admin");
-  if (typeof groups !== "string") return false;
-  const value = groups.trim();
-  if (value.startsWith("[")) {
-    if (!value.endsWith("]")) return false;
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) && parsed.includes("central-admin");
-    } catch {
-      // HTTP API JWT claims can stringify a group list without JSON quotes.
-      // Match whole comma-delimited names, never substrings or words in a name.
-      return value
-        .slice(1, -1)
-        .split(",")
-        .some((group) => group.trim() === "central-admin");
-    }
-  }
-  return value.split(",").some((group) => group.trim() === "central-admin");
+  return adminPrincipal(event).authenticated;
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+export function isComplianceSupervisor(event) {
+  return adminPrincipal(event).role === ADMIN_GROUPS.supervisor;
 }
 
 /**
@@ -44,6 +98,25 @@ export function isCentralAdmin(event) {
  */
 export async function adminOnly(event, fn) {
   if (!isCentralAdmin(event)) return jsonResponse(403, { error: "forbidden" });
+  return withBody(event, fn);
+}
+
+/**
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {(body: Record<string, unknown>) => Promise<any>} fn
+ * @returns {Promise<any>}
+ */
+export async function supervisorOnly(event, fn) {
+  if (!isComplianceSupervisor(event))
+    return jsonResponse(403, { error: "supervisor_required" });
+  return withBody(event, fn);
+}
+
+/**
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {(body: Record<string, unknown>) => Promise<any>} fn
+ */
+async function withBody(event, fn) {
   let body = /** @type {Record<string, unknown>} */ ({});
   if (event.body) {
     try {

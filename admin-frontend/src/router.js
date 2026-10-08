@@ -1,4 +1,5 @@
 const ROUTES = [
+  ["administrators", /^\/administrators\/?$/],
   ["manager-new", /^\/managers\/new\/?$/],
   ["manager", /^\/managers\/([^/]+)\/?$/],
   ["managers", /^\/managers\/?$/],

@@ -8,6 +8,8 @@
     "build:lambdas": "node scripts/build-lambdas.mjs",
     "backfill:site-short-codes": "node scripts/backfill-site-short-codes.mjs",
     "backfill:manager-membership-directory": "node scripts/backfill-manager-membership-directory.mjs",
+    "migrate:master-contacts": "node scripts/migrate-master-contacts-to-managers.mjs",
+    "migrate:cognito-admin-groups": "node scripts/migrate-cognito-admin-groups.mjs",
     "backfill:transitional-programs": "node scripts/backfill-transitional-programs.mjs",
     "seed:dev-site-codes": "node scripts/seed-dev-site-codes.mjs",
     "test:mail-relay": "node scripts/test-mail-manager-smtp.mjs",

@@ -9,9 +9,14 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  supervisorOnly,
+} from "../lib/admin-auth.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
-import { emailHash } from "./setup-codes.js";
+import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 const SEARCH_PK = "PROGRAM_SEARCH#ACTIVE";
 
@@ -28,7 +33,7 @@ export const listPrograms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createProgram = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const name = clean(body.name);
     const providerId = clean(body.providerId);
     if (!name) return jsonResponse(400, { error: "name_required" });
@@ -118,7 +123,7 @@ export const getProgram = (event) =>
 /** Assign an existing Program to a provider when it has no active Site bindings. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const assignProgramToProvider = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const providerId = event.pathParameters?.providerId ?? "";
     const programId = clean(body.programId);
     if (!programId) return jsonResponse(400, { error: "program_required" });
@@ -222,7 +227,7 @@ export const assignProgramToProvider = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createProgramUser = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
     const contact = normalizeContact(body);
     if (!contact.firstName || !contact.lastName) {
@@ -282,6 +287,24 @@ export const updateProgramUser = (event) =>
     if (!contact.phone) {
       return jsonResponse(400, { error: "phone_required" });
     }
+    const current = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+      }),
+    );
+    if (!current.Item || current.Item.status !== "active") {
+      return jsonResponse(404, { error: "program_user_not_found" });
+    }
+    const principal = adminPrincipal(event);
+    const requestedSiteManager = body.siteManager === true;
+    if (
+      principal.role !== ADMIN_GROUPS.supervisor &&
+      (requestedSiteManager !== (current.Item.siteManager === true) ||
+        contact.email !== normalizeEmail(String(current.Item.email ?? "")))
+    ) {
+      return jsonResponse(403, { error: "supervisor_required" });
+    }
     const now = new Date().toISOString();
     const result = await ddb.send(
       new UpdateCommand({
@@ -297,7 +320,7 @@ export const updateProgramUser = (event) =>
           ":phone": contact.phone,
           ":phoneExtension": contact.phoneExtension,
           ":email": contact.email,
-          ":siteManager": body.siteManager === true,
+          ":siteManager": requestedSiteManager,
           ":now": now,
           ":active": "active",
         },
@@ -309,7 +332,7 @@ export const updateProgramUser = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateProgramUser = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const programId = event.pathParameters?.programId ?? "";
     const userId = event.pathParameters?.userId ?? "";
     const tableName = getDynamoTableName();
@@ -623,7 +646,7 @@ export const updateProgram = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateProgram = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const programId = event.pathParameters?.programId ?? "";
     const now = new Date().toISOString();
     const current = await ddb.send(

@@ -155,6 +155,57 @@ describe("Site Manager memberships", () => {
     );
   });
 
+  it("lets managers edit a display name without transferring access", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "MANAGER_MEMBERSHIP#membership-1",
+          membershipId: "membership-1",
+          name: "Alex Rivera",
+          email: "alex@example.org",
+          emailHash:
+            "8b1de59d49eacae6572a3e7eb8bea992e692d1f606e0a99288d196e1c011188c",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      updateManagerMembership,
+      event(
+        { name: "Alexis Rivera", email: "alex@example.org" },
+        { siteId: "site-1", membershipId: "membership-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[1][0].input.TransactItems).toHaveLength(2);
+  });
+
+  it("does not let managers transfer a membership to another email", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        membershipId: "membership-1",
+        name: "Alex Rivera",
+        email: "alex@example.org",
+        status: "active",
+      },
+    });
+    const response = await call(
+      updateManagerMembership,
+      event(
+        { name: "Alex Rivera", email: "other@example.org" },
+        { siteId: "site-1", membershipId: "membership-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "supervisor_required",
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("deactivates membership, advances its generation, and removes email uniqueness", async () => {
     send
       .mockResolvedValueOnce({
@@ -228,7 +279,11 @@ describe("Site Manager memberships", () => {
  * @param {Record<string, string>} pathParameters
  * @returns {Record<string, unknown>}
  */
-function event(body = undefined, pathParameters = {}) {
+function event(
+  body = undefined,
+  pathParameters = {},
+  groups = "compliance-supervisor",
+) {
   return {
     body: body === undefined ? undefined : JSON.stringify(body),
     pathParameters,
@@ -236,7 +291,7 @@ function event(body = undefined, pathParameters = {}) {
       authorizer: {
         jwt: {
           claims: {
-            "cognito:groups": "central-admin",
+            "cognito:groups": groups,
             sub: "admin-1",
           },
         },

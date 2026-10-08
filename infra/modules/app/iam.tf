@@ -69,8 +69,13 @@ data "aws_iam_policy_document" "api" {
     actions = [
       "cognito-idp:AdminAddUserToGroup",
       "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
+      "cognito-idp:AdminEnableUser",
       "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminRemoveUserFromGroup",
       "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:ListUsersInGroup",
       "cognito-idp:ListUsers",
     ]
     resources = [aws_cognito_user_pool.users.arn]

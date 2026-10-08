@@ -59,7 +59,7 @@ function event(body = undefined) {
     body: body === undefined ? undefined : JSON.stringify(body),
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": "central-admin" } },
+        jwt: { claims: { "cognito:groups": "compliance-supervisor" } },
       },
     },
   };
