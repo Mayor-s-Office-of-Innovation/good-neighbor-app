@@ -13,6 +13,7 @@ const TYPES = /** @type {const} */ ([
   "backend_unreachable",
   "auth_reauth_required",
   "auth_forbidden",
+  "in_app_browser",
 ]);
 /** Max message length the intake accepts (chars). */
 export const MAX_MESSAGE = 2000;

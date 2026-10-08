@@ -24,13 +24,76 @@ async function adminFetch(path, init = {}) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || "admin_request_failed");
+    const err = new Error(body.error || "admin_request_failed");
+    // Some routes (analytics) explain the failure; surface it for the UI.
+    if (typeof body.message === "string") {
+      /** @type {any} */ (err).detail = body.message;
+    }
+    throw err;
   }
   return body;
 }
 
 export const adminApi = {
+  suggestAddresses: (query, signal) =>
+    adminFetch("/admin/v1/address-suggestions", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+      signal,
+    }),
   listProviders: () => adminFetch("/admin/v1/providers"),
+  listPrograms: () => adminFetch("/admin/v1/programs"),
+  listCityProgramManagers: () => adminFetch("/admin/v1/program-managers"),
+  createCityProgramManager: (values) =>
+    adminFetch("/admin/v1/program-managers", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  listOversightOptions: () => adminFetch("/admin/v1/oversight-options"),
+  createOversightOption: (values) =>
+    adminFetch("/admin/v1/oversight-options", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  createProgram: (values) =>
+    adminFetch("/admin/v1/programs", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  getProgram: (programId) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`),
+  updateProgram: (programId, values) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  deactivateProgram: (programId) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}`, {
+      method: "DELETE",
+    }),
+  createProgramUser: (programId, values) =>
+    adminFetch(`/admin/v1/programs/${encodeURIComponent(programId)}/users`, {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updateProgramUser: (programId, userId, values) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(values),
+      },
+    ),
+  deactivateProgramUser: (programId, userId) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
+  removeSiteManager: (programId, userId) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
   createProvider: (name) =>
     adminFetch("/admin/v1/providers", {
       method: "POST",
@@ -42,18 +105,150 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
-  createSite: (providerId, { name, address }) =>
+  updateProvider: (providerId, values) =>
+    adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  assignProgramToProvider: (providerId, programId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/programs`,
+      {
+        method: "POST",
+        body: JSON.stringify({ programId }),
+      },
+    ),
+  createSite: (providerId, values) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/sites`, {
       method: "POST",
-      body: JSON.stringify({ name, address }),
+      body: JSON.stringify(values),
     }),
   getSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
-  updateSite: (siteId, { name, address }) =>
+  updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "PATCH",
-      body: JSON.stringify({ name, address }),
+      body: JSON.stringify(values),
     }),
+  reassignSite: (siteId, providerId, leadProgramId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ providerId, leadProgramId }),
+    }),
+  assignSiteUser: (siteId, userId, primary = false) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/users`, {
+      method: "POST",
+      body: JSON.stringify({ userId, primary }),
+    }),
+  unassignSiteUser: (siteId, userId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/users/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    ),
+  listSiteTerms: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`),
+  createSiteTerms: (siteId, values) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`, {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  getSitePerimeter: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`),
+  updateSitePerimeter: (siteId, perimeter, expectedUpdatedAt) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`, {
+      method: "PUT",
+      body: JSON.stringify({ perimeter, expectedUpdatedAt }),
+    }),
+  listManagerMemberships: (siteId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+    ),
+  createManagerMembership: (siteId, name, email, programId = "", userId = "") =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name, email, programId, userId }),
+      },
+    ),
+  updateManagerMembership: (siteId, membershipId, name, email) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name, email }),
+      },
+    ),
+  deactivateManagerMembership: (siteId, membershipId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
+  listManagerGrants: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/grants`),
+  createManagerGrant: (siteId, membershipId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/manager-grants`, {
+      method: "POST",
+      body: JSON.stringify({ membershipId }),
+    }),
+  cancelManagerGrant: (siteId, grantId) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/grants/${encodeURIComponent(grantId)}`,
+      { method: "DELETE" },
+    ),
+  previewSiteImport: (fileName, csv) =>
+    adminFetch("/admin/v1/site-imports/preview", {
+      method: "POST",
+      body: JSON.stringify({ fileName, csv }),
+    }),
+  listSiteImports: () => adminFetch("/admin/v1/site-imports"),
+  applySiteImport: (importId, previewVersion, idempotencyKey) =>
+    adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ previewVersion, idempotencyKey }),
+    }),
+  getSiteImport: (importId) =>
+    adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}`),
+  downloadSiteImportConflicts: async (importId) => {
+    const config = getAdminConfig();
+    const token = getAdminToken();
+    const response = await fetch(
+      `${config.apiBase}/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
+      {
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(config.localDebugAdmin
+            ? {
+                "x-debug-groups": "central-admin",
+                "x-debug-sub": "local-admin",
+              }
+            : {}),
+        },
+      },
+    );
+    if (!response.ok) throw new Error("conflict_report_failed");
+    return response.blob();
+  },
+  presignComplianceLetter: (siteId, file) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-letters:presign`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contentType: "application/pdf",
+          size: file.size,
+          fileName: file.name,
+        }),
+      },
+    ),
+  uploadComplianceLetter: async (uploadUrl, file) => {
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": "application/pdf" },
+      body: file,
+    });
+    if (!response.ok) throw new Error("compliance_letter_upload_failed");
+  },
   deactivateSite: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "DELETE",
@@ -73,10 +268,10 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/master-contacts/${encodeURIComponent(emailHash)}`,
       { method: "DELETE" },
     ),
-  issueSetupCode: (siteId, email) =>
+  issueSetupCode: (siteId, email, accessLevel = "general") =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/setup-codes`, {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, accessLevel }),
     }),
   listDevices: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/devices`),
@@ -85,4 +280,76 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/devices/${encodeURIComponent(deviceId)}`,
       { method: "DELETE" },
     ),
+  revokeSelectedDeviceBindings: (siteId, bindingIds) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings:revoke`,
+      {
+        method: "POST",
+        body: JSON.stringify({ bindingIds }),
+      },
+    ),
+  revokeAllSiteDeviceBindings: (siteId, confirmation) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings:revoke-all`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation }),
+      },
+    ),
+  suspendDeviceBinding: (siteId, bindingId, reason) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/device-bindings/${encodeURIComponent(bindingId)}/suspend`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  getPhysicalDevice: (physicalDeviceId) =>
+    adminFetch(
+      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}`,
+    ),
+  revokePhysicalDeviceEverywhere: (physicalDeviceId, confirmation) =>
+    adminFetch(
+      `/admin/v1/physical-devices/${encodeURIComponent(physicalDeviceId)}/revoke`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirmation }),
+      },
+    ),
+  listEmergencyRevocationSites: () =>
+    adminFetch("/admin/v1/emergency-site-revocations/sites"),
+  previewEmergencySiteRevocation: (siteIds) =>
+    adminFetch("/admin/v1/emergency-site-revocations:preview", {
+      method: "POST",
+      body: JSON.stringify({ siteIds }),
+    }),
+  startEmergencySiteRevocation: (siteIds, confirmation) =>
+    adminFetch("/admin/v1/emergency-site-revocations", {
+      method: "POST",
+      body: JSON.stringify({ siteIds, confirmation }),
+    }),
+  // Analytics (ADR 0013): the reporting lake, never the app database.
+  /** The canned query catalog. */
+  analyticsCatalog: () => adminFetch("/admin/v1/analytics/queries"),
+  /**
+   * Run one catalog query with parameters.
+   * @param {string} queryId
+   * @param {Record<string, string | number>} params
+   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
+   */
+  analyticsRun: (queryId, params) =>
+    adminFetch(`/admin/v1/analytics/queries/${encodeURIComponent(queryId)}`, {
+      method: "POST",
+      body: JSON.stringify({ params }),
+    }),
+  /**
+   * Run raw read-only SQL (the advanced panel).
+   * @param {string} sql
+   * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
+   */
+  analyticsQuery: (sql) =>
+    adminFetch("/admin/v1/analytics/query", {
+      method: "POST",
+      body: JSON.stringify({ sql }),
+    }),
 };

@@ -5,6 +5,7 @@ import {
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getToasts } from "../state/toasts.js";
+import { t } from "../i18n/i18n.js";
 import {
   onDeletionsChange,
   pendingDeletedConditionIds,
@@ -52,7 +53,7 @@ function fixture() {
 }
 
 describe("undoable analysis card deletion", () => {
-  it("hides immediately, protects enclosing renders, restores focus, and saves after five seconds", async () => {
+  it("hides immediately, protects enclosing renders, restores focus, and saves after 3.5 seconds", async () => {
     const { host, close, focus } = fixture();
     const home = /** @type {any} */ ({ contains: (node) => node === host });
     const unsubscribe = onDeletionsChange((status) => {
@@ -62,14 +63,24 @@ describe("undoable analysis card deletion", () => {
     const render = vi.fn(() =>
       expect(isDeletingAnalysisCard(host)).toBe(false),
     );
-    await deleteAnalysisCard(host, problem, commit, render);
+    await deleteAnalysisCard(host, problem, commit, render, {
+      address: "123 Main St, San Francisco, CA",
+    });
     unsubscribe();
     expect(close).toHaveBeenCalledOnce();
     expect(render).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(pendingDeletedConditionIds(problem)).toContain(problem.conditionId);
     expect(commit).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(4999);
+    expect(getToasts()[0]).toMatchObject({
+      title: t("card.deleteToast.title"),
+      message: t("card.deleteToast.messageAt", {
+        label: "Litter",
+        address: "123 Main St",
+      }),
+      tone: "success",
+    });
+    await vi.advanceTimersByTimeAsync(3499);
     expect(commit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(commit).toHaveBeenCalledOnce();
@@ -111,13 +122,13 @@ describe("undoable analysis card deletion", () => {
       () => Promise.reject(new Error("offline")),
       () => {},
     );
-    await vi.advanceTimersByTimeAsync(10000);
+    await vi.advanceTimersByTimeAsync(3500);
     expect(pendingDeletedConditionIds(problem)).not.toContain(
       problem.conditionId,
     );
-    expect(getToasts()[0].title).toBe("Couldn't delete item");
-    await vi.advanceTimersByTimeAsync(60000);
-    expect(getToasts()).toHaveLength(1);
+    expect(getToasts()[0].title).toBe(t("toast.deleteError.title"));
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(getToasts()).toHaveLength(0);
   });
 
   it("still offers Undo when the post-collapse view refresh fails", async () => {
@@ -126,7 +137,7 @@ describe("undoable analysis card deletion", () => {
     await deleteAnalysisCard(host, problem, vi.fn(), () =>
       Promise.reject(new Error("refresh failed")),
     );
-    expect(getToasts()[0].action.label).toBe("Undo");
+    expect(getToasts()[0].action.label).toBe(t("common.undo"));
     expect(focus).toHaveBeenCalledOnce();
   });
 });

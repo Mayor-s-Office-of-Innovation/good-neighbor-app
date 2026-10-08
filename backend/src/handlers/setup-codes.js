@@ -40,6 +40,7 @@ const setupCodeSecretCache = new Map();
  * @property {number} uses
  * @property {string} siteId
  * @property {string} siteName
+ * @property {"general"|"admin"} [accessLevel]
  * @property {string} [providerId]
  * @property {string} [providerName]
  * @property {string} [providerSiteId]
@@ -59,6 +60,7 @@ const setupCodeSecretCache = new Map();
  * @property {string} providerSiteId
  * @property {string} siteId
  * @property {string} siteName
+ * @property {"general"|"admin"} [accessLevel]
  */
 
 /**
@@ -69,6 +71,8 @@ const setupCodeSecretCache = new Map();
  * @property {string} siteId
  * @property {string} siteName
  * @property {string|undefined} providerSiteId
+ * @property {"general"|"admin"} [accessLevel]
+ * @property {number} [siteCredentialGeneration]
  */
 
 /**
@@ -86,7 +90,8 @@ export async function validateSetupCode(rawCode, options = {}) {
   const setup = await getSetupCode(code, tableName);
   if (setup) {
     if (!isSetupCodeUsable(setup, now)) return null;
-    if (!(await isSiteActive(setup.siteId, tableName))) return null;
+    const site = await getActiveSite(setup.siteId, tableName);
+    if (!site) return null;
     if (!(await isCurrentSetupCode(setup, tableName))) return null;
     return {
       kind: "setupCode",
@@ -95,6 +100,8 @@ export async function validateSetupCode(rawCode, options = {}) {
       siteId: setup.siteId,
       siteName: setup.siteName,
       providerSiteId: setup.providerSiteId,
+      accessLevel: normalizeAccessLevel(setup.accessLevel),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     };
   }
 
@@ -102,7 +109,8 @@ export async function validateSetupCode(rawCode, options = {}) {
   // out. New production codes should use SETUP_CODE# verifier records.
   const legacy = await getLegacySiteCode(code, tableName);
   if (legacy?.active && legacy.siteId && legacy.siteName) {
-    if (!(await isSiteActive(legacy.siteId, tableName))) return null;
+    const site = await getActiveSite(legacy.siteId, tableName);
+    if (!site) return null;
     return {
       kind: "legacy",
       code,
@@ -110,6 +118,8 @@ export async function validateSetupCode(rawCode, options = {}) {
       siteId: legacy.siteId,
       siteName: legacy.siteName,
       providerSiteId: legacy.providerSiteId,
+      accessLevel: normalizeAccessLevel(legacy.accessLevel),
+      siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
     };
   }
 
@@ -146,7 +156,7 @@ export function consumeSetupCodeTransactItem(valid, nowIso) {
 /**
  * Issue a setup code for a site/contact, invalidating any pending code for the
  * same pair before writing the replacement.
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now?: Date, generateCode?: () => string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now?: Date, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 export async function issueSetupCode(input) {
@@ -173,6 +183,15 @@ export async function issueSetupCode(input) {
   throw new Error(
     "Unable to issue setup code after bounded contention retries",
   );
+}
+
+/**
+ * Unknown and legacy values fail closed to general access.
+ * @param {unknown} value
+ * @returns {"general"|"admin"}
+ */
+export function normalizeAccessLevel(value) {
+  return value === "admin" ? "admin" : "general";
 }
 
 /**
@@ -369,7 +388,7 @@ async function getCurrentSetupCodeReference({ siteId, contactHash }) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, current?: CurrentSetupCodeReference, generateCode?: () => string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now: Date, nowIso: string, contactHash: string, current?: CurrentSetupCodeReference, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 async function reserveCurrentSetupCode(input) {
@@ -445,7 +464,7 @@ function writeCurrentSetupCode(input, item) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
  * @returns {SetupCodeItem}
  */
 function setupCodeItem(input) {
@@ -461,6 +480,7 @@ function setupCodeItem(input) {
     uses: 0,
     siteId: input.siteId,
     siteName: input.siteName,
+    accessLevel: normalizeAccessLevel(input.accessLevel),
     providerId: input.providerId,
     providerName: input.providerName,
     providerSiteId: input.providerSiteId,
@@ -535,17 +555,17 @@ async function queryPendingSetupCodesForSite(siteId) {
 /**
  * @param {string} siteId
  * @param {string} tableName
- * @returns {Promise<boolean>}
+ * @returns {Promise<Record<string, any> | null>}
  */
-async function isSiteActive(siteId, tableName) {
+async function getActiveSite(siteId, tableName) {
   const res = await ddb.send(
     new GetCommand({
       TableName: tableName,
       Key: { pk: `SITE#${siteId}`, sk: "#META" },
     }),
   );
-  const site = /** @type {{ status?: string } | undefined} */ (res.Item);
-  return Boolean(site && site.status !== "inactive");
+  const site = /** @type {Record<string, any> | undefined} */ (res.Item);
+  return site && site.status !== "inactive" ? site : null;
 }
 
 /**

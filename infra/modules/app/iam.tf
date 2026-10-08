@@ -1,4 +1,4 @@
-# Execution roles for the two Lambdas. Scoped to this env's table / bucket /
+# Execution roles for the app Lambdas. Scoped to this env's table / bucket /
 # queue / key / secret ARNs — no wildcard resources except X-Ray (which has no
 # resource-level permissions), called out with an inline skip.
 
@@ -64,9 +64,27 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
-    sid       = "UploadsObjects"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject"]
+    sid    = "ManageCityProgramManagers"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:ListUsers",
+    ]
+    resources = [aws_cognito_user_pool.users.arn]
+  }
+
+  statement {
+    sid    = "UploadsObjects"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+    ]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 
@@ -82,13 +100,6 @@ data "aws_iam_policy_document" "api" {
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
     resources = [aws_kms_key.app.arn]
-  }
-
-  statement {
-    sid       = "ReadPosthogSecret"
-    effect    = "Allow"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.posthog_project_api_key.arn]
   }
 
   statement {
@@ -145,6 +156,53 @@ resource "aws_iam_role_policy" "api" {
   name   = "${local.name_prefix}-api"
   role   = aws_iam_role.api.id
   policy = data.aws_iam_policy_document.api.json
+}
+
+# ---- intake Lambda role -------------------------------------------------------
+# PostHog egress only: read the ingest key, decrypt with the app key, log.
+# No table, no bucket, no queue — the intakes store nothing of their own.
+
+resource "aws_iam_role" "intake" {
+  name               = "${local.name_prefix}-intake"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "intake" {
+  statement {
+    sid       = "ReadPosthogSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.posthog_project_api_key.arn]
+  }
+
+  statement {
+    sid       = "UseAppKey"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.app.arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.intake.arn}:*"]
+  }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "intake" {
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
+  name   = "${local.name_prefix}-intake"
+  role   = aws_iam_role.intake.id
+  policy = data.aws_iam_policy_document.intake.json
 }
 
 # ---- authorizer Lambda role ---------------------------------------------------
@@ -224,9 +282,9 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    sid       = "ReadUploads"
+    sid       = "ReadAndClassifyUploads"
     effect    = "Allow"
-    actions   = ["s3:GetObject"]
+    actions   = ["s3:GetObject", "s3:PutObjectTagging"]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 
@@ -242,6 +300,25 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
+    sid       = "EnqueueRevocationReconciliation"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.submissions.arn]
+  }
+
+  statement {
+    sid    = "ReadRevocationOutboxStream"
+    effect = "Allow"
+    actions = [
+      "dynamodb:DescribeStream",
+      "dynamodb:GetRecords",
+      "dynamodb:GetShardIterator",
+      "dynamodb:ListStreams",
+    ]
+    resources = [aws_dynamodb_table.app.stream_arn]
+  }
+
+  statement {
     sid       = "SendToDlq"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
@@ -253,6 +330,13 @@ data "aws_iam_policy_document" "worker" {
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_secretsmanager_secret.analyzer_api_key.arn]
+  }
+
+  statement {
+    sid       = "ReadSf311Secret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.sf311_basic_auth.arn]
   }
 
   statement {

@@ -113,18 +113,22 @@ export const createCheck = async (event) => {
     return jsonResponse(400, { error: "Missing idempotency-key header" });
   }
 
+  let input;
   try {
-    readJsonBody(event);
+    input = /** @type {{ flowType?: unknown }} */ (readJsonBody(event));
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
 
   const startedAt = new Date().toISOString();
+  const flowType =
+    input?.flowType === "single-problem" ? "single-problem" : "perimeter";
   const item = {
     ...checkHeaderKey(siteId, checkId),
     ...checkTimelineGsi(siteId, startedAt),
     checkId,
     status: "in_progress",
+    flowType,
     startedAt,
     issueCount: 0,
     maxSeverity: 0,

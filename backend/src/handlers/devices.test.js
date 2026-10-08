@@ -1,4 +1,5 @@
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handlers' writes hit a spy, not AWS.
@@ -81,6 +82,23 @@ const callRefresh = (body) =>
   );
 
 /**
+ * Sign the refresh-token shape issued before accessLevel was introduced.
+ * @param {Record<string, unknown>} claims
+ * @returns {string}
+ */
+function legacyToken(claims) {
+  /** @param {unknown} value @returns {string} */
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode(claims);
+  const signature = createHmac("sha256", "test-secret-0123456789abcdef")
+    .update(`${header}.${payload}`)
+    .digest("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+/**
  * Read back the DeviceItem the handler wrote (the PutCommand input).
  * @returns {any} the DEVICE# item, or undefined
  */
@@ -155,6 +173,8 @@ describe("registerDevice", () => {
     expect(item.pk).toBe("SITE#site-1");
     expect(item.sk).toBe(`DEVICE#${body.deviceId}`);
     expect(item.tokenGeneration).toBe(1);
+    expect(item.accessLevel).toBe("general");
+    expect(item.siteCredentialGeneration).toBe(0);
 
     // Access token claims carry the Cognito-shaped claim the handlers read.
     const claims = JSON.parse(
@@ -164,11 +184,54 @@ describe("registerDevice", () => {
     expect(claims.sub).toBe(body.deviceId);
     expect(claims.ver).toBe(1);
     expect(claims.typ).toBe("access");
+    expect(claims.accessLevel).toBe("general");
 
     const refreshClaims = JSON.parse(
       Buffer.from(body.refreshToken.split(".")[1], "base64").toString("utf8"),
     );
     expect(item.refreshJti).toBe(refreshClaims.jti);
+  });
+
+  it("pins a new legacy-code registration to the Site's current credential generation", async () => {
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 3 },
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await callRegister({ code: "123456" });
+
+    expect(res.statusCode).toBe(201);
+    expect(putItem().siteCredentialGeneration).toBe(3);
+    const transact = send.mock.calls
+      .map(([cmd]) => cmd)
+      .find((cmd) => cmd instanceof TransactWriteCommand);
+    expect(
+      /** @type {any} */ (transact).input.TransactItems[1].ConditionCheck
+        .ExpressionAttributeValues[":siteGeneration"],
+    ).toBe(3);
+  });
+
+  it("rejects registration when the Site generation changes after code validation", async () => {
+    send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: SITE_CODE_ITEM })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 3 },
+      })
+      .mockRejectedValueOnce(
+        transactionCanceled([
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ]),
+      );
+
+    const res = await callRegister({ code: "123456" });
+
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe("invalid_site_code");
   });
 
   it("is idempotent for a known deviceId: bumps generation, keeps registration", async () => {
@@ -259,6 +322,9 @@ describe("refreshDeviceToken", () => {
           refreshJti: jti,
         },
       })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 0 },
+      })
       .mockResolvedValueOnce({}); // UpdateItem (rotation)
     return token;
   }
@@ -276,7 +342,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);
@@ -293,7 +359,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 3, refreshJti: "whatever" },
@@ -313,7 +379,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 365 * 24 * 3600 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       send.mockResolvedValueOnce({
         Item: { tokenGeneration: 2, refreshJti: `old-${jti}` },
@@ -329,7 +395,7 @@ describe("refreshDeviceToken", () => {
   it("rotates: bumps generation, stores the NEW jti, returns a fresh pair", async () => {
     const oldToken = await setupRefresh({ generation: 2 });
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: oldToken });
 
@@ -372,6 +438,98 @@ describe("refreshDeviceToken", () => {
     }
   });
 
+  it("migrates a legacy refresh token and device to general access", async () => {
+    const refreshToken = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "refresh",
+      jti: "legacy-jti",
+      iat: 1000,
+      exp: 3000,
+    });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          deviceId: "dev-1",
+          siteId: "site-1",
+          siteName: "City Hall",
+          tokenGeneration: 2,
+          refreshJti: "legacy-jti",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 0 },
+      })
+      .mockResolvedValueOnce({});
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.accessLevel).toBe("general");
+
+      const { verifyDeviceToken } = await import("../lib/device-token.js");
+      await expect(verifyDeviceToken(body.token)).resolves.toMatchObject({
+        accessLevel: "general",
+        typ: "access",
+      });
+      await expect(verifyDeviceToken(body.refreshToken)).resolves.toMatchObject(
+        {
+          accessLevel: "general",
+          typ: "refresh",
+        },
+      );
+
+      const update = send.mock.calls
+        .map(([cmd]) => cmd)
+        .find((cmd) => cmd instanceof UpdateCommand);
+      expect(
+        /** @type {any} */ (update)?.input.ExpressionAttributeValues[
+          ":accessLevel"
+        ],
+      ).toBe("general");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a generation-less legacy refresh after Site-wide revocation", async () => {
+    const refreshToken = legacyToken({
+      sub: "dev-1",
+      "custom:siteId": "site-1",
+      ver: 2,
+      typ: "refresh",
+      jti: "legacy-jti",
+      iat: 1000,
+      exp: 3000,
+    });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          deviceId: "dev-1",
+          siteId: "site-1",
+          tokenGeneration: 2,
+          refreshJti: "legacy-jti",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: { status: "active", siteCredentialGeneration: 1 },
+      });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1500 * 1000));
+    try {
+      const res = await callRefresh({ refreshToken });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.body).reason).toBe("revoked_or_replayed");
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("expired refresh token → 401 expired", async () => {
     const { mintRefreshToken } = await import("../lib/device-token.js");
     const { token } = await mintRefreshToken(
@@ -379,7 +537,7 @@ describe("refreshDeviceToken", () => {
       { now: 1000, expiresIn: 60 },
     );
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(2000 * 1000));
+    vi.setSystemTime(new Date(1500 * 1000));
     try {
       const res = await callRefresh({ refreshToken: token });
       expect(res.statusCode).toBe(401);

@@ -1,5 +1,8 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectTaggingCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -65,16 +68,71 @@ client.middlewareStack.use({
  * @param {string} params.bucket
  * @param {string} params.key
  * @param {string} params.contentType
+ * @param {number} [params.contentLength]
+ * @param {string} [params.tagging] URL-encoded object tags
  * @param {number} [params.expiresIn] seconds (default 300)
  * @returns {Promise<string>}
  */
-export function presignPut({ bucket, key, contentType, expiresIn = 300 }) {
+export function presignPut({
+  bucket,
+  key,
+  contentType,
+  contentLength,
+  tagging,
+  expiresIn = 300,
+}) {
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
+    IfNoneMatch: "*",
+    ...(Number.isInteger(contentLength)
+      ? { Metadata: { "declared-bytes": String(contentLength) } }
+      : {}),
+    ...(tagging ? { Tagging: tagging } : {}),
   });
   return getSignedUrl(presignClient, command, { expiresIn });
+}
+
+/**
+ * Read upload metadata without downloading the object.
+ * @param {{ bucket: string, key: string }} params
+ * @returns {Promise<{ contentType?: string, contentLength?: number, metadata?: Record<string, string> }>}
+ */
+export async function headObject({ bucket, key }) {
+  const out = await client.send(
+    new HeadObjectCommand({ Bucket: bucket, Key: key }),
+  );
+  return {
+    contentType: out.ContentType,
+    contentLength: out.ContentLength,
+    metadata: out.Metadata,
+  };
+}
+
+/**
+ * @param {{ bucket: string, key: string }} params
+ * @returns {Promise<unknown>}
+ */
+export function deleteObject({ bucket, key }) {
+  return client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+/**
+ * Replace an object's lifecycle tags after it has been accepted by the app.
+ * @param {{ bucket: string, key: string, tags: Record<string, string> }} params
+ * @returns {Promise<unknown>}
+ */
+export function setObjectTags({ bucket, key, tags }) {
+  return client.send(
+    new PutObjectTaggingCommand({
+      Bucket: bucket,
+      Key: key,
+      Tagging: {
+        TagSet: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })),
+      },
+    }),
+  );
 }
 
 /**

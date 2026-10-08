@@ -118,6 +118,21 @@ analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
 
+## Site address lookup and validation
+
+The City admin suggests Site addresses through an authenticated
+`POST /admin/v1/address-suggestions` endpoint. The browser debounces input and
+the API proxies the query to Photon's public OpenStreetMap-backed service,
+bounded to San Francisco and limited to five house-address results. The browser
+does not contact Photon directly, and a manual-entry path remains available
+because the public endpoint has no uptime guarantee.
+
+Selecting a suggestion only fills the editable Street address, City, State, and
+ZIP fields. Saving remains authoritative: the backend formats those fields and
+uses the U.S. Census geocoder to validate the complete address and derive the
+Site coordinates. Photon results are therefore suggestions, not trusted stored
+coordinates.
+
 ## Guidance workflow (rule-driven tasks)
 
 Guidance is evaluated **per evidence item** at capture time: `POST /v1/assessments:evaluate`
@@ -163,6 +178,22 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   recovery then carries the durable `closed` record forward instead of re-closing the SR.
 - **Task compatibility:** tasks keep `type: "onsite" | "city_escalation"` alongside the
   richer `kind`/`escalationChannel`/`appActions[]` fields.
+- **In-progress issue updates:** each versioned guidance rule snapshots
+  `canBeInProgress` and `primaryInProgressAgency` onto its task. After the first
+  successful card action, eligible tasks move from `open` to `in_progress` and
+  append an immutable, actor-attributed task-update event; ineligible tasks move
+  directly to `completed` and append a `task_completed` event labeled "Marked as
+  complete" with the completion timestamp and actor. The event and task status
+  are committed in one transaction. History timelines derive this entry from
+  `completedAt` for older direct completions without an event, once all event
+  pages are loaded. Routing never depends on user-facing button text.
+  The issue timeline derives non-stacking presence prompts from fixed four-hour
+  periods beginning at `inProgressAt`. Resolving normally moves the task
+  irreversibly to `completed`; when an app-owned informational 311 ticket must
+  be closed first, a lease-protected `resolving` state checkpoints successful
+  closures and returns incomplete attempts to `in_progress` for retry. Notes,
+  actions, and update photos append to the timeline. Update-photo registration
+  reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
@@ -171,7 +202,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   by the client. Card hydration batches visible requests so one handler invocation loads the
   agency-76 feed once; concurrent detail loads in the same Lambda environment also share an
   in-flight feed request. The raw HUB response and customer fields are never returned. A dev-only
-  harness (`/dev/guidance-harness`, dev builds only) exercises the flow with fixtures.
+  harness page (`frontend/dev/guidance-harness.html` — a standalone entry point outside the app
+  build, served only by the dev server) exercises the flow with fixtures against the real local
+  API; see [dev-commands.md](./dev-commands.md#guidance-harness-dev-only-page).
 
 ## Single-table data model
 
@@ -194,16 +227,16 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   (ADR 0010) whose site claim scopes every later request to one partition. (The
   Cognito user pool in `main.tf` serves the separate central admin console, not
   the field device.)
-- `siteId` is derived server-side from the verified token/claim — never read from the request body — so a tenant can only ever address its own partition **at the application layer** (every handler resolves the partition via `deriveSiteId`).
-  The **platform-layer backstop** — an IAM `dynamodb:LeadingKeys` condition on the
-  Lambda role pinning key prefixes to `SITE#<siteId>` — is the **target design, not
-  the current deployment**: the deployed role carries table-wide DynamoDB actions
-  with no such condition (see [dynamodb-data-model.md](./dynamodb-data-model.md)
-  "Identity model"). Hardening it is the pre-real-data work tracked on the issue
-  tracker.
+- `siteId` is derived server-side from the verified token/claim — never read from the request body — so a tenant can only ever address its own partition **at the application layer** (every handler resolves the partition via `deriveSiteId`). Media registration additionally requires the exact server-issued Site/check/artifact key, and media reads revalidate the stored key's Site/check prefix before signing it.
+  A caller-dynamic IAM `dynamodb:LeadingKeys` condition cannot be attached to the
+  shared API Lambda execution role: DynamoDB sees that role, not the JWT/device
+  principal, and the same function performs central-admin/global-partition work.
+  A further platform backstop therefore requires a separate tenant-only data-plane
+  function/role or per-request tagged-role assumption; a static `SITE#*` condition
+  would not isolate one Site from another.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. (A ~7-day media-expiration lifecycle rule is designed but not yet enforced — a pre-launch TODO; see [security-review.md](./security-review.md).)
+- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Pending/rejected media expires after one day, registered-but-unprocessed media after two days, and accepted media after seven days; noncurrent media versions expire after one day.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)

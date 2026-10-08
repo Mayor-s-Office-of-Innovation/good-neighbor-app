@@ -17,6 +17,7 @@
 */
 :root {
   color-scheme: light;
+  --app-content-max-width: 550px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;

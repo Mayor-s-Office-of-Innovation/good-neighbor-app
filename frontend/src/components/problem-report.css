@@ -1,0 +1,38 @@
+/*
+  Styles for <problem-report> (problem-report.js): the single-issue capture layout
+  embedded in the home hub (tiles and dialogs come from perimeter-check.css
+  and analysis-results.css).
+  Imported from that module; main.js loads tokens.css and base.css first, so
+  these rules follow the shared base in the bundle. Unlayered, like base.css.
+*/
+
+.single-issue__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--wa-font-family-heading, var(--font-sans));
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+  letter-spacing: 0;
+  /* Programmatic focus target (route announcement) — never a ring. */
+  outline: none;
+}
+
+.single-issue .shotgrid {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.single-issue .shotgrid--empty {
+  justify-content: flex-start;
+}
+
+.single-issue__analysis {
+  width: 100%;
+}
+
+/* A collapsed tray must not reserve the flow's inter-item gap below the
+   footer; this keeps Done aligned with Finish check in the perimeter flow. */
+.single-issue__analysis:empty {
+  display: none;
+}

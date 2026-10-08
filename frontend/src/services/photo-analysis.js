@@ -19,6 +19,8 @@ import {
   uploadArtifact,
   registerTextArtifact,
   ApiError,
+  contentTypeFromDataUrl,
+  dataUrlToBlob,
   LEG,
 } from "./api.js";
 import { getCaptureDeviceLocation } from "./device-location.js";
@@ -127,7 +129,7 @@ async function withLeg(leg, work) {
 
 async function ensureRemoteCheck(check) {
   if (check.remoteStarted) return;
-  await createCheck(check.id);
+  await createCheck(check.id, { flowType: check.flowType });
   check.remoteStarted = true;
 }
 
@@ -183,6 +185,7 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
         severityLabel: concern.ratingLabel,
         userFriendlyLabel: concern.userFriendlyLabel,
         description: concern.explanation || "",
+        translations: concern.translations,
         sourceArtifactIds: [artifactId],
         evidenceIndices: concern.evidenceIndices || [],
       })),
@@ -241,6 +244,7 @@ function concernsFromAssessment(assessment) {
     ratingLabel: condition.severity_label,
     userFriendlyLabel: condition.user_friendly_label,
     explanation: condition.description || "",
+    ...(condition.translations ? { translations: condition.translations } : {}),
     evidenceIndices: condition.evidence_indices || [],
   }));
 }
@@ -410,16 +414,18 @@ export function retryEvidenceItem(itemId) {
     // Re-register the same artifact: conditional write + always-enqueue on
     // the backend means a fresh analyze message with zero new upload. Then
     // run the pipeline again — run() adopts the coordinates and polls.
-    void withLeg("start", () =>
-      registerArtifact(check.id, {
+    void withLeg("start", async () => {
+      const mediaMetadata = await retryMediaMetadata(item);
+      return registerArtifact(check.id, {
         artifactId: analysisArtifactId || uploadArtifactId,
         s3Key: item.analysis?.s3Key || item.upload?.s3Key,
+        ...mediaMetadata,
         capturedAt: item.uploadedAt,
         ...(hasCoordinates(item.location) ? item.location : {}),
         ...(item.kind === "text" ? { text: item.text } : {}),
         ...(item.note ? { text: item.note } : {}),
-      }),
-    )
+      });
+    })
       .then(() => {
         analyzeEvidenceItem(itemId);
       })
@@ -448,6 +454,39 @@ export function retryEvidenceItem(itemId) {
     failure: undefined,
   });
   analyzeEvidenceItem(itemId);
+}
+
+/**
+ * Recover the exact registration metadata for an already-uploaded photo.
+ * New sessions persist it at upload time; deriving it from the retained data
+ * URL keeps interrupted sessions created by an older app version retryable.
+ * Text artifacts have no S3 object and need no media metadata.
+ * @param {any} item
+ * @returns {Promise<{contentType?: string, contentLength?: number}>}
+ */
+async function retryMediaMetadata(item) {
+  if (item.kind === "text") return {};
+  if (
+    typeof item.upload?.contentType === "string" &&
+    Number.isInteger(item.upload?.contentLength) &&
+    item.upload.contentLength > 0
+  ) {
+    return {
+      contentType: item.upload.contentType,
+      contentLength: item.upload.contentLength,
+    };
+  }
+  if (!item.dataUrl) {
+    throw new ApiError("Uploaded photo metadata is unavailable", {
+      status: 0,
+      body: { code: "artifact_metadata_unavailable" },
+    });
+  }
+  const blob = await dataUrlToBlob(item.dataUrl);
+  return {
+    contentType: contentTypeFromDataUrl(item.dataUrl),
+    contentLength: blob.size,
+  };
 }
 
 /**
@@ -748,7 +787,12 @@ async function run(itemId) {
         });
       } else {
         updateItem(itemId, { upload: { status: "uploading" } });
-        const { artifactId: uploadedId, s3Key } = await withLeg("upload", () =>
+        const {
+          artifactId: uploadedId,
+          s3Key,
+          contentType,
+          contentLength,
+        } = await withLeg("upload", () =>
           uploadArtifact(check.id, {
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
@@ -772,7 +816,13 @@ async function run(itemId) {
         // Persist the s3Key with the artifact: retry re-registers the SAME
         // artifact from these coordinates (no new upload, no new object).
         updateItem(itemId, {
-          upload: { status: "uploaded", artifactId, s3Key },
+          upload: {
+            status: "uploaded",
+            artifactId,
+            s3Key,
+            contentType,
+            contentLength,
+          },
         });
         updateItemAnalysis(itemId, { s3Key });
       }

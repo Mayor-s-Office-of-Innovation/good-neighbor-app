@@ -128,6 +128,29 @@ describe("downscaleImage", () => {
     );
   });
 
+  it("rejects a declared content type that disagrees with decoded bytes", async () => {
+    const bytes = await jpegOf(100, 100);
+    await expect(downscaleImage(bytes, "image/png")).rejects.toThrow(
+      DownscaleError,
+    );
+  });
+
+  it("rejects images whose decoded dimensions exceed policy", async () => {
+    const bytes = await sharp({
+      create: {
+        width: 12_001,
+        height: 1,
+        channels: 3,
+        background: "#fff",
+      },
+    })
+      .jpeg()
+      .toBuffer();
+    await expect(downscaleImage(bytes, "image/jpeg")).rejects.toThrow(
+      DownscaleError,
+    );
+  });
+
   it("bounds the output payload well under the analyzer's tolerance", async () => {
     const bytes = await jpegOf(6000, 4500);
     const result = await downscaleImage(bytes, "image/jpeg");

@@ -4,8 +4,8 @@
 # (`dynamodb:ExportTableToPointInTime`), so app paths and capacity are untouched.
 #
 # Deployable bundles come from `npm run build:lambdas` (see backend/scripts/
-# build-lambdas.mjs) — export/convert/report entries land in
-# backend/dist/{analytics-export,analytics-convert,analytics-report}/.
+# build-lambdas.mjs) — export/convert/report/query entries land in
+# backend/dist/{analytics-export,analytics-convert,analytics-report,analytics-query}/.
 #
 # The watermark (previous ExportToTime) lives in the same single table as
 # `ANALYTICS#EXPORT` / `#WATERMARK` — one tiny item, no extra store.
@@ -558,4 +558,129 @@ resource "aws_cloudwatch_metric_alarm" "analytics_export_stalled" {
   ok_actions    = [aws_sns_topic.alarms.arn]
 
   tags = var.tags
+}
+
+# ---- Query Lambda (admin analytics API: catalog + raw SQL over the lake) ------
+#
+# The admin analytics routes (api.tf `analytics_routes`) target this function
+# through their own API Gateway integration. It is deliberately NOT the app api
+# Lambda: DuckDB's native binding, a 2 GB memory footprint and multi-second
+# S3 scans have no place in the operational path, and a burst of dashboard
+# queries must never eat the app's concurrency. The engine locks itself down
+# after building views (backend/src/analytics/lake-views.js lockdown): no local
+# filesystem, no configuration changes — so the role's read-only lake grant is
+# the security boundary for the SQL central admins submit.
+
+resource "aws_cloudwatch_log_group" "analytics_query" {
+  name              = "/aws/lambda/${local.name_prefix}-analytics-query"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "analytics_query" {
+  #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A.
+  #checkov:skip=CKV_AWS_117:No VPC — needs S3 API egress; revisit with VPC + endpoints.
+  #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
+  function_name    = "${local.name_prefix}-analytics-query"
+  role             = aws_iam_role.analytics_query.arn
+  runtime          = "nodejs22.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.analytics_query.output_path
+  source_code_hash = data.archive_file.analytics_query.output_base64sha256
+  # Same footprint as the report Lambda: DuckDB in-process over S3 Parquet.
+  memory_size = 2048
+  # API Gateway HTTP APIs cap integration time at 30 s; leave the gateway a
+  # second to answer with its own 504 rather than racing it.
+  timeout     = 29
+  kms_key_arn = aws_kms_key.app.arn
+  # A handful of admins clicking dashboards; a small cap bounds cost and keeps
+  # a runaway dashboard from stampeding S3. Raise if the admin page grows.
+  reserved_concurrent_executions = 3
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      LAKE_BUCKET = aws_s3_bucket.analytics_lake.bucket
+      LAKE_REGION = data.aws_region.current.name
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.analytics_query,
+    aws_iam_role_policy.analytics_query,
+  ]
+  tags = var.tags
+}
+
+resource "aws_iam_role" "analytics_query" {
+  name               = "${local.name_prefix}-analytics-query"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "analytics_query" {
+  statement {
+    # Read-only on the converted Parquet only: no raw/ exports, no reports/,
+    # no writes anywhere. ListBucket covers the per-entity prefix probe and
+    # DuckDB's glob expansion.
+    sid       = "ReadParquetLake"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:ListBucket"]
+    resources = [aws_s3_bucket.analytics_lake.arn, "${aws_s3_bucket.analytics_lake.arn}/readings/*"]
+  }
+
+  statement {
+    sid       = "UseAppKey"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.app.arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.analytics_query.arn}:*"]
+  }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "analytics_query" {
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
+  name   = "${local.name_prefix}-analytics-query"
+  role   = aws_iam_role.analytics_query.id
+  policy = data.aws_iam_policy_document.analytics_query.json
+}
+
+resource "aws_lambda_permission" "analytics_query_api_gateway" {
+  statement_id  = "AllowApiGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.analytics_query.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
+# Uncaught server errors from the query function feed the shared ServerError
+# alarm (alarms.tf), same convention as the api/worker/convert/report groups.
+resource "aws_cloudwatch_log_metric_filter" "analytics_query_errors" {
+  name           = "${local.name_prefix}-analytics-query-server-errors"
+  log_group_name = aws_cloudwatch_log_group.analytics_query.name
+  pattern        = "{ $.level = \"ERROR\" }"
+
+  metric_transformation {
+    name          = "ServerError"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
 }

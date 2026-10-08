@@ -283,6 +283,46 @@ export function updateItemAnalysis(itemId, analysisPatch) {
 }
 
 /**
+ * Drop a rejected condition from a session item: its task card goes, and the
+ * condition id is remembered so a later analysis refresh does not revive it.
+ * No-op (null) when the item is not in the current session.
+ * @param {{ itemId?: string, taskId?: string, conditionId?: string }} problem
+ */
+export function rejectConditionLocally({ itemId, taskId, conditionId }) {
+  const item = findItem(itemId || "");
+  if (!item) return null;
+  return updateItemAnalysis(item.id, {
+    tasks: (item.analysis?.tasks || []).filter(
+      (task) => task.taskId !== taskId,
+    ),
+    rejectedConditionIds: [
+      ...(item.analysis?.rejectedConditionIds || []),
+      conditionId,
+    ].filter(Boolean),
+  });
+}
+
+/**
+ * Mark a condition resolved on a session item: its task card goes, and the
+ * condition id is remembered as handled. No-op (null) when the item is not
+ * in the current session.
+ * @param {{ itemId?: string, taskId?: string, conditionId?: string }} problem
+ */
+export function resolveConditionLocally({ itemId, taskId, conditionId }) {
+  const item = findItem(itemId || "");
+  if (!item) return null;
+  return updateItemAnalysis(item.id, {
+    tasks: (item.analysis?.tasks || []).filter(
+      (task) => task.taskId !== taskId,
+    ),
+    resolvedConditionIds: [
+      ...(item.analysis?.resolvedConditionIds || []),
+      conditionId,
+    ].filter(Boolean),
+  });
+}
+
+/**
  * Capture has ended, but photo/description analysis may still be flowing back
  * into the same session. Keep it review-backed so home can render live results.
  * @param {{ submissionKind?: "check" | "problem_report", checkId?: string, expectedArtifacts?: number }} [opts]

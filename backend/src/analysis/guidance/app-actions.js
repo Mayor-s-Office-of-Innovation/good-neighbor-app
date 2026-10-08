@@ -19,6 +19,7 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
+import { serviceRequestClosureState } from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -177,7 +178,7 @@ function build311ActionResult({
  * @param {AppActionResult} result
  * @returns {AppActionResult[]}
  */
-function mergeAppActionResults(priorResults, result) {
+export function mergeAppActionResults(priorResults, result) {
   const merged = [];
   let placed = false;
   for (const prior of priorResults) {
@@ -208,6 +209,7 @@ function mergeAppActionResults(priorResults, result) {
  * @param {AppActionResult} opts.result
  * @param {AppActionResult[]} opts.priorResults
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {string} opts.updatedAt
  * @returns {Promise<void>}
  */
@@ -218,31 +220,44 @@ async function checkpoint311ActionResult({
   result,
   priorResults,
   completionLeaseExpiresAt,
+  executionLease,
   updatedAt,
 }) {
   if (!tableName || !siteId || !taskId) return;
+  const lease =
+    executionLease ??
+    (completionLeaseExpiresAt
+      ? {
+          status: "completing",
+          attribute: "completionLeaseExpiresAt",
+          value: completionLeaseExpiresAt,
+        }
+      : null);
   await ddb.send(
     new UpdateCommand({
       TableName: tableName,
       Key: taskKey(siteId, taskId),
       UpdateExpression:
         "SET appActionResults = :results, appActionStatus = :status, updatedAt = :updatedAt",
-      ConditionExpression: completionLeaseExpiresAt
-        ? "#status = :completing AND #lease = :leaseExpiresAt"
-        : "#status = :completing",
+      ConditionExpression: executionLease
+        ? "#status = :executionStatus AND #lease = :leaseExpiresAt"
+        : completionLeaseExpiresAt
+          ? "#status = :completing AND #lease = :leaseExpiresAt"
+          : "#status = :completing",
       ExpressionAttributeNames: {
         "#status": "status",
-        ...(completionLeaseExpiresAt
-          ? { "#lease": "completionLeaseExpiresAt" }
-          : {}),
+        ...(lease ? { "#lease": lease.attribute } : {}),
       },
       ExpressionAttributeValues: {
         ":results": mergeAppActionResults(priorResults, result),
         ":status": summarizeAppActionResults([result]),
         ":updatedAt": updatedAt,
         ":completing": "completing",
-        ...(completionLeaseExpiresAt
-          ? { ":leaseExpiresAt": completionLeaseExpiresAt }
+        ...(lease
+          ? {
+              ":leaseExpiresAt": lease.value,
+              ...(executionLease ? { ":executionStatus": lease.status } : {}),
+            }
           : {}),
       },
     }),
@@ -788,6 +803,8 @@ function buildCloseActionResult({
  * @param {string} [opts.siteId]
  * @param {string} [opts.taskId]
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
+ * @param {boolean} [opts.reconcile311Closures]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311ClosureAction({
@@ -799,6 +816,8 @@ async function execute311ClosureAction({
   siteId = "",
   taskId = "",
   completionLeaseExpiresAt = "",
+  executionLease,
+  reconcile311Closures = false,
 }) {
   const now = nowDate.toISOString();
   const priorClosuresByServiceCode =
@@ -815,8 +834,60 @@ async function execute311ClosureAction({
   }
 
   const sf311 = createSf311Client({ config });
+  let latestUpdates;
+  const needsReconciliation =
+    reconcile311Closures &&
+    [...eligible].some(
+      ([serviceCode]) =>
+        priorClosuresByServiceCode.get(serviceCode)?.status !== "closed",
+    );
+  if (needsReconciliation) {
+    try {
+      latestUpdates = await sf311.getLatestUpdatesBySourceAgency();
+    } catch (error) {
+      return buildCloseActionResult({
+        action,
+        status: "failed",
+        recordedAt: now,
+        closures: [...eligible].map(([serviceCode, { ticket }]) => ({
+          serviceCode,
+          srNum: String(ticket.srNum),
+          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          status: "failed",
+          reason: "sf311_closure_reconciliation_failed",
+        })),
+        diagnostics: appActionErrorDiagnostics(error),
+      });
+    }
+  }
   /** @type {Array<Record<string, unknown>>} */
   const closures = [];
+  /** Persist the current closure accumulator while this executor owns the lease. */
+  const checkpoint = async () => {
+    if (!tableName || !siteId || !taskId) return true;
+    try {
+      await checkpoint311ActionResult({
+        tableName,
+        siteId,
+        taskId,
+        completionLeaseExpiresAt,
+        executionLease,
+        result: buildCloseActionResult({
+          action,
+          status: closures.every((closure) => closure.status === "closed")
+            ? "submitted"
+            : "partial",
+          recordedAt: now,
+          closures: [...closures],
+        }),
+        priorResults,
+        updatedAt: now,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
   for (const [serviceCode, { ticket }] of eligible) {
     const priorClosure = priorClosuresByServiceCode.get(serviceCode);
     // Already closed on an earlier attempt: carry the record forward without
@@ -824,6 +895,33 @@ async function execute311ClosureAction({
     if (priorClosure && priorClosure.status === "closed") {
       closures.push({ ...priorClosure });
       continue;
+    }
+    if (needsReconciliation) {
+      const closureState = serviceRequestClosureState(
+        latestUpdates,
+        String(ticket.srNum),
+      );
+      if (closureState === "closed") {
+        closures.push({
+          serviceCode,
+          srNum: String(ticket.srNum),
+          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          status: "closed",
+          reconciled: true,
+        });
+        if (!(await checkpoint())) break;
+        continue;
+      }
+      if (closureState === "unknown") {
+        closures.push({
+          serviceCode,
+          srNum: String(ticket.srNum),
+          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          status: "failed",
+          reason: "sf311_closure_state_unknown",
+        });
+        continue;
+      }
     }
     try {
       const payload = buildCloseSrPayload({
@@ -842,35 +940,9 @@ async function execute311ClosureAction({
       // so if this process dies (or the lease is lost) before the final task
       // write, lease recovery must see `closed` here instead of re-closing
       // the same SR from the original CreateSR result.
-      if (tableName && siteId && taskId) {
-        try {
-          await checkpoint311ActionResult({
-            tableName,
-            siteId,
-            taskId,
-            completionLeaseExpiresAt,
-            result: buildCloseActionResult({
-              action,
-              status: closures.every((closure) => closure.status === "closed")
-                ? "submitted"
-                : "partial",
-              recordedAt: now,
-              // Snapshot: the accumulator keeps mutating across the loop, and
-              // the checkpoint result must record closures as of this call.
-              closures: [...closures],
-            }),
-            priorResults,
-            updatedAt: now,
-          });
-        } catch {
-          // The checkpoint is best-effort: the final transaction write remains
-          // authoritative. Its failure means the lease was likely reclaimed —
-          // stop issuing further HUB updates this run, since a reclaimed task
-          // gets re-executed and the persisted-prior results no longer include
-          // this in-memory closure.
-          break;
-        }
-      }
+      // If the lease was reclaimed, stop issuing further HUB updates because
+      // this in-memory closure is not durably visible to the next executor.
+      if (!(await checkpoint())) break;
     } catch (error) {
       closures.push({
         serviceCode,
@@ -885,7 +957,11 @@ async function execute311ClosureAction({
     }
   }
 
-  if (closures.every((closure) => closure.status === "closed")) {
+  const allTicketsProcessed = closures.length === eligible.size;
+  if (
+    allTicketsProcessed &&
+    closures.every((closure) => closure.status === "closed")
+  ) {
     return buildCloseActionResult({
       action,
       status: "submitted",
@@ -1017,6 +1093,8 @@ function actionsForTrigger(appActions, trigger) {
  * @param {"task_created" | "user_confirmed"} [opts.trigger]
  * @param {Date} [opts.now]
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
+ * @param {boolean} [opts.reconcile311Closures]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -1103,6 +1181,8 @@ export async function executeAppActions(appActions, opts = {}) {
               siteId: opts.siteId ?? "",
               taskId: opts.taskId ?? "",
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
+              executionLease: opts.executionLease,
+              reconcile311Closures: opts.reconcile311Closures,
             }),
           );
         } catch (error) {

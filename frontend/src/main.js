@@ -12,6 +12,9 @@
   small icon set in /public/icons and register it as the `default` library below, so
   every <wa-icon> resolves locally — no kit fetch (the ka-*.fontawesome.com strings
   left in the WA bundle are its default resolver, never reached once we override it).
+  WA's built-in "system" icon library (40 kB of inlined SVGs for its components'
+  own icons) is aliased to the same self-hosted set in vite.config.js — see
+  src/lib/wa-system-icons.js for the rule when adding a WA component.
   The default theme and palette use system fonts and are imported from the installed
   package, so the app remains fully CDN-free at runtime while matching the official
   Web Awesome Figma kit.
@@ -44,9 +47,10 @@ import "@awesome.me/webawesome/dist/styles/utilities.css";
 // stylesheet imports the palette and uses only local/system font stacks.
 import "@awesome.me/webawesome/dist/styles/themes/default.css";
 
-// Cherry-picked WA components (tree-shaken — only what we use). Any component
-// used only by a dev screen is imported in that module instead (see
-// guidance-harness.js), so the prod bundle carries only production components.
+// Cherry-picked WA components (tree-shaken — only what we use). Dev-only
+// screens live outside the app graph on standalone pages (e.g.
+// frontend/dev/guidance-harness.html), so the prod bundle carries only
+// production components.
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/otp-input/otp-input.js";
 import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
@@ -54,11 +58,14 @@ import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
 // Our tokens + layout. Unlayered, so they win over WA's @layer-ed native styles.
 import "./styles/tokens.css";
-import "./styles/app.css";
+import "./styles/base.css";
 
 // Register custom elements (side-effect imports).
 import "./components/theme-toggle.js";
 import "./components/today-view.js";
+import "./components/ticket-detail-dialog.js";
+import "./components/site-switcher.js";
+import "./components/location-dialog.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";
@@ -67,6 +74,9 @@ import "./components/site-setup.js";
 import "./components/app-toasts.js";
 import "./components/app-root.js";
 
-if (import.meta.env.DEV) {
-  await import("./components/guidance-harness.js");
-}
+// Page views + app events (services/analytics.js): one `$pageview` per route
+// change, beaconed to our own intake and forwarded to PostHog server-side
+// with browser/OS/device properties. No vendor SDK ships.
+import { currentRoute, onRouteChange } from "./router.js";
+import { startPageViewTracking } from "./services/analytics.js";
+startPageViewTracking({ currentRoute, onRouteChange });

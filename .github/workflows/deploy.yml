@@ -79,13 +79,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
       # Install once at the repo root; workspaces (backend + frontend) share the
       # lockfile. Needed for both the Lambda bundles and the frontend build.
       - name: Install dependencies
         working-directory: ${{ github.workspace }}
         run: npm ci
 
-      # Bundle the api + worker Lambdas into backend/dist/{api,worker} BEFORE
+      # Bundle every Lambda entrypoint into backend/dist/<name> BEFORE
       # terraform plan — data.archive_file zips these dirs and its hash drives
       # Lambda redeploys, so the artifacts must exist before plan reads them.
       - name: Build Lambda bundles
@@ -198,6 +201,12 @@ jobs:
           };
           CONFIG
 
+      - name: Build admin frontend
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm run build:admin
+          cp admin-frontend/config.js admin-frontend/dist/config.js
+
       # Upload sourcemaps to the error tracker so client stack traces
       # symbolicate for contributors. The upload is per-release (the sha the
       # client sends) and needs POSTHOG_CLI_API_KEY (a personal API key —
@@ -245,11 +254,7 @@ jobs:
 
       - name: Publish admin frontend to S3
         working-directory: ${{ github.workspace }}
-        run: |
-          aws s3 sync admin-frontend "s3://${{ steps.tf.outputs.admin_bucket }}" \
-            --delete \
-            --exclude "README.md" \
-            --exclude "config.example.js"
+        run: aws s3 sync admin-frontend/dist "s3://${{ steps.tf.outputs.admin_bucket }}" --delete
 
       # Env-scoped: only this environment's distribution is invalidated.
       - name: Invalidate CloudFront

@@ -1,5 +1,6 @@
 import { stageDeletion } from "../state/pending-deletions.js";
 import { showToast } from "../state/toasts.js";
+import { t } from "../i18n/i18n.js";
 
 /** Hosts whose card DOM must survive session notifications during deletion. */
 const deletingHosts = new Set();
@@ -18,14 +19,14 @@ export function isDeletingAnalysisCard(host) {
  * @param {import("../state/pending-deletions.js").DeletedProblem} problem
  * @param {() => Promise<unknown> | void} commit
  * @param {() => Promise<unknown> | void} render
- * @param {{focusUndo?: boolean}} [options]
+ * @param {{focusUndo?: boolean, address?: string}} [options]
  */
 export async function deleteAnalysisCard(
   host,
   problem,
   commit,
   render,
-  { focusUndo = false } = {},
+  { focusUndo = false, address = "" } = {},
 ) {
   const cards = [...host.querySelectorAll(".analysis-card")];
   const index = cards.findIndex(
@@ -43,7 +44,7 @@ export async function deleteAnalysisCard(
       card
         ?.querySelector(".analysis-card__meta")
         ?.textContent?.trim()
-        .replace(/^(NEW|NEEDS ACTION)\s*•?\s*/, "");
+        .replace(metaLabelPrefix(), "");
     pending = stageDeletion({ ...problem, reference }, commit);
     if (!pending) return;
     const dialog = /** @type {HTMLDialogElement | null} */ (
@@ -77,18 +78,44 @@ export async function deleteAnalysisCard(
     }
     if (pending) {
       showToast({
-        title: "Item deleted",
-        message: `${reference ? `${reference} (“${problem.title || "Item"}”)` : `“${problem.title || "Item"}”`} has been successfully deleted.`,
-        icon: "trash",
-        duration: 5000,
+        title: t("card.deleteToast.title"),
+        message: deletionSummary(problem.title, address),
+        icon: "circle-check",
+        tone: "success",
         focusAction: focusUndo,
-        action: { label: "Undo", run: () => pending.undo() },
+        action: {
+          label: t("common.undo"),
+          run: () => pending.undo(),
+        },
         onDismiss: () => {
           void pending.save();
         },
       });
     }
   }
+}
+
+/**
+ * Strips the card's "NEW" / "NEEDS ACTION" meta prefix (and its separator) so
+ * only the reference remains, in whatever language the card was rendered.
+ * @returns {RegExp}
+ */
+function metaLabelPrefix() {
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const labels = [t("card.meta.new"), t("card.meta.needsAction")].map(escape);
+  return new RegExp(`^(${labels.join("|")})\\s*•?\\s*`);
+}
+
+/** @param {string | undefined} label @param {string} address */
+function deletionSummary(label, address) {
+  const friendlyLabel = label || t("card.deleteToast.issueFallback");
+  const firstAddressLine = address.split(/[\n,]/, 1)[0].trim();
+  return firstAddressLine
+    ? t("card.deleteToast.messageAt", {
+        label: friendlyLabel,
+        address: firstAddressLine,
+      })
+    : friendlyLabel;
 }
 
 /** @param {HTMLElement} card */

@@ -8,18 +8,21 @@
  * description per check (docs/plan-remove-places.md): opening this screen
  * again edits the saved description, and saving a change replaces it.
  */
+import "./describe-instead.css";
 import { getSite } from "../db.js";
 import { currentRoute, navigate } from "../router.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   addItem,
   getFlowType,
   getCurrentCheck,
   loadDraft,
+  setAnalyzingOpen,
   updateItem,
 } from "../state/check-session.js";
 import {
   MIN_DESCRIPTION_LENGTH,
-  MIN_TEXT_EVIDENCE_LENGTH,
   textItems,
 } from "../domain/check-completion.js";
 import {
@@ -45,13 +48,7 @@ class DescribeInstead extends HTMLElement {
     this._flowType = getFlowType();
     this._routeBase =
       this._flowType === "single-problem" ? "/problem" : "/check";
-    // The perimeter description must describe the whole area, so it carries a
-    // minimum length; a single-issue note only has to clear the backend's
-    // text-artifact minimum (the analyzer rejects shorter text permanently).
-    this._minLength =
-      this._flowType === "perimeter"
-        ? MIN_DESCRIPTION_LENGTH
-        : MIN_TEXT_EVIDENCE_LENGTH;
+    this._minLength = MIN_DESCRIPTION_LENGTH;
     this._existing =
       this._flowType === "perimeter" ? textItems(check)[0] || null : null;
     this._savedText = this._existing?.text || "";
@@ -60,6 +57,7 @@ class DescribeInstead extends HTMLElement {
 
     this._render();
     this._bind();
+    announceScreenHeading(this, ".describe__title");
   }
 
   _bind() {
@@ -143,11 +141,17 @@ class DescribeInstead extends HTMLElement {
       navigate(this._routeBase);
       return;
     }
-    this._dialog.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._dialog),
+      "discard-confirm",
+    );
   }
 
-  _discardAndExit() {
-    this._dialog.close();
+  async _discardAndExit() {
+    // Discard from the confirm dialog → wait for its sentinel to unwind →
+    // then leave, so the queued back() can't land on the navigated-away
+    // entry or leave a stale #discard-confirm hash.
+    await awaitOverlayUnwind("discard-confirm");
     navigate(this._routeBase);
   }
 
@@ -176,6 +180,7 @@ class DescribeInstead extends HTMLElement {
     // it and the backend never misses a text-only check.
     const record = addItem({ kind: "text", text });
     updateItem(record.id, { upload: { status: "uploaded" } });
+    if (this._flowType === "single-problem") setAnalyzingOpen(true);
     analyzeEvidenceItem(record.id);
     navigate(this._routeBase);
   }

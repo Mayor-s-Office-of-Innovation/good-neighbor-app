@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" class="wa-light wa-theme-default wa-palette-default">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Guidance harness (dev) · Good Neighbor</title>
+    <meta name="theme-color" content="#ffffff" />
+    <!--
+      Standalone dev-only workbench for the guidance workflow: NO app graph.
+      Deliberately separate from index.html — no <app-root>, no router, no site
+      binding, no device-token auth, no health monitoring, no error reporting.
+      It talks to the real local backend (npm run dev -w backend) through the
+      Vite /v1 proxy with unauthenticated requests; the local API's stub
+      authorizer resolves the tenant partition (X-Debug-Site field in the UI
+      → DEBUG_SITE → "demo-site").
+
+      Real app styles (tokens.css + base.css) load here so harness buttons and
+      surfaces can't drift from the app, mirroring design-system.html. Dev-only:
+      vite build emits only the app's index.html, so this never ships.
+      URL: http://127.0.0.1:5173/dev/guidance-harness.html
+    -->
+    <!--
+      Theme init — same mechanism as index.html (theme-override localStorage
+      key, .wa-dark toggle on <html>, themechange event), inline + synchronous
+      so the first paint is already correct. A ?themeToggle button is mounted
+      by the harness component over the header.
+    -->
+    <script>
+      (function () {
+        var KEY = "theme-override"; // 'dark' | 'light' | null (follow OS)
+        var mq = window.matchMedia("(prefers-color-scheme: dark)");
+        function override() {
+          try {
+            return localStorage.getItem(KEY);
+          } catch (e) {
+            return null;
+          }
+        }
+        function isDark() {
+          var o = override();
+          return o ? o === "dark" : mq.matches;
+        }
+        function apply() {
+          var dark = isDark(),
+            el = document.documentElement;
+          el.classList.toggle("wa-dark", dark);
+          el.classList.toggle("wa-light", !dark);
+          var tc = document.querySelector('meta[name="theme-color"]');
+          if (tc) tc.setAttribute("content", dark ? "#1a1a1a" : "#ffffff");
+          window.dispatchEvent(
+            new CustomEvent("themechange", {
+              detail: { dark: dark, following: !override() },
+            }),
+          );
+        }
+        window.__theme = {
+          isDark: isDark,
+          following: function () {
+            return !override();
+          },
+          // cycle: light -> dark -> follow OS -> ...
+          toggle: function () {
+            var o = override();
+            try {
+              if (o === null)
+                localStorage.setItem(KEY, mq.matches ? "light" : "dark");
+              else if (o !== (mq.matches ? "light" : "dark"))
+                localStorage.removeItem(KEY);
+              else localStorage.setItem(KEY, o === "dark" ? "light" : "dark");
+            } catch (e) {}
+            apply();
+          },
+          set: function (mode) {
+            try {
+              if (mode === "os") localStorage.removeItem(KEY);
+              else localStorage.setItem(KEY, mode);
+            } catch (e) {}
+            apply();
+          },
+        };
+        apply();
+        mq.addEventListener("change", function () {
+          if (!override()) apply();
+        });
+      })();
+    </script>
+    <script type="module">
+      // Same Web Awesome setup as main.js (kept in sync manually — see its
+      // header), then the real app styles. Note: wa-textarea and the
+      // select/option/input/checkbox components register from the harness
+      // module itself; icon + otp-input are unused on this page.
+      import "@awesome.me/webawesome/dist/styles/layers.css";
+      import "@awesome.me/webawesome/dist/styles/native.css";
+      import "@awesome.me/webawesome/dist/styles/utilities.css";
+      import "@awesome.me/webawesome/dist/styles/themes/default.css";
+
+      import "/src/styles/tokens.css";
+      import "/src/styles/base.css";
+    </script>
+  </head>
+  <body>
+    <guidance-harness></guidance-harness>
+    <script type="module" src="/src/dev/guidance-harness.js"></script>
+  </body>
+</html>

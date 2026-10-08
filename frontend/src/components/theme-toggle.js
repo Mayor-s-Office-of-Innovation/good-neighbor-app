@@ -7,6 +7,8 @@
   Keyboard-operable (it's a real <button>), visible focus, aria-pressed + label
   that says whether we're following the OS.
 */
+import { t } from "../i18n/i18n.js";
+
 class ThemeToggle extends HTMLElement {
   connectedCallback() {
     // Hidden unless the ?themeToggle URL param is present (per-load, dev affordance).
@@ -30,6 +32,11 @@ class ThemeToggle extends HTMLElement {
         button:hover { opacity: 1; transform: translateY(-1px); }
         button:focus-visible { opacity: 1; outline: 2px solid var(--c-blue); outline-offset: 2px; }
         wa-icon { display: block; }
+        /* Shadow root: base.css's global reduced-motion guard can't reach in. */
+        @media (prefers-reduced-motion: reduce) {
+          button { transition: none; }
+          button:hover { transform: none; }
+        }
       </style>
       <button type="button" part="button"><wa-icon></wa-icon></button>
     `;
@@ -50,11 +57,14 @@ class ThemeToggle extends HTMLElement {
     const following = window.__theme.following();
     this._icon.name = dark ? "moon" : "sun";
     this._btn.setAttribute("aria-pressed", String(dark));
-    const base = dark ? "Dark mode" : "Light mode";
-    this._btn.setAttribute(
-      "aria-label",
-      `${base}${following ? " (following device setting)" : ""}. Activate to change theme.`,
-    );
+    const label = dark
+      ? following
+        ? "theme.toggle.darkFollowing.aria"
+        : "theme.toggle.dark.aria"
+      : following
+        ? "theme.toggle.lightFollowing.aria"
+        : "theme.toggle.light.aria";
+    this._btn.setAttribute("aria-label", t(label));
     this._btn.title = this._btn.getAttribute("aria-label");
   }
 }

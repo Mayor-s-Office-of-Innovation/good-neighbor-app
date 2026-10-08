@@ -7,8 +7,10 @@
   and shadow, plus the light/dark values. **Never hard-code a hex; always use a token.**
   The full value table (light/dark, plus the WA-layer values) is in
   [design-tokens.md](./design-tokens.md) — the Figma ↔ code mapping.
-- [frontend/src/styles/app.css](../frontend/src/styles/app.css) — the component classes below,
-  grouped by screen with comments.
+- [frontend/src/styles/base.css](../frontend/src/styles/base.css) — the shared vocabulary
+  below (shell, `.screen`, buttons, forms, `.sheet`), with comments.
+- `frontend/src/components/<name>.css` — the classes one component renders, next to that
+  component and imported from its module. Add a new screen's classes there, not to base.css.
 - [frontend/design-system.html](../frontend/design-system.html) — the visual reference:
   every button state, live token swatches (light/dark), and our WA divergences, rendered
   with the real styles. Dev-only — run `npm run dev:frontend` and open
@@ -25,7 +27,7 @@ links, status, and active states. **Severity/status is never carried by color al
 and a text label lead, color only reinforces (WCAG 1.4.1). **Dark mode** is a token swap: light
 values live in `:root`, dark overrides in `html.wa-dark`. Web Awesome (WA) components re-theme
 off the same `.wa-dark`/`.wa-light` class, so one toggle re-themes our CSS and WA together
-(`app.css` is unlayered and WA's styles are `@layer`-ed, so our rules win the cascade).
+(`base.css` and the component sheets are unlayered and WA's styles are `@layer`-ed, so our rules win the cascade).
 
 ## Tokens you'll use most (from tokens.css)
 
@@ -103,7 +105,7 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 `data-loading` + `aria-busy="true"` + `disabled`, and snapshot the button's
 `offsetWidth` into an inline `--btn-loading-min-width` custom property; show a
 `<wa-spinner>` inside the label while loading; remove the attributes after. The
-`button[data-loading]` rule in `app.css` pins the width so the button never shifts.
+`button[data-loading]` rule in `base.css` pins the width so the button never shifts.
 (First instance: the login continue button.)
 
 ## Surfaces, text, status
@@ -123,6 +125,22 @@ Form controls are **Web Awesome** components (`wa-input`, `wa-select`, `wa-texta
 `<button class="btn-ink">` (never `<wa-button>`; ADR 0011). Import any WA component
 in the module that actually renders it — blanket imports in `main.js` ship the whole
 component graph to production even when only a dev screen uses it.
+
+## Icons — `<wa-icon>` from the self-hosted set only (ADR 0011 addendum)
+
+- Every icon is an SVG file in `frontend/public/icons/`, rendered as
+  `<wa-icon name="camera">` (name = filename without `.svg`). Nothing loads
+  from a CDN or a Font Awesome kit.
+- **Adding an icon:** drop the Font Awesome Free SVG into `public/icons/` and
+  use its name. The library mutator sets `fill="currentColor"`, so icons take
+  the surrounding text color.
+- **Web Awesome's own icons** (the chevron on `<wa-select>`, the clear button
+  on an input, the eye on a password field) come from the same folder: its
+  built-in "system" library is aliased to ours in `vite.config.js`
+  (`src/lib/wa-system-icons.js`). When you add a WA component, check its docs
+  for the system icons it renders and add each one to `public/icons/`. A
+  missing icon shows as an empty box in dev — fix it by adding the file, never
+  by re-enabling the vendor library.
 
 ## Non-negotiable rules
 
@@ -150,8 +168,39 @@ component graph to production even when only a dev screen uses it.
 from the pieces above and adds **no new visual vocabulary**: hub-card archetype (`.home` >
 `.screen` > `.screen__sec`), a brand `.sitehead`, a `.hero` heading, `.btn-ink`/`.btn-outline`
 actions, and WA controls for the code field. The only setup-specific CSS is full-width CTAs and
-the "Don't have a code?" disclosure (`app.css`, "First-run setup"). That's the target shape for
+the "Don't have a code?" disclosure (`site-setup.css`, "First-run setup"). That's the target shape for
 a screen matched to the design without a mockup.
+
+## Motion
+
+Everything animated must be instant when the OS asks for reduced motion
+(`prefers-reduced-motion: reduce`). axe-core has no rule for this, so the e2e
+accessibility scan will not catch a regression — the rules below are the guard.
+
+1. **base.css covers light DOM.** Its global `@media (prefers-reduced-motion: reduce)`
+   block zeroes every animation and transition duration/delay, forces
+   `scroll-behavior: auto`, and zeroes the `--wa-transition-*` tokens that Web Awesome
+   controls read inside their shadow roots. Do not add per-component reduced-motion
+   blocks for ordinary light-DOM transitions; the global rule already handles them.
+2. **Shadow roots and view-transition pseudo-elements need their own guard.** The `*`
+   selector stops at shadow boundaries and never matches `::view-transition-*`. Known
+   sites: the route cross-fade in `app-root.js` (guarded in base.css and skipped in JS
+   when the media query matches), `theme-toggle.js`'s own shadow stylesheet, and
+   `wa-spinner` (see below). Anything new that animates inside a shadow root, or uses
+   `document.startViewTransition`, must add its own `prefers-reduced-motion` rule.
+3. **JS never asks for smooth scrolling.** `scrollTo`/`scrollIntoView` with
+   `behavior: "smooth"` ignores the CSS `scroll-behavior` override; use `behavior: "auto"`
+   (or plain CSS) so the global rule stays in charge.
+
+`wa-spinner` keeps spinning under reduced motion on purpose: it is the only loading
+indicator inside the setup buttons, it carries an `aria-label`, and its animations live
+on inner elements the exposed `::part(spinner)` wrapper can't stop. WCAG treats
+essential status motion as exempt. Our own `.analysis-progress-ring` does stop; if that
+inconsistency ever matters, swap the spinner for a static "Loading…" label rather than
+fighting the shadow root.
+
+To check by hand: Playwright `reducedMotion: "reduce"`, or the DevTools Rendering panel's
+"Emulate CSS media feature prefers-reduced-motion".
 
 ## Action notifications
 

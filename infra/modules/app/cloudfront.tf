@@ -71,6 +71,7 @@ resource "aws_cloudfront_function" "frontend_spa_rewrite" {
     // Keep this list in lockstep with the API cache behaviors below and
     // local.api_routes in api.tf.
     if (uri.indexOf("/v1/") === 0 ||
+        uri.indexOf("/app/v1/") === 0 ||
         uri.indexOf("/site-code") === 0 ||
         uri.indexOf("/submissions") === 0 ||
         uri.indexOf("/health") === 0) {
@@ -134,6 +135,18 @@ resource "aws_cloudfront_distribution" "frontend" {
 
   ordered_cache_behavior {
     path_pattern               = "/v1/*"
+    target_origin_id           = "api-gateway"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods             = ["GET", "HEAD", "OPTIONS"]
+    compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+  }
+
+  ordered_cache_behavior {
+    path_pattern               = "/app/v1/*"
     target_origin_id           = "api-gateway"
     viewer_protocol_policy     = "redirect-to-https"
     allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]

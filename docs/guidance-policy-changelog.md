@@ -2,6 +2,30 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v5 - 2026-10-06
+
+- Source asset: `GNP rubrics.csv` (36 rules).
+- Updated 27 user-facing button labels to action instructions for the checklist.
+- Routing, agencies, eligibility for In progress, and all other rule fields are unchanged.
+- Existing open cards display the current label by rule ID; their original policy
+  snapshots and execution behavior remain unchanged. Prior catalogs remain registered.
+
+## actions-escalations-v4 - 2026-10-01
+
+- Source asset: `GNP rubrics-2.csv`.
+- Added a Pacific-local daily validity window to every rule. Clarifying
+  questions are resolved first, then the matching answer branch is checked at
+  the condition's original `reportedAt` time.
+- Added `canBeInProgress` as explicit rule metadata and snapshot it onto every
+  new task. The first successful card action now moves eligible tasks to In
+  progress; other tasks move directly to History.
+- Added `primaryInProgressAgency` as explicit rule metadata and snapshot it
+  onto new tasks so in-progress details show the rubric-defined agency.
+- Removed status inference from user-facing button labels.
+- Catalog validation now rejects any fully answered category, severity, and
+  time combination that cannot resolve to a rule.
+- Preserved earlier catalogs for historical assessments.
+
 ## actions-escalations-v3 - 2026-09-23
 
 - Source asset: `GNP-3.csv`.

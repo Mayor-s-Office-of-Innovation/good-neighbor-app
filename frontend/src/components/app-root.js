@@ -10,28 +10,53 @@
   lands straight on home.
 */
 import { requestLocationPermissionEarly } from "../services/device-location.js";
-import { getSite, resetLocalAppState, saveSiteSettings } from "../db.js";
+import {
+  hasAdminAccess,
+  clearSite,
+  getSite,
+  resetLocalAppState,
+  saveSiteSettings,
+} from "../db.js";
 import { getSiteSettings } from "../services/api.js";
 import {
   startHealthMonitoring,
   stopHealthMonitoring,
   clearAuthState,
 } from "../services/backend-health.js";
-import { currentRoute, onRouteChange, navigate } from "../router.js";
+import {
+  currentRoute,
+  onRouteChange,
+  navigate,
+  replaceRoute,
+} from "../router.js";
+import { hasDraft } from "../state/check-session.js";
+import {
+  captureRouteToRestore,
+  captureResumeProperties,
+} from "../state/capture-resume.js";
+import { trackEvent } from "../services/analytics.js";
 import { setupView, appShell } from "./app-root.templates.js";
 import "./connection-status.js";
-import {
-  isInAppBrowser,
-  escapeUrlForPlatform,
-} from "../services/browser-context.js";
-import { reportClientEvent } from "../services/error-report.js";
+import { isInAppBrowser } from "../services/browser-context.js";
 import {
   deepActiveElement,
   isEditable,
   keyboardViewport,
 } from "../services/keyboard-viewport.js";
+import {
+  showQueuedSiteSwitchSuccessToast,
+  showSiteSwitchSuccessToast,
+} from "../state/toasts.js";
+import {
+  hasEnrollmentCredentials,
+  isFatalSessionError,
+} from "../services/startup-auth.js";
+import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/site-admin/edit", "site-admin-edit"],
+  ["/site-admin/access", "site-access-view"],
+  ["/site-admin", "site-admin-view"],
   ["/problem/describe", "describe-instead"],
   ["/problem", "problem-report"],
   ["/check/describe", "describe-instead"],
@@ -39,16 +64,44 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
-if (import.meta.env.DEV) {
-  ROUTE_VIEW.unshift(["/dev/guidance-harness", "guidance-harness"]);
-}
-
-class AppRoot extends HTMLElement {
+export class AppRoot extends HTMLElement {
   async connectedCallback() {
+    if (!this._onPhotoLightbox) {
+      this._onPhotoLightbox = (event) => {
+        const trigger = event.target?.closest?.("[data-photo-lightbox]");
+        if (!trigger) return;
+        event.preventDefault();
+        // Polling may replace the thumbnail while the lazy module loads.
+        // Keep the originating screen as the navigation guard instead.
+        const screen = trigger.closest(".app__main > *");
+        void import("./photo-lightbox.js").then(({ openPhotoLightbox }) =>
+          openPhotoLightbox(this, trigger, screen),
+        );
+      };
+      this.addEventListener("click", this._onPhotoLightbox);
+    }
     this._startKeyboardViewportSync();
     if (this._isDevResetRoute()) {
       await this._resetFirstLaunch();
       return;
+    }
+    // The stored language's catalog must be in place before any template
+    // runs; English resolves immediately, other locales await their chunk.
+    await i18nReady;
+    if (!this._onLocaleChange) {
+      // Every screen renders from state, so a language switch is a full
+      // re-render of the shell and the current view (or the setup screen).
+      this._onLocaleChange = () => {
+        if (!this.isConnected) return;
+        if (!this._site) {
+          this._renderSetup();
+          return;
+        }
+        // Only the view: the shell chrome is hidden, and re-creating it would
+        // re-show a dismissed in-app-browser banner and replay queued toasts.
+        this._renderView();
+      };
+      window.addEventListener("localechange", this._onLocaleChange);
     }
     requestLocationPermissionEarly();
     this._site = await getSite();
@@ -65,6 +118,10 @@ class AppRoot extends HTMLElement {
       this._renderSetup();
     };
     window.addEventListener("authsignout", this._onAuthSignout);
+    this._onEnrollmentUrlChange = () => {
+      if (hasEnrollmentCredentials()) this._beginEnrollmentFromUrl();
+    };
+    window.addEventListener("hashchange", this._onEnrollmentUrlChange);
     this._onSiteRequested = (event) => {
       const { siteId = "", siteName = "", mode = "code" } = event.detail || {};
       this._renderSetup({
@@ -78,11 +135,16 @@ class AppRoot extends HTMLElement {
     // Health monitoring starts regardless of binding state: /health is
     // authorizer-free, and the AUTH dialog is meaningful before setup too.
     startHealthMonitoring();
+    if (hasEnrollmentCredentials()) {
+      this._beginEnrollmentFromUrl();
+      return;
+    }
     if (!this._site) {
       this._renderSetup();
       return;
     }
-    await this._refreshSiteSettings();
+    if (!(await this._refreshSiteSettings())) return;
+    await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     this._renderView();
@@ -92,8 +154,13 @@ class AppRoot extends HTMLElement {
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
+    window.removeEventListener("hashchange", this._onEnrollmentUrlChange);
+    window.removeEventListener("localechange", this._onLocaleChange);
+    this._onLocaleChange = null;
     this.removeEventListener("siterequested", this._onSiteRequested);
     this._stopKeyboardViewportSync();
+    this.removeEventListener("click", this._onPhotoLightbox);
+    this._onPhotoLightbox = null;
   }
 
   /**
@@ -148,11 +215,13 @@ class AppRoot extends HTMLElement {
   }
 
   _renderSetup(options = {}) {
+    const switchingSite = Boolean(this._site);
     if (this._unsub) {
       this._unsub();
       this._unsub = null;
     }
     this.innerHTML = setupView(options);
+    this.append(document.createElement("app-toasts"));
     this.append(document.createElement("connection-status"));
     this._maybeWarnInAppBrowser();
     this.querySelector("site-setup").addEventListener("sitecancel", () => {
@@ -164,12 +233,25 @@ class AppRoot extends HTMLElement {
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
       this._site = await getSite();
       clearAuthState(); // re-bind heals an AUTH state
-      await this._refreshSiteSettings();
+      void trackEvent("site_setup_completed", {
+        switching_site: switchingSite,
+      });
+      if (!(await this._refreshSiteSettings())) return;
       this._renderApp();
+      if (switchingSite) showSiteSwitchSuccessToast();
       this._unsub = onRouteChange(() => this._renderView());
       navigate("/today");
       this._renderView();
     });
+  }
+
+  _beginEnrollmentFromUrl() {
+    // A one-time enrollment link is an explicit request to replace the cached
+    // binding. Mount setup even when IndexedDB still holds an older (possibly
+    // revoked) session. Clearing an earlier AUTH presentation keeps its modal
+    // from covering the automatic redemption state.
+    clearAuthState();
+    this._renderSetup();
   }
 
   _renderApp() {
@@ -179,6 +261,7 @@ class AppRoot extends HTMLElement {
     this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
+    showQueuedSiteSwitchSuccessToast();
   }
 
   /**
@@ -188,41 +271,52 @@ class AppRoot extends HTMLElement {
    */
   _maybeWarnInAppBrowser() {
     if (!isInAppBrowser()) return;
-    reportClientEvent("in_app_browser", "in-app webview detected at boot", {});
-    const host = this.querySelector(".app__main") || this;
-    host.insertAdjacentHTML(
-      "afterbegin",
-      `<div class="webview-banner" role="status">
-        <p>
-          <strong>Camera may not open here.</strong> You're inside another app's
-          browser. Open in your browser instead for the camera to work.
-        </p>
-        <button class="webview-banner__open" type="button">Open in browser</button>
-        <button class="webview-banner__close" type="button" aria-label="Dismiss">
-          ✕
-        </button>
-      </div>`,
+    void import("./webview-warning.js").then(({ showWebviewWarning }) =>
+      showWebviewWarning(this),
     );
-    this.querySelector(".webview-banner__open")?.addEventListener(
-      "click",
-      () => {
-        const url = escapeUrlForPlatform();
-        if (!url) return;
-        // Both the iOS handoff (target=_blank → Safari) and the Android
-        // intent URL must be triggered from a user gesture.
-        window.open(url, "_blank", "noopener");
-      },
-    );
-    this.querySelector(".webview-banner__close")?.addEventListener(
-      "click",
-      () => this.querySelector(".webview-banner")?.remove(),
-    );
+  }
+
+  /**
+   * Field fix (2026-10): on older Android devices the browser is killed while
+   * the camera is open and relaunches at the entry URL, so the user lands on
+   * home mid-check. The capture screen left a marker when it opened the
+   * camera; if it is fresh and the draft is still there, replace home with
+   * the capture route before the first render. The analytics event records
+   * how the relaunch looked so the field pattern can be confirmed in PostHog.
+   */
+  async _restoreInterruptedCapture() {
+    let restore = null;
+    try {
+      restore = await captureRouteToRestore({
+        route: currentRoute(),
+        hasDraft,
+      });
+    } catch (err) {
+      console.error("capture resume check failed", err);
+    }
+    if (!restore) return;
+    void trackEvent("capture_resumed", captureResumeProperties(restore));
+    replaceRoute(restore.route);
   }
 
   _renderView() {
     const route = currentRoute();
     if (this._isDevResetRoute(route)) {
       void this._resetFirstLaunch();
+      return;
+    }
+    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
+      navigate("/today");
+      return;
+    }
+    if (
+      route.startsWith("/site-admin") &&
+      !customElements.get("site-admin-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./site-admin.js").then(() => {
+        if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
       return;
     }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
@@ -233,15 +327,65 @@ class AppRoot extends HTMLElement {
     if (this._shell) {
       this._shell.classList.add("app--chromeless");
     }
-    // Always mount a fresh element (each screen reads current state on connect).
-    this._view.replaceChildren(document.createElement(tag));
-    this._view.focus();
+    const swap = () => {
+      // Always mount a fresh element (each screen reads current state on
+      // connect).
+      this._view.replaceChildren(document.createElement(tag));
+      this._restateScreenFocus();
+    };
+    // Same-document View Transition: cross-fades the route swap (full-blown
+    // zoom animations could re-use this hook later). No-op where unsupported.
+    // The API does NOT honor prefers-reduced-motion on its own: base.css
+    // zeroes the ::view-transition-* animations as the safety net, and we skip
+    // the call entirely here so those users also avoid the snapshot pause.
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduceMotion && typeof document.startViewTransition === "function") {
+      document.startViewTransition(swap);
+    } else {
+      swap();
+    }
+  }
+
+  /**
+   * Hand focus to the new screen's programmatic focus point (title or a
+   * screen-declared target): routing is a page-level event, so the screen's
+   * own heading should receive focus — not <main>. <main> (tabindex="-1")
+   * remains the silent fallback target and never draws a ring (outline:
+   * none). Screens may still move focus onward to a meaningful control
+   * after async setup (e.g. describe-instead focuses its text field).
+   */
+  _restateScreenFocus() {
+    const view = this._view;
+    if (!view) return;
+    this._afterMount(() => {
+      const viewFocusPoint =
+        view.querySelector("[data-screen-focus]") ||
+        view.querySelector("h1[tabindex='-1']");
+      if (viewFocusPoint instanceof HTMLElement) {
+        viewFocusPoint.focus();
+      } else {
+        view.focus();
+      }
+    });
+  }
+
+  /** @param {() => void} fn */
+  _afterMount(fn) {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(fn);
+    } else {
+      fn();
+    }
   }
 
   /**
    * Pull the site's settings (name etc.) from the backend and merge them onto
    * the local binding record. Best-effort: the app runs on the stored record
-   * when the request fails.
+   * when a transient request fails. A rejected or revoked session is fatal:
+   * clear the current binding and return to setup before rendering app data.
+   * @returns {Promise<boolean>} whether the app shell may be rendered
    */
   async _refreshSiteSettings() {
     try {
@@ -252,8 +396,17 @@ class AppRoot extends HTMLElement {
           providerSiteId: this._site.providerSiteId || site.providerSiteId,
         });
       }
+      return true;
     } catch (err) {
+      if (isFatalSessionError(err)) {
+        await clearSite();
+        this._site = null;
+        clearAuthState();
+        this._renderSetup();
+        return false;
+      }
       console.error("getSiteSettings failed", err);
+      return true;
     }
   }
 

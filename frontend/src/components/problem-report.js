@@ -1,15 +1,42 @@
+import {
+  toggleCardCompletion,
+  isCompletingAnalysisCard,
+} from "./analysis-card-completion.js";
 /*
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
 */
-import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import "./problem-report.css";
+import {
+  show311SuccessToast,
+  show311ErrorToast,
+  showActionSaveErrorToast,
+  showAnswerSaveErrorToast,
+  showDeletionRefreshToast,
+  showDeleteErrorToast,
+  showEditErrorToast,
+  showEditRefreshErrorToast,
+  showEditSavedToast,
+  showReanalysisErrorToast,
+} from "../state/toasts.js";
+import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
+import { getLocale, t } from "../i18n/i18n.js";
+import {
+  missingConditionMessage,
+  problemFromCard,
+  rejectProblemCondition,
+} from "./analysis-problem-actions.js";
 import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
-import { navigate } from "../router.js";
+import { navigate, replaceRoute } from "../router.js";
+import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
+import { trackEvent } from "../services/analytics.js";
+import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   answerAnalysisQuestion,
   analyzeEvidenceItem,
@@ -17,18 +44,16 @@ import {
   refreshEvidenceAnalysis,
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
-import {
-  ApiError,
-  completeTask,
-  editAnalysisCondition,
-  rejectAnalysisCondition,
-} from "../services/api.js";
+import { completeTask, editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import { isFiled311Completion } from "../domain/task-actions.js";
-import { hasEvidence } from "../domain/check-completion.js";
+import {
+  isFiled311Completion,
+  submitted311ServiceRequestNumber,
+} from "../domain/task-actions.js";
+import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
   ensureProblemReport,
   startProblemReport,
@@ -40,14 +65,17 @@ import {
   addItem,
   removeItem,
   getFlowType,
+  getAnalyzingOpen,
   isCurrentSession,
-  updateItemAnalysis,
+  rejectConditionLocally,
+  resolveConditionLocally,
   markCaptureComplete,
   onCheckSessionChange,
   pauseCheck,
+  setAnalyzingOpen,
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
-import { shotTile, addTile } from "./perimeter-check.templates.js";
+import { shotTile, addTile, footer } from "./perimeter-check.templates.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
@@ -77,7 +105,6 @@ class ProblemReport extends HTMLElement {
     this._analysisProgressDialog = null;
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
-    this._toastTimer = 0;
     this._initGeneration = 0;
     this._answeringConditionIds = new Set();
   }
@@ -86,7 +113,8 @@ class ProblemReport extends HTMLElement {
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
-    this._embedded = this.hasAttribute("embedded");
+    // A boot that lands here directly has no interrupted hand-off to resume.
+    clearCameraOpen();
     /** @type {SiteRecord | null} */
     this._site = await getSite();
     if (!this._isCurrentInit(initGeneration)) return;
@@ -118,10 +146,7 @@ class ProblemReport extends HTMLElement {
       if (this.isConnected && !this._finishing) this._render();
     });
 
-    this.innerHTML = shell({
-      embedded: this._embedded,
-      title: this._titleText(),
-    });
+    this.innerHTML = shell({ title: this._titleText() });
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -139,24 +164,26 @@ class ProblemReport extends HTMLElement {
     this.querySelector("#cancel-report-save")?.addEventListener(
       "click",
       async () => {
-        this._cancelDialog?.close();
+        // Close → await the history unwind → then replace the entry (see
+        // perimeter-check's cancel handlers for the race this avoids).
+        await awaitOverlayUnwind("cancel-confirm");
         await pauseCheck();
         this._exitCapture();
       },
     );
     this.querySelector("#cancel-report-discard")?.addEventListener(
       "click",
-      () => {
-        this._cancelDialog?.close();
-        this._exitCapture({ discarded: true });
+      async () => {
+        await awaitOverlayUnwind("cancel-confirm");
+        this._exitCapture();
         window.setTimeout(() => clearCheck(), 0);
       },
     );
     this._cancelDialog?.addEventListener("click", (e) => {
       if (e.target === this._cancelDialog) this._cancelDialog.close();
     });
-    this.querySelector("#submit-report").addEventListener("click", () =>
-      this._done(),
+    this.querySelector("#problem-footer").addEventListener("click", (event) =>
+      this._onFooterClick(event),
     );
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-delete-dialog")
@@ -197,6 +224,8 @@ class ProblemReport extends HTMLElement {
     this._fileInput.addEventListener("change", () => this._onFilePicked());
 
     this._render();
+    // Async-init announcement: the heading may not exist at route-mount time.
+    announceScreenHeading(this, ".single-issue__title");
   }
 
   _isCurrentInit(initGeneration) {
@@ -213,15 +242,25 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _openCamera() {
     if (!this._fileInput) return;
+    // Survives a process kill while the camera is up: app-root reads it at
+    // boot and re-enters /problem instead of home (state/capture-resume.js).
+    markCameraOpen("/problem");
+    void trackEvent("camera_opened", { flow: "single-problem" });
     this._fileInput.value = "";
     this._fileInput.click();
   }
 
   /** @returns {void} */
   _onFilePicked() {
+    clearCameraOpen();
     if (!this._fileInput) return;
     const file = this._fileInput.files && this._fileInput.files[0];
     if (!file) return;
+    void trackEvent("photo_picked", {
+      flow: "single-problem",
+      photo_bytes: file.size,
+      photo_type: file.type,
+    });
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();
     }
@@ -255,8 +294,29 @@ class ProblemReport extends HTMLElement {
     const record = addItem(
       /** @type {PhotoItemInput} */ ({ kind: "photo", dataUrl }),
     );
-    if (record) analyzeEvidenceItem(record.id);
+    if (record) {
+      setAnalyzingOpen(true);
+      analyzeEvidenceItem(record.id);
+    }
     this._render();
+  }
+
+  /** @param {Event} event */
+  _onFooterClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("#submit-report")) {
+      this._done();
+      return;
+    }
+    const toggle = target.closest("#toggle-analyzing");
+    if (toggle) {
+      setAnalyzingOpen(!getAnalyzingOpen());
+      const replacement = this.querySelector("#toggle-analyzing");
+      if (replacement instanceof HTMLElement) {
+        replacement.focus({ preventScroll: true });
+      }
+    }
   }
 
   /** @param {Event} e */
@@ -277,11 +337,14 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _cancel() {
     if (!hasEvidence(getCurrentCheck())) {
-      this._exitCapture({ discarded: true });
+      this._exitCapture();
       window.setTimeout(() => clearCheck(), 0);
       return;
     }
-    this._cancelDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._cancelDialog),
+      "cancel-confirm",
+    );
   }
 
   /** @returns {void} */
@@ -312,14 +375,15 @@ class ProblemReport extends HTMLElement {
     const container = this.querySelector("#single-issue-analysis");
     if (!container) return;
     const items = getItems();
-    container.innerHTML = items.length
-      ? analysisSection(
-          items,
-          this._checkId,
-          this._site?.name || "",
-          this._site?.address || "",
-        )
-      : "";
+    container.innerHTML =
+      getAnalyzingOpen() && items.length
+        ? analysisSection(
+            items,
+            this._checkId,
+            this._site?.name || "",
+            this._site?.address || "",
+          )
+        : "";
     this._wireAnalysisCards();
   }
 
@@ -331,7 +395,7 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _render() {
-    if (isDeletingAnalysisCard(this)) return;
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
     this._renderAnalysis();
@@ -340,68 +404,49 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {string} */
   _titleText() {
-    return getItems().length ? "Flag another issue" : "Flag a single issue";
+    return getItems().length
+      ? t("problem.title.another")
+      : t("problem.title.single");
   }
 
   /** @returns {void} */
   _syncControls() {
-    const submit = this.querySelector("#submit-report");
-    if (!(submit instanceof HTMLButtonElement)) return;
-    submit.disabled = false;
+    const container = this.querySelector("#problem-footer");
+    if (!container) return;
+    const items = getItems();
+    container.innerHTML = footer({
+      items,
+      analyzingOpen: getAnalyzingOpen(),
+      complete: hasLiveEvidence(getCurrentCheck()),
+      doneId: "submit-report",
+      doneLabel: t("common.done"),
+    });
   }
 
   /** @returns {Promise<void>} */
   async _done() {
     const check = getCurrentCheck();
-    if (!hasEvidence(getCurrentCheck())) {
-      clearCheck();
-      this._exitCapture({ discarded: true });
+    if (!hasLiveEvidence(check)) {
+      this._syncControls();
       return;
     }
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem" },
-        }),
-      );
-      window.setTimeout(() => {
-        markCaptureComplete({
-          checkId: check?.id,
-          submissionKind: "problem_report",
-          expectedArtifacts,
-        });
-        finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-      }, 0);
-      return;
-    }
     markCaptureComplete({
       checkId: check?.id,
       submissionKind: "problem_report",
       expectedArtifacts,
     });
     finalizeCaptureScorecardInBackground(check?.id, { expectedArtifacts });
-    navigate("/today");
+    // Replace-at-completion: back can never revisit the finished flow.
+    replaceRoute("/today");
   }
 
-  _exitCapture({ discarded = false } = {}) {
+  _exitCapture() {
     this._finishing = true;
     this._cleanupSubscription();
-    if (this._embedded) {
-      this.dispatchEvent(
-        new CustomEvent("capturefinished", {
-          bubbles: true,
-          composed: true,
-          detail: { flowType: "single-problem", discarded },
-        }),
-      );
-      return;
-    }
-    navigate("/today");
+    replaceRoute("/today");
   }
 
   _wireAnalysisCards() {
@@ -418,7 +463,12 @@ class ProblemReport extends HTMLElement {
         } else if (action === "edit") {
           this._openEditProblem(problem);
         } else if (action === "resolve") {
-          this._resolveProblem(problem);
+          if (target.getAttribute("role") === "checkbox") {
+            toggleCardCompletion(this, card, target, {
+              onSaved: () => this._markProblemResolved(problem),
+              render: () => this._render(),
+            });
+          } else this._resolveProblem(problem);
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
         } else if (action === "retry") {
@@ -433,16 +483,7 @@ class ProblemReport extends HTMLElement {
   }
 
   _problemFromCard(card) {
-    return {
-      itemId: card.getAttribute("data-item-id") || "",
-      checkId: card.getAttribute("data-check-id") || "",
-      artifactId: card.getAttribute("data-artifact-id") || "",
-      taskId: card.getAttribute("data-task-id") || "",
-      conditionId: card.getAttribute("data-condition-id") || "",
-      actionKind: card.getAttribute("data-action-kind") || "",
-      title: card.getAttribute("data-card-title") || "problem",
-      description: card.getAttribute("data-card-description") || "",
-    };
+    return problemFromCard(card);
   }
 
   _openDeleteProblem(problem) {
@@ -450,8 +491,14 @@ class ProblemReport extends HTMLElement {
     this._activeProblem = problem;
     this._setDialogError("analysis-delete-error", "");
     const title = this.querySelector("#analysis-delete-title");
-    if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    if (title)
+      title.textContent = t("analysis.deleteDialog.titleFor", {
+        title: problem.title,
+      });
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -460,7 +507,10 @@ class ProblemReport extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -469,7 +519,7 @@ class ProblemReport extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
-        this._missingConditionMessage(problem, "deleted"),
+        missingConditionMessage(problem, "deleted"),
       );
       return;
     }
@@ -477,75 +527,35 @@ class ProblemReport extends HTMLElement {
     this._deletingProblem = true;
     const button = this.querySelector("#analysis-delete-confirm");
     const focusUndo = button?.matches(":focus-visible") || false;
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
       await deleteAnalysisCard(
         this,
         problem,
-        async () => {
-          let result;
-          try {
-            result = await rejectAnalysisCondition(
-              problem.checkId,
-              problem.artifactId,
-              problem.conditionId,
-              {
-                reason: { key: "not_a_problem" },
-                ...(problem.taskId ? { taskId: problem.taskId } : {}),
-                caller: { request_id: this._requestId("delete", problem) },
-              },
-            );
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            if (getCurrentCheck()?.id === problem.checkId)
-              this._deleteProblemLocally(problem);
-            return;
-          }
-          if (!result?.assessment) {
-            this._deleteProblemLocally(problem);
-            return;
-          }
-          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
-            await refreshEvidenceAnalysis(problem.itemId, result, {
-              rejectedConditionId: problem.conditionId,
-            }).catch((error) => {
-              console.error("refresh after saved deletion failed", error);
-              this._showToast(
-                "Deletion saved. Could not refresh the cards; please reload.",
-              );
-            });
-          }
-        },
+        () =>
+          rejectProblemCondition(problem, {
+            requestId: this._requestId("delete", problem),
+            deleteLocally: () => this._deleteProblemLocally(problem),
+            onRefreshFailure: () => {
+              showDeletionRefreshToast();
+            },
+          }),
         () => this._render(),
-        { focusUndo },
+        { focusUndo, address: this._site?.address || "" },
       );
       this._activeProblem = null;
     } catch (err) {
       console.error("delete analysis condition failed", err);
-      this._setDialogError(
-        "analysis-delete-error",
-        "Could not delete this problem. Please try again.",
-      );
+      showDeleteErrorToast();
     } finally {
       this._deletingProblem = false;
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
   _deleteProblemLocally(problem) {
-    const item = findItem(problem.itemId);
-    if (!item) return;
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      rejectedConditionIds: [
-        ...(item.analysis?.rejectedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
-    if (this.isConnected) this._render();
+    if (rejectConditionLocally(problem) && this.isConnected) this._render();
   }
 
   async _saveProblemEdit() {
@@ -555,7 +565,7 @@ class ProblemReport extends HTMLElement {
     if (description.length < 5) {
       this._setDialogError(
         "analysis-edit-error",
-        "Description must be at least 5 characters.",
+        t("analysis.editDialog.tooShort"),
       );
       return;
     }
@@ -566,16 +576,22 @@ class ProblemReport extends HTMLElement {
     }
 
     const button = this.querySelector("#analysis-edit-save");
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
       if (!problem.conditionId) {
-        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
+        try {
+          await analyzeNoIssueDescriptionEdit(problem.itemId, description);
+        } catch (error) {
+          console.error("text-only no-issue reanalysis failed", error);
+          showReanalysisErrorToast();
+          return;
+        }
       } else {
         if (!problem.checkId || !problem.artifactId) {
           this._setDialogError(
             "analysis-edit-error",
-            this._missingConditionMessage(problem, "edited"),
+            missingConditionMessage(problem, "edited"),
           );
           return;
         }
@@ -585,6 +601,7 @@ class ProblemReport extends HTMLElement {
           problem.conditionId,
           {
             description,
+            language: getLocale(),
             caller: { request_id: this._requestId("edit", problem) },
           },
         );
@@ -592,36 +609,39 @@ class ProblemReport extends HTMLElement {
           await refreshEvidenceAnalysis(problem.itemId, result);
         } catch (error) {
           console.error("refresh after saved edit failed", error);
-          this._setDialogError(
-            "analysis-edit-error",
-            "Edit saved. Could not refresh the cards; please reload.",
-          );
+          this._analysisEditDialog?.close();
+          this._activeProblem = null;
+          showEditRefreshErrorToast();
           return;
         }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
+      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      this._setDialogError(
-        "analysis-edit-error",
-        "Could not save this edit. Please try again.",
-      );
+      showEditErrorToast();
     } finally {
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
   async _resolveProblem(problem) {
     if (!problem.taskId) {
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
     if (problem.actionKind === "escalation") {
-      this._analysisProgressDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
+        "analysis-progress",
+      );
       try {
         const result = await completeTask(problem.taskId, {
           completionMethod: "311_filed",
@@ -632,7 +652,7 @@ class ProblemReport extends HTMLElement {
           return;
         }
         this._markProblemResolved(problem);
-        show311SuccessToast();
+        show311SuccessToast(submitted311ServiceRequestNumber(result.task));
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
@@ -644,10 +664,13 @@ class ProblemReport extends HTMLElement {
     try {
       await completeTask(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
     } catch (err) {
       console.error("resolve task failed", err);
-      this._showToast("Could not save that action. Please try again.");
+      showActionSaveErrorToast();
     }
   }
 
@@ -656,7 +679,7 @@ class ProblemReport extends HTMLElement {
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
     if (!problem.itemId || !problem.conditionId || !answerKey) {
-      this._showToast("Could not save that answer. Please try again.");
+      showAnswerSaveErrorToast();
       return;
     }
     if (this._answeringConditionIds.has(problem.conditionId)) return;
@@ -673,7 +696,7 @@ class ProblemReport extends HTMLElement {
       this._render();
     } catch (err) {
       console.error("answer condition failed", err);
-      this._showToast("Could not save that answer. Please try again.");
+      showAnswerSaveErrorToast();
     } finally {
       this._answeringConditionIds.delete(problem.conditionId);
       setQuestionAnswerBusy(this, problem.conditionId, false);
@@ -681,65 +704,26 @@ class ProblemReport extends HTMLElement {
   }
 
   _markProblemResolved(problem) {
-    const item = findItem(problem.itemId);
-    if (!item) return;
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      resolvedConditionIds: [
-        ...(item.analysis?.resolvedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
-    this._render();
+    if (resolveConditionLocally(problem)) this._render();
   }
 
   _setDialogError(id, message) {
-    const error = /** @type {HTMLElement | null} */ (
-      this.querySelector(`#${id}`)
-    );
-    if (!error) return;
-    error.textContent = message;
-    error.hidden = !message;
-  }
-
-  _setBusy(button, busy) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
-  }
-
-  _showToast(message) {
-    let toast = this.querySelector(".check-toast");
-    if (!toast) {
-      toast = document.createElement("div");
-      toast.className = "check-toast";
-      toast.setAttribute("role", "status");
-      this.appendChild(toast);
-    }
-    toast.innerHTML = `<wa-icon name="circle-check" aria-hidden="true"></wa-icon><span></span>`;
-    toast.querySelector("span").textContent = message;
-    window.clearTimeout(this._toastTimer);
-    this._toastTimer = window.setTimeout(() => toast.remove(), 3500);
-  }
-
-  _missingConditionMessage(problem, action) {
-    if (!problem.conditionId) {
-      return `This card does not have a problem condition that can be ${action}.`;
-    }
-    return `This result is missing its original evidence coordinates, so it cannot be ${action}. Take a new photo and try again.`;
+    setDialogError(this, `#${id}`, message);
   }
 
   _requestId(action, problem) {
-    const suffix =
-      globalThis.crypto?.randomUUID?.() ||
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${this._checkId}:${problem.itemId}:${problem.conditionId}:${action}:${suffix}`;
+    return requestId(
+      this._checkId,
+      problem.itemId,
+      problem.conditionId,
+      action,
+    );
   }
 
   /** @returns {void} */
   disconnectedCallback() {
+    // Only an abnormal document death leaves the marker behind.
+    clearCameraOpen();
     this._initGeneration += 1;
     if (this._fileReader?.readyState === FileReader.LOADING) {
       this._fileReader.abort();

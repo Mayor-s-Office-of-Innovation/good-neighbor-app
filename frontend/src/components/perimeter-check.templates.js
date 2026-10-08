@@ -8,29 +8,29 @@
   analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { t } from "../i18n/i18n.js";
+import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
+  analysisDialogs,
   analysisResultsTray,
   problemSummary,
   problemSummaryLabel,
 } from "./analysis-results.templates.js";
 
-export const shell = ({ embedded = false } = {}) => html`
-  <div
-    class="flow view-check check check-timeline check-roll ${embedded
-      ? "check-timeline--embedded"
-      : ""}"
-  >
+export const shell = () => html`
+  <div class="flow view-check check check-timeline check-roll">
     <div class="check-timeline__topbar">
       <span aria-hidden="true"></span>
       <button class="check-timeline__close" id="cancel" type="button">
         <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden">Close check</span>
+        <span class="visually-hidden"
+          >${escapeHtml(t("check.close.aria"))}</span
+        >
       </button>
     </div>
 
     <h1 class="check-timeline__title" tabindex="-1">
-      Take photos around your building.
+      ${escapeHtml(t("check.title"))}
     </h1>
 
     <p
@@ -40,12 +40,10 @@ export const shell = ({ embedded = false } = {}) => html`
       aria-live="polite"
     ></p>
 
-    <div class="check-roll__description" id="check-description"></div>
-
     <div
       class="shotgrid check-roll__grid"
       id="shotgrid"
-      aria-label="Perimeter photos"
+      aria-label="${escapeAttr(t("check.grid.aria"))}"
     ></div>
 
     <button
@@ -53,7 +51,7 @@ export const shell = ({ embedded = false } = {}) => html`
       id="describe-instead"
       type="button"
     >
-      Describe instead
+      ${escapeHtml(t("check.describeInstead"))}
     </button>
 
     <div class="check-timeline__footer" id="check-footer"></div>
@@ -63,12 +61,12 @@ export const shell = ({ embedded = false } = {}) => html`
     <dialog
       class="sheet"
       id="cancel-check-dialog"
-      aria-label="Leave this check?"
+      aria-label="${escapeAttr(t("check.cancelDialog.aria"))}"
     >
       <div class="sheet__panel">
         <div class="sheet__actions">
           <button class="sheet__cancel" type="button" id="cancel-check-save">
-            Save my place to resume later
+            ${escapeHtml(t("check.cancelDialog.save"))}
           </button>
         </div>
         <ul class="sheet__opts">
@@ -78,7 +76,7 @@ export const shell = ({ embedded = false } = {}) => html`
               id="cancel-check-discard"
               type="button"
             >
-              End the check and exit
+              ${escapeHtml(t("check.cancelDialog.discard"))}
             </button>
           </li>
         </ul>
@@ -97,141 +95,16 @@ export const shell = ({ embedded = false } = {}) => html`
   </div>
 `;
 
-export const analysisDialogs = () => html`
-  <dialog
-    class="analysis-dialog"
-    id="analysis-delete-dialog"
-    aria-labelledby="analysis-delete-title"
-    aria-describedby="analysis-delete-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-delete-title"></h2>
-        <p class="analysis-dialog__text" id="analysis-delete-copy">
-          This action can't be undone. The issue details won't be saved.
-        </p>
-        <p class="analysis-dialog__error" id="analysis-delete-error" hidden></p>
-      </div>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--danger"
-          id="analysis-delete-confirm"
-          type="button"
-        >
-          Delete
-        </button>
-        <button class="analysis-dialog__button" type="submit">Cancel</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog"
-    id="analysis-success-dialog"
-    aria-labelledby="analysis-success-title"
-    aria-describedby="analysis-success-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-success-title">
-          Great work!
-        </h2>
-        <p class="analysis-dialog__text" id="analysis-success-copy">
-          We've recorded your action. This item is now
-          <span>marked as resolved.</span>
-        </p>
-      </div>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--success"
-          type="submit"
-        >
-          Continue
-        </button>
-        <button
-          class="analysis-dialog__button"
-          id="analysis-success-undo"
-          type="button"
-        >
-          Undo
-        </button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog"
-    id="analysis-progress-dialog"
-    aria-labelledby="analysis-progress-title"
-  >
-    <div class="analysis-dialog__card analysis-dialog__card--progress">
-      <h2 class="analysis-dialog__title" id="analysis-progress-title">
-        Filing ticket...
-      </h2>
-      <div class="analysis-progress-ring" aria-hidden="true"></div>
-      <button
-        class="analysis-dialog__button"
-        id="analysis-progress-cancel"
-        type="button"
-      >
-        Cancel
-      </button>
-    </div>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog analysis-edit-dialog"
-    id="analysis-edit-dialog"
-    aria-labelledby="analysis-edit-title"
-    aria-describedby="analysis-edit-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-edit-title">
-          Edit problem
-        </h2>
-        <p class="analysis-dialog__text" id="analysis-edit-copy">
-          Change the description to match what you see
-        </p>
-        <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
-      </div>
-      <label class="analysis-edit-dialog__field">
-        <span>Description</span>
-        <textarea id="analysis-edit-description" rows="5"></textarea>
-      </label>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--ink"
-          id="analysis-edit-save"
-          type="button"
-        >
-          Save
-        </button>
-        <button
-          class="analysis-dialog__button analysis-dialog__button--danger-text"
-          type="submit"
-        >
-          Discard
-        </button>
-      </div>
-    </form>
-  </dialog>
-`;
-
 /**
  * Stacked capture status under the title. The description minimum is
  * instructional copy; the existing completion rule is unchanged.
- * @param {{ photos: number, texts: number, complete: boolean }} status
+ * @param {{ photos: number }} status
  * @returns {string}
  */
-export function progressLine({ photos, texts, complete }) {
-  if (texts > 0) {
-    return "<strong>Description saved.</strong> Ready to finish. Photos are optional.";
-  }
+export function progressLine({ photos }) {
   return (
-    `<strong>${photos} of ${MIN_PERIMETER_PHOTOS} photos taken</strong>` +
-    `<span>Try to take at least 3-5 photos</span>` +
-    (complete ? `<span>Ready to finish.</span>` : "")
+    `<strong>${escapeHtml(t("check.progress.count", { photos, recommended: RECOMMENDED_PERIMETER_PHOTOS }))}</strong>` +
+    `<span>${escapeHtml(t("check.progress.hint"))}</span>`
   );
 }
 
@@ -243,26 +116,27 @@ export function progressLine({ photos, texts, complete }) {
 export function descriptionCard(item) {
   if (!item) return "";
   return html`
-    <section class="check-description" aria-label="Your description">
-      <p class="check-description__text">${escapeHtml(item.text || "")}</p>
-      <div class="check-description__actions">
-        <button
-          class="check-description__button"
-          type="button"
-          data-edit-description="${escapeAttr(item.id)}"
-        >
-          <wa-icon name="pen" aria-hidden="true"></wa-icon>
-          Edit
-        </button>
-        <button
-          class="check-description__button check-description__button--danger"
-          type="button"
-          data-remove-description="${escapeAttr(item.id)}"
-        >
-          <wa-icon name="trash" aria-hidden="true"></wa-icon>
-          Remove
-        </button>
-      </div>
+    <section
+      class="shot shot--description"
+      aria-label="${escapeAttr(t("check.description.aria"))}"
+    >
+      <p class="shot__description">${escapeHtml(item.text || "")}</p>
+      <button
+        class="shot__del shot__edit"
+        type="button"
+        aria-label="${escapeAttr(t("check.description.edit"))}"
+        data-edit-description="${escapeAttr(item.id)}"
+      >
+        <wa-icon name="pen" aria-hidden="true"></wa-icon>
+      </button>
+      <button
+        class="shot__del"
+        type="button"
+        aria-label="${escapeAttr(t("check.description.delete"))}"
+        data-remove-description="${escapeAttr(item.id)}"
+      >
+        <wa-icon name="trash" aria-hidden="true"></wa-icon>
+      </button>
     </section>
   `;
 }
@@ -270,11 +144,13 @@ export function descriptionCard(item) {
 /**
  * The photo roll: camera first, then captured tiles from newest to oldest.
  * @param {Array<{ id: string, dataUrl?: string }>} photos
+ * @param {{ id: string, text?: string } | null | undefined} description
  * @returns {string}
  */
-export function photoGrid(photos) {
+export function photoGrid(photos, description = null) {
   return (
-    addTile(photos.length === 0) +
+    addTile(photos.length === 0 && !description) +
+    descriptionCard(description) +
     photos
       .map((item, index) => shotTile(item, index))
       .reverse()
@@ -283,23 +159,34 @@ export function photoGrid(photos) {
 }
 
 /**
- * @param {{ items: any[], analyzingOpen: boolean, complete: boolean }} props
+ * @param {{ items: any[], analyzingOpen: boolean, complete: boolean, doneId?: string, doneLabel?: string }} props
  * @returns {string}
  */
-export function footer({ items, analyzingOpen, complete }) {
+export function footer({
+  items,
+  analyzingOpen,
+  complete,
+  doneId = "done-check",
+  doneLabel = t("check.footer.finish"),
+}) {
   const active = items.some((item) =>
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
+  const failed = items.some((item) => item.analysis?.status === "failed");
   const problems = problemSummary(items);
-  const problemLabel = active ? "Analyzing..." : problemSummaryLabel(problems);
+  const problemLabel = active
+    ? t("card.pending.title")
+    : failed
+      ? t("card.failed.analysisTitle")
+      : problemSummaryLabel(problems);
   return html`
     <button
       class="check-timeline__done"
-      id="done-check"
+      id="${escapeAttr(doneId)}"
       type="button"
       ${complete ? "" : "disabled"}
     >
-      Finish check
+      ${escapeHtml(doneLabel)}
     </button>
     ${items.length
       ? html`
@@ -309,7 +196,7 @@ export function footer({ items, analyzingOpen, complete }) {
             type="button"
             aria-expanded="${analyzingOpen ? "true" : "false"}"
           >
-            ${problemLabel}
+            ${escapeHtml(problemLabel)}
             <span
               class="check-timeline__analyzing-caret ${analyzingOpen
                 ? "check-timeline__analyzing-caret--up"
@@ -329,8 +216,8 @@ export function analyzingSection(
 ) {
   return analysisResultsTray(items, sessionCheckId, {
     title: "",
-    ariaLabel: "Analyzing evidence",
-    emptyText: "All problems were resolved or deleted.",
+    ariaLabel: t("check.analyzing.aria"),
+    emptyText: t("analysis.tray.empty"),
     siteName,
     siteAddress,
     checkTime: startedAt,
@@ -340,16 +227,28 @@ export function analyzingSection(
 // Shared with <problem-report>, which renders the same grid.
 export const shotTile = (item, index) => html`
   <div class="shot">
-    <img
-      class="shot__img"
-      src="${escapeAttr(item.dataUrl)}"
-      alt="Captured photo ${index + 1}"
-    />
+    <button
+      class="shot__preview"
+      type="button"
+      data-photo-lightbox
+      data-photo-address="${escapeAttr(
+        item.georeferencedAddress || item.address || item.siteAddress || "",
+      )}"
+      data-photo-time="${escapeAttr(
+        item.uploadedAt || item.createdAt || item.capturedAt || "",
+      )}"
+    >
+      <img
+        class="shot__img"
+        src="${escapeAttr(item.dataUrl)}"
+        alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
+      />
+    </button>
     <button
       class="shot__del"
       type="button"
       data-del="${escapeAttr(item.id)}"
-      aria-label="Delete photo"
+      aria-label="${escapeAttr(t("check.photo.delete"))}"
     >
       <wa-icon name="trash" aria-hidden="true"></wa-icon>
     </button>
@@ -358,13 +257,17 @@ export const shotTile = (item, index) => html`
 
 export const addTile = (empty) => html`
   <button
-    class="btn-photo addshot ${empty ? "addshot--empty" : ""}"
+    class="btn-photo photo-capture-tile addshot ${empty
+      ? "addshot--empty"
+      : ""}"
     id="add-photo"
     type="button"
   >
-    <span class="addshot__icon" aria-hidden="true"
+    <span class="photo-capture-tile__icon addshot__icon" aria-hidden="true"
       ><wa-icon name="camera"></wa-icon
     ></span>
-    <span class="addshot__label">Take photo</span>
+    <span class="photo-capture-tile__label addshot__label"
+      >${escapeHtml(t("check.photo.take"))}</span
+    >
   </button>
 `;

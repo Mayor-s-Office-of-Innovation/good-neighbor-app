@@ -104,6 +104,49 @@ export const taskKey = (siteId, taskId) => ({
 });
 
 /**
+ * One immutable update in a task's in-progress timeline.
+ * @param {string} siteId @param {string} taskId
+ * @param {string} occurredAt @param {string} updateId
+ */
+export const taskUpdateKey = (siteId, taskId, occurredAt, updateId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#UPDATE#${occurredAt}#${updateId}`,
+});
+
+/** Prefix used to read a task's update timeline newest-first. @param {string} taskId */
+export const taskUpdatePrefix = (taskId) => `TASK#${taskId}#UPDATE#`;
+
+/**
+ * Direct lookup pointer for a task update whose timeline key includes time.
+ * @param {string} siteId @param {string} taskId @param {string} updateId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdatePointerKey = (siteId, taskId, updateId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#UPDATE_ID#${updateId}`,
+});
+
+/**
+ * Task-owned media attached to an update rather than analyzer input.
+ * @param {string} siteId @param {string} taskId @param {string} artifactId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdateMediaKey = (siteId, taskId, artifactId) => ({
+  pk: sitePk(siteId),
+  sk: `TASK#${taskId}#MEDIA#${artifactId}`,
+});
+
+/**
+ * Check-scoped pointer used by the existing authorized media route.
+ * @param {string} siteId @param {string} checkId @param {string} artifactId
+ * @returns {PrimaryKey}
+ */
+export const taskUpdateMediaPointerKey = (siteId, checkId, artifactId) => ({
+  pk: sitePk(siteId),
+  sk: `CHECK#${checkId}#UPDATE_MEDIA#${artifactId}`,
+});
+
+/**
  * Site-scoped monotonic counter for human-facing task short IDs.
  * @param {string} siteId
  * @returns {PrimaryKey}

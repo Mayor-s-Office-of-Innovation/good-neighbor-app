@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-09-03, branch `feature/session-security`). Amends the identity
+Superseded in part by [ADR 0015](./0015-device-bindings-and-manager-enrollment.md)
+for token lifetime, canonical Manager role, and physical-device/Site-binding
+separation. Accepted originally (2026-09-03, branch `feature/session-security`). Amends the identity
 decision in [security-review.md](../security-review.md): that doc adopted
 **Option 3** (Cognito device identity + STS/SigV4) with **Option 4** (bearer
 token) as the documented *lighter fallback if device provisioning slips*.
@@ -38,7 +40,8 @@ JWT dependency), signed with a server-side key:
   `tokenGeneration`, which also kills the previous access token immediately.
 - **Revocation:** bump `tokenGeneration` (or delete the device). The
   authorizer's live `GetItem` check makes a still-cryptographically-valid token
-  dead instantly; API Gateway's 60 s verdict cache is the propagation bound.
+  dead on the next protected request; REQUEST-authorizer verdict caching is
+  disabled so no stale allow decision survives a revocation.
 - **Routing:** `POST /v1/devices` (register) and
   `POST /v1/devices/token:refresh` are the only device routes reachable
   anonymously; everything else attaches a REQUEST authorizer

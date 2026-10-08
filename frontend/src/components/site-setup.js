@@ -4,22 +4,32 @@
   were given; the backend verifies the code is active and returns the provider
   site this shared device should operate as.
 */
-import { setSite } from "../db.js";
+import "./site-setup.css";
+import { getSite, setSite } from "../db.js";
+import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
   requestSetupCode,
   searchSites,
   validateSetupCode,
 } from "../services/onboarding.js";
-import { registerDevice } from "../services/devices.js";
+import { redeemEnrollmentGrant, registerDevice } from "../services/devices.js";
 import { codeEntryView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
-const INVALID_MESSAGE = "Invalid site code. Check the code and try again.";
 const SITE_SEARCH_DELAY_MS = 250;
 
 export class SiteSetup extends HTMLElement {
+  constructor() {
+    super();
+    this._pendingTouchSubmit = null;
+    this._onTouchPointerUp = (event) => this._finishTouchSubmit(event);
+    this._onTouchPointerCancel = () => this._cancelTouchSubmit();
+  }
+
   connectedCallback() {
+    window.addEventListener("pointerup", this._onTouchPointerUp, true);
+    window.addEventListener("pointercancel", this._onTouchPointerCancel, true);
     this._validationGeneration = 0;
     this._cancelled = false;
     this._committingSite = false;
@@ -27,10 +37,13 @@ export class SiteSetup extends HTMLElement {
     this._targetSiteName = this.getAttribute("data-target-site-name") || "";
     this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
+    const enrollment = readEnrollmentFromUrl();
     this._checking = false;
     this._error = "";
     this._mode =
-      this.getAttribute("data-mode") === "request" ? "request" : "code";
+      this.getAttribute("data-mode") === "request"
+        ? this.getAttribute("data-mode")
+        : "code";
     this._request = {
       query: "",
       email: "",
@@ -45,16 +58,32 @@ export class SiteSetup extends HTMLElement {
     this._siteSearchGeneration = 0;
     this._render();
 
+    if (enrollment) {
+      stripEnrollmentFromUrl();
+      this._checking = true;
+      this._render();
+      this._redeemEnrollment(enrollment);
+      return;
+    }
+
     if (this._code.length === CODE_LENGTH) {
       this._validate();
     }
   }
 
   disconnectedCallback() {
+    window.removeEventListener("pointerup", this._onTouchPointerUp, true);
+    window.removeEventListener(
+      "pointercancel",
+      this._onTouchPointerCancel,
+      true,
+    );
+    this._cancelTouchSubmit();
     this._cancelSiteSearch();
   }
 
   _render() {
+    this._cancelTouchSubmit();
     this.innerHTML = codeEntryView({
       value: this._code,
       error: this._error,
@@ -74,7 +103,6 @@ export class SiteSetup extends HTMLElement {
       this._bindRequestForm();
       return;
     }
-
     this._form = this.querySelector("#code-form");
     this._otp = this.querySelector("#code-input");
     this._continue = this.querySelector("#continue");
@@ -83,11 +111,13 @@ export class SiteSetup extends HTMLElement {
       this._error = "";
       this._render();
     });
-
     this._form.addEventListener("submit", (e) => {
       e.preventDefault();
       this._validate();
     });
+    this._continue.addEventListener("pointerdown", (event) =>
+      this._beginTouchSubmit(/** @type {PointerEvent} */ (event)),
+    );
     // <wa-otp-input> owns per-segment typing, arrow-key nav, backspace, and
     // paste internally — we only react to the resulting value. `wa-complete`
     // fires once all six segments are filled.
@@ -97,6 +127,48 @@ export class SiteSetup extends HTMLElement {
     if (!this._checking) {
       requestAnimationFrame(() => this._otp?.focus());
     }
+  }
+
+  /**
+   * Mobile browsers can blur the OTP and reflow the keyboard-compacted layout
+   * before dispatching the resulting click. Prevent that initial touch from
+   * blurring the OTP, then submit only after a matching release inside the
+   * button. Mouse and keyboard users retain the form's native submit path.
+   * @param {PointerEvent} event
+   */
+  _beginTouchSubmit(event) {
+    if (
+      event.pointerType !== "touch" ||
+      event.button !== 0 ||
+      event.isPrimary === false
+    ) {
+      return;
+    }
+    event.preventDefault();
+    this._pendingTouchSubmit = {
+      pointerId: event.pointerId,
+      button: event.currentTarget,
+    };
+  }
+
+  /** @param {PointerEvent} event */
+  _finishTouchSubmit(event) {
+    const pending = this._pendingTouchSubmit;
+    this._cancelTouchSubmit();
+    if (!pending || event.pointerId !== pending.pointerId) return;
+    const button = pending.button;
+    if (!(button instanceof Element)) return;
+    const rect = button.getBoundingClientRect();
+    const releasedInside =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (releasedInside) this._form?.requestSubmit();
+  }
+
+  _cancelTouchSubmit() {
+    this._pendingTouchSubmit = null;
   }
 
   _cancelSwitch() {
@@ -210,9 +282,7 @@ export class SiteSetup extends HTMLElement {
     }
     this._request.searching = false;
     this._request.sites = result.ok ? result.sites : [];
-    this._request.error = result.ok
-      ? ""
-      : "We couldn't search sites. Try again in a moment.";
+    this._request.error = result.ok ? "" : t("setup.error.search");
     this._renderRequestPreservingFocus();
   }
 
@@ -289,8 +359,8 @@ export class SiteSetup extends HTMLElement {
     } else {
       this._request.error =
         result.reason === "invalid"
-          ? "Choose a site and enter a work email."
-          : "We couldn't request a code. Try again in a moment.";
+          ? t("setup.error.requestInvalid")
+          : t("setup.error.request");
     }
     this._render();
   }
@@ -311,8 +381,8 @@ export class SiteSetup extends HTMLElement {
       this._checking = false;
       this._error =
         result.reason === "network"
-          ? "We couldn't check the code. Try again in a moment."
-          : INVALID_MESSAGE;
+          ? t("setup.error.network")
+          : t("setup.error.invalidCode");
       this._render();
       return;
     }
@@ -320,7 +390,12 @@ export class SiteSetup extends HTMLElement {
     const providerSite = result.providerSite;
     if (this._targetSiteId && providerSite.siteId !== this._targetSiteId) {
       this._checking = false;
-      this._error = `This code is for ${providerSite.name}, not ${this._targetSiteName || "the selected site"}.`;
+      this._error = this._targetSiteName
+        ? t("setup.error.wrongSite", {
+            site: providerSite.name,
+            target: this._targetSiteName,
+          })
+        : t("setup.error.wrongSiteUnknown", { site: providerSite.name });
       this._render();
       return;
     }
@@ -333,14 +408,14 @@ export class SiteSetup extends HTMLElement {
       session = await registerDevice(result.code);
       if (this._cancelled || generation !== this._validationGeneration) return;
     } catch (err) {
-      if (err instanceof Error && /invalid site code/.test(err.message)) {
+      if (err instanceof Error && err.name === "InvalidSiteCodeError") {
         this._checking = false;
-        this._error = INVALID_MESSAGE;
+        this._error = t("setup.error.invalidCode");
         this._render();
         return;
       }
       this._checking = false;
-      this._error = "We couldn't set up this device. Try again in a moment.";
+      this._error = t("setup.error.register");
       this._render();
       return;
     }
@@ -361,17 +436,55 @@ export class SiteSetup extends HTMLElement {
           Date.now() + session.expiresIn * 1000,
         ).toISOString(),
         tokenGeneration: session.tokenGeneration,
+        accessLevel: session.accessLevel,
       });
     } catch {
       this._committingSite = false;
       this._checking = false;
-      this._error = "We couldn't save this site. Try again in a moment.";
+      this._error = t("setup.error.save");
       this._render();
       return;
     }
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
+  }
+
+  async _redeemEnrollment({ grantId, token }) {
+    try {
+      const current = await getSite();
+      const session = await redeemEnrollmentGrant(grantId, token, {
+        physicalDeviceId: current?.physicalDeviceId,
+      });
+      if (this._cancelled) return;
+      this._committingSite = true;
+      this._render();
+      const site = await setSite(session.site.name, {
+        siteId: session.site.siteId,
+        deviceId: session.deviceId,
+        bindingId: session.bindingId,
+        physicalDeviceId: session.physicalDeviceId,
+        token: session.token,
+        refreshToken: session.refreshToken,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
+        tokenGeneration: session.tokenGeneration,
+        accessLevel: session.accessLevel,
+      });
+      this.dispatchEvent(
+        new CustomEvent("sitebound", { bubbles: true, detail: site }),
+      );
+    } catch (err) {
+      if (this._cancelled) return;
+      this._committingSite = false;
+      this._checking = false;
+      this._error =
+        err instanceof Error && /invalid enrollment link/.test(err.message)
+          ? "This enrollment link is invalid or has expired. Ask a City administrator for a new link."
+          : "We couldn't enroll this device. Try again in a moment.";
+      this._render();
+    }
   }
 }
 
@@ -403,6 +516,26 @@ export function stripCodeFromUrl() {
       }
       history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
+  } catch {
+    /* no-op */
+  }
+}
+
+export function readEnrollmentFromUrl() {
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const grantId = fragment.get("enrollment_grant")?.trim() || "";
+  const token = fragment.get("enrollment_token")?.trim() || "";
+  return grantId && token ? { grantId, token } : null;
+}
+
+export function stripEnrollmentFromUrl() {
+  try {
+    const url = new URL(location.href);
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    fragment.delete("enrollment_grant");
+    fragment.delete("enrollment_token");
+    url.hash = fragment.toString();
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
   } catch {
     /* no-op */
   }

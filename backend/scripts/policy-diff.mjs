@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { actionsEscalationsV2Catalog } from "../src/analysis/guidance/actions-escalations-v2.js";
 import { actionsEscalationsV3Catalog } from "../src/analysis/guidance/actions-escalations-v3.js";
+import { actionsEscalationsV4Catalog } from "../src/analysis/guidance/actions-escalations-v4.js";
 import { rulebaseImpactFixtures } from "../src/analysis/guidance/fixtures/rulebase-impact-fixtures.js";
 import {
   diffCatalogs,
@@ -43,6 +44,7 @@ async function loadCatalog(value, fallback) {
     mod.catalog ??
     mod.default ??
     mod.actionsEscalationsV3Catalog ??
+    mod.actionsEscalationsV4Catalog ??
     mod.actionsEscalationsV2Catalog ??
     undefined;
   if (!catalog || typeof catalog !== "object") {
@@ -52,8 +54,8 @@ async function loadCatalog(value, fallback) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const before = await loadCatalog(args.before, actionsEscalationsV2Catalog);
-const after = await loadCatalog(args.after, actionsEscalationsV3Catalog);
+const before = await loadCatalog(args.before, actionsEscalationsV3Catalog);
+const after = await loadCatalog(args.after, actionsEscalationsV4Catalog);
 
 const beforeErrors = validateCatalog(before);
 const afterErrors = validateCatalog(after);

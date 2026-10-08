@@ -8,6 +8,31 @@ import {
   vi,
 } from "vitest";
 
+import { lastLogSummary } from "../domain/home-tasks.js";
+import { formatTime } from "../i18n/dates.js";
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
+
+/*
+  Frozen clock with Pacific-anchored fixtures. The app renders every check
+  time in Pacific (i18n/dates.js), so runner-local setHours() raced between a
+  Pacific laptop and a UTC CI runner. Oct 2026 is PDT (-07:00); the instants
+  are fixed so labels are deterministic on every machine and every day.
+*/
+const FROZEN_NOW = new Date("2026-10-02T17:30:00-07:00");
+const OLDER_TODAY = new Date("2026-10-02T09:00:00-07:00").toISOString();
+const NEWER_TODAY = new Date("2026-10-02T10:00:00-07:00").toISOString();
+const YESTERDAY = new Date("2026-10-01T17:30:00-07:00").toISOString();
+
+function freezeClock() {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW.getTime());
+}
+
+/** Same-day check title exactly as a template renders it (escaped). */
+const todayTitle = (iso) =>
+  escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
+
 const session = vi.hoisted(() => ({ current: null }));
 const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
 vi.mock("../services/device-location.js", () => ({
@@ -25,14 +50,19 @@ const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),
   discardInMemorySession: vi.fn(),
 }));
+const navigateMock = vi.hoisted(() => vi.fn());
+const awaitOverlayUnwindMock = vi.hoisted(() => vi.fn(async () => {}));
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
   getSite: async () => ({ siteId: "site-1" }),
+  hasAdminAccess: () => false,
   listBoundSites: async () => [],
+  setSite: vi.fn(async (_name, meta) => ({ ...meta, id: "current" })),
   clearSiteSession: logout.clearSiteSession,
 }));
 vi.mock("../services/api.js", () => ({
   listProviderSites: catalog.listProviderSites,
+  selectDeviceBinding: vi.fn(),
   listChecks: async () => ({ checks: [] }),
   listTasks: async () => ({ tasks: [] }),
 }));
@@ -43,9 +73,23 @@ vi.mock("../state/check-session.js", () => ({
   onCheckSessionChange: () => () => {},
   discardInMemorySession: logout.discardInMemorySession,
 }));
+vi.mock("../router.js", () => ({
+  navigate: navigateMock,
+  pushOverlay: vi.fn(),
+  closeOverlay: vi.fn(),
+  onOverlayPop: () => () => {},
+  currentRoute: () => "/today",
+}));
+vi.mock("../dialog-history.js", () => ({
+  awaitOverlayUnwind: awaitOverlayUnwindMock,
+  openOverlayDialog: vi.fn((dialog) => {
+    if (!dialog.open) dialog.showModal();
+  }),
+}));
 
 let TodayView;
 beforeEach(() => {
+  awaitOverlayUnwindMock.mockClear();
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -88,6 +132,7 @@ beforeAll(async () => {
   await import("./today-view.js");
 });
 afterEach(() => {
+  vi.useRealTimers();
   session.current = null;
   devicePosition.current = null;
   logout.clearSiteSession.mockClear();
@@ -97,6 +142,7 @@ afterEach(() => {
 
 async function mount(search) {
   window.location.search = search;
+  navigateMock.mockClear();
   const view = new TodayView();
   view._renderHome = vi.fn();
   view._hydrateVisibleHomeTasks = vi.fn();
@@ -106,8 +152,9 @@ async function mount(search) {
 
 describe("clear perimeter checks on home", () => {
   it("keeps a just-finished clear check in the newest blue group", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const startedAt = new Date().toISOString();
+    const startedAt = FROZEN_NOW.toISOString();
     const pendingSession = {
       id: "clear-check",
       status: "capture-complete",
@@ -155,25 +202,24 @@ describe("clear perimeter checks on home", () => {
   });
 
   it("shows the active clear check above every filter and superseded checks in History", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const older = new Date();
-    older.setHours(9, 0, 0, 0);
-    const newer = new Date();
-    newer.setHours(10, 0, 0, 0);
     const checks = [
       {
         id: "newer-clear",
         status: "submitted",
-        submittedAt: newer.toISOString(),
+        submittedAt: NEWER_TODAY,
         issueCount: 0,
       },
       {
         id: "older-clear",
         status: "submitted",
-        submittedAt: older.toISOString(),
+        submittedAt: OLDER_TODAY,
         issueCount: 0,
       },
     ];
+    const newerTitle = todayTitle(NEWER_TODAY);
+    const olderTitle = todayTitle(OLDER_TODAY);
     const model = {
       last: checks[0],
       checks,
@@ -184,8 +230,8 @@ describe("clear perimeter checks on home", () => {
 
     const todoMarkup = view._render(model);
     expect(todoMarkup).toContain("analysis-tray--new");
-    expect(todoMarkup).toContain("From today&#39;s 10:00 AM check");
-    expect(todoMarkup).not.toContain("From today&#39;s 9:00 AM check");
+    expect(todoMarkup).toContain(newerTitle);
+    expect(todoMarkup).not.toContain(olderTitle);
     expect(todoMarkup.match(/Your check was clear!/g)).toHaveLength(1);
     expect(todoMarkup.indexOf("analysis-tray--new")).toBeLessThan(
       todoMarkup.indexOf("home-tabs"),
@@ -198,19 +244,18 @@ describe("clear perimeter checks on home", () => {
       historyMarkup.indexOf("home-tabs"),
     );
     expect(historyMarkup).toContain("analysis-tray--history");
-    expect(historyMarkup).toContain("From today&#39;s 9:00 AM check");
-    expect(historyMarkup).toContain("From today&#39;s 10:00 AM check");
+    expect(historyMarkup).toContain(olderTitle);
+    expect(historyMarkup).toContain(newerTitle);
     expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(2);
   });
 
   it("keeps the latest clear check active across days until another check completes", async () => {
+    freezeClock();
     const view = await mount("?filter=todo");
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
     const check = {
       id: "yesterday-clear",
       status: "submitted",
-      submittedAt: yesterday.toISOString(),
+      submittedAt: YESTERDAY,
       issueCount: 0,
     };
     const model = {
@@ -227,27 +272,71 @@ describe("clear perimeter checks on home", () => {
     view._homeFilter = "history";
     const markup = view._render(model);
     expect(markup).toContain("analysis-tray--new");
-    expect(markup).toContain("From yesterday&#39;s");
+    expect(markup).toContain(
+      escapeHtml(
+        t("analysis.checkTitle.yesterdayTime", { time: formatTime(YESTERDAY) }),
+      ),
+    );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
-  it("moves an active clear check to History after a newer check completes", async () => {
+  it("groups newest-check history tasks by the selected date or issue type", async () => {
+    freezeClock();
     const view = await mount("?filter=history");
-    const older = new Date();
-    older.setHours(9, 0, 0, 0);
-    const newer = new Date();
-    newer.setHours(10, 0, 0, 0);
+    const check = {
+      id: "latest",
+      status: "submitted",
+      submittedAt: NEWER_TODAY,
+      issueCount: 1,
+    };
+    const model = {
+      last: check,
+      checks: [check],
+      captureSession: null,
+      pendingSession: null,
+      tasks: [
+        {
+          taskId: "completed-litter",
+          checkId: "latest",
+          status: "completed",
+          category: "Litter",
+          createdAt: YESTERDAY,
+          completedAt: NEWER_TODAY,
+        },
+      ],
+    };
+    for (const [mode, title] of [
+      ["resolved", "Today · Oct 2"],
+      ["opened", "Yesterday · Oct 1"],
+      ["type", "Litter"],
+    ]) {
+      view._historyGrouping = mode;
+      const markup = view._render(model);
+      const headings = [
+        ...markup.matchAll(
+          /<h2 class="analysis-tray__check-title">\s*([^<]+)<\/h2>/g,
+        ),
+      ].map((match) => match[1].trim());
+      expect(headings).toContain(title);
+      expect(markup).not.toContain(todayTitle(NEWER_TODAY));
+      expect(markup).toContain("history-card__row");
+    }
+  });
+
+  it("moves an active clear check to History after a newer check completes", async () => {
+    freezeClock();
+    const view = await mount("?filter=history");
     const checks = [
       {
         id: "newer-with-issues",
         status: "submitted",
-        submittedAt: newer.toISOString(),
+        submittedAt: NEWER_TODAY,
         issueCount: 1,
       },
       {
         id: "older-clear",
         status: "submitted",
-        submittedAt: older.toISOString(),
+        submittedAt: OLDER_TODAY,
         issueCount: 0,
       },
     ];
@@ -259,7 +348,7 @@ describe("clear perimeter checks on home", () => {
         {
           taskId: "task-1",
           checkId: "newer-with-issues",
-          createdAt: newer.toISOString(),
+          createdAt: NEWER_TODAY,
           status: "completed",
         },
       ],
@@ -268,11 +357,75 @@ describe("clear perimeter checks on home", () => {
     });
 
     expect(markup).toContain("analysis-tray--history");
-    expect(markup).toContain("From today&#39;s 9:00 AM check");
-    expect(markup.indexOf("From today&#39;s 9:00 AM check")).toBeGreaterThan(
+    expect(markup).toContain(todayTitle(OLDER_TODAY));
+    expect(markup.indexOf(todayTitle(OLDER_TODAY))).toBeGreaterThan(
       markup.indexOf("home-tabs"),
     );
     expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+  });
+
+  it.each(["resolved", "opened"])(
+    "orders historical clear checks alongside %s day groups",
+    async (mode) => {
+      const view = await mount("?filter=history");
+      view._historyGrouping = mode;
+      view._taskCardEntry = () => ({ markup: "task-card" });
+      const groups = view._historyGroups(
+        [
+          {
+            task: {
+              taskId: "old",
+              createdAt: "2026-09-01T12:00:00Z",
+              completedAt: "2026-09-02T12:00:00Z",
+            },
+          },
+          {
+            task: {
+              taskId: "new",
+              createdAt: "2026-10-04T12:00:00Z",
+              completedAt: "2026-10-05T12:00:00Z",
+            },
+          },
+        ],
+        [],
+        [
+          { startedAt: "2026-09-10T12:00:00Z" },
+          {
+            submittedAt: "2026-10-02T12:00:00Z",
+            startedAt: "2026-08-01T12:00:00Z",
+          },
+        ],
+      );
+      expect(groups.map((group) => group.dateKey)).toEqual([
+        mode === "opened" ? "2026-10-04" : "2026-10-05",
+        "2026-10-02",
+        "2026-09-10",
+        mode === "opened" ? "2026-09-01" : "2026-09-02",
+      ]);
+      expect(groups.map((group) => group.compact)).toEqual([
+        true,
+        false,
+        false,
+        true,
+      ]);
+    },
+  );
+
+  it("keeps clear checks separate after issue-type groups", async () => {
+    const view = await mount("?filter=history");
+    view._historyGrouping = "type";
+    view._taskCardEntry = () => ({ markup: "task-card" });
+    const groups = view._historyGroups(
+      [{ task: { category: "Litter" } }, { task: { category: "Graffiti" } }],
+      [],
+      [{ submittedAt: NEWER_TODAY }],
+    );
+    expect(groups.map((group) => group.title)).toEqual([
+      "Graffiti",
+      "Litter",
+      "",
+    ]);
+    expect(groups[2].checkTime).toBe(NEWER_TODAY);
   });
 });
 
@@ -286,28 +439,28 @@ describe("site location prompt", () => {
     };
     view._siteId = "site-1";
     view._showLocationDialog = vi.fn();
-    view._enterCapture = vi.fn();
     devicePosition.current = { latitude: 37.78, longitude: -122.4194 };
     await view._startCapture("perimeter");
     expect(view._showLocationDialog).toHaveBeenCalledOnce();
-    expect(view._enterCapture).not.toHaveBeenCalled();
+    // Paused mid-flight: no navigation until the radius question is settled.
+    expect(navigateMock).not.toHaveBeenCalled();
     await view._startCapture("single-problem");
     expect(view._locationPrompt.flowType).toBe("single-problem");
     devicePosition.current = { latitude: 37.7749, longitude: -122.4194 };
     await view._startCapture("perimeter");
-    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+    // Routed capture: a successful radius check navigates to the flow's URL.
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
   });
 
   it("logs when a check starts without a usable location and still continues", async () => {
     const view = await mount("?filter=todo");
-    view._enterCapture = vi.fn();
     devicePosition.current = null;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await view._startCapture("perimeter");
     expect(warn).toHaveBeenCalledWith(
       "[location] No usable device location when starting a full check; site proximity check skipped.",
     );
-    expect(view._enterCapture).toHaveBeenCalledWith("perimeter", null);
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
     warn.mockRestore();
   });
 
@@ -319,62 +472,23 @@ describe("site location prompt", () => {
       location: { latitude: 37.7749, longitude: -122.4194 },
     };
     view._deviceLocation = { latitude: 37.78, longitude: -122.4194 };
-    const summary = view._summaryBlock(
-      { id: "check-1", submittedAt: new Date().toISOString(), issueCount: 1 },
-      [{ task: { checkId: "check-1" }, homeStatus: "needs_action" }],
-    );
-    expect(summary).toContain("Looks like you're not near this site.");
+    const last = {
+      id: "check-1",
+      submittedAt: new Date().toISOString(),
+      issueCount: 1,
+    };
+    const entries = [
+      { task: { checkId: "check-1" }, homeStatus: "needs_action" },
+    ];
+    const summary = view._summaryBlock(last, entries);
+    expect(summary).toContain(escapeHtml(t("today.summary.outsideRadius")));
     expect(summary).toContain('id="lastlog-change-site"');
     expect(summary).toContain('appearance="plain"');
-    expect(summary).not.toContain("Last log:");
+    const label = lastLogSummary(last, entries);
+    expect(label).not.toBe("");
+    expect(summary).not.toContain(escapeHtml(label));
     view._deviceLocation = null;
     expect(view._summaryBlock(null, [])).toBe("");
-  });
-
-  it("lists provider sites and keeps site-change confirmation disabled initially", async () => {
-    const view = await mount("?filter=todo");
-    view._site = { siteId: "site-1", name: "Mission District" };
-    view._providerSites = [
-      { siteId: "site-1", name: "Mission District" },
-      { siteId: "site-2", name: "Site 2" },
-    ];
-    const markup = view._locationDialogMarkup();
-    expect(markup).toContain("Is your app set to the right location?");
-    expect(markup).toContain('<h2 id="location-dialog-title">');
-    expect(markup).toContain('aria-labelledby="location-dialog-title"');
-    expect(markup).toContain('aria-describedby="location-dialog-copy"');
-    expect(markup).toContain("Site 2");
-    expect(markup).toMatch(/location-dialog__site"\s+appearance="plain"/);
-    expect(markup).toMatch(/location-dialog__confirm"\s+appearance="plain"/);
-    expect(markup).toMatch(/location-dialog__stay"\s+appearance="plain"/);
-    expect(markup).toMatch(/Confirm site change\s*<\/button>/);
-    expect(markup).toMatch(/id="location-confirm"\s+type="button"\s+disabled/);
-  });
-
-  it("focuses the selected site when opening the location dialog", async () => {
-    const view = await mount("?filter=todo");
-    const focus = vi.fn();
-    const showModal = vi.fn();
-    const querySelector = vi.fn((selector) =>
-      selector === '.location-dialog__site[aria-pressed="true"]'
-        ? { focus }
-        : null,
-    );
-    view.querySelector = () => ({
-      showModal,
-      querySelector,
-    });
-
-    view._showLocationDialog();
-
-    expect(showModal).toHaveBeenCalledOnce();
-    expect(querySelector).toHaveBeenCalledWith(
-      '.location-dialog__site[aria-pressed="true"]',
-    );
-    expect(focus).toHaveBeenCalledOnce();
-    expect(showModal.mock.invocationCallOrder[0]).toBeLessThan(
-      focus.mock.invocationCallOrder[0],
-    );
   });
 
   it("keeps the location warning mounted through a background location update", async () => {
@@ -382,43 +496,52 @@ describe("site location prompt", () => {
     view.isConnected = true;
     const model = { tasks: [] };
     view._homeModel = model;
-    view._viewPhase = "home";
     view._locationPrompt = { flowType: "perimeter", launcher: null };
-    view._locationSelectedSiteId = view._siteId;
     const render = vi.fn();
     view._render = render;
     view._renderHome = TodayView.prototype._renderHome.bind(view);
-    let onClose = () => {};
-    const stayButton = { addEventListener: vi.fn() };
-    const confirmButton = { addEventListener: vi.fn() };
-    const dialog = {
-      open: true,
-      addEventListener: (event, callback) => {
-        if (event === "close") onClose = callback;
-      },
-      querySelectorAll: () => [],
-      querySelector: (selector) =>
-        selector === "#location-stay" ? stayButton : confirmButton,
-    };
-    view.querySelector = () => dialog;
-    view._wireLocationDialog();
 
     devicePosition.listener({ latitude: 37.78, longitude: -122.4194 });
     expect(view._pendingLocationRender).toBe(true);
     expect(render).not.toHaveBeenCalled();
-    expect(dialog.open).toBe(true);
-    expect(stayButton.addEventListener).toHaveBeenCalledWith(
-      "click",
-      expect.any(Function),
-    );
-    expect(confirmButton.addEventListener).toHaveBeenCalledWith(
-      "click",
-      expect.any(Function),
-    );
 
     view._renderHome = vi.fn();
-    onClose();
+    view._onLocationDialogClosed({ changingSite: false });
+    expect(view._locationPrompt).toBeNull();
     expect(view._renderHome).toHaveBeenCalledWith(model);
+  });
+
+  it("does not redraw the home behind a site change after the prompt closes", async () => {
+    const view = await mount("?filter=todo");
+    view._homeModel = { tasks: [] };
+    view._locationPrompt = { flowType: "perimeter", launcher: null };
+    view._pendingLocationRender = true;
+    view._renderHome = vi.fn();
+    view._onLocationDialogClosed({ changingSite: true });
+    expect(view._renderHome).not.toHaveBeenCalled();
+    expect(view._pendingLocationRender).toBe(false);
+  });
+
+  it("resumes the waiting capture flow on Stay", async () => {
+    devicePosition.current = { latitude: 37.78, longitude: -122.4194 };
+    const view = await mount("?filter=todo");
+    view._site = {
+      siteId: "site-1",
+      name: "Mission District",
+      location: { latitude: 37.7749, longitude: -122.4194 },
+    };
+    await view._onLocationStay({
+      prompt: { flowType: "single-problem", launcher: null },
+    });
+    expect(awaitOverlayUnwindMock).toHaveBeenLastCalledWith("location");
+    expect(navigateMock).toHaveBeenLastCalledWith("/problem");
+    await view._onLocationStay({
+      prompt: { flowType: "perimeter", launcher: null },
+    });
+    expect(navigateMock).toHaveBeenLastCalledWith("/check");
+    navigateMock.mockClear();
+    await view._onLocationStay({ prompt: null });
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
 
@@ -442,11 +565,12 @@ describe("worklist URL initialization", () => {
       for (let remount = 0; remount < 2; remount++) {
         const view = await mount(`?filter=${filter}`);
         expect(view._homeFilter).toBe(expectedTab);
-        expect(view._viewPhase).toBe("home");
         expect(view._renderHome).toHaveBeenCalledWith(
-          expect.objectContaining({ captureSession: null }),
+          expect.objectContaining({ pendingSession: null }),
         );
         expect(session.current).toBe(draft);
+        // Routed capture: home never navigates on its own.
+        expect(navigateMock).not.toHaveBeenCalled();
         view.disconnectedCallback();
       }
     },
@@ -456,14 +580,14 @@ describe("worklist URL initialization", () => {
     expect(view._homeFilter).toBe("todo");
     view.disconnectedCallback();
   });
-  it("still resumes capture when no recognized worklist filter was requested", async () => {
+  it("keeps an in-progress draft off home: no capture re-entry, worklist unchanged", async () => {
     session.current = {
       id: "draft-1",
       status: "in-progress",
       flowType: "perimeter",
     };
     const view = await mount("?filter=unknown");
-    expect(view._viewPhase).toBe("capture");
+    expect(navigateMock).not.toHaveBeenCalled();
     view.disconnectedCallback();
   });
 });
@@ -473,6 +597,8 @@ describe("logout", () => {
     const view = new TodayView();
     const dialog = {
       open: false,
+      dataset: {},
+      addEventListener: vi.fn(),
       showModal: vi.fn(function () {
         this.open = true;
       }),
@@ -511,42 +637,12 @@ describe("logout", () => {
     expect(logout.discardInMemorySession).not.toHaveBeenCalled();
     expect(window.dispatchEvent).not.toHaveBeenCalled();
     expect(view._logoutPending).toBe(false);
-    expect(view._logoutError).toBe(
-      "We couldn't log you out. Please try again.",
-    );
+    expect(view._logoutError).toBe(t("today.logout.error"));
     expect(view._renderHome).toHaveBeenCalledTimes(2);
   });
 });
 
-describe("task card labels", () => {
-  it("prefers the user-friendly condition label", () => {
-    const view = new TodayView();
-    view._cardActions = () => [];
-
-    const card = view._actionCard({
-      taskId: "task-1",
-      category: "Litter",
-      label: "File a 311 ticket",
-      userFriendlyLabel: "Lots of trash in tree well",
-    });
-
-    expect(card).toContain("Lots of trash in tree well");
-    expect(card).not.toContain(">File a 311 ticket</h3>");
-  });
-});
-
 describe("site switcher", () => {
-  it("uses accessible filter buttons rather than incomplete tab semantics", () => {
-    const view = new TodayView();
-    view._homeFilter = "todo";
-    const markup = view._taskTabs();
-    expect(markup).toContain('role="group"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).not.toContain('role="tab"');
-    expect(markup).not.toContain('role="tablist"');
-    expect(markup).not.toContain('tabindex="-1"');
-  });
-
   it("collects all provider-site pages and sorts the complete catalog", async () => {
     catalog.listProviderSites
       .mockResolvedValueOnce({
@@ -582,12 +678,7 @@ describe("site switcher", () => {
     view._siteSwitcherOpen = true;
 
     expect(view._providerSitesStatus).toBe("error");
-    expect(view._siteSwitcher("Provider One")).toContain(
-      'id="site-catalog-retry"',
-    );
-    expect(view._siteSwitcher("Provider One")).toContain(
-      "Other sites couldn't load.",
-    );
+    expect(view._providerSites).toEqual([]);
 
     catalog.listProviderSites.mockResolvedValueOnce({
       providerId: "provider-1",
@@ -601,49 +692,36 @@ describe("site switcher", () => {
     expect(view._providerSites).toEqual([
       { siteId: "site-2", name: "Second site" },
     ]);
-    expect(view._siteSwitcher("Provider One")).not.toContain(
-      "Other sites couldn't load.",
-    );
     errorLog.mockRestore();
   });
+});
 
-  it("stays open when the location-summary link click reaches the outside-click listener", async () => {
-    const view = await mount("?filter=todo");
-    const originalElement = globalThis.Element;
-    class SiteChangeLink {
-      matches(selector) {
-        return selector.includes("#lastlog-change-site");
-      }
-    }
-    try {
-      vi.stubGlobal("Element", SiteChangeLink);
-      view._siteSwitcherOpen = true;
-      view._siteDocumentClick({ composedPath: () => [new SiteChangeLink()] });
-      expect(view._siteSwitcherOpen).toBe(true);
-
-      view._siteDocumentClick({ composedPath: () => [] });
-      expect(view._siteSwitcherOpen).toBe(false);
-    } finally {
-      vi.stubGlobal("Element", originalElement);
-    }
-  });
-
-  it("lists provider sites without add-site or generic login actions", () => {
+describe("worklist refresh focus", () => {
+  it("announces initial arrival without moving focus or scroll on a card refresh", async () => {
+    window.location.search = "?filter=todo";
+    let scrollTop = 0;
+    const heading = new HTMLElement();
+    heading.focus = vi.fn(() => {
+      scrollTop = 0;
+    });
     const view = new TodayView();
-    view._site = { name: "730 Polk" };
-    view._siteId = "chc-730-polk";
-    view._providerSites = [
-      { siteId: "chc-640-jones", name: "640 Jones" },
-      { siteId: "chc-730-polk", name: "730 Polk" },
-    ];
-    view._siteSwitcherOpen = true;
+    view.isConnected = true;
+    view.querySelector = () => heading;
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
+    view._hydrateVisibleHomeTasks = vi.fn();
+    view._hydrate311CardStatuses = vi.fn();
 
-    const menu = view._siteSwitcher("CHC");
+    await view.connectedCallback();
+    expect(heading.focus).toHaveBeenCalledOnce();
+    scrollTop = 850;
 
-    expect(menu).toContain("640 Jones");
-    expect(menu).toContain("730 Polk");
-    expect(menu).toContain("home-site-switcher__item--selected");
-    expect(menu).not.toContain("Add another site");
-    expect(menu).not.toContain("Login to another site");
+    // Checklist completion refreshes via this same callback after collapsing.
+    await view.connectedCallback();
+    expect(view._renderHome).toHaveBeenCalledTimes(2);
+    expect(heading.focus).toHaveBeenCalledOnce();
+    expect(scrollTop).toBe(850);
+    view.disconnectedCallback();
   });
 });

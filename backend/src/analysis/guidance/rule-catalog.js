@@ -1,5 +1,6 @@
 /** @typedef {"Low" | "Moderate" | "High"} RuleWeighting */
 /** @typedef {"action" | "escalation" | "non_actionable_escalation" | "manual_review"} OutcomeKind */
+/** @typedef {{ kind: "always" } | { kind: "daily", startMinute: number, endMinute: number, timeZone: "America/Los_Angeles" }} RuleTimeRange */
 
 /**
  * @typedef {object} RuleQuestion
@@ -37,6 +38,9 @@
  * @property {RuleWeighting} weighting
  * @property {number} evaluationOrder
  * @property {{ min: number, max: number }} severity
+ * @property {RuleTimeRange} validTimeRange
+ * @property {boolean} canBeInProgress
+ * @property {string} primaryInProgressAgency
  * @property {RuleQuestion[]} requiredQuestions
  * @property {{ all: RulePredicateClause[] }} predicate
  * @property {RuleOutcome} outcome
@@ -83,6 +87,38 @@ export function parseSeverityRange(raw) {
 }
 
 /**
+ * @param {string} raw
+ * @returns {RuleTimeRange}
+ */
+export function parseValidTimeRange(raw) {
+  const value = cleanCell(raw);
+  if (value.toLowerCase() === "24 hours") return { kind: "always" };
+  const match = value.match(/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/);
+  if (!match) throw new Error(`Invalid valid time range: ${raw}`);
+  const [, startHour, startMinute, endHour, endMinute] = match.map(Number);
+  if (startHour > 23 || endHour > 23 || startMinute > 59 || endMinute > 59) {
+    throw new Error(`Invalid valid time range: ${raw}`);
+  }
+  return {
+    kind: "daily",
+    startMinute: startHour * 60 + startMinute,
+    endMinute: endHour * 60 + endMinute,
+    timeZone: "America/Los_Angeles",
+  };
+}
+
+/**
+ * @param {string} raw
+ * @returns {boolean}
+ */
+export function parseBoolean(raw) {
+  const value = cleanCell(raw).toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`Invalid boolean: ${raw}`);
+}
+
+/**
  * @param {string} prompt
  * @returns {string | null}
  */
@@ -93,6 +129,8 @@ export function questionKeyForPrompt(prompt) {
   if (value.includes("on site property")) return "onsite";
   if (value.includes("client or resident")) return "affiliated";
   if (value.includes("clients or residents")) return "affiliated";
+  if (value.includes("owned by a resident or client"))
+    return "provider_generated";
   if (value.includes("asking for medical help")) return "medical_help";
   if (value.includes("likely to leave if asked")) return "refusal_leave";
   throw new Error(`Unknown question prompt: ${prompt}`);
@@ -240,10 +278,14 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
-      const isResponseTimeRulebaseShape = row.length === 17;
+      const isAgencyAwareRulebaseShape = row.length === 20;
+      const isTimeValidityRulebaseShape =
+        row.length === 19 || isAgencyAwareRulebaseShape;
+      const isResponseTimeRulebaseShape =
+        row.length === 17 || isTimeValidityRulebaseShape;
       const isResponsibleAgencyRulebaseShape =
         row.length === 16 || isResponseTimeRulebaseShape;
-      if (![15, 16, 17].includes(row.length)) {
+      if (![15, 16, 17, 19, 20].includes(row.length)) {
         throw new Error(
           `Unsupported rulebase row shape: ${row.length} columns`,
         );
@@ -253,30 +295,60 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
       const ruleId = row[2];
       const evaluationOrder = row[3];
       const severity = row[4];
-      const askUser = row[5];
-      const userResponse = row[6];
-      const thenKind = row[7];
-      const label = row[8];
-      const buttons = row[9];
-      const appAction = row[10];
-      const serviceCodeOrAction = row[11];
-      const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
-        ? row[12]
+      const validTimeRange = /** @type {RuleTimeRange} */ (
+        isTimeValidityRulebaseShape
+          ? parseValidTimeRange(row[5])
+          : { kind: "always" }
+      );
+      const askUser = row[isTimeValidityRulebaseShape ? 6 : 5];
+      const userResponse = row[isTimeValidityRulebaseShape ? 7 : 6];
+      const thenKind = row[isTimeValidityRulebaseShape ? 8 : 7];
+      const canBeInProgress = isTimeValidityRulebaseShape
+        ? parseBoolean(row[9])
+        : false;
+      const primaryInProgressAgency = isAgencyAwareRulebaseShape
+        ? cleanCell(row[10])
         : "";
-      const responseHours = isResponseTimeRulebaseShape ? row[13] : undefined;
-      const guidance = isResponseTimeRulebaseShape
-        ? row[14]
-        : isResponsibleAgencyRulebaseShape
-          ? row[13]
-          : row[12];
-      const cannotDoReasons = isResponsibleAgencyRulebaseShape
-        ? row[isResponseTimeRulebaseShape ? 15 : 14]
-        : row[13];
-      const source = isResponseTimeRulebaseShape
-        ? row[16]
-        : isResponsibleAgencyRulebaseShape
-          ? row[15]
-          : row[14];
+      const timeValidityOffset = isAgencyAwareRulebaseShape ? 1 : 0;
+      const label =
+        row[isTimeValidityRulebaseShape ? 10 + timeValidityOffset : 8];
+      const buttons =
+        row[isTimeValidityRulebaseShape ? 11 + timeValidityOffset : 9];
+      const appAction =
+        row[isTimeValidityRulebaseShape ? 12 + timeValidityOffset : 10];
+      const serviceCodeOrAction =
+        row[isTimeValidityRulebaseShape ? 13 + timeValidityOffset : 11];
+      const responsibleAgencyCode = isResponsibleAgencyRulebaseShape
+        ? row[isTimeValidityRulebaseShape ? 14 + timeValidityOffset : 12]
+        : "";
+      const responseHours = isResponseTimeRulebaseShape
+        ? row[isTimeValidityRulebaseShape ? 15 + timeValidityOffset : 13]
+        : undefined;
+      const guidance = isAgencyAwareRulebaseShape
+        ? row[17]
+        : isTimeValidityRulebaseShape
+          ? row[16]
+          : isResponseTimeRulebaseShape
+            ? row[14]
+            : isResponsibleAgencyRulebaseShape
+              ? row[13]
+              : row[12];
+      const cannotDoReasons = isAgencyAwareRulebaseShape
+        ? row[18]
+        : isTimeValidityRulebaseShape
+          ? row[17]
+          : isResponsibleAgencyRulebaseShape
+            ? row[isResponseTimeRulebaseShape ? 15 : 14]
+            : row[13];
+      const source = isAgencyAwareRulebaseShape
+        ? row[19]
+        : isTimeValidityRulebaseShape
+          ? row[18]
+          : isResponseTimeRulebaseShape
+            ? row[16]
+            : isResponsibleAgencyRulebaseShape
+              ? row[15]
+              : row[14];
 
       const normalizedResponseHours =
         responseHours === undefined
@@ -293,6 +365,9 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
           : { maxAcceptableResponseHours: normalizedResponseHours }),
         evaluationOrder: Number(cleanCell(evaluationOrder)),
         severity: parseSeverityRange(severity),
+        validTimeRange,
+        canBeInProgress,
+        primaryInProgressAgency,
         requiredQuestions: questionsForPrompt(askUser),
         predicate: parsePredicate(userResponse),
         outcome: {
@@ -311,6 +386,108 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
       };
     }),
   };
+}
+
+/**
+ * @param {GuidanceRule} rule
+ * @param {Record<string, boolean>} answers
+ * @returns {boolean}
+ */
+function validationPredicateMatches(rule, answers) {
+  return rule.predicate.all.every((clause) =>
+    clause.op === "eq"
+      ? answers[clause.fact] === clause.value
+      : answers[clause.fact] !== clause.value,
+  );
+}
+
+/**
+ * @param {GuidanceRule} rule
+ * @param {number} minute
+ * @returns {boolean}
+ */
+function validationTimeMatches(rule, minute) {
+  const range = rule.validTimeRange;
+  if (!range || range.kind === "always") return true;
+  return range.startMinute <= range.endMinute
+    ? minute >= range.startMinute && minute <= range.endMinute
+    : minute >= range.startMinute || minute <= range.endMinute;
+}
+
+/**
+ * @param {string[]} keys
+ * @returns {Record<string, boolean>[]}
+ */
+function booleanAnswerCombinations(keys) {
+  return Array.from({ length: 2 ** keys.length }, (_, mask) =>
+    Object.fromEntries(
+      keys.map((key, index) => [key, Boolean(mask & (1 << index))]),
+    ),
+  );
+}
+
+/**
+ * Ensure every fully answered, positive-severity path resolves to exactly one
+ * rule for every Pacific-local minute. This catches both predicate and daily
+ * time-window gaps before a catalog can become active.
+ * @param {GuidanceCatalog} catalog
+ * @returns {string[]}
+ */
+function validateRuleCoverage(catalog) {
+  const errors = new Set();
+  const categories = new Set(catalog.rules.map((rule) => rule.category));
+  for (const category of categories) {
+    for (let severity = 1; severity <= 5; severity += 1) {
+      const candidates = catalog.rules.filter(
+        (rule) =>
+          rule.category === category &&
+          severity >= rule.severity.min &&
+          severity <= rule.severity.max,
+      );
+      if (!candidates.length) {
+        errors.add(`${category} severity ${severity} has no rule`);
+        continue;
+      }
+      const questionKeys = [
+        ...new Set(
+          candidates.flatMap((rule) =>
+            rule.requiredQuestions.map((question) => question.key),
+          ),
+        ),
+      ].sort();
+      for (const answers of booleanAnswerCombinations(questionKeys)) {
+        const answerLabel = questionKeys.length
+          ? questionKeys.map((key) => `${key}=${answers[key]}`).join(", ")
+          : "no answers";
+        let gapMinute = null;
+        for (let minute = 0; minute < 24 * 60; minute += 1) {
+          const matching = candidates.filter(
+            (rule) =>
+              validationPredicateMatches(rule, answers) &&
+              validationTimeMatches(rule, minute),
+          );
+          if (!matching.length) {
+            gapMinute ??= minute;
+            continue;
+          }
+        }
+        /**
+         * @param {number} minute
+         * @returns {string}
+         */
+        const formatMinute = (minute) =>
+          `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(
+            minute % 60,
+          ).padStart(2, "0")}`;
+        if (gapMinute !== null) {
+          errors.add(
+            `${category} severity ${severity} (${answerLabel}) has no rule at ${formatMinute(gapMinute)}`,
+          );
+        }
+      }
+    }
+  }
+  return [...errors];
 }
 
 /**
@@ -355,6 +532,18 @@ export function validateCatalog(catalog) {
     ) {
       errors.push(`${rule.ruleId} has invalid maxAcceptableResponseHours`);
     }
+    if (typeof rule.canBeInProgress !== "boolean") {
+      errors.push(`${rule.ruleId} has invalid canBeInProgress`);
+    }
+    if (rule.canBeInProgress && !rule.primaryInProgressAgency) {
+      errors.push(`${rule.ruleId} is missing primaryInProgressAgency`);
+    }
+    if (
+      !rule.validTimeRange ||
+      !["always", "daily"].includes(rule.validTimeRange.kind)
+    ) {
+      errors.push(`${rule.ruleId} has invalid validTimeRange`);
+    }
 
     for (const question of rule.requiredQuestions) {
       const prior = questionTypes.get(question.key);
@@ -381,6 +570,8 @@ export function validateCatalog(catalog) {
       );
     }
   }
+
+  errors.push(...validateRuleCoverage(catalog));
 
   return errors;
 }

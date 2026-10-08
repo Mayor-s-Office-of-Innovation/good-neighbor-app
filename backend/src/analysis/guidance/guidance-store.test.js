@@ -114,7 +114,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v3",
+      policyVersion: "actions-escalations-v5",
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -134,7 +134,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v3",
+      policyVersion: "actions-escalations-v5",
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
@@ -148,7 +148,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v3",
+      policyVersion: "actions-escalations-v5",
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
@@ -167,6 +167,8 @@ describe("storeEvaluatedAssessment", () => {
       checkId: "chk-1",
       conditionId: "001-litter",
       ruleId: "LITTER-2",
+      canBeInProgress: true,
+      primaryInProgressAgency: "Department of Public Works (DPW)",
       kind: "escalation",
       type: "city_escalation",
       status: "open",
@@ -274,15 +276,15 @@ describe("storeEvaluatedAssessment", () => {
       ],
     });
 
-    const updateTx = send.mock.calls[3][0];
-    expect(updateTx).toBeInstanceOf(TransactWriteCommand);
-    expect(updateTx.input.TransactItems[0].Put).toMatchObject({
-      ConditionExpression: "#status = :open",
-      ExpressionAttributeValues: { ":open": "open" },
-    });
-    expect(updateTx.input.TransactItems[0].Put.Item).toMatchObject({
-      taskId: "task-silent",
-      appActionStatus: "failed",
+    const update = send.mock.calls[3][0];
+    expect(update).toBeInstanceOf(UpdateCommand);
+    expect(update.input).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "TASK#task-silent" },
+      ConditionExpression: "attribute_exists(sk)",
+      ReturnValues: "ALL_NEW",
+      ExpressionAttributeValues: {
+        ":actionStatus": "failed",
+      },
     });
     expect(errorLog).toHaveBeenCalledTimes(1);
     expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
@@ -519,6 +521,66 @@ describe("completeTaskWithAppActions", () => {
       gsi2sk: "2026-08-18T12:02:00.000Z#escalation#3#task-1",
     });
     expect(task).toMatchObject({ status: "completed" });
+    expect(finalTx.input.TransactItems[1].Put.Item).toMatchObject({
+      entityType: "task_update",
+      type: "task_completed",
+      label: "Marked as complete",
+      occurredAt: "2026-08-18T12:02:00.000Z",
+    });
+    expect(finalTx.input.TransactItems[2].Put.Item).toMatchObject({
+      entityType: "task_update_pointer",
+      updateId: finalTx.input.TransactItems[1].Put.Item.updateId,
+    });
+  });
+
+  it("moves an eligible task to in progress on its first card action", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "non_actionable_escalation",
+          severity: 4,
+          canBeInProgress: true,
+          primaryInProgressAgency: "SF Police Department (SFPD)",
+          buttons: ["We called 911"],
+          appActions: [],
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "manual",
+      actorId: "device-7",
+      now: new Date("2026-10-01T18:00:00.000Z"),
+    });
+
+    expect(task).toMatchObject({
+      status: "in_progress",
+      inProgressAt: "2026-10-01T18:00:00.000Z",
+      notifiedAt: "2026-10-01T18:00:00.000Z",
+      agency: "SF Police Department (SFPD)",
+      latestUpdateLabel: "We called 911",
+      gsi2pk: "SITE#site-1#TASK#in_progress",
+    });
+    expect(task).not.toHaveProperty("completedAt");
+    const writes = send.mock.calls[2][0].input.TransactItems;
+    expect(writes).toHaveLength(3);
+    expect(writes[1].Put.Item).toMatchObject({
+      type: "escalation_action_taken",
+      label: "We called 911",
+      actorId: "device-7",
+    });
+    expect(writes[2].Put.Item).toMatchObject({
+      entityType: "task_update_pointer",
+      taskId: "task-1",
+    });
   });
 
   it("returns a stored completed task for an identical replay", async () => {
@@ -995,6 +1057,16 @@ describe("completeTaskWithAppActions", () => {
     expect(task).toMatchObject({
       status: "completed",
       completionMethod: "311_filed",
+      agency: "311",
+      notifiedAt: "2026-08-18T12:02:00.000Z",
+      latestUpdateLabel: "311 ticket filed",
+    });
+    const finalTransaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+    expect(finalTransaction.input.TransactItems[1].Put.Item).toMatchObject({
+      type: "311_ticket_filed",
+      label: "311 ticket filed",
+      occurredAt: "2026-08-18T12:02:00.000Z",
+      documentationState: "closed",
     });
     // The user_confirmed filing re-ran (idempotent: prior ticket reused) and
     // no closure action was synthesized for the 311_filed path.
@@ -1496,7 +1568,14 @@ describe("assessment refresh preserves unchanged conditions", () => {
   function mockPrevious({ taskStatus = "open", checkId = "check-1" } = {}) {
     send.mockImplementation(async (command) => {
       if (command instanceof GetCommand)
-        return { Item: { checkId, assessmentRevision: 1 } };
+        return {
+          Item: {
+            checkId,
+            assessmentRevision: 1,
+            policyVersion: "actions-escalations-v3",
+            reportedAt: "2026-09-10T19:00:00Z",
+          },
+        };
       if (command instanceof QueryCommand)
         return { Items: [previousCondition] };
       if (command instanceof BatchGetCommand)
@@ -1595,6 +1674,17 @@ describe("assessment refresh preserves unchanged conditions", () => {
     );
     expect(result.conditionItems[0].answers).toEqual({});
     expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
+  });
+
+  it("pins refreshed assessments and condition evaluation to the original report time", async () => {
+    mockPrevious();
+    const result = await storeEvaluatedAssessment(input, {
+      tableName: "table",
+    });
+
+    expect(result.assessmentItem.reportedAt).toBe("2026-09-10T19:00:00Z");
+    expect(result.assessmentItem.gsi1sk).toContain("2026-09-10T19:00:00Z");
+    expect(result.conditionItems[0].gsi4sk).toContain("2026-09-10T19:00:00Z");
   });
 
   it("does not reuse answers from different evidence", async () => {

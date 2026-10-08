@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
-  Tests for components/connection-status.js — the OUTAGE banner + AUTH dialog
+  Tests for components/connection-status.js — the OUTAGE toast + AUTH dialog
   surface (api-response-integrity plan §3b). Node environment: the class is
   exercised directly (no real DOM registration — customElements is stubbed);
   sign-out wiring is the regression target: it must clear the in-memory
@@ -23,6 +23,9 @@ vi.mock("../db.js", () => ({
 }));
 vi.mock("../state/check-session.js", () => ({
   discardInMemorySession: vi.fn(),
+}));
+vi.mock("../state/toasts.js", () => ({
+  showOfflinePhotosToast: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -189,41 +192,24 @@ describe("sign-out handler (fix 2 + 3)", () => {
   });
 });
 
-describe("banner dismissal lifecycle (fix 6)", () => {
-  it("re-arms the banner on a later outage after dismissal + healthy transition", async () => {
+describe("outage toast lifecycle", () => {
+  it("shows once per outage period and re-arms after a healthy transition", async () => {
     const { default: ConnectionStatus } = await load();
+    const { showOfflinePhotosToast } = await import("../state/toasts.js");
     const el = await mount(ConnectionStatus);
 
-    // Outage #1: banner mounts.
     healthModule.state = "outage";
     el._sync();
-    expect(el._banner).not.toBeNull();
+    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(1);
 
-    // User dismisses it.
-    el._listeners["banner-close"]();
-    expect(el._banner).toBeNull();
+    el._sync();
+    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(1);
 
-    // Healthy transition — with the banner already gone from the DOM, the
-    // pre-fix code keyed the _dismissed reset on banner presence and never
-    // re-armed; the reset must happen on the transition itself.
     healthModule.state = "healthy";
     el._sync();
 
-    // Outage #2: banner must mount again.
     healthModule.state = "outage";
     el._sync();
-    expect(el._banner).not.toBeNull();
-  });
-
-  it("banner stays dismissed within a single outage period", async () => {
-    const { default: ConnectionStatus } = await load();
-    healthModule.state = "outage";
-    const el = await mount(ConnectionStatus);
-    expect(el._banner).not.toBeNull();
-
-    el._listeners["banner-close"]();
-    // Re-sync while still in outage: no re-mount (still dismissed).
-    el._sync();
-    expect(el._banner).toBeNull();
+    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(2);
   });
 });

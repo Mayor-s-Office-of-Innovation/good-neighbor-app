@@ -20,6 +20,7 @@ import { refreshDeviceToken } from "./devices.js";
 import { ApiError, ReauthRequiredError } from "./api-error.js";
 import { reportClientEvent } from "./error-report.js";
 import { classifyApiFailure } from "./backend-health.js";
+import { getLocale } from "../i18n/locale.js";
 
 // Public error surface stays on api.js (existing importers); the classes live
 // in api-error.js because devices.js needs them too and importing api.js from
@@ -37,8 +38,9 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 
 /*
   Device-token plumbing (Option 4 device auth, docs/adr/0010): every request
-  rides `Authorization: Bearer <token>` from the stored site record. On a 401 —
-  or pre-emptively when the access token is near expiry — the session is
+  rides `Authorization: Bearer <token>` from the stored site record. On an
+  authentication rejection — a 401 locally, or API Gateway's authorizer-level
+  403 in AWS — or pre-emptively when the access token is near expiry, the session is
   refreshed silently with the single-use rotating refresh token (never the site
   code; the code-holder may not be around). One in-flight refresh is shared by
   concurrent requests; failures surface as `ReauthRequiredError`.
@@ -125,10 +127,36 @@ function is401(err) {
 }
 
 /**
+ * API Gateway returns a bare 403 for requests rejected by its authorizer,
+ * including an expired access token. Application-level authorization failures
+ * use structured `error` codes and must not trigger a token rotation.
+ * @param {number} status
+ * @param {unknown} body
+ * @returns {boolean}
+ */
+function isAccessTokenRejection(status, body) {
+  if (status === 401) return true;
+  if (status !== 403 || !body || typeof body !== "object") return false;
+  const response = /** @type {Record<string, unknown>} */ (body);
+  return (
+    !("error" in response) &&
+    (response.message === "Forbidden" ||
+      response.message === "User is not authorized to access this resource")
+  );
+}
+
+/** @param {unknown} err */
+function isAccessTokenError(err) {
+  return (
+    err instanceof ApiError && isAccessTokenRejection(err.status, err.body)
+  );
+}
+
+/**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
  * failure. Attaches the device token when a session exists and retries once
- * through a silent refresh on a 401.
+ * through a silent refresh on an access-token rejection.
  * @param {string} method
  * @param {string} path        path beginning with `/` (joined onto BASE)
  * @param {object} [opts]
@@ -207,9 +235,9 @@ async function request(
 
   if (!res.ok) {
     // Expired/revoked access token → ONE silent refresh, then retry. A second
-    // 401 (or a rejected refresh) is fatal UNLESS the stored session was
+    // auth rejection (or a rejected refresh) is fatal UNLESS the stored session was
     // superseded mid-flight (see the retry leg below).
-    if (res.status === 401 && allowAuthRetry) {
+    if (isAccessTokenRejection(res.status, parsed) && allowAuthRetry) {
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
@@ -238,7 +266,7 @@ async function request(
           originSiteId: requestSiteId,
         });
       } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
+        if (isAccessTokenError(err)) {
           const nowToken = (await getSite().catch(() => null))?.token;
           if (nowToken && nowToken !== retryToken) {
             // Superseded mid-flight: the LATEST persisted session is newer
@@ -294,6 +322,22 @@ export function getSiteSettings() {
   return request("GET", "/v1/site");
 }
 
+/** Get the admin-only site information payload. */
+export function getSiteAdmin() {
+  return request("GET", "/v1/site-admin");
+}
+
+/**
+ * Update one editable site-information section.
+ * @param {"siteDetails"|"contactPerson"} section
+ * @param {Record<string, unknown>} values
+ */
+export function updateSiteAdmin(section, values) {
+  return request("PATCH", "/v1/site-admin", {
+    body: { section, values },
+  });
+}
+
 /**
  * List one bounded page of the current provider's active sites.
  * @param {string} [cursor]
@@ -305,12 +349,60 @@ export function listProviderSites(cursor = "") {
   );
 }
 
+/** List the authenticated physical device's currently usable Site bindings. */
+export function listDeviceBindings() {
+  return request("GET", "/app/v1/device-bindings");
+}
+
+/**
+ * Select one Site binding owned by the authenticated physical device.
+ * @param {string} bindingId
+ */
+export function selectDeviceBinding(bindingId) {
+  return request("POST", "/app/v1/device-bindings/select", {
+    body: { bindingId },
+  });
+}
+
+/** @param {string} label */
+export function createStaffEnrollmentGrant(label) {
+  return request("POST", "/app/v1/manager/staff-grants", {
+    body: { label },
+  });
+}
+
+/** Return the current Manager binding's unfinished staff grant metadata. */
+export function getCurrentStaffEnrollmentGrant() {
+  return request("GET", "/app/v1/manager/staff-grants/current");
+}
+
+/** @param {string} grantId */
+export function cancelStaffEnrollmentGrant(grantId) {
+  return request(
+    "DELETE",
+    `/app/v1/manager/staff-grants/${encodeURIComponent(grantId)}`,
+  );
+}
+
+/** List general-access devices at the current Manager binding's Site. */
+export function listManagerDeviceBindings() {
+  return request("GET", "/app/v1/manager/device-bindings");
+}
+
+/** @param {string} bindingId */
+export function revokeManagerDeviceBinding(bindingId) {
+  return request(
+    "POST",
+    `/app/v1/manager/device-bindings/${encodeURIComponent(bindingId)}/revoke`,
+  );
+}
+
 /**
  * POST /v1/checks — start a perimeter run. The client-minted `checkId` rides in
  * the `idempotency-key` header (not the body), so a replay can't duplicate the
  * header. `siteId` is server-derived.
  * @param {string} checkId
- * @param {{ places?: unknown }} [body]
+ * @param {{ flowType?: "perimeter" | "single-problem" }} [body]
  * @returns {Promise<{ checkId: string, status: string, startedAt?: string }>}
  */
 export function createCheck(checkId, body = {}) {
@@ -380,7 +472,7 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ description: string, caller?: { request_id?: string } }} body
+ * @param {{ description: string, language?: string, caller?: { request_id?: string } }} body
  * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
  */
 export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
@@ -438,8 +530,8 @@ export function getCheck(checkId) {
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ contentType: string }} body
- * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, uploadUrl: string, expiresIn: number }>}
+ * @param {{ contentType: string, contentLength: number }} body
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body) {
   return request(
@@ -452,8 +544,10 @@ export function presignArtifact(checkId, body) {
 /**
  * POST /v1/checks/{checkId}/artifacts — record an uploaded artifact and enqueue
  * its analysis. 409 (this artifactId already registered) → ApiError.
+ * Stamps the active UI locale so the analyzer writes translated
+ * labels/descriptions the device can show.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string, language?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -461,7 +555,7 @@ export function registerArtifact(checkId, body) {
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
     {
-      body,
+      body: { language: getLocale(), ...body },
     },
   );
 }
@@ -489,15 +583,21 @@ export function deleteArtifact(checkId, artifactId) {
  * @param {string} uploadUrl  absolute presigned URL from `presignArtifact`
  * @param {Blob} blob
  * @param {string} contentType
+ * @param {Record<string, string>} [uploadHeaders]
  * @returns {Promise<void>}
  */
-export async function putMedia(uploadUrl, blob, contentType) {
+export async function putMedia(
+  uploadUrl,
+  blob,
+  contentType,
+  uploadHeaders = {},
+) {
   /** @type {Response} */
   let res;
   try {
     res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "content-type": contentType },
+      headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
     });
   } catch (err) {
@@ -533,6 +633,36 @@ export function getMediaUrl(checkId, artifactId) {
  */
 export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
+}
+
+export function getTaskUpdates(taskId, nextToken) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/updates${qs({ nextToken })}`,
+  );
+}
+
+export function createTaskUpdate(taskId, body) {
+  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
+    body,
+    headers: { "idempotency-key": crypto.randomUUID() },
+  });
+}
+
+export function documentTaskUpdate(taskId, updateId, body = {}) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/updates/${encodeURIComponent(updateId)}/document`,
+    { body },
+  );
+}
+
+export function registerTaskUpdateMedia(taskId, body) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/update-media`,
+    { body },
+  );
 }
 
 export function get311RequestDetail(taskId, srNum) {
@@ -619,15 +749,15 @@ export async function dataUrlToBlob(dataUrl) {
 
 /**
  * Upload one captured photo end-to-end: presign → PUT bytes to S3 → register
- * (which enqueues the async analysis). Returns the registered artifactId + the
- * pinned S3 key, so callers can persist enough state to re-drive the analysis
+ * (which enqueues the async analysis). Returns the registered artifactId, the
+ * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
  * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
- * @returns {Promise<{ artifactId: string, s3Key: string }>}
+ * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number }>}
  */
 export async function uploadArtifact(
   checkId,
@@ -637,16 +767,20 @@ export async function uploadArtifact(
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
+  const blob = await dataUrlToBlob(dataUrl);
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl } = await presignArtifact(checkId, {
-    contentType,
-  });
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
+    checkId,
+    {
+      contentType,
+      contentLength: blob.size,
+    },
+  );
   endPresign({ artifactId });
   onLeg?.("presign");
 
-  const blob = await dataUrlToBlob(dataUrl);
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await putMedia(uploadUrl, blob, contentType);
+  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
   endPut();
   onLeg?.("put");
 
@@ -655,6 +789,7 @@ export async function uploadArtifact(
     artifactId,
     s3Key,
     contentType,
+    contentLength: blob.size,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
       ? { latitude, longitude }
@@ -665,6 +800,34 @@ export async function uploadArtifact(
   onLeg?.("register");
 
   done({ artifactId });
+  return { artifactId, s3Key, contentType, contentLength: blob.size };
+}
+
+/**
+ * Upload documentation for a task update without registering it for analysis.
+ * @param {string} taskId
+ * @param {string} checkId
+ * @param {{ dataUrl: string, capturedAt?: string }} item
+ */
+export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
+  const contentType = contentTypeFromDataUrl(item.dataUrl);
+  const blob = await dataUrlToBlob(item.dataUrl);
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
+    checkId,
+    {
+      contentType,
+      contentLength: blob.size,
+    },
+  );
+  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+  await registerTaskUpdateMedia(taskId, {
+    checkId,
+    artifactId,
+    s3Key,
+    contentType,
+    contentLength: blob.size,
+    ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
+  });
   return { artifactId, s3Key };
 }
 

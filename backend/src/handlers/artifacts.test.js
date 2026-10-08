@@ -1,17 +1,29 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
-import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  PutCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Spies for the three side-effecting seams. vi.hoisted lets the mock factories
 // (hoisted above imports) reference them.
-const { ddbSend, sqsSend, presignPut, presignGet } = vi.hoisted(() => ({
-  ddbSend: vi.fn(),
-  sqsSend: vi.fn(),
-  presignPut: vi.fn(),
-  presignGet: vi.fn(),
-}));
+const { ddbSend, sqsSend, presignPut, presignGet, headObject, setObjectTags } =
+  vi.hoisted(() => ({
+    ddbSend: vi.fn(),
+    sqsSend: vi.fn(),
+    presignPut: vi.fn(),
+    presignGet: vi.fn(),
+    headObject: vi.fn(),
+    setObjectTags: vi.fn(),
+  }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
-vi.mock("../s3.js", () => ({ presignPut, presignGet }));
+vi.mock("../s3.js", () => ({
+  presignPut,
+  presignGet,
+  headObject,
+  setObjectTags,
+}));
 vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return {
@@ -63,6 +75,12 @@ beforeEach(() => {
   sqsSend.mockReset();
   presignPut.mockReset();
   presignGet.mockReset();
+  headObject.mockReset().mockResolvedValue({
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    metadata: { "declared-bytes": "1024" },
+  });
+  setObjectTags.mockReset().mockResolvedValue({});
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.SQS_QUEUE_URL = "queue";
   process.env.DYNAMO_TABLE = "gnp-test-app";
@@ -76,7 +94,7 @@ describe("presignUpload", () => {
       artifactEvent({
         checkId: "chk_01",
         siteClaim: "site-1",
-        body: { contentType: "image/jpeg" },
+        body: { contentType: "image/jpeg", contentLength: 1024 },
       }),
     );
 
@@ -84,6 +102,27 @@ describe("presignUpload", () => {
     const payload = JSON.parse(res.body);
     expect(payload.uploadUrl).toBe("https://signed.example/put");
     expect(payload.expiresIn).toBe(300);
+    expect(payload.uploadHeaders).toEqual({
+      "content-type": "image/jpeg",
+      "if-none-match": "*",
+    });
+    expect(payload.uploadHeaders).not.toHaveProperty(
+      "x-amz-meta-declared-bytes",
+    );
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
+    const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
+    expect(reservation[0].ConditionCheck.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01",
+    });
+    expect(reservation[1].Update.Key).toMatchObject({
+      pk: "SITE#site-1",
+      sk: expect.stringMatching(/^MEDIA_QUOTA#\d{4}-\d{2}-\d{2}#CHECK#chk_01$/),
+    });
+    expect(reservation[1].Update.Key).not.toEqual({
+      pk: "SITE#site-1",
+      sk: "CHECK#chk_01",
+    });
     expect(typeof payload.artifactId).toBe("string");
     expect(payload.s3Key).toBe(`checks/site-1/chk_01/${payload.artifactId}`);
     expect(payload).not.toHaveProperty("placeId");
@@ -94,6 +133,8 @@ describe("presignUpload", () => {
       bucket: "bucket",
       key: payload.s3Key,
       contentType: "image/jpeg",
+      contentLength: 1024,
+      tagging: "state=pending",
       expiresIn: 300,
     });
   });
@@ -110,6 +151,24 @@ describe("presignUpload", () => {
     expect(presignPut).not.toHaveBeenCalled();
   });
 
+  it("returns a non-specific 429 when any reservation budget is exhausted", async () => {
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("quota"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    const res = await callPresign(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: { contentType: "image/jpeg", contentLength: 1024 },
+      }),
+    );
+    expect(res.statusCode).toBe(429);
+    expect(JSON.parse(res.body)).toEqual({ error: "media_quota_exceeded" });
+    expect(presignPut).not.toHaveBeenCalled();
+  });
+
   it("ignores legacy placeId / placeName fields from pre-Phase-2 clients", async () => {
     // A device that has not yet picked up the flat-key client still sends the
     // retired place fields; they must not 400 and must not reach the key.
@@ -123,6 +182,7 @@ describe("presignUpload", () => {
           placeId: "perimeter",
           placeName: "Civic Center Annex",
           contentType: "image/jpeg",
+          contentLength: 1024,
         },
       }),
     );
@@ -140,6 +200,7 @@ describe("registerArtifact", () => {
     artifactId: "art_1",
     s3Key: "checks/site-1/chk_01/art_1",
     contentType: "image/jpeg",
+    contentLength: 1024,
     capturedAt: "2026-08-14T12:00:00.000Z",
     text: "north gate clear",
   };
@@ -226,6 +287,29 @@ describe("registerArtifact", () => {
     expect(ddbSend).not.toHaveBeenCalled();
   });
 
+  it("rejects registration when S3 metadata differs from the signed claim", async () => {
+    headObject.mockResolvedValueOnce({
+      contentType: "image/png",
+      contentLength: 1024,
+      metadata: { "declared-bytes": "1024" },
+    });
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: validBody,
+      }),
+    );
+    expect(res.statusCode).toBe(422);
+    expect(setObjectTags).toHaveBeenCalledWith({
+      bucket: "bucket",
+      key: validBody.s3Key,
+      tags: { state: "rejected" },
+    });
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
+
   it("rejects an s3Key that does not belong to this check (no writes)", async () => {
     const res = await callRegister(
       artifactEvent({
@@ -287,14 +371,7 @@ describe("registerArtifact", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it("ignores legacy placeId / placeName fields and a pre-Phase-2 s3Key layout", async () => {
-    // A stale client may still send the retired place fields and hand back a
-    // key presigned under the old `<placeId>` segment. Neither reaches the
-    // item or the message, and the key is accepted (it is still under this
-    // site + check).
-    ddbSend.mockResolvedValueOnce({});
-    sqsSend.mockResolvedValueOnce({});
-
+  it("rejects a pre-Phase-2 key during new registration", async () => {
     const res = await callRegister(
       artifactEvent({
         checkId: "chk_01",
@@ -305,30 +382,15 @@ describe("registerArtifact", () => {
           placeName: "Civic Center Annex",
           s3Key: "checks/site-1/chk_01/perimeter/art_1",
           contentType: "image/jpeg",
+          contentLength: 1024,
           capturedAt: "2026-08-14T12:00:00.000Z",
         },
       }),
     );
 
-    expect(res.statusCode).toBe(202);
-    const put = ddbSend.mock.calls[0][0];
-    expect(put.input.Item).toMatchObject({
-      pk: "SITE#site-1",
-      sk: "CHECK#chk_01#ART#art_1",
-      artifactId: "art_1",
-      s3Key: "checks/site-1/chk_01/perimeter/art_1",
-    });
-    expect(put.input.Item).not.toHaveProperty("placeId");
-    expect(put.input.Item).not.toHaveProperty("placeName");
-
-    const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
-    expect(msg).toEqual({
-      siteId: "site-1",
-      checkId: "chk_01",
-      artifactId: "art_1",
-      s3Key: "checks/site-1/chk_01/perimeter/art_1",
-      capturedAt: "2026-08-14T12:00:00.000Z",
-    });
+    expect(res.statusCode).toBe(400);
+    expect(ddbSend).not.toHaveBeenCalled();
+    expect(sqsSend).not.toHaveBeenCalled();
   });
 
   it("accepts text-only evidence and enqueues it without an s3Key", async () => {
@@ -495,6 +557,10 @@ describe("deleteArtifact", () => {
     const headerQ = ddbSend.mock.calls[0][0];
     expect(headerQ.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
     expect(headerQ.input.ExpressionAttributeValues[":sk"]).toBe("CHECK#chk_01");
+    expect(headerQ.input.ProjectionExpression).toBe("#status");
+    expect(headerQ.input.ExpressionAttributeNames).toEqual({
+      "#status": "status",
+    });
     // The artifact lookup is the same ART#-prefix query presignMedia uses.
     const artQ = ddbSend.mock.calls[1][0];
     expect(artQ.input.ExpressionAttributeValues[":prefix"]).toBe(
@@ -630,6 +696,58 @@ describe("presignMedia", () => {
 
     expect(res.statusCode).toBe(404);
     expect(presignGet).not.toHaveBeenCalled();
+  });
+
+  it("refuses to sign a corrupt cross-Site media pointer", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "art_1",
+          s3Key: "checks/site-2/chk_01/art_1",
+        },
+      ],
+    });
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(presignGet).not.toHaveBeenCalled();
+  });
+
+  it("presigns task-update media through its check-scoped pointer", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Item: { mediaSk: "TASK#task-1#MEDIA#art_1" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          sk: "TASK#task-1#MEDIA#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+        },
+      });
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(presignGet).toHaveBeenCalledWith({
+      bucket: "bucket",
+      key: "checks/site-1/chk_01/art_1",
+      expiresIn: 300,
+    });
   });
 
   it("requires an artifactId", async () => {

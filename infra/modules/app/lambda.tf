@@ -1,6 +1,22 @@
-# The two Lambdas and their SQS wiring. Deployable bundles are produced by
+# The app Lambdas and their SQS wiring. Deployable bundles are produced by
 # `npm run build:lambdas` (esbuild → backend/dist/{api,worker}/index.mjs) before
 # `terraform plan`; the archive's source_code_hash drives redeploys.
+
+# Ticket creation can run synchronously in the API or silently after analysis
+# in the worker. Keep both runtimes on one configuration map so those paths
+# cannot drift apart.
+locals {
+  sf311_lambda_environment = {
+    GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
+    SF311_CREATESR_URL                = var.sf311_createsr_url
+    SF311_UPDATESR_URL                = var.sf311_updatesr_url
+    SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
+    SF311_LATEST_UPDATES_URL          = var.sf311_latest_updates_url
+    SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
+    SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
+    SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+  }
+}
 
 data "archive_file" "api" {
   type        = "zip"
@@ -12,6 +28,12 @@ data "archive_file" "authorizer" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/authorizer"
   output_path = "${path.module}/dist/authorizer.zip"
+}
+
+data "archive_file" "intake" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/intake"
+  output_path = "${path.module}/dist/intake.zip"
 }
 
 data "archive_file" "worker" {
@@ -36,6 +58,12 @@ data "archive_file" "analytics_report" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/analytics-report"
   output_path = "${path.module}/dist/analytics-report.zip"
+}
+
+data "archive_file" "analytics_query" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/analytics-query"
+  output_path = "${path.module}/dist/analytics-query.zip"
 }
 
 resource "aws_cloudwatch_log_group" "api" {
@@ -72,41 +100,89 @@ resource "aws_lambda_function" "api" {
   }
 
   environment {
-    variables = {
-      DYNAMO_TABLE                      = aws_dynamodb_table.app.name
-      SQS_QUEUE_URL                     = aws_sqs_queue.submissions.url
-      S3_UPLOAD_BUCKET                  = aws_s3_bucket.uploads.bucket
-      DEMO_SITE_ID                      = "demo-site"
-      BEDROCK_MODEL_ID                  = var.bedrock_model_id
-      ANALYZER_BASE_URL                 = var.analyzer_base_url
-      ANALYZER_API_KEY_SECRET_ARN       = aws_secretsmanager_secret.analyzer_api_key.arn
-      POSTHOG_API_KEY_SECRET_ARN        = aws_secretsmanager_secret.posthog_project_api_key.arn
-      POSTHOG_HOST                      = var.posthog_host
-      GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
-      SF311_CREATESR_URL                = var.sf311_createsr_url
-      SF311_UPDATESR_URL                = var.sf311_updatesr_url
-      SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
-      SF311_LATEST_UPDATES_URL          = var.sf311_latest_updates_url
-      SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
-      SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
-      SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+    variables = merge({
+      DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
+      SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      DEMO_SITE_ID                = "demo-site"
+      BEDROCK_MODEL_ID            = var.bedrock_model_id
+      ANALYZER_BASE_URL           = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
-      DEVICE_TOKEN_SECRET_SECRET_ARN = aws_secretsmanager_secret.device_token_key.arn
-      # Feedback destination (docs/runbooks/feedback-ops.md): plain
-      # identifiers, not secrets. Empty defaults keep the forwarder log-only
-      # until the surveys exist in the project (the kill switch too).
-      FEEDBACK_SURVEY_ID              = var.feedback_survey_id
-      FEEDBACK_QUESTION_ID            = var.feedback_question_id
+      DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn
       SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
-    }
+    }, local.sf311_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
   tags       = var.tags
+}
+
+# Best-effort public intakes: client errors, client analytics events, user
+# feedback (backend/src/lambda/intake.js). Split from the api function so the
+# PostHog forward each handler awaits before answering 204 can never hold the
+# api function's executions during a PostHog slowdown — the only aggregate
+# bound on this anonymous traffic is the reservation below (the per-IP WAF
+# rate rules cannot cap many IPs). Throttled beacons fail silently client-side.
+resource "aws_cloudwatch_log_group" "intake" {
+  name              = "/aws/lambda/${local.name_prefix}-intake"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "intake" {
+  #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; the handlers always answer 204 and never retry, so a Lambda DLQ is N/A.
+  #checkov:skip=CKV_AWS_117:No VPC — the function needs public egress to PostHog; revisit with VPC + endpoints.
+  #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
+  function_name    = "${local.name_prefix}-intake"
+  role             = aws_iam_role.intake.arn
+  runtime          = "nodejs22.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.intake.output_path
+  source_code_hash = data.archive_file.intake.output_base64sha256
+  memory_size      = 256
+  # Forwarders bound their own egress (events 1 s, errors/feedback 3 s), so
+  # the function never needs the gateway's full 29 s.
+  timeout     = 10
+  kms_key_arn = aws_kms_key.app.arn
+  # Honest traffic is one page view per route change plus a few events per
+  # check across a pilot's worth of devices; 3 concurrent at ≤1 s each is
+  # thousands of events a minute. The reservation — not the WAF — is what
+  # stops a flood (or a slow PostHog) from reaching the rest of the account.
+  reserved_concurrent_executions = 3
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      POSTHOG_API_KEY_SECRET_ARN = aws_secretsmanager_secret.posthog_project_api_key.arn
+      POSTHOG_HOST               = var.posthog_host
+      # Feedback destination (docs/runbooks/feedback-ops.md): plain
+      # identifiers, not secrets. Empty defaults keep the forwarder log-only
+      # until the surveys exist in the project (the kill switch too).
+      FEEDBACK_SURVEY_ID   = var.feedback_survey_id
+      FEEDBACK_QUESTION_ID = var.feedback_question_id
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.intake]
+  tags       = var.tags
+}
+
+resource "aws_lambda_permission" "intake_api_gateway" {
+  statement_id  = "AllowApiGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.intake.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
 resource "aws_cloudwatch_log_group" "authorizer" {
@@ -181,14 +257,14 @@ resource "aws_lambda_function" "worker" {
   }
 
   environment {
-    variables = {
+    variables = merge({
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
-    }
+    }, local.sf311_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]
@@ -248,6 +324,36 @@ resource "aws_lambda_event_source_mapping" "worker" {
   scaling_config {
     maximum_concurrency = 20
   }
+}
+
+# Revocation requests and their outbox entries are committed atomically. This
+# filtered stream mapping forwards only new pending outbox entries to the worker,
+# which publishes the site reconciliation message to SQS and marks the entry as
+# dispatched. Stream retries close the former commit-then-send failure window.
+resource "aws_lambda_event_source_mapping" "revocation_outbox" {
+  event_source_arn = aws_dynamodb_table.app.stream_arn
+  function_name    = aws_lambda_function.worker.arn
+  # TRIM_HORIZON avoids a deployment-order gap: if the updated API writes an
+  # outbox row before this mapping becomes active, the retained INSERT still
+  # gets dispatched. The filter keeps unrelated table history out.
+  starting_position       = "TRIM_HORIZON"
+  batch_size              = 10
+  function_response_types = ["ReportBatchItemFailures"]
+
+  filter_criteria {
+    filter {
+      pattern = jsonencode({
+        eventName = ["INSERT"]
+        dynamodb = {
+          NewImage = {
+            entityType = { S = ["REVOCATION_OUTBOX"] }
+          }
+        }
+      })
+    }
+  }
+
+  depends_on = [aws_iam_role_policy.worker]
 }
 
 resource "aws_lambda_permission" "api_gateway" {

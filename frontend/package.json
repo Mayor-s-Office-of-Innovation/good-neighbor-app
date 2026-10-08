@@ -8,20 +8,42 @@
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
     "lint": "eslint src",
+    "perf": "node scripts/run-lighthouse.mjs && node scripts/print-lighthouse.mjs",
     "size": "size-limit",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "i18n:check": "node scripts/i18n-check.mjs"
   },
   "size-limit": [
     {
-      "name": "js",
-      "path": "dist/assets/*.js",
-      "limit": "75 kB"
+      "name": "main js",
+      "path": "dist/assets/index-*.js",
+      "limit": "77 kB"
     },
     {
-      "name": "css",
-      "path": "dist/assets/*.css",
-      "limit": "24 kB"
+      "name": "site admin js",
+      "path": "dist/assets/site-admin-*.js",
+      "limit": "9 kB"
+    },
+    {
+      "name": "main css",
+      "path": "dist/assets/index-*.css",
+      "limit": "21 kB"
+    },
+    {
+      "name": "task update js",
+      "path": "dist/assets/task-update-dialog-*.js",
+      "limit": "5 kB"
+    },
+    {
+      "name": "task update css",
+      "path": "dist/assets/task-update-dialog-*.css",
+      "limit": "2 kB"
+    },
+    {
+      "name": "site admin css",
+      "path": "dist/assets/site-admin-*.css",
+      "limit": "2 kB"
     }
   ],
   "dependencies": {
@@ -29,16 +51,16 @@
   },
   "devDependencies": {
     "@eslint/js": "9.9.1",
-    "@lhci/cli": "^0.15.1",
     "@size-limit/file": "^14.0.0",
     "@types/node": "^22.20.1",
     "eslint": "9.9.1",
-    "eslint-plugin-jsdoc": "50.2.2",
+    "eslint-plugin-jsdoc": "^64.5.4",
     "globals": "15.9.0",
+    "lighthouse": "^13.5.0",
     "size-limit": "^14.0.0",
     "typescript": "5.5.4",
     "vite": "8.2.1",
     "vite-plugin-pwa": "1.3.0",
-    "vitest": "4.1.10"
+    "vitest": "^4.1.11"
   }
 }

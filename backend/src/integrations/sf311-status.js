@@ -1,5 +1,8 @@
 /** @type {Record<string, string>} */
-const STATUS_NAMES = {
+// Display text in this module is also exported for the frontend's translation
+// catalog generator (frontend/scripts/i18n-rulebook.mjs); the API keeps sending
+// the English, and the UI looks it up by text.
+export const STATUS_NAMES = {
   1: "New",
   2: "Accepted",
   3: "Prioritized",
@@ -13,7 +16,7 @@ const STATUS_NAMES = {
 };
 
 /** @type {Record<string, string>} */
-const PRIORITY_NAMES = {
+export const PRIORITY_NAMES = {
   0: "Very High",
   1: "High",
   2: "Medium/High",
@@ -23,7 +26,7 @@ const PRIORITY_NAMES = {
 };
 
 /** @type {Record<string, string>} */
-const CLOSED_REASONS = {
+export const CLOSED_REASONS = {
   1: "Resolved",
   2: "Duplicate",
   3: "Cancelled",
@@ -34,6 +37,35 @@ const CLOSED_REASONS = {
   8: "Field Work Completed",
   9: "No Merit",
 };
+
+/**
+ * Timeline event titles, keyed by event kind. "{value}" is filled with the
+ * agency / priority / status / ticket number named by the update. Events carry
+ * `kind` and `value` next to the filled-in English `title` so the frontend
+ * can render the sentence in another language.
+ */
+export const EVENT_TITLES = Object.freeze({
+  submitted: "Ticket submitted",
+  agencyAssigned: "Ticket assigned to a new agency: {value}",
+  priorityUpdated: "Priority on this ticket was updated to {value}",
+  statusChanged: "Ticket status changed to {value}",
+  agencyUpdate: "Agency update",
+  workCompleted: "Work has been completed on this ticket",
+  detailsUpdated: "Problem details have been updated",
+  accepted: "The ticket was accepted for action",
+  resolved: "The ticket was resolved",
+  linked: "Another ticket was linked to this, #{value}",
+  agencyReviewing: "{value} has received this ticket and is reviewing",
+});
+export const EVENT_DESCRIPTIONS = Object.freeze({
+  agencySaid: "Agency said: {value}",
+});
+export const STATUS_DETAILS = { responseOverdue: "response overdue" };
+/**
+ * Function replacer so a literal "$&" or "$'" in feed text is inserted as-is.
+ * @param {string} template @param {string} value
+ */
+const fill = (template, value) => template.replace("{value}", () => value);
 
 /** @type {Record<string, string>} */
 export const AGENCY_NAMES = {
@@ -172,39 +204,62 @@ function updateEvent(update) {
   const notes = first(update, "Notes", "notes");
   const agency =
     agencyName(numeric) || agencyName(first(update, "SendingAgency"));
-  let title = "";
+  /** @type {keyof typeof EVENT_TITLES | ""} */
+  let kind = "";
+  let value = "";
   let description = "";
-  if (type === "1" && agency)
-    title = `Ticket assigned to a new agency: ${agency}`;
-  else if (type === "2" && PRIORITY_NAMES[numeric])
-    title = `Priority on this ticket was updated to ${PRIORITY_NAMES[numeric]}`;
-  else if (type === "3" && STATUS_NAMES[numeric])
-    title = `Ticket status changed to ${STATUS_NAMES[numeric]}`;
-  else if (type === "5") {
-    title = "Agency update";
+  /** @type {Record<string, string>} */
+  const extra = {};
+  if (type === "1" && agency) {
+    kind = "agencyAssigned";
+    value = agency;
+  } else if (type === "2" && PRIORITY_NAMES[numeric]) {
+    kind = "priorityUpdated";
+    value = PRIORITY_NAMES[numeric];
+  } else if (type === "3" && STATUS_NAMES[numeric]) {
+    kind = "statusChanged";
+    value = STATUS_NAMES[numeric];
+  } else if (type === "5") {
+    kind = "agencyUpdate";
     description = notes || text;
-  } else if (type === "6") title = "Work has been completed on this ticket";
+  } else if (type === "6") kind = "workCompleted";
   else if (type === "9") {
-    title = "Problem details have been updated";
+    kind = "detailsUpdated";
     description = notes;
-  } else if (type === "10") title = "The ticket was accepted for action";
+  } else if (type === "10") kind = "accepted";
   else if (type === "11" && CLOSED_REASONS[numeric]) {
-    title = "The ticket was resolved";
-    description = [`Agency said: ${CLOSED_REASONS[numeric]}`, notes]
+    kind = "resolved";
+    extra.closureReason = CLOSED_REASONS[numeric];
+    if (notes) extra.notes = notes;
+    description = [
+      fill(EVENT_DESCRIPTIONS.agencySaid, CLOSED_REASONS[numeric]),
+      notes,
+    ]
       .filter(Boolean)
       .join("\n");
-  } else if (type === "12" && text)
-    title = `Another ticket was linked to this, #${text}`;
-  else if (type === "14" && agency)
-    title = `${agency} has received this ticket and is reviewing`;
-  if (!title) return null;
+  } else if (type === "12" && text) {
+    kind = "linked";
+    value = text;
+  } else if (type === "14" && agency) {
+    kind = "agencyReviewing";
+    value = agency;
+  }
+  if (!kind) return null;
+  const title = fill(EVENT_TITLES[kind], value);
   const occurredAt = validDate(
     update.EffectiveDate,
     update.ToHubDate,
     update.ToAgencyDate,
   );
   if (!occurredAt) return null;
-  return { title, occurredAt, ...(description ? { description } : {}) };
+  return {
+    kind: /** @type {keyof typeof EVENT_TITLES} */ (kind),
+    ...(value ? { value } : {}),
+    title,
+    occurredAt,
+    ...(description ? { description } : {}),
+    ...extra,
+  };
 }
 
 /** @param {Record<string, unknown>} record @returns {unknown[]} */
@@ -245,6 +300,32 @@ function latestStatusCode(record) {
     })
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   return candidates[0]?.code || "";
+}
+
+/**
+ * Return a conservative closure state for retry reconciliation. Unknown is
+ * intentionally distinct from open: a missing or unfamiliar HUB record must
+ * not trigger a potentially duplicate non-idempotent close request.
+ * @param {unknown} body
+ * @param {string} srNum
+ * @returns {"closed" | "open" | "unknown"}
+ */
+export function serviceRequestClosureState(body, srNum) {
+  const record = findServiceRequest(body, srNum);
+  if (!record) return "unknown";
+  const statusCode = latestStatusCode(record);
+  if (statusCode === "4") return "closed";
+  if (statusCode && STATUS_NAMES[statusCode]) return "open";
+  const closedReason = first(
+    record,
+    "ClosedReason",
+    "ClosedReasonCode",
+    "closed_reason",
+  );
+  if (closedReason) return "closed";
+  const summaryStatus = first(record, "Status", "StatusCode", "status");
+  if (summaryStatus === "4") return "closed";
+  return summaryStatus && STATUS_NAMES[summaryStatus] ? "open" : "unknown";
 }
 
 /** Normalize a HUB record into the app's stable, PII-free ticket-detail contract. */
@@ -309,7 +390,11 @@ export function normalizeSf311Detail({
     )
     .filter((item) => item !== null);
   if (submittedAt)
-    events.push({ title: "Ticket submitted", occurredAt: submittedAt });
+    events.push({
+      kind: "submitted",
+      title: EVENT_TITLES.submitted,
+      occurredAt: submittedAt,
+    });
   events.sort((a, b) =>
     String(b.occurredAt).localeCompare(String(a.occurredAt)),
   );
@@ -331,7 +416,7 @@ export function normalizeSf311Detail({
     status === "Closed" && closureReason
       ? closureReason.toLocaleLowerCase()
       : overdue
-        ? "response overdue"
+        ? STATUS_DETAILS.responseOverdue
         : "";
   return {
     requestNumber: clean(srNum),

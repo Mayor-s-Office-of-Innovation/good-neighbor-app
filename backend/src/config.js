@@ -3,6 +3,7 @@
  * @property {string} uploadBucket
  * @property {string} queueUrl
  * @property {string} dynamoTable
+ * @property {string} [cognitoUserPoolId]
  * @property {string} [analyzerBaseUrl]
  * @property {string} [analyzerApiKey]
  * @property {string} [analyzerApiKeySecretArn]
@@ -40,6 +41,8 @@ export function getConfig(env = process.env) {
   }
 
   const config = /** @type {AppConfig} */ (required);
+  if (env.COGNITO_USER_POOL_ID)
+    config.cognitoUserPoolId = env.COGNITO_USER_POOL_ID;
   if (env.REVERSE_GEOCODING_ENABLED === "true") {
     config.reverseGeocodingEnabled = true;
   }

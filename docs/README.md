@@ -13,6 +13,9 @@
 - **[dynamodb-data-model.md](./dynamodb-data-model.md)** — the authoritative item shapes,
   keys, GSIs, access patterns, identity model, and metric definitions for the single-table
   store.
+- **[dynamodb-sample-records.md](./dynamodb-sample-records.md)** — one check's records as
+  JSON: header, artifact, analysis, assessment, condition, and task, with the keys that
+  tie them together.
 - **[perimeter-check-data-flow.md](./perimeter-check-data-flow.md)** — a worked end-to-end
   walkthrough of one perimeter check: user actions, the analyzer call and what we do with
   its response, the DynamoDB record at each write point (with realistic sample data), the
@@ -28,7 +31,8 @@
   worker (the 413 `input_too_large` fix) and its Lambda packaging choice.
 - **[ADR 0013](./adr/0013-analytics-read-plane.md)** — the analytics read plane: scheduled
   DynamoDB PITR exports → entity-split Parquet in S3 → DuckDB (supersedes the Glue/Athena
-  sketch in the data-model doc; Athena remains a future add-on over the same Parquet).
+  sketch in the data-model doc; Athena remains a future add-on over the same Parquet), plus
+  the dedicated analytics-query Lambda + canned query catalog behind the admin Analytics page.
 - **[ADR 0014](./adr/0014-remove-places-photo-roll.md)** — the perimeter check as a flat
   photo roll: no per-site places setup, completion at three photos or one description
   (client-side rule), text as a full alternative to photos.
@@ -39,11 +43,19 @@
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
   folder is plans + history, see AGENTS.md).
+- **[Client analytics events](./runbooks/client-events.md)** — page views + device facts
+  to PostHog without an SDK: events, allowlists, kill switches, CloudWatch markers.
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
 
 - **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
   and deployment troubleshooting.
+- **[Site Manager access recovery](./runbooks/manager-access.md)** — public recovery abuse,
+  delivery-failure, and WAF alarm triage without exposing email addresses or grant secrets.
+- **[Device revocation](./runbooks/device-revocation.md)** — individual, selected, and
+  Site-wide credential invalidation, partial reconciliation, and recovery checks.
+- **[Media safeguards](./runbooks/media-safeguards.md)** — upload validation, quota and
+  rejection alarms, retention, and incident triage without inspecting private media.
 
 ## Domain & policy reference
 
@@ -51,9 +63,12 @@
   for the action/escalation rulebase (versions, update process). The workflow itself is
   described in [architecture.md](./architecture.md); the rule catalog lives in
   `backend/src/analysis/guidance/`.
+- **[localization.md](./localization.md)** — how the five-language UI works: catalogs,
+  `t()`, the language switch, date rules, translated rulebook/311 text, the i18n scripts,
+  and the translation glossary.
 - **[frontend-design-system.md](./frontend-design-system.md)** — living reference for
-  building a screen to spec from the token/class system (`tokens.css` / `app.css` are the
-  source of truth).
+  building a screen to spec from the token/class system (`tokens.css` / `base.css` plus each
+  component's `.css` are the source of truth).
 - **[design-tokens.md](./design-tokens.md)** — the token values (light/dark) as a
   Figma ↔ code mapping: theme stack, swatches, button metrics, and the WCAG rules
   the palette encodes.
@@ -61,7 +76,7 @@
   reference (dev-only: `npm run dev:frontend` → http://127.0.0.1:5173/design-system.html).
   Renders every button state, all tokens with live values (light + dark), and the
   deliberate divergences from off-the-shelf Web Awesome — using the real `tokens.css` /
-  `app.css`, so it can't drift from the app.
+  `base.css` and component sheets, so it can't drift from the app.
 
 ## Process & security
 

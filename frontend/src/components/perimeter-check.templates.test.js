@@ -2,7 +2,9 @@ import { existsSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { MIN_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
+import { t } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
 import {
   descriptionCard,
   footer,
@@ -44,25 +46,35 @@ describe("shell", () => {
 
 describe("progressLine", () => {
   it("counts photos toward the minimum and offers the text alternative", () => {
-    const markup = progressLine({ photos: 2, texts: 0, complete: false });
+    const markup = progressLine({ photos: 2 });
 
-    expect(markup).toContain(`2 of ${MIN_PERIMETER_PHOTOS} photos taken`);
-    expect(markup).toContain("Try to take at least 3-5 photos");
+    expect(markup).toContain(
+      t("check.progress.count", {
+        photos: 2,
+        recommended: RECOMMENDED_PERIMETER_PHOTOS,
+      }),
+    );
+    expect(markup).toContain(t("check.progress.hint"));
   });
 
-  it("reads ready once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 3, texts: 0, complete: true });
+  it("does not add a completion label once the photo minimum is met", () => {
+    const markup = progressLine({ photos: 1 });
 
-    expect(markup).toContain("3 of 3 photos taken");
-    expect(markup).toContain("Ready to finish");
+    expect(markup).toContain(
+      t("check.progress.count", { photos: 1, recommended: 3 }),
+    );
+    expect(markup).not.toContain("Ready to finish");
   });
 
-  it("reads ready after one description regardless of photo count", () => {
-    const markup = progressLine({ photos: 0, texts: 1, complete: true });
+  it("keeps the photo guidance without a saved-description status", () => {
+    const markup = progressLine({ photos: 0 });
 
-    expect(markup).toContain("Description saved.");
-    expect(markup).toContain("Ready to finish");
-    expect(markup).toContain("Photos are optional");
+    expect(markup).toContain(
+      t("check.progress.count", { photos: 0, recommended: 3 }),
+    );
+    expect(markup).toContain(t("check.progress.hint"));
+    expect(markup).not.toContain("Description saved");
+    expect(markup).not.toContain("Ready to finish");
   });
 });
 
@@ -79,6 +91,11 @@ describe("descriptionCard", () => {
     });
 
     expect(markup).toContain("Litter &lt;near&gt; the door &amp; sidewalk");
+    expect(markup).toContain('class="shot shot--description"');
+    expect(markup).toContain('class="shot__del shot__edit"');
+    expect(markup).toContain('class="shot__del"');
+    expect(markup).toContain(`aria-label="${t("check.description.edit")}"`);
+    expect(markup).toContain(`aria-label="${t("check.description.delete")}"`);
     expect(markup).toContain('data-edit-description="text-1"');
     expect(markup).toContain('data-remove-description="text-1"');
   });
@@ -104,8 +121,26 @@ describe("photoGrid", () => {
     const markup = photoGrid([]);
 
     expect(markup).toContain("addshot--empty");
-    expect(markup).toContain("Take photo");
+    expect(markup).toContain("photo-capture-tile");
+    expect(markup).toContain("photo-capture-tile__icon");
+    expect(markup).toContain("photo-capture-tile__label");
+    expect(markup).toContain(t("check.photo.take"));
     expect(markup).toContain('name="camera"');
+  });
+
+  it("renders a description immediately after the camera tile", () => {
+    const markup = photoGrid([{ id: "photo-1", dataUrl: "data:photo" }], {
+      id: "text-1",
+      text: "Litter near the entrance",
+    });
+
+    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
+      markup.indexOf('data-edit-description="text-1"'),
+    );
+    expect(markup.indexOf('data-edit-description="text-1"')).toBeLessThan(
+      markup.indexOf('data-del="photo-1"'),
+    );
+    expect(markup).not.toContain("addshot--empty");
   });
 });
 
@@ -126,6 +161,46 @@ describe("footer", () => {
 
     expect(markup).not.toMatch(/id="done-check"[^>]*disabled/);
     expect(markup).toContain('id="toggle-analyzing"');
-    expect(markup).toContain("Analyzing...");
+    expect(markup).toContain(t("card.pending.title"));
+  });
+
+  it("supports the single-issue completion control", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", analysis: { status: "complete" } }],
+      analyzingOpen: true,
+      complete: true,
+      doneId: "submit-report",
+      doneLabel: t("common.done"),
+    });
+
+    expect(markup).toContain('id="submit-report"');
+    expect(markup).toContain(t("common.done"));
+    expect(markup).toContain('id="toggle-analyzing"');
+    expect(markup).toContain('aria-expanded="true"');
+  });
+
+  it("reports failed analysis instead of saying no problems were found", () => {
+    const markup = footer({
+      items: [{ id: "photo-1", analysis: { status: "failed" } }],
+      analyzingOpen: true,
+      complete: true,
+    });
+
+    expect(markup).toContain(escapeHtml(t("card.failed.analysisTitle")));
+    expect(markup).not.toContain(t("analysis.summary.none"));
+  });
+
+  it("keeps the analyzing label while another item remains active", () => {
+    const markup = footer({
+      items: [
+        { id: "photo-1", analysis: { status: "failed" } },
+        { id: "photo-2", analysis: { status: "analyzing" } },
+      ],
+      analyzingOpen: true,
+      complete: true,
+    });
+
+    expect(markup).toContain(t("card.pending.title"));
+    expect(markup).not.toContain(escapeHtml(t("card.failed.analysisTitle")));
   });
 });

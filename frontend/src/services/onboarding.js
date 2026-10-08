@@ -3,6 +3,7 @@
   which provider site it binds to; the frontend only formats the prompt and stores
   the returned binding after a successful check.
 */
+import { t } from "../i18n/i18n.js";
 
 // Same-origin everywhere: in dev the Vite proxy forwards `/site-code` → the local
 // API (no CORS — see vite.config.js); in production the SPA and API share one
@@ -124,7 +125,36 @@ export async function requestSetupCode({ siteId, email }) {
     message:
       typeof data?.message === "string"
         ? data.message
-        : "If that email is authorized for this site, we will send a new setup code.",
+        : t("onboarding.setupCodeRequested.message"),
+  };
+}
+
+/**
+ * Request Site Manager enrollment links without revealing membership state.
+ * @param {string} email
+ * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'}>}
+ */
+export async function requestManagerAccess(email) {
+  if (!isPlausibleEmail(email)) return { ok: false, reason: "invalid" };
+  let response;
+  try {
+    response = await fetch(`${BASE}/app/v1/manager-access/request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: String(email).trim() }),
+    });
+  } catch {
+    return { ok: false, reason: "network" };
+  }
+  if (response.status === 400) return { ok: false, reason: "invalid" };
+  if (!response.ok) return { ok: false, reason: "network" };
+  const data = await response.json().catch(() => null);
+  return {
+    ok: true,
+    message:
+      typeof data?.message === "string"
+        ? data.message
+        : "If that email is authorized, enrollment instructions will arrive shortly.",
   };
 }
 

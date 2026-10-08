@@ -1,0 +1,146 @@
+/*
+  Styles for <app-toasts> (app-toasts.js): the stacked toast region and its
+  success / error / information variants.
+  Imported from that module; main.js loads tokens.css and base.css first, so
+  these rules follow the shared base in the bundle. Unlayered, like base.css.
+*/
+
+/* App-level notifications survive route changes without moving page content. */
+app-toasts {
+  position: fixed;
+  inset-block-start: env(safe-area-inset-top, 0px);
+  inset-block-end: auto;
+  inset-inline: 0;
+  z-index: 100;
+  display: grid;
+  gap: 0.75rem;
+  /* Keep implicit rows content-sized if a top-layer browser expands the host. */
+  align-content: start;
+  justify-items: center;
+  max-block-size: 100dvh;
+  overflow-y: auto;
+  inline-size: auto;
+  margin: 0;
+  border: 0;
+  padding: 0 0 0.5rem;
+  background: transparent;
+  color: inherit;
+  pointer-events: none;
+}
+
+.app-toast {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.875rem;
+  inline-size: 100%;
+  max-inline-size: 430px;
+  padding: 2rem 1.25rem;
+  border-radius: 0 0 1.5rem 1.5rem;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 0.375rem 1rem rgba(15, 23, 41, 0.12);
+  pointer-events: auto;
+}
+
+.app-toast__icon {
+  flex: 0 0 3.203125rem;
+  inline-size: 3.203125rem;
+  block-size: 2.5625rem;
+  font-size: 2.5625rem;
+}
+
+.app-toast--success .app-toast__icon {
+  color: var(--toast-success);
+}
+
+.app-toast--error .app-toast__icon {
+  color: var(--c-hazard);
+}
+
+.app-toast--info .app-toast__icon {
+  color: var(--brand-blue);
+}
+
+.app-toast__copy {
+  flex: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-toast__copy [role="status"] {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.app-toast__title {
+  margin: 0;
+  font-size: 1.5625rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.app-toast__message {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.app-toast__controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0;
+}
+
+.app-toast button {
+  height: auto;
+  margin: 0;
+  box-shadow: none;
+  font-family: inherit;
+  font-weight: 500;
+  line-height: 1.2;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-block-size: 2.6875rem;
+  min-inline-size: 2.6875rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.app-toast button:hover {
+  background: var(--surface-2);
+}
+
+.app-toast .app-toast__undo {
+  margin-block-start: 0.25rem;
+  min-inline-size: 2.6875rem;
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--brand-blue);
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.app-toast .app-toast__close {
+  color: var(--text);
+  font-size: 1.25rem;
+}
+
+.app-toast :is(a, button):focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+@media (max-width: 40rem) {
+  .app-toast {
+    gap: 0.875rem;
+    padding: 2rem 1.25rem;
+  }
+}

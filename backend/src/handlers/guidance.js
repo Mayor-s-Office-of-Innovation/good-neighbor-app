@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
-import { deriveSiteId } from "../lib/principal.js";
+import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
   answerCondition,
   completeTaskWithAppActions,
@@ -446,6 +446,7 @@ export const completeTask = async (event) => {
       taskId,
       completionMethod:
         typeof completionMethod === "string" ? completionMethod : undefined,
+      actorId: deriveActorId(event),
     });
     return jsonResponse(200, { task });
   } catch (err) {

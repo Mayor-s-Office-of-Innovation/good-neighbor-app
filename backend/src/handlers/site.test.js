@@ -1,13 +1,41 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  QueryCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, geocodeAddress, presignGet } = vi.hoisted(() => ({
+  send: vi.fn(),
+  geocodeAddress: vi.fn(),
+  presignGet: vi.fn(),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../s3.js", () => ({ presignGet }));
+vi.mock("../integrations/census-geocoder.js", () => ({
+  GeocodingError: class GeocodingError extends Error {
+    /** @param {string} code */
+    constructor(code) {
+      super(code);
+      this.code = code;
+    }
+  },
+  geocodeAddress,
+}));
 
-const { listProviderSites } = await import("./site.js");
+const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
+  await import("./site.js");
 
 beforeEach(() => {
   send.mockReset();
+  geocodeAddress.mockReset();
+  presignGet.mockReset();
+  geocodeAddress.mockResolvedValue({
+    latitude: 37.75,
+    longitude: -122.42,
+    matchedAddress: "2 NEW ST, SAN FRANCISCO, CA 94103",
+  });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "test-bucket");
   vi.stubEnv("SQS_QUEUE_URL", "test-queue");
@@ -21,6 +49,21 @@ function event(siteId) {
   return /** @type {any} */ ({
     requestContext: {
       authorizer: { jwt: { claims: { "custom:siteId": siteId } } },
+    },
+  });
+}
+
+/**
+ * @param {string} siteId
+ * @param {"general"|"admin"} accessLevel
+ * @returns {any}
+ */
+function accessEvent(siteId, accessLevel) {
+  return /** @type {any} */ ({
+    requestContext: {
+      authorizer: {
+        jwt: { claims: { "custom:siteId": siteId, accessLevel } },
+      },
     },
   });
 }
@@ -209,5 +252,171 @@ describe("listProviderSites", () => {
     expect(body(response).sites).toHaveLength(12);
     expect(peak).toBeLessThanOrEqual(5);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("site admin", () => {
+  it("keeps admin-only fields out of the general site response", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        contactPerson: { email: "private@example.org" },
+        oversight: { managingCityDepartment: "DPH" },
+        complianceLetters: { current: { url: "/letter.pdf" } },
+      },
+    });
+    const response = await /** @type {any} */ (getSite)(event("site-1"));
+    expect(body(response).site).toEqual({ siteId: "site-1", name: "Mission" });
+  });
+
+  it("denies general-access devices without reading site data", async () => {
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "general"),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns the admin information to an admin-access device", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        addressParts: { streetNumber: "1", streetAddress: "Main St" },
+        contactPerson: { firstName: "Priya", lastName: "Anand" },
+        perimeter: "The block",
+      },
+    });
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(body(response).site).toMatchObject({
+      siteId: "site-1",
+      name: "Mission",
+      perimeter: "The block",
+    });
+  });
+
+  it("returns a fresh download URL for an uploaded compliance letter", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        complianceLetters: {
+          current: {
+            s3Key: "compliance-letters/site-1/current.pdf",
+            fileName: "current.pdf",
+            effectiveStart: "2026-02-01",
+          },
+          past: [],
+        },
+      },
+    });
+    presignGet.mockResolvedValueOnce("https://uploads.example/current");
+
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+
+    expect(body(response).site.complianceLetters.current.url).toBe(
+      "https://uploads.example/current",
+    );
+    expect(presignGet).toHaveBeenCalledWith({
+      bucket: "test-bucket",
+      key: "compliance-letters/site-1/current.pdf",
+      expiresIn: 300,
+    });
+  });
+
+  it("validates and updates the contact person", async () => {
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", name: "Mission", status: "active" },
+    });
+    send.mockResolvedValueOnce({});
+    const request = accessEvent("site-1", "admin");
+    request.body = JSON.stringify({
+      section: "contactPerson",
+      values: {
+        firstName: "Priya",
+        lastName: "Anand",
+        email: "priya@example.org",
+        phone: "(415) 555-0148",
+      },
+    });
+    const response = await /** @type {any} */ (updateSiteAdmin)(request);
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(
+      send.mock.calls[1][0].input.ExpressionAttributeValues[":contact"],
+    ).toEqual({
+      firstName: "Priya",
+      lastName: "Anand",
+      email: "priya@example.org",
+      phone: "(415) 555-0148",
+    });
+  });
+
+  it("atomically reindexes and geocodes edited site details", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Old Name",
+          address: "1 Old St, San Francisco, CA 94103",
+          providerId: "provider-1",
+          providerName: "Provider One",
+          providerSiteId: "provider-site-1",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const request = accessEvent("site-1", "admin");
+    request.body = JSON.stringify({
+      section: "siteDetails",
+      values: {
+        name: "New Name",
+        address: {
+          streetNumber: "2",
+          streetAddress: "New St",
+          secondLine: "",
+          city: "San Francisco",
+          state: "CA",
+          zip: "94103",
+        },
+      },
+    });
+
+    const response = await /** @type {any} */ (updateSiteAdmin)(request);
+
+    expect(response.statusCode).toBe(200);
+    expect(geocodeAddress).toHaveBeenCalledWith(
+      "2 New St, San Francisco, CA 94103",
+    );
+    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems?.[0]?.Update).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: "#META" },
+      ExpressionAttributeValues: {
+        ":name": "New Name",
+        ":location": { latitude: 37.75, longitude: -122.42 },
+        ":geocodedAddress": "2 NEW ST, SAN FRANCISCO, CA 94103",
+      },
+    });
+    expect(tx.input.TransactItems?.[1]?.Update?.Key).toEqual({
+      pk: "PROVIDER#provider-1",
+      sk: "SITE#site-1",
+    });
+    expect(tx.input.TransactItems?.[2]?.Delete?.Key).toEqual({
+      pk: "SITE_SEARCH#ACTIVE",
+      sk: "old name#site-1",
+    });
+    expect(tx.input.TransactItems?.[3]?.Put?.Item).toMatchObject({
+      pk: "SITE_SEARCH#ACTIVE",
+      sk: "new name#site-1",
+      siteName: "New Name",
+      searchText: "new name provider one",
+    });
   });
 });

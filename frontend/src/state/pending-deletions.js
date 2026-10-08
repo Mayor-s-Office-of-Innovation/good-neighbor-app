@@ -1,4 +1,4 @@
-import { showToast } from "./toasts.js";
+import { showDeleteErrorToast } from "./toasts.js";
 
 /**
  * @typedef {object} DeletedProblem
@@ -74,13 +74,7 @@ export function stageDeletion(problem, commit) {
         entry.status = "failed";
         emit("failed");
         console.error("save pending deletion failed", error);
-        showToast({
-          title: "Couldn't delete item",
-          message: `“${problem.title || "Item"}” has been restored. Please try again.`,
-          icon: "triangle-exclamation",
-          tone: "error",
-          duration: 0,
-        });
+        showDeleteErrorToast();
       } finally {
         if (saves.get(artifactKey) === saving) saves.delete(artifactKey);
       }

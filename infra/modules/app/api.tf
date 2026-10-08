@@ -1,5 +1,9 @@
-# API Gateway v2 HTTP API fronting the api Lambda. One integration; every route
-# key targets it, and the Lambda dispatches on event.routeKey. No authorizer for
+# API Gateway v2 HTTP API fronting the api Lambda. One integration for the app
+# routes — every key in api_routes targets it, and the Lambda dispatches on
+# event.routeKey — plus a second integration for the admin analytics routes,
+# which a dedicated DuckDB-carrying Lambda serves (analytics.tf), and a third
+# for the anonymous best-effort intakes (intake_routes → the intake Lambda,
+# lambda.tf), isolated so PostHog latency never consumes api concurrency. No authorizer for
 # MVP — the site-code flow mints no Cognito JWT, so requests resolve to
 # DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
 # route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
@@ -10,10 +14,21 @@ locals {
     # Device bootstrap (Option 4 device auth — docs/adr/0010): open, no authorizer.
     "POST /v1/devices",
     "POST /v1/devices/token:refresh",
+    "POST /app/v1/enrollment/redeem",
+    "POST /app/v1/manager-access/request",
+    "GET /app/v1/device-bindings",
+    "POST /app/v1/device-bindings/select",
+    "POST /app/v1/manager/staff-grants",
+    "GET /app/v1/manager/staff-grants/current",
+    "DELETE /app/v1/manager/staff-grants/{grantId}",
+    "GET /app/v1/manager/device-bindings",
+    "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
     "GET /v1/sites:search",
     "POST /v1/setup-codes:request",
     # Site config
     "GET /v1/site",
+    "GET /v1/site-admin",
+    "PATCH /v1/site-admin",
     "GET /v1/provider-sites",
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
@@ -28,6 +43,10 @@ locals {
     "POST /v1/311-requests:batch",
     "POST /v1/tasks/{taskId}/complete",
     "POST /v1/tasks/{taskId}/cannot-do",
+    "GET /v1/tasks/{taskId}/updates",
+    "POST /v1/tasks/{taskId}/updates",
+    "POST /v1/tasks/{taskId}/updates/{updateId}/document",
+    "POST /v1/tasks/{taskId}/update-media",
     "GET /v1/tasks/{taskId}/311-requests/{srNum}",
     "POST /v1/assessments:evaluate",
     "GET /v1/assessments/{assessmentId}/guidance",
@@ -35,16 +54,48 @@ locals {
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     "POST /submissions",
-    "POST /v1/client-errors",
-    "POST /v1/feedback",
     "GET /admin/v1/providers",
     "POST /admin/v1/providers",
     "GET /admin/v1/providers/{providerId}",
     "PATCH /admin/v1/providers/{providerId}",
     "DELETE /admin/v1/providers/{providerId}",
+    "GET /admin/v1/programs",
+    "GET /admin/v1/program-managers",
+    "POST /admin/v1/program-managers",
+    "GET /admin/v1/oversight-options",
+    "POST /admin/v1/oversight-options",
+    "POST /admin/v1/address-suggestions",
+    "POST /admin/v1/programs",
+    "GET /admin/v1/programs/{programId}",
+    "PATCH /admin/v1/programs/{programId}",
+    "DELETE /admin/v1/programs/{programId}",
+    "POST /admin/v1/programs/{programId}/users",
+    "PATCH /admin/v1/programs/{programId}/users/{userId}",
+    "DELETE /admin/v1/programs/{programId}/users/{userId}",
+    "POST /admin/v1/providers/{providerId}/programs",
     "POST /admin/v1/providers/{providerId}/sites",
     "GET /admin/v1/sites/{siteId}",
+    "POST /admin/v1/sites/{siteId}/reassign",
+    "POST /admin/v1/sites/{siteId}/users",
+    "DELETE /admin/v1/sites/{siteId}/users/{userId}",
+    "GET /admin/v1/sites/{siteId}/terms",
+    "POST /admin/v1/sites/{siteId}/terms",
+    "GET /admin/v1/sites/{siteId}/perimeter",
+    "PUT /admin/v1/sites/{siteId}/perimeter",
+    "GET /admin/v1/sites/{siteId}/manager-memberships",
+    "POST /admin/v1/sites/{siteId}/manager-memberships",
+    "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    "DELETE /admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    "GET /admin/v1/sites/{siteId}/grants",
+    "POST /admin/v1/sites/{siteId}/manager-grants",
+    "DELETE /admin/v1/sites/{siteId}/grants/{grantId}",
+    "POST /admin/v1/site-imports/preview",
+    "GET /admin/v1/site-imports",
+    "POST /admin/v1/site-imports/{importId}/apply",
+    "GET /admin/v1/site-imports/{importId}",
+    "GET /admin/v1/site-imports/{importId}/conflicts.csv",
     "PATCH /admin/v1/sites/{siteId}",
+    "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",
     "GET /admin/v1/sites/{siteId}/master-contacts",
     "POST /admin/v1/sites/{siteId}/master-contacts",
@@ -55,22 +106,56 @@ locals {
     "POST /admin/v1/sites/{siteId}/setup-codes",
     "GET /admin/v1/sites/{siteId}/devices",
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke",
+    "POST /admin/v1/sites/{siteId}/device-bindings:revoke-all",
+    "POST /admin/v1/sites/{siteId}/device-bindings/{bindingId}/suspend",
+    "GET /admin/v1/physical-devices/{physicalDeviceId}",
+    "POST /admin/v1/physical-devices/{physicalDeviceId}/revoke",
+    "GET /admin/v1/emergency-site-revocations/sites",
+    "POST /admin/v1/emergency-site-revocations:preview",
+    "POST /admin/v1/emergency-site-revocations",
     "GET /health",
   ]
 
-  # Routes an anonymous caller may reach: bootstrap + health + best-effort
-  # intakes. Everything else gets the device-token authorizer (Option 4).
-  # As a MAP keyed by route, so the route resource can do `route_is_open[x]`.
+  # Admin analytics (ADR 0013): served by aws_lambda_function.analytics_query,
+  # never the app api function — DuckDB + a 2 GB footprint stay out of the
+  # operational path. Mirrors backend/src/lambda/analytics-query.js.
+  analytics_routes = [
+    "GET /admin/v1/analytics/queries",
+    "POST /admin/v1/analytics/queries/{queryId}",
+    "POST /admin/v1/analytics/query",
+  ]
+
+  # Best-effort public intakes, served by the intake Lambda (lambda.tf) and
+  # always anonymous. Mirrors backend/src/lambda/intake.js.
+  intake_routes = [
+    "POST /v1/client-errors",
+    "POST /v1/client-events",
+    "POST /v1/feedback",
+  ]
+
+  # api_routes an anonymous caller may reach: bootstrap + health + the legacy
+  # submissions loop. Everything else gets the device-token authorizer
+  # (Option 4). As a MAP keyed by route, so the route resource can do
+  # `route_is_open[x]`. (The intakes above are open too, on their own route
+  # resource.)
   route_is_open = {
-    "POST /site-code"                = true
-    "POST /v1/devices"               = true
-    "POST /v1/devices/token:refresh" = true
-    "GET /v1/sites:search"           = true
-    "POST /v1/setup-codes:request"   = true
-    "GET /health"                    = true
-    "POST /v1/client-errors"         = true
-    "POST /v1/feedback"              = true
-    "POST /submissions"              = true
+    "POST /site-code"                     = true
+    "POST /v1/devices"                    = true
+    "POST /v1/devices/token:refresh"      = true
+    "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/manager-access/request" = true
+    "GET /v1/sites:search"                = true
+    "POST /v1/setup-codes:request"        = true
+    "GET /health"                         = true
+    "POST /submissions"                   = true
+  }
+
+  # Route keys are "METHOD /path". Determine admin scope from the path rather
+  # than enumerating methods so new PUT/HEAD/etc. admin routes fail closed onto
+  # Cognito instead of accidentally receiving the device authorizer.
+  route_is_admin = {
+    for route in local.api_routes : route => can(regex("^[A-Z]+ /admin/", route))
   }
 }
 
@@ -101,11 +186,27 @@ resource "aws_apigatewayv2_integration" "api" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "intake" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.intake.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_integration" "analytics_query" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.analytics_query.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
+}
+
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
 # the claim-shaped context handlers read. Identity source = the Authorization
-# header, so API Gateway caches verdicts per token; the TTL bounds revocation
-# propagation.
+# header. Results are deliberately not cached: device revocation is a security
+# boundary and must take effect on the next request.
 resource "aws_apigatewayv2_authorizer" "device_token" {
   api_id                            = aws_apigatewayv2_api.http.id
   name                              = "${local.name_prefix}-device-token"
@@ -117,7 +218,7 @@ resource "aws_apigatewayv2_authorizer" "device_token" {
   # context }) — without this flag API Gateway expects an IAM policy and
   # rejects the verdict at runtime.
   enable_simple_responses          = true
-  authorizer_result_ttl_in_seconds = 60
+  authorizer_result_ttl_in_seconds = 0
 }
 
 resource "aws_apigatewayv2_route" "routes" {
@@ -138,8 +239,39 @@ resource "aws_apigatewayv2_route" "routes" {
   # unlisted route as protected — a bare map lookup on an absent key is a hard
   # plan-time "Invalid index" error, and the default is fail-closed.
   #checkov:skip=CKV_AWS_309:Open routes only (bootstrap/health/intakes) are anonymous by design; all other routes attach the device-token authorizer.
-  authorization_type = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? "JWT" : "CUSTOM"
-  authorizer_id      = try(local.route_is_open[each.value], false) ? null : startswith(each.value, "GET /admin/") || startswith(each.value, "POST /admin/") || startswith(each.value, "PATCH /admin/") || startswith(each.value, "DELETE /admin/") ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+  authorization_type = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? "JWT" : "CUSTOM"
+  authorizer_id      = try(local.route_is_open[each.value], false) ? null : local.route_is_admin[each.value] ? aws_apigatewayv2_authorizer.admin_jwt.id : aws_apigatewayv2_authorizer.device_token.id
+
+  lifecycle {
+    precondition {
+      condition     = length(regexall("\\{[^}/]+\\}[^/]+", each.value)) == 0
+      error_message = "API Gateway path parameters must occupy an entire path segment: ${each.value}"
+    }
+  }
+}
+
+# Admin analytics routes: always the admin JWT authorizer, always the
+# analytics-query integration. Kept as a separate resource so the app route
+# set above stays a plain list.
+resource "aws_apigatewayv2_route" "analytics" {
+  for_each = toset(local.analytics_routes)
+
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.analytics_query.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.admin_jwt.id
+}
+
+# Best-effort intakes: anonymous by design (sendBeacon from the field app
+# carries no credentials), always the intake integration.
+resource "aws_apigatewayv2_route" "intake" {
+  #checkov:skip=CKV_AWS_309:Public best-effort intakes (client errors/events, feedback) are anonymous by design; payloads are allowlist-scrubbed and the Lambda's reserved concurrency bounds abuse.
+  for_each = toset(local.intake_routes)
+
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = each.value
+  target    = "integrations/${aws_apigatewayv2_integration.intake.id}"
 }
 
 resource "aws_cloudwatch_log_group" "api_gw" {

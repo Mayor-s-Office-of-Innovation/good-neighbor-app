@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { t, setLocale } from "../i18n/i18n.js";
+import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
+import { escapeHtml } from "../lib/html.js";
 import {
   analysisActionPriority,
   analysisCards,
@@ -19,26 +22,29 @@ describe("historical check titles", () => {
   const now = new Date(2026, 8, 23, 12, 0);
 
   it("shows the time for a superseded check from today", () => {
-    expect(historicalCheckTitle(new Date(2026, 8, 23, 9, 5), now)).toBe(
-      "From today's 9:05 AM check",
+    const date = new Date(2026, 8, 23, 9, 5);
+    expect(historicalCheckTitle(date, now)).toBe(
+      t("analysis.checkTitle.today", { time: formatTime(date) }),
     );
   });
 
   it("uses yesterday for the prior calendar day", () => {
     expect(historicalCheckTitle(new Date(2026, 8, 22, 9, 0), now)).toBe(
-      "From yesterday's check",
+      t("analysis.checkTitle.yesterday"),
     );
   });
 
   it("uses the weekday within the current calendar week", () => {
-    expect(historicalCheckTitle(new Date(2026, 8, 21, 9, 0), now)).toBe(
-      "From Monday's check",
+    const date = new Date(2026, 8, 21, 9, 0);
+    expect(historicalCheckTitle(date, now)).toBe(
+      t("analysis.checkTitle.weekday", { weekday: formatWeekday(date) }),
     );
   });
 
   it("uses a numeric date before the current calendar week", () => {
-    expect(historicalCheckTitle(new Date(2026, 8, 14, 9, 0), now)).toBe(
-      "From the check on 09/14/26",
+    const date = new Date(2026, 8, 14, 9, 0);
+    expect(historicalCheckTitle(date, now)).toBe(
+      t("analysis.checkTitle.date", { date: formatNumericDate(date) }),
     );
   });
 });
@@ -247,7 +253,9 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("NEW • GUB-STJ-001");
+    expect(cards[0]).toContain(
+      t("card.meta.newWithReference", { reference: "GUB-STJ-001" }),
+    );
     expect(cards[0]).not.toContain("long-assessment-id");
   });
 
@@ -282,7 +290,9 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("NEW • legacy-assessment-id");
+    expect(cards[0]).toContain(
+      t("card.meta.newWithReference", { reference: "legacy-assessment-id" }),
+    );
   });
 
   it("does not show raw assessment ids on condition cards awaiting answers", () => {
@@ -316,8 +326,8 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("More details needed");
-    expect(cards[0]).toContain(">NEW</span>");
+    expect(cards[0]).toContain(t("card.title.moreDetails"));
+    expect(cards[0]).toContain(`>${t("card.meta.new")}</span>`);
     expect(cards[0]).not.toContain("long-assessment-id");
   });
 
@@ -367,12 +377,14 @@ describe("analysis result summaries", () => {
 
     expect(cards).toHaveLength(2);
     expect(cards[0]).toContain("Litter");
-    expect(cards[1]).toContain("More details needed");
+    expect(cards[1]).toContain(t("card.title.moreDetails"));
     expect(cards[1]).toContain(
       "Is this animal owned by a site client or resident?",
     );
     expect(problemSummary(items)).toEqual({ visible: 2, hidden: 0 });
-    expect(problemSummaryLabel(problemSummary(items))).toBe("2 problems found");
+    expect(problemSummaryLabel(problemSummary(items))).toBe(
+      t("analysis.summary.found", { count: 2 }),
+    );
   });
 
   it("counts a visible unpaired condition after all task conditions are hidden", () => {
@@ -413,7 +425,9 @@ describe("analysis result summaries", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toContain("Needles");
     expect(problemSummary([item])).toEqual({ visible: 1, hidden: 1 });
-    expect(problemSummaryLabel(problemSummary([item]))).toBe("1 problem found");
+    expect(problemSummaryLabel(problemSummary([item]))).toBe(
+      t("analysis.summary.found", { count: 1 }),
+    );
   });
 
   it("renders a clarifying question instead of a generic condition title", () => {
@@ -447,7 +461,7 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("More details needed");
+    expect(cards[0]).toContain(t("card.title.moreDetails"));
     expect(cards[0]).toContain("Dogs are off-leash near traffic.");
     expect(cards[0]).toContain(
       "Is this animal owned by a site client or resident?",
@@ -455,7 +469,7 @@ describe("analysis result summaries", () => {
     expect(cards[0]).not.toContain("Dangerous animals");
     expect(cards[0]).toContain('data-analysis-action="answer"');
     expect(cards[0]).toContain('data-answer-key="affiliated"');
-    expect(cards[0]).not.toContain("Condition found");
+    expect(cards[0]).not.toContain(t("card.title.fallback"));
   });
 
   it("uses analyzer category fields for condition-only cards", () => {
@@ -482,7 +496,7 @@ describe("analysis result summaries", () => {
 
     expect(cards).toHaveLength(1);
     expect(cards[0]).toContain("Dangerous animals");
-    expect(cards[0]).not.toContain("Condition found");
+    expect(cards[0]).not.toContain(t("card.title.fallback"));
   });
 
   it("renders the check-level clear result with an add-problem link", () => {
@@ -501,10 +515,10 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain("Your check was clear!");
-    expect(cards[0]).toContain(
-      "We didn't identify any perimeter issues in this check.",
-    );
+    expect(cards[0]).toContain(escapeHtml(t("card.clear.title")));
+    const [sentence] = t("card.clear.copy").split("{link}");
+    expect(cards[0]).toContain(escapeHtml(sentence.trim()));
+    expect(cards[0]).toContain(escapeHtml(t("card.clear.addProblem")));
     expect(cards[0]).toContain('href="/problem"');
     expect(cards[0]).not.toContain('data-analysis-action="edit"');
     expect(cards[0]).not.toContain('data-analysis-action="delete"');
@@ -521,16 +535,12 @@ describe("analysis result summaries", () => {
       "check_1",
     );
 
-    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+    expect(markup.split(escapeHtml(t("card.clear.title"))).length - 1).toBe(1);
   });
 
-  it("removes the clear card as soon as any issue is present", () => {
+  it("does not show a clear card after an issue is already in the stack", () => {
     const markup = analysisResultsTray(
       [
-        {
-          id: "clear_photo",
-          analysis: { status: "analyzed", tasks: [], conditions: [] },
-        },
         {
           id: "issue_photo",
           analysis: {
@@ -547,12 +557,35 @@ describe("analysis result summaries", () => {
             conditions: [],
           },
         },
+        {
+          id: "clear_photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
       ],
       "check_1",
     );
 
-    expect(markup).not.toContain("Your check was clear!");
+    expect(markup).not.toContain(escapeHtml(t("card.clear.title")));
     expect(markup).toContain("Litter");
+  });
+
+  it("waits for every item before showing the stack-level clear card", () => {
+    const markup = analysisResultsTray(
+      [
+        {
+          id: "pending_issue_photo",
+          analysis: { status: "analyzing" },
+        },
+        {
+          id: "clear_photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+      ],
+      "check_1",
+    );
+
+    expect(markup).not.toContain(escapeHtml(t("card.clear.title")));
+    expect(markup).toContain("analysis-card--pending");
   });
 });
 
@@ -569,7 +602,7 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Analyzing...");
+    expect(card).toContain(escapeHtml(t("card.pending.title")));
     expect(card).toContain("15th St");
     expect(card).toContain("analysis-card__skeleton--route");
     expect(card).toContain("analysis-card__skeleton--button");
@@ -593,7 +626,7 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Analyzing...");
+    expect(card).toContain(escapeHtml(t("card.pending.title")));
     expect(card).toContain("analysis-card__skeleton--wide");
     expect(card).toContain("analysis-card__skeleton--mid");
   });
@@ -609,7 +642,7 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Analyzing...");
+    expect(card).toContain(escapeHtml(t("card.pending.title")));
     expect(card).toContain("analysis-card__media--text");
     expect(card).not.toContain("analysis-card__media--placeholder");
   });
@@ -638,10 +671,16 @@ describe("failed cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Analysis didn't finish");
-    expect(card).toContain("Try again");
+    expect(card).toContain(escapeHtml(t("card.failed.analysisTitle")));
+    expect(card).toContain(escapeHtml(t("common.retry")));
     expect(card).toContain('data-analysis-action="retry"');
-    expect(card).toContain("Waited 3m 0s.");
+    expect(card).toContain(
+      escapeHtml(
+        t("card.failed.waited", {
+          duration: t("date.elapsed.minutes", { minutes: 3, seconds: 0 }),
+        }),
+      ),
+    );
     expect(card).not.toContain("skeleton-line");
   });
 
@@ -666,10 +705,14 @@ describe("failed cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain("Upload failed");
-    expect(card).toContain("Check your connection and try again.");
+    expect(card).toContain(escapeHtml(t("card.failed.uploadTitle")));
+    expect(card).toContain(escapeHtml(t("card.failed.reason.upload")));
     expect(card).toContain('data-analysis-action="remove-item"');
-    expect(card).not.toContain("Waited");
+    // The "Waited …" sentence minus its duration: must be absent under a second.
+    const [waitedPrefix] = t("card.failed.waited", { duration: "\0" }).split(
+      "\0",
+    );
+    expect(card).not.toContain(escapeHtml(waitedPrefix.trim()));
   });
 
   it("keeps an analyzer-side failure retryable without the remove affordance", () => {
@@ -693,16 +736,37 @@ describe("failed cards", () => {
       "check_1",
     )[0];
 
+    expect(card).toContain(escapeHtml(t("card.failed.reason.analyzeBackend")));
     expect(card).toContain(
-      "The analysis service couldn&#39;t process this one.",
+      escapeHtml(
+        t("card.failed.waited", {
+          duration: t("date.elapsed.seconds", { seconds: 4 }),
+        }),
+      ),
     );
-    expect(card).toContain("Waited 4s.");
     expect(card).toContain('data-analysis-action="retry"');
     expect(card).not.toContain('data-analysis-action="remove-item"');
   });
 });
 
 describe("taskAnalysisCard", () => {
+  it("uses the thumbnail on the card and the full media URL in the lightbox", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task_photo",
+        checkId: "check_photo",
+        category: "Litter",
+        thumbnailUrl: "https://cdn.example/thumb.jpg",
+        mediaUrl: "https://cdn.example/full.jpg",
+      },
+      action: null,
+      statusLabel: "Today",
+    });
+
+    expect(card).toContain('src="https://cdn.example/thumb.jpg"');
+    expect(card).toContain('data-full-src="https://cdn.example/full.jpg"');
+  });
+
   it("keeps action guidance visible while preserving the condition description for edits", () => {
     const card = taskAnalysisCard({
       task: {
@@ -765,9 +829,9 @@ describe("taskAnalysisCard", () => {
       includeControls: false,
     });
 
-    expect(card).toContain("View details");
+    expect(card).toContain(t("card.viewUpdates"));
     expect(card).toContain('data-action="view311"');
-    expect(card).toContain("analysis-card__primary--outline");
+    expect(card).toContain("analysis-card__updates");
     expect(card).not.toContain('name="circle-check"');
     expect(card).toContain("analysis-card__media--placeholder");
     expect(card).toContain('name="image"');
@@ -777,15 +841,15 @@ describe("taskAnalysisCard", () => {
   });
 
   it("formats latest 311 update timestamps for card footers", () => {
-    const now = new Date(2026, 8, 24, 12, 0);
-    expect(updatedCardTime(new Date(2026, 8, 24, 9, 15), now)).toBe(
+    const now = new Date("2026-09-24T12:00:00-07:00");
+    expect(updatedCardTime("2026-09-24T09:15:00-07:00", now)).toBe(
       "Updated today, 9:15 AM",
     );
-    expect(updatedCardTime(new Date(2026, 8, 22, 9, 15), now)).toBe(
+    expect(updatedCardTime("2026-09-22T09:15:00-07:00", now)).toBe(
       "Updated Tuesday, 9:15 AM",
     );
-    expect(updatedCardTime(new Date(2026, 8, 17, 9, 15), now)).toBe(
-      "Updated Sep 17, 9:15 AM",
+    expect(updatedCardTime("2026-09-17T09:15:00-07:00", now)).toBe(
+      "Updated 09/17/2026, 9:15 AM",
     );
   });
 
@@ -812,7 +876,7 @@ describe("taskAnalysisCard", () => {
         includeControls: false,
       });
 
-      expect(card).toContain("311 request");
+      expect(card).toContain(escapeHtml(t("card.route.ticket")));
       expect(card).toContain(`analysis-card__ticket-status--${tone}`);
       expect(card).toContain(`>${label}</span`);
     },
@@ -831,7 +895,7 @@ describe("taskAnalysisCard", () => {
       includeControls: false,
     });
 
-    expect(card).toContain("311 request");
+    expect(card).toContain(escapeHtml(t("card.route.ticket")));
     expect(card).not.toContain("analysis-card__ticket-status");
   });
 });
@@ -952,5 +1016,72 @@ describe("evidence captions without a place name", () => {
 
     expect(card).toContain("Civic Center Annex");
     expect(card).not.toContain(">perimeter<");
+  });
+});
+
+describe("card redesign", () => {
+  it("uses the Spanish task-update translation for an ambiguous History status", async () => {
+    await setLocale("es");
+    try {
+      const card = taskAnalysisCard({
+        task: {
+          taskId: "resolved",
+          kind: "escalation",
+          status: "completed",
+          latestUpdateLabel: "Resolved",
+        },
+        history: true,
+        action: null,
+        statusLabel: "",
+      });
+      expect(card).toContain("Resuelto");
+      expect(card).not.toContain("Resuelta");
+    } finally {
+      await setLocale("en");
+    }
+  });
+  const task = {
+    taskId: "task_1",
+    ruleId: "LITTER-1",
+    kind: "action",
+    category: "Litter",
+    buttons: ["We picked this up"],
+    createdAt: "2026-10-01T12:00:00Z",
+    completedAt: "2026-10-01T13:00:00Z",
+  };
+  it("shows the new rubric label on an existing to-do card with one edit target and an X", () => {
+    const card = taskAnalysisCard({
+      task,
+      action: { kind: "done", label: "We picked this up" },
+      statusLabel: "",
+    });
+    expect(card).toContain('role="checkbox"');
+    expect(card).toContain('aria-checked="false"');
+    expect(card).toContain("Pick up the litter");
+    expect(card).not.toContain("We picked this up");
+    expect(card).toContain('name="xmark"');
+    expect(card).toContain(t("card.editDetails"));
+  });
+  it("retains a filing button for 311 escalations", () => {
+    const card = taskAnalysisCard({
+      task: { ...task, kind: "escalation" },
+      action: { kind: "file311", label: "File 311 ticket" },
+      statusLabel: "",
+    });
+    expect(card).toContain('data-action="file311"');
+    expect(card).not.toContain('role="checkbox"');
+  });
+  it("renders history as a timeline row without editing controls or guidance", () => {
+    const card = taskAnalysisCard({
+      task: { ...task, status: "completed", guidance: "Guidance omitted" },
+      history: true,
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).toContain('data-action="update"');
+    expect(card).toContain(t("card.history.hours", { count: 1 }));
+    expect(card).not.toContain('data-analysis-action="edit"');
+    expect(card).not.toContain('data-analysis-action="delete"');
+    expect(card).not.toContain("Guidance omitted");
   });
 });

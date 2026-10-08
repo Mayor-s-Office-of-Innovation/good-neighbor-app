@@ -1,10 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
+  requestManagerAccess,
   requestSetupCode,
   searchSites,
   validateSetupCode,
 } from "./onboarding.js";
+
+describe("requestManagerAccess", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns the generic response without asking for a Site", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: () =>
+        Promise.resolve({
+          message:
+            "If that email is authorized, enrollment instructions will arrive shortly.",
+        }),
+    });
+    vi.stubGlobal("fetch", fetch);
+    await expect(requestManagerAccess("manager@example.org")).resolves.toEqual({
+      ok: true,
+      message:
+        "If that email is authorized, enrollment instructions will arrive shortly.",
+    });
+    expect(fetch.mock.calls[0][0]).toBe("/app/v1/manager-access/request");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      email: "manager@example.org",
+    });
+  });
+});
 
 describe("formatSiteCode", () => {
   it("normalizes visual separators", () => {
@@ -59,8 +87,7 @@ describe("requestSetupCode", () => {
       status: 202,
       json: () =>
         Promise.resolve({
-          message:
-            "If that email is authorized for this site, we will send a new setup code.",
+          message: "Check your inbox for a setup code.",
         }),
     });
     vi.stubGlobal("fetch", fetch);
@@ -69,13 +96,28 @@ describe("requestSetupCode", () => {
       requestSetupCode({ siteId: "site-1", email: "lead@example.org" }),
     ).resolves.toEqual({
       ok: true,
-      message:
-        "If that email is authorized for this site, we will send a new setup code.",
+      message: "Check your inbox for a setup code.",
     });
     expect(fetch.mock.calls[0][0]).toBe("/v1/setup-codes:request");
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       siteId: "site-1",
       email: "lead@example.org",
+    });
+  });
+
+  it("falls back to the generic message when the server sends none", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: () => Promise.resolve({}),
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(
+      requestSetupCode({ siteId: "site-1", email: "lead@example.org" }),
+    ).resolves.toEqual({
+      ok: true,
+      message: t("onboarding.setupCodeRequested.message"),
     });
   });
 

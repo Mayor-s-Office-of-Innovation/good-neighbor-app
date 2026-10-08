@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 
 const releaseSha =
@@ -6,10 +7,10 @@ const releaseSha =
 
 /*
   Served from the site root (S3/CloudFront), so base is "/" — paired with the
-  History-API router (src/router.js). Deep-link/refresh 404s are handled by a
-  CloudFront custom-error-response → index.html fallback provisioned with the
-  deploy stage (infra I1); Vite's dev/preview server already serves that SPA
-  fallback locally.
+  History-API router (src/router.js). Deep-link/refresh 404s are handled by the
+  frontend_spa_rewrite viewer-request CloudFront Function rewriting non-asset
+  paths to /index.html before the S3 origin (infra/modules/app/cloudfront.tf);
+  Vite's dev/preview server serves the same SPA fallback locally.
 
   TODO(offline pass): the PWA is intentionally OFF for the MVP — no service
   worker is generated or registered while we finalize screens. When we do the
@@ -28,6 +29,31 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: "/",
+    resolve: {
+      alias: [
+        // Web Awesome's built-in "system" icon library is ~40 kB of inlined
+        // Font Awesome SVGs registered at import time and looked up by name,
+        // so it cannot be tree-shaken. None of the components we load (icon,
+        // otp-input, textarea, spinner) draw a system icon. The replacement
+        // resolves system icon names to the same self-hosted set as our
+        // `default` library instead — see src/lib/wa-system-icons.js for the
+        // rule when adding a Web Awesome component that does use one.
+        // The regex must match the WHOLE specifier (hence the leading ^.*):
+        // a regex alias replaces only the matched part, so a bare filename
+        // match would leave a broken "../../chunks/<abs path>". Keyed on the
+        // vendor chunk's hashed filename; if a Web Awesome upgrade renames
+        // it, the build still succeeds and size-limit reports the ~8 kB
+        // brotli regression.
+        {
+          find: /^.*chunk\.LDM2MW63\.js$/,
+          // import.meta.url (not import.meta.dirname): Vite rewrites it to
+          // the real config path when it bundles this file to a temp dir.
+          replacement: fileURLToPath(
+            new URL("./src/lib/wa-system-icons.js", import.meta.url),
+          ),
+        },
+      ],
+    },
     plugins: [],
     define: {
       // Release stamp for error reports (services/error-report.js reads
@@ -40,6 +66,20 @@ export default defineConfig(({ mode }) => {
       // error-tracking plan). deploy.yml uploads them to PostHog and EXCLUDES
       // them from the public S3 sync — public maps would leak full source.
       sourcemap: true,
+      rollupOptions: {
+        output: {
+          // Keep shared localization/escaping separate from the application
+          // entry as lazy card controls and dialogs are added to the graph.
+          manualChunks(id) {
+            if (
+              /\/src\/(i18n\/(i18n|locale)\.js|i18n\/catalogs\/en\.json|lib\/html\.js)$/.test(
+                id,
+              )
+            )
+              return "shared-ui";
+          },
+        },
+      },
     },
     server: {
       // HTTPS tunnel used for camera/location testing on physical devices. The
@@ -61,6 +101,7 @@ export default defineConfig(({ mode }) => {
       // to their own origin and never touch this proxy.
       proxy: {
         "/v1": "http://localhost:3001",
+        "/app": "http://localhost:3001",
         "/site-code": "http://localhost:3001",
         "/health": "http://localhost:3001",
         // DynamoDB/SQS stay behind the API, but presigned media uploads go

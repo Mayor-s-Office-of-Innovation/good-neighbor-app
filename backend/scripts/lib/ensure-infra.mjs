@@ -29,6 +29,9 @@ import { seedSiteCodes } from "./site-code-seeds.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const WAIT_SECONDS = Number(process.env.LOCAL_INFRA_WAIT_SECONDS ?? 90);
+const POLL_INTERVAL_MS = 500;
+
 /**
  * Retry an operation until it stops throwing connection errors — absorbs JVM
  * warmup. Rethrows immediately on any non-connection error.
@@ -36,7 +39,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * @param {string} label
  */
 async function waitForService(probe, label) {
-  const attempts = 40;
+  const attempts = Math.max(
+    1,
+    Math.round((WAIT_SECONDS * 1000) / POLL_INTERVAL_MS),
+  );
   for (let i = 1; i <= attempts; i++) {
     try {
       await probe();
@@ -54,12 +60,12 @@ async function waitForService(probe, label) {
       if (!connreset || i === attempts) {
         if (i === attempts) {
           throw new Error(
-            `${label} not reachable after ${attempts} attempts: ${/** @type {Error} */ (err).message}`,
+            `${label} not reachable after ~${WAIT_SECONDS}s (${attempts} attempts): ${/** @type {Error} */ (err).message}`,
           );
         }
         throw err;
       }
-      await sleep(250);
+      await sleep(POLL_INTERVAL_MS);
     }
   }
 }

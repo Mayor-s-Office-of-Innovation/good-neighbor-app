@@ -10,12 +10,15 @@ import { evaluateCondition } from "./evaluator.js";
  * @property {string} id
  * @property {{ category: string, severity: number }} condition
  * @property {Record<string, unknown>} [answers]
+ * @property {string} [reportedAt]
  */
 
 const ROUTING_PATHS = new Set([
   "category",
   "evaluationOrder",
   "severity",
+  "validTimeRange",
+  "canBeInProgress",
   "requiredQuestions",
   "predicate",
   "outcome.kind",
@@ -23,6 +26,7 @@ const ROUTING_PATHS = new Set([
 
 const INTEGRATION_PATHS = new Set([
   "maxAcceptableResponseHours",
+  "primaryInProgressAgency",
   "outcome.appActions",
   "outcome.category311",
 ]);
@@ -80,6 +84,9 @@ function comparableRule(rule) {
     maxAcceptableResponseHours: rule.maxAcceptableResponseHours,
     evaluationOrder: rule.evaluationOrder,
     severity: rule.severity,
+    validTimeRange: rule.validTimeRange,
+    canBeInProgress: rule.canBeInProgress,
+    primaryInProgressAgency: rule.primaryInProgressAgency,
     requiredQuestions: rule.requiredQuestions,
     predicate: rule.predicate,
     "outcome.kind": rule.outcome.kind,
@@ -205,6 +212,7 @@ export function evaluateRulebaseImpact(before, after, fixtures) {
         condition: fixture.condition,
         answers: fixture.answers ?? {},
         catalog: before,
+        reportedAt: fixture.reportedAt ?? "2026-10-01T19:00:00.000Z",
       }),
     );
     const next = evaluationFingerprint(
@@ -212,6 +220,7 @@ export function evaluateRulebaseImpact(before, after, fixtures) {
         condition: fixture.condition,
         answers: fixture.answers ?? {},
         catalog: after,
+        reportedAt: fixture.reportedAt ?? "2026-10-01T19:00:00.000Z",
       }),
     );
     return sameValue(prior, next)

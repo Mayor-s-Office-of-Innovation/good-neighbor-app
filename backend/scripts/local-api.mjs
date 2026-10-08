@@ -9,6 +9,7 @@
 
 import { createServer } from "node:http";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
 import { buildProxyEvent } from "./lib/proxy-event.mjs";
 import {
   createCheck,
@@ -28,6 +29,12 @@ import {
   listTasks,
 } from "../src/handlers/tasks.js";
 import {
+  createTaskUpdate,
+  documentTaskUpdate,
+  getTaskUpdates,
+  registerTaskUpdateMedia,
+} from "../src/handlers/task-updates.js";
+import {
   cannotDoTask,
   completeTask,
   evaluateAssessment,
@@ -38,12 +45,31 @@ import { handler as submissionsHandler } from "../src/handlers/submissions.js";
 import { handler as healthHandler } from "../src/handlers/health.js";
 import { handler as siteCodeHandler } from "../src/handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../src/handlers/devices.js";
+import { redeemEnrollmentGrant } from "../src/handlers/enrollment.js";
+import {
+  listDeviceBindings,
+  selectDeviceBinding,
+} from "../src/handlers/device-bindings.js";
+import {
+  cancelStaffGrant,
+  createStaffGrant,
+  getCurrentStaffGrant,
+  listGeneralBindings,
+  revokeGeneralBinding,
+} from "../src/handlers/manager-access.js";
+import { requestManagerAccess } from "../src/handlers/manager-access-requests.js";
 import {
   requestSetupCode,
   searchSites,
 } from "../src/handlers/setup-code-requests.js";
-import { getSite, listProviderSites } from "../src/handlers/site.js";
+import {
+  getSite,
+  getSiteAdmin,
+  listProviderSites,
+  updateSiteAdmin,
+} from "../src/handlers/site.js";
 import { handler as clientErrorsHandler } from "../src/handlers/client-errors.js";
+import { handler as clientEventsHandler } from "../src/handlers/client-events.js";
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
   editAnalysisCondition,
@@ -51,6 +77,7 @@ import {
 } from "../src/handlers/analysis-amendments.js";
 import {
   createCodeContact,
+  createCityProgramManager,
   createMasterContact,
   createProvider,
   createSite,
@@ -62,13 +89,75 @@ import {
   getProvider,
   issueAdminSetupCode,
   listCodeContacts,
+  listCityProgramManagers,
   listDevices,
   listMasterContacts,
   listProviders,
+  presignComplianceLetter,
+  reassignSite,
   revokeDevice,
   updateProvider,
   updateSite,
 } from "../src/handlers/admin.js";
+import {
+  createOversightOption,
+  listOversightOptions,
+} from "../src/handlers/admin-oversight.js";
+import { suggestAddresses } from "../src/handlers/admin-addresses.js";
+import {
+  getPhysicalDeviceRevocationPreview,
+  revokeAllSiteDeviceBindings,
+  revokePhysicalDeviceEverywhere,
+  revokeSelectedDeviceBindings,
+  suspendDeviceBinding,
+} from "../src/handlers/admin-device-revocation.js";
+import {
+  listEmergencyRevocationSites,
+  previewEmergencySiteRevocation,
+  startEmergencySiteRevocation,
+} from "../src/handlers/admin-multi-site-revocation.js";
+import {
+  assignProgramToProvider,
+  createProgramUser,
+  createProgram,
+  deactivateProgramUser,
+  deactivateProgram,
+  getProgram,
+  listPrograms,
+  updateProgramUser,
+  updateProgram,
+} from "../src/handlers/admin-programs.js";
+import {
+  assignSiteUser,
+  createSiteTerms,
+  getSitePerimeter,
+  listSiteTerms,
+  putSitePerimeter,
+  unassignSiteUser,
+} from "../src/handlers/admin-site-config.js";
+import {
+  createManagerMembership,
+  deactivateManagerMembership,
+  listManagerMemberships,
+  updateManagerMembership,
+} from "../src/handlers/admin-manager-memberships.js";
+import {
+  cancelManagerGrant,
+  createManagerGrant,
+  listManagerGrants,
+} from "../src/handlers/admin-manager-grants.js";
+import {
+  applySiteImport,
+  getSiteImport,
+  getSiteImportConflicts,
+  listSiteImports,
+  previewSiteImport,
+} from "../src/handlers/admin-site-imports.js";
+import {
+  listAnalyticsQueries,
+  runAnalyticsCatalogQuery,
+  runAnalyticsQuery,
+} from "../src/handlers/admin-analytics.js";
 
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
@@ -79,34 +168,8 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
 };
-
-// Local device-token verification (mirrors lambda/authorizer.js): when a
-// request carries `Authorization: Bearer <jwt>`, verify it and use its claims
-// INSTEAD of the X-Debug stubs — so local dev exercises the production claim
-// contract. Unset DEVICE_TOKEN_SECRET disables verification (stub-only mode).
-async function resolveClaims(flatHeaders) {
-  const bearer = /^(?:authorization)$/i;
-  const header = Object.keys(flatHeaders).find((k) => bearer.test(k));
-  const value = header ? flatHeaders[header] : "";
-  const m = /^Bearer\s+(.+)$/i.exec(value.trim());
-  if (m && process.env.DEVICE_TOKEN_SECRET) {
-    try {
-      const { verifyDeviceToken } = await import("../src/lib/device-token.js");
-      const claims = await verifyDeviceToken(m[1]);
-      if (claims.typ !== "access") throw new Error("not an access token");
-      return {
-        sub: claims.sub,
-        siteId: claims.siteId,
-        ver: claims.ver,
-      };
-    } catch (err) {
-      return { error: /** @type {Error} */ (err).message };
-    }
-  }
-  return null;
-}
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
 // (e.g. `/v1/checks/{checkId}`) and may carry a literal `:action` suffix on the
@@ -148,10 +211,25 @@ const routes = [
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),
   route("POST", "/v1/devices/token:refresh", refreshDeviceToken),
+  route("POST", "/app/v1/enrollment/redeem", redeemEnrollmentGrant),
+  route("POST", "/app/v1/manager-access/request", requestManagerAccess),
+  route("GET", "/app/v1/device-bindings", listDeviceBindings),
+  route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
+  route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
+  route("GET", "/app/v1/manager/staff-grants/current", getCurrentStaffGrant),
+  route("DELETE", "/app/v1/manager/staff-grants/{grantId}", cancelStaffGrant),
+  route("GET", "/app/v1/manager/device-bindings", listGeneralBindings),
+  route(
+    "POST",
+    "/app/v1/manager/device-bindings/{bindingId}/revoke",
+    revokeGeneralBinding,
+  ),
   route("GET", "/v1/sites:search", searchSites),
   route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config
   route("GET", "/v1/site", getSite),
+  route("GET", "/v1/site-admin", getSiteAdmin),
+  route("PATCH", "/v1/site-admin", updateSiteAdmin),
   route("GET", "/v1/provider-sites", listProviderSites),
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
@@ -163,6 +241,7 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}",
     deleteArtifact,
   ),
+  route("POST", "/v1/tasks/{taskId}/update-media", registerTaskUpdateMedia),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
     "GET",
@@ -176,6 +255,13 @@ const routes = [
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
   route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
+  route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
+  route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
+  route(
+    "POST",
+    "/v1/tasks/{taskId}/updates/{updateId}/document",
+    documentTaskUpdate,
+  ),
   // Assessment guidance workflow
   route("POST", "/v1/assessments:evaluate", evaluateAssessment),
   route("GET", "/v1/assessments/{assessmentId}/guidance", getGuidance),
@@ -199,6 +285,8 @@ const routes = [
   route("GET", "/health", healthHandler),
   // Client error intake (best-effort; handler always 204s)
   route("POST", "/v1/client-errors", clientErrorsHandler),
+  // Client analytics intake (page views + app events; always 204s)
+  route("POST", "/v1/client-events", clientEventsHandler),
   // User feedback intake (log-based store; handler always 204s)
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
@@ -206,9 +294,83 @@ const routes = [
   route("GET", "/admin/v1/providers/{providerId}", getProvider),
   route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
   route("DELETE", "/admin/v1/providers/{providerId}", deactivateProvider),
+  route("GET", "/admin/v1/programs", listPrograms),
+  route("GET", "/admin/v1/program-managers", listCityProgramManagers),
+  route("POST", "/admin/v1/program-managers", createCityProgramManager),
+  route("GET", "/admin/v1/oversight-options", listOversightOptions),
+  route("POST", "/admin/v1/oversight-options", createOversightOption),
+  route("POST", "/admin/v1/address-suggestions", suggestAddresses),
+  route("POST", "/admin/v1/programs", createProgram),
+  route("GET", "/admin/v1/programs/{programId}", getProgram),
+  route("PATCH", "/admin/v1/programs/{programId}", updateProgram),
+  route("DELETE", "/admin/v1/programs/{programId}", deactivateProgram),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/programs",
+    assignProgramToProvider,
+  ),
+  route("POST", "/admin/v1/programs/{programId}/users", createProgramUser),
+  route(
+    "PATCH",
+    "/admin/v1/programs/{programId}/users/{userId}",
+    updateProgramUser,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/programs/{programId}/users/{userId}",
+    deactivateProgramUser,
+  ),
   route("POST", "/admin/v1/providers/{providerId}/sites", createSite),
   route("GET", "/admin/v1/sites/{siteId}", getAdminSite),
+  route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
+  route("POST", "/admin/v1/sites/{siteId}/users", assignSiteUser),
+  route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
+  route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
+  route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
+  route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
+  route(
+    "GET",
+    "/admin/v1/sites/{siteId}/manager-memberships",
+    listManagerMemberships,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/manager-memberships",
+    createManagerMembership,
+  ),
+  route(
+    "PATCH",
+    "/admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    updateManagerMembership,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/manager-memberships/{membershipId}",
+    deactivateManagerMembership,
+  ),
+  route("GET", "/admin/v1/sites/{siteId}/grants", listManagerGrants),
+  route("POST", "/admin/v1/sites/{siteId}/manager-grants", createManagerGrant),
+  route(
+    "DELETE",
+    "/admin/v1/sites/{siteId}/grants/{grantId}",
+    cancelManagerGrant,
+  ),
+  route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
+  route("GET", "/admin/v1/site-imports", listSiteImports),
+  route("POST", "/admin/v1/site-imports/{importId}/apply", applySiteImport),
+  route("GET", "/admin/v1/site-imports/{importId}", getSiteImport),
+  route(
+    "GET",
+    "/admin/v1/site-imports/{importId}/conflicts.csv",
+    getSiteImportConflicts,
+  ),
   route("PATCH", "/admin/v1/sites/{siteId}", updateSite),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/compliance-letters:presign",
+    presignComplianceLetter,
+  ),
   route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
   route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
   route(
@@ -231,6 +393,53 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
   route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
   route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings:revoke",
+    revokeSelectedDeviceBindings,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings:revoke-all",
+    revokeAllSiteDeviceBindings,
+  ),
+  route(
+    "POST",
+    "/admin/v1/sites/{siteId}/device-bindings/{bindingId}/suspend",
+    suspendDeviceBinding,
+  ),
+  route(
+    "GET",
+    "/admin/v1/physical-devices/{physicalDeviceId}",
+    getPhysicalDeviceRevocationPreview,
+  ),
+  route(
+    "POST",
+    "/admin/v1/physical-devices/{physicalDeviceId}/revoke",
+    revokePhysicalDeviceEverywhere,
+  ),
+  route(
+    "GET",
+    "/admin/v1/emergency-site-revocations/sites",
+    listEmergencyRevocationSites,
+  ),
+  route(
+    "POST",
+    "/admin/v1/emergency-site-revocations:preview",
+    previewEmergencySiteRevocation,
+  ),
+  route(
+    "POST",
+    "/admin/v1/emergency-site-revocations",
+    startEmergencySiteRevocation,
+  ),
+  route("GET", "/admin/v1/analytics/queries", listAnalyticsQueries),
+  route(
+    "POST",
+    "/admin/v1/analytics/queries/{queryId}",
+    runAnalyticsCatalogQuery,
+  ),
+  route("POST", "/admin/v1/analytics/query", runAnalyticsQuery),
 ];
 
 /**
@@ -301,13 +510,14 @@ const server = createServer(async (req, res) => {
     }
     const hasQuery = Object.keys(queryStringParameters).length > 0;
 
-    // Local token verification (production claim contract): a Bearer token
-    // overrides the X-Debug stubs; a BAD token 401s like the real authorizer.
+    // Run the production authorizer locally. A Bearer token overrides the
+    // X-Debug stubs, and signature, expiry, live binding status/generation,
+    // Site state, and Manager membership are all checked before dispatch.
     const flat = {};
     for (const [k, v] of Object.entries(req.headers)) {
       flat[k] = Array.isArray(v) ? v.join(",") : v;
     }
-    const claims = await resolveClaims(flat);
+    const claims = await resolveDeviceClaims(flat);
     if (claims?.error) {
       res.writeHead(401, {
         "content-type": "application/json",

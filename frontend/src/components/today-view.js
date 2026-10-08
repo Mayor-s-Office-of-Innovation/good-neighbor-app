@@ -1,3 +1,10 @@
+import {
+  toggleCardCompletion,
+  isCompletingAnalysisCard,
+  slideCompletedCard,
+} from "./analysis-card-completion.js";
+import { groupHistory } from "../domain/task-history.js";
+import { pacificDateKey } from "../i18n/dates.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
 
@@ -8,10 +15,27 @@
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
-  tasks are created. Markup is inline via the `html` tag; split into a
-  .templates.js file if it grows (see CLAUDE.md convention).
+  tasks are created. Markup lives in today-view.templates.js; this file owns
+  state, data loading, and DOM wiring.
 */
-import { show311SuccessToast, show311ErrorToast } from "../state/toasts.js";
+import "./today-view.css";
+import {
+  show311SuccessToast,
+  show311ErrorToast,
+  showActionSaveErrorToast,
+  showAnswerSaveErrorToast,
+  showDeleteErrorToast,
+  showEditErrorToast,
+  showEditRefreshErrorToast,
+  showEditSavedToast,
+  showReanalysisErrorToast,
+  showSiteCatalogErrorToast,
+  showSiteSwitchBlockedToast,
+  showSiteSwitchErrorToast,
+  showSiteSwitchSuccessToast,
+  showLanguageErrorToast,
+  queueSiteSwitchSuccessToast,
+} from "../state/toasts.js";
 import {
   onDeletionsChange,
   isTaskPendingDeletion,
@@ -20,26 +44,25 @@ import {
   deleteAnalysisCard,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
-import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { navigate } from "../router.js";
+import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
+import { announceScreenHeading } from "../screen-focus.js";
 import {
   activateSiteBinding,
   clearSiteSession,
   getSite,
+  hasAdminAccess,
   listBoundSites,
+  setSite,
 } from "../db.js";
 import {
   listChecks,
   listTasks,
-  listProviderSites,
-  getCheck,
-  getMediaUrl,
-  ApiError,
   completeTask,
   cannotDoTask,
   editAnalysisCondition,
-  rejectAnalysisCondition,
-  get311RequestDetail,
   get311RequestDetails,
+  selectDeviceBinding,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -49,10 +72,50 @@ import {
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
+  HOME_TABS,
+  displayTaskId,
+  hasProblemResults,
+  homeTabForStatus,
+  homeTaskStatus,
+  isNewHomeTask,
+  isOutsideSiteRadius,
+  isStalePendingSession,
+  lastLogSummary,
+  newestBlueCheckGroup,
+  newestTaskEntriesFirst,
+  normalizedHomeTab,
+  relativeDay,
+  sessionProblemItemHasBackendCards,
+  splitSiteIdentity,
+  submitted311Ticket,
+  taskArtifactIdSet,
+  taskArtifactIds,
+  taskCheckGroupId,
+  taskCreatedAt,
+  timeOf,
+  uniqueTasks,
+  visibleTaskEntriesForHydration,
+} from "../domain/home-tasks.js";
+import {
+  hydrateTaskEvidence,
+  mergeHydratedTasks,
+  needsTaskEvidenceHydration,
+} from "../services/task-evidence.js";
+import {
+  readTaskStatusOverrides,
+  writeTaskStatusOverrides,
+} from "../state/task-status-overrides.js";
+import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
+import {
+  missingConditionMessage,
+  problemFromCard,
+  rejectProblemCondition,
+} from "./analysis-problem-actions.js";
+import {
   appActionFailureMessage,
   isFiled311Completion,
+  submitted311ServiceRequestNumber,
 } from "../domain/task-actions.js";
-import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import {
   getCurrentCheck,
   hasDraft,
@@ -61,23 +124,31 @@ import {
   clearSubmittedSession,
   discardInMemorySession,
   pauseCheck,
-  resumeOrStartCheck,
-  resumeOrStartProblemReport,
   removeItem,
-  updateItemAnalysis,
+  rejectConditionLocally,
+  resolveConditionLocally,
 } from "../state/check-session.js";
 import {
-  analysisResultsTray,
   analysisActionPriority,
-  clearCheckCard,
-  historicalCheckTitle,
-  recentCheckTitle,
   sortAnalysisCards,
   taskAnalysisCard,
-  taskMediaUrl,
 } from "./analysis-results.templates.js";
+import {
+  actionButton,
+  errorView,
+  heroBlock,
+  homeResults,
+  homeShell,
+  reasonPicker,
+  summaryBlock,
+} from "./today-view.templates.js";
+import "./ticket-detail-dialog.js";
+import "./site-switcher.js";
+import "./location-dialog.js";
+import { fetchProviderSites } from "../services/provider-sites.js";
+import { getLocale, setLocale, t } from "../i18n/i18n.js";
+import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
-import { analysisDialogs } from "./perimeter-check.templates.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import {
   getSiteCheckDeviceLocation,
@@ -86,722 +157,52 @@ import {
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
 
-const HOME_TABS = [
-  { id: "todo", label: "To do" },
-  { id: "in_progress", label: "In progress" },
-  { id: "history", label: "History" },
-];
-const NEW_TASK_WINDOW_MS = 3 * 60 * 60 * 1000;
-const ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000;
-const TASK_STATUS_OVERRIDES_KEY = "gnp-home-task-status-overrides";
-const CHECK_ARTIFACTS_CACHE = new Map();
-const MEDIA_URL_CACHE = new Map();
-const SITE_RADIUS_METERS = 201.168; // One eighth of a mile.
-
-/**
- * @param {string | number | Date} expectedAt
- * @param {string | number | Date} [now]
- */
-export function formatOverdueElapsed(expectedAt, now = Date.now()) {
-  const elapsedHours = Math.max(
-    1,
-    Math.floor(
-      (new Date(now).getTime() - new Date(expectedAt).getTime()) / 3_600_000,
-    ),
-  );
-  if (elapsedHours < 24) {
-    return `${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"}`;
-  }
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  return `${elapsedDays} ${elapsedDays === 1 ? "day" : "days"}`;
-}
-
-function ticketEventDescription(description) {
-  return description ? html`<p>${escapeHtml(description)}</p>` : "";
-}
-
-function submitted311Ticket(task) {
-  for (const result of task?.appActionResults || []) {
-    if (result?.code !== "create_311_ticket") continue;
-    const ticket = result?.payload?.tickets?.find((item) => item?.srNum);
-    if (ticket) return ticket;
-  }
-  return null;
-}
-
-/**
- * @param {{latitude: number, longitude: number} | null | undefined} position
- * @param {{latitude: number, longitude: number} | null | undefined} site
- * @returns {boolean}
- */
-export function isOutsideSiteRadius(position, site) {
-  if (!position || !site) return false;
-  const { latitude: lat1, longitude: lon1 } = position;
-  const { latitude: lat2, longitude: lon2 } = site;
-  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return false;
-  if (
-    Math.abs(lat1) > 90 ||
-    Math.abs(lat2) > 90 ||
-    Math.abs(lon1) > 180 ||
-    Math.abs(lon2) > 180
-  )
-    return false;
-  const radians = Math.PI / 180;
-  const deltaLat = (lat2 - lat1) * radians;
-  const deltaLon = (lon2 - lon1) * radians;
-  const arc =
-    Math.sin(deltaLat / 2) ** 2 +
-    Math.cos(lat1 * radians) *
-      Math.cos(lat2 * radians) *
-      Math.sin(deltaLon / 2) ** 2;
-  return (
-    6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(arc))) > SITE_RADIUS_METERS
-  );
-}
-
-/**
- * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
- * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
- * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
- * @returns {boolean}
- */
-export function isStalePendingSession(session, submitted, tasks = []) {
-  if (!session) return false;
-  if (session.status === "capture-complete") {
-    // The backend check can be submitted before per-artifact guidance has
-    // finished. Keep the local results alive until every captured item has
-    // settled; otherwise its last analysis update cannot refresh home.
-    const items = Array.isArray(session.items) ? session.items : [];
-    if (items.some((item) => item.analysis?.status !== "analyzed")) {
-      return false;
-    }
-    if (
-      items.some(
-        (item) =>
-          hasProblemResults(item) &&
-          !sessionProblemItemHasBackendCards(item, tasks),
-      )
-    ) {
-      return false;
-    }
-    return submitted.some((check) => check.id === session.id);
-  }
-  if (submitted.some((check) => check.id === session.id)) return false;
-  if (!session.submittedAt || !submitted.length) return false;
-  return submitted.some(
-    (check) =>
-      check.submittedAt &&
-      check.submittedAt.localeCompare(session.submittedAt) >= 0,
-  );
-}
-
-/**
- * Sort task records by creation time without mutating the caller's array.
- * @template {{ createdAt?: string }} T
- * @param {T[]} tasks
- * @returns {T[]}
- */
-export function newestTasksFirst(tasks) {
-  return [...tasks].sort((a, b) =>
-    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
-  );
-}
-
-export function activeHomeFilterLabel(filterId, counts) {
-  const tab =
-    HOME_TABS.find((candidate) => candidate.id === filterId) || HOME_TABS[0];
-  return `${tab.label} • ${counts[filterId] || 0}`;
-}
-
-/**
- * @param {string} status
- * @returns {"todo" | "in_progress" | "history"}
- */
-export function homeTabForStatus(status) {
-  if (status === "needs_action") return "todo";
-  if (status === "in_progress") return "in_progress";
-  return "history";
-}
-
-function normalizedHomeTab(value) {
-  if (value === "needs_action") return "todo";
-  if (value === "resolved" || value === "archived") return "history";
-  return HOME_TABS.some((tab) => tab.id === value) ? value : "todo";
-}
-
-export function homeTaskStatus(task, override, now = new Date()) {
-  const status = String(task.status || "open");
-  if (status === "completing" || status === "in_progress") {
-    return "in_progress";
-  }
-  if (status === "completed" || status === "cannot_do") {
-    if (
-      status === "completed" &&
-      task.completionMethod === "311_filed" &&
-      !hasCompleted311Ticket(task)
-    ) {
-      return "in_progress";
-    }
-    const resolvedAt =
-      task.completedAt ||
-      task.completed_at ||
-      task.resolvedAt ||
-      task.resolved_at ||
-      task.updatedAt ||
-      task.updated_at ||
-      taskCreatedAt(task);
-    return ageMs(resolvedAt, now) >= ARCHIVE_AFTER_MS ? "archived" : "resolved";
-  }
-  if (override?.status === "in_progress") return "in_progress";
-  if (override?.status === "resolved") {
-    return ageMs(override.updatedAt, now) >= ARCHIVE_AFTER_MS
-      ? "archived"
-      : "resolved";
-  }
-  return "needs_action";
-}
-
-function hasCompleted311Ticket(task) {
-  const terminalStatuses = new Set(["closed", "completed", "resolved"]);
-  return (task.appActionResults || []).some(
-    (result) =>
-      result?.code === "create_311_ticket" &&
-      terminalStatuses.has(String(result.status || "").toLowerCase()),
-  );
-}
-
-export function isNewHomeTask(task, override, now = new Date()) {
-  return (
-    homeTaskStatus(task, override, now) === "needs_action" &&
-    ageMs(taskCreatedAt(task), now) < NEW_TASK_WINDOW_MS
-  );
-}
-
-export function taskCreatedAt(task) {
-  if (task.createdAt) return task.createdAt;
-  if (task.created_at) return task.created_at;
-  if (task.updatedAt) return task.updatedAt;
-  if (task.updated_at) return task.updated_at;
-  const gsiDate = /^([^#]+)#/.exec(String(task.gsi2sk || ""));
-  return gsiDate?.[1] || "";
-}
-
-export function displayTaskId(task) {
-  return String(
-    task.shortId ||
-      task.displayId ||
-      task.display_id ||
-      task.assessmentId ||
-      task.taskId ||
-      "",
-  );
-}
-
-export function shouldShowFirstRunHome({
-  captureVisible,
-  last,
-  taskCount,
-  hasResultCards,
-}) {
-  return !captureVisible && !last && taskCount === 0 && !hasResultCards;
-}
-
-/** @returns {string} */
-export function homeAllDonePanel() {
-  return html`
-    <section
-      class="home-results__complete"
-      aria-labelledby="home-all-done-title"
-    >
-      <div class="home-results__complete-content">
-        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
-        <h2 id="home-all-done-title">All done!</h2>
-        <p>
-          Your site is in great shape. Nothing needs your attention right now.
-        </p>
-        <p class="home-results__complete-note">
-          <a href="/problem" data-start-capture="single-problem">
-            Add a problem
-          </a>
-          if we missed something.
-        </p>
-      </div>
-    </section>
-  `;
-}
-
-export function shouldDeferSessionRenderDuringCapture(viewPhase, session) {
-  if (!["entering-capture", "capture", "leaving-capture"].includes(viewPhase)) {
-    return false;
-  }
-  return !session || session.status === "capture-complete";
-}
-
-export function shouldInertHomeResults(viewPhase) {
-  return ["entering-capture", "capture"].includes(viewPhase);
-}
-
-export function captureAnimationFallbackMs(style) {
-  const durations = cssTimeListMs(style.animationDuration);
-  const delays = cssTimeListMs(style.animationDelay);
-  const count = Math.max(durations.length, delays.length, 1);
-  let max = 0;
-  for (let i = 0; i < count; i++) {
-    max = Math.max(
-      max,
-      (durations[i % durations.length] || 0) + (delays[i % delays.length] || 0),
-    );
-  }
-  return max > 0 ? max + 50 : 1;
-}
-
-export function issueCountLabel(count) {
-  if (!count) return "";
-  return `${count} ${count === 1 ? "issue" : "issues"} found`;
-}
-
-/**
- * @param {{ id?: string, submittedAt?: string | null, issueCount?: number } | null | undefined} last
- * @param {Array<{ task: { checkId?: string }, homeStatus: string }>} entries
- * @param {Date} [now]
- * @returns {string}
- */
-export function lastLogSummary(last, entries, now = new Date()) {
-  if (!last?.submittedAt) return "";
-  const date = new Date(last.submittedAt);
-  if (Number.isNaN(date.getTime())) return "";
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  const day =
-    date.toDateString() === now.toDateString()
-      ? "today"
-      : date.toDateString() === yesterday.toDateString()
-        ? "yesterday"
-        : new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
-  const time = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-  const count = Number(last.issueCount) || 0;
-  const needsAction = entries.some(
-    (entry) =>
-      entry.task.checkId === last.id && entry.homeStatus === "needs_action",
-  );
-  const outcome =
-    count === 0
-      ? "No issues found"
-      : last.id && !needsAction
-        ? "All issues handled"
-        : issueCountLabel(count);
-  return `Last log: ${day} at ${time} · ${outcome}`;
-}
-
-export function taskSignaturesFromSessionItems(items) {
-  const signatures = {
-    taskIds: new Set(),
-    conditionIds: new Set(),
-    assessmentIds: new Set(),
-    artifactIds: new Set(),
-  };
-  for (const item of items || []) {
-    const artifactId = item?.analysis?.artifactId || item?.upload?.artifactId;
-    if (artifactId) signatures.artifactIds.add(artifactId);
-    const assessmentId = item?.analysis?.assessment?.assessmentId;
-    if (assessmentId) signatures.assessmentIds.add(assessmentId);
-    for (const condition of item?.analysis?.conditions || []) {
-      if (condition?.conditionId) {
-        signatures.conditionIds.add(condition.conditionId);
-      }
-    }
-    for (const task of item?.analysis?.tasks || []) {
-      if (task?.taskId) signatures.taskIds.add(task.taskId);
-      if (task?.conditionId) signatures.conditionIds.add(task.conditionId);
-      if (task?.assessmentId) signatures.assessmentIds.add(task.assessmentId);
-      for (const artifact of task?.sourceArtifactIds || []) {
-        if (artifact) signatures.artifactIds.add(artifact);
-      }
-    }
-  }
-  return signatures;
-}
-
-export function taskMatchesSessionSignatures(task, signatures) {
-  if (!task || !signatures) return false;
-  if (task.taskId && signatures.taskIds.has(task.taskId)) return true;
-  if (task.conditionId && signatures.conditionIds.has(task.conditionId)) {
-    return true;
-  }
-  if (task.assessmentId && signatures.assessmentIds.has(task.assessmentId)) {
-    return true;
-  }
-  return taskArtifactIds(task).some((artifactId) =>
-    signatures.artifactIds.has(artifactId),
-  );
-}
-
-function ageMs(iso, now) {
-  if (!iso) return 0;
-  const timestamp = new Date(iso).getTime();
-  if (!Number.isFinite(timestamp)) return 0;
-  return Math.max(0, now.getTime() - timestamp);
-}
-
-function uniqueTasks(tasks) {
-  const byId = new Map();
-  for (const task of tasks) {
-    if (!task?.taskId || byId.has(task.taskId)) continue;
-    byId.set(task.taskId, task);
-  }
-  return [...byId.values()];
-}
-
-function taskArtifactIdSet(tasks) {
-  const artifactIds = new Set();
-  for (const task of tasks || []) {
-    for (const artifactId of taskArtifactIds(task)) {
-      if (artifactId) artifactIds.add(artifactId);
-    }
-  }
-  return artifactIds;
-}
-
-function taskArtifactIds(task) {
-  const explicitIds = Array.isArray(task?.sourceArtifactIds)
-    ? task.sourceArtifactIds
-    : [];
-  const assessmentArtifactId = artifactIdFromAssessmentId(task?.assessmentId);
-  return [...explicitIds, assessmentArtifactId].filter(Boolean);
-}
-
-function hasProblemResults(item) {
-  return Boolean(
-    (item.analysis?.tasks || []).length ||
-      (item.analysis?.conditions || []).length,
-  );
-}
-
-export function sessionProblemItemHasBackendCards(item, tasks) {
-  const backendTasks = Array.isArray(tasks) ? tasks : [];
-  const localTasks = item?.analysis?.tasks || [];
-  if (localTasks.length) {
-    return localTasks.every((localTask) =>
-      backendTasks.some((backendTask) =>
-        sameProblemCard(localTask, backendTask),
-      ),
-    );
-  }
-  const localConditions = item?.analysis?.conditions || [];
-  if (localConditions.length) {
-    return localConditions.every((condition) =>
-      backendTasks.some(
-        (backendTask) =>
-          condition.conditionId &&
-          condition.conditionId === backendTask.conditionId,
-      ),
-    );
-  }
-  return false;
-}
-
-function sameProblemCard(localTask, backendTask) {
-  return Boolean(
-    (localTask.taskId && localTask.taskId === backendTask.taskId) ||
-      (localTask.conditionId &&
-        localTask.conditionId === backendTask.conditionId) ||
-      (localTask.assessmentId &&
-        localTask.assessmentId === backendTask.assessmentId),
-  );
-}
-
-async function hydrateTaskEvidence(tasks) {
-  const checkIds = [
-    ...new Set(tasks.map((task) => task?.checkId).filter(Boolean)),
-  ];
-  if (!checkIds.length) return tasks;
-
-  const artifactsByCheck = new Map();
-  await Promise.all(
-    checkIds.map(async (checkId) => {
-      artifactsByCheck.set(checkId, await cachedCheckArtifacts(checkId));
-    }),
-  );
-
-  return Promise.all(
-    tasks.map(async (task) => {
-      const artifact = firstTaskArtifact(task, artifactsByCheck);
-      if (!artifact) return task;
-      // `positionDescriptor` is not a fallback here: since ADR 0014 it is a
-      // fixed literal, not a location. Only pre-Phase-2 rows carry a place
-      // name; the card falls back to the site name otherwise.
-      const evidence = {
-        artifactId: artifact.artifactId || "",
-        placeName: artifact.placeName || task.placeName || task.location || "",
-        georeferencedAddress: artifact.georeferencedAddress || "",
-        text: artifact.text || "",
-      };
-      if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
-        try {
-          const downloadUrl = await cachedMediaUrl(
-            task.checkId,
-            artifact.artifactId,
-          );
-          return {
-            ...task,
-            evidence,
-            mediaUrl: downloadUrl,
-            thumbnailUrl: downloadUrl,
-          };
-        } catch (err) {
-          console.warn("Could not hydrate task media", {
-            checkId: task.checkId,
-            artifactId: artifact.artifactId,
-            err,
-          });
-        }
-      }
-      return { ...task, evidence };
-    }),
-  );
-}
-
-async function cachedCheckArtifacts(checkId) {
-  if (!CHECK_ARTIFACTS_CACHE.has(checkId)) {
-    CHECK_ARTIFACTS_CACHE.set(
-      checkId,
-      getCheck(checkId)
-        .then((result) => {
-          const addresses = new Map(
-            (result.analyses || []).map((analysis) => [
-              analysis.artifactId,
-              analysis.georeferencedAddress || "",
-            ]),
-          );
-          return (result.artifacts || []).map((artifact) => ({
-            ...artifact,
-            georeferencedAddress:
-              addresses.get(artifact.artifactId) ||
-              artifact.georeferencedAddress ||
-              "",
-          }));
-        })
-        .catch((err) => {
-          console.warn("Could not hydrate task evidence", { checkId, err });
-          CHECK_ARTIFACTS_CACHE.delete(checkId);
-          return [];
-        }),
-    );
-  }
-  return CHECK_ARTIFACTS_CACHE.get(checkId);
-}
-
-async function cachedMediaUrl(checkId, artifactId) {
-  const key = `${checkId}:${artifactId}`;
-  if (!MEDIA_URL_CACHE.has(key)) {
-    MEDIA_URL_CACHE.set(
-      key,
-      getMediaUrl(checkId, artifactId)
-        .then((media) => media.downloadUrl)
-        .catch((err) => {
-          MEDIA_URL_CACHE.delete(key);
-          throw err;
-        }),
-    );
-  }
-  return MEDIA_URL_CACHE.get(key);
-}
-
-function firstTaskArtifact(task, artifactsByCheck) {
-  const artifacts = artifactsByCheck.get(task?.checkId) || [];
-  const sourceIds = new Set(taskArtifactIds(task));
-  return (
-    artifacts.find((artifact) =>
-      sourceIds.has(String(artifact.artifactId || "")),
-    ) || null
-  );
-}
-
-function artifactIdFromAssessmentId(assessmentId) {
-  const value = String(assessmentId || "");
-  const uuidPair =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
-      value,
-    );
-  return uuidPair?.[1] || "";
-}
-
-function newestTaskEntriesFirst(entries) {
-  return [...entries].sort((a, b) =>
-    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
-  );
-}
-
-function taskCheckGroupId(task) {
-  return task?.checkId || "unknown";
-}
-
-/**
- * @param {Array<{task: {checkId?: string}, createdAt?: string}>} entries
- * @param {Array<{id: string, submittedAt?: string, startedAt?: string, issueCount?: number}>} checks
- * @param {{id?: string, startedAt?: string, submittedAt?: string} | null} pendingSession
- * @param {Date} [now]
- * @returns {{id: string, time: string}}
- */
-export function newestBlueCheckGroup(
-  entries,
-  checks,
-  pendingSession,
-  now = new Date(),
-) {
-  const checkTimes = new Map(
-    (checks || []).map((check) => [
-      check.id,
-      check.submittedAt || check.startedAt || "",
-    ]),
-  );
-  const candidates = new Map();
-  for (const entry of entries || []) {
-    const id = taskCheckGroupId(entry.task);
-    const timestamp = checkTimes.get(id) || entry.createdAt || "";
-    const previous = candidates.get(id) || "";
-    if (String(timestamp).localeCompare(String(previous)) > 0) {
-      candidates.set(id, timestamp);
-    }
-  }
-  for (const check of checks || []) {
-    if (Number(check.issueCount) !== 0 || !check.id) continue;
-    candidates.set(
-      check.id,
-      check.submittedAt || check.startedAt || candidates.get(check.id) || "",
-    );
-  }
-  if (pendingSession?.id) {
-    candidates.set(
-      pendingSession.id,
-      pendingSession.startedAt || pendingSession.submittedAt || "",
-    );
-  }
-  const newest = [...candidates.entries()].sort((a, b) =>
-    String(b[1]).localeCompare(String(a[1])),
-  )[0];
-  if (!newest) return { id: "", time: "" };
-  const date = new Date(newest[1]);
-  if (
-    Number.isNaN(date.getTime()) ||
-    date.toDateString() !== now.toDateString()
-  ) {
-    return { id: "", time: "" };
-  }
-  return { id: newest[0], time: newest[1] };
-}
-
-export function visibleTaskEntriesForHydration(entries, homeFilter) {
-  return entries.filter(
-    (entry) => homeTabForStatus(entry.homeStatus) === homeFilter,
-  );
-}
-
-function needsTaskEvidenceHydration(task) {
-  return Boolean(
-    task?.checkId &&
-      taskArtifactIds(task).length &&
-      !task?.evidence?.artifactId &&
-      !task?.mediaUrl &&
-      !task?.thumbnailUrl,
-  );
-}
-
-function mergeHydratedTasks(tasks, hydratedTasks) {
-  const hydratedById = new Map(
-    hydratedTasks
-      .filter((task) => task?.taskId)
-      .map((task) => [task.taskId, task]),
-  );
-  return tasks.map((task) => hydratedById.get(task.taskId) || task);
-}
-
-function readTaskStatusOverrides() {
-  try {
-    const raw = localStorage.getItem(TASK_STATUS_OVERRIDES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeTaskStatusOverrides(overrides) {
-  try {
-    localStorage.setItem(TASK_STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
-  } catch {
-    // Losing this overlay only affects the temporary home bucket assignment.
-  }
-}
-
-function cssTimeListMs(value) {
-  return String(value || "0s")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const numeric = Number.parseFloat(part);
-      if (!Number.isFinite(numeric)) return 0;
-      return part.endsWith("ms") ? numeric : numeric * 1000;
-    });
-}
-
 class TodayView extends HTMLElement {
   constructor() {
     super();
-    this._viewPhase = "home";
-    this._captureFlow = null;
-    /** @param {CustomEvent<{ discarded?: boolean }>} event */
-    this._captureFinishedHandler = (event) => this._finishCapture(event);
-    this._discardingCapture = false;
     this._cardDeletedHandler = (event) => {
       if (!this._deferredDeletionRender) return;
       this._deferredDeletionRender = false;
       if (event.target === this) return;
-      this._focusAfterRender = ["capture", "entering-capture"].includes(
-        this._viewPhase,
-      )
-        ? "capture-heading"
-        : "home-primary-control";
+      this._focusAfterRender = "home-primary-control";
       void this.connectedCallback();
     };
-    this._captureFinishedListening = false;
-    this._capturePhaseTimer = 0;
     this._focusAfterRender = null;
-    this._captureLauncherSelector = null;
     this._homeModel = null;
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
     this._settingsDocumentClick = null;
-    this._siteSwitcherOpen = false;
-    this._siteDocumentClick = null;
+    this._attributionsDialog = null;
+    this._attributionsDialogOpen = false;
+    this._languageDialog = null;
+    this._languageDialogOpen = false;
+    /** @type {any} the persistent <site-switcher>, created on first render */
+    this._siteSwitcher = null;
     this._providerSites = [];
     this._providerSitesStatus = "idle";
     this._boundSites = [];
     this._providerName = "";
-    this._siteSwitchError = "";
     this._logoutDialog = null;
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
     this._deviceLocation = getLastDeviceLocation();
     this._locationUnsub = null;
+    /** @type {any} the persistent <location-dialog>, created on first render */
+    this._locationDialog = null;
+    /** @type {{ flowType: string, launcher: EventTarget | null } | null} capture waiting on the prompt */
     this._locationPrompt = null;
-    this._locationSelectedSiteId = "";
     this._pendingLocationRender = false;
     this._startingCapture = false;
-    this._ticketDetail = null;
-    this._ticketDetailState = "idle";
-    this._ticketDetailOpen = false;
-    this._ticketDetailTrigger = null;
+    /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
+    this._ticketDetailDialog = null;
+    /** @type {any} */
+    this._taskUpdateDialog = null;
+    /** @type {{ taskId: string, trigger: HTMLElement } | null} */
+    this._taskUpdateReturnFocus = null;
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
-    this._311DetailGeneration = 0;
   }
 
   disconnectedCallback() {
@@ -809,20 +210,15 @@ class TodayView extends HTMLElement {
     this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
-    this.removeEventListener("capturefinished", this._captureFinishedHandler);
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
-    document.removeEventListener("click", this._siteDocumentClick);
-    this._siteDocumentClick = null;
-    this._captureFinishedListening = false;
     this._locationUnsub?.();
     this._locationUnsub = null;
-    window.clearTimeout(this._capturePhaseTimer);
   }
 
   async connectedCallback() {
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
@@ -836,7 +232,7 @@ class TodayView extends HTMLElement {
     if (!this._locationUnsub) {
       this._locationUnsub = onDeviceLocationChange((location) => {
         this._deviceLocation = location;
-        if (this.isConnected && this._homeModel && this._viewPhase === "home") {
+        if (this.isConnected && this._homeModel) {
           this._renderHome(this._homeModel);
         }
       });
@@ -847,16 +243,8 @@ class TodayView extends HTMLElement {
         if (session?.status === "in-progress") {
           return;
         }
-        if (shouldDeferSessionRenderDuringCapture(this._viewPhase, session)) {
-          return;
-        }
         this.connectedCallback();
       });
-    }
-    if (!this._captureFinishedListening) {
-      this.addEventListener("capturefinished", this._captureFinishedHandler);
-      this.addEventListener("analysiscarddeleted", this._cardDeletedHandler);
-      this._captureFinishedListening = true;
     }
     if (!this._settingsDocumentClick) {
       this._settingsDocumentClick = (event) => {
@@ -870,31 +258,18 @@ class TodayView extends HTMLElement {
       };
       document.addEventListener("click", this._settingsDocumentClick);
     }
-    if (!this._siteDocumentClick) {
-      this._siteDocumentClick = (event) => {
-        if (!this._siteSwitcherOpen) return;
-        const path = event.composedPath?.() || [];
-        if (
-          !path.some(
-            (node) =>
-              node instanceof Element &&
-              node.matches(".home-site-switcher, #lastlog-change-site"),
-          )
-        ) {
-          this._siteSwitcherOpen = false;
-          if (this._homeModel) this._renderHome(this._homeModel);
-        }
-      };
-      document.addEventListener("click", this._siteDocumentClick);
-    }
 
+    // Refreshing a completed card is not a new screen arrival. Re-focusing
+    // the heading after that refresh would scroll the worklist to the top.
+    const announceArrival = !this._homeModel;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
-      this._fetchProviderSites().catch((error) => {
+      fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
+        showSiteCatalogErrorToast();
         return null;
       }),
       listBoundSites(),
@@ -908,23 +283,8 @@ class TodayView extends HTMLElement {
     const requestedFilter = new URLSearchParams(window.location.search).get(
       "filter",
     );
-    const recognizedFilter = [
-      ...HOME_TABS.map(({ id }) => id),
-      "needs_action",
-      "resolved",
-      "archived",
-    ].includes(requestedFilter || "");
-    // Explicit worklist links retain the resumable draft without reopening it.
-    const showRequestedWorklist =
-      recognizedFilter && this._viewPhase === "home";
-    const captureSession =
-      active?.status === "in-progress" && !showRequestedWorklist
-        ? active
-        : null;
-    if (captureSession) {
-      this._captureFlow = captureSession.flowType || "perimeter";
-      if (this._viewPhase === "home") this._viewPhase = "capture";
-    }
+    // An in-progress draft no longer re-enters capture from home: capture
+    // lives on its own route (/check, /problem) and home stays the worklist.
     let pendingSession =
       active && active.status === "capture-complete"
         ? active
@@ -947,18 +307,21 @@ class TodayView extends HTMLElement {
         completingTasksResult,
         completedTasksResult,
         cannotDoTasksResult,
+        inProgressTasksResult,
       ] = await Promise.all([
         listChecks({ limit: 30 }),
         listTasks({ status: "open", limit: 50 }),
         listTasks({ status: "completing", limit: 50 }),
         listTasks({ status: "completed", limit: 50 }),
         listTasks({ status: "cannot_do", limit: 50 }),
+        listTasks({ status: "in_progress", limit: 50 }),
       ]);
       tasks = uniqueTasks([
         ...(openTasksResult.tasks || []),
         ...(completingTasksResult.tasks || []),
         ...(completedTasksResult.tasks || []),
         ...(cannotDoTasksResult.tasks || []),
+        ...(inProgressTasksResult.tasks || []),
       ]);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
@@ -989,8 +352,6 @@ class TodayView extends HTMLElement {
       });
     }
 
-    // A resumable in-progress walk (Cancel from /check keeps it) still reopens
-    // the draft, even though the home CTAs now use the simplified Figma copy.
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
@@ -1000,11 +361,11 @@ class TodayView extends HTMLElement {
       last,
       checks: submitted,
       tasks,
-      captureSession,
       pendingSession: effectivePendingSession,
     });
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
   _taskWith311CardStatus(task) {
@@ -1066,7 +427,7 @@ class TodayView extends HTMLElement {
       this._pendingLocationRender = true;
       return;
     }
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
@@ -1082,8 +443,24 @@ class TodayView extends HTMLElement {
     );
     if (feedbackDialog) feedbackDialog.siteId = this._siteId;
 
+    const grouping = this.querySelector("#history-grouping");
+    if (grouping) {
+      void import("./history-grouping.js");
+    }
+    grouping?.addEventListener("change", async () => {
+      this._historyGrouping = /** @type {any} */ (grouping).value;
+      this._renderHome(this._homeModel);
+      const replacement =
+        /** @type {HTMLElement & { updateComplete?: Promise<boolean> }} */ (
+          this.querySelector("#history-grouping")
+        );
+      await replacement?.updateComplete;
+      if (replacement?.isConnected) replacement.focus({ preventScroll: true });
+    });
     const start = this.querySelector("#start-check");
     if (start) {
+      // Routed capture: the check screen (routed variant) owns the flow from
+      // here; the draft session machinery is unchanged.
       start.addEventListener("click", (event) =>
         this._startCapture("perimeter", event.currentTarget),
       );
@@ -1091,41 +468,94 @@ class TodayView extends HTMLElement {
     this.querySelector("#home-settings")?.addEventListener("click", () =>
       this._toggleSettingsMenu(),
     );
-    this.querySelector("#site-switcher-trigger")?.addEventListener(
-      "click",
-      () => {
-        this._setSiteSwitcherOpen(!this._siteSwitcherOpen);
-      },
-    );
+    this._mountSiteSwitcher();
     this.querySelector("#lastlog-change-site")?.addEventListener(
       "click",
       () => {
-        this._setSiteSwitcherOpen(true);
+        this._siteSwitcher?.setOpen(true);
       },
     );
-    this.querySelector(".home-site-switcher")?.addEventListener(
-      "keydown",
-      (event) => {
-        if (/** @type {KeyboardEvent} */ (event).key !== "Escape") return;
-        this._siteSwitcherOpen = false;
-        this._renderHome(this._homeModel);
-        /** @type {HTMLElement | null} */ (
-          this.querySelector("#site-switcher-trigger")
-        )?.focus();
-      },
-    );
-    this.querySelectorAll("[data-switch-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        void this._switchToSite(button.getAttribute("data-switch-site") || "");
-      });
-    });
-    this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
-      void this._retryProviderSites();
-    });
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
+    });
+    this.querySelector("#settings-feedback")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      feedbackDialog?.open();
+    });
+    this.querySelector("#settings-attributions")?.addEventListener(
+      "click",
+      () => {
+        this._settingsMenuOpen = false;
+        this.querySelector(".home-settings-menu")?.remove();
+        this.querySelector("#home-settings")?.setAttribute(
+          "aria-expanded",
+          "false",
+        );
+        this._attributionsDialogOpen = true;
+        openOverlayDialog(
+          /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+          "attributions",
+        );
+      },
+    );
+    this.querySelector("#settings-language")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      this._languageDialogOpen = true;
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._languageDialog),
+        "language",
+      );
+    });
+    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
+      navigate("/site-admin"),
+    );
+    this._languageDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #language-dialog")
+    );
+    this._languageDialog?.addEventListener("click", (event) => {
+      if (event.target === this._languageDialog) this._languageDialog.close();
+    });
+    this._languageDialog?.addEventListener("close", () => {
+      this._languageDialogOpen = false;
+      const chosen = this._languageDialog?.returnValue || "";
+      if (this._languageDialog) this._languageDialog.returnValue = "";
+      if (chosen && chosen !== getLocale()) {
+        // app-root re-renders the view on "localechange". A failed catalog
+        // load (offline first use of a language) changes nothing; say so.
+        void setLocale(chosen).then((ok) => {
+          if (!ok) showLanguageErrorToast();
+        });
+        return;
+      }
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
+    this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(":scope > .home > #attributions-dialog")
+    );
+    this._attributionsDialog?.addEventListener("click", (event) => {
+      if (event.target === this._attributionsDialog) {
+        this._attributionsDialog.close();
+      }
+    });
+    this._attributionsDialog?.addEventListener("close", () => {
+      this._attributionsDialogOpen = false;
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
     });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
@@ -1137,8 +567,11 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
-    this._wire311Dialog();
-    this._wireLocationDialog();
+    this._restoreAttributionsDialog();
+    this._restoreLanguageDialog();
+    this._mountTicketDetailDialog();
+    this._mountTaskUpdateDialog();
+    this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
     );
@@ -1245,22 +678,13 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
-    const activeTask = tasks.find(
-      (task) => task.taskId === this._ticketDetailTask?.taskId,
+    this._ticketDetailDialog?.updateTask(
+      tasks.find((task) => task.taskId === this._ticketDetailDialog.taskId),
     );
-    if (activeTask) {
-      this._ticketDetailTask = activeTask;
-      if (this._ticketDetail) {
-        this._ticketDetail = {
-          ...this._ticketDetail,
-          mediaUrl: taskMediaUrl(activeTask),
-        };
-      }
-    }
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, captureSession, pendingSession }) {
+  _render({ last, checks = [], tasks, pendingSession }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -1289,10 +713,14 @@ class TodayView extends HTMLElement {
       ),
     );
     const newTaskEntries = selectedTaskEntries.filter(
-      (entry) => taskCheckGroupId(entry.task) === newestCheck.id,
+      (entry) =>
+        this._homeFilter !== "history" &&
+        taskCheckGroupId(entry.task) === newestCheck.id,
     );
     const visibleTasks = selectedTaskEntries.filter(
-      (entry) => taskCheckGroupId(entry.task) !== newestCheck.id,
+      (entry) =>
+        this._homeFilter === "history" ||
+        taskCheckGroupId(entry.task) !== newestCheck.id,
     );
     const latestSubmittedCheck = [...checks].sort((a, b) =>
       String(b.submittedAt || b.startedAt || "").localeCompare(
@@ -1328,139 +756,35 @@ class TodayView extends HTMLElement {
       );
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
-    const captureVisible =
-      Boolean(captureSession) || this._viewPhase === "leaving-capture";
-    const showFirstRun = shouldShowFirstRunHome({
-      captureVisible,
-      last,
-      taskCount: tasks.length,
-      hasResultCards,
+    // First-run hero only for a truly empty account: no submitted check, no
+    // worklist, no in-review session results.
+    const showFirstRun = !last && tasks.length === 0 && !hasResultCards;
+
+    return homeShell({
+      settingsMenuOpen: this._settingsMenuOpen,
+      adminAccess: hasAdminAccess(this._site),
+      hero: showFirstRun
+        ? this._firstRunBlock()
+        : this._activityBlock({ last, homeTasks }),
+      results: this._homeResults({
+        pendingSession,
+        recentCheckTime:
+          newestCheck.time ||
+          pendingSession?.startedAt ||
+          last?.submittedAt ||
+          "",
+        checks,
+        recentItems: visibleRecentItems,
+        newTaskEntries,
+        visibleTasks,
+        activeClearCheck,
+        hasPendingClearResult,
+        historicalClearChecks,
+      }),
+      showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
+      logoutError: this._logoutError,
+      logoutPending: this._logoutPending,
     });
-    const phaseClass = `home--${this._viewPhase}`;
-    const resultsInactive = shouldInertHomeResults(this._viewPhase);
-
-    return html`
-      <div
-        class="home ${phaseClass} ${captureVisible ? "home--has-capture" : ""}"
-      >
-        <section class="home-region home-region--header">
-          <div class="home-top-actions">
-            <div class="home-settings-wrap">
-              <button
-                class="home-settings"
-                id="home-settings"
-                type="button"
-                aria-label="Settings"
-                aria-haspopup="menu"
-                aria-expanded="${this._settingsMenuOpen ? "true" : "false"}"
-              >
-                <span class="home-settings__icon" aria-hidden="true"></span>
-              </button>
-              ${this._settingsMenuOpen
-                ? html`<div
-                    class="home-settings-menu"
-                    role="menu"
-                    aria-label="Settings"
-                  >
-                    <button id="settings-logout" type="button" role="menuitem">
-                      <wa-icon
-                        name="arrow-right-from-bracket"
-                        aria-hidden="true"
-                      ></wa-icon>
-                      Logout
-                    </button>
-                    <a
-                      href="https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      role="menuitem"
-                      aria-label="Address data attribution (opens in a new tab)"
-                      >Address data attribution</a
-                    >
-                  </div>`
-                : ""}
-            </div>
-            <feedback-dialog class="feedback-dialog"></feedback-dialog>
-          </div>
-          <div
-            class="screen screen--today-hero"
-            role="group"
-            aria-label="Today"
-          >
-            ${showFirstRun
-              ? this._firstRunBlock()
-              : this._activityBlock({
-                  last,
-                  homeTasks,
-                })}
-          </div>
-        </section>
-
-        <section class="home-region home-region--capture" aria-live="polite">
-          ${captureVisible ? this._captureRegion() : ""}
-        </section>
-
-        <section
-          class="home-region home-region--results"
-          aria-label="Task results"
-          ${resultsInactive ? html`inert aria-hidden="true"` : ""}
-        >
-          ${this._homeResults({
-            pendingSession,
-            recentCheckTime:
-              newestCheck.time ||
-              pendingSession?.startedAt ||
-              last?.submittedAt ||
-              "",
-            checks,
-            recentItems: visibleRecentItems,
-            newTaskEntries,
-            visibleTasks,
-            activeClearCheck,
-            hasPendingClearResult,
-            historicalClearChecks,
-          })}
-        </section>
-        ${hasPendingAssessment || hasResultCards ? analysisDialogs() : ""}
-        ${this._locationDialogMarkup()} ${this._311DialogMarkup()}
-        <dialog
-          class="places-modal logout-dialog"
-          id="logout-dialog"
-          aria-labelledby="logout-title"
-          aria-describedby="logout-copy"
-        >
-          <form class="places-modal__card" method="dialog">
-            <div class="places-modal__copy">
-              <h2 class="places-modal__title" id="logout-title">
-                Confirm you'd like to logout
-              </h2>
-              <p class="places-modal__text" id="logout-copy">
-                This will log you out and unlink this device: you'll need to
-                request a new code to access the app
-              </p>
-              ${this._logoutError
-                ? html`<p class="logout-dialog__error" role="alert">
-                    ${this._logoutError}
-                  </p>`
-                : ""}
-            </div>
-            <div class="places-modal__actions logout-dialog__actions">
-              <button
-                class="places-modal__primary logout-dialog__confirm"
-                id="logout-confirm"
-                type="button"
-                ${this._logoutPending ? "disabled" : ""}
-              >
-                ${this._logoutPending ? "Logging out..." : "Log me out"}
-              </button>
-              <button class="logout-dialog__cancel" type="submit">
-                Return to app
-              </button>
-            </div>
-          </form>
-        </dialog>
-      </div>
-    `;
   }
 
   _toggleSettingsMenu() {
@@ -1468,252 +792,70 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _311DialogMarkup() {
-    const detail = this._ticketDetail;
-    const formatDate = (date) =>
-      date
-        ? new Intl.DateTimeFormat(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(new Date(date))
-        : "";
-    const formatRelativeDate = (date) => {
-      if (!date) return "";
-      const days = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000),
-      );
-      return days === 0
-        ? "today"
-        : days === 1
-          ? "1 day ago"
-          : `${days} days ago`;
-    };
-    return html` <dialog
-      class="ticket-detail"
-      id="ticket-detail-dialog"
-      aria-labelledby="ticket-detail-title"
-    >
-      <div class="ticket-detail__sheet">
-        <header class="ticket-detail__header">
-          <button
-            type="button"
-            class="btn-icon ticket-detail__close wa-plain"
-            data-close-311
-            aria-label="Close request details"
-          >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-          </button>
-        </header>
-        ${this._ticketDetailState === "loading"
-          ? html`<p role="status">Loading request updates…</p>`
-          : ""}
-        ${this._ticketDetailState === "error"
-          ? html`<div role="alert">
-              <p>We couldn't load the latest 311 updates.</p>
-              <button
-                type="button"
-                class="btn-outline btn-outline--sm"
-                data-retry-311
-              >
-                Try again
-              </button>
-            </div>`
-          : ""}
-        ${detail
-          ? html` <section
-                class="ticket-detail__summary"
-                aria-label="Request summary"
-              >
-                <p
-                  class="ticket-detail__type ticket-detail__type--${detail.responseOverdue
-                    ? "overdue"
-                    : detail.status === "Closed"
-                      ? "closed"
-                      : "default"}"
-                >
-                  <span aria-hidden="true"></span>
-                  <span class="ticket-detail__type-label">311 request</span>
-                  <span class="ticket-detail__type-separator" aria-hidden="true"
-                    >·</span
-                  >
-                  <strong
-                    >${escapeHtml(detail.status)}${detail.statusDetail
-                      ? html`: ${escapeHtml(detail.statusDetail)}`
-                      : ""}</strong
-                  >
-                </p>
-                ${detail.location
-                  ? html`<p class="ticket-detail__location">
-                      ${escapeHtml(String(detail.location).split(/\r?\n|,/)[0])}
-                    </p>`
-                  : ""}
-                <h2 id="ticket-detail-title">
-                  ${escapeHtml(
-                    detail.title || detail.problemType || "Request details",
-                  )}
-                </h2>
-                ${detail.description
-                  ? html`<p class="ticket-detail__description">
-                      ${escapeHtml(detail.description)}
-                    </p>`
-                  : ""}
-                ${detail.mediaUrl
-                  ? html`<img
-                      class="ticket-detail__photo"
-                      src="${escapeAttr(detail.mediaUrl)}"
-                      alt="Evidence for ${escapeAttr(
-                        detail.title || detail.problemType || "the 311 request",
-                      )}"
-                    />`
-                  : html`<div
-                      class="ticket-detail__photo photo-placeholder"
-                      role="img"
-                      aria-label="No photo available"
-                    >
-                      <wa-icon name="image" aria-hidden="true"></wa-icon>
-                    </div>`}
-                <dl class="ticket-detail__metadata">
-                  ${detail.assignedAgency
-                    ? html`<div>
-                        <dt>Agency:</dt>
-                        <dd>${escapeHtml(detail.assignedAgency)}</dd>
-                      </div>`
-                    : ""}
-                  ${detail.submittedAt
-                    ? html`<div>
-                        <dt>Submitted:</dt>
-                        <dd>
-                          ${escapeHtml(formatRelativeDate(detail.submittedAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.expectedResponseAt
-                    ? html`<div>
-                        <dt>Response expected:</dt>
-                        <dd>
-                          ${escapeHtml(formatDate(detail.expectedResponseAt))}
-                        </dd>
-                      </div>`
-                    : ""}
-                  ${detail.closureReason
-                    ? html`<div>
-                        <dt>Closure reason:</dt>
-                        <dd>${escapeHtml(detail.closureReason)}</dd>
-                      </div>`
-                    : ""}
-                </dl>
-                ${detail.responseOverdue && detail.expectedResponseAt
-                  ? html`<p class="ticket-detail__overdue-message">
-                      The City's expected response time passed
-                      ${escapeHtml(
-                        formatOverdueElapsed(detail.expectedResponseAt),
-                      )}
-                      ago.
-                    </p>`
-                  : ""}
-              </section>
-              <section class="ticket-detail__updates">
-                <h3>Request updates</h3>
-                ${detail.events?.length
-                  ? html`<ol class="ticket-timeline">
-                      ${detail.events
-                        .map(
-                          (event) =>
-                            html`<li class="ticket-timeline__item">
-                              <div class="ticket-timeline__content">
-                                <strong>${escapeHtml(event.title)}</strong
-                                >${ticketEventDescription(event.description)}
-                                <time datetime="${escapeAttr(event.occurredAt)}"
-                                  >${escapeHtml(
-                                    formatDate(event.occurredAt),
-                                  )}</time
-                                >
-                              </div>
-                            </li>`,
-                        )
-                        .join("")}
-                    </ol>`
-                  : html`<p>No updates are available yet.</p>`}
-              </section>
-              <p class="ticket-detail__reference">
-                #${escapeHtml(detail.requestNumber)}
-              </p>`
-          : ""}
-      </div>
-    </dialog>`;
-  }
-
-  _wire311Dialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#ticket-detail-dialog")
-    );
-    if (!dialog) return;
-    this._ticketDetailDialog = dialog;
-    dialog
-      .querySelector("[data-close-311]")
-      ?.addEventListener("click", () => dialog.close());
-    dialog.querySelector("[data-retry-311]")?.addEventListener("click", () => {
-      if (this._ticketDetailTask)
-        void this._load311Detail(this._ticketDetailTask);
-    });
-    dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) dialog.close();
-    });
-    dialog.addEventListener("close", () => {
-      this._ticketDetailOpen = false;
-      this._311DetailGeneration += 1;
-      const taskId = this._ticketDetailTask?.taskId;
-      const currentTrigger = taskId
-        ? this.querySelector(
-            `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
-          )
-        : null;
-      (currentTrigger || this._ticketDetailTrigger)?.focus?.();
-    });
-    if (this._ticketDetailOpen) dialog.showModal();
-  }
-
-  async _open311Detail(task, trigger) {
-    this._ticketDetailTask = this._tasksById.get(task.taskId) || task;
-    this._ticketDetailTrigger = trigger;
-    this._ticketDetailOpen = true;
-    this._ticketDetail = null;
-    await this._load311Detail(this._ticketDetailTask);
-  }
-
-  async _load311Detail(task) {
-    const ticket = submitted311Ticket(task);
-    if (!ticket) return;
-    const generation = ++this._311DetailGeneration;
-    const isCurrent = () =>
-      generation === this._311DetailGeneration &&
-      task.taskId === this._ticketDetailTask?.taskId &&
-      ticket.srNum === submitted311Ticket(this._ticketDetailTask)?.srNum;
-    this._ticketDetailState = "loading";
-    if (this._homeModel) this._renderHome(this._homeModel);
-    try {
-      const response = await get311RequestDetail(task.taskId, ticket.srNum);
-      if (!isCurrent()) return;
-      const request = response.request;
-      this._ticketDetail = {
-        ...request,
-        title:
-          task.userFriendlyLabel ||
-          task.user_friendly_label ||
-          task.category ||
-          task.analyzerCategory ||
-          request.problemType,
-        description: task.description || request.description || "",
-        location: ticketDetailLocation(task, this._site || {}, request),
-        mediaUrl: taskMediaUrl(task),
-      };
-      this._ticketDetailState = "ready";
-    } catch {
-      if (!isCurrent()) return;
-      this._ticketDetailState = "error";
+  _mountTicketDetailDialog() {
+    if (!this._ticketDetailDialog) {
+      const dialog = document.createElement("ticket-detail-dialog");
+      dialog.addEventListener("ticketdetailclosed", (event) => {
+        const { taskId, trigger } = /** @type {CustomEvent} */ (event).detail;
+        // The card that opened the sheet was re-rendered since; find its
+        // current button and fall back to the original trigger.
+        const current = taskId
+          ? this.querySelector(
+              `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
+            )
+          : null;
+        (current || trigger)?.focus?.();
+      });
+      this._ticketDetailDialog = dialog;
     }
-    if (this._homeModel) this._renderHome(this._homeModel);
+    this._ticketDetailDialog.site = this._site;
+    // Re-appending the same element keeps its state across innerHTML
+    // replacement; it restores its open state on reconnect.
+    this.querySelector(":scope > .home")?.append(this._ticketDetailDialog);
+  }
+
+  _open311Detail(task, trigger) {
+    this._mountTicketDetailDialog();
+    void this._ticketDetailDialog.open(
+      this._tasksById.get(task.taskId) || task,
+      trigger,
+    );
+  }
+
+  async _mountTaskUpdateDialog() {
+    await import("./task-update-dialog.js");
+    if (!this._taskUpdateDialog) {
+      const dialog = document.createElement("task-update-dialog");
+      dialog.addEventListener("taskupdated", () => {
+        void this.connectedCallback();
+      });
+      dialog.addEventListener("taskupdateclosed", () => {
+        const returnFocus = this._taskUpdateReturnFocus;
+        this._taskUpdateReturnFocus = null;
+        void this.connectedCallback().then(() => {
+          const current = returnFocus?.taskId
+            ? this.querySelector(
+                `[data-task-id="${CSS.escape(returnFocus.taskId)}"] [data-action="update"]`,
+              )
+            : null;
+          const fallback = returnFocus?.trigger?.isConnected
+            ? returnFocus.trigger
+            : this.querySelector(".home-tabs__tab--active");
+          const target = /** @type {HTMLElement | null | undefined} */ (
+            current || fallback
+          );
+          target?.focus();
+        });
+      });
+      this._taskUpdateDialog = dialog;
+    }
+    this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
+  }
+
+  async _openTaskUpdate(task, trigger) {
+    this._taskUpdateReturnFocus = { taskId: task.taskId, trigger };
+    await this._mountTaskUpdateDialog();
+    await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
   }
 
   _closeSettingsMenu() {
@@ -1724,7 +866,26 @@ class TodayView extends HTMLElement {
 
   _restoreLogoutDialog() {
     if (!this._logoutDialogOpen || this._logoutDialog?.open) return;
-    this._logoutDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._logoutDialog),
+      "logout",
+    );
+  }
+
+  _restoreAttributionsDialog() {
+    if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._attributionsDialog),
+      "attributions",
+    );
+  }
+
+  _restoreLanguageDialog() {
+    if (!this._languageDialogOpen || this._languageDialog?.open) return;
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._languageDialog),
+      "language",
+    );
   }
 
   async _logout() {
@@ -1739,19 +900,9 @@ class TodayView extends HTMLElement {
       window.dispatchEvent(new CustomEvent("authsignout"));
     } catch {
       this._logoutPending = false;
-      this._logoutError = "We couldn't log you out. Please try again.";
+      this._logoutError = t("today.logout.error");
       if (this._homeModel) this._renderHome(this._homeModel);
     }
-  }
-
-  _captureRegion() {
-    return html`
-      <div class="home-capture">
-        ${this._captureFlow === "single-problem"
-          ? html`<problem-report embedded></problem-report>`
-          : html`<perimeter-check embedded></perimeter-check>`}
-      </div>
-    `;
   }
 
   _homeResults({
@@ -1766,73 +917,38 @@ class TodayView extends HTMLElement {
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
-    const hasVisibleCards =
-      recentItems.length ||
-      newTaskEntries.length ||
-      visibleTasks.length ||
-      Boolean(activeClearCheck) ||
-      historicalClearChecks.length;
-    return html`
-      <div class="home-results">
-        ${hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : activeClearCheck && !recentItems.length && !newTaskEntries.length
-            ? this._clearCheckTray(activeClearCheck, true)
-            : ""}
-        ${this._taskTabs()}
-        ${recentItems.length && !hasPendingClearResult
-          ? analysisResultsTray(recentItems, pendingSession.id, {
-              id: "home-analysis-results",
-              title: "",
-              ariaLabel: "New analysis results",
-              tone: "new",
-              siteName: this._site?.name || "",
-              siteAddress: this._site?.address || "",
-              checkTime: recentCheckTime,
-              extraCards: newTaskCards,
-            })
-          : ""}
-        ${newTaskEntries.length && !recentItems.length
-          ? this._newTaskCards(newTaskEntries, recentCheckTime)
-          : ""}
-        ${visibleTasks.length || historicalClearChecks.length
-          ? html`
-              <div class="home-results__cards">
-                ${this._historicalTaskGroups(
-                  visibleTasks,
-                  checks,
-                  historicalClearChecks,
-                )}
-              </div>
-            `
-          : ""}
-        ${!hasVisibleCards
-          ? this._homeFilter === "todo" && !pendingSession
-            ? homeAllDonePanel()
-            : html`<p class="home-results__empty" role="status">
-                ${this._homeFilter === "todo"
-                  ? "No tasks to do."
-                  : this._homeFilter === "in_progress"
-                    ? "No tasks in progress."
-                    : "No task history yet."}
-              </p>`
-          : ""}
-      </div>
-    `;
+    return homeResults({
+      historyGrouping: this._historyGrouping || "resolved",
+      homeFilter: this._homeFilter,
+      siteName: this._site?.name || "",
+      siteAddress: this._site?.address || "",
+      pendingSessionId: pendingSession?.id || "",
+      hasPendingSession: Boolean(pendingSession),
+      recentCheckTime,
+      recentItems,
+      newTaskCards,
+      newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
+        .map((card) => card.markup)
+        .join(""),
+      newTaskCount: newTaskEntries.length,
+      activeClearCheck,
+      hasPendingClearResult,
+      historyGroups: this._historyGroups(
+        visibleTasks,
+        checks,
+        historicalClearChecks,
+      ),
+    });
   }
 
   _newTaskCardEntries(entries) {
-    return entries.map((entry) => ({
+    return entries.map((entry) => this._taskCardEntry(entry, true));
+  }
+
+  _taskCardEntry(entry, isNew) {
+    return {
       markup: taskAnalysisCard({
+        history: ["resolved", "archived"].includes(entry.homeStatus),
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
@@ -1842,59 +958,60 @@ class TodayView extends HTMLElement {
         action:
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
-            : entry.homeStatus === "in_progress" &&
-                submitted311Ticket(entry.task)
-              ? { kind: "view311", label: "View details", variant: "outline" }
+            : entry.homeStatus === "in_progress"
+              ? {
+                  kind: "update",
+                  label: t("card.viewUpdates"),
+                  variant: "outline",
+                }
               : null,
-        statusLabel: this._newTaskStatusMeta(entry),
-        isNew: true,
+        statusLabel: isNew
+          ? this._newTaskStatusMeta(entry)
+          : this._taskStatusMeta(entry),
+        isNew,
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
-    }));
+    };
   }
 
-  _newTaskCards(entries, checkTime = "") {
-    return html`
-      <section
-        class="analysis-tray analysis-tray--new analysis-tray--recent"
-        aria-label="New analysis results"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">
-            ${escapeHtml(recentCheckTitle(checkTime))}
-          </h2>
-          ${sortAnalysisCards(this._newTaskCardEntries(entries))
-            .map((card) => card.markup)
-            .join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  _clearCheckTray(check, recent = false) {
-    const checkTime = check.submittedAt || check.startedAt || "";
-    const title = recent
-      ? recentCheckTitle(checkTime)
-      : historicalCheckTitle(checkTime);
-    return html`
-      <section
-        class="analysis-tray ${recent
-          ? "analysis-tray--new analysis-tray--recent"
-          : "analysis-tray--history"}"
-        aria-label="${escapeAttr(title)}"
-      >
-        <div class="analysis-tray__cards">
-          <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
-          ${clearCheckCard()}
-        </div>
-      </section>
-    `;
-  }
-
-  _historicalTaskGroups(entries, checks, clearChecks = []) {
+  // Active work stays grouped by check; History uses the selected grouping.
+  // Preserve no-findings check records alongside the task history.
+  _historyGroups(entries, checks, clearChecks = []) {
+    if (this._homeFilter === "history") {
+      const groups = groupHistory(
+        entries,
+        this._historyGrouping || "resolved",
+      ).map((group) => ({
+        dateKey: group.key,
+        title: group.title,
+        checkTime: "",
+        compact: true,
+        cards: group.entries
+          .map((entry) => this._taskCardEntry(entry, false).markup)
+          .join(""),
+      }));
+      // Preserve checks with no findings; they have no task resolution time.
+      for (const check of [...clearChecks].sort((a, b) =>
+        String(b.submittedAt || b.startedAt || "").localeCompare(
+          String(a.submittedAt || a.startedAt || ""),
+        ),
+      ))
+        groups.push({
+          dateKey: pacificDateKey(check.submittedAt || check.startedAt || ""),
+          title: "",
+          checkTime: check.submittedAt || check.startedAt,
+          compact: false,
+          cards: "",
+        });
+      // Clear checks have no resolution event: use their check day for both
+      // date modes. Type mode keeps them separate after the issue categories.
+      return this._historyGrouping === "type"
+        ? groups
+        : groups.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    }
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
     );
@@ -1913,57 +1030,14 @@ class TodayView extends HTMLElement {
         const bTime = checkTimes.get(b[0]) || b[1][0]?.createdAt || "";
         return String(bTime).localeCompare(String(aTime));
       })
-      .map(([checkId, group]) => {
-        const checkTime =
-          checkTimes.get(checkId) || group[0]?.createdAt || new Date();
-        return html`
-          <section
-            class="analysis-tray analysis-tray--history"
-            aria-label="${escapeAttr(historicalCheckTitle(checkTime))}"
-          >
-            <div class="analysis-tray__cards">
-              <h2 class="analysis-tray__check-title">
-                ${escapeHtml(historicalCheckTitle(checkTime))}
-              </h2>
-              ${group.length
-                ? sortAnalysisCards(
-                    group.map((entry) => ({
-                      markup: taskAnalysisCard({
-                        task: this._taskWith311CardStatus({
-                          ...entry.task,
-                          createdAt: entry.createdAt,
-                          siteAddress:
-                            entry.task.siteAddress || this._site?.address || "",
-                        }),
-                        siteName: this._site?.name || "",
-                        action:
-                          entry.homeStatus === "needs_action"
-                            ? this._primaryCardAction(entry.task)
-                            : entry.homeStatus === "in_progress" &&
-                                submitted311Ticket(entry.task)
-                              ? {
-                                  kind: "view311",
-                                  label: "View details",
-                                  variant: "outline",
-                                }
-                              : null,
-                        statusLabel: this._taskStatusMeta(entry),
-                        isNew: false,
-                        includeControls: entry.homeStatus === "needs_action",
-                      }),
-                      createdAt: entry.createdAt,
-                      needsAnswer: Boolean(entry.task.needsAnswer),
-                      actionPriority: analysisActionPriority(entry.task),
-                    })),
-                  )
-                    .map((card) => card.markup)
-                    .join("")
-                : clearCheckCard()}
-            </div>
-          </section>
-        `;
-      })
-      .join("");
+      .map(([checkId, group]) => ({
+        checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        cards: sortAnalysisCards(
+          group.map((entry) => this._taskCardEntry(entry, false)),
+        )
+          .map((card) => card.markup)
+          .join(""),
+      }));
   }
 
   async _startCapture(flowType, launcher = null) {
@@ -1978,104 +1052,20 @@ class TodayView extends HTMLElement {
       }
       if (isOutsideSiteRadius(position, this._site?.location)) {
         this._locationPrompt = { flowType, launcher };
-        this._locationSelectedSiteId = this._siteId;
         this._showLocationDialog();
         return;
       }
-      await this._enterCapture(flowType, launcher);
+      this._enterCaptureRoute(flowType);
     } finally {
       this._startingCapture = false;
     }
   }
 
-  async _enterCapture(flowType, launcher = null) {
-    this._captureFlow = flowType;
-    this._viewPhase = "entering-capture";
-    this._captureLauncherSelector =
-      launcher instanceof HTMLElement && launcher.id
-        ? `#${CSS.escape(launcher.id)}`
-        : null;
-    this._focusAfterRender = "capture-heading";
-    this._scrollCaptureStartIntoView();
-    if (flowType === "single-problem") {
-      await resumeOrStartProblemReport(this._siteId);
-    } else {
-      await resumeOrStartCheck(this._siteId);
-    }
-    await this.connectedCallback();
-    this._scrollCaptureStartIntoView();
-    this._afterCaptureAnimation("entering-capture", () => {
-      this._viewPhase = "capture";
-      this._syncPhaseClass();
-    });
-  }
-
-  /** @param {CustomEvent<{ discarded?: boolean }>} event */
-  async _finishCapture(event) {
-    if (this._viewPhase === "leaving-capture") return;
-    this._discardingCapture = Boolean(event.detail?.discarded);
-    this._viewPhase = "leaving-capture";
-    this._focusAfterRender =
-      this._captureLauncherSelector || "home-primary-control";
-    this._syncPhaseClass();
-    this._afterCaptureAnimation("leaving-capture", async () => {
-      this._viewPhase = "home";
-      this._captureFlow = null;
-      this._discardingCapture = false;
-      await this.connectedCallback();
-      this._captureLauncherSelector = null;
-    });
-  }
-
-  _syncPhaseClass() {
-    const root = this.querySelector(".home");
-    if (!root) return;
-    root.classList.toggle("home--home", this._viewPhase === "home");
-    root.classList.toggle(
-      "home--entering-capture",
-      this._viewPhase === "entering-capture",
-    );
-    root.classList.toggle("home--capture", this._viewPhase === "capture");
-    root.classList.toggle(
-      "home--leaving-capture",
-      this._viewPhase === "leaving-capture",
-    );
-    root.classList.toggle("home--discarding-capture", this._discardingCapture);
-    const results = this.querySelector(".home-region--results");
-    if (results) {
-      const inactive = shouldInertHomeResults(this._viewPhase);
-      results.toggleAttribute("inert", inactive);
-      if (inactive) {
-        results.setAttribute("aria-hidden", "true");
-      } else {
-        results.removeAttribute("aria-hidden");
-      }
-    }
-  }
-
-  _afterCaptureAnimation(expectedPhase, callback) {
-    window.clearTimeout(this._capturePhaseTimer);
-    const capture = this.querySelector(".home-region--capture");
-    if (!capture) {
-      void callback();
-      return;
-    }
-    let completed = false;
-    const finish = () => {
-      if (completed || this._viewPhase !== expectedPhase) return;
-      completed = true;
-      capture.removeEventListener("animationend", onAnimationEnd);
-      window.clearTimeout(this._capturePhaseTimer);
-      void callback();
-    };
-    const onAnimationEnd = (event) => {
-      if (event.target === capture) finish();
-    };
-    const fallbackMs = captureAnimationFallbackMs(
-      window.getComputedStyle(capture),
-    );
-    capture.addEventListener("animationend", onAnimationEnd);
-    this._capturePhaseTimer = window.setTimeout(finish, fallbackMs);
+  _enterCaptureRoute(flowType) {
+    // Routed capture: navigate so the flow has a real URL. The routed
+    // component bootstraps itself (resume-or-start) from IndexedDB on
+    // connect; today-view keeps no capture phase state.
+    navigate(flowType === "single-problem" ? "/problem" : "/check");
   }
 
   _scrollCaptureStartIntoView() {
@@ -2102,67 +1092,18 @@ class TodayView extends HTMLElement {
 
   _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
-    return html`
-      <div class="screen__sec home-lead">
-        ${this._siteSwitcher(identity.org)}
-        <div class="home-identity home-identity--with-summary">
-          <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-          ${this._summaryBlock(last, homeTasks)}
-        </div>
-        ${this._homeActions({
-          checkLabel: this._checkActionLabel(),
-          reportLabel: "Flag a single issue",
-        })}
-      </div>
-    `;
+    return heroBlock({
+      siteName: identity.site,
+      summary: this._summaryBlock(last, homeTasks),
+      checkLabel: this._checkActionLabel(),
+      reportLabel: t("today.actions.report"),
+    });
   }
 
   _checkActionLabel() {
-    return this._hasPerimeterDraft ? "Resume a check" : "Start a full check";
-  }
-
-  _homeActions({ checkLabel = "Start a check", reportLabel, stacked = false }) {
-    return html`
-      <div class="home-actions ${stacked ? "home-actions--stacked" : ""}">
-        <button id="start-check" class="btn-ink" type="button">
-          ${escapeHtml(checkLabel)}
-        </button>
-        <button id="report-problem" class="btn-outline" type="button">
-          ${escapeHtml(reportLabel)}
-        </button>
-      </div>
-    `;
-  }
-
-  async _fetchProviderSites() {
-    const sites = new Map();
-    const seenCursors = new Set();
-    let cursor = "";
-    let providerId = "";
-    let providerName = "";
-    do {
-      const page = await listProviderSites(cursor);
-      if (!page || !Array.isArray(page.sites)) {
-        throw new Error("Invalid provider sites response");
-      }
-      if (providerId && page.providerId !== providerId) {
-        throw new Error("Provider changed during site listing");
-      }
-      providerId = String(page.providerId || "");
-      providerName = String(page.providerName || providerName);
-      for (const site of page.sites) {
-        if (site?.siteId) sites.set(site.siteId, site);
-      }
-      cursor = page.nextCursor || "";
-      if (cursor && seenCursors.has(cursor)) {
-        throw new Error("Repeated provider sites cursor");
-      }
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    return {
-      providerName,
-      sites: [...sites.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    };
+    return this._hasPerimeterDraft
+      ? t("today.actions.resumeCheck")
+      : t("today.actions.startCheck");
   }
 
   async _retryProviderSites() {
@@ -2171,7 +1112,7 @@ class TodayView extends HTMLElement {
     this._providerSitesStatus = "loading";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
-      const catalog = await this._fetchProviderSites();
+      const catalog = await fetchProviderSites();
       if (requestedSiteId !== this._siteId) return;
       this._providerSites = catalog.sites;
       this._providerName =
@@ -2180,6 +1121,7 @@ class TodayView extends HTMLElement {
     } catch (error) {
       console.error("listProviderSites retry failed", error);
       this._providerSitesStatus = "error";
+      showSiteCatalogErrorToast();
     } finally {
       if (requestedSiteId === this._siteId && this._homeModel) {
         this._renderHome(this._homeModel);
@@ -2195,228 +1137,99 @@ class TodayView extends HTMLElement {
           this._site.orgName ||
           this._site.organizationName)) ||
       "";
-    const name = (this._site && this._site.name) || "Your site";
+    const name = (this._site && this._site.name) || t("today.site.fallback");
     if (org) return { org, site: name };
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
-  _siteSwitcher(providerName) {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site.name }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.push({ siteId: this._siteId, name: this._site.name });
-    }
-    return html`
-      <div class="home-site-switcher">
-        <button
-          id="site-switcher-trigger"
-          class="home-site-switcher__trigger"
-          type="button"
-          aria-expanded="${this._siteSwitcherOpen ? "true" : "false"}"
-          aria-controls="site-switcher-list"
-        >
-          <span>${escapeHtml(providerName || "Your provider")}</span>
-          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-        </button>
-        ${this._siteSwitcherOpen
-          ? html`<div id="site-switcher-list" class="home-site-switcher__menu">
-              ${sites
-                .map(
-                  (site) =>
-                    html`<button
-                      class="home-site-switcher__item ${site.siteId ===
-                      this._siteId
-                        ? "home-site-switcher__item--selected"
-                        : ""}"
-                      type="button"
-                      data-switch-site="${escapeAttr(site.siteId)}"
-                      ${site.siteId === this._siteId
-                        ? 'aria-current="page"'
-                        : ""}
-                    >
-                      <span class="home-site-switcher__check" aria-hidden="true"
-                        >${site.siteId === this._siteId ? "✓" : ""}</span
-                      >
-                      <span>${escapeHtml(site.name)}</span>
-                    </button>`,
-                )
-                .join("")}
-              ${this._siteSwitchError
-                ? html`<p class="home-site-switcher__error" role="alert">
-                    ${escapeHtml(this._siteSwitchError)}
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "loading"
-                ? html`<p class="home-site-switcher__status" role="status">
-                    Loading sites…
-                  </p>`
-                : ""}
-              ${this._providerSitesStatus === "error"
-                ? html`<div class="home-site-switcher__failure">
-                    <p role="alert">Other sites couldn't load.</p>
-                    <button id="site-catalog-retry" type="button">Retry</button>
-                  </div>`
-                : ""}
-            </div>`
-          : ""}
-      </div>
-    `;
-  }
-
-  _setSiteSwitcherOpen(open) {
-    this._siteSwitcherOpen = open;
-    this._siteSwitchError = "";
-    this._renderHome(this._homeModel);
-    /** @type {HTMLElement | null} */ (
-      this.querySelector("#site-switcher-trigger")
-    )?.focus();
-  }
-
-  _locationDialogMarkup() {
-    const sites = this._providerSites.length
-      ? [...this._providerSites]
-      : [{ siteId: this._siteId, name: this._site?.name || "Your site" }];
-    if (!sites.some((site) => site.siteId === this._siteId)) {
-      sites.unshift({
-        siteId: this._siteId,
-        name: this._site?.name || "Your site",
-      });
-    }
-    return html`<dialog
-      class="location-dialog"
-      id="location-dialog"
-      aria-labelledby="location-dialog-title"
-      aria-describedby="location-dialog-copy"
-    >
-      <div class="location-dialog__card">
-        <div class="location-dialog__copy">
-          <h2 id="location-dialog-title">
-            Is your app set to the right location?
-          </h2>
-          <p id="location-dialog-copy">
-            It looks like you're not near
-            ${escapeHtml(this._site?.name || "this site")}. Consider changing
-            your app's site.
-          </p>
-        </div>
-        <div
-          class="location-dialog__sites"
-          role="group"
-          aria-label="Choose a site"
-        >
-          ${sites
-            .map(
-              (site) =>
-                html`<button
-                  class="home-site-switcher__item location-dialog__site"
-                  appearance="plain"
-                  type="button"
-                  data-location-site="${escapeAttr(site.siteId)}"
-                  aria-pressed="${site.siteId === this._siteId
-                    ? "true"
-                    : "false"}"
-                >
-                  <span class="home-site-switcher__check" aria-hidden="true"
-                    >${site.siteId === this._siteId ? "✓" : ""}</span
-                  >
-                  <span>${escapeHtml(site.name)}</span>
-                </button>`,
-            )
-            .join("")}
-        </div>
-        <div class="location-dialog__actions">
-          <button
-            class="location-dialog__confirm"
-            appearance="plain"
-            id="location-confirm"
-            type="button"
-            disabled
-          >
-            Confirm site change
-          </button>
-          <button
-            class="location-dialog__stay"
-            appearance="plain"
-            id="location-stay"
-            type="button"
-          >
-            I'm in the right location
-          </button>
-        </div>
-      </div>
-    </dialog>`;
-  }
-
-  _wireLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    if (!dialog) return;
-    dialog.addEventListener("close", () => {
-      const changingSite = this._locationSelectedSiteId !== this._siteId;
-      this._locationPrompt = null;
-      if (this._pendingLocationRender) {
-        this._pendingLocationRender = false;
-        if (!changingSite && this._viewPhase === "home" && this._homeModel) {
-          this._renderHome(this._homeModel);
-        }
-      }
-    });
-    dialog.querySelectorAll("[data-location-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this._locationSelectedSiteId =
-          button.getAttribute("data-location-site") || this._siteId;
-        dialog.querySelectorAll("[data-location-site]").forEach((option) => {
-          const selected =
-            option.getAttribute("data-location-site") ===
-            this._locationSelectedSiteId;
-          option.setAttribute("aria-pressed", String(selected));
-          const check = option.querySelector(".home-site-switcher__check");
-          if (check) check.textContent = selected ? "✓" : "";
-        });
-        const confirm = /** @type {HTMLButtonElement | null} */ (
-          dialog.querySelector("#location-confirm")
+  _mountSiteSwitcher() {
+    if (!this._siteSwitcher) {
+      const switcher = document.createElement("site-switcher");
+      switcher.addEventListener("switchsite", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
         );
-        if (confirm)
-          confirm.disabled = this._locationSelectedSiteId === this._siteId;
       });
-    });
-    dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
-      if (this._locationSelectedSiteId === this._siteId) return;
-      dialog.close();
-      void this._switchToSite(this._locationSelectedSiteId);
-    });
-    dialog.querySelector("#location-stay")?.addEventListener("click", () => {
-      const prompt = this._locationPrompt;
-      dialog.close();
-      if (prompt) void this._enterCapture(prompt.flowType, prompt.launcher);
-    });
+      switcher.addEventListener("retrysites", () => {
+        void this._retryProviderSites();
+      });
+      this._siteSwitcher = switcher;
+    }
+    const switcher = this._siteSwitcher;
+    switcher.providerName = this._siteIdentity().org;
+    switcher.sites = this._providerSites;
+    switcher.currentSite = { siteId: this._siteId, name: this._site?.name };
+    switcher.status = this._providerSitesStatus;
+    // Swapping the same instance in for the placeholder keeps its open state
+    // across innerHTML replacement.
+    this.querySelector(":scope > .home site-switcher")?.replaceWith(switcher);
+  }
+
+  _mountLocationDialog() {
+    if (!this._locationDialog) {
+      const dialog = document.createElement("location-dialog");
+      dialog.addEventListener("locationclosed", (event) =>
+        this._onLocationDialogClosed(/** @type {CustomEvent} */ (event).detail),
+      );
+      dialog.addEventListener("locationconfirm", (event) => {
+        void this._switchToSite(
+          /** @type {CustomEvent} */ (event).detail.siteId || "",
+        );
+      });
+      dialog.addEventListener("locationstay", (event) =>
+        this._onLocationStay(/** @type {CustomEvent} */ (event).detail),
+      );
+      this._locationDialog = dialog;
+    }
+    const dialog = this._locationDialog;
+    dialog.siteName = this._site?.name || t("today.site.thisSite");
+    dialog.sites = this._providerSites;
+    dialog.currentSite = {
+      siteId: this._siteId,
+      name: this._site?.name || t("today.site.fallback"),
+    };
+    this.querySelector(":scope > .home location-dialog")?.replaceWith(dialog);
   }
 
   _showLocationDialog() {
-    const dialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#location-dialog")
-    );
-    dialog?.showModal();
-    /** @type {HTMLButtonElement | null} */ (
-      dialog?.querySelector('.location-dialog__site[aria-pressed="true"]') ||
-        null
-    )?.focus();
+    this._locationDialog?.open(this._locationPrompt);
+  }
+
+  /**
+   * The prompt closed (Stay, Confirm, Escape, backdrop). A home render that
+   * was deferred while it was open runs now, unless a site switch is about
+   * to replace the page anyway.
+   * @param {{ changingSite: boolean }} detail
+   */
+  _onLocationDialogClosed({ changingSite }) {
+    this._locationPrompt = null;
+    if (this._pendingLocationRender) {
+      this._pendingLocationRender = false;
+      if (!changingSite && this._homeModel) {
+        this._renderHome(this._homeModel);
+      }
+    }
+  }
+
+  /** @param {{ prompt: { flowType: string, launcher: EventTarget | null } | null }} detail */
+  async _onLocationStay({ prompt }) {
+    // The user explicitly confirmed the bound site is correct. Rechecking the
+    // same out-of-radius fix here would immediately reopen the prompt.
+    if (!prompt) return;
+    await awaitOverlayUnwind("location");
+    this._enterCaptureRoute(prompt.flowType);
   }
 
   async _requestAnotherSite(mode = "code", siteId = "", siteName = "") {
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      showSiteSwitchBlockedToast();
       return;
     }
     try {
       if (active) await pauseCheck();
       discardInMemorySession();
-      this._siteSwitcherOpen = false;
+      this._siteSwitcher?.close();
       this.dispatchEvent(
         new CustomEvent("siterequested", {
           bubbles: true,
@@ -2425,20 +1238,17 @@ class TodayView extends HTMLElement {
       );
     } catch (error) {
       console.error("site switch preparation failed", error);
-      this._siteSwitchError =
-        "We couldn't save this check before switching sites.";
-      this._renderHome(this._homeModel);
+      showSiteSwitchErrorToast();
     }
   }
 
   async _switchToSite(siteId) {
     if (!siteId || siteId === this._siteId) {
-      this._siteSwitcherOpen = false;
-      this._renderHome(this._homeModel);
+      this._siteSwitcher?.close();
       return;
     }
     const target = this._providerSites.find((site) => site.siteId === siteId);
-    const bound = this._boundSites.some(
+    const bound = this._boundSites.find(
       (site) => site.siteId === siteId && site.token && site.refreshToken,
     );
     if (!bound) {
@@ -2447,51 +1257,50 @@ class TodayView extends HTMLElement {
     }
     const active = getCurrentCheck();
     if (active?.status === "capture-complete") {
-      this._siteSwitchError =
-        "Wait for this check to finish analyzing before switching sites.";
-      this._renderHome(this._homeModel);
+      showSiteSwitchBlockedToast();
       return;
     }
     try {
       if (active) await pauseCheck();
-      const selected = await activateSiteBinding(siteId);
+      let selected;
+      if (bound.bindingId && bound.physicalDeviceId) {
+        const session = await selectDeviceBinding(bound.bindingId);
+        selected = await setSite(session.site.name, {
+          siteId: session.site.siteId,
+          deviceId: session.deviceId,
+          bindingId: session.bindingId,
+          physicalDeviceId: session.physicalDeviceId,
+          token: session.token,
+          refreshToken: session.refreshToken,
+          tokenExpiresAt: Date.now() + session.expiresIn * 1000,
+          tokenGeneration: session.tokenGeneration,
+          accessLevel: session.accessLevel,
+          absoluteExpiresAt: session.absoluteExpiresAt,
+        });
+      } else {
+        selected = await activateSiteBinding(siteId);
+      }
       if (!selected) {
         await this._requestAnotherSite("code", siteId, target?.name || "");
         return;
       }
       discardInMemorySession();
+      if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
       window.location.assign("/today");
     } catch (error) {
       console.error("site switch failed", error);
-      this._siteSwitchError = "We couldn't switch sites. Try again.";
-      this._renderHome(this._homeModel);
+      showSiteSwitchErrorToast();
     }
   }
 
-  // Last submitted check only: its recorded issue count and remaining actions.
   _summaryBlock(last, homeTasks) {
-    if (isOutsideSiteRadius(this._deviceLocation, this._site?.location)) {
-      return html`<div class="lastlog">
-        <p class="lastlog__eyebrow">
-          Looks like you're not near this site.
-          <button
-            id="lastlog-change-site"
-            class="lastlog__switch"
-            type="button"
-            appearance="plain"
-          >
-            Change the site
-          </button>
-        </p>
-      </div>`;
-    }
-    const label = lastLogSummary(last, homeTasks);
-    if (!label) return "";
-    return html`
-      <div class="lastlog">
-        <p class="lastlog__eyebrow">${escapeHtml(label)}</p>
-      </div>
-    `;
+    return summaryBlock({
+      outsideRadius: isOutsideSiteRadius(
+        this._deviceLocation,
+        this._site?.location,
+      ),
+      label: lastLogSummary(last, homeTasks),
+    });
   }
 
   _sessionItems(session) {
@@ -2512,27 +1321,6 @@ class TodayView extends HTMLElement {
         ),
         isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
       }));
-  }
-
-  _taskTabs() {
-    return html`
-      <div class="home-tabs" role="group" aria-label="Filter tasks">
-        ${HOME_TABS.map(
-          (tab) => html`
-            <button
-              class="home-tabs__tab ${tab.id === this._homeFilter
-                ? "home-tabs__tab--active"
-                : ""}"
-              type="button"
-              aria-pressed="${tab.id === this._homeFilter ? "true" : "false"}"
-              data-home-filter="${escapeAttr(tab.id)}"
-            >
-              ${escapeHtml(tab.label)}
-            </button>
-          `,
-        ).join("")}
-      </div>
-    `;
   }
 
   _activateHomeTab(tabId) {
@@ -2576,67 +1364,18 @@ class TodayView extends HTMLElement {
   _taskStatusMeta(entry) {
     const createdAt = taskCreatedAt(entry.task);
     const when = createdAt
-      ? `${relativeDay(createdAt)} • ${timeOf(createdAt)}`
-      : "Existing";
+      ? t("today.card.when", {
+          day: relativeDay(createdAt),
+          time: timeOf(createdAt),
+        })
+      : t("today.card.existing");
     const id = displayTaskId(entry.task);
-    return id ? `${when} • ${id}` : when;
+    return id ? t("today.card.meta", { when, id }) : when;
   }
 
   _newTaskStatusMeta(entry) {
     const id = displayTaskId(entry.task);
-    return id ? `NEW • ${id}` : "NEW";
-  }
-
-  // A boxed worklist group (design "D2 boxed groups"). Omitted when empty.
-  _group(title, items, className) {
-    if (!items.length) return "";
-    return html`
-      <section class="worklist__group ${className}">
-        <h2 class="worklist__label">${escapeHtml(title)}</h2>
-        <div class="worklist__cards">
-          ${items.map((t) => this._actionCard(t)).join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  // A single open task, rendered from its real TASK# fields: when it was flagged,
-  // the guidance label, the guidance text, and the task's own action buttons.
-  _actionCard(task) {
-    const when = task.createdAt
-      ? `${relativeDay(task.createdAt)} · ${timeOf(task.createdAt)}`
-      : "";
-    const title =
-      task.userFriendlyLabel ||
-      task.user_friendly_label ||
-      task.label ||
-      task.category ||
-      "Finding";
-    const detail = task.guidance || task.category || "";
-    const category = task.category || "";
-    const actions = this._cardActions(task);
-    return html`
-      <div class="actioncard" data-task-id="${escapeHtml(task.taskId)}">
-        <div class="actioncard__body">
-          ${when
-            ? html`<span class="actioncard__time">${escapeHtml(when)}</span>`
-            : ""}
-          <h3 class="actioncard__title">${escapeHtml(title)}</h3>
-          ${detail
-            ? html`<p class="actioncard__detail">${escapeHtml(detail)}</p>`
-            : ""}
-          ${category
-            ? html`<p class="actioncard__category">${escapeHtml(category)}</p>`
-            : ""}
-        </div>
-        ${actions.length
-          ? html`<div class="actioncard__actions">
-              ${actions.map((a) => this._actionButton(a)).join("")}
-            </div>`
-          : ""}
-        <p class="actioncard__error" role="alert" hidden></p>
-      </div>
-    `;
+    return id ? t("today.card.newMeta", { id }) : t("card.meta.new");
   }
 
   // Resolve a task's persisted actions into the concrete controls this screen
@@ -2656,10 +1395,18 @@ class TodayView extends HTMLElement {
       if (a) actions.push(a);
     }
     if (!actions.length) {
-      actions.push({ kind: "done", label: "Done", variant: "ink" });
+      actions.push({
+        kind: "done",
+        label: t("common.done"),
+        variant: "ink",
+      });
     }
     if ((task.cannotDoReasons || []).length) {
-      actions.push({ kind: "cant", label: "Can't", variant: "outline" });
+      actions.push({
+        kind: "cant",
+        label: t("today.action.cant"),
+        variant: "outline",
+      });
     }
     return actions;
   }
@@ -2668,24 +1415,29 @@ class TodayView extends HTMLElement {
   // Returns null for actions with no wired behavior yet (fire-hazard report,
   // generic manual steps) — they always co-occur with a call/311 action, so the
   // card stays actionable without rendering a dead button.
-  _resolveAction(appAction, label) {
+  // `storedLabel` is the English rulebook string persisted on the task: the
+  // label-shape checks below run against it, and only the rendered `label`
+  // goes through the active-language lookup.
+  _resolveAction(appAction, storedLabel) {
     const code = appAction?.code;
     const payload = appAction?.payload || {};
-    const l = label.toLowerCase();
+    const l = storedLabel.toLowerCase();
+    const label = rulebookText(storedLabel);
     if (payload.executionTrigger === "task_created") {
       return label ? { kind: "done", label, variant: "ink" } : null;
     }
     if (code === "open_phone" || /^call\b/.test(l)) {
       return {
         kind: "done",
-        label: String(payload.completionLabel || label || "Done"),
+        label:
+          rulebookText(payload.completionLabel) || label || t("common.done"),
         variant: "blue",
       };
     }
     if (code === "create_311_ticket") {
       return {
         kind: "file311",
-        label: label || "File 311 ticket",
+        label: label || t("today.action.file311"),
         variant: "blue",
       };
     }
@@ -2693,39 +1445,15 @@ class TodayView extends HTMLElement {
       const to = String(payload.to || "");
       return {
         kind: "email",
-        label: label || "Email",
+        label: label || t("today.action.email"),
         variant: "blue",
         href: to ? `mailto:${to}` : null,
       };
     }
-    if (l === "done") return { kind: "done", label: "Done", variant: "ink" };
+    if (l === "done") {
+      return { kind: "done", label: t("common.done"), variant: "ink" };
+    }
     return null;
-  }
-
-  _actionButton(a) {
-    const cls =
-      a.variant === "ink"
-        ? "btn-ink btn-ink--sm"
-        : a.variant === "blue"
-          ? "btn-blue btn-blue--sm"
-          : "btn-outline btn-outline--sm";
-    // Link-style actions render as native anchors with no data-action, so the
-    // click wiring skips them and the browser handles the URL.
-    if (a.href) {
-      return html`<a class="${cls}" href="${a.href}"
-        >${escapeHtml(a.label)}</a
-      >`;
-    }
-    // An email whose target isn't known yet: surface the instruction but keep
-    // it non-interactive rather than misdialing or opening an empty composer.
-    if (a.kind === "email") {
-      return html`<button type="button" class="${cls}" disabled>
-        ${escapeHtml(a.label)}
-      </button>`;
-    }
-    return html`<button type="button" class="${cls}" data-action="${a.kind}">
-      ${escapeHtml(a.label)}
-    </button>`;
   }
 
   _wireCards() {
@@ -2773,7 +1501,16 @@ class TodayView extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      this._resolveAnalysisProblem(problem);
+      if (btn.getAttribute("role") === "checkbox") {
+        toggleCardCompletion(this, card, btn, {
+          onSaved: (task) =>
+            this._markAnalysisProblemResolved(problem, {
+              taskStatus:
+                task.status === "in_progress" ? "in_progress" : "resolved",
+            }),
+          render: () => this.connectedCallback(),
+        });
+      } else this._resolveAnalysisProblem(problem, card);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
     } else if (action === "retry") {
@@ -2790,20 +1527,22 @@ class TodayView extends HTMLElement {
     removeItem(problem.itemId);
   }
 
+  // Home cards may be backed by a backend task; fill any coordinates the
+  // card markup lacks from the task record.
   _problemFromCard(card, task = null) {
+    const base = problemFromCard(card);
     return {
-      itemId: card.getAttribute("data-item-id") || "",
-      checkId: card.getAttribute("data-check-id") || task?.checkId || "",
+      ...base,
+      checkId: base.checkId || task?.checkId || "",
       artifactId:
-        card.getAttribute("data-artifact-id") ||
-        (task ? taskArtifactIds(task)[0] : "") ||
-        "",
-      taskId: card.getAttribute("data-task-id") || task?.taskId || "",
-      conditionId:
-        card.getAttribute("data-condition-id") || task?.conditionId || "",
-      actionKind: card.getAttribute("data-action-kind") || task?.kind || "",
+        base.artifactId || (task ? taskArtifactIds(task)[0] : "") || "",
+      taskId: base.taskId || task?.taskId || "",
+      conditionId: base.conditionId || task?.conditionId || "",
+      actionKind: base.actionKind || task?.kind || "",
       title:
-        card.getAttribute("data-card-title") || task?.category || "problem",
+        card.getAttribute("data-card-title") ||
+        rulebookText(task?.category) ||
+        t("card.title.problemFallback"),
       description:
         card.getAttribute("data-card-edit-description") ||
         task?.description ||
@@ -2819,8 +1558,15 @@ class TodayView extends HTMLElement {
     const title = this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-title",
     );
-    if (title) title.textContent = `Delete "${problem.title}"?`;
-    this._analysisDeleteDialog?.showModal();
+    if (title) {
+      title.textContent = t("analysis.deleteDialog.titleFor", {
+        title: problem.title,
+      });
+    }
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
+      "analysis-delete",
+    );
   }
 
   _openEditProblem(problem) {
@@ -2829,7 +1575,10 @@ class TodayView extends HTMLElement {
     if (this._analysisEditDescription) {
       this._analysisEditDescription.value = problem.description;
     }
-    this._analysisEditDialog?.showModal();
+    openOverlayDialog(
+      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
+      "analysis-edit",
+    );
   }
 
   async _confirmDeleteProblem() {
@@ -2838,7 +1587,7 @@ class TodayView extends HTMLElement {
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-delete-error",
-        "This result is missing its original evidence coordinates, so it cannot be deleted. Take a new photo and try again.",
+        missingConditionMessage(problem, "deleted"),
       );
       return;
     }
@@ -2848,60 +1597,33 @@ class TodayView extends HTMLElement {
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     );
     const focusUndo = button?.matches(":focus-visible") || false;
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-delete-error", "");
     try {
       await deleteAnalysisCard(
         this,
         problem,
-        async () => {
-          let result;
-          try {
-            result = await rejectAnalysisCondition(
-              problem.checkId,
-              problem.artifactId,
-              problem.conditionId,
-              {
-                reason: { key: "not_a_problem" },
-                ...(problem.taskId ? { taskId: problem.taskId } : {}),
-                caller: { request_id: this._requestId("delete", problem) },
-              },
-            );
-          } catch (err) {
-            if (!(err instanceof ApiError) || err.status !== 404) throw err;
-            if (getCurrentCheck()?.id === problem.checkId)
-              this._deleteProblemLocally(problem);
-            return;
-          }
-          if (!result?.assessment) {
-            this._deleteProblemLocally(problem);
-            return;
-          }
-          if (getCurrentCheck()?.id === problem.checkId && problem.itemId) {
-            await refreshEvidenceAnalysis(problem.itemId, result, {
-              rejectedConditionId: problem.conditionId,
-            }).catch((error) => {
-              console.error("refresh after saved deletion failed", error);
+        () =>
+          rejectProblemCondition(problem, {
+            requestId: this._requestId("delete", problem),
+            deleteLocally: () => this._deleteProblemLocally(problem),
+            onRefreshFailure: () => {
               if (getCurrentCheck()?.id === problem.checkId)
                 this._deleteProblemLocally(problem);
-            });
-          }
-        },
+            },
+          }),
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
-        { focusUndo },
+        { focusUndo, address: this._site?.address || "" },
       );
       this._activeProblem = null;
     } catch (err) {
       console.error("delete analysis condition failed", err);
-      this._setDialogError(
-        "analysis-delete-error",
-        "Could not delete this problem. Please try again.",
-      );
+      showDeleteErrorToast();
     } finally {
       this._deletingProblem = false;
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -2912,7 +1634,7 @@ class TodayView extends HTMLElement {
     if (description.length < 5) {
       this._setDialogError(
         "analysis-edit-error",
-        "Description must be at least 5 characters.",
+        t("analysis.editDialog.tooShort"),
       );
       return;
     }
@@ -2925,35 +1647,33 @@ class TodayView extends HTMLElement {
       if (!problem.itemId) {
         this._setDialogError(
           "analysis-edit-error",
-          "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+          missingConditionMessage(problem, "edited"),
         );
         return;
       }
       const button = this.querySelector(
         ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
       );
-      this._setBusy(button, true);
+      setBusy(button, true);
       this._setDialogError("analysis-edit-error", "");
       try {
         await analyzeNoIssueDescriptionEdit(problem.itemId, description);
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         await this.connectedCallback();
+        showEditSavedToast();
       } catch (err) {
         console.error("text-only no-issue reanalysis failed", err);
-        this._setDialogError(
-          "analysis-edit-error",
-          "Could not analyze this description. Please try again.",
-        );
+        showReanalysisErrorToast();
       } finally {
-        this._setBusy(button, false);
+        setBusy(button, false);
       }
       return;
     }
     if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
       this._setDialogError(
         "analysis-edit-error",
-        "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
+        missingConditionMessage(problem, "edited"),
       );
       return;
     }
@@ -2961,7 +1681,7 @@ class TodayView extends HTMLElement {
     const button = this.querySelector(
       ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
     );
-    this._setBusy(button, true);
+    setBusy(button, true);
     this._setDialogError("analysis-edit-error", "");
     try {
       const result = await editAnalysisCondition(
@@ -2970,44 +1690,45 @@ class TodayView extends HTMLElement {
         problem.conditionId,
         {
           description,
+          language: getLocale(),
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
       if (problem.itemId) {
-        await refreshEvidenceAnalysis(problem.itemId, result);
+        try {
+          await refreshEvidenceAnalysis(problem.itemId, result);
+        } catch (error) {
+          console.error("refresh after saved edit failed", error);
+          this._analysisEditDialog?.close();
+          this._activeProblem = null;
+          showEditRefreshErrorToast();
+          return;
+        }
       }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
+      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      this._setDialogError(
-        "analysis-edit-error",
-        "Could not save this edit. Please try again.",
-      );
+      showEditErrorToast();
     } finally {
-      this._setBusy(button, false);
+      setBusy(button, false);
     }
   }
 
   _deleteProblemLocally(problem) {
-    if (!problem.itemId) return;
-    const item = this._sessionItem(problem);
-    updateItemAnalysis(problem.itemId, {
-      tasks: (item?.analysis?.tasks || []).filter(
-        (task) => task.taskId !== problem.taskId,
-      ),
-      rejectedConditionIds: [
-        ...(item?.analysis?.rejectedConditionIds || []),
-        problem.conditionId,
-      ].filter(Boolean),
-    });
+    rejectConditionLocally(problem);
   }
 
-  async _resolveAnalysisProblem(problem) {
+  async _resolveAnalysisProblem(problem, card) {
     if (!problem.taskId) {
+      if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       return;
     }
 
@@ -3022,23 +1743,30 @@ class TodayView extends HTMLElement {
         show311ErrorToast();
         return;
       }
-      show311SuccessToast();
+      show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
       return;
     }
 
     try {
-      await completeTask(problem.taskId, { completionMethod: "manual" });
-      this._markAnalysisProblemResolved(problem);
-      this._analysisSuccessDialog?.showModal();
+      const result = await completeTask(problem.taskId, {
+        completionMethod: "manual",
+      });
+      if (card.isConnected) await slideCompletedCard(card);
+      this._markAnalysisProblemResolved(problem, {
+        taskStatus:
+          result?.task?.status === "in_progress" ? "in_progress" : "resolved",
+      });
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
+      );
       await this.connectedCallback();
     } catch (err) {
       console.error("resolve task failed", err);
-      this._setInlineProblemError(
-        problem,
-        "Could not save that action. Please try again.",
-      );
+      showActionSaveErrorToast();
     }
   }
 
@@ -3047,10 +1775,7 @@ class TodayView extends HTMLElement {
     const answerKey = button.getAttribute("data-answer-key") || "";
     const answerValue = button.getAttribute("data-answer-value") === "true";
     if (!problem.itemId || !problem.conditionId || !answerKey) {
-      this._setInlineProblemError(
-        problem,
-        "Could not save that answer. Please try again.",
-      );
+      showAnswerSaveErrorToast();
       return;
     }
     if (this._answeringConditionIds.has(problem.conditionId)) return;
@@ -3067,10 +1792,7 @@ class TodayView extends HTMLElement {
       );
     } catch (err) {
       console.error("answer condition failed", err);
-      this._setInlineProblemError(
-        problem,
-        "Could not save that answer. Please try again.",
-      );
+      showAnswerSaveErrorToast();
     } finally {
       this._answeringConditionIds.delete(problem.conditionId);
       setQuestionAnswerBusy(this, problem.conditionId, false);
@@ -3078,18 +1800,7 @@ class TodayView extends HTMLElement {
   }
 
   _markAnalysisProblemResolved(problem, { taskStatus = "resolved" } = {}) {
-    if (problem.itemId) {
-      const item = this._sessionItem(problem);
-      updateItemAnalysis(problem.itemId, {
-        tasks: (item?.analysis?.tasks || []).filter(
-          (task) => task.taskId !== problem.taskId,
-        ),
-        resolvedConditionIds: [
-          ...(item?.analysis?.resolvedConditionIds || []),
-          problem.conditionId,
-        ].filter(Boolean),
-      });
-    }
+    if (problem.itemId) resolveConditionLocally(problem);
     if (problem.taskId && taskStatus) {
       this._setTaskOverride(problem.taskId, taskStatus);
     }
@@ -3119,48 +1830,45 @@ class TodayView extends HTMLElement {
   }
 
   _setDialogError(id, message) {
-    const error = this.querySelector(
-      `:scope > .home > .analysis-dialog #${id}`,
-    );
-    if (!(error instanceof HTMLElement)) return;
-    error.textContent = message;
-    error.hidden = !message;
-  }
-
-  _setBusy(button, busy) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.disabled = busy;
-    button.setAttribute("aria-busy", busy ? "true" : "false");
+    // Scoped past the embedded <perimeter-check>, which renders the same dialog ids.
+    setDialogError(this, `:scope > .home > .analysis-dialog #${id}`, message);
   }
 
   _requestId(action, problem) {
-    const suffix =
-      globalThis.crypto?.randomUUID?.() ||
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${problem.checkId}:${problem.artifactId}:${problem.conditionId}:${action}:${suffix}`;
+    return requestId(
+      problem.checkId,
+      problem.artifactId,
+      problem.conditionId,
+      action,
+    );
   }
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "view311") {
+    if (action === "update") {
+      void this._openTaskUpdate(task, btn);
+    } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
-      this._run(card, () =>
-        completeTask(task.taskId, { completionMethod: "manual" }),
-      ).then((ok) => {
-        if (ok) {
-          this._setTaskOverride(task.taskId, "resolved");
-          this.connectedCallback();
-        }
+      toggleCardCompletion(this, card, btn, {
+        onSaved: (taskResult) =>
+          this._setTaskOverride(
+            task.taskId,
+            taskResult.status === "in_progress" ? "in_progress" : "resolved",
+          ),
+        render: () => this.connectedCallback(),
       });
     } else if (action === "file311") {
       this._run(
         card,
-        () => completeTask(task.taskId, { completionMethod: "311_filed" }),
-        { requireSubmitted311: true },
-      ).then((ok) => {
-        if (ok) {
-          show311SuccessToast();
+        () =>
+          completeTask(task.taskId, {
+            completionMethod: "311_filed",
+          }),
+        { requireSubmitted311: true, animateOnSuccess: true },
+      ).then((result) => {
+        if (result) {
+          show311SuccessToast(submitted311ServiceRequestNumber(result.task));
           this.connectedCallback();
         }
       });
@@ -3168,14 +1876,14 @@ class TodayView extends HTMLElement {
       this._renderReasonPicker(card, task);
     } else if (action === "cant-reason") {
       const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason })).then(
-        (ok) => {
-          if (ok) {
-            this._setTaskOverride(task.taskId, "resolved");
-            this.connectedCallback();
-          }
-        },
-      );
+      this._run(card, () => cannotDoTask(task.taskId, { reason }), {
+        animateOnSuccess: true,
+      }).then((ok) => {
+        if (ok) {
+          this._setTaskOverride(task.taskId, "resolved");
+          this.connectedCallback();
+        }
+      });
     } else if (action === "cant-cancel") {
       this._restoreActions(card, task);
     }
@@ -3200,29 +1908,13 @@ class TodayView extends HTMLElement {
       ".analysis-card__actions, .actioncard__actions",
     );
     if (!actions) return;
-    const reasons = task.cannotDoReasons || [];
-    actions.innerHTML = html`
-      ${reasons
-        .map(
-          (r) =>
-            html`<button
-              type="button"
-              class="btn-outline btn-outline--sm"
-              data-action="cant-reason"
-              data-reason="${escapeHtml(r)}"
-            >
-              ${escapeHtml(r)}
-            </button>`,
-        )
-        .join("")}
-      <button
-        type="button"
-        class="home-cta__link actioncard__cancel"
-        data-action="cant-cancel"
-      >
-        Cancel
-      </button>
-    `;
+    // The backend validates the reason against the task's English list, so
+    // each option submits the stored string and displays its translation.
+    const reasons = (task.cannotDoReasons || []).map((value) => ({
+      value: String(value),
+      label: rulebookText(value),
+    }));
+    actions.innerHTML = reasonPicker({ reasons });
     this._wireCardButtons(card, task);
   }
 
@@ -3232,17 +1924,21 @@ class TodayView extends HTMLElement {
     );
     if (!actions) return;
     actions.innerHTML = this._cardActions(task)
-      .map((a) => this._actionButton(a))
+      .map((a) => actionButton(a))
       .join("");
     this._wireCardButtons(card, task);
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
   // whole view so the worklist and the "To do" count stay consistent; on failure
-  // re-enable the card. Explicit 311 failures use the app error toast; other
-  // actions keep their inline error. A 200 with a failed app action still
-  // counts as a failure and leaves the task available to retry.
-  async _run(card, fn, { requireSubmitted311 = false } = {}) {
+  // re-enable the card. Failures use the standardized app toast. A 200 with a
+  // failed app action still counts as a failure and leaves the task available
+  // to retry.
+  async _run(
+    card,
+    fn,
+    { requireSubmitted311 = false, animateOnSuccess = false } = {},
+  ) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
     buttons.forEach((b) => (b.disabled = true));
@@ -3261,21 +1957,18 @@ class TodayView extends HTMLElement {
       if (failure) {
         buttons.forEach((b) => (b.disabled = false));
         if (requireSubmitted311) show311ErrorToast();
-        else if (err) {
-          err.hidden = false;
-          err.textContent = failure;
-        }
+        else showActionSaveErrorToast();
         return;
       }
-      return true;
+      if (animateOnSuccess && card.isConnected) {
+        await slideCompletedCard(card);
+      }
+      return result || true;
     } catch (e) {
       console.error("task action failed", e);
       buttons.forEach((b) => (b.disabled = false));
       if (requireSubmitted311) show311ErrorToast();
-      else if (err) {
-        err.hidden = false;
-        err.textContent = "Couldn’t save that — please try again.";
-      }
+      else showActionSaveErrorToast();
       return false;
     }
   }
@@ -3283,71 +1976,16 @@ class TodayView extends HTMLElement {
   // Backend unreachable on load. Online-only: surface it with a retry rather than
   // silently degrading (offline is post-MVP; no local read fallback).
   _renderError() {
-    if (isDeletingAnalysisCard(this)) {
+    if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
     const identity = this._siteIdentity();
-    this.innerHTML = html`
-      <div class="home">
-        <div class="screen" role="group" aria-label="Today">
-          <div class="screen__sec home-lead">
-            <div class="home-identity">
-              ${identity.org
-                ? html`<p class="home-identity__org">
-                    ${escapeHtml(identity.org)}
-                  </p>`
-                : ""}
-              <h1 class="home-identity__site">${escapeHtml(identity.site)}</h1>
-            </div>
-            <div class="lastlog">
-              <p class="lastlog__eyebrow">CAN’T REACH THE SERVER</p>
-              <p class="lastlog__summary">Checks are unavailable</p>
-            </div>
-            <div class="home-actions">
-              <button id="retry" class="btn-ink" type="button">
-                Try again
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+    this.innerHTML = errorView({ identity });
     this.querySelector("#retry")?.addEventListener("click", () =>
       this.connectedCallback(),
     );
   }
-}
-
-function timeOf(iso) {
-  return new Date(iso)
-    .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    .replace(/\s/g, "")
-    .toUpperCase();
-}
-
-// "TODAY" / "YESTERDAY" for the last 2 days, else the uppercase weekday.
-function relativeDay(iso) {
-  const d = new Date(iso);
-  const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const ago = Math.round((todayStart.getTime() - dStart.getTime()) / 86400000);
-  if (ago <= 0) return "TODAY";
-  if (ago === 1) return "YESTERDAY";
-  return d.toLocaleDateString([], { weekday: "long" }).toUpperCase();
-}
-
-function splitSiteIdentity(name) {
-  for (const delimiter of [" · ", " — ", " – ", " - ", ": "]) {
-    if (!name.includes(delimiter)) continue;
-    const [org, ...rest] = name.split(delimiter);
-    const site = rest.join(delimiter).trim();
-    if (org.trim() && site) {
-      return { org: org.trim(), site };
-    }
-  }
-  return null;
 }
 
 customElements.define("today-view", TodayView);

@@ -1,0 +1,96 @@
+.photo-lightbox {
+  width: fit-content;
+  height: fit-content;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg, 1.5rem);
+  overflow: hidden;
+  background: var(--surface, #fff);
+  color: var(--text, #16181f);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 35%);
+}
+
+.photo-lightbox[open] {
+  display: block;
+}
+
+.photo-lightbox::backdrop {
+  background: rgb(0 0 0 / 78%);
+}
+
+.photo-lightbox__figure {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+}
+
+.photo-lightbox__image-wrap {
+  position: relative;
+  width: fit-content;
+  max-width: calc(100vw - 3.5rem);
+  margin: 0.75rem 0.75rem 0;
+  border-radius: calc(var(--radius-lg, 1.5rem) - 0.5rem);
+  overflow: hidden;
+  background-color: var(--surface-2, #eef0f3);
+  background-image: linear-gradient(45deg, rgb(0 0 0 / 5%) 25%, transparent 25%),
+    linear-gradient(-45deg, rgb(0 0 0 / 5%) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgb(0 0 0 / 5%) 75%),
+    linear-gradient(-45deg, transparent 75%, rgb(0 0 0 / 5%) 75%);
+  background-position:
+    0 0,
+    0 1rem,
+    1rem -1rem,
+    -1rem 0;
+  background-size: 2rem 2rem;
+  line-height: 0;
+}
+
+.photo-lightbox__image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100dvh - 6.75rem);
+}
+
+.photo-lightbox__close {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 1rem;
+  inset-inline-end: 1rem;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface, #fff) 88%, transparent);
+  color: var(--text, #16181f);
+  font: inherit;
+  font-size: 1.5rem;
+  cursor: pointer;
+  box-shadow: 0 0.125rem 0.5rem rgb(0 0 0 / 16%);
+}
+
+.photo-lightbox__caption {
+  min-height: 3.25rem;
+  margin: 0;
+  padding: 0.75rem 1.25rem 1rem;
+  text-align: center;
+  color: var(--text-secondary, #555b66);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 40rem) {
+  .photo-lightbox {
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+  }
+
+  .photo-lightbox__image-wrap {
+    max-width: calc(100vw - 2.5rem);
+  }
+}
