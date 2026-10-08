@@ -56,6 +56,11 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
+  # Bootstrap in two applies: leave false until the secret containers created
+  # by the first apply have been populated per docs/runbooks/city-smtp.md.
+  provision_city_smtp_relay_foundation = true
+  enable_city_smtp_relay               = false
+  city_smtp_from_address               = "goodneighbor-dev@sf.gov"
 
   providers = {
     aws           = aws

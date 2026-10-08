@@ -168,6 +168,51 @@ variable "setup_code_email_reply_to" {
   default     = ""
 }
 
+variable "enable_city_smtp_relay" {
+  description = "Create the SES Mail Manager gateway to the City Proofpoint SMTP relay. Enable only after both SMTP secret values have been populated out-of-band."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_city_smtp_relay || var.provision_city_smtp_relay_foundation
+    error_message = "The City SMTP relay cannot be enabled unless its environment foundation is provisioned."
+  }
+}
+
+variable "provision_city_smtp_relay_foundation" {
+  description = "Create the environment's SMTP KMS key, empty secret containers, log group, and alarms. Enable in dev first; add prod only after dev verification."
+  type        = bool
+  default     = false
+}
+
+variable "city_smtp_relay_host" {
+  description = "Public City SMTP relay hostname used by SES Mail Manager."
+  type        = string
+  default     = "smtp-us.ser.proofpoint.com"
+}
+
+variable "city_smtp_relay_port" {
+  description = "City SMTP submission port; Proofpoint recommends 587 with STARTTLS."
+  type        = number
+  default     = 587
+
+  validation {
+    condition     = var.city_smtp_relay_port == 587
+    error_message = "The approved Proofpoint integration must use authenticated submission on port 587."
+  }
+}
+
+variable "city_smtp_from_address" {
+  description = "Only envelope sender that the environment's Mail Manager rule relays to Proofpoint."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_city_smtp_relay || can(regex("^[^@]+@sf\\.gov$", var.city_smtp_from_address))
+    error_message = "An enabled City SMTP relay requires an @sf.gov sender address."
+  }
+}
+
 variable "provider_app_url" {
   description = "Public HTTPS provider app URL used in setup-code emails."
   type        = string
