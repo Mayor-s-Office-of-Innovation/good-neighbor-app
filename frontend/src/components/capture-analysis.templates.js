@@ -24,7 +24,12 @@ const categories = [
     "blocking access",
   ],
   ["drugs", "public-drug-use-9638", "public drug use"],
-  ["distress", "someone-in-distress-0d4e", "someone in distress"],
+  [
+    "distress",
+    "someone-in-distress-0d4e",
+    "someone in distress",
+    "behavioral health",
+  ],
   ["animals", "animals-1780", "aggressive animals", "dangerous animals"],
   ["medical", "medical-emergency-1a14", "medical emergency"],
   [
@@ -32,7 +37,10 @@ const categories = [
     "threats-intimidation-or-violence-9166",
     "threats, intimidation, or violence",
     "intimidation, or violence",
+    "intimidation or violence",
+    "intimidation and violence",
   ],
+  ["parking", "illegal-parking-878a", "illegal parking"],
 ];
 
 /** @param {import("./analysis-results.templates.js").AnalysisItem} item */
@@ -77,16 +85,18 @@ export function captureLabels(items) {
       ([key, icon]) =>
         html` <div class="capture-label" data-category="${key}">
           <span class="capture-category-icon" aria-hidden="true">
-            <img
-              class="capture-category-icon--light capture-category-icon--${icon}-light"
-              src="/category-icons/${icon}-light.png"
-              alt=""
-            />
-            <img
-              class="capture-category-icon--dark capture-category-icon--${icon}-dark"
-              src="/category-icons/${icon}-dark.png"
-              alt=""
-            />
+            ${icon === "parking"
+              ? '<wa-icon name="flag"></wa-icon>'
+              : html`<img
+                    class="capture-category-icon--light capture-category-icon--${icon}-light"
+                    src="/category-icons/${icon}-light.png"
+                    alt=""
+                  />
+                  <img
+                    class="capture-category-icon--dark capture-category-icon--${icon}-dark"
+                    src="/category-icons/${icon}-dark.png"
+                    alt=""
+                  />`}
           </span>
           <span>${escapeHtml(t(`rulebook.category.${key}`))}</span>
         </div>`,

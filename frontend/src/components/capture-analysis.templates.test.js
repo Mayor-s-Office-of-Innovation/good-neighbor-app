@@ -67,7 +67,7 @@ describe("capture analysis feedback", () => {
     expect(markup).toContain("encampment-dark.png");
   });
 
-  it("covers all thirteen rubric categories", () => {
+  it("covers all fourteen rubric categories", () => {
     const keys = [
       "litter-b192",
       "bulky-items-c8c9",
@@ -82,6 +82,7 @@ describe("capture analysis feedback", () => {
       "animals-1780",
       "medical-emergency-1a14",
       "threats-intimidation-or-violence-9166",
+      "illegal-parking-878a",
     ];
     const markup = captureLabels([
       photo(
@@ -93,4 +94,22 @@ describe("capture analysis feedback", () => {
     expect(markup).toContain("distress-light.png");
     expect(markup).toContain("distress-dark.png");
   });
+
+  it.each([
+    ["Behavioral health", "someone-in-distress-0d4e", "distress"],
+    [
+      "Intimidation and violence",
+      "threats-intimidation-or-violence-9166",
+      "threats",
+    ],
+  ])(
+    "preserves capture labels for older analyzer category %s",
+    (category, key, icon) => {
+      const markup = captureLabels([photo("analyzed", [{ category }])]);
+      expect(markup).toContain(`data-category="${key}"`);
+      expect(markup).toContain(t(`rulebook.category.${key}`));
+      expect(markup).toContain(`${icon}-light.png`);
+      expect(markup).toContain(`${icon}-dark.png`);
+    },
+  );
 });
