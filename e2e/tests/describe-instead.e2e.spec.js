@@ -264,6 +264,10 @@ test.describe("describe instead", () => {
   }) => {
     await page.locator("#report-problem").click();
     await expect(page).toHaveURL(/\/problem$/);
+    // The URL changes before ProblemReport's async connectedCallback finishes
+    // loading the Site and creating its single-problem session. UI locators
+    // normally auto-wait for that render; page.evaluate() below does not.
+    await expect(page.locator("#submit-report")).toBeVisible();
 
     await page.evaluate(async () => {
       // @ts-expect-error -- this URL is resolved by the Vite browser server.
