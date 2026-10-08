@@ -1,0 +1,158 @@
+/* Figma artwork crops; source nodes recorded in public/category-icons/sources.json. */
+.capture-category-icon--litter-light {
+  --icon-left: -32.2%;
+  --icon-top: -32.2%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--litter-dark {
+  --icon-left: -30%;
+  --icon-top: -22.44%;
+  --icon-width: 152.44%;
+  --icon-height: 152.44%;
+}
+.capture-category-icon--bulky-light {
+  --icon-left: -28.05%;
+  --icon-top: -30.76%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--bulky-dark {
+  --icon-left: -21.14%;
+  --icon-top: -18.83%;
+  --icon-width: 145.01%;
+  --icon-height: 148.83%;
+}
+.capture-category-icon--feces-light {
+  --icon-left: -32.35%;
+  --icon-top: -29.46%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--feces-dark {
+  --icon-left: -32.23%;
+  --icon-top: -30.19%;
+  --icon-width: 165.26%;
+  --icon-height: 165.26%;
+}
+.capture-category-icon--needles-light {
+  --icon-left: -12.31%;
+  --icon-top: -19.28%;
+  --icon-width: 142.22%;
+  --icon-height: 142.22%;
+}
+.capture-category-icon--needles-dark {
+  --icon-left: -19.59%;
+  --icon-top: -25%;
+  --icon-width: 142.75%;
+  --icon-height: 142.75%;
+}
+.capture-category-icon--encampment-light {
+  --icon-left: -30.87%;
+  --icon-top: -20.34%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--encampment-dark {
+  --icon-left: -29.12%;
+  --icon-top: -31.33%;
+  --icon-width: 170%;
+  --icon-height: 170%;
+}
+.capture-category-icon--graffiti-light {
+  --icon-left: 4.05%;
+  --icon-top: 2.18%;
+  --icon-width: 95%;
+  --icon-height: 95%;
+}
+.capture-category-icon--graffiti-dark {
+  --icon-left: -2.46%;
+  --icon-top: -1.46%;
+  --icon-width: 104.9%;
+  --icon-height: 104.9%;
+}
+.capture-category-icon--fire-light {
+  --icon-left: -23.43%;
+  --icon-top: -13.57%;
+  --icon-width: 142.11%;
+  --icon-height: 131.96%;
+}
+.capture-category-icon--fire-dark {
+  --icon-left: -25.95%;
+  --icon-top: -14.14%;
+  --icon-width: 141.24%;
+  --icon-height: 130.38%;
+}
+.capture-category-icon--blocked-light {
+  --icon-left: -19.56%;
+  --icon-top: -21.43%;
+  --icon-width: 142.86%;
+  --icon-height: 142.86%;
+}
+.capture-category-icon--blocked-dark {
+  --icon-left: -22.95%;
+  --icon-top: -26.14%;
+  --icon-width: 148.38%;
+  --icon-height: 148.38%;
+}
+.capture-category-icon--drugs-light {
+  --icon-left: -23.91%;
+  --icon-top: -18.88%;
+  --icon-width: 134%;
+  --icon-height: 134%;
+}
+.capture-category-icon--drugs-dark {
+  --icon-left: -18.51%;
+  --icon-top: -16.71%;
+  --icon-width: 132.12%;
+  --icon-height: 132.12%;
+}
+.capture-category-icon--animals-light {
+  --icon-left: -10.58%;
+  --icon-top: -7.17%;
+  --icon-width: 120.55%;
+  --icon-height: 118.66%;
+}
+.capture-category-icon--animals-dark {
+  --icon-left: -8.25%;
+  --icon-top: -6.42%;
+  --icon-width: 117.75%;
+  --icon-height: 117.75%;
+}
+.capture-category-icon--medical-light {
+  --icon-left: -29.83%;
+  --icon-top: -31.61%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--medical-dark {
+  --icon-left: -20.42%;
+  --icon-top: -20.58%;
+  --icon-width: 145.42%;
+  --icon-height: 145.42%;
+}
+.capture-category-icon--threats-light {
+  --icon-left: -29.41%;
+  --icon-top: -37.58%;
+  --icon-width: 160%;
+  --icon-height: 160%;
+}
+.capture-category-icon--threats-dark {
+  --icon-left: -22.3%;
+  --icon-top: -24.64%;
+  --icon-width: 145%;
+  --icon-height: 145%;
+}
+
+.capture-category-icon--distress-light {
+  --icon-left: 0.58%;
+  --icon-top: -1.45%;
+  --icon-width: 100%;
+  --icon-height: 100%;
+}
+.capture-category-icon--distress-dark {
+  --icon-left: 0%;
+  --icon-top: 0%;
+  --icon-width: 100%;
+  --icon-height: 100%;
+}

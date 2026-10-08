@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
   isCompletingAnalysisCard,
@@ -722,6 +723,7 @@ class PerimeterCheck extends HTMLElement {
     grid.innerHTML = photoGrid(photos, description);
 
     const evidence = getItems();
+    this.querySelector("#capture-labels").innerHTML = captureLabels(getItems());
     this.querySelector("#check-footer").innerHTML = footer({
       items: evidence,
       analyzingOpen: getAnalyzingOpen(),

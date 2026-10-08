@@ -17,6 +17,8 @@ import {
   problemSummaryLabel,
 } from "./analysis-results.templates.js";
 
+import { analysisScanner } from "./capture-analysis.templates.js";
+
 export const shell = () => html`
   <div class="flow view-check check check-timeline check-roll">
     <div class="check-timeline__topbar">
@@ -44,6 +46,13 @@ export const shell = () => html`
       class="shotgrid check-roll__grid"
       id="shotgrid"
       aria-label="${escapeAttr(t("check.grid.aria"))}"
+    ></div>
+
+    <div
+      class="capture-labels"
+      id="capture-labels"
+      role="status"
+      aria-live="polite"
     ></div>
 
     <button
@@ -243,6 +252,7 @@ export const shotTile = (item, index) => html`
         src="${escapeAttr(item.dataUrl)}"
         alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
       />
+      ${analysisScanner(item)}
     </button>
     <button
       class="shot__del"

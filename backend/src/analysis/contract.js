@@ -1,6 +1,6 @@
 // Vendored types for the analysis service response contract, pinned to
 // `../street-conditions-analysis/contract/schemas/analysis-response.schema.json`
-// (rubric `good-neighbor-app` v1.0.0, re-pinned 2026-08-14). The service owns
+// (rubric `good-neighbor-app` v2.0.0, re-pinned 2026-10-08). The service owns
 // this shape; we adapt to it, never the reverse. Referenced elsewhere via
 // `import("./contract.js").AnalysisResponse`, mirroring the repo's
 // `import("aws-lambda").X` style. Types only — no runtime coupling to the SDK.
@@ -94,4 +94,4 @@
 export const RUBRIC_ID = "good-neighbor-app";
 
 /** @type {string} */
-export const RUBRIC_VERSION = "1.0.0";
+export const RUBRIC_VERSION = "2.0.0";
