@@ -98,6 +98,11 @@ describe("guidance handlers", () => {
                 severity: 3,
                 user_friendly_label: "Lots of trash in tree well",
                 description: "trash",
+                translations: {
+                  language: "es",
+                  user_friendly_label: "Montón de basura",
+                  description: "basura",
+                },
               },
             ],
           },
@@ -121,6 +126,11 @@ describe("guidance handlers", () => {
     expect(writes[1].Put.Item).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        language: "es",
+        user_friendly_label: "Montón de basura",
+        description: "basura",
+      },
       source: {
         latitude: 37.7,
         longitude: -122.4,
@@ -131,8 +141,68 @@ describe("guidance handlers", () => {
       ruleId: "LITTER-2",
       shortId: "MOI-CIT-001",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        language: "es",
+        user_friendly_label: "Montón de basura",
+        description: "basura",
+      },
     });
     expect(parse(res).tasks).toHaveLength(1);
+  });
+
+  it("drops malformed and empty translations blocks instead of rejecting", async () => {
+    mockTaskShortIdAllocation();
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: [
+            {
+              category: "Litter",
+              severity: 3,
+              translations: "es",
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { user_friendly_label: "no language" },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: 7 },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: "es", user_friendly_label: 42 },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: "es" },
+            },
+            { category: "Litter", severity: 3, translations: null },
+          ],
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(201);
+    const writes = /** @type {any[]} */ (
+      send.mock.calls[2][0].input.TransactItems
+    );
+    const conditionItems = writes
+      .map((write) => write.Put.Item)
+      .filter((item) => item.sk.includes("#COND#"));
+    expect(conditionItems).toHaveLength(6);
+    for (const item of conditionItems) {
+      expect(item).not.toHaveProperty("translations");
+    }
   });
 
   it("preserves top-level grade from explicit check-completion assessments", async () => {
