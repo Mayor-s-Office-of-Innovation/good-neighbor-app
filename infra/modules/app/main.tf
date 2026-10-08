@@ -18,6 +18,12 @@ resource "aws_kms_key" "smtp_secrets" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Standard KMS account-administration statement. Granting the account
+        # principal full key administration keeps IAM delegation and key
+        # recovery possible and prevents an unrecoverable key lockout; it does
+        # not grant Mail Manager runtime access. The following statement grants
+        # that service only Decrypt/Describe through Secrets Manager and scopes
+        # it to this environment's two SMTP secrets.
         Sid       = "EnableIamUserPermissions"
         Effect    = "Allow"
         Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }

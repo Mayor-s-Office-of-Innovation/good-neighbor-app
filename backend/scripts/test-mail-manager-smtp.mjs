@@ -38,9 +38,11 @@ function smtpReader(socket) {
   /** @type {Array<{resolve: (value: string[]) => void, reject: (reason: Error) => void, timer: NodeJS.Timeout}>} */
   const waiting = [];
 
-  socket.setEncoding("utf8");
   const onData = (chunk) => {
-    buffer += chunk;
+    // Keep the underlying socket in binary mode. The same socket is handed to
+    // tls.connect() after STARTTLS, and setting a text encoding on it would
+    // corrupt the TLS records before the TLS wrapper can process them.
+    buffer += chunk.toString("utf8");
     while (true) {
       const match = /(?:^|\r\n)(\d{3}) ([^\r\n]*)\r\n/.exec(buffer);
       if (!match) break;
