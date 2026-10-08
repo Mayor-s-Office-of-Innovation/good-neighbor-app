@@ -146,6 +146,9 @@ export function buildAnalyzeRequest({
  * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
  * @property {(input: { classifierId: string, evidence: ClassifierEvidence, requestId?: string, appId?: string }) => Promise<unknown>} classifyEvidence
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
+ * @property {(input: { items: import("./contract.js").TranslateRequestItem[], languages: string[], requestId?: string, appId?: string }) => Promise<import("./contract.js").TranslateResponse>} translate
+ *   text-only background translation of model-written label/description
+ *   pairs into every requested locale (`POST /v1/translations`)
  * @property {() => Promise<unknown>} listRubrics
  */
 
@@ -326,6 +329,23 @@ export function createAnalyzerClient({
         },
         auth: true,
       });
+    },
+    translate({ items, languages, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return /** @type {Promise<import("./contract.js").TranslateResponse>} */ (
+        request("/v1/translations", {
+          method: "POST",
+          body: {
+            languages,
+            items,
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        })
+      );
     },
     listRubrics() {
       return request("/v1/rubrics", { method: "GET", auth: false });

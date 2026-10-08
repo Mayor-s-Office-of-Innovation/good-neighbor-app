@@ -28,11 +28,37 @@
 /**
  * A `translations` block on one identified condition: localized copies of the
  * model-written display fields, present only when the caller requested a
- * supported non-English `language`.
+ * supported non-English `language`. One language per analyze call; we store
+ * it as a per-locale map (see analysis/translations.js) and fill the other
+ * locales in the background.
  * @typedef {object} ConditionTranslations
  * @property {string} language
  * @property {string} user_friendly_label
  * @property {string} description
+ */
+
+/**
+ * `POST /v1/translations` — text-only, stateless: translate the two
+ * model-written fields of each item into every requested locale in one model
+ * call. Items echo back by `id`; a locale the service could not produce is
+ * simply absent from that item's map (never an error).
+ * @typedef {object} TranslateRequestItem
+ * @property {string} id
+ * @property {string} user_friendly_label
+ * @property {string} description
+ *
+ * @typedef {object} TranslateRequest
+ * @property {string[]} languages BCP-47 tags (es/vi/fil/zh-Hant)
+ * @property {TranslateRequestItem[]} items
+ * @property {{ app_id?: string, request_id?: string }} [caller]
+ *
+ * @typedef {object} TranslateResponseItem
+ * @property {string} id
+ * @property {Record<string, { user_friendly_label?: string, description?: string }>} translations
+ *
+ * @typedef {object} TranslateResponse
+ * @property {ModelRef} [model]
+ * @property {TranslateResponseItem[]} items
  */
 
 /**

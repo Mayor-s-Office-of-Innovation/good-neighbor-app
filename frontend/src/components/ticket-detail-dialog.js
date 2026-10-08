@@ -12,7 +12,7 @@
 */
 import "./timeline.css";
 import { rulebookText } from "../i18n/rulebook.js";
-import { getLocale } from "../i18n/locale.js";
+import { analyzerTranslation } from "../i18n/analyzer-text.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
 import { get311RequestDetail } from "../services/api.js";
@@ -30,14 +30,7 @@ import { ticketDetailDialog } from "./ticket-detail-dialog.templates.js";
  * @returns {Record<string, any>}
  */
 export function buildTicketDetail(task, site, request) {
-  const analyzerText = (flat, key) => {
-    const translations = task?.translations;
-    if (translations && translations.language === getLocale()) {
-      const localized = translations[key];
-      if (typeof localized === "string" && localized) return localized;
-    }
-    return flat;
-  };
+  const analyzerText = (flat, key) => analyzerTranslation(task, key) ?? flat;
   return {
     ...request,
     title:

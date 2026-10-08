@@ -12,6 +12,7 @@ const {
   analyze,
   createAnalyzerClient,
   reverseGeocodePhoto,
+  enqueueTranslateArtifact,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   getObjectBytes: vi.fn(),
@@ -19,6 +20,11 @@ const {
   analyze: vi.fn(),
   createAnalyzerClient: vi.fn(),
   reverseGeocodePhoto: vi.fn(),
+  enqueueTranslateArtifact: vi.fn(async () => true),
+}));
+vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
+  .../** @type {any} */ (await importOriginal()),
+  enqueueTranslateArtifact,
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes, setObjectTags }));
@@ -71,6 +77,7 @@ beforeEach(() => {
   analyze.mockReset();
   createAnalyzerClient.mockReset();
   reverseGeocodePhoto.mockReset();
+  enqueueTranslateArtifact.mockClear();
   delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
@@ -81,6 +88,76 @@ beforeEach(() => {
 });
 
 describe("analyze-artifact worker", () => {
+  it("enqueues a background translate job for the stored concerns", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke(baseMsg);
+
+    const concern =
+      singleLowConcernResponse.assessment.identified_conditions_of_concern[0];
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+    expect(enqueueTranslateArtifact).toHaveBeenCalledWith({
+      queueUrl: "queue",
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+      items: [
+        {
+          user_friendly_label: concern.user_friendly_label,
+          description: concern.description,
+        },
+      ],
+    });
+    // The enqueue follows the conditional ANALYSIS# put.
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+  });
+
+  it("keeps the analysis when the translate enqueue fails", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    enqueueTranslateArtifact.mockRejectedValueOnce(new Error("sqs down"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await invoke(baseMsg);
+      expect(result.batchItemFailures).toEqual([]);
+      expect(warning).toHaveBeenCalledWith(
+        "Translate enqueue failed; analysis keeps English only",
+        { checkId: "chk_01", artifactId: "art_1", error: "Error" },
+      );
+      // Counters still bump after the failed enqueue.
+      expect(ddbSend.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not enqueue translation on an already-analyzed redelivery", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+
+    await invoke(baseMsg);
+
+    expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+  });
+
   it("stores a photo address returned for its coordinates", async () => {
     process.env.REVERSE_GEOCODING_ENABLED = "true";
     getObjectBytes.mockResolvedValue({
