@@ -221,12 +221,10 @@ it.each([undefined, "Followed up"])(
     dialog._task = { taskId: "task-1" };
     dialog._render = vi.fn();
     dialog._notifyUpdated = vi.fn();
-    api.createTaskUpdate
-      .mockReset()
-      .mockResolvedValue({
-        task: dialog._task,
-        update: { updateId: "update-1" },
-      });
+    api.createTaskUpdate.mockReset().mockResolvedValue({
+      task: dialog._task,
+      update: { updateId: "update-1" },
+    });
     const type = text ? "additional_action_resolved" : "presence_resolved";
     await dialog._recordOutcome({ querySelectorAll: () => [] }, type, text);
     expect(api.createTaskUpdate).toHaveBeenCalledWith("task-1", {
