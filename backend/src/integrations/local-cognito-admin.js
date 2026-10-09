@@ -99,6 +99,20 @@ export class LocalCognitoAdminClient {
       case "AdminResetUserPasswordCommand":
         requireUser(username).status = "RESET_REQUIRED";
         return {};
+      case "AdminUpdateUserAttributesCommand": {
+        const user = requireUser(username);
+        Object.assign(
+          user.attributes,
+          Object.fromEntries(
+            (input.UserAttributes ?? []).map(
+              (
+                /** @type {{ Name: string, Value: string }} */ { Name, Value },
+              ) => [Name, Value],
+            ),
+          ),
+        );
+        return {};
+      }
       default:
         throw new Error(
           `Unsupported local Cognito command: ${command.constructor.name}`,
@@ -166,6 +180,7 @@ function seedUser(
       given_name: firstName,
       family_name: lastName,
       name: `${firstName} ${lastName}`,
+      ...(status === "CONFIRMED" ? { email_verified: "true" } : {}),
     },
     groups: new Set([role]),
     createdAt: now,

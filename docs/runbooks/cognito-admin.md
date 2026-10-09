@@ -50,6 +50,9 @@ messages; the application never generates or displays a password.
 Creating a user alone does not grant admin API access: backend handlers require
 one of the two Compliance groups. Public self-sign-up is disabled. Do not mark an
 email verified until control of that address has been established.
+The session endpoint records `email_verified=true` only after an invited
+administrator has successfully authenticated with an email-address username;
+password reset remains unavailable without a verified email or phone number.
 
 The invited user opens the admin console, chooses Sign in, enters the exact
 username and emailed temporary password, chooses a permanent password, and

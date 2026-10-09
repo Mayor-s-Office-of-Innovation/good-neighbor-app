@@ -2923,7 +2923,7 @@ customElements.define("admin-app", AdminApp);
 function adminSettingsMenu(canManageUsers, canImportSites) {
   return `<div class="admin-settings-wrap">
     <button class="admin-settings" type="button" popovertarget="admin-settings-menu" aria-label="Settings" aria-haspopup="menu">
-      <span class="admin-settings__icon" aria-hidden="true"></span>
+      <wa-icon name="gear" aria-hidden="true"></wa-icon>
     </button>
     <div class="admin-settings-menu" id="admin-settings-menu" popover role="menu" aria-label="Settings">
       ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="users" aria-hidden="true"></wa-icon>User management</a>' : ""}
@@ -2994,7 +2994,9 @@ function adminUserRow(user) {
       : `${
           status === "invited"
             ? `<button class="btn-secondary" type="button" data-admin-user-action="reinvite" data-username="${username}">Re-invite</button>`
-            : `<button class="btn-secondary" type="button" data-admin-user-action="reset" data-username="${username}">Reset password</button>`
+            : user.canResetPassword
+              ? `<button class="btn-secondary" type="button" data-admin-user-action="reset" data-username="${username}">Reset password</button>`
+              : ""
         }<button class="btn-danger" type="button" data-admin-user-action="suspend" data-username="${username}">Suspend</button>`;
   return `<tr><td>${escapeHtml(user.name || "—")}</td><td>${escapeHtml(user.email)}</td><td class="admin-user-role"><wa-select aria-label="Role for ${escapeHtml(user.email)}" data-admin-role data-username="${username}" value="${escapeHtml(user.role)}"><wa-option value="compliance-manager">Manager</wa-option><wa-option value="compliance-supervisor">Supervisor</wa-option></wa-select></td><td>${escapeHtml(statusLabel)}</td><td><div class="admin-user-actions">${actions}</div></td></tr>`;
 }

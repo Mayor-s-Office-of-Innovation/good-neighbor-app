@@ -6,6 +6,7 @@ import {
   AdminGetUserCommand,
   AdminListGroupsForUserCommand,
   AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { describe, expect, it } from "vitest";
@@ -98,6 +99,13 @@ describe("LocalCognitoAdminClient", () => {
       }),
     );
     await client.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: pool,
+        Username: username,
+        UserAttributes: [{ Name: "email_verified", Value: "true" }],
+      }),
+    );
+    await client.send(
       new AdminResetUserPasswordCommand({
         UserPoolId: pool,
         Username: username,
@@ -107,6 +115,12 @@ describe("LocalCognitoAdminClient", () => {
       await client.send(
         new AdminGetUserCommand({ UserPoolId: pool, Username: username }),
       ),
-    ).toMatchObject({ Enabled: true, UserStatus: "RESET_REQUIRED" });
+    ).toMatchObject({
+      Enabled: true,
+      UserStatus: "RESET_REQUIRED",
+      UserAttributes: expect.arrayContaining([
+        { Name: "email_verified", Value: "true" },
+      ]),
+    });
   });
 });

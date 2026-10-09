@@ -7,6 +7,7 @@ import {
   AdminListGroupsForUserCommand,
   AdminRemoveUserFromGroupCommand,
   AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -32,6 +33,7 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", async (importOriginal) => {
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 
 const {
+  getAdminSession,
   inviteAdminUser,
   reinviteAdminUser,
   resetAdminUserPassword,
@@ -49,6 +51,25 @@ beforeEach(() => {
 });
 
 describe("Compliance administrator lifecycle", () => {
+  it("records email verification after an invited administrator authenticates", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("caller@example.org", "caller-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({});
+
+    const response = await call(getAdminSession, event());
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[1][0]).toBeInstanceOf(
+      AdminUpdateUserAttributesCommand,
+    );
+    expect(cognitoSend.mock.calls[1][0].input).toMatchObject({
+      Username: "caller@example.org",
+      UserAttributes: [{ Name: "email_verified", Value: "true" }],
+    });
+  });
+
   it("rejects an invalid invitation email before calling Cognito", async () => {
     const response = await call(
       inviteAdminUser,
@@ -275,6 +296,27 @@ describe("Compliance administrator lifecycle", () => {
     );
   });
 
+  it("does not reset a password without a verified delivery method", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("active@example.org", "active-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-manager" }],
+      });
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "active@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "verified_contact_required",
+    });
+    expect(cognitoSend).toHaveBeenCalledTimes(2);
+  });
+
   it("does not expose lifecycle actions for a non-administrator Cognito user", async () => {
     cognitoSend
       .mockResolvedValueOnce(
@@ -292,8 +334,8 @@ describe("Compliance administrator lifecycle", () => {
   });
 });
 
-/** @param {string} username @param {string} sub @param {string} [status] */
-function user(username, sub, status = "CONFIRMED") {
+/** @param {string} username @param {string} sub @param {string} [status] @param {boolean} [verified] */
+function user(username, sub, status = "CONFIRMED", verified = true) {
   return {
     Username: username,
     Enabled: true,
@@ -301,6 +343,7 @@ function user(username, sub, status = "CONFIRMED") {
     UserAttributes: [
       { Name: "sub", Value: sub },
       { Name: "email", Value: username },
+      ...(verified ? [{ Name: "email_verified", Value: "true" }] : []),
     ],
   };
 }

@@ -10,6 +10,7 @@ import {
   AdminListGroupsForUserCommand,
   ListUsersInGroupCommand,
   AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -43,6 +44,7 @@ const LOCK_SECONDS = 30;
 export const getAdminSession = (event) =>
   adminOnly(event, async () => {
     const principal = adminPrincipal(event);
+    await verifyAuthenticatedAdminContact(configuredPool(), principal);
     return jsonResponse(200, {
       role: principal.role,
       capabilities: principal.capabilities,
@@ -261,6 +263,9 @@ export const resetAdminUserPassword = (event) =>
     if (target.UserStatus === "FORCE_CHANGE_PASSWORD") {
       return jsonResponse(409, { error: "invitation_pending" });
     }
+    if (!hasVerifiedContact(target)) {
+      return jsonResponse(409, { error: "verified_contact_required" });
+    }
     await cognito.send(
       new AdminResetUserPasswordCommand({
         UserPoolId: pool,
@@ -417,6 +422,12 @@ async function getAdminUser(pool, username) {
 /** @param {any} user @param {string} role */
 function publicUser(user, role) {
   const attrs = attributes(user);
+  const lifecycleStatus =
+    user.Enabled === false
+      ? "suspended"
+      : user.UserStatus === "FORCE_CHANGE_PASSWORD"
+        ? "invited"
+        : "active";
   return {
     username: user.Username ?? "",
     subject: attrs.sub ?? "",
@@ -428,13 +439,54 @@ function publicUser(user, role) {
     role,
     enabled: user.Enabled !== false,
     status: user.UserStatus ?? "",
-    lifecycleStatus:
-      user.Enabled === false
-        ? "suspended"
-        : user.UserStatus === "FORCE_CHANGE_PASSWORD"
-          ? "invited"
-          : "active",
+    lifecycleStatus,
+    canResetPassword: lifecycleStatus === "active" && hasVerifiedContact(user),
   };
+}
+
+/**
+ * Completing the emailed temporary-password flow and reaching an authenticated
+ * admin session demonstrates control of an email-address username. Record that
+ * proof once so Cognito can deliver future password-reset codes. Session access
+ * itself must not fail if Cognito cannot persist the attribute; reset remains
+ * unavailable until verification succeeds.
+ * @param {string | undefined} pool
+ * @param {ReturnType<typeof adminPrincipal>} principal
+ */
+async function verifyAuthenticatedAdminContact(pool, principal) {
+  if (!pool || !principal.username.includes("@")) return;
+  try {
+    const target = await getUser(pool, principal.username);
+    const attrs = attributes(target);
+    if (
+      target.Enabled === false ||
+      target.UserStatus === "FORCE_CHANGE_PASSWORD" ||
+      attrs.email?.toLowerCase() !== principal.username.toLowerCase() ||
+      attrs.email_verified === "true"
+    ) {
+      return;
+    }
+    await cognito.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: pool,
+        Username: principal.username,
+        UserAttributes: [{ Name: "email_verified", Value: "true" }],
+      }),
+    );
+  } catch (error) {
+    console.error("Failed to record authenticated admin email verification", {
+      username: principal.username,
+      error,
+    });
+  }
+}
+
+/** @param {any} user */
+function hasVerifiedContact(user) {
+  const attrs = attributes(user);
+  return (
+    attrs.email_verified === "true" || attrs.phone_number_verified === "true"
+  );
 }
 
 /** @param {any} user @returns {Record<string, string>} */
