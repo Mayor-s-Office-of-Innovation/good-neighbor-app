@@ -146,3 +146,62 @@ describe("ticket evidence hydration", () => {
     expect(dialog._render).toHaveBeenCalledOnce();
   });
 });
+
+describe("311 issue updates", () => {
+  it("loads saved documentation, hydrates photos, and appends older pages", async () => {
+    vi.resetModules();
+    const task = {
+      taskId: "t1",
+      checkId: "c1",
+      status: "in_progress",
+      appActionResults: [
+        { code: "create_311_ticket", payload: { tickets: [{ srNum: "123" }] } },
+      ],
+    };
+    const getTaskUpdates = vi
+      .fn()
+      .mockResolvedValueOnce({
+        task,
+        updates: [
+          {
+            type: "note_photo_update",
+            notes: ["Saved note"],
+            photoKeys: ["p1"],
+          },
+          { type: "311_ticket_filed" },
+        ],
+        nextToken: "older",
+      })
+      .mockResolvedValueOnce({
+        task: { ...task, status: "completed" },
+        updates: [{ type: "additional_action", text: "Earlier action" }],
+      });
+    const getMediaUrl = vi.fn().mockResolvedValue({ downloadUrl: "photo.jpg" });
+    vi.doMock("../services/api.js", () => ({
+      get311RequestDetail: vi
+        .fn()
+        .mockResolvedValue({ request: { status: "Open", events: [] } }),
+      getTaskUpdates,
+      getMediaUrl,
+    }));
+    try {
+      const { TicketDetailDialog } = await import("./ticket-detail-dialog.js");
+      const dialog = new TicketDetailDialog();
+      dialog._render = vi.fn();
+      await dialog.open(task);
+      expect(dialog._detail.updates).toHaveLength(1);
+      expect(dialog._detail.mediaUrls.get("p1")).toBe("photo.jpg");
+      expect(dialog._detail.nextToken).toBe("older");
+      await dialog._load("older");
+      expect(getTaskUpdates).toHaveBeenLastCalledWith("t1", "older");
+      expect(dialog._detail.updates.map((update) => update.type)).toEqual([
+        "note_photo_update",
+        "additional_action",
+      ]);
+      expect(dialog._detail.task.status).toBe("completed");
+      expect(dialog._detail.nextToken).toBeUndefined();
+    } finally {
+      vi.doUnmock("../services/api.js");
+    }
+  });
+});

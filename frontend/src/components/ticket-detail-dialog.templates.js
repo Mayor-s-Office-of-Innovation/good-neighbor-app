@@ -1,3 +1,7 @@
+import {
+  taskUpdateActions,
+  taskUpdateTimelineItem,
+} from "./issue-updates.templates.js";
 /*
   Presentational template for <ticket-detail-dialog>: the 311 request detail
   sheet opened from a task card. Logic and fetching stay in
@@ -62,6 +66,10 @@ function ticketEventDescription(event) {
  * @param {{ detail: any, state: string }} vm — state is "idle" | "loading" | "ready" | "error"
  */
 export function ticketDetailDialog({ detail, state }) {
+  const events = [
+    ...(detail?.events || []).map((event) => ({ ...event, local: false })),
+    ...(detail?.updates || []).map((event) => ({ ...event, local: true })),
+  ].sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
   return html` <dialog
     class="ticket-detail"
     id="ticket-detail-dialog"
@@ -219,27 +227,48 @@ export function ticketDetailDialog({ detail, state }) {
             </section>
             <section class="ticket-detail__updates">
               <h3>${escapeHtml(t("ticket.updates.title"))}</h3>
-              ${detail.events?.length
+              ${detail.task?.status === "in_progress" &&
+              detail.status !== "Closed"
+                ? taskUpdateActions()
+                : ""}
+              ${events.length
                 ? html`<ol class="ticket-timeline">
-                    ${detail.events
-                      .map(
-                        (event) =>
-                          html`<li class="ticket-timeline__item">
-                            <div class="ticket-timeline__content">
-                              <strong
-                                >${escapeHtml(ticketEventTitle(event))}</strong
-                              >${ticketEventDescription(event)}
-                              <time datetime="${escapeAttr(event.occurredAt)}"
-                                >${escapeHtml(
-                                  formatTicketDate(event.occurredAt),
-                                )}</time
-                              >
-                            </div>
-                          </li>`,
+                    ${events
+                      .map((event) =>
+                        event.local
+                          ? taskUpdateTimelineItem(
+                              event,
+                              detail.task || {},
+                              detail.mediaUrls || new Map(),
+                              detail.title || "",
+                            )
+                          : html`<li class="ticket-timeline__item">
+                              <div class="ticket-timeline__content">
+                                <strong
+                                  >${escapeHtml(
+                                    ticketEventTitle(event),
+                                  )}</strong
+                                >${ticketEventDescription(event)}
+                                <time datetime="${escapeAttr(event.occurredAt)}"
+                                  >${escapeHtml(
+                                    formatTicketDate(event.occurredAt),
+                                  )}</time
+                                >
+                              </div>
+                            </li>`,
                       )
                       .join("")}
                   </ol>`
                 : html`<p>${escapeHtml(t("ticket.updates.empty"))}</p>`}
+              ${detail.nextToken
+                ? html`<button
+                    type="button"
+                    class="btn-outline"
+                    data-load-older
+                  >
+                    ${escapeHtml(t("taskUpdate.updates.loadOlder"))}
+                  </button>`
+                : ""}
             </section>
             <p class="ticket-detail__reference">
               #${escapeHtml(detail.requestNumber)}

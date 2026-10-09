@@ -131,6 +131,25 @@ export function buildAttachmentUpdatePayload({ srNum, imageUrl, now }) {
   };
 }
 
+/**
+ * Add Notes: HUB API Documentation, appendix 4.4 (type 5, subtype 2).
+ * @param {{ srNum: string, siteName: string, now: Date }} input
+ * @returns {Record<string, string>}
+ */
+export function buildNoteUpdatePayload({ srNum, siteName, now }) {
+  return {
+    SRnum: srNum,
+    UpdateType: "5",
+    SendingAgency: SENDING_AGENCY,
+    SourceOperator: "Good Neighbor App",
+    NumericSubType: "2",
+    TextSubType: "",
+    EffectiveDate: hubDateTime(now),
+    ToAgencyDate: "",
+    Notes: `The provider site "${siteName}" reports that the issue is resolved or City help is no longer needed.`,
+  };
+}
+
 // HUB UpdateType 11 = ClosedReason; "HUB changes update status to closed"
 // (HUB_Lookup_Tables.xlsx UpdateType sheet). NumericSubType 8 = "Field Work
 // Completed" (ClosedReasonCode sheet). HUB rejects the update with return
