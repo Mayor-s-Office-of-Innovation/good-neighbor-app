@@ -325,6 +325,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
 }
 
 resource "aws_s3_bucket" "uploads" {
+  # checkov:skip=CKV_AWS_21:Media is write-once under an unpredictable key and is
+  # never overwritten or restored; the only deletes are the lifecycle rules below.
+  # Versioning would keep expired photos alive as noncurrent versions, working
+  # against the retention window, so it is suspended. The frontend and
+  # compliance-letter buckets keep it on.
   bucket_prefix = "${local.bucket_name_prefix}-uploads-"
   force_destroy = false
 }
@@ -381,8 +386,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 resource "aws_s3_bucket_versioning" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # S3 cannot disable versioning once enabled, only suspend it. Suspended also
+  # works for a fresh bucket, so every environment uses the same value.
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -396,6 +403,10 @@ resource "aws_s3_bucket_logging" "uploads" {
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # Bucket-wide backstop. The state-tag rules below are the real retention
+  # policy; this rule catches anything that lands without a state tag (console
+  # or CLI uploads) so nothing outlives 30 days. S3 applies the shortest
+  # matching expiration, so this never extends a tag rule's window.
   rule {
     id     = "expire-incomplete-uploads"
     status = "Enabled"
@@ -404,12 +415,34 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
       prefix = ""
     }
 
+    expiration {
+      days = 30
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
 
+    # Versioning is suspended, so this only drains versions created before the
+    # suspension. It can be removed once none remain.
     noncurrent_version_expiration {
-      noncurrent_days = 90
+      noncurrent_days = 7
+    }
+  }
+
+  # Expiring an object on a versioning-suspended bucket still leaves a delete
+  # marker behind. Clean those up once nothing sits under them. S3 forbids
+  # combining this with a day-based expiration or a tag filter, hence its own rule.
+  rule {
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      expired_object_delete_marker = true
     }
   }
 

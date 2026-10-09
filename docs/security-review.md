@@ -27,7 +27,8 @@ lifecycle window, changeable at will). This also matches the deployed origin app
 
 **What is at rest.** Person-images live in **GNP's KMS-encrypted bucket**. Declarative lifecycle
 rules expire pending/rejected media after one day, registered media after two days, accepted media
-after seven days, and noncurrent media versions after one day. DynamoDB stores the **analysis document + the S3 key**
+after seven days, and anything untagged after 30 days (bucket-wide backstop). Bucket versioning is
+suspended, so expiry removes the bytes outright rather than leaving a noncurrent version. DynamoDB stores the **analysis document + the S3 key**
 (the scorecard is `sensitive`; the key is a pointer, not PII). This is a step **up** in data-at-rest
 exposure from the no-media design and puts a **photo-retention control in scope**.
 
