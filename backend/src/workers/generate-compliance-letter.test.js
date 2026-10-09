@@ -47,6 +47,15 @@ describe("generate compliance letter worker", () => {
         },
       })
       .mockResolvedValueOnce({ Item: { latestComplianceTermsVersionId: "v1" } })
+      .mockResolvedValueOnce({
+        Item: {
+          latestComplianceTermsVersionId: "v1",
+          complianceLetters: {
+            current: { termsVersionId: "old", s3Key: "old.pdf" },
+            past: [],
+          },
+        },
+      })
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
 
@@ -67,12 +76,82 @@ describe("generate compliance letter worker", () => {
         body: expect.any(Buffer),
       }),
     );
-    expect(send.mock.calls[3][0]).toBeInstanceOf(UpdateCommand);
-    expect(send.mock.calls[3][0].input.ConditionExpression).toBe(
-      "latestComplianceTermsVersionId = :version",
+    expect(send.mock.calls[4][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[4][0].input.ConditionExpression).toBe(
+      "latestComplianceTermsVersionId = :version AND complianceLetters = :observedLetters",
+    );
+    expect(send.mock.calls[4][0].input.ExpressionAttributeValues).toMatchObject(
+      {
+        ":letters": {
+          current: { termsVersionId: "v1" },
+          past: [{ termsVersionId: "old", s3Key: "old.pdf" }],
+        },
+      },
+    );
+  });
+
+  it("re-reads and preserves letter history after a concurrent update", async () => {
+    const conflict = new Error("changed");
+    conflict.name = "ConditionalCheckFailedException";
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          status: "dispatched",
+          termsSk: "COMPLIANCE_TERMS#2026-10-08#v1",
+        },
+      })
+      .mockResolvedValueOnce({ Item: term() })
+      .mockResolvedValueOnce({ Item: { latestComplianceTermsVersionId: "v1" } })
+      .mockResolvedValueOnce({
+        Item: {
+          latestComplianceTermsVersionId: "v1",
+          complianceLetters: { current: { termsVersionId: "old" }, past: [] },
+        },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          latestComplianceTermsVersionId: "v1",
+          complianceLetters: {
+            current: { termsVersionId: "newer" },
+            past: [{ termsVersionId: "old" }],
+          },
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    await handler(event(), /** @type {any} */ ({}), () => {});
+
+    expect(send.mock.calls[6][0].input.ExpressionAttributeValues).toMatchObject(
+      {
+        ":letters": {
+          past: [{ termsVersionId: "newer" }, { termsVersionId: "old" }],
+        },
+      },
     );
   });
 });
+
+function term() {
+  return {
+    termsVersionId: "v1",
+    effectiveStart: "2026-10-08",
+    requiredChecksPerDay: 3,
+    reasons: ["2"],
+    letterInputs: {
+      confirmedOn: "2026-10-08",
+      siteName: "Site One",
+      siteManagerFirstName: "Sam",
+      siteManagerName: "Sam Lee",
+      siteAddress: "1 Main St",
+      departmentName: "DPH",
+      programManagerName: "Rob Hoffman",
+      programManagerPhone: "415-555-0100",
+      programManagerEmail: "rob@sfgov.org",
+    },
+  };
+}
 
 function event() {
   return /** @type {any} */ ({

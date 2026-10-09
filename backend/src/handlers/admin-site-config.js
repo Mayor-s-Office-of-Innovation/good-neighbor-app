@@ -37,7 +37,9 @@ export const createSiteTerms = (event) =>
         ? null
         : Number(body.correctiveActionTier);
     const requiredChecksPerDay = Number(body.requiredChecksPerDay);
-    const effectiveStart = isoDate(body.effectiveStart);
+    // Periods always begin when they are saved. Keep the effective date
+    // server-owned so API callers cannot create unsupported scheduled terms.
+    const effectiveStart = pacificIsoDate();
     const periodEnd = body.periodEnd ? isoDate(body.periodEnd) : "";
     const expiresOnExclusive = periodEnd ? nextIsoDate(periodEnd) : "";
     if (!reasons.length)
@@ -53,9 +55,6 @@ export const createSiteTerms = (event) =>
     }
     if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 1) {
       return jsonResponse(400, { error: "invalid_check_cadence" });
-    }
-    if (!effectiveStart) {
-      return jsonResponse(400, { error: "invalid_effective_start" });
     }
     if (body.periodEnd && !periodEnd) {
       return jsonResponse(400, { error: "invalid_expiry" });
@@ -128,7 +127,14 @@ export const createSiteTerms = (event) =>
     const existing = (termsResult.Items ?? []).filter(
       (item) => item.status !== "cancelled",
     );
-    if (existing.some((item) => item.effectiveStart === effectiveStart)) {
+    if (
+      existing.some(
+        (item) =>
+          item.effectiveStart === effectiveStart &&
+          (!item.expiresOnExclusive ||
+            String(item.expiresOnExclusive) > effectiveStart),
+      )
+    ) {
       return jsonResponse(409, { error: "terms_start_conflict" });
     }
     const futureCollision = existing.some(
@@ -228,12 +234,6 @@ export const createSiteTerms = (event) =>
         letterJobId,
         termsVersionId,
         termsSk: terms.sk,
-        previousLetters: [
-          ...(site.complianceLetters?.current
-            ? [site.complianceLetters.current]
-            : []),
-          ...(site.complianceLetters?.past ?? []),
-        ],
         status: "pending",
         createdAt: now,
         createdBy: actor,
@@ -327,7 +327,7 @@ export const endSiteTerms = (event) =>
               TableName: tableName,
               Key: { pk: active.pk, sk: active.sk },
               UpdateExpression:
-                "SET expiresOnExclusive = :today, endedAt = :now, endedBy = :actor, #status = :ended",
+                "SET expiresOnExclusive = :today, endedOn = :today, endedAt = :now, endedBy = :actor, #status = :ended",
               ConditionExpression:
                 "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
               ExpressionAttributeNames: { "#status": "status" },

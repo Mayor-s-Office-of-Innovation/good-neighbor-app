@@ -916,25 +916,22 @@ class AdminApp extends HTMLElement {
     this.state.siteSaveError = "";
     this.state.error = "";
     try {
-      if (selectedProgramManager) {
-        const phone = controlValue(form, "program-manager-phone");
-        if (phone !== String(selectedProgramManager.phone || "")) {
-          const updated = await adminApi.updateCityProgramManager(
-            selectedProgramManager.userId,
-            { phone },
-          );
-          this.state.programManagers = this.state.programManagers.map(
-            (manager) =>
-              manager.userId === updated.programManager.userId
-                ? updated.programManager
-                : manager,
-          );
-        }
-      }
+      const programManagerPhone = selectedProgramManager
+        ? controlValue(form, "program-manager-phone")
+        : undefined;
       const result = await adminApi.updateSite(this.state.site.siteId, {
         name: this.state.site.name,
         oversight,
+        ...(programManagerPhone === undefined ? {} : { programManagerPhone }),
       });
+      if (selectedProgramManager && programManagerPhone !== undefined) {
+        this.state.programManagers = this.state.programManagers.map(
+          (manager) =>
+            manager.userId === selectedProgramManager.userId
+              ? { ...manager, phone: programManagerPhone }
+              : manager,
+        );
+      }
       this.state.site = { ...this.state.site, ...result.site };
       this.state.sites = this.state.sites.map((site) =>
         site.siteId === this.state.site?.siteId
@@ -1055,7 +1052,6 @@ class AdminApp extends HTMLElement {
         ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
         : {}),
       requiredChecksPerDay: Number(controlValue(form, "terms-checks-per-day")),
-      effectiveStart: controlValue(form, "terms-start"),
       periodEnd: controlValue(form, "terms-expiry"),
     });
     window.history.replaceState(
@@ -3231,7 +3227,7 @@ function termsHistory(
   return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Ends</th><th>Reasons</th><th>Tier</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
     .map(
       (term) =>
-        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.periodEnd || term.endedAt?.slice(0, 10) || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(term.correctiveActionTier || "—")}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
+        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.endedOn || term.periodEnd || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(term.correctiveActionTier || "—")}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 }
@@ -4605,7 +4601,6 @@ function newChecksPeriodDialog(state) {
       <div class="places-modal__copy">
         <h3 class="places-modal__title" id="new-checks-period-title">Set up the perimeter check requirement</h3>
         <p>Indicate why perimeter checks will apply.</p>
-        <input type="hidden" name="terms-start" value="${todayPacific()}" />
         <fieldset class="form-grid form-grid--one compliance-period-reasons">
           <legend>Select one or more reasons</legend>
           ${reasons.map(([value, label]) => `<wa-checkbox name="terms-reason" value="${value}" ${mappedReason === value ? "checked" : ""}>${escapeHtml(label)}</wa-checkbox>`).join("")}

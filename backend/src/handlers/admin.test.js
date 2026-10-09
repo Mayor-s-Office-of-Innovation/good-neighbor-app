@@ -1042,6 +1042,64 @@ describe("provider and site management", () => {
     ).not.toHaveProperty(":compliance");
   });
 
+  it("updates oversight and the shared program-manager phone atomically", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          status: "active",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+            sk: "MANAGER#rob@sfgov.org",
+            userId: "manager-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "Site One",
+          oversight: {
+            managingCityDepartment: "DPH",
+            managingSystemOfCare: "BHS-PBH",
+            cityProgramManagerId: "manager-1",
+            cityProgramManager: "Rob Hoffman",
+          },
+          programManagerPhone: "415-555-0199",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[2][0]
+    );
+    expect(transaction.input.TransactItems?.length).toBeGreaterThanOrEqual(2);
+    expect(transaction.input.TransactItems?.[1]).toMatchObject({
+      Update: {
+        Key: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#rob@sfgov.org",
+        },
+        ExpressionAttributeValues: expect.objectContaining({
+          ":phone": "415-555-0199",
+        }),
+      },
+    });
+  });
+
   it("updates all site information fields and supersedes the current letter", async () => {
     send
       .mockResolvedValueOnce({

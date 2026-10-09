@@ -132,6 +132,42 @@ const roots = [resolve(backendRoot, ".."), backendRoot];
 const findPkg = (pkg) =>
   roots.map((root) => resolve(root, "node_modules", pkg)).find(existsSync);
 
+const fontSrc = findPkg("@fontsource/noto-sans");
+if (!fontSrc) {
+  throw new Error(
+    "[build-lambdas] @fontsource/noto-sans not found — compliance letters would fail to render",
+  );
+}
+const fontDist = join(
+  distDir,
+  "worker",
+  "node_modules",
+  "@fontsource",
+  "noto-sans",
+);
+await mkdir(join(fontDist, "files"), { recursive: true });
+await Promise.all([
+  cp(join(fontSrc, "package.json"), join(fontDist, "package.json")),
+  cp(join(fontSrc, "LICENSE"), join(fontDist, "LICENSE")),
+  ...[
+    "latin",
+    "latin-ext",
+    "vietnamese",
+    "greek",
+    "greek-ext",
+    "cyrillic",
+    "cyrillic-ext",
+  ].flatMap((subset) =>
+    [400, 700].map((weight) => {
+      const file = `noto-sans-${subset}-${weight}-normal.woff`;
+      return cp(join(fontSrc, "files", file), join(fontDist, "files", file));
+    }),
+  ),
+]);
+console.log(
+  "[build-lambdas] copied @fontsource/noto-sans into dist/worker/node_modules/",
+);
+
 const sharpSrc = findPkg("sharp");
 if (!sharpSrc) {
   throw new Error(

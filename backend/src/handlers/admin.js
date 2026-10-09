@@ -840,6 +840,32 @@ export const updateSite = (event) =>
     if (body.oversight !== undefined && !oversight) {
       return jsonResponse(400, { error: "invalid_oversight" });
     }
+    const programManagerPhone =
+      body.programManagerPhone === undefined
+        ? undefined
+        : normalizePhone(body.programManagerPhone);
+    if (body.programManagerPhone !== undefined && !programManagerPhone) {
+      return jsonResponse(400, { error: "valid_phone_required" });
+    }
+    /** @type {Record<string, any> | undefined} */
+    let selectedProgramManager;
+    if (programManagerPhone !== undefined) {
+      if (!oversight?.cityProgramManagerId) {
+        return jsonResponse(400, { error: "program_manager_required" });
+      }
+      const programManagers = await queryAll({
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
+      });
+      selectedProgramManager = programManagers.find(
+        (item) => item.userId === oversight.cityProgramManagerId,
+      );
+      if (!selectedProgramManager) {
+        return jsonResponse(400, { error: "program_manager_not_found" });
+      }
+    }
     const compliance =
       body.compliance === undefined
         ? null
@@ -1022,6 +1048,28 @@ export const updateSite = (event) =>
         },
       },
     ];
+    if (selectedProgramManager && programManagerPhone !== undefined) {
+      transactItems.push({
+        Update: {
+          TableName: tableName,
+          Key: {
+            pk: selectedProgramManager.pk,
+            sk: selectedProgramManager.sk,
+          },
+          UpdateExpression: "SET phone = :phone, updatedAt = :managerNow",
+          ConditionExpression: selectedProgramManager.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :managerUpdatedAt"
+            : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
+          ExpressionAttributeValues: {
+            ":phone": programManagerPhone,
+            ":managerNow": now,
+            ...(selectedProgramManager.updatedAt
+              ? { ":managerUpdatedAt": selectedProgramManager.updatedAt }
+              : {}),
+          },
+        },
+      });
+    }
     if (site.providerId) {
       transactItems.push({
         Update: {

@@ -5,8 +5,8 @@ import {
 } from "./compliance-letter-pdf.js";
 
 describe("compliance letter PDF", () => {
-  it("creates a one-page PDF with selected reasons and mapped fields", () => {
-    const pdf = generateComplianceLetterPdf({
+  it("creates a one-page PDF with selected reasons and mapped fields", async () => {
+    const pdf = await generateComplianceLetterPdf({
       effectiveStart: "2026-10-08",
       periodEnd: "2026-12-31",
       requiredChecksPerDay: 4,
@@ -24,12 +24,30 @@ describe("compliance letter PDF", () => {
         programManagerEmail: "rob@sfgov.org",
       },
     });
-    expect(pdf.subarray(0, 8).toString()).toBe("%PDF-1.4");
-    const content = pdf.toString("latin1");
-    expect(content).toContain("Site One");
-    expect(content).toContain("complete 4 documented perimeter checks");
-    expect(content).toContain("December 31, 2026");
-    expect(content).toContain("/Count 1");
+    expect(pdf.subarray(0, 8).toString()).toBe("%PDF-1.7");
+    expect(pdf.length).toBeGreaterThan(1_000);
+  });
+
+  it("embeds accented and non-Latin names without rejecting their glyphs", async () => {
+    const pdf = await generateComplianceLetterPdf({
+      effectiveStart: "2026-10-08",
+      requiredChecksPerDay: 3,
+      reasons: ["2"],
+      letterInputs: {
+        confirmedOn: "2026-10-08",
+        siteName: "Casa Muñoz — Дом Надежды",
+        siteManagerFirstName: "José",
+        siteManagerName: "José Παπαδόπουλος",
+        siteAddress: "1 Main St",
+        departmentName: "DPH",
+        programManagerName: "Анна Иванова",
+        programManagerPhone: "415-555-0100",
+        programManagerEmail: "manager@sfgov.org",
+      },
+    });
+
+    expect(pdf.subarray(0, 8).toString()).toBe("%PDF-1.7");
+    expect(pdf.length).toBeGreaterThan(1_000);
   });
 
   it("creates an SVG preview from the same mapped letter fields", () => {

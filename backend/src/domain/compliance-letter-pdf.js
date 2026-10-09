@@ -1,3 +1,8 @@
+import fontkit from "@pdf-lib/fontkit";
+import { PDFDocument, rgb } from "pdf-lib";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+
 const REASONS = {
   1: "Recurring or unresolved Good Neighbor concerns have been identified at this site.",
   2: "Site is a Permanent Supportive Housing property.",
@@ -8,20 +13,21 @@ const REASONS = {
 };
 
 /**
- * Generate the one-page perimeter-check notice without a runtime PDF dependency.
- * The output uses PDF's built-in Helvetica font and simple vector checkboxes.
+ * Generate the one-page perimeter-check notice with embedded, subsetted Unicode
+ * fonts so names are not transliterated or silently stripped.
  * @param {Record<string, any>} period
- * @returns {Buffer}
+ * @returns {Promise<Buffer>}
  */
-export function generateComplianceLetterPdf(period) {
+export async function generateComplianceLetterPdf(period) {
   const input = period.letterInputs || {};
   const selected = new Set(period.reasons || []);
-  const commands = [];
+  const document = await PDFDocument.create();
+  document.registerFontkit(fontkit);
+  const fonts = await embedFonts(document);
+  const page = document.addPage([612, 792]);
   /** @param {unknown} value @param {number} x @param {number} y @param {number} [size] @param {boolean} [bold] */
   const text = (value, x, y, size = 10, bold = false) => {
-    commands.push(
-      `BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${y} Td (${pdfText(value)}) Tj ET`,
-    );
+    drawUnicodeText(page, String(value ?? ""), x, y, size, fonts, bold);
   };
   /** @param {unknown} value @param {number} x @param {number} y @param {number} width @param {number} [size] @param {number} [leading] */
   const paragraph = (value, x, y, width, size = 9.5, leading = 12) => {
@@ -65,9 +71,25 @@ export function generateComplianceLetterPdf(period) {
   );
   y -= 18;
   for (const [reason, label] of Object.entries(REASONS)) {
-    commands.push(`0.8 w 54 ${y - 2} 9 9 re S`);
+    page.drawRectangle({
+      x: 54,
+      y: y - 2,
+      width: 9,
+      height: 9,
+      borderWidth: 0.8,
+      borderColor: rgb(0, 0, 0),
+    });
     if (selected.has(reason)) {
-      commands.push(`1.2 w 56 ${y + 1} m 59 ${y - 2} l 64 ${y + 5} l S`);
+      page.drawLine({
+        start: { x: 56, y: y + 1 },
+        end: { x: 59, y: y - 2 },
+        thickness: 1.2,
+      });
+      page.drawLine({
+        start: { x: 59, y: y - 2 },
+        end: { x: 64, y: y + 5 },
+        thickness: 1.2,
+      });
     }
     y = paragraph(label, 70, y, 488, 8.5, 10) - 5;
   }
@@ -90,7 +112,7 @@ export function generateComplianceLetterPdf(period) {
   text(input.programManagerName, 54, y - 27, 10);
   text(input.departmentName, 54, y - 42, 10);
 
-  return buildPdf(commands.join("\n"));
+  return Buffer.from(await document.save());
 }
 
 /**
@@ -186,38 +208,91 @@ export function generateComplianceLetterPreviewSvg(period) {
   );
 }
 
-/** @param {string} content */
-function buildPdf(content) {
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
-  ];
-  let output = "%PDF-1.4\n%GNP\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(output, "latin1"));
-    output += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(output, "latin1");
-  output += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  output += offsets
-    .slice(1)
-    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
-    .join("");
-  output += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return Buffer.from(output, "latin1");
+const require = createRequire(import.meta.url);
+const FONT_SUBSETS = [
+  "latin",
+  "latin-ext",
+  "vietnamese",
+  "greek",
+  "greek-ext",
+  "cyrillic",
+  "cyrillic-ext",
+];
+
+/** @param {PDFDocument} document */
+async function embedFonts(document) {
+  /** @type {Record<string, {regular: import("pdf-lib").PDFFont, bold: import("pdf-lib").PDFFont}>} */
+  const fonts = {};
+  await Promise.all(
+    FONT_SUBSETS.map(async (subset) => {
+      const [regular, bold] = await Promise.all(
+        [400, 700].map(async (weight) => {
+          const path = require.resolve(
+            `@fontsource/noto-sans/files/noto-sans-${subset}-${weight}-normal.woff`,
+          );
+          return document.embedFont(await readFile(path), { subset: true });
+        }),
+      );
+      fonts[subset] = { regular, bold };
+    }),
+  );
+  return fonts;
 }
 
-/** @param {unknown} value */
-function pdfText(value) {
-  return String(value ?? "")
-    .normalize("NFKD")
-    .replace(/[^\x20-\x7E]/g, "")
-    .replace(/([\\()])/g, "\\$1");
+/**
+ * @param {import("pdf-lib").PDFPage} page
+ * @param {string} value
+ * @param {number} x
+ * @param {number} y
+ * @param {number} size
+ * @param {Awaited<ReturnType<typeof embedFonts>>} fonts
+ * @param {boolean} bold
+ */
+function drawUnicodeText(page, value, x, y, size, fonts, bold) {
+  let cursor = x;
+  for (const run of fontRuns(value)) {
+    const font = fonts[run.subset][bold ? "bold" : "regular"];
+    page.drawText(run.text, { x: cursor, y, size, font });
+    cursor += font.widthOfTextAtSize(run.text, size);
+  }
+}
+
+/** @param {string} value */
+function fontRuns(value) {
+  /** @type {{subset: string, text: string}[]} */
+  const runs = [];
+  for (const character of value.normalize("NFC")) {
+    const subset = fontSubset(character.codePointAt(0) ?? 0);
+    const previous = runs.at(-1);
+    if (previous?.subset === subset) previous.text += character;
+    else runs.push({ subset, text: character });
+  }
+  return runs;
+}
+
+/** @param {number} codePoint */
+function fontSubset(codePoint) {
+  if (codePoint >= 0x1f00 && codePoint <= 0x1fff) return "greek-ext";
+  if (codePoint >= 0x0370 && codePoint <= 0x03ff) return "greek";
+  if (
+    (codePoint >= 0x0460 && codePoint <= 0x052f) ||
+    (codePoint >= 0x2de0 && codePoint <= 0x2dff) ||
+    (codePoint >= 0xa640 && codePoint <= 0xa69f)
+  ) {
+    return "cyrillic-ext";
+  }
+  if (codePoint >= 0x0400 && codePoint <= 0x045f) return "cyrillic";
+  if (
+    (codePoint >= 0x1ea0 && codePoint <= 0x1ef9) ||
+    [
+      0x0102, 0x0103, 0x0110, 0x0111, 0x0128, 0x0129, 0x0168, 0x0169, 0x01a0,
+      0x01a1, 0x01af, 0x01b0,
+    ].includes(codePoint)
+  ) {
+    return "vietnamese";
+  }
+  if (codePoint > 0x00ff) return "latin-ext";
+  return "latin";
 }
 
 /** @param {unknown} value */
