@@ -6,6 +6,8 @@ import {
   AdminGetUserCommand,
   AdminListGroupsForUserCommand,
   AdminRemoveUserFromGroupCommand,
+  AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -30,9 +32,14 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", async (importOriginal) => {
 });
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 
-const { inviteAdminUser, suspendAdminUser, updateAdminUserRole } = await import(
-  "./admin-users.js"
-);
+const {
+  getAdminSession,
+  inviteAdminUser,
+  reinviteAdminUser,
+  resetAdminUserPassword,
+  suspendAdminUser,
+  updateAdminUserRole,
+} = await import("./admin-users.js");
 
 beforeEach(() => {
   cognitoSend.mockReset();
@@ -44,6 +51,43 @@ beforeEach(() => {
 });
 
 describe("Compliance administrator lifecycle", () => {
+  it("records email verification after an invited administrator authenticates", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("caller@example.org", "caller-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({});
+
+    const response = await call(getAdminSession, event());
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[1][0]).toBeInstanceOf(
+      AdminUpdateUserAttributesCommand,
+    );
+    expect(cognitoSend.mock.calls[1][0].input).toMatchObject({
+      Username: "caller@example.org",
+      UserAttributes: [{ Name: "email_verified", Value: "true" }],
+    });
+  });
+
+  it("rejects an invalid invitation email before calling Cognito", async () => {
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "not-an-email",
+        firstName: "New",
+        lastName: "Admin",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "valid_email_required",
+    });
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
   it("deletes a newly created account when group assignment fails", async () => {
     const assignmentError = new Error("group unavailable");
     cognitoSend
@@ -140,6 +184,10 @@ describe("Compliance administrator lifecycle", () => {
     });
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
     expect(ddbSend.mock.calls.at(-1)?.[0]).toBeInstanceOf(DeleteCommand);
+    expect(ddbSend.mock.calls.at(-1)?.[0].input).toMatchObject({
+      ConditionExpression: "#token = :token",
+      ExpressionAttributeNames: { "#token": "token" },
+    });
   });
 
   it("serializes concurrent suspensions so both cannot pass the invariant check", async () => {
@@ -192,6 +240,9 @@ describe("Compliance administrator lifecycle", () => {
     const firstResponse = await first;
 
     expect(firstResponse.statusCode).toBe(200);
+    expect(JSON.parse(String(firstResponse.body))).toMatchObject({
+      user: { enabled: false, lifecycleStatus: "suspended" },
+    });
     expect(second.statusCode).toBe(409);
     expect(JSON.parse(String(second.body))).toEqual({
       error: "admin_user_change_in_progress",
@@ -202,16 +253,97 @@ describe("Compliance administrator lifecycle", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("resends a pending invitation for an administrator", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("invited@example.org", "invited-sub", "FORCE_CHANGE_PASSWORD"),
+      )
+      .mockResolvedValueOnce({ Groups: [{ GroupName: "compliance-manager" }] })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      reinviteAdminUser,
+      event(undefined, { username: "invited@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[2][0]).toBeInstanceOf(AdminCreateUserCommand);
+    expect(cognitoSend.mock.calls[2][0].input).toMatchObject({
+      MessageAction: "RESEND",
+      Username: "invited@example.org",
+    });
+  });
+
+  it("sends password-reset instructions only for an active administrator", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("active@example.org", "active-sub", "CONFIRMED"),
+      )
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-supervisor" }],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "active@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[2][0]).toBeInstanceOf(
+      AdminResetUserPasswordCommand,
+    );
+  });
+
+  it("does not reset a password without a verified delivery method", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("active@example.org", "active-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-manager" }],
+      });
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "active@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "verified_contact_required",
+    });
+    expect(cognitoSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not expose lifecycle actions for a non-administrator Cognito user", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("other@example.org", "other-sub", "CONFIRMED"),
+      )
+      .mockResolvedValueOnce({ Groups: [] });
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "other@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(cognitoSend).toHaveBeenCalledTimes(2);
+  });
 });
 
-/** @param {string} username @param {string} sub */
-function user(username, sub) {
+/** @param {string} username @param {string} sub @param {string} [status] @param {boolean} [verified] */
+function user(username, sub, status = "CONFIRMED", verified = true) {
   return {
     Username: username,
     Enabled: true,
+    UserStatus: status,
     UserAttributes: [
       { Name: "sub", Value: sub },
       { Name: "email", Value: username },
+      ...(verified ? [{ Name: "email_verified", Value: "true" }] : []),
     ],
   };
 }

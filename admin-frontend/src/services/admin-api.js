@@ -61,6 +61,16 @@ export const adminApi = {
         method: "POST",
       },
     ),
+  reinviteAdminUser: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/reinvite`,
+      { method: "POST" },
+    ),
+  resetAdminUserPassword: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/reset-password`,
+      { method: "POST" },
+    ),
   suggestAddresses: (query, signal) =>
     adminFetch("/admin/v1/address-suggestions", {
       method: "POST",

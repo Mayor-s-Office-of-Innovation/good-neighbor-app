@@ -40,9 +40,19 @@ Administrators screen. Assign exactly one of `compliance-manager` or
 Terraform state. `central-admin` is a temporary migration alias for
 `compliance-manager`; do not add new users to it.
 
+The admin app's Settings menu exposes User management only to Compliance
+supervisors. The directory distinguishes active, invited, and suspended users.
+Supervisors can resend a still-pending invitation, send password-reset
+instructions to an active user, suspend either administrator role, and
+reinstate a suspended user. Cognito sends both invitation and password-reset
+messages; the application never generates or displays a password.
+
 Creating a user alone does not grant admin API access: backend handlers require
 one of the two Compliance groups. Public self-sign-up is disabled. Do not mark an
 email verified until control of that address has been established.
+The session endpoint records `email_verified=true` only after an invited
+administrator has successfully authenticated with an email-address username;
+password reset remains unavailable without a verified email or phone number.
 
 The invited user opens the admin console, chooses Sign in, enters the exact
 username and emailed temporary password, chooses a permanent password, and
@@ -63,6 +73,13 @@ fields in update requests can reset to AWS defaults. Keep the matching
 Terraform configuration in sync.
 
 ## Troubleshooting
+
+For local user-management testing, set
+`LOCAL_COGNITO_ADMIN_DIRECTORY=true` in `.env.local`. The local API then uses a
+seeded, in-memory Cognito-compatible directory with active, invited, and
+suspended users. Mutations reset on backend restart, and invite, re-invite, and
+password-reset operations do not send email. Deployed Lambda environments must
+leave this variable unset and continue to use the configured Cognito user pool.
 
 - Missing admin assets / 403 from CloudFront: check the admin S3 publication and
   the required root Terraform outputs in the deployment job.
@@ -85,5 +102,6 @@ with `npm run migrate:cognito-admin-groups --workspace backend`, providing
 membership for rollback; users must sign out and back in to refresh claims.
 - The app rejects self-suspension, self-demotion, and any attempt to suspend or
   demote the last enabled Compliance supervisor.
-- Invitation expired: use `admin-create-user --message-action RESEND` for that
-  existing username after authorization to resend the invitation.
+- Invitation expired: a Compliance supervisor can use Re-invite in User
+  management. The backend uses Cognito's `AdminCreateUser` operation with
+  `MessageAction: RESEND`; it rejects accounts that are no longer pending.

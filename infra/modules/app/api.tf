@@ -60,6 +60,8 @@ locals {
     "PUT /admin/v1/admin-users/{username}/role",
     "POST /admin/v1/admin-users/{username}/suspend",
     "POST /admin/v1/admin-users/{username}/reinstate",
+    "POST /admin/v1/admin-users/{username}/reinvite",
+    "POST /admin/v1/admin-users/{username}/reset-password",
     "POST /admin/v1/providers",
     "GET /admin/v1/providers/{providerId}",
     "PATCH /admin/v1/providers/{providerId}",

@@ -95,7 +95,9 @@ import {
   getAdminSession,
   inviteAdminUser,
   listAdminUsers,
+  reinviteAdminUser,
   reinstateAdminUser,
+  resetAdminUserPassword,
   suspendAdminUser,
   updateAdminUserRole,
 } from "../src/handlers/admin-users.js";
@@ -299,6 +301,12 @@ const routes = [
     "POST",
     "/admin/v1/admin-users/{username}/reinstate",
     reinstateAdminUser,
+  ),
+  route("POST", "/admin/v1/admin-users/{username}/reinvite", reinviteAdminUser),
+  route(
+    "POST",
+    "/admin/v1/admin-users/{username}/reset-password",
+    resetAdminUserPassword,
   ),
   route("POST", "/admin/v1/providers", createProvider),
   route("GET", "/admin/v1/providers/{providerId}", getProvider),

@@ -40,6 +40,9 @@ import {
  * @property {any[]} programs
  * @property {any[]} programManagers
  * @property {any[]} adminUsers
+ * @property {string} adminUserStatusFilter
+ * @property {string} adminUserMessage
+ * @property {string} adminUserDirectoryMode
  * @property {any[]} siteManagers
  * @property {any | null} siteManager
  * @property {boolean} managerDirectoryLoaded
@@ -91,6 +94,9 @@ class AdminApp extends HTMLElement {
       programs: [],
       programManagers: [],
       adminUsers: [],
+      adminUserStatusFilter: "all",
+      adminUserMessage: "",
+      adminUserDirectoryMode: "",
       siteManagers: [],
       siteManager: null,
       managerDirectoryLoaded: false,
@@ -144,6 +150,8 @@ class AdminApp extends HTMLElement {
       programs: [],
       programManagers: [],
       adminUsers: [],
+      adminUserStatusFilter: "all",
+      adminUserMessage: "",
       siteManagers: [],
       siteManager: null,
       managerDirectoryLoaded: false,
@@ -328,6 +336,7 @@ class AdminApp extends HTMLElement {
         return navigate("/sites", { replace: true });
       const result = await adminApi.listAdminUsers();
       this.state.adminUsers = result.users || [];
+      this.state.adminUserDirectoryMode = result.directoryMode || "cognito";
       this.state.provider = null;
       this.state.program = null;
       this.state.site = null;
@@ -1675,7 +1684,9 @@ class AdminApp extends HTMLElement {
       "submit",
       (event) => {
         event.preventDefault();
-        const data = new FormData(asForm(event.currentTarget));
+        const form = asForm(event.currentTarget);
+        if (!form.reportValidity()) return;
+        const data = new FormData(form);
         adminApi
           .inviteAdminUser({
             firstName: String(data.get("firstName") || ""),
@@ -1683,23 +1694,56 @@ class AdminApp extends HTMLElement {
             email: String(data.get("email") || ""),
             role: String(data.get("role") || ""),
           })
-          .then(() => this.openRoute())
+          .then(() => {
+            this.state.adminUserMessage = "Invitation sent.";
+            return this.openRoute();
+          })
           .catch((error) => {
             this.state.error = error.message;
             this.render();
           });
       },
     );
+    this.querySelector("#admin-user-status-filter")?.addEventListener(
+      "change",
+      (event) => {
+        this.state.adminUserStatusFilter = String(
+          event.currentTarget.value || "all",
+        );
+        this.render();
+      },
+    );
+    this.querySelector("#show-admin-role-help")?.addEventListener(
+      "click",
+      () => {
+        this.querySelector("#admin-role-help-dialog")?.showModal();
+      },
+    );
     this.querySelectorAll("[data-admin-user-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const username = dataAttr(button, "data-username");
         const action = dataAttr(button, "data-admin-user-action");
-        const request =
-          action === "suspend"
-            ? adminApi.suspendAdminUser(username)
-            : adminApi.reinstateAdminUser(username);
+        const requests = {
+          suspend: () => adminApi.suspendAdminUser(username),
+          reinstate: () => adminApi.reinstateAdminUser(username),
+          reinvite: () => adminApi.reinviteAdminUser(username),
+          reset: () => adminApi.resetAdminUserPassword(username),
+        };
+        const request = requests[action]?.();
+        if (!request) return;
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        button.textContent = "Working…";
         request
-          .then(() => this.openRoute())
+          .then(() => {
+            this.state.adminUserMessage = {
+              suspend: "Administrator suspended.",
+              reinstate: "Administrator reinstated.",
+              reinvite: "Invitation sent again.",
+              reset: "Password reset instructions sent.",
+            }[action];
+            return this.openRoute();
+          })
           .catch((error) => {
             this.state.error = error.message;
             this.render();
@@ -2970,7 +3014,10 @@ class AdminApp extends HTMLElement {
           </div>
           ${
             this.state.hasToken
-              ? `${this.state.capabilities.manageAdminUsers ? '<a class="btn-link" href="/administrators" data-route>Administrators</a>' : ""}<button class="btn-secondary" id="clear-token" type="button">Sign out</button>`
+              ? adminSettingsMenu(
+                  this.state.capabilities.manageAdminUsers,
+                  this.state.capabilities.createEntities,
+                )
               : ""
           }
         </header>
@@ -2998,7 +3045,12 @@ class AdminApp extends HTMLElement {
         ${
           this.state.hasToken && !provider && !program && !site && !siteManager
             ? route.name === "administrators"
-              ? administratorView(this.state.adminUsers)
+              ? administratorView(
+                  this.state.adminUsers,
+                  this.state.adminUserStatusFilter,
+                  this.state.adminUserMessage,
+                  this.state.adminUserDirectoryMode,
+                )
               : route.name === "site-import"
                 ? siteImportView(this.state)
                 : route.name === "site-new"
@@ -3059,27 +3111,114 @@ class AdminApp extends HTMLElement {
 
 customElements.define("admin-app", AdminApp);
 
-function administratorView(users) {
+function adminSettingsMenu(canManageUsers, canImportSites) {
+  return `<div class="admin-settings-wrap">
+    <button class="admin-settings" type="button" popovertarget="admin-settings-menu" aria-label="Settings" aria-haspopup="menu">
+      <wa-icon name="gear" aria-hidden="true"></wa-icon>
+    </button>
+    <div class="admin-settings-menu" id="admin-settings-menu" popover role="menu" aria-label="Settings">
+      ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="users" aria-hidden="true"></wa-icon>User management</a>' : ""}
+      ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon>Import</a>' : ""}
+      <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon>Sign out</button>
+    </div>
+  </div>`;
+}
+
+function administratorView(
+  users,
+  statusFilter = "all",
+  message = "",
+  directoryMode = "cognito",
+) {
+  const filteredUsers = users.filter(
+    (user) =>
+      statusFilter === "all" || adminUserLifecycleStatus(user) === statusFilter,
+  );
   return `<section class="panel" aria-labelledby="administrators-title">
-    <div class="panel__head"><div><h1 id="administrators-title" tabindex="-1">Compliance administrators</h1><p class="muted">Invite, suspend, reinstate, or change administrator roles.</p></div><a class="btn-link" href="/sites" data-route>Back to sites</a></div>
+    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> Site admin</a>
+    <div class="panel__head"><div><h1 id="administrators-title" tabindex="-1">Manage users</h1><p class="muted">Invite, suspend, reinstate, or manage user access.</p></div></div>
+    ${directoryMode === "local" ? '<p class="admin-local-directory" role="note"><strong>Local test directory.</strong> Changes reset when the backend restarts, and no emails are sent.</p>' : ""}
+    ${message ? `<p class="success admin-user-toast" role="status">${escapeHtml(message)}</p>` : ""}
     <form id="admin-user-form" class="site-details-form">
       <fieldset><legend>Invite administrator</legend>
         <div class="form-grid">
           <wa-input name="firstName" label="First name" required></wa-input>
           <wa-input name="lastName" label="Last name" required></wa-input>
-          <wa-input name="email" type="email" label="Work email" required></wa-input>
-          <wa-select name="role" label="Role" value="compliance-manager" required>
-            <wa-option value="compliance-manager">Compliance manager</wa-option>
-            <wa-option value="compliance-supervisor">Compliance supervisor</wa-option>
+          <wa-input name="email" type="email" label="Work email" autocomplete="email" required></wa-input>
+          <div class="admin-role-label">
+            <span id="invite-admin-role-label">Role</span>
+            <button class="btn-icon" id="show-admin-role-help" type="button" aria-label="Learn about user roles"><wa-icon name="circle-info" aria-hidden="true"></wa-icon></button>
+          </div>
+          <wa-select name="role" aria-labelledby="invite-admin-role-label" value="compliance-manager">
+            <wa-option value="compliance-manager">Manager</wa-option>
+            <wa-option value="compliance-supervisor">Supervisor</wa-option>
           </wa-select>
         </div>
-        <button class="btn-primary" type="submit">Send invitation</button>
+        <button class="btn-primary admin-invite-submit" type="submit">Send invitation</button>
       </fieldset>
     </form>
+    <div class="admin-user-filter">
+      <wa-select id="admin-user-status-filter" label="Filter by status" value="${escapeHtml(statusFilter)}">
+        <wa-option value="all">All statuses</wa-option>
+        <wa-option value="active">Active</wa-option>
+        <wa-option value="invited">Invited</wa-option>
+        <wa-option value="suspended">Suspended</wa-option>
+      </wa-select>
+    </div>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>
-      ${users.map((user) => `<tr><td>${escapeHtml(user.name || "—")}</td><td>${escapeHtml(user.email)}</td><td><wa-select aria-label="Role for ${escapeHtml(user.email)}" data-admin-role data-username="${escapeHtml(user.username)}" value="${escapeHtml(user.role)}"><wa-option value="compliance-manager">Compliance manager</wa-option><wa-option value="compliance-supervisor">Compliance supervisor</wa-option></wa-select></td><td>${user.enabled ? "Active" : "Suspended"}</td><td><button class="${user.enabled ? "btn-danger" : "btn-secondary"}" type="button" data-admin-user-action="${user.enabled ? "suspend" : "reinstate"}" data-username="${escapeHtml(user.username)}">${user.enabled ? "Suspend" : "Reinstate"}</button></td></tr>`).join("")}
+      ${filteredUsers.map(adminUserRow).join("")}
     </tbody></table></div>
+    ${filteredUsers.length ? "" : '<p class="muted">No administrators match this status.</p>'}
+    ${adminRoleHelpDialog()}
   </section>`;
+}
+
+function adminUserRow(user) {
+  const status = adminUserLifecycleStatus(user);
+  const statusLabel =
+    { active: "Active", invited: "Invited", suspended: "Suspended" }[status] ||
+    status;
+  const username = escapeHtml(user.username);
+  const actions =
+    status === "suspended"
+      ? `<button class="btn-secondary" type="button" data-admin-user-action="reinstate" data-username="${username}">Reinstate</button>`
+      : `${
+          status === "invited"
+            ? `<button class="btn-secondary" type="button" data-admin-user-action="reinvite" data-username="${username}">Re-invite</button>`
+            : user.canResetPassword
+              ? `<button class="btn-secondary" type="button" data-admin-user-action="reset" data-username="${username}">Reset password</button>`
+              : ""
+        }<button class="btn-danger" type="button" data-admin-user-action="suspend" data-username="${username}">Suspend</button>`;
+  return `<tr><td>${escapeHtml(user.name || "—")}</td><td>${escapeHtml(user.email)}</td><td class="admin-user-role"><wa-select aria-label="Role for ${escapeHtml(user.email)}" data-admin-role data-username="${username}" value="${escapeHtml(user.role)}"><wa-option value="compliance-manager">Manager</wa-option><wa-option value="compliance-supervisor">Supervisor</wa-option></wa-select></td><td>${escapeHtml(statusLabel)}</td><td><div class="admin-user-actions">${actions}</div></td></tr>`;
+}
+
+function adminRoleHelpDialog() {
+  return `<dialog id="admin-role-help-dialog" class="places-modal" aria-labelledby="admin-role-help-title">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 class="places-modal__title" id="admin-role-help-title">User roles</h2>
+        <div class="admin-role-help-copy">
+          <section>
+            <h3>Manager</h3>
+            <p>Managers can update existing providers, programs, sites, contacts, setup codes, and device access. They can generate compliance letters, enroll devices, and revoke device access.</p>
+          </section>
+          <section>
+            <h3>Supervisor</h3>
+            <p>Supervisors can do everything a Manager can. They can also manage users, create and deactivate records, run bulk imports, and change a site's Site manager or lead program.</p>
+          </section>
+        </div>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-primary" value="close">Close</button>
+      </div>
+    </form>
+  </dialog>`;
+}
+
+function adminUserLifecycleStatus(user) {
+  if (user.lifecycleStatus) return user.lifecycleStatus;
+  if (user.enabled === false) return "suspended";
+  return user.status === "FORCE_CHANGE_PASSWORD" ? "invited" : "active";
 }
 
 function discardChangesDialog() {
@@ -3442,7 +3581,6 @@ function directoryView(state, route) {
         <h1 id="directory-title" tabindex="-1">Site admin</h1>
         <p class="muted">Manage providers, programs, sites, enrollment, and devices.</p>
       </div>
-      ${section === "sites" ? '<a class="btn-link" href="/sites/import" data-route>Import</a>' : ""}
     </div>
     <form id="directory-search" class="directory-search" role="search">
       <label class="visually-hidden" for="directory-search-input">Search providers, programs, sites, or managers</label>

@@ -86,7 +86,9 @@ import {
   getAdminSession,
   inviteAdminUser,
   listAdminUsers,
+  reinviteAdminUser,
   reinstateAdminUser,
+  resetAdminUserPassword,
   suspendAdminUser,
   updateAdminUserRole,
 } from "../handlers/admin-users.js";
@@ -214,6 +216,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,
   "POST /admin/v1/admin-users/{username}/suspend": suspendAdminUser,
   "POST /admin/v1/admin-users/{username}/reinstate": reinstateAdminUser,
+  "POST /admin/v1/admin-users/{username}/reinvite": reinviteAdminUser,
+  "POST /admin/v1/admin-users/{username}/reset-password":
+    resetAdminUserPassword,
   "POST /admin/v1/providers": createProvider,
   "GET /admin/v1/providers/{providerId}": getProvider,
   "PATCH /admin/v1/providers/{providerId}": updateProvider,

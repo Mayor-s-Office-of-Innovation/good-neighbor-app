@@ -9,12 +9,15 @@ import {
   CognitoIdentityProviderClient,
   AdminListGroupsForUserCommand,
   ListUsersInGroupCommand,
+  AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
 import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
+import { LocalCognitoAdminClient } from "../integrations/local-cognito-admin.js";
 import {
   ADMIN_GROUPS,
   adminOnly,
@@ -22,9 +25,15 @@ import {
   supervisorOnly,
 } from "../lib/admin-auth.js";
 
-const cognito = new CognitoIdentityProviderClient({});
+const localDirectory = process.env.LOCAL_COGNITO_ADMIN_DIRECTORY === "true";
+/** @type {{ send(command: any): Promise<any> }} */
+const cognito = localDirectory
+  ? new LocalCognitoAdminClient()
+  : new CognitoIdentityProviderClient({});
 const ROLES = [ADMIN_GROUPS.manager, ADMIN_GROUPS.supervisor];
-const ADMIN_GROUP_SET = new Set([...ROLES, ADMIN_GROUPS.legacyManager]);
+const ADMIN_GROUP_SET = new Set(
+  /** @type {string[]} */ ([...ROLES, ADMIN_GROUPS.legacyManager]),
+);
 const SUPERVISOR_MUTATION_LOCK = {
   pk: "ADMIN_LOCK#SUPERVISOR_MUTATION",
   sk: "#LOCK",
@@ -35,6 +44,7 @@ const LOCK_SECONDS = 30;
 export const getAdminSession = (event) =>
   adminOnly(event, async () => {
     const principal = adminPrincipal(event);
+    await verifyAuthenticatedAdminContact(configuredPool(), principal);
     return jsonResponse(200, {
       role: principal.role,
       capabilities: principal.capabilities,
@@ -71,6 +81,7 @@ export const listAdminUsers = (event) =>
     }
     return jsonResponse(200, {
       users: [...users.values()].sort((a, b) => a.email.localeCompare(b.email)),
+      directoryMode: localDirectory ? "local" : "cognito",
     });
   });
 
@@ -213,6 +224,57 @@ export const suspendAdminUser = (event) =>
 export const reinstateAdminUser = (event) =>
   supervisorOnly(event, async () => setEnabled(event, true));
 
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const reinviteAdminUser = (event) =>
+  supervisorOnly(event, async () => {
+    const pool = configuredPool();
+    if (!pool) return unavailable();
+    const username = decodeURIComponent(event.pathParameters?.username ?? "");
+    if (!username) return jsonResponse(400, { error: "username_required" });
+    const target = await getAdminUser(pool, username);
+    if (!target) return jsonResponse(404, { error: "admin_user_not_found" });
+    if (target.Enabled === false)
+      return jsonResponse(409, { error: "admin_user_suspended" });
+    if (target.UserStatus !== "FORCE_CHANGE_PASSWORD") {
+      return jsonResponse(409, { error: "invitation_not_pending" });
+    }
+    await cognito.send(
+      new AdminCreateUserCommand({
+        UserPoolId: pool,
+        Username: username,
+        MessageAction: "RESEND",
+        DesiredDeliveryMediums: ["EMAIL"],
+      }),
+    );
+    return jsonResponse(200, { user: publicUser(target, target.role) });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const resetAdminUserPassword = (event) =>
+  supervisorOnly(event, async () => {
+    const pool = configuredPool();
+    if (!pool) return unavailable();
+    const username = decodeURIComponent(event.pathParameters?.username ?? "");
+    if (!username) return jsonResponse(400, { error: "username_required" });
+    const target = await getAdminUser(pool, username);
+    if (!target) return jsonResponse(404, { error: "admin_user_not_found" });
+    if (target.Enabled === false)
+      return jsonResponse(409, { error: "admin_user_suspended" });
+    if (target.UserStatus === "FORCE_CHANGE_PASSWORD") {
+      return jsonResponse(409, { error: "invitation_pending" });
+    }
+    if (!hasVerifiedContact(target)) {
+      return jsonResponse(409, { error: "verified_contact_required" });
+    }
+    await cognito.send(
+      new AdminResetUserPasswordCommand({
+        UserPoolId: pool,
+        Username: username,
+      }),
+    );
+    return jsonResponse(200, { user: publicUser(target, target.role) });
+  });
+
 /** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {boolean} enabled */
 async function setEnabled(event, enabled) {
   const pool = configuredPool();
@@ -229,7 +291,7 @@ async function setEnabled(event, enabled) {
     const Command = enabled ? AdminEnableUserCommand : AdminDisableUserCommand;
     await cognito.send(new Command({ UserPoolId: pool, Username: username }));
     return jsonResponse(200, {
-      user: { ...publicUser(target, ""), enabled },
+      user: publicUser({ ...target, Enabled: enabled }, ""),
     });
   };
   return enabled ? changeEnabled() : withSupervisorMutationLock(changeEnabled);
@@ -274,7 +336,8 @@ async function withSupervisorMutationLock(fn) {
         new DeleteCommand({
           TableName: getDynamoTableName(),
           Key: SUPERVISOR_MUTATION_LOCK,
-          ConditionExpression: "token = :token",
+          ConditionExpression: "#token = :token",
+          ExpressionAttributeNames: { "#token": "token" },
           ExpressionAttributeValues: { ":token": token },
         }),
       );
@@ -325,7 +388,7 @@ async function groupsForUser(pool, username) {
     }),
   );
   return (result.Groups ?? [])
-    .map((group) => group.GroupName ?? "")
+    .map((/** @type {any} */ group) => group.GroupName ?? "")
     .filter(Boolean);
 }
 
@@ -336,9 +399,35 @@ async function getUser(pool, username) {
   );
 }
 
+/** @param {string} pool @param {string} username */
+async function getAdminUser(pool, username) {
+  let target;
+  try {
+    target = await getUser(pool, username);
+  } catch (error) {
+    if (error instanceof Error && error.name === "UserNotFoundException") {
+      return null;
+    }
+    throw error;
+  }
+  const groups = await groupsForUser(pool, username);
+  const role = groups.includes(ADMIN_GROUPS.supervisor)
+    ? ADMIN_GROUPS.supervisor
+    : groups.some((/** @type {string} */ group) => ADMIN_GROUP_SET.has(group))
+      ? ADMIN_GROUPS.manager
+      : "";
+  return role ? { ...target, role } : null;
+}
+
 /** @param {any} user @param {string} role */
 function publicUser(user, role) {
   const attrs = attributes(user);
+  const lifecycleStatus =
+    user.Enabled === false
+      ? "suspended"
+      : user.UserStatus === "FORCE_CHANGE_PASSWORD"
+        ? "invited"
+        : "active";
   return {
     username: user.Username ?? "",
     subject: attrs.sub ?? "",
@@ -350,7 +439,54 @@ function publicUser(user, role) {
     role,
     enabled: user.Enabled !== false,
     status: user.UserStatus ?? "",
+    lifecycleStatus,
+    canResetPassword: lifecycleStatus === "active" && hasVerifiedContact(user),
   };
+}
+
+/**
+ * Completing the emailed temporary-password flow and reaching an authenticated
+ * admin session demonstrates control of an email-address username. Record that
+ * proof once so Cognito can deliver future password-reset codes. Session access
+ * itself must not fail if Cognito cannot persist the attribute; reset remains
+ * unavailable until verification succeeds.
+ * @param {string | undefined} pool
+ * @param {ReturnType<typeof adminPrincipal>} principal
+ */
+async function verifyAuthenticatedAdminContact(pool, principal) {
+  if (!pool || !principal.username.includes("@")) return;
+  try {
+    const target = await getUser(pool, principal.username);
+    const attrs = attributes(target);
+    if (
+      target.Enabled === false ||
+      target.UserStatus === "FORCE_CHANGE_PASSWORD" ||
+      attrs.email?.toLowerCase() !== principal.username.toLowerCase() ||
+      attrs.email_verified === "true"
+    ) {
+      return;
+    }
+    await cognito.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: pool,
+        Username: principal.username,
+        UserAttributes: [{ Name: "email_verified", Value: "true" }],
+      }),
+    );
+  } catch (error) {
+    console.error("Failed to record authenticated admin email verification", {
+      username: principal.username,
+      error,
+    });
+  }
+}
+
+/** @param {any} user */
+function hasVerifiedContact(user) {
+  const attrs = attributes(user);
+  return (
+    attrs.email_verified === "true" || attrs.phone_number_verified === "true"
+  );
 }
 
 /** @param {any} user @returns {Record<string, string>} */
@@ -372,7 +508,9 @@ function sameUser(principal, target) {
 }
 
 function configuredPool() {
-  return getConfig().cognitoUserPoolId;
+  return localDirectory
+    ? "local-admin-directory"
+    : getConfig().cognitoUserPoolId;
 }
 
 function unavailable() {
