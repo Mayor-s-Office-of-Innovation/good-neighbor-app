@@ -1,3 +1,4 @@
+import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { taskRoute } from "../domain/task-route.js";
 import { taskActionLabel } from "../domain/task-action-labels.js";
 import { historyDuration, historyEnteredAt } from "../domain/task-history.js";
@@ -7,7 +8,6 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import { t } from "../i18n/i18n.js";
-import { analyzerTranslation } from "../i18n/analyzer-text.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
   formatMonthDay,
@@ -1003,9 +1003,6 @@ export function statusLine(status, detail = "", scope = "server.sf311") {
 
 // Prefer the active-locale analyzer translation when present; fall back to the
 // canonical English wire fields, then rulebook text.
-function localizedAnalyzerText(record, flat, translationsKey) {
-  return analyzerTranslation(record, translationsKey) ?? flat;
-}
 
 function displayCategory(record) {
   return (

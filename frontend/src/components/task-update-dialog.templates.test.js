@@ -167,3 +167,60 @@ describe("task update dialog templates", () => {
     expect(taskUpdateTimelineTone("note_photo_update")).toBe("general");
   });
 });
+
+it("reuses capture with the results title and skip, then renders saved content in history", () => {
+  const capture = taskUpdateCapture({
+    pendingEvent: { type: "task_completed" },
+    results: true,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  expect(capture).toContain(t("taskUpdate.capture.resultsTitle"));
+  expect(capture).toContain("data-skip");
+  const timeline = taskUpdateTimeline({
+    task: { status: "completed" },
+    updates: [
+      {
+        type: "task_completed",
+        label: "Marked as complete",
+        occurredAt: "2026-10-08T12:00:00Z",
+        notes: ["Area cleaned"],
+        photoKeys: ["photo-1"],
+      },
+    ],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
+  });
+  expect(timeline).toContain("Area cleaned");
+  expect(timeline).toContain('src="https://example.test/photo.jpg"');
+});
+
+it("keeps notes and skip available without an uploadable check", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: { updateId: "update-1" },
+    results: true,
+    photosAllowed: false,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  expect(markup).not.toContain("data-photos");
+  expect(markup).toContain(t("taskUpdate.photo.unavailable"));
+  expect(markup).toContain("data-add-note");
+  expect(markup).toContain("data-skip");
+});
+it("preserves a conflicted draft with an explanation and disabled save", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: null,
+    results: true,
+    files: [],
+    notes: ["Unsaved note"],
+    previews: [],
+  });
+  expect(markup).toContain("Unsaved note");
+  expect(markup).toContain(t("taskUpdate.capture.conflict"));
+  expect(markup).toMatch(/data-save-notes\s+disabled/);
+  expect(markup).toContain("data-skip");
+});

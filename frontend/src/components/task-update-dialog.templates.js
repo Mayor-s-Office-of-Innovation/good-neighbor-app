@@ -1,7 +1,7 @@
+import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { taskRoute } from "../domain/task-route.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { analyzerTranslation } from "../i18n/analyzer-text.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 import {
@@ -13,14 +13,15 @@ import {
 export function taskUpdateTimelineTone(type) {
   if (type === "escalation_action_taken") return "escalation";
   if (
-    type === "presence_still_present" ||
-    type === "additional_action_still_present"
+    ["presence_still_present", "additional_action_still_present"].includes(type)
   )
     return "still-there";
   if (
-    type === "task_completed" ||
-    type === "presence_resolved" ||
-    type === "additional_action_resolved"
+    [
+      "task_completed",
+      "presence_resolved",
+      "additional_action_resolved",
+    ].includes(type)
   )
     return "resolved";
   return "general";
@@ -95,6 +96,8 @@ export function taskUpdateTimeline({
   nextToken,
   now = new Date(),
 }) {
+  const address =
+    task.georeferencedAddress || task.siteAddress || task.address || "";
   const expected = task.responseExpectedAt
     ? new Date(task.responseExpectedAt)
     : null;
@@ -142,10 +145,11 @@ export function taskUpdateTimeline({
   ]
     .filter((update) => update.occurredAt)
     .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
-  const englishTitle = task.userFriendlyLabel || task.user_friendly_label || "";
-  const analyzerTitle = englishTitle
-    ? (analyzerTranslation(task, "user_friendly_label") ?? englishTitle)
-    : "";
+  const canonicalTitle =
+    task.userFriendlyLabel || task.user_friendly_label || "";
+  const analyzerTitle =
+    canonicalTitle &&
+    localizedAnalyzerText(task, canonicalTitle, "user_friendly_label");
   const title =
     analyzerTitle ||
     rulebookText(task.category) ||
@@ -165,11 +169,7 @@ export function taskUpdateTimeline({
           : ""}
       </p>
       <p class="task-update__location">
-        ${escapeHtml(
-          String(
-            task.georeferencedAddress || task.siteAddress || task.address || "",
-          ).split(/\r?\n|,/)[0],
-        )}
+        ${escapeHtml(String(address).split(/\r?\n|,/)[0])}
       </p>
       <h2 id="task-update-title">${escapeHtml(title)}</h2>
       <p class="task-update__description">
@@ -180,12 +180,7 @@ export function taskUpdateTimeline({
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
-            data-photo-address="${escapeAttr(
-              task.georeferencedAddress ||
-                task.siteAddress ||
-                task.address ||
-                "",
-            )}"
+            data-photo-address="${escapeAttr(address)}"
             data-photo-time="${escapeAttr(
               task.createdAt || task.created_at || task.notifiedAt || "",
             )}"
@@ -253,7 +248,6 @@ export function taskUpdateTimeline({
               ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
             </button>
           </div>
-          <p class="task-update__error" role="alert" hidden></p>
         </section>`
       : ""}
     ${task.status === "in_progress"
@@ -311,12 +305,7 @@ export function taskUpdateTimeline({
                           class="task-update__photo-trigger"
                           type="button"
                           data-photo-lightbox
-                          data-photo-address="${escapeAttr(
-                            task.georeferencedAddress ||
-                              task.siteAddress ||
-                              task.address ||
-                              "",
-                          )}"
+                          data-photo-address="${escapeAttr(address)}"
                           data-photo-time="${escapeAttr(update.occurredAt)}"
                         >
                           <img
@@ -343,10 +332,18 @@ export function taskUpdateTimeline({
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 
-/** @param {{ pendingEvent: Record<string, any> | null, files: File[], notes: string[], previews: string[] }} view */
-export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
-  const title =
-    pendingEvent?.type === "presence_resolved"
+/** @param {{ pendingEvent: Record<string, any> | null, results?: boolean, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
+export function taskUpdateCapture({
+  pendingEvent,
+  results = false,
+  photosAllowed = true,
+  files,
+  notes,
+  previews,
+}) {
+  const title = results
+    ? t("taskUpdate.capture.resultsTitle")
+    : pendingEvent?.type === "presence_resolved"
       ? t("taskUpdate.capture.successTitle")
       : pendingEvent
         ? t("taskUpdate.capture.pendingTitle")
@@ -355,7 +352,12 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
   const hasContent = files.length || populatedNotes.length;
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
-    ${photoPicker(previews, "update", files)}
+    ${results && !pendingEvent
+      ? html`<p role="alert">
+          ${escapeHtml(t("taskUpdate.capture.conflict"))}
+        </p>`
+      : ""}
+    ${photoPicker(previews, "update", files, photosAllowed)}
     ${populatedNotes.length
       ? html`<ul class="task-update__note-list">
           ${notes
@@ -380,17 +382,16 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
           ${escapeHtml(t("taskUpdate.capture.addNote"))}
         </button>`
       : ""}
-    <p class="task-update__error" role="alert" hidden></p>
     <div class="task-update__actions task-update__actions--footer">
       <button
         type="button"
         class="btn-ink"
         data-save-notes
-        ${!pendingEvent && !hasContent ? "disabled" : ""}
+        ${!pendingEvent && (results || !hasContent) ? "disabled" : ""}
       >
         ${escapeHtml(t("common.done"))}
       </button>
-      ${pendingEvent
+      ${pendingEvent || results
         ? html`<button type="button" class="btn-outline" data-skip>
             ${escapeHtml(t("taskUpdate.skip"))}
           </button>`
@@ -399,8 +400,10 @@ export function taskUpdateCapture({ pendingEvent, files, notes, previews }) {
   </section>`;
 }
 
-/** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] */
-function photoPicker(previews, kind, files = []) {
+/** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] @param {boolean} [allowed] */
+function photoPicker(previews, kind, files = [], allowed = true) {
+  if (!allowed)
+    return html`<p>${escapeHtml(t("taskUpdate.photo.unavailable"))}</p>`;
   return html`<div class="task-update__photo-grid">
     <label class="photo-capture-tile task-update__photo-picker"
       ><input
@@ -516,18 +519,20 @@ ${escapeHtml(text)}</textarea
         </button>
       </div>
     </section>
-    <p class="task-update__error" role="alert" hidden></p>
   </section>`;
 }
 
-/** @param {string[]} previews @param {File[]} [files] */
-export function taskUpdateActionPhotos(previews, files = []) {
+/** @param {string[]} previews @param {File[]} [files] @param {boolean} [photosAllowed] */
+export function taskUpdateActionPhotos(
+  previews,
+  files = [],
+  photosAllowed = true,
+) {
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">
       ${escapeHtml(t("taskUpdate.actionPhotos.title"))}
     </h2>
-    ${photoPicker(previews, "action", files)}
-    <p class="task-update__error" role="alert" hidden></p>
+    ${photoPicker(previews, "action", files, photosAllowed)}
     <div class="task-update__actions task-update__actions--footer">
       <button
         type="button"
