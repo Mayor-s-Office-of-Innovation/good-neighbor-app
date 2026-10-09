@@ -7,10 +7,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
-import {
-  getComplianceLetterBucket,
-  getDynamoTableName,
-} from "../config.js";
+import { getComplianceLetterBucket, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import {
