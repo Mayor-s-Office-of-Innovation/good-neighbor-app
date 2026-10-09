@@ -48,8 +48,8 @@ function summarizeError(err) {
 }
 
 /**
- * Both flows share SQS_QUEUE_URL, so the local pump — standing in for two
- * separate Lambda event-source mappings — picks the handler by message shape.
+ * The async flows share SQS_QUEUE_URL, so the local pump picks the handler by
+ * message shape.
  * The register handler enqueues an analyze message carrying s3Key + artifactId;
  * the demo /submissions flow does not. Anything without both goes to the
  * submission handler (unchanged default).
