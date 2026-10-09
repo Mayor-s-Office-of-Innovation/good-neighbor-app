@@ -51,6 +51,21 @@ CloudWatch Logs v2 delivery permissions, and
 missing deployment-role permission; do not work around it with console-created
 resources.
 
+## Unblock deployments during relay bootstrap
+
+If creating the relay fails because Proofpoint is unavailable or SMTP
+authentication fails, set `enable_city_smtp_relay = false` in
+`infra/environments/dev/main.tf`, keeping
+`provision_city_smtp_relay_foundation = true`. Run a fresh CI plan and apply.
+Terraform removes the failed gateway stack from its managed configuration while
+preserving the SMTP secrets, KMS key, log group, and alarms. The existing
+direct-SES application senders and Cognito delivery remain unchanged.
+
+This is a bootstrap recovery path, before application senders use the gateway.
+Once Proofpoint authentication succeeds, set `enable_city_smtp_relay = true`
+and deploy through CI, then complete the connectivity tests below before
+switching any senders.
+
 ## Connectivity test
 
 Wait until the requested dev mailbox exists. Obtain the non-secret endpoint
