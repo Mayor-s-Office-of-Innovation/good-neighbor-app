@@ -5,7 +5,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { getConfig } from "../config.js";
+import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
   geocodeSiteAddress,
   locationFromSite,
@@ -279,6 +279,11 @@ async function loadSite(siteId) {
  * @returns {Promise<Record<string, any>>}
  */
 async function siteAdminView(site) {
+  const compliance = site.compliance || {};
+  const activeCompliance =
+    compliance.periodEnd && compliance.periodEnd < pacificIsoDate()
+      ? { perimeterChecksRequired: false }
+      : compliance;
   return {
     siteId: site.siteId,
     name: String(site.name || "Your site"),
@@ -297,12 +302,26 @@ async function siteAdminView(site) {
       phone: "",
     },
     oversight: site.oversight || {},
-    compliance: site.compliance || {},
+    compliance: activeCompliance,
     perimeter: String(site.perimeter || ""),
     complianceLetters: await complianceLetterLinks(
       site.complianceLetters || { current: null, past: [] },
     ),
   };
+}
+
+function pacificIsoDate() {
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(new Date())
+      .map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 /** @param {Record<string, any>} letters */
@@ -313,7 +332,7 @@ async function complianceLetterLinks(letters) {
     return {
       ...letter,
       url: await presignGet({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: letter.s3Key,
         expiresIn: 300,
       }),

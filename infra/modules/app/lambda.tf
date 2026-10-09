@@ -105,6 +105,7 @@ resource "aws_lambda_function" "api" {
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       DEMO_SITE_ID                = "demo-site"
       BEDROCK_MODEL_ID            = var.bedrock_model_id
       ANALYZER_BASE_URL           = var.analyzer_base_url
@@ -261,6 +262,7 @@ resource "aws_lambda_function" "worker" {
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
@@ -326,10 +328,8 @@ resource "aws_lambda_event_source_mapping" "worker" {
   }
 }
 
-# Revocation requests and their outbox entries are committed atomically. This
-# filtered stream mapping forwards only new pending outbox entries to the worker,
-# which publishes the site reconciliation message to SQS and marks the entry as
-# dispatched. Stream retries close the former commit-then-send failure window.
+# Revocation and compliance-letter requests are committed with durable outbox
+# entries. This filtered stream mapping forwards them to the worker queue.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
   event_source_arn = aws_dynamodb_table.app.stream_arn
   function_name    = aws_lambda_function.worker.arn
@@ -346,7 +346,7 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
         eventName = ["INSERT"]
         dynamodb = {
           NewImage = {
-            entityType = { S = ["REVOCATION_OUTBOX"] }
+            entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] }
           }
         }
       })

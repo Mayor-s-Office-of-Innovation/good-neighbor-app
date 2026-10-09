@@ -11,6 +11,7 @@ vi.mock("../db.js", () => ({ ddb: { send } }));
 const {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
@@ -40,8 +41,16 @@ describe("effective-dated Site terms", () => {
       .mockResolvedValueOnce({
         Item: {
           siteId: "site-1",
+          name: "Site One",
+          address: "1 Main St, San Francisco, CA 94102",
           status: "active",
           latestComplianceTermsVersionId: "old",
+          primaryContactUserId: "contact-1",
+          primaryContact: { firstName: "Sam", lastName: "Lee" },
+          oversight: {
+            managingCityDepartment: "Department of Public Health",
+            cityProgramManagerId: "manager-1",
+          },
         },
       })
       .mockResolvedValueOnce({
@@ -53,24 +62,44 @@ describe("effective-dated Site terms", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            userId: "manager-1",
+            firstName: "Rob",
+            lastName: "Hoffman",
+            email: "rob.hoffman@sfgov.org",
+            phone: "415-555-0100",
+          },
+        ],
+      })
       .mockResolvedValueOnce({});
     const response = await call(
       createSiteTerms,
       event(
         {
-          tier: 2,
+          reasons: ["2", "6"],
+          correctiveActionTier: 2,
           requiredChecksPerDay: 3,
           effectiveStart: "2026-11-01",
-          expiresOnExclusive: "",
+          periodEnd: "2026-12-01",
         },
         { siteId: "site-1" },
       ),
     );
     expect(response.statusCode).toBe(201);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = send.mock.calls[2][0];
+    const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems[0].Put.Item.effectiveStart).toBe(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Los_Angeles",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date()),
+    );
     expect(transaction.input.TransactItems[1].Update).toMatchObject({
       ConditionExpression:
         "attribute_exists(pk) AND latestComplianceTermsVersionId = :observedLatest",
@@ -93,15 +122,39 @@ describe("effective-dated Site terms", () => {
 
   it("rejects overlapping future terms", async () => {
     send
-      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          address: "1 Main St",
+          status: "active",
+          primaryContactUserId: "contact-1",
+          primaryContact: { firstName: "Sam", lastName: "Lee" },
+          oversight: {
+            managingCityDepartment: "DPH",
+            cityProgramManagerId: "manager-1",
+          },
+        },
+      })
       .mockResolvedValueOnce({
         Items: [{ effectiveStart: "2027-01-01", status: "scheduled" }],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            userId: "manager-1",
+            firstName: "Rob",
+            lastName: "Hoffman",
+            email: "rob@sfgov.org",
+            phone: "415-555-0100",
+          },
+        ],
       });
     const response = await call(
       createSiteTerms,
       event(
         {
-          tier: 3,
+          reasons: ["2"],
           requiredChecksPerDay: 2,
           effectiveStart: "2026-11-01",
         },
@@ -111,6 +164,143 @@ describe("effective-dated Site terms", () => {
     expect(response.statusCode).toBe(409);
     expect(JSON.parse(String(response.body))).toEqual({
       error: "terms_overlap",
+    });
+  });
+
+  it("requires an expiry when any temporary reason is selected", async () => {
+    const response = await call(
+      createSiteTerms,
+      event(
+        {
+          reasons: ["1", "2"],
+          requiredChecksPerDay: 3,
+          effectiveStart: "2026-11-01",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "expiry_required",
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("allows a new period after an earlier period was closed the same day", async () => {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          address: "1 Main St",
+          status: "active",
+          primaryContactUserId: "contact-1",
+          primaryContact: { firstName: "Sam", lastName: "Lee" },
+          oversight: {
+            managingCityDepartment: "DPH",
+            cityProgramManagerId: "manager-1",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            effectiveStart: today,
+            expiresOnExclusive: today,
+            status: "expired",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            userId: "manager-1",
+            firstName: "Rob",
+            lastName: "Hoffman",
+            email: "rob@sfgov.org",
+            phone: "415-555-0100",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      createSiteTerms,
+      event({ reasons: ["2"], requiredChecksPerDay: 3 }, { siteId: "site-1" }),
+    );
+
+    expect(response.statusCode).toBe(201);
+  });
+
+  it("ends the active period and clears the current compliance projection", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "COMPLIANCE_TERMS#2020-01-01#v1",
+            termsVersionId: "v1",
+            effectiveStart: "2020-01-01",
+            status: "active",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      endSiteTerms,
+      event(undefined, { siteId: "site-1" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const query = send.mock.calls[1][0];
+    expect(query).toBeInstanceOf(QueryCommand);
+    expect(query.input.ConsistentRead).toBe(true);
+    const transaction = send.mock.calls[2][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(
+      transaction.input.TransactItems[1].Update.ExpressionAttributeValues[
+        ":compliance"
+      ],
+    ).toEqual({
+      perimeterChecksRequired: false,
+    });
+    expect(
+      transaction.input.TransactItems[0].Update.UpdateExpression,
+    ).toContain("endedOn = :today");
+  });
+
+  it("returns a conflict when the active period changes during close", async () => {
+    const conflict = new Error("changed");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "COMPLIANCE_TERMS#2020-01-01#v1",
+            termsVersionId: "v1",
+            effectiveStart: "2020-01-01",
+            status: "active",
+          },
+        ],
+      })
+      .mockRejectedValueOnce(conflict);
+
+    const response = await call(
+      endSiteTerms,
+      event(undefined, { siteId: "site-1" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "terms_close_conflict",
     });
   });
 });

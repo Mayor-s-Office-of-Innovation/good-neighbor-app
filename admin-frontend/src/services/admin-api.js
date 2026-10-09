@@ -75,6 +75,11 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
+  updateCityProgramManager: (userId, values) =>
+    adminFetch(`/admin/v1/program-managers/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
   listOversightOptions: () => adminFetch("/admin/v1/oversight-options"),
   createOversightOption: (values) =>
     adminFetch("/admin/v1/oversight-options", {
@@ -177,6 +182,10 @@ export const adminApi = {
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`, {
       method: "POST",
       body: JSON.stringify(values),
+    }),
+  endSiteTerms: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms:close`, {
+      method: "POST",
     }),
   getSitePerimeter: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`),

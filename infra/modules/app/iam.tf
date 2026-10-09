@@ -94,6 +94,18 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid    = "ComplianceLetterObjects"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+    ]
+    resources = ["${aws_s3_bucket.compliance_letters.arn}/*"]
+  }
+
+  statement {
     sid       = "EnqueueSubmissions"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
@@ -291,6 +303,13 @@ data "aws_iam_policy_document" "worker" {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObjectTagging"]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
+  }
+
+  statement {
+    sid       = "WriteComplianceLetters"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.compliance_letters.arn}/compliance-letters/*"]
   }
 
   statement {

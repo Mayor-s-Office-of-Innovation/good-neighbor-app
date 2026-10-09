@@ -88,6 +88,7 @@ import {
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../src/handlers/admin.js";
 import {
@@ -129,6 +130,7 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
@@ -305,6 +307,11 @@ const routes = [
   route("GET", "/admin/v1/programs", listPrograms),
   route("GET", "/admin/v1/program-managers", listCityProgramManagers),
   route("POST", "/admin/v1/program-managers", createCityProgramManager),
+  route(
+    "PATCH",
+    "/admin/v1/program-managers/{userId}",
+    updateCityProgramManager,
+  ),
   route("GET", "/admin/v1/oversight-options", listOversightOptions),
   route("POST", "/admin/v1/oversight-options", createOversightOption),
   route("POST", "/admin/v1/address-suggestions", suggestAddresses),
@@ -335,6 +342,7 @@ const routes = [
   route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/terms:close", endSiteTerms),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
   route(

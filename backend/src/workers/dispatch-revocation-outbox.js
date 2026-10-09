@@ -7,7 +7,7 @@ import { ddb } from "../db.js";
 const sqs = new SQSClient({});
 
 /**
- * Forward revocation outbox inserts to SQS. DynamoDB Streams retries failures,
+ * Forward durable outbox inserts to SQS. DynamoDB Streams retries failures,
  * closing the API's former commit-then-send crash window. Duplicate delivery is
  * safe because reconciliation verifies already-revoked projections.
  * @type {import("aws-lambda").DynamoDBStreamHandler}
@@ -23,7 +23,12 @@ export const handler = async (event) => {
         ),
       )
     );
-    if (item.entityType !== "REVOCATION_OUTBOX" || item.status !== "pending") {
+    if (
+      !["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"].includes(
+        item.entityType,
+      ) ||
+      item.status !== "pending"
+    ) {
       continue;
     }
     const config = getConfig();
@@ -38,14 +43,24 @@ export const handler = async (event) => {
     await sqs.send(
       new SendMessageCommand({
         QueueUrl: config.queueUrl,
-        MessageBody: JSON.stringify({
-          type: "reconcile_site_revocation",
-          operationId: item.operationId,
-          operationPk: item.operationPk,
-          siteId: item.siteId,
-          startedAt: item.startedAt,
-          actor: item.actor,
-        }),
+        MessageBody: JSON.stringify(
+          item.entityType === "COMPLIANCE_LETTER_OUTBOX"
+            ? {
+                type: "generate_compliance_letter",
+                siteId: item.siteId,
+                jobPk: item.pk,
+                jobSk: item.sk,
+                previousLetters: item.previousLetters || [],
+              }
+            : {
+                type: "reconcile_site_revocation",
+                operationId: item.operationId,
+                operationPk: item.operationPk,
+                siteId: item.siteId,
+                startedAt: item.startedAt,
+                actor: item.actor,
+              },
+        ),
       }),
     );
     try {

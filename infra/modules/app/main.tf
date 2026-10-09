@@ -514,6 +514,113 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   }
 }
 
+# Compliance letters are durable administrative records. Keep them separate
+# from short-lived submitted imagery so media lifecycle rules cannot delete
+# current letters.
+resource "aws_s3_bucket" "compliance_letters" {
+  bucket_prefix = "${local.bucket_name_prefix}-compliance-letters-"
+  force_destroy = false
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "compliance_letters" {
+  bucket                  = aws_s3_bucket.compliance_letters.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "compliance_letters_tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.compliance_letters.arn,
+      "${aws_s3_bucket.compliance_letters.arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "compliance_letters_tls_only" {
+  bucket = aws_s3_bucket.compliance_letters.id
+  policy = data.aws_iam_policy_document.compliance_letters_tls_only.json
+
+  depends_on = [aws_s3_bucket_public_access_block.compliance_letters]
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_logging" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "compliance-letters/"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
+      [for name in var.admin_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_sqs_queue" "submissions" {
   name                       = "${local.name_prefix}-submissions"
   kms_master_key_id          = aws_kms_key.app.arn
@@ -892,7 +999,7 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
       # Only the admin app needs cross-origin access to Cognito's token endpoint.
       # Derive the domain string without a pool dependency (the pool invite
       # template references this distribution).
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.compliance_letters.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 

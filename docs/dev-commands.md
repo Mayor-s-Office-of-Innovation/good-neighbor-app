@@ -135,7 +135,7 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 MinIO is the local stand-in for S3, so the presigned-PUT upload leg and the analyze worker's
 read-back work without real AWS. On **first run** `local:minio` downloads the official MinIO
 binary into `backend/.local/` (git-ignored, ~100 MB) — allow a moment. `ensureLocalInfra()` then
-creates the `S3_UPLOAD_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
+creates the `S3_UPLOAD_BUCKET` and durable `S3_COMPLIANCE_LETTER_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
 is set **globally** by the launcher via `MINIO_API_CORS_ALLOW_ORIGIN` (MinIO returns 501 for the
 per-bucket `PutBucketCors` API, so bucket-level CORS is not used). Browse uploaded objects at the
 console: **http://localhost:9001** (log in with the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`

@@ -9,6 +9,7 @@ import { handler as processSubmission } from "../workers/process-submission.js";
 import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
 import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-revocation.js";
 import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
+import { handler as generateComplianceLetter } from "../workers/generate-compliance-letter.js";
 import { handler as translateArtifact } from "../workers/translate-artifact.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
@@ -27,6 +28,9 @@ function pickHandler(body) {
     const msg = JSON.parse(body ?? "");
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
+    }
+    if (msg?.type === "generate_compliance_letter") {
+      return generateComplianceLetter;
     }
     if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
       return translateArtifact;

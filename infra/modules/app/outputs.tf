@@ -13,6 +13,11 @@ output "upload_bucket_name" {
   value       = aws_s3_bucket.uploads.bucket
 }
 
+output "compliance_letter_bucket_name" {
+  description = "S3 bucket for durable compliance-letter PDFs and previews."
+  value       = aws_s3_bucket.compliance_letters.bucket
+}
+
 output "submission_queue_url" {
   description = "SQS queue URL for offline submissions."
   value       = aws_sqs_queue.submissions.url
