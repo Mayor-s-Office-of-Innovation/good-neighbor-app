@@ -7,7 +7,11 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
-import { getConfig, getDynamoTableName } from "../config.js";
+import {
+  getComplianceLetterBucket,
+  getConfig,
+  getDynamoTableName,
+} from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import {
@@ -520,13 +524,13 @@ export const getAdminSite = (event) =>
           if (!letter?.s3Key) return letter;
           const [url, previewUrl] = await Promise.all([
             presignGet({
-              bucket: getConfig().uploadBucket,
+              bucket: getComplianceLetterBucket(),
               key: letter.s3Key,
               expiresIn: 300,
             }),
             letter.previewS3Key
               ? presignGet({
-                  bucket: getConfig().uploadBucket,
+                  bucket: getComplianceLetterBucket(),
                   key: letter.previewS3Key,
                   expiresIn: 300,
                 })
@@ -748,7 +752,7 @@ export const presignComplianceLetter = (event) =>
     }
     const s3Key = `compliance-letters/${siteId}/${randomUUID()}.pdf`;
     const uploadUrl = await presignPut({
-      bucket: getConfig().uploadBucket,
+      bucket: getComplianceLetterBucket(),
       key: s3Key,
       contentType: COMPLIANCE_LETTER_CONTENT_TYPE,
       tagging: "state=pending",
@@ -924,7 +928,7 @@ export const updateSite = (event) =>
         return jsonResponse(400, { error: "invalid_compliance_letter" });
       }
       await setObjectTags({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: uploadedLetterKey,
         tags: { state: "active" },
       });
@@ -1135,7 +1139,7 @@ export const updateSite = (event) =>
 async function validateComplianceLetterUpload(key) {
   try {
     const object = await headObject({
-      bucket: getConfig().uploadBucket,
+      bucket: getComplianceLetterBucket(),
       key,
     });
     return (
@@ -1155,7 +1159,10 @@ async function validateComplianceLetterUpload(key) {
  */
 async function deleteComplianceLetterUpload(key) {
   try {
-    await deleteObject({ bucket: getConfig().uploadBucket, key });
+    await deleteObject({
+      bucket: getComplianceLetterBucket(),
+      key,
+    });
   } catch (error) {
     console.error("Failed to clean up compliance-letter upload", {
       key,

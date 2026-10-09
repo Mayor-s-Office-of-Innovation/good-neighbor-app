@@ -15,6 +15,7 @@ beforeEach(() => {
   putObject.mockReset().mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "gnp-test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "queue");
 });
 
@@ -64,6 +65,7 @@ describe("generate compliance letter worker", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     expect(putObject).toHaveBeenCalledWith(
       expect.objectContaining({
+        bucket: "gnp-test-compliance-letters",
         key: "compliance-letters/site-1/v1.pdf",
         contentType: "application/pdf",
         body: expect.any(Buffer),
@@ -71,6 +73,7 @@ describe("generate compliance letter worker", () => {
     );
     expect(putObject).toHaveBeenCalledWith(
       expect.objectContaining({
+        bucket: "gnp-test-compliance-letters",
         key: "compliance-letters/site-1/v1-preview.svg",
         contentType: "image/svg+xml",
         body: expect.any(Buffer),

@@ -1,5 +1,5 @@
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { getConfig } from "../config.js";
+import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
   generateComplianceLetterPdf,
   generateComplianceLetterPreviewSvg,
@@ -57,14 +57,14 @@ export const handler = async (event) => {
     const previewKey = `compliance-letters/${message.siteId}/${term.termsVersionId}-preview.svg`;
     await Promise.all([
       putObject({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key,
         body: pdf,
         contentType: "application/pdf",
         metadata: { "terms-version-id": String(term.termsVersionId) },
       }),
       putObject({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: previewKey,
         body: generateComplianceLetterPreviewSvg(term),
         contentType: "image/svg+xml",

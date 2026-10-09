@@ -38,6 +38,7 @@ beforeEach(() => {
   });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "test-bucket");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "test-queue");
 });
 
@@ -345,7 +346,7 @@ describe("site admin", () => {
       "https://uploads.example/current",
     );
     expect(presignGet).toHaveBeenCalledWith({
-      bucket: "test-bucket",
+      bucket: "test-compliance-letters",
       key: "compliance-letters/site-1/current.pdf",
       expiresIn: 300,
     });

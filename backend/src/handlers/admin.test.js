@@ -79,6 +79,7 @@ beforeEach(() => {
   deleteObject.mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "gnp-test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/queue");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
@@ -1165,11 +1166,11 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(200);
     expect(headObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
     });
     expect(setObjectTags).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
       tags: { state: "active" },
     });
@@ -1247,7 +1248,7 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toBe("invalid_compliance_letter");
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/too-large.pdf",
     });
     expect(send).toHaveBeenCalledTimes(1);
@@ -1293,7 +1294,7 @@ describe("provider and site management", () => {
       "updatedAt = :expectedUpdatedAt",
     );
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/concurrent.pdf",
     });
   });
@@ -1321,7 +1322,7 @@ describe("provider and site management", () => {
     const body = JSON.parse(res.body);
     expect(body.s3Key).toMatch(/^compliance-letters\/site-1\/[0-9a-f-]+\.pdf$/);
     expect(presignPut).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: body.s3Key,
       contentType: "application/pdf",
       tagging: "state=pending",

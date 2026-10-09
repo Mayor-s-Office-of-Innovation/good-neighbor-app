@@ -153,6 +153,7 @@ export async function ensureLocalInfra() {
   const tableName = process.env.DYNAMO_TABLE;
   const queueUrl = process.env.SQS_QUEUE_URL;
   const uploadBucket = process.env.S3_UPLOAD_BUCKET;
+  const complianceLetterBucket = process.env.S3_COMPLIANCE_LETTER_BUCKET;
   if (!tableName) throw new Error("DYNAMO_TABLE is not set");
   if (!queueUrl) throw new Error("SQS_QUEUE_URL is not set");
 
@@ -219,6 +220,9 @@ export async function ensureLocalInfra() {
   // returns 501 NotImplemented for the per-bucket PutBucketCors API.
   if (process.env.AWS_ENDPOINT_URL_S3) {
     if (!uploadBucket) throw new Error("S3_UPLOAD_BUCKET is not set");
+    if (!complianceLetterBucket) {
+      throw new Error("S3_COMPLIANCE_LETTER_BUCKET is not set");
+    }
     const s3 = new S3Client({ forcePathStyle: true });
 
     await waitForService(
@@ -235,18 +239,20 @@ export async function ensureLocalInfra() {
       }
     });
 
-    try {
-      await s3.send(new CreateBucketCommand({ Bucket: uploadBucket }));
-      console.log(`[bootstrap] created S3 bucket "${uploadBucket}"`);
-    } catch (err) {
-      const name = /** @type {Error} */ (err).name;
-      if (
-        name === "BucketAlreadyOwnedByYou" ||
-        name === "BucketAlreadyExists"
-      ) {
-        console.log(`[bootstrap] S3 bucket "${uploadBucket}" already exists`);
-      } else {
-        throw err;
+    for (const bucket of [uploadBucket, complianceLetterBucket]) {
+      try {
+        await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+        console.log(`[bootstrap] created S3 bucket "${bucket}"`);
+      } catch (err) {
+        const name = /** @type {Error} */ (err).name;
+        if (
+          name === "BucketAlreadyOwnedByYou" ||
+          name === "BucketAlreadyExists"
+        ) {
+          console.log(`[bootstrap] S3 bucket "${bucket}" already exists`);
+        } else {
+          throw err;
+        }
       }
     }
   }

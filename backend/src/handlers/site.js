@@ -5,7 +5,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { getConfig } from "../config.js";
+import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
   geocodeSiteAddress,
   locationFromSite,
@@ -332,7 +332,7 @@ async function complianceLetterLinks(letters) {
     return {
       ...letter,
       url: await presignGet({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: letter.s3Key,
         expiresIn: 300,
       }),
