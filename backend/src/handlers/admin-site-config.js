@@ -71,8 +71,13 @@ export const replaceSiteComplianceManagers = (event) =>
       return jsonResponse(400, { error: "invalid_compliance_manager" });
     }
     const current = siteItemsResult.Items ?? [];
+    const currentById = new Map(
+      current.map((assignment) => [String(assignment.managerId), assignment]),
+    );
     const currentIds = new Set(
-      current.map((assignment) => String(assignment.managerId)),
+      current
+        .filter((assignment) => assignment.status === "active")
+        .map((assignment) => String(assignment.managerId)),
     );
     const nextIds = new Set(managerIds);
     const now = new Date().toISOString();
@@ -81,6 +86,29 @@ export const replaceSiteComplianceManagers = (event) =>
     const items = [];
     for (const managerId of managerIds) {
       if (currentIds.has(managerId)) continue;
+      const currentAssignment = currentById.get(managerId);
+      if (currentAssignment) {
+        items.push({
+          Update: {
+            TableName: tableName,
+            Key: {
+              pk: currentAssignment.pk,
+              sk: currentAssignment.sk,
+            },
+            UpdateExpression:
+              "SET #status = :active, updatedAt = :now, updatedBy = :actor",
+            ConditionExpression: "attribute_exists(pk) AND #status = :inactive",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":active": "active",
+              ":inactive": "inactive",
+              ":now": now,
+              ":actor": actor,
+            },
+          },
+        });
+        continue;
+      }
       const manager = managersById.get(managerId);
       items.push(
         put({
@@ -906,7 +934,7 @@ async function resolveLetterGenerator(event, siteId, tableName) {
   if (principal.role === ADMIN_GROUPS.supervisor) {
     return { status: 200, manager };
   }
-  if (!directory?.userId) {
+  if (!directory?.userId || directory.status !== "active") {
     return { status: 403, error: "compliance_manager_profile_required" };
   }
   const assignment = await ddb.send(

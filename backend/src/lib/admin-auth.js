@@ -149,7 +149,7 @@ export async function siteAdminOnly(event, siteId, fn) {
       ConsistentRead: true,
     }),
   );
-  if (!directory.Item?.userId) {
+  if (!directory.Item?.userId || directory.Item.status !== "active") {
     return jsonResponse(403, { error: "site_assignment_required" });
   }
   const assignment = await ddb.send(

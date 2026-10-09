@@ -389,22 +389,32 @@ async function applyOneRow(importId, row) {
       ),
     );
   }
-  if (plan.site.action === "reuse" && plan.assignment.action !== "create") {
-    items.push(
-      activeMatch(
-        { pk: `SITE#${plan.site.id}`, sk: "#META" },
-        "providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND siteType = :siteType AND oversight.managingCityDepartment = :department",
-        { "#name": "name" },
-        {
+  if (plan.site.action === "reuse") {
+    items.push({
+      Update: {
+        TableName: tableName,
+        Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
+        UpdateExpression:
+          "SET updatedAt = :now, siteType = if_not_exists(siteType, :siteType), oversight = :oversight",
+        ConditionExpression:
+          "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND (attribute_not_exists(siteType) OR siteType = :siteType) AND (attribute_not_exists(oversight) OR oversight = :expectedOversight)",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#name": "name",
+        },
+        ExpressionAttributeValues: {
+          ":now": now,
+          ":active": "active",
           ":providerId": plan.provider.id,
           ":programId": plan.program.id,
           ":name": plan.site.name,
           ":address": plan.site.address,
           ":siteType": plan.site.siteType,
-          ":department": plan.site.department.name,
+          ":oversight": plan.site.oversight,
+          ":expectedOversight": plan.site.expectedOversight,
         },
-      ),
-    );
+      },
+    });
   }
   if (
     plan.contact.action === "reuse" &&
@@ -617,29 +627,6 @@ async function applyOneRow(importId, row) {
         updatedAt: now,
       }),
     );
-    if (plan.site.action !== "create") {
-      items.push({
-        Update: {
-          TableName: tableName,
-          Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
-          UpdateExpression: "SET updatedAt = :now",
-          ConditionExpression:
-            "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address",
-          ExpressionAttributeNames: {
-            "#status": "status",
-            "#name": "name",
-          },
-          ExpressionAttributeValues: {
-            ":now": now,
-            ":active": "active",
-            ":providerId": plan.provider.id,
-            ":programId": plan.program.id,
-            ":name": plan.site.name,
-            ":address": plan.site.address,
-          },
-        },
-      });
-    }
   }
   const managerPlan = plan.manager || {
     id: stableId(`${plan.site.id}|${plan.contact.id}|manager-membership`),
@@ -724,8 +711,10 @@ async function applyOneRow(importId, row) {
           sk: `MANAGER#${complianceManager.email}`,
         },
         ConditionExpression:
-          "attribute_exists(pk) AND email = :email AND userId = :userId",
+          "attribute_exists(pk) AND #status = :active AND email = :email AND userId = :userId",
+        ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
+          ":active": "active",
           ":email": complianceManager.email,
           ":userId": complianceManager.id,
         },
@@ -1023,41 +1012,41 @@ async function loadCatalog() {
 
 /** @param {Record<string, string>[]} rows @param {Record<string, any>} catalog */
 function planRows(rows, catalog) {
-  const providers = indexUnique(catalog.providers, (item) =>
+  let providers = indexUnique(catalog.providers, (item) =>
     normalized(item.name),
   );
-  const programs = indexUnique(
+  let programs = indexUnique(
     catalog.programs,
     (item) => `${item.providerId}|${normalized(item.name)}`,
   );
-  const sites = indexUnique(catalog.sites, (item) => siteIdentity(item));
-  const users = indexUnique(
+  let sites = indexUnique(catalog.sites, (item) => siteIdentity(item));
+  let users = indexUnique(
     catalog.users,
     (item) => `${item.programId}|${normalized(item.email)}`,
   );
-  const assignments = indexUnique(
+  let assignments = indexUnique(
     catalog.assignments,
     (item) => `${item.siteId}|${item.userId}`,
   );
   const activeManagerMemberships = /** @type {any[]} */ (
     catalog.managerMemberships
   ).filter((item) => item.status === "active");
-  const managersByUser = indexUnique(
+  let managersByUser = indexUnique(
     activeManagerMemberships,
     (item) => `${item.siteId}|${item.userId}`,
   );
-  const managersByEmail = indexUnique(
+  let managersByEmail = indexUnique(
     activeManagerMemberships,
     (item) => `${item.siteId}|${item.programId}|${normalized(item.email)}`,
   );
-  const complianceManagers = indexUnique(catalog.complianceManagers, (item) =>
+  let complianceManagers = indexUnique(catalog.complianceManagers, (item) =>
     normalized(item.email),
   );
-  const complianceAssignments = indexUnique(
+  let complianceAssignments = indexUnique(
     catalog.complianceManagerAssignments,
     (item) => `${item.siteId}|${item.managerId}`,
   );
-  const complianceManagerCounts = new Map();
+  let complianceManagerCounts = new Map();
   for (const assignment of catalog.complianceManagerAssignments) {
     const siteId = String(assignment.siteId || "");
     if (!siteId || assignment.status === "inactive") continue;
@@ -1065,345 +1054,394 @@ function planRows(rows, catalog) {
     ids.add(String(assignment.managerId || ""));
     complianceManagerCounts.set(siteId, ids);
   }
-  const providerManagers = indexUnique(
+  let providerManagers = indexUnique(
     catalog.providerManagers,
     (item) => `${item.providerId}|${normalized(item.email)}`,
   );
   const departments = departmentAliases(catalog.departments);
-  const plannedDepartmentCreates = new Set();
+  let plannedDepartmentCreates = new Set();
   return rows.map((source, index) => {
-    const rowNumber = index + 2;
-    const missing = REQUIRED_HEADERS.filter((header) => !clean(source[header]));
-    if (missing.length) {
-      return {
-        rowNumber,
-        source,
-        classification: "invalid",
-        reasonCode: "missing_required_value",
-        existingValue: missing.join(", "),
-      };
-    }
-    const missingOptional = OPTIONAL_HEADERS.filter(
-      (header) => !clean(source[header]),
-    );
-    const siteType = importedSiteType(source["Site type"]);
-    if (!siteType) {
-      return conflictRow(rowNumber, source, "invalid_site_type");
-    }
-    let department = importedDepartment(source.Department, departments);
-    if (!department) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "unknown_department",
-        source.Department,
-      );
-    }
-    let programManagerDepartment = importedDepartment(
-      source["Program manager department"],
-      departments,
-    );
-    if (!programManagerDepartment) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "unknown_program_manager_department",
-        source["Program manager department"],
-      );
-    }
-    if (
-      department.action === "create" &&
-      plannedDepartmentCreates.has(department.id)
-    ) {
-      department = { ...department, action: "reuse" };
-    }
-    if (
-      programManagerDepartment.action === "create" &&
-      plannedDepartmentCreates.has(programManagerDepartment.id)
-    ) {
-      programManagerDepartment = {
-        ...programManagerDepartment,
-        action: "reuse",
-      };
-    }
-    const providerKey = normalized(source.Provider);
-    const providerExisting = providers.get(providerKey);
-    if (Array.isArray(providerExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_provider");
-    }
-    const providerId = providerExisting?.providerId || slug(source.Provider);
-    const provider = {
-      id: providerId,
-      action: providerExisting ? "reuse" : "create",
-      name: providerExisting?.name || source.Provider,
+    const previous = {
+      providers,
+      programs,
+      sites,
+      users,
+      assignments,
+      managersByUser,
+      managersByEmail,
+      complianceManagers,
+      complianceAssignments,
+      complianceManagerCounts,
+      providerManagers,
+      plannedDepartmentCreates,
     };
-    if (!providerExisting)
-      providers.set(providerKey, { providerId, name: source.Provider });
-    const programKey = `${providerId}|${normalized(source.Program)}`;
-    const programExisting = programs.get(programKey);
-    if (Array.isArray(programExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_program");
-    }
-    const programId =
-      programExisting?.programId || slug(`${providerId}-${source.Program}`);
-    const program = {
-      id: programId,
-      action: programExisting ? "reuse" : "create",
-      name: programExisting?.name || source.Program,
-    };
-    if (!programExisting)
-      programs.set(programKey, { programId, providerId, name: source.Program });
-    const siteKey = siteIdentity({
-      name: source["Site name"],
-      address: source["Site address"],
-    });
-    const siteExisting = sites.get(siteKey);
-    if (Array.isArray(siteExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_site");
-    }
-    if (
-      siteExisting &&
-      (siteExisting.providerId !== providerId ||
-        siteExisting.leadProgramId !== programId ||
-        siteIdentity(siteExisting) !== siteKey ||
-        (siteExisting.siteType && siteExisting.siteType !== siteType) ||
-        (siteExisting.oversight?.managingCityDepartment &&
-          normalized(siteExisting.oversight.managingCityDepartment) !==
-            normalized(department.name)))
-    ) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "site_exact_match_conflict",
-        `${siteExisting.name} — ${siteExisting.address || "address unavailable"}`,
-      );
-    }
-    const siteId =
-      siteExisting?.siteId ||
-      slug(`${source["Site name"]}-${source["Site address"]}`);
-    const site = {
-      id: siteId,
-      action: siteExisting ? "reuse" : "create",
-      name: siteExisting?.name || source["Site name"],
-      address: siteExisting?.address || source["Site address"],
-      siteType,
-      department,
-    };
-    if (!siteExisting)
-      sites.set(siteKey, {
+    providers = new Map(providers);
+    programs = new Map(programs);
+    sites = new Map(sites);
+    users = new Map(users);
+    assignments = new Map(assignments);
+    managersByUser = new Map(managersByUser);
+    managersByEmail = new Map(managersByEmail);
+    complianceManagers = new Map(complianceManagers);
+    complianceAssignments = new Map(complianceAssignments);
+    complianceManagerCounts = new Map(
+      [...complianceManagerCounts].map(([siteId, managerIds]) => [
         siteId,
-        providerId,
-        leadProgramId: programId,
+        new Set(managerIds),
+      ]),
+    );
+    providerManagers = new Map(providerManagers);
+    plannedDepartmentCreates = new Set(plannedDepartmentCreates);
+    const result = (() => {
+      const rowNumber = index + 2;
+      const missing = REQUIRED_HEADERS.filter(
+        (header) => !clean(source[header]),
+      );
+      if (missing.length) {
+        return {
+          rowNumber,
+          source,
+          classification: "invalid",
+          reasonCode: "missing_required_value",
+          existingValue: missing.join(", "),
+        };
+      }
+      const missingOptional = OPTIONAL_HEADERS.filter(
+        (header) => !clean(source[header]),
+      );
+      const siteType = importedSiteType(source["Site type"]);
+      if (!siteType) {
+        return conflictRow(rowNumber, source, "invalid_site_type");
+      }
+      let department = importedDepartment(source.Department, departments);
+      if (!department) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "unknown_department",
+          source.Department,
+        );
+      }
+      let programManagerDepartment = importedDepartment(
+        source["Program manager department"],
+        departments,
+      );
+      if (!programManagerDepartment) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "unknown_program_manager_department",
+          source["Program manager department"],
+        );
+      }
+      if (
+        department.action === "create" &&
+        plannedDepartmentCreates.has(department.id)
+      ) {
+        department = { ...department, action: "reuse" };
+      }
+      if (
+        programManagerDepartment.action === "create" &&
+        plannedDepartmentCreates.has(programManagerDepartment.id)
+      ) {
+        programManagerDepartment = {
+          ...programManagerDepartment,
+          action: "reuse",
+        };
+      }
+      const providerKey = normalized(source.Provider);
+      const providerExisting = providers.get(providerKey);
+      if (Array.isArray(providerExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_provider");
+      }
+      const providerId = providerExisting?.providerId || slug(source.Provider);
+      const provider = {
+        id: providerId,
+        action: providerExisting ? "reuse" : "create",
+        name: providerExisting?.name || source.Provider,
+      };
+      if (!providerExisting)
+        providers.set(providerKey, { providerId, name: source.Provider });
+      const programKey = `${providerId}|${normalized(source.Program)}`;
+      const programExisting = programs.get(programKey);
+      if (Array.isArray(programExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_program");
+      }
+      const programId =
+        programExisting?.programId || slug(`${providerId}-${source.Program}`);
+      const program = {
+        id: programId,
+        action: programExisting ? "reuse" : "create",
+        name: programExisting?.name || source.Program,
+      };
+      if (!programExisting)
+        programs.set(programKey, {
+          programId,
+          providerId,
+          name: source.Program,
+        });
+      const siteKey = siteIdentity({
         name: source["Site name"],
         address: source["Site address"],
-        siteType,
-        oversight: { managingCityDepartment: department.name },
       });
-    const contactKey = `${programId}|${normalized(source["Site manager email"])}`;
-    const contactExisting = users.get(contactKey);
-    if (Array.isArray(contactExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_contact");
-    }
-    if (contactExisting && !sameContact(contactExisting, source)) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "contact_exact_match_conflict",
-        String(contactExisting.email),
-      );
-    }
-    const contactId = contactExisting?.userId || stableId(contactKey);
-    const contact = {
-      id: contactId,
-      action: contactExisting ? "reuse" : "create",
-      email: normalized(contactExisting?.email || source["Site manager email"]),
-      promote: Boolean(contactExisting && contactExisting.siteManager !== true),
-    };
-    if (!contactExisting)
-      users.set(contactKey, {
-        userId: contactId,
-        programId,
-        firstName: source["Site manager first name"],
-        lastName: source["Site manager last name"],
-        phone: source["Site manager phone"],
-        phoneExtension: source["Site manager extension"],
-        email: source["Site manager email"],
-      });
-    const assignmentKey = `${siteId}|${contactId}`;
-    const assignmentExisting = assignments.get(assignmentKey);
-    if (Array.isArray(assignmentExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_assignment");
-    }
-    const assignment = {
-      action: assignmentExisting ? "reuse" : "create",
-    };
-    if (!assignmentExisting) {
-      assignments.set(assignmentKey, { siteId, userId: contactId });
-    }
-    const managerKey = `${siteId}|${contactId}`;
-    const managerEmailKey = `${siteId}|${programId}|${contact.email}`;
-    const managerExisting =
-      managersByUser.get(managerKey) || managersByEmail.get(managerEmailKey);
-    if (Array.isArray(managerExisting)) {
-      return conflictRow(rowNumber, source, "duplicate_existing_manager");
-    }
-    const manager = {
-      id: managerExisting?.membershipId || randomUUID(),
-      action: managerExisting ? "reuse" : "create",
-    };
-    if (!managerExisting) {
-      const plannedManager = {
-        membershipId: manager.id,
-        siteId,
-        programId,
-        userId: contactId,
-        email: contact.email,
-      };
-      managersByUser.set(managerKey, plannedManager);
-      managersByEmail.set(managerEmailKey, plannedManager);
-    }
-    const complianceEmail = normalized(source["Program manager email"]);
-    const complianceExisting = complianceManagers.get(complianceEmail);
-    if (Array.isArray(complianceExisting)) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "duplicate_existing_program_manager",
-      );
-    }
-    if (
-      complianceExisting &&
-      !sameImportedPerson(complianceExisting, source, "Program manager")
-    ) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "program_manager_exact_match_conflict",
-        complianceEmail,
-      );
-    }
-    if (
-      complianceExisting?.departmentId &&
-      complianceExisting.departmentId !== programManagerDepartment.id
-    ) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "program_manager_department_conflict",
-        String(complianceExisting.departmentName || ""),
-      );
-    }
-    const complianceManager = {
-      id: complianceExisting?.userId || stableId(complianceEmail),
-      action: complianceExisting ? "reuse" : "create",
-      email: complianceEmail,
-      department: programManagerDepartment,
-    };
-    if (!complianceExisting) {
-      complianceManagers.set(complianceEmail, {
-        userId: complianceManager.id,
-        email: complianceEmail,
-        firstName: source["Program manager first name"],
-        lastName: source["Program manager last name"],
-        phone: source["Program manager phone"],
-        phoneExtension: source["Program manager extension"],
-        departmentId: programManagerDepartment.id,
-        departmentName: programManagerDepartment.name,
-      });
-    }
-    const complianceAssignmentKey = `${siteId}|${complianceManager.id}`;
-    const complianceAssignmentExisting = complianceAssignments.get(
-      complianceAssignmentKey,
-    );
-    if (Array.isArray(complianceAssignmentExisting)) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "duplicate_existing_program_manager_assignment",
-      );
-    }
-    const complianceAssignment = {
-      action: complianceAssignmentExisting ? "reuse" : "create",
-    };
-    if (!complianceAssignmentExisting) {
-      const assignedIds = complianceManagerCounts.get(siteId) || new Set();
-      if (assignedIds.size >= 2) {
-        return conflictRow(rowNumber, source, "too_many_program_managers");
+      const siteExisting = sites.get(siteKey);
+      if (Array.isArray(siteExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_site");
       }
-      complianceAssignments.set(complianceAssignmentKey, {
-        siteId,
-        managerId: complianceManager.id,
-      });
-      assignedIds.add(complianceManager.id);
-      complianceManagerCounts.set(siteId, assignedIds);
-    }
-    const providerManagerEmail = normalized(source["Provider manager email"]);
-    const providerManagerKey = `${providerId}|${providerManagerEmail}`;
-    const providerManagerExisting = providerManagers.get(providerManagerKey);
-    if (Array.isArray(providerManagerExisting)) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "duplicate_existing_provider_manager",
+      if (
+        siteExisting &&
+        (siteExisting.providerId !== providerId ||
+          siteExisting.leadProgramId !== programId ||
+          siteIdentity(siteExisting) !== siteKey ||
+          (siteExisting.siteType && siteExisting.siteType !== siteType) ||
+          (siteExisting.oversight?.managingCityDepartment &&
+            normalized(siteExisting.oversight.managingCityDepartment) !==
+              normalized(department.name)))
+      ) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "site_exact_match_conflict",
+          `${siteExisting.name} — ${siteExisting.address || "address unavailable"}`,
+        );
+      }
+      const siteId =
+        siteExisting?.siteId ||
+        slug(`${source["Site name"]}-${source["Site address"]}`);
+      const site = {
+        id: siteId,
+        action: siteExisting ? "reuse" : "create",
+        name: siteExisting?.name || source["Site name"],
+        address: siteExisting?.address || source["Site address"],
+        siteType,
+        department,
+        expectedOversight: siteExisting?.oversight || null,
+        oversight: {
+          ...(siteExisting?.oversight || {}),
+          managingCityDepartment: department.name,
+        },
+      };
+      if (!siteExisting)
+        sites.set(siteKey, {
+          siteId,
+          providerId,
+          leadProgramId: programId,
+          name: source["Site name"],
+          address: source["Site address"],
+          siteType,
+          oversight: { managingCityDepartment: department.name },
+        });
+      const contactKey = `${programId}|${normalized(source["Site manager email"])}`;
+      const contactExisting = users.get(contactKey);
+      if (Array.isArray(contactExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_contact");
+      }
+      if (contactExisting && !sameContact(contactExisting, source)) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "contact_exact_match_conflict",
+          String(contactExisting.email),
+        );
+      }
+      const contactId = contactExisting?.userId || stableId(contactKey);
+      const contact = {
+        id: contactId,
+        action: contactExisting ? "reuse" : "create",
+        email: normalized(
+          contactExisting?.email || source["Site manager email"],
+        ),
+        promote: Boolean(
+          contactExisting && contactExisting.siteManager !== true,
+        ),
+      };
+      if (!contactExisting)
+        users.set(contactKey, {
+          userId: contactId,
+          programId,
+          firstName: source["Site manager first name"],
+          lastName: source["Site manager last name"],
+          phone: source["Site manager phone"],
+          phoneExtension: source["Site manager extension"],
+          email: source["Site manager email"],
+        });
+      const assignmentKey = `${siteId}|${contactId}`;
+      const assignmentExisting = assignments.get(assignmentKey);
+      if (Array.isArray(assignmentExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_assignment");
+      }
+      const assignment = {
+        action: assignmentExisting ? "reuse" : "create",
+      };
+      if (!assignmentExisting) {
+        assignments.set(assignmentKey, { siteId, userId: contactId });
+      }
+      const managerKey = `${siteId}|${contactId}`;
+      const managerEmailKey = `${siteId}|${programId}|${contact.email}`;
+      const managerExisting =
+        managersByUser.get(managerKey) || managersByEmail.get(managerEmailKey);
+      if (Array.isArray(managerExisting)) {
+        return conflictRow(rowNumber, source, "duplicate_existing_manager");
+      }
+      const manager = {
+        id: managerExisting?.membershipId || randomUUID(),
+        action: managerExisting ? "reuse" : "create",
+      };
+      if (!managerExisting) {
+        const plannedManager = {
+          membershipId: manager.id,
+          siteId,
+          programId,
+          userId: contactId,
+          email: contact.email,
+        };
+        managersByUser.set(managerKey, plannedManager);
+        managersByEmail.set(managerEmailKey, plannedManager);
+      }
+      const complianceEmail = normalized(source["Program manager email"]);
+      const complianceExisting = complianceManagers.get(complianceEmail);
+      if (Array.isArray(complianceExisting)) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "duplicate_existing_program_manager",
+        );
+      }
+      if (
+        complianceExisting &&
+        !sameImportedPerson(complianceExisting, source, "Program manager")
+      ) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "program_manager_exact_match_conflict",
+          complianceEmail,
+        );
+      }
+      if (complianceExisting?.status === "inactive") {
+        return conflictRow(
+          rowNumber,
+          source,
+          "inactive_program_manager",
+          complianceEmail,
+        );
+      }
+      if (
+        complianceExisting?.departmentId &&
+        complianceExisting.departmentId !== programManagerDepartment.id
+      ) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "program_manager_department_conflict",
+          String(complianceExisting.departmentName || ""),
+        );
+      }
+      const complianceManager = {
+        id: complianceExisting?.userId || stableId(complianceEmail),
+        action: complianceExisting ? "reuse" : "create",
+        email: complianceEmail,
+        department: programManagerDepartment,
+      };
+      if (!complianceExisting) {
+        complianceManagers.set(complianceEmail, {
+          userId: complianceManager.id,
+          email: complianceEmail,
+          firstName: source["Program manager first name"],
+          lastName: source["Program manager last name"],
+          phone: source["Program manager phone"],
+          phoneExtension: source["Program manager extension"],
+          departmentId: programManagerDepartment.id,
+          departmentName: programManagerDepartment.name,
+        });
+      }
+      const complianceAssignmentKey = `${siteId}|${complianceManager.id}`;
+      const complianceAssignmentExisting = complianceAssignments.get(
+        complianceAssignmentKey,
       );
-    }
-    if (
-      providerManagerExisting &&
-      !sameImportedPerson(providerManagerExisting, source, "Provider manager")
-    ) {
-      return conflictRow(
-        rowNumber,
-        source,
-        "provider_manager_exact_match_conflict",
-        providerManagerEmail,
-      );
-    }
-    const providerManager = {
-      id: providerManagerExisting?.managerId || stableId(providerManagerEmail),
-      action: providerManagerExisting ? "reuse" : "create",
-      email: providerManagerEmail,
-    };
-    if (!providerManagerExisting) {
-      providerManagers.set(providerManagerKey, {
-        providerId,
-        managerId: providerManager.id,
+      if (Array.isArray(complianceAssignmentExisting)) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "duplicate_existing_program_manager_assignment",
+        );
+      }
+      if (complianceAssignmentExisting?.status === "inactive") {
+        return conflictRow(
+          rowNumber,
+          source,
+          "inactive_program_manager_assignment",
+          complianceEmail,
+        );
+      }
+      const complianceAssignment = {
+        action: complianceAssignmentExisting ? "reuse" : "create",
+      };
+      if (!complianceAssignmentExisting) {
+        const assignedIds = complianceManagerCounts.get(siteId) || new Set();
+        if (assignedIds.size >= 2) {
+          return conflictRow(rowNumber, source, "too_many_program_managers");
+        }
+        complianceAssignments.set(complianceAssignmentKey, {
+          siteId,
+          managerId: complianceManager.id,
+        });
+        assignedIds.add(complianceManager.id);
+        complianceManagerCounts.set(siteId, assignedIds);
+      }
+      const providerManagerEmail = normalized(source["Provider manager email"]);
+      const providerManagerKey = `${providerId}|${providerManagerEmail}`;
+      const providerManagerExisting = providerManagers.get(providerManagerKey);
+      if (Array.isArray(providerManagerExisting)) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "duplicate_existing_provider_manager",
+        );
+      }
+      if (
+        providerManagerExisting &&
+        !sameImportedPerson(providerManagerExisting, source, "Provider manager")
+      ) {
+        return conflictRow(
+          rowNumber,
+          source,
+          "provider_manager_exact_match_conflict",
+          providerManagerEmail,
+        );
+      }
+      if (providerManagerExisting?.status === "inactive") {
+        return conflictRow(
+          rowNumber,
+          source,
+          "inactive_provider_manager",
+          providerManagerEmail,
+        );
+      }
+      const providerManager = {
+        id:
+          providerManagerExisting?.managerId || stableId(providerManagerEmail),
+        action: providerManagerExisting ? "reuse" : "create",
         email: providerManagerEmail,
-        firstName: source["Provider manager first name"],
-        lastName: source["Provider manager last name"],
-        phone: source["Provider manager phone"],
-        phoneExtension: source["Provider manager extension"],
-      });
-    }
-    if (department.action === "create") {
-      plannedDepartmentCreates.add(department.id);
-    }
-    if (programManagerDepartment.action === "create") {
-      plannedDepartmentCreates.add(programManagerDepartment.id);
-    }
-    const actions = [
-      provider,
-      program,
-      site,
-      contact,
-      assignment,
-      manager,
-      complianceManager,
-      complianceAssignment,
-      providerManager,
-      department,
-      programManagerDepartment,
-    ];
-    return {
-      rowNumber,
-      source,
-      classification: missingOptional.length
-        ? "acceptable"
-        : actions.some((item) => item.action === "create")
-          ? "create"
-          : "reuse",
-      reasonCode: missingOptional.length ? "missing_optional_value" : "",
-      existingValue: missingOptional.join(", "),
-      plan: {
+      };
+      if (!providerManagerExisting) {
+        providerManagers.set(providerManagerKey, {
+          providerId,
+          managerId: providerManager.id,
+          email: providerManagerEmail,
+          firstName: source["Provider manager first name"],
+          lastName: source["Provider manager last name"],
+          phone: source["Provider manager phone"],
+          phoneExtension: source["Provider manager extension"],
+        });
+      }
+      if (department.action === "create") {
+        plannedDepartmentCreates.add(department.id);
+      }
+      if (programManagerDepartment.action === "create") {
+        plannedDepartmentCreates.add(programManagerDepartment.id);
+      }
+      const actions = [
         provider,
         program,
         site,
@@ -1413,9 +1451,50 @@ function planRows(rows, catalog) {
         complianceManager,
         complianceAssignment,
         providerManager,
-        departments: [department, programManagerDepartment],
-      },
-    };
+        department,
+        programManagerDepartment,
+      ];
+      return {
+        rowNumber,
+        source,
+        classification: missingOptional.length
+          ? "acceptable"
+          : actions.some((item) => item.action === "create")
+            ? "create"
+            : "reuse",
+        reasonCode: missingOptional.length ? "missing_optional_value" : "",
+        existingValue: missingOptional.join(", "),
+        plan: {
+          provider,
+          program,
+          site,
+          contact,
+          assignment,
+          manager,
+          complianceManager,
+          complianceAssignment,
+          providerManager,
+          departments: [department, programManagerDepartment],
+        },
+      };
+    })();
+    if (!result.plan) {
+      ({
+        providers,
+        programs,
+        sites,
+        users,
+        assignments,
+        managersByUser,
+        managersByEmail,
+        complianceManagers,
+        complianceAssignments,
+        complianceManagerCounts,
+        providerManagers,
+        plannedDepartmentCreates,
+      } = previous);
+    }
+    return result;
   });
 }
 

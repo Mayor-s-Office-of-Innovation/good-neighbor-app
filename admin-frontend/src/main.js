@@ -1014,6 +1014,16 @@ class AdminApp extends HTMLElement {
       managingCityDepartment: controlValue(form, "managing-city-department"),
       managingSystemOfCare: controlValue(form, "managing-system-of-care"),
     };
+    const currentManagerIds = this.state.assignedComplianceManagers
+      .map((manager) => String(manager.managerId || manager.userId || ""))
+      .filter(Boolean)
+      .sort();
+    const nextManagerIds = [...managerIds].sort();
+    const assignmentsChanged =
+      currentManagerIds.length !== nextManagerIds.length ||
+      currentManagerIds.some(
+        (managerId, index) => managerId !== nextManagerIds[index],
+      );
     this.state.siteSaving = true;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
@@ -1029,12 +1039,17 @@ class AdminApp extends HTMLElement {
         name: this.state.site.name,
         oversight,
       });
-      const assignmentResult = await adminApi.replaceSiteComplianceManagers(
-        this.state.site.siteId,
-        managerIds,
-      );
-      this.state.assignedComplianceManagers =
-        assignmentResult.assignments || [];
+      if (
+        this.state.capabilities.createEntities === true &&
+        assignmentsChanged
+      ) {
+        const assignmentResult = await adminApi.replaceSiteComplianceManagers(
+          this.state.site.siteId,
+          managerIds,
+        );
+        this.state.assignedComplianceManagers =
+          assignmentResult.assignments || [];
+      }
       this.state.site = { ...this.state.site, ...result.site };
       this.state.sites = this.state.sites.map((site) =>
         site.siteId === this.state.site?.siteId
@@ -4054,7 +4069,7 @@ function siteImportHelpDialog() {
           <p>Upload a UTF-8 CSV no larger than 1 MB or 500 data rows.</p>
           <p>The first row must contain these columns in this exact order:</p>
           <p class="column-list"><code>Provider</code>, <code>Program</code>, <code>Site name</code>, <code>Site address</code>, <code>Site type</code>, <code>Department</code>, <code>Site manager first name</code>, <code>Site manager last name</code>, <code>Site manager phone</code>, <code>Site manager extension</code>, <code>Site manager email</code>, <code>Program manager first name</code>, <code>Program manager last name</code>, <code>Program manager phone</code>, <code>Program manager extension</code>, <code>Program manager department</code>, <code>Program manager email</code>, <code>Provider manager first name</code>, <code>Provider manager last name</code>, <code>Provider manager phone</code>, <code>Provider manager extension</code>, <code>Provider manager email</code>.</p>
-          <p>Phone and extension columns may be blank. All other fields are required.</p>
+          <p>Program manager phone is required. Other phone and all extension columns may be blank. All remaining fields are required.</p>
           <p>Use another row with the same Site to add another Site manager, Program manager, or Provider manager. Put values containing commas in double quotes.</p>
           <p>Department names must match an existing department or one of the supported DPH and HSH names. Unknown names are held for manual resolution.</p>
         </div>
@@ -4808,7 +4823,7 @@ function oversightCreationDialogs(state) {
   </dialog>`;
 }
 
-function complianceManagerAssignmentRow(manager) {
+function complianceManagerAssignmentRow(manager, canManageAssignments) {
   const managerId = String(manager.userId || manager.managerId || "");
   const profile = manager.manager || manager;
   const name = profile.name || manager.name || "Program manager";
@@ -4822,8 +4837,8 @@ function complianceManagerAssignmentRow(manager) {
         : "";
   return `<li class="compliance-manager-assignment" data-manager-id="${escapeHtml(managerId)}">
     <input type="hidden" name="compliance-manager-id" value="${escapeHtml(managerId)}" />
-    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning"><wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon><span>${escapeHtml(name)} needs to be invited to join the app.</span></span><button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
-    <button class="btn-icon" type="button" data-remove-compliance-manager aria-label="Remove ${escapeHtml(name)} from this site"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
+    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning"><wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon><span>${escapeHtml(name)} needs to be invited to join the app.</span></span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
+    ${canManageAssignments ? `<button class="btn-icon" type="button" data-remove-compliance-manager aria-label="Remove ${escapeHtml(name)} from this site"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>` : ""}
   </li>`;
 }
 
@@ -4834,6 +4849,7 @@ function siteOversightView(state) {
   const assignedManagerIds = new Set(
     state.assignedComplianceManagers.map((manager) => manager.managerId),
   );
+  const canManageAssignments = state.capabilities.createEntities === true;
   const departments = uniqueNamedOptions([
     ...state.oversightOptions.departments,
     ...(department ? [{ name: department }] : []),
@@ -4851,11 +4867,13 @@ function siteOversightView(state) {
         <ul class="compliance-manager-assignment-list" data-compliance-manager-list>
           ${managers
             .filter((manager) => assignedManagerIds.has(manager.userId))
-            .map(complianceManagerAssignmentRow)
+            .map((manager) =>
+              complianceManagerAssignmentRow(manager, canManageAssignments),
+            )
             .join("")}
         </ul>
         ${assignedManagerIds.size ? "" : '<p class="muted" data-no-compliance-managers>No program managers assigned.</p>'}
-        <button class="btn-secondary" id="add-compliance-manager" type="button">Add program manager</button>
+        ${canManageAssignments ? '<button class="btn-secondary" id="add-compliance-manager" type="button">Add program manager</button>' : ""}
       </fieldset>
       <wa-select name="managing-city-department" label="Managing City department" placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.name)}" ${department === item.name ? "selected" : ""}>${escapeHtml(item.name)}</wa-option>`).join("")}

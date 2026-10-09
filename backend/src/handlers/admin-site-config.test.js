@@ -345,6 +345,7 @@ describe("Site Compliance manager assignments", () => {
             pk: "SITE#site-1",
             sk: "COMPLIANCE_MANAGER#manager-1",
             managerId: "manager-1",
+            status: "active",
           },
         ],
       })
@@ -361,6 +362,51 @@ describe("Site Compliance manager assignments", () => {
       expect.arrayContaining([
         expect.objectContaining({ Put: expect.any(Object) }),
         expect.objectContaining({ Delete: expect.any(Object) }),
+      ]),
+    );
+  });
+
+  it("reactivates a requested inactive assignment", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Items: [
+          { userId: "manager-1", email: "one@sfgov.org", status: "active" },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "COMPLIANCE_MANAGER#manager-1",
+            managerId: "manager-1",
+            status: "inactive",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      replaceSiteComplianceManagers,
+      event({ managerIds: ["manager-1"] }, { siteId: "site-1" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[3][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: {
+              pk: "SITE#site-1",
+              sk: "COMPLIANCE_MANAGER#manager-1",
+            },
+            ExpressionAttributeValues: expect.objectContaining({
+              ":active": "active",
+              ":inactive": "inactive",
+            }),
+          }),
+        }),
       ]),
     );
   });

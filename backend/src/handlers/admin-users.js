@@ -99,6 +99,7 @@ export const inviteAdminUser = (event) =>
     const firstName = clean(body.firstName);
     const lastName = clean(body.lastName);
     const phone = clean(body.phone);
+    const cognitoPhoneNumber = toCognitoPhoneNumber(phone);
     const phoneExtension = clean(body.phoneExtension);
     const departmentId = clean(body.departmentId);
     const departmentName = clean(body.departmentName);
@@ -107,7 +108,8 @@ export const inviteAdminUser = (event) =>
       return jsonResponse(400, { error: "valid_email_required" });
     if (!firstName || !lastName)
       return jsonResponse(400, { error: "name_required" });
-    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
+    if (!cognitoPhoneNumber)
+      return jsonResponse(400, { error: "valid_phone_required" });
     if (!(/** @type {string[]} */ (ROLES).includes(role)))
       return jsonResponse(400, { error: "invalid_role" });
     const directoryResult = await ddb.send(
@@ -149,7 +151,7 @@ export const inviteAdminUser = (event) =>
             { Name: "given_name", Value: firstName },
             { Name: "family_name", Value: lastName },
             { Name: "name", Value: `${firstName} ${lastName}` },
-            ...(phone ? [{ Name: "phone_number", Value: phone }] : []),
+            { Name: "phone_number", Value: cognitoPhoneNumber },
           ],
         }),
       );
@@ -638,4 +640,15 @@ function unavailable() {
 /** @param {unknown} value */
 function clean(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Convert accepted North American contact numbers to Cognito's E.164 form.
+ * @param {unknown} value
+ */
+function toCognitoPhoneNumber(value) {
+  const digits = clean(value).replace(/\D/g, "");
+  const national =
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return national.length === 10 ? `+1${national}` : "";
 }

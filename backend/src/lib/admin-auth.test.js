@@ -44,7 +44,9 @@ describe("admin roles", () => {
 
   it("allows an assigned Compliance manager to mutate that Site", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "manager-1" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "manager-1", status: "active" },
+      })
       .mockResolvedValueOnce({ Item: { status: "active" } });
     const response = await siteAdminOnly(
       event(ADMIN_GROUPS.manager, "manager@sfgov.org"),
@@ -55,9 +57,24 @@ describe("admin roles", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects an inactive Compliance manager with an active Site assignment", async () => {
+    send.mockResolvedValueOnce({
+      Item: { userId: "manager-1", status: "inactive" },
+    });
+    const response = await siteAdminOnly(
+      event(ADMIN_GROUPS.manager, "manager@sfgov.org"),
+      "site-1",
+      async () => ({ statusCode: 200, body: "ok" }),
+    );
+    expect(response.statusCode).toBe(403);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an unassigned Compliance manager but lets a supervisor bypass assignment", async () => {
     send
-      .mockResolvedValueOnce({ Item: { userId: "manager-1" } })
+      .mockResolvedValueOnce({
+        Item: { userId: "manager-1", status: "active" },
+      })
       .mockResolvedValueOnce({});
     const denied = await siteAdminOnly(
       event(ADMIN_GROUPS.manager, "manager@sfgov.org"),

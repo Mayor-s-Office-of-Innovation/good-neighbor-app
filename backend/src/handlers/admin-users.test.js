@@ -236,6 +236,12 @@ describe("Compliance administrator lifecycle", () => {
     );
 
     expect(response.statusCode).toBe(201);
+    const createUser = cognitoSend.mock.calls[0][0];
+    expect(createUser).toBeInstanceOf(AdminCreateUserCommand);
+    expect(createUser.input.UserAttributes).toContainEqual({
+      Name: "phone_number",
+      Value: "+14155550100",
+    });
     const update = ddbSend.mock.calls[1][0];
     expect(update).toBeInstanceOf(UpdateCommand);
     expect(update.input.ExpressionAttributeValues).toMatchObject({

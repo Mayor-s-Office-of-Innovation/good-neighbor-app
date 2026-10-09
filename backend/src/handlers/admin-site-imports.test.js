@@ -211,8 +211,122 @@ describe("Site CSV import", () => {
     });
   });
 
+  it("requires manual resolution for inactive imported managers", async () => {
+    mockCatalog({
+      complianceManagers: [
+        {
+          userId: "manager-1",
+          email: "pat.manager@sfgov.org",
+          firstName: "Pat",
+          lastName: "Manager",
+          phone: "415-555-0110",
+          departmentId: "dph",
+          departmentName: "Department of Public Health (DPH)",
+          status: "inactive",
+        },
+      ],
+    });
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
+    );
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "inactive_program_manager",
+    });
+  });
+
+  it("requires manual resolution for inactive Provider-manager memberships", async () => {
+    mockCatalog({
+      providers: [
+        { providerId: "provider-one", name: "Provider One", status: "active" },
+      ],
+      providerManagers: [
+        {
+          sk: "PROVIDER_MANAGER#provider-manager-1",
+          providerId: "provider-one",
+          managerId: "provider-manager-1",
+          email: "priya@provider.org",
+          firstName: "Priya",
+          lastName: "Provider",
+          phone: "415-555-0120",
+          status: "inactive",
+        },
+      ],
+    });
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
+    );
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "inactive_provider_manager",
+    });
+  });
+
+  it("does not let a conflicted row contaminate later rows for the same Site", async () => {
+    mockCatalog({
+      providers: [
+        { providerId: "provider-one", name: "Provider One", status: "active" },
+      ],
+      providerManagers: [
+        {
+          sk: "PROVIDER_MANAGER#provider-manager-1",
+          providerId: "provider-one",
+          managerId: "provider-manager-1",
+          email: "priya@provider.org",
+          firstName: "Different",
+          lastName: "Person",
+          phone: "415-555-0120",
+          status: "active",
+        },
+      ],
+    });
+    const second = [...baseValues];
+    second[6] = "Taylor";
+    second[7] = "Jones";
+    second[10] = "taylor@example.org";
+    second[11] = "Alex";
+    second[16] = "alex.manager@sfgov.org";
+    second[17] = "Quinn";
+    second[21] = "quinn@provider.org";
+    const third = [...baseValues];
+    third[6] = "Morgan";
+    third[7] = "Diaz";
+    third[10] = "morgan@example.org";
+    third[11] = "Riley";
+    third[16] = "riley.manager@sfgov.org";
+    third[17] = "Casey";
+    third[21] = "casey@provider.org";
+
+    const response = await call(
+      previewSiteImport,
+      event({
+        fileName: "sites.csv",
+        csv: makeCsv([baseValues, second, third]),
+      }),
+    );
+    const body = JSON.parse(String(response.body));
+    expect(body.rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "provider_manager_exact_match_conflict",
+    });
+    expect(body.rows[1].classification).not.toBe("conflict");
+    expect(body.rows[2].classification).not.toBe("conflict");
+    const ledgerWrite = send.mock.calls
+      .map(([command]) => command)
+      .find((command) => command instanceof BatchWriteCommand);
+    const ledgerRows =
+      ledgerWrite?.input.RequestItems?.["gnp-test-app"]?.map(
+        (request) => request.PutRequest?.Item,
+      ) || [];
+    expect(
+      ledgerRows.find((row) => row?.rowNumber === 3)?.plan.site.action,
+    ).toBe("create");
+  });
+
   it("applies Site, Compliance-manager, and Provider-manager relationships atomically", async () => {
-    const row = importRow();
+    const row = /** @type {any} */ (importRow());
     let rowQueryCount = 0;
     send.mockImplementation(async (command) => {
       if (command instanceof GetCommand)
@@ -273,6 +387,63 @@ describe("Site CSV import", () => {
       },
     });
     expect(site.primaryContactUserId).toBeUndefined();
+  });
+
+  it("backfills missing Site type and department on legacy Site reuse", async () => {
+    const row = /** @type {any} */ (importRow());
+    row.plan.site = {
+      ...row.plan.site,
+      action: "reuse",
+      expectedOversight: null,
+      oversight: {
+        managingCityDepartment: "Department of Public Health (DPH)",
+      },
+    };
+    row.plan.assignment = { action: "reuse" };
+    let rowQueryCount = 0;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: {
+            previewVersion: "preview-1",
+            previewExpiresAt: "2099-01-01T00:00:00.000Z",
+            counts: { reuse: 1 },
+            fileName: "sites.csv",
+          },
+        };
+      if (command instanceof QueryCommand) {
+        rowQueryCount += 1;
+        return {
+          Items: rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
+        };
+      }
+      return {};
+    });
+
+    const response = await call(
+      applySiteImport,
+      event(
+        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+        { importId: "import-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls
+      .map(([command]) => command)
+      .find((command) => command instanceof TransactWriteCommand);
+    const siteUpdates = (transaction?.input.TransactItems || []).filter(
+      (item) => item.Update?.Key?.sk === "#META",
+    );
+    expect(siteUpdates).toHaveLength(1);
+    expect(siteUpdates[0].Update).toMatchObject({
+      ExpressionAttributeValues: expect.objectContaining({
+        ":siteType": "shelter",
+        ":expectedOversight": null,
+        ":oversight": {
+          managingCityDepartment: "Department of Public Health (DPH)",
+        },
+      }),
+    });
   });
 
   it("escapes spreadsheet formula prefixes in conflict downloads", async () => {
@@ -352,6 +523,28 @@ function importRow() {
       departments: [department],
     },
   };
+}
+
+/**
+ * @param {{ providers?: any[], complianceManagers?: any[], providerManagers?: any[] }} [catalog]
+ */
+function mockCatalog({
+  providers = [],
+  complianceManagers = [],
+  providerManagers = [],
+} = {}) {
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) {
+      const pk = command.input.ExpressionAttributeValues?.[":pk"];
+      if (pk === "PROVIDER_SEARCH#ACTIVE") return { Items: providers };
+      if (pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS")
+        return { Items: complianceManagers };
+      if (String(pk).startsWith("PROVIDER#"))
+        return { Items: providerManagers };
+      return { Items: [] };
+    }
+    return {};
+  });
 }
 
 /** @param {unknown} body @param {Record<string, string>} pathParameters */
