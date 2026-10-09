@@ -64,6 +64,9 @@
 
 ## Domain & policy reference
 
+- **[duplicate-evaluation.md](duplicate-evaluation.md)** — local duplicate-detection
+  experiment: replay dataset, baseline and model comparisons, and recall-focused metrics.
+
 - **[guidance-policy-changelog.md](./guidance-policy-changelog.md)** — policy operations log
   for the action/escalation rulebase (versions, update process). The workflow itself is
   described in [architecture.md](./architecture.md); the rule catalog lives in

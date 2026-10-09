@@ -17,6 +17,7 @@
     "policy:diff": "node scripts/policy-diff.mjs",
     "policy:import": "node scripts/policy-import.mjs",
     "policy:validate": "node scripts/policy-validate.mjs",
+    "duplicates:evaluate": "node scripts/evaluate-duplicates.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "local:ddb": "node scripts/local-ddb.mjs",
