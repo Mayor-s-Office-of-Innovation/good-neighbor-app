@@ -10,6 +10,7 @@
   lands straight on home.
 */
 import { requestLocationPermissionEarly } from "../services/device-location.js";
+import { refreshSessionTranslationsOnLocaleChange } from "../services/session-translations.js";
 import {
   hasAdminAccess,
   clearSite,
@@ -100,6 +101,9 @@ export class AppRoot extends HTMLElement {
         // Only the view: the shell chrome is hidden, and re-creating it would
         // re-show a dismissed in-app-browser banner and replay queued toasts.
         this._renderView();
+        // Cards in an active capture render from session state captured when
+        // the analysis landed; pull in the locales the backend filled since.
+        void refreshSessionTranslationsOnLocaleChange();
       };
       window.addEventListener("localechange", this._onLocaleChange);
     }

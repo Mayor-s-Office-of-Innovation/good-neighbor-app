@@ -1,5 +1,6 @@
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
-// analysis, and Site-revocation flows share one SQS queue; a filtered DynamoDB
+// analysis, background translation, and Site-revocation flows share one SQS
+// queue; a filtered DynamoDB
 // stream also invokes this Lambda to dispatch durable revocation outbox rows.
 // Records run concurrently and `batchItemFailures` ensures only failures are
 // redriven by the originating event source.
@@ -9,6 +10,8 @@ import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
 import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-revocation.js";
 import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
 import { handler as generateComplianceLetter } from "../workers/generate-compliance-letter.js";
+import { handler as translateArtifact } from "../workers/translate-artifact.js";
+import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
 
 /**
@@ -28,6 +31,9 @@ function pickHandler(body) {
     }
     if (msg?.type === "generate_compliance_letter") {
       return generateComplianceLetter;
+    }
+    if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
+      return translateArtifact;
     }
     if (
       typeof msg?.artifactId === "string" &&

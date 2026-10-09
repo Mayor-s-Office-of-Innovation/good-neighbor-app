@@ -7,8 +7,15 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, enqueueTranslateArtifact } = vi.hoisted(() => ({
+  send: vi.fn(),
+  enqueueTranslateArtifact: vi.fn(async () => true),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
+  .../** @type {any} */ (await importOriginal()),
+  enqueueTranslateArtifact,
+}));
 
 const {
   cannotDoTask,
@@ -68,6 +75,7 @@ function mockTaskShortIdAllocation({
 describe("guidance handlers", () => {
   beforeEach(() => {
     send.mockReset();
+    enqueueTranslateArtifact.mockClear();
     process.env.S3_UPLOAD_BUCKET = "bucket";
     process.env.SQS_QUEUE_URL = "queue";
     process.env.DYNAMO_TABLE = "table";
@@ -103,6 +111,7 @@ describe("guidance handlers", () => {
                   user_friendly_label: "Montón de basura",
                   description: "basura",
                 },
+                sourceArtifactIds: ["art-1"],
               },
             ],
           },
@@ -127,9 +136,10 @@ describe("guidance handlers", () => {
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       userFriendlyLabel: "Lots of trash in tree well",
       translations: {
-        language: "es",
-        user_friendly_label: "Montón de basura",
-        description: "basura",
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
       },
       source: {
         latitude: 37.7,
@@ -142,15 +152,56 @@ describe("guidance handlers", () => {
       shortId: "MOI-CIT-001",
       userFriendlyLabel: "Lots of trash in tree well",
       translations: {
-        language: "es",
-        user_friendly_label: "Montón de basura",
-        description: "basura",
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
       },
     });
     expect(parse(res).tasks).toHaveLength(1);
+    // The stored copies still lack three locales, so the background translate
+    // worker is asked to fill them, scoped to the condition's source artifact.
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+    expect(enqueueTranslateArtifact).toHaveBeenCalledWith({
+      queueUrl: "queue",
+      siteId: "site-1",
+      checkId: "chk-1",
+      artifactId: "art-1",
+      items: [
+        {
+          user_friendly_label: "Lots of trash in tree well",
+          description: "trash",
+        },
+      ],
+    });
   });
 
-  it("drops malformed and empty translations blocks instead of rejecting", async () => {
+  it("does not enqueue translation when the evaluate has no check", async () => {
+    mockTaskShortIdAllocation();
+    send.mockResolvedValueOnce({});
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: [
+            {
+              category: "Litter",
+              severity: 3,
+              user_friendly_label: "Trash",
+              description: "trash",
+              sourceArtifactIds: ["art-1"],
+            },
+          ],
+        },
+      }),
+    );
+    expect(res.statusCode).toBe(201);
+    expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+  });
+
+  it("drops malformed and empty translations instead of rejecting", async () => {
     mockTaskShortIdAllocation();
     send.mockResolvedValueOnce({});
 
