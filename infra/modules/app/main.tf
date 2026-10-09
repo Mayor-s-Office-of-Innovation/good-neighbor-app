@@ -518,7 +518,8 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 # from short-lived submitted imagery so media lifecycle rules cannot delete
 # current letters.
 resource "aws_s3_bucket" "compliance_letters" {
-  bucket_prefix = "${local.bucket_name_prefix}-compliance-letters-"
+  # Keep the generated prefix within S3's 37-character provider limit.
+  bucket_prefix = "${local.bucket_name_prefix}-letters-"
   force_destroy = false
   tags          = var.tags
 }
