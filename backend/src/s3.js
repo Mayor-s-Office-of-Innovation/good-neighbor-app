@@ -131,7 +131,6 @@ export function putObject({ bucket, key, body, contentType, metadata }) {
       Body: body,
       ContentType: contentType,
       Metadata: metadata,
-      Tagging: "state=active",
     }),
   );
 }

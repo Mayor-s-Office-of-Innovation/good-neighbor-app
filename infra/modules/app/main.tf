@@ -520,6 +520,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 resource "aws_s3_bucket" "compliance_letters" {
   bucket_prefix = "${local.bucket_name_prefix}-compliance-letters-"
   force_destroy = false
+  tags          = var.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "compliance_letters" {
@@ -998,7 +999,7 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
       # Only the admin app needs cross-origin access to Cognito's token endpoint.
       # Derive the domain string without a pool dependency (the pool invite
       # template references this distribution).
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.compliance_letters.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 

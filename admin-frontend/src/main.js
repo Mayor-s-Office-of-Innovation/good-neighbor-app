@@ -2276,6 +2276,7 @@ class AdminApp extends HTMLElement {
         }
       }
     });
+    let compliancePeriodSaved = false;
     this.querySelectorAll("#site-terms-form, #site-compliance-form").forEach(
       (form) =>
         form.addEventListener("submit", async (e) => {
@@ -2293,7 +2294,7 @@ class AdminApp extends HTMLElement {
             saveButton.textContent = "Saving…";
           }
           try {
-            await this.createSiteTerms(currentForm);
+            compliancePeriodSaved = await this.createSiteTerms(currentForm);
           } catch (err) {
             showFormSaveError(currentForm, compliancePeriodErrorMessage(err));
             if (saveButton) {
@@ -2366,9 +2367,13 @@ class AdminApp extends HTMLElement {
       "click",
       () => {
         newPeriodDialog?.close();
-        if (requirementToggle) requirementToggle.checked = false;
       },
     );
+    newPeriodDialog?.addEventListener("close", () => {
+      if (!compliancePeriodSaved && requirementToggle) {
+        requirementToggle.checked = false;
+      }
+    });
     endPeriodDialog?.addEventListener("close", () => {
       if (endPeriodDialog.returnValue === "confirm") {
         this.endSiteTerms().catch((error) => {

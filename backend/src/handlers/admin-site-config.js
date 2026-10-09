@@ -296,6 +296,7 @@ export const endSiteTerms = (event) =>
             ":pk": `SITE#${siteId}`,
             ":prefix": "COMPLIANCE_TERMS#",
           },
+          ConsistentRead: true,
         }),
       ),
     ]);
@@ -319,53 +320,64 @@ export const endSiteTerms = (event) =>
       /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
         "central-admin",
     );
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Update: {
-              TableName: tableName,
-              Key: { pk: active.pk, sk: active.sk },
-              UpdateExpression:
-                "SET expiresOnExclusive = :today, endedOn = :today, endedAt = :now, endedBy = :actor, #status = :ended",
-              ConditionExpression:
-                "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: {
-                ":today": today,
-                ":now": now,
-                ":actor": actor,
-                ":ended": "expired",
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key: { pk: active.pk, sk: active.sk },
+                UpdateExpression:
+                  "SET expiresOnExclusive = :today, endedOn = :today, endedAt = :now, endedBy = :actor, #status = :ended",
+                ConditionExpression:
+                  "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":today": today,
+                  ":now": now,
+                  ":actor": actor,
+                  ":ended": "expired",
+                },
               },
             },
-          },
-          {
-            Update: {
-              TableName: tableName,
-              Key: { pk: `SITE#${siteId}`, sk: "#META" },
-              UpdateExpression:
-                "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now",
-              ConditionExpression: "latestComplianceTermsVersionId = :version",
-              ExpressionAttributeValues: {
-                ":compliance": { perimeterChecksRequired: false },
-                ":now": now,
-                ":version": active.termsVersionId,
+            {
+              Update: {
+                TableName: tableName,
+                Key: { pk: `SITE#${siteId}`, sk: "#META" },
+                UpdateExpression:
+                  "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now",
+                ConditionExpression:
+                  "latestComplianceTermsVersionId = :version",
+                ExpressionAttributeValues: {
+                  ":compliance": { perimeterChecksRequired: false },
+                  ":now": now,
+                  ":version": active.termsVersionId,
+                },
               },
             },
-          },
-          put({
-            pk: `SITE#${siteId}`,
-            sk: `AUDIT#${now}#${randomUUID()}`,
-            type: "siteAuditEvent",
-            eventType: "perimeter_checks_period_ended",
-            siteId,
-            termsVersionId: active.termsVersionId,
-            actor,
-            createdAt: now,
-          }),
-        ],
-      }),
-    );
+            put({
+              pk: `SITE#${siteId}`,
+              sk: `AUDIT#${now}#${randomUUID()}`,
+              type: "siteAuditEvent",
+              eventType: "perimeter_checks_period_ended",
+              siteId,
+              termsVersionId: active.termsVersionId,
+              actor,
+              createdAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      ) {
+        return jsonResponse(409, { error: "terms_close_conflict" });
+      }
+      throw error;
+    }
     return jsonResponse(200, {
       termsVersionId: active.termsVersionId,
       endedAt: now,

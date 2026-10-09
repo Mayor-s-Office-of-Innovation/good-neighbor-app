@@ -258,6 +258,9 @@ describe("effective-dated Site terms", () => {
       event(undefined, { siteId: "site-1" }),
     );
     expect(response.statusCode).toBe(200);
+    const query = send.mock.calls[1][0];
+    expect(query).toBeInstanceOf(QueryCommand);
+    expect(query.input.ConsistentRead).toBe(true);
     const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(
@@ -270,6 +273,35 @@ describe("effective-dated Site terms", () => {
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
     ).toContain("endedOn = :today");
+  });
+
+  it("returns a conflict when the active period changes during close", async () => {
+    const conflict = new Error("changed");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "COMPLIANCE_TERMS#2020-01-01#v1",
+            termsVersionId: "v1",
+            effectiveStart: "2020-01-01",
+            status: "active",
+          },
+        ],
+      })
+      .mockRejectedValueOnce(conflict);
+
+    const response = await call(
+      endSiteTerms,
+      event(undefined, { siteId: "site-1" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "terms_close_conflict",
+    });
   });
 });
 
