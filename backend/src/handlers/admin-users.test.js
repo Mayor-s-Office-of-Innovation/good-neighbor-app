@@ -10,7 +10,11 @@ import {
   AdminUpdateUserAttributesCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { cognitoSend, ddbSend } = vi.hoisted(() => ({
@@ -44,6 +48,7 @@ const {
 beforeEach(() => {
   cognitoSend.mockReset();
   ddbSend.mockReset();
+  ddbSend.mockResolvedValue({});
   vi.stubEnv("COGNITO_USER_POOL_ID", "pool-1");
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
@@ -101,6 +106,7 @@ describe("Compliance administrator lifecycle", () => {
         email: "new@example.org",
         firstName: "New",
         lastName: "Admin",
+        phone: "415-555-0100",
         role: "compliance-manager",
       }),
     );
@@ -132,6 +138,7 @@ describe("Compliance administrator lifecycle", () => {
         email: "new@example.org",
         firstName: "New",
         lastName: "Admin",
+        phone: "415-555-0100",
         role: "compliance-manager",
       }),
     );
@@ -144,6 +151,103 @@ describe("Compliance administrator lifecycle", () => {
     expect(cognitoSend.mock.calls[3][0]).toBeInstanceOf(
       AdminAddUserToGroupCommand,
     );
+  });
+
+  it("reuses an active Supervisor account for a matching program manager", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#supervisor@example.org",
+          userId: "manager-1",
+          firstName: "Existing",
+          lastName: "Supervisor",
+          email: "supervisor@example.org",
+          phone: "415-555-0100",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const exists = new Error("exists");
+    exists.name = "UsernameExistsException";
+    cognitoSend
+      .mockRejectedValueOnce(exists)
+      .mockResolvedValueOnce(user("supervisor@example.org", "supervisor-sub"))
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-supervisor" }],
+      });
+
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "supervisor@example.org",
+        firstName: "Existing",
+        lastName: "Supervisor",
+        phone: "415-555-0100",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      user: { role: "compliance-supervisor" },
+      invitationStatus: "active",
+    });
+    expect(
+      cognitoSend.mock.calls.some(
+        ([command]) => command instanceof AdminAddUserToGroupCommand,
+      ),
+    ).toBe(false);
+    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(
+      ddbSend.mock.calls[1][0].input.ExpressionAttributeValues,
+    ).toMatchObject({ ":role": "compliance-supervisor" });
+  });
+
+  it("links a matching imported Compliance manager when Cognito is created later", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#imported@example.org",
+          userId: "manager-1",
+          firstName: "Imported",
+          lastName: "Manager",
+          email: "imported@example.org",
+          phone: "415-555-0100",
+          departmentId: "dph",
+        },
+      })
+      .mockResolvedValueOnce({});
+    cognitoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(user("imported@example.org", "imported-sub"));
+
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "imported@example.org",
+        firstName: "Imported",
+        lastName: "Manager",
+        phone: "415-555-0100",
+        departmentId: "dph",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    const createUser = cognitoSend.mock.calls[0][0];
+    expect(createUser).toBeInstanceOf(AdminCreateUserCommand);
+    expect(createUser.input.UserAttributes).toContainEqual({
+      Name: "phone_number",
+      Value: "+14155550100",
+    });
+    const update = ddbSend.mock.calls[1][0];
+    expect(update).toBeInstanceOf(UpdateCommand);
+    expect(update.input.ExpressionAttributeValues).toMatchObject({
+      ":subject": "imported-sub",
+      ":role": "compliance-manager",
+    });
   });
 
   it("adds the destination role before removing old memberships", async () => {

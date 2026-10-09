@@ -136,6 +136,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
 import {
@@ -348,6 +349,11 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
   route("POST", "/admin/v1/sites/{siteId}/users", assignSiteUser),
   route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
+  route(
+    "PUT",
+    "/admin/v1/sites/{siteId}/compliance-managers",
+    replaceSiteComplianceManagers,
+  ),
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms:close", endSiteTerms),

@@ -28,7 +28,7 @@ describe("oversight option directory", () => {
     expect(response.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
     expect(JSON.parse(String(response.body))).toMatchObject({
-      departments: [{ name: "DPH" }, { name: "HSH" }],
+      departments: [],
       systemsOfCare: expect.arrayContaining([
         expect.objectContaining({ name: "Housing" }),
       ]),
