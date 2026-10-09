@@ -13,22 +13,22 @@ Status: in progress — testing-phase data-handling decision recorded (2026-08-1
 - Cognito authentication and authorization.
 - Terraform and GitHub Actions deployment pipeline.
 
-## Data classification & media handling — GNP-owned bucket, ~7-day lifecycle (revised 2026-08-13 PM)
+## Data classification & media handling — GNP-owned bucket, 30-day lifecycle (revised 2026-10-09)
 
 **Supersedes the 2026-08-13 "no media at rest" note.** The interim design dropped the media bucket
 and posted images base64-inline from the client. That is **reversed** (D1/D3):
 captured media is uploaded via **presigned PUT to an S3 bucket GNP owns**, the backend reads it back
-to call the analyzer, and S3 lifecycle rules expire accepted media after seven days (with shorter
-windows for pending, rejected, and unprocessed media). Drivers: **large-upload
+to call the analyzer, and an S3 lifecycle rule expires every photo 30 days after upload (with a
+one-day window for never-registered and rejected media). Drivers: **large-upload
 support** (presigned PUT bypasses the Lambda ~6 MB payload ceiling), **admin review of AI output
 against the source media** (the product driver), and **GNP owning retention** (our KMS key +
 lifecycle window, changeable at will). This also matches the deployed origin app
 `../street-conditions`, which stores media in S3.
 
 **What is at rest.** Person-images live in **GNP's KMS-encrypted bucket**. Declarative lifecycle
-rules expire pending/rejected media after one day, registered media after two days, accepted media
-after seven days, and anything untagged after 30 days (bucket-wide backstop). Bucket versioning is
-suspended, so expiry removes the bytes outright rather than leaving a noncurrent version. DynamoDB stores the **analysis document + the S3 key**
+rules expire every photo 30 days after upload, and never-registered (pending) or rejected media
+after one day. Bucket versioning is suspended, so expiry removes the bytes outright rather than
+leaving a noncurrent version. DynamoDB stores the **analysis document + the S3 key**
 (the scorecard is `sensitive`; the key is a pointer, not PII). This is a step **up** in data-at-rest
 exposure from the no-media design and puts a **photo-retention control in scope**.
 

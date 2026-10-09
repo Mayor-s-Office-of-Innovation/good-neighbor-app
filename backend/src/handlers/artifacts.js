@@ -421,6 +421,8 @@ export const registerArtifact = async (event) => {
   }
 
   if (hasS3Key) {
+    // Clears the presign's `state=pending` tag so the 1-day pending rule leaves
+    // the object alone; the bucket-wide 30-day rule owns it from here.
     await setObjectTags({
       bucket: getConfig().uploadBucket,
       key: s3Key,

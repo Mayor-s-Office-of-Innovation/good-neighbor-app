@@ -403,10 +403,11 @@ resource "aws_s3_bucket_logging" "uploads" {
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
-  # Bucket-wide backstop. The state-tag rules below are the real retention
-  # policy; this rule catches anything that lands without a state tag (console
-  # or CLI uploads) so nothing outlives 30 days. S3 applies the shortest
-  # matching expiration, so this never extends a tag rule's window.
+  # Retention policy: every photo expires 30 days after upload. The two tag
+  # rules below only shorten that for uploads the app never registered
+  # (`state=pending`) or rejected during registration/analysis
+  # (`state=rejected`). S3 applies the shortest matching expiration, so this
+  # rule never extends either of those windows.
   rule {
     id     = "expire-incomplete-uploads"
     status = "Enabled"
@@ -446,8 +447,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
     }
   }
 
+  # The presigned PUT tags every upload `state=pending`; registration retags it
+  # `state=registered`. Anything still pending after a day was abandoned
+  # between the PUT and the register call.
   rule {
-    id     = "expire-pending-compliance-letters"
+    id     = "expire-pending-media"
     status = "Enabled"
 
     filter {
@@ -459,26 +463,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  rule {
-    id     = "expire-registered-media"
-    status = "Enabled"
-
-    filter {
-      tag {
-        key   = "state"
-        value = "registered"
-      }
-    }
-
-    expiration {
-      days = 2
     }
 
     noncurrent_version_expiration {
@@ -499,26 +483,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  rule {
-    id     = "expire-accepted-media"
-    status = "Enabled"
-
-    filter {
-      tag {
-        key   = "state"
-        value = "accepted"
-      }
-    }
-
-    expiration {
-      days = 7
     }
 
     noncurrent_version_expiration {
