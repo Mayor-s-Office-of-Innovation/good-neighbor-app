@@ -8,10 +8,16 @@ import {
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
+import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
+import { getConfig } from "../src/config.js";
+import { ddb } from "../src/db.js";
 import { handler as processSubmission } from "../src/workers/process-submission.js";
 import { handler as analyzeArtifact } from "../src/workers/analyze-artifact.js";
 import { handler as reconcileSiteRevocation } from "../src/workers/reconcile-site-revocation.js";
+import { handler as dispatchOutbox } from "../src/workers/dispatch-revocation-outbox.js";
+import { handler as generateComplianceLetter } from "../src/workers/generate-compliance-letter.js";
 
 const sqs = new SQSClient({});
 let running = true;
@@ -54,6 +60,9 @@ function pickHandler(body) {
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
     }
+    if (msg?.type === "generate_compliance_letter") {
+      return generateComplianceLetter;
+    }
     // Analyze messages carry an artifactId plus either an S3 key (photo) or text
     // (description). The demo /submissions flow carries neither.
     if (
@@ -90,8 +99,60 @@ function toSqsEvent(msg) {
   });
 }
 
+/**
+ * DynamoDB Local does not emit Streams records. Poll pending durable outbox
+ * items and pass them through the same dispatcher used by the deployed Stream
+ * event source so local async workflows reach SQS too.
+ */
+async function dispatchPendingOutbox() {
+  let lastEvaluatedKey;
+  do {
+    const result = await ddb.send(
+      new ScanCommand({
+        TableName: getConfig().dynamoTable,
+        FilterExpression:
+          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter)",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#entityType": "entityType",
+        },
+        ExpressionAttributeValues: {
+          ":pending": "pending",
+          ":revocation": "REVOCATION_OUTBOX",
+          ":letter": "COMPLIANCE_LETTER_OUTBOX",
+        },
+        ExclusiveStartKey: lastEvaluatedKey,
+      }),
+    );
+    for (const item of result.Items ?? []) {
+      await dispatchOutbox(
+        /** @type {import("aws-lambda").DynamoDBStreamEvent} */ ({
+          Records: [
+            {
+              eventName: "INSERT",
+              eventSource: "aws:dynamodb",
+              dynamodb: { NewImage: marshall(item) },
+            },
+          ],
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      );
+      console.log(`[worker] dispatched local outbox item ${item.sk}`);
+    }
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+}
+
 async function poll(queueUrl) {
   while (running) {
+    try {
+      await dispatchPendingOutbox();
+    } catch (err) {
+      console.error(
+        `[worker] local outbox dispatch failed, retrying on the next poll: ${summarizeError(err)}`,
+      );
+    }
     let received;
     try {
       received = await sqs.send(

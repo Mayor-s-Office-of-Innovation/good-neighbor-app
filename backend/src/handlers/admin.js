@@ -10,7 +10,13 @@ import { randomUUID } from "node:crypto";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { deleteObject, headObject, presignPut, setObjectTags } from "../s3.js";
+import {
+  deleteObject,
+  headObject,
+  presignGet,
+  presignPut,
+  setObjectTags,
+} from "../s3.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
 import {
   geocodeSiteAddress,
@@ -47,12 +53,14 @@ export const createCityProgramManager = (event) =>
     const firstName = cleanText(body.firstName);
     const lastName = cleanText(body.lastName);
     const email = cleanText(body.email).toLowerCase();
+    const phone = normalizePhone(body.phone);
     if (!firstName || !lastName) {
       return jsonResponse(400, { error: "name_required" });
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
+    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
     const now = new Date().toISOString();
     const item = {
       pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
@@ -63,6 +71,7 @@ export const createCityProgramManager = (event) =>
       lastName,
       name: `${firstName} ${lastName}`,
       email,
+      phone,
       createdAt: now,
       updatedAt: now,
     };
@@ -75,6 +84,40 @@ export const createCityProgramManager = (event) =>
     );
     return jsonResponse(201, {
       programManager: publicProgramManager(item),
+    });
+  });
+
+/** PATCH /admin/v1/program-managers/{userId} — update shared contact details. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const updateCityProgramManager = (event) =>
+  adminOnly(event, async (body) => {
+    const userId = event.pathParameters?.userId ?? "";
+    const phone = normalizePhone(body.phone);
+    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
+    const items = await queryAll({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS" },
+    });
+    const manager = items.find((item) => item.userId === userId);
+    if (!manager)
+      return jsonResponse(404, { error: "program_manager_not_found" });
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: manager.pk, sk: manager.sk },
+        UpdateExpression: "SET phone = :phone, updatedAt = :now",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeValues: {
+          ":phone": phone,
+          ":now": new Date().toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return jsonResponse(200, {
+      programManager: publicProgramManager(
+        result.Attributes || { ...manager, phone },
+      ),
     });
   });
 
@@ -250,6 +293,10 @@ export const createSite = (event) =>
     if (body.publicContact !== undefined && !publicContact) {
       return jsonResponse(400, { error: "invalid_public_contact" });
     }
+    const siteType = normalizeSiteType(body.siteType);
+    if (body.siteType !== undefined && body.siteType !== "" && !siteType) {
+      return jsonResponse(400, { error: "invalid_site_type" });
+    }
     let program = null;
     let primaryContact = null;
     if (leadProgramId) {
@@ -309,6 +356,7 @@ export const createSite = (event) =>
       geocodedAddress: geocoded.matchedAddress,
       ...(addressParts ? { addressParts } : {}),
       ...(publicContact ? { publicContact } : {}),
+      ...(siteType ? { siteType } : {}),
       providerId,
       providerName: provider.Item.name,
       ...(program ? { leadProgramId, programName: String(program.name) } : {}),
@@ -464,7 +512,40 @@ export const getAdminSite = (event) =>
       }),
     );
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
-    return jsonResponse(200, { items: res.Items });
+    const items = await Promise.all(
+      res.Items.map(async (item) => {
+        if (item.sk !== "#META" || !item.complianceLetters) return item;
+        /** @param {Record<string, any> | null | undefined} letter */
+        const link = async (letter) => {
+          if (!letter?.s3Key) return letter;
+          const [url, previewUrl] = await Promise.all([
+            presignGet({
+              bucket: getConfig().uploadBucket,
+              key: letter.s3Key,
+              expiresIn: 300,
+            }),
+            letter.previewS3Key
+              ? presignGet({
+                  bucket: getConfig().uploadBucket,
+                  key: letter.previewS3Key,
+                  expiresIn: 300,
+                })
+              : Promise.resolve(""),
+          ]);
+          return { ...letter, url, ...(previewUrl ? { previewUrl } : {}) };
+        };
+        return {
+          ...item,
+          complianceLetters: {
+            current: await link(item.complianceLetters.current),
+            past: await Promise.all(
+              (item.complianceLetters.past || []).map(link),
+            ),
+          },
+        };
+      }),
+    );
+    return jsonResponse(200, { items });
   });
 
 /**
@@ -766,6 +847,13 @@ export const updateSite = (event) =>
     if (body.compliance !== undefined && !compliance) {
       return jsonResponse(400, { error: "invalid_compliance" });
     }
+    const siteType =
+      body.siteType === undefined
+        ? undefined
+        : normalizeSiteType(body.siteType);
+    if (body.siteType !== undefined && body.siteType !== "" && !siteType) {
+      return jsonResponse(400, { error: "invalid_site_type" });
+    }
     const perimeter =
       body.perimeter === undefined ? null : cleanLongText(body.perimeter);
     if (body.perimeter !== undefined && perimeter === null) {
@@ -828,6 +916,7 @@ export const updateSite = (event) =>
         : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
+      ...(siteType !== undefined ? { siteType: siteType || undefined } : {}),
       ...(perimeter !== null ? { perimeter } : {}),
       ...(complianceLetters ? { complianceLetters } : {}),
       ...(geocoded
@@ -898,6 +987,14 @@ export const updateSite = (event) =>
     if (compliance) {
       setExpressions.push("compliance = :compliance");
       expressionAttributeValues[":compliance"] = compliance;
+    }
+    if (siteType !== undefined) {
+      if (siteType) {
+        setExpressions.push("siteType = :siteType");
+        expressionAttributeValues[":siteType"] = siteType;
+      } else {
+        removeExpressions.push("siteType");
+      }
     }
     if (perimeter !== null) {
       setExpressions.push("perimeter = :perimeter");
@@ -1517,7 +1614,28 @@ function publicProgramManager(item) {
         .filter(Boolean)
         .join(" "),
     email: cleanText(item.email),
+    phone: cleanText(item.phone),
   };
+}
+
+/** @param {unknown} value */
+function normalizePhone(value) {
+  const digits = cleanText(value).replace(/\D/g, "");
+  const national =
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return national.length === 10
+    ? `${national.slice(0, 3)}-${national.slice(3, 6)}-${national.slice(6)}`
+    : "";
+}
+
+/** @param {unknown} value */
+function normalizeSiteType(value) {
+  const siteType = cleanText(value);
+  return ["permanent_supportive_housing", "shelter", "drop_in"].includes(
+    siteType,
+  )
+    ? siteType
+    : "";
 }
 
 /** @param {unknown} value */

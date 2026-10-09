@@ -7,11 +7,13 @@ const {
   analyzeArtifact,
   reconcileSiteRevocation,
   dispatchRevocationOutbox,
+  generateComplianceLetter,
 } = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
   dispatchRevocationOutbox: vi.fn(async () => {}),
+  generateComplianceLetter: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
@@ -22,6 +24,9 @@ vi.mock("../workers/reconcile-site-revocation.js", () => ({
 }));
 vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
   handler: dispatchRevocationOutbox,
+}));
+vi.mock("../workers/generate-compliance-letter.js", () => ({
+  handler: generateComplianceLetter,
 }));
 
 const { handler } = await import("./worker.js");
@@ -42,6 +47,7 @@ describe("worker dispatch (pickHandler)", () => {
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
     dispatchRevocationOutbox.mockClear();
+    generateComplianceLetter.mockClear();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {
@@ -86,6 +92,16 @@ describe("worker dispatch (pickHandler)", () => {
     expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
     expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes compliance-letter jobs to the letter worker", async () => {
+    await handler(
+      event({ type: "generate_compliance_letter", siteId: "site-1" }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(generateComplianceLetter).toHaveBeenCalledTimes(1);
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes DynamoDB stream records to the revocation outbox dispatcher", async () => {

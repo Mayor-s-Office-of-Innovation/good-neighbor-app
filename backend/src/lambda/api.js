@@ -79,6 +79,7 @@ import {
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../handlers/admin.js";
 import {
@@ -121,6 +122,7 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
@@ -219,6 +221,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/programs": listPrograms,
   "GET /admin/v1/program-managers": listCityProgramManagers,
   "POST /admin/v1/program-managers": createCityProgramManager,
+  "PATCH /admin/v1/program-managers/{userId}": updateCityProgramManager,
   "GET /admin/v1/oversight-options": listOversightOptions,
   "POST /admin/v1/oversight-options": createOversightOption,
   "POST /admin/v1/address-suggestions": suggestAddresses,
@@ -237,6 +240,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
+  "POST /admin/v1/sites/{siteId}/terms:close": endSiteTerms,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,

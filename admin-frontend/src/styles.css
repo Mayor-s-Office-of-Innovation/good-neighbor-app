@@ -477,6 +477,72 @@ h3 {
   font-weight: 700;
 }
 
+.compliance-period-dialog .places-modal__copy {
+  align-items: stretch;
+  text-align: left;
+}
+
+.compliance-period-dialog {
+  width: 80vw;
+  max-width: calc(100vw - 32px);
+}
+
+.compliance-period-dialog .places-modal__copy > h3,
+.compliance-period-dialog .places-modal__copy > p {
+  text-align: left;
+}
+
+.compliance-period-dialog .places-modal__copy > h3 {
+  margin: 0;
+}
+
+.compliance-period-reasons wa-checkbox {
+  width: 100%;
+  text-align: left;
+}
+
+.compliance-period-reasons wa-checkbox::part(checkbox) {
+  align-self: start;
+  margin-top: 0.15em;
+}
+
+.compliance-period-reasons wa-checkbox::part(label) {
+  width: 100%;
+  text-align: left;
+}
+
+.compliance-period-fields {
+  padding-top: 16px;
+}
+
+.compliance-period-fields wa-input[data-expiry-field] {
+  width: min(100%, 18rem);
+}
+
+.compliance-period-dialog .compliance-period-fields wa-number-input {
+  width: 100%;
+}
+
+.compliance-period-dialog
+  .compliance-period-fields
+  wa-number-input::part(number-input) {
+  width: max(33.333%, 12rem);
+}
+
+.compliance-period-dialog wa-select::part(display-input),
+.compliance-period-dialog wa-select::part(listbox),
+.compliance-period-dialog wa-option {
+  text-align: left;
+}
+
+.compliance-period-error {
+  text-align: left;
+}
+
+.compliance-prerequisite-error {
+  margin: 8px 0 0;
+}
+
 .btn-outline {
   border: 1px solid var(--line);
   background: transparent;
@@ -1101,6 +1167,25 @@ button:disabled,
 
 .subsection > div > p {
   margin: 6px 0 0;
+}
+
+.compliance-letter-preview {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+
+.compliance-letter-preview__thumbnail {
+  display: inline-flex;
+  border-radius: 6px;
+}
+
+.compliance-letter-preview__thumbnail img {
+  width: min(100%, 14rem);
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
 }
 
 .contact-list {

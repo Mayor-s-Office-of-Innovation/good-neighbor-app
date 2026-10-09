@@ -56,25 +56,52 @@ describe("revocation outbox dispatch", () => {
     expect(sqsSend).not.toHaveBeenCalled();
     expect(ddbSend).toHaveBeenCalledTimes(1);
   });
+
+  it("dispatches a compliance-letter outbox entry", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "pending" } })
+      .mockResolvedValueOnce({});
+    await handler(
+      event({
+        pk: "SITE#site-1",
+        sk: "LETTER_JOB#now#job-1",
+        entityType: "COMPLIANCE_LETTER_OUTBOX",
+        status: "pending",
+        siteId: "site-1",
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody)).toEqual({
+      type: "generate_compliance_letter",
+      siteId: "site-1",
+      jobPk: "SITE#site-1",
+      jobSk: "LETTER_JOB#now#job-1",
+      previousLetters: [],
+    });
+  });
 });
 
-function event() {
+/** @param {Record<string, unknown>} [item] */
+function event(item) {
   return /** @type {any} */ ({
     Records: [
       {
         eventName: "INSERT",
         dynamodb: {
-          NewImage: marshall({
-            pk: "REVOCATION_OPERATION#operation-1",
-            sk: "OUTBOX#site-1",
-            entityType: "REVOCATION_OUTBOX",
-            status: "pending",
-            operationId: "operation-1",
-            operationPk: "REVOCATION_OPERATION#operation-1",
-            siteId: "site-1",
-            startedAt: "2026-10-03T12:00:00.000Z",
-            actor: "admin-1",
-          }),
+          NewImage: marshall(
+            item || {
+              pk: "REVOCATION_OPERATION#operation-1",
+              sk: "OUTBOX#site-1",
+              entityType: "REVOCATION_OUTBOX",
+              status: "pending",
+              operationId: "operation-1",
+              operationPk: "REVOCATION_OPERATION#operation-1",
+              siteId: "site-1",
+              startedAt: "2026-10-03T12:00:00.000Z",
+              actor: "admin-1",
+            },
+          ),
         },
       },
     ],

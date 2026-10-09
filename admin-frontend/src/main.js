@@ -30,7 +30,7 @@ import {
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, siteName?: string, name?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, status?: string, updatedAt?: string }} AdminSite
+ * @typedef {{ siteId: string, siteName?: string, name?: string, siteType?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, primaryContact?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number | boolean>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, letterState?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, primaryContactUserId?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
@@ -660,6 +660,7 @@ class AdminApp extends HTMLElement {
       firstName: formValue(data, "manager-first-name"),
       lastName: formValue(data, "manager-last-name"),
       email: formValue(data, "manager-email"),
+      phone: formValue(data, "manager-phone"),
     });
     this.state.programManagers = [
       ...this.state.programManagers,
@@ -705,8 +706,19 @@ class AdminApp extends HTMLElement {
           : value;
       select.querySelector(`[value='${CSS.escape(value)}']`)?.remove();
       select.querySelector("[data-add-option]")?.before(option);
-      select.value = value;
+      setSelectValue(select, value);
       select.dispatchEvent(new Event("change", { bubbles: true }));
+      if (selectName === "program-manager-id") {
+        const phone = this.querySelector("[name='program-manager-phone']");
+        const manager = this.state.programManagers.find(
+          (item) => item.userId === value,
+        );
+        if (phone) {
+          phone.value = manager?.phone || "";
+          phone.toggleAttribute("required", Boolean(manager));
+          phone.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      }
     }
     form.closest("dialog")?.close();
     form.reset();
@@ -728,6 +740,7 @@ class AdminApp extends HTMLElement {
         phone: formValue(data, "public-contact-phone"),
       },
       primaryContactUserId: formValue(data, "site-manager-user-id"),
+      siteType: controlValue(form, "site-type"),
     });
     const siteId = result.site.siteId;
     const expectedManagerId = formValue(data, "site-manager-user-id");
@@ -745,6 +758,7 @@ class AdminApp extends HTMLElement {
           phone: formValue(data, "public-contact-phone"),
         },
         primaryContactUserId: expectedManagerId,
+        siteType: controlValue(form, "site-type"),
       });
       if (
         !repaired.site?.addressParts ||
@@ -796,6 +810,8 @@ class AdminApp extends HTMLElement {
     };
     if (section === "all" || section === "details")
       values.publicContact = publicContact;
+    if (section === "all" || section === "details")
+      values.siteType = controlValue(form, "site-type");
     if (section === "all" || section === "site-manager")
       values.primaryContactUserId = internalContactUserId;
     if (
@@ -877,22 +893,21 @@ class AdminApp extends HTMLElement {
 
   async updateOversight(form) {
     if (!this.state.site) return false;
-    const data = new FormData(form);
+    const programManagerId = controlValue(form, "program-manager-id");
+    const selectedProgramManager = this.state.programManagers.find(
+      (manager) => manager.userId === programManagerId,
+    );
     const oversight = {
-      managingCityDepartment: formValue(data, "managing-city-department"),
-      managingSystemOfCare: formValue(data, "managing-system-of-care"),
+      managingCityDepartment: controlValue(form, "managing-city-department"),
+      managingSystemOfCare: controlValue(form, "managing-system-of-care"),
       cityProgramManagerId:
-        this.state.programManagers.find(
-          (manager) => manager.userId === formValue(data, "program-manager-id"),
-        )?.userId ||
-        (formValue(data, "program-manager-id") === "legacy-existing"
+        selectedProgramManager?.userId ||
+        (programManagerId === "legacy-existing"
           ? this.state.site.oversight?.cityProgramManagerId || ""
           : ""),
       cityProgramManager:
-        this.state.programManagers.find(
-          (manager) => manager.userId === formValue(data, "program-manager-id"),
-        )?.name ||
-        (formValue(data, "program-manager-id") === "legacy-existing"
+        selectedProgramManager?.name ||
+        (programManagerId === "legacy-existing"
           ? this.state.site.oversight?.cityProgramManager || ""
           : ""),
     };
@@ -901,6 +916,21 @@ class AdminApp extends HTMLElement {
     this.state.siteSaveError = "";
     this.state.error = "";
     try {
+      if (selectedProgramManager) {
+        const phone = controlValue(form, "program-manager-phone");
+        if (phone !== String(selectedProgramManager.phone || "")) {
+          const updated = await adminApi.updateCityProgramManager(
+            selectedProgramManager.userId,
+            { phone },
+          );
+          this.state.programManagers = this.state.programManagers.map(
+            (manager) =>
+              manager.userId === updated.programManager.userId
+                ? updated.programManager
+                : manager,
+          );
+        }
+      }
       const result = await adminApi.updateSite(this.state.site.siteId, {
         name: this.state.site.name,
         oversight,
@@ -1017,13 +1047,16 @@ class AdminApp extends HTMLElement {
 
   async createSiteTerms(form) {
     if (!this.state.site) return false;
-    const data = new FormData(form);
+    const reasons = selectedComplianceReasons(form);
     const siteId = this.state.site.siteId;
     await adminApi.createSiteTerms(this.state.site.siteId, {
-      tier: Number(data.get("terms-tier")),
-      requiredChecksPerDay: Number(data.get("terms-checks-per-day")),
-      effectiveStart: formValue(data, "terms-start"),
-      expiresOnExclusive: formValue(data, "terms-expiry"),
+      reasons,
+      ...(reasons.includes("6")
+        ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
+        : {}),
+      requiredChecksPerDay: Number(controlValue(form, "terms-checks-per-day")),
+      effectiveStart: controlValue(form, "terms-start"),
+      periodEnd: controlValue(form, "terms-expiry"),
     });
     window.history.replaceState(
       {},
@@ -1032,9 +1065,44 @@ class AdminApp extends HTMLElement {
     );
     await this.openSite(siteId, false);
     this.state.siteSaveMessage =
-      "Compliance term saved. A new letter is being generated.";
+      "Perimeter check compliance period saved. The letter is being generated.";
     this.render();
+    void this.refreshPendingComplianceLetter(siteId);
     return true;
+  }
+
+  async refreshPendingComplianceLetter(siteId) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (this.state.site?.siteId !== siteId) return;
+      try {
+        const result = await adminApi.getSite(siteId);
+        const latest = result.items?.find((item) => item.sk === "#META");
+        if (!latest || latest.letterState === "draft_pending") continue;
+        this.state.site = { ...this.state.site, ...latest };
+        this.state.sites = this.state.sites.map((site) =>
+          site.siteId === siteId ? { ...site, ...latest } : site,
+        );
+        this.state.siteSaveMessage = latest.complianceLetters?.current
+          ? "Perimeter check compliance period saved. The letter is ready."
+          : "Perimeter check compliance period saved.";
+        this.render();
+        return;
+      } catch {
+        // A transient refresh failure should not turn a successful save into an
+        // error. The next polling attempt can still retrieve the generated PDF.
+      }
+    }
+  }
+
+  async endSiteTerms() {
+    if (!this.state.site) return;
+    const siteId = this.state.site.siteId;
+    await adminApi.endSiteTerms(siteId);
+    await this.openSite(siteId, false);
+    this.state.siteSaveMessage =
+      "The site is no longer required to complete perimeter checks.";
+    this.render();
   }
 
   async previewSiteImport(form) {
@@ -2032,8 +2100,27 @@ class AdminApp extends HTMLElement {
     this.querySelectorAll("#site-oversight-form wa-select").forEach(
       (select) => {
         select.addEventListener("change", () => {
-          const value = String(select.value || "");
-          if (!value.startsWith("__add_")) return;
+          const oversightForm = select.closest("form");
+          const value =
+            oversightForm instanceof HTMLFormElement
+              ? controlValue(oversightForm, select.name)
+              : String(select.value || "");
+          if (!value.startsWith("__add_")) {
+            if (select.name === "program-manager-id") {
+              const phone = this.querySelector(
+                "[name='program-manager-phone']",
+              );
+              const manager = this.state.programManagers.find(
+                (item) => item.userId === value,
+              );
+              if (phone) {
+                phone.value = manager?.phone || "";
+                phone.toggleAttribute("required", Boolean(manager));
+                phone.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+            }
+            return;
+          }
           const dialogId = {
             __add_manager__: "#new-city-program-manager-dialog",
             __add_department__: "#new-oversight-option-dialog",
@@ -2054,15 +2141,23 @@ class AdminApp extends HTMLElement {
               .querySelector("[data-option-input]")
               ?.setAttribute("label", `${label} name`);
           }
-          select.value = select.dataset.previousValue || "";
+          setSelectValue(select, select.dataset.previousValue || "");
           dialog.showModal();
           dialog.querySelector("wa-input")?.focus();
         });
         select.addEventListener("wa-show", () => {
-          select.dataset.previousValue = String(select.value || "");
+          const oversightForm = select.closest("form");
+          select.dataset.previousValue =
+            oversightForm instanceof HTMLFormElement
+              ? controlValue(oversightForm, select.name)
+              : String(select.value || "");
         });
         select.addEventListener("focus", () => {
-          select.dataset.previousValue = String(select.value || "");
+          const oversightForm = select.closest("form");
+          select.dataset.previousValue =
+            oversightForm instanceof HTMLFormElement
+              ? controlValue(oversightForm, select.name)
+              : String(select.value || "");
         });
       },
     );
@@ -2111,6 +2206,8 @@ class AdminApp extends HTMLElement {
         syncSiteDetailsForm(siteDetailsForm);
       };
       syncSiteDetailsForm(siteDetailsForm, true);
+      siteDetailsForm.addEventListener("pointerdown", sync, true);
+      siteDetailsForm.addEventListener("keydown", sync, true);
       siteDetailsForm.addEventListener("input", sync);
       siteDetailsForm.addEventListener("change", sync);
       siteDetailsForm.addEventListener("reset", () => queueMicrotask(sync));
@@ -2185,14 +2282,107 @@ class AdminApp extends HTMLElement {
     });
     this.querySelectorAll("#site-terms-form, #site-compliance-form").forEach(
       (form) =>
-        form.addEventListener("submit", (e) => {
+        form.addEventListener("submit", async (e) => {
           e.preventDefault();
-          this.createSiteTerms(asForm(e.currentTarget)).catch((err) => {
-            this.state.error = err.message;
-            this.render();
-          });
+          const currentForm = asForm(e.currentTarget);
+          const validationError = compliancePeriodValidationError(currentForm);
+          if (validationError) {
+            return;
+          }
+          const saveButton = /** @type {HTMLButtonElement | null} */ (
+            currentForm.querySelector("[data-save-button]")
+          );
+          if (saveButton) {
+            saveButton.disabled = true;
+            saveButton.textContent = "Saving…";
+          }
+          try {
+            await this.createSiteTerms(currentForm);
+          } catch (err) {
+            showFormSaveError(currentForm, compliancePeriodErrorMessage(err));
+            if (saveButton) {
+              saveButton.disabled = false;
+              saveButton.textContent = "Save and generate letter";
+            }
+          }
         }),
     );
+    const requirementToggle = this.querySelector("#perimeter-checks-required");
+    const newPeriodDialog = this.querySelector("#new-checks-period-dialog");
+    const endPeriodDialog = this.querySelector("#end-checks-period-dialog");
+    const requiredChecks = /** @type {{ value?: string } | null} */ (
+      this.querySelector("wa-number-input[name='terms-checks-per-day']")
+    );
+    if (requiredChecks && !requiredChecks.value) requiredChecks.value = "3";
+    requirementToggle?.addEventListener("change", () => {
+      if (requirementToggle.checked) {
+        newPeriodDialog?.showModal();
+        newPeriodDialog?.querySelector("wa-checkbox")?.focus();
+      } else {
+        endPeriodDialog?.showModal();
+      }
+    });
+    const syncPeriodFields = () => {
+      const form = this.querySelector("#site-compliance-form");
+      const selected = [
+        ...this.querySelectorAll("wa-checkbox[name='terms-reason']"),
+      ]
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => checkbox.value);
+      const expiry = this.querySelector("[data-expiry-field]");
+      const tier = this.querySelector("[data-tier-field]");
+      const needsExpiry = selected.some((reason) =>
+        ["1", "5", "6"].includes(reason),
+      );
+      expiry?.toggleAttribute("hidden", !needsExpiry);
+      expiry?.toggleAttribute("required", needsExpiry);
+      tier?.toggleAttribute("hidden", !selected.includes("6"));
+      tier?.toggleAttribute("required", selected.includes("6"));
+      if (form instanceof HTMLFormElement) {
+        const saveButton = /** @type {HTMLButtonElement | null} */ (
+          form.querySelector("[data-save-button]")
+        );
+        if (saveButton) {
+          saveButton.disabled = Boolean(compliancePeriodValidationError(form));
+        }
+        const error = /** @type {HTMLElement | null} */ (
+          form.querySelector("[data-form-save-error]")
+        );
+        if (error) {
+          error.textContent = "";
+          error.hidden = true;
+        }
+      }
+    };
+    this.querySelectorAll("wa-checkbox[name='terms-reason']").forEach(
+      (checkbox) => checkbox.addEventListener("change", syncPeriodFields),
+    );
+    this.querySelector("#site-compliance-form")?.addEventListener(
+      "input",
+      syncPeriodFields,
+    );
+    this.querySelector("#site-compliance-form")?.addEventListener(
+      "change",
+      syncPeriodFields,
+    );
+    syncPeriodFields();
+    this.querySelector("[data-cancel-checks-period]")?.addEventListener(
+      "click",
+      () => {
+        newPeriodDialog?.close();
+        if (requirementToggle) requirementToggle.checked = false;
+      },
+    );
+    endPeriodDialog?.addEventListener("close", () => {
+      if (endPeriodDialog.returnValue === "confirm") {
+        this.endSiteTerms().catch((error) => {
+          this.state.error = error.message;
+          this.render();
+        });
+      } else if (requirementToggle) {
+        requirementToggle.checked = true;
+      }
+    });
     this.querySelector("#site-perimeter-form")?.addEventListener(
       "submit",
       (e) => {
@@ -2975,7 +3165,6 @@ function siteSectionView(state, section, subview = "") {
   if (section === "oversight")
     return `${siteOversightView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}`;
   if (section === "compliance") {
-    if (subview === "new-term") return siteComplianceTermView(state);
     return `${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}`;
   }
   if (section === "access") return siteAccessView(state);
@@ -3013,9 +3202,11 @@ function siteTermsView(state) {
   const terms = [...state.siteTerms].sort((a, b) =>
     String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
   );
+  const active = activeSiteTerms(terms);
+  const history = terms.filter((term) => term !== active);
   return `<section class="subsection" aria-labelledby="terms-title">
-    <div><h2 id="terms-title">Past compliance terms</h2><p class="muted">Adding a new compliance term generates a new draft compliance letter.</p></div>
-    ${termsHistory(terms.slice(1), "No past compliance terms.")}
+    <div><h2 id="terms-title">Past perimeter check compliance periods</h2></div>
+    ${termsHistory(history, "No past perimeter check compliance periods.")}
   </section>`;
 }
 
@@ -3024,10 +3215,10 @@ function siteLettersView(state) {
   const current = site?.complianceLetters?.current;
   const past = site?.complianceLetters?.past || [];
   return `<section class="subsection" aria-labelledby="letters-title">
-    <h2 id="letters-title">Compliance letters</h2>
-    <p>${current ? `Current letter: ${escapeHtml(current.fileName || current.status || "Generated")}` : "No letter has been generated yet"}</p>
+    <h2 id="letters-title">Perimeter check letters</h2>
+    ${current ? `<div class="compliance-letter-preview">${current.previewUrl && current.url ? `<a class="compliance-letter-preview__thumbnail" href="${escapeHtml(current.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(current.fileName || "the current perimeter check letter")}"><img src="${escapeHtml(current.previewUrl)}" alt="" loading="lazy" /></a>` : ""}<p>Current letter: ${current.url ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener">${escapeHtml(current.fileName || "Open PDF")}</a>` : escapeHtml(current.fileName || current.status || "Generating")}</p></div>` : `<p>${state.site?.letterState === "draft_pending" ? "The letter is being generated." : "No letter has been generated yet"}</p>`}
     <h3>Past letters</h3>
-    ${past.length ? `<ul>${past.map((letter) => `<li>${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="muted">No past letters.</p>'}
+    ${past.length ? `<ul>${past.map((letter) => `<li>${letter.url ? `<a href="${escapeHtml(letter.url)}" target="_blank" rel="noopener">${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</a>` : escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="muted">No past letters.</p>'}
   </section>`;
 }
 
@@ -3037,10 +3228,10 @@ function termsHistory(
   emptyMessage = "No effective-dated terms have been added.",
 ) {
   if (!terms.length) return `<p class="muted">${escapeHtml(emptyMessage)}</p>`;
-  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Expires</th><th>Tier</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
+  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Ends</th><th>Reasons</th><th>Tier</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
     .map(
       (term) =>
-        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.expiresOnExclusive || "No expiry")}</td><td>${escapeHtml(term.tier)}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
+        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.periodEnd || term.endedAt?.slice(0, 10) || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(term.correctiveActionTier || "—")}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 }
@@ -3086,7 +3277,7 @@ function siteAccessView(state) {
     <div class="device-list">${revocableDevices.map((device) => `<div class="device-row">${device.legacy ? "" : `<wa-checkbox aria-label="Select device ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}">Select</wa-checkbox>`}<div class="device-row__details"><strong>ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}</strong><span>Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}</span></div></div>`).join("")}</div>
     ${deviceSuspensionForm(state.suspensionTarget)}
     ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
-    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" required autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit" disabled>Revoke all devices at this Site</button></form>
+    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit" disabled>Revoke all devices at this Site</button></form>
     ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
 }
@@ -3772,6 +3963,7 @@ function newSiteRecordStep(provider, program, users) {
       <input type="hidden" name="lead-program-id" value="${escapeHtml(program.programId)}" />
       <fieldset><legend>Site details</legend><div class="form-grid form-grid--one">
         ${requiredFlowInput("site-name", "Site name", { autocomplete: "organization" })}
+        ${siteTypeSelect("")}
       </div></fieldset>
       <fieldset><legend>Address</legend>
         ${addressEditor({}, { required: true })}
@@ -4036,6 +4228,18 @@ function programContactDialog(contact) {
   </dialog>`;
 }
 
+function siteTypeSelect(value) {
+  const options = [
+    ["", "Not set"],
+    ["permanent_supportive_housing", "Permanent supportive housing"],
+    ["shelter", "Shelter"],
+    ["drop_in", "Drop-in"],
+  ];
+  return `<wa-select name="site-type" label="Site type">
+    ${options.map(([optionValue, label]) => `<wa-option value="${optionValue}" ${optionValue === value ? "selected" : ""}>${label}</wa-option>`).join("")}
+  </wa-select>`;
+}
+
 /**
  * @param {AdminSite} site
  * @param {boolean} saving
@@ -4062,6 +4266,7 @@ function siteEditor(state) {
       <legend>Site name and public contact</legend>
       <div class="form-grid form-grid--one" data-site-details-fields>
         ${formInput("site-name", "Site name", site.name, { required: true, autocomplete: "organization" })}
+        ${siteTypeSelect(site.siteType || "")}
         <div class="form-grid form-grid--two">
           ${formInput("public-contact-email", "Public contact email", publicContact.email, { type: "email", autocomplete: "email" })}
           ${formInput("public-contact-phone", "Public contact phone", publicContact.phone, { type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
@@ -4250,6 +4455,7 @@ function oversightCreationDialogs() {
         ${formInput("manager-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
       </div>
       ${formInput("manager-email", "City email", "", { required: true, type: "email", autocomplete: "email" })}
+      ${formInput("manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
       <div class="site-unsaved-dialog__actions">
         <button class="btn-secondary" type="button" data-close-dialog>Cancel</button>
         <button class="btn-primary" type="submit" data-save-button>Add manager</button>
@@ -4279,6 +4485,9 @@ function siteOversightView(state) {
     ? oversight.cityProgramManagerId
     : managers.find((manager) => manager.name === oversight.cityProgramManager)
         ?.userId || (oversight.cityProgramManager ? "legacy-existing" : "");
+  const selectedManager = managers.find(
+    (manager) => manager.userId === managerValue,
+  );
   const departments = uniqueNamedOptions([
     ...state.oversightOptions.departments,
     { name: "DPH" },
@@ -4299,6 +4508,7 @@ function siteOversightView(state) {
         ${managerValue === "legacy-existing" ? `<wa-option value="legacy-existing" selected>${escapeHtml(oversight.cityProgramManager)}</wa-option>` : ""}
         <wa-option value="__add_manager__" data-add-option>Add a new City program manager…</wa-option>
       </wa-select>
+      ${formInput("program-manager-phone", "City program manager phone", selectedManager?.phone || "", { required: Boolean(selectedManager), type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
       <wa-select name="managing-city-department" label="Managing City department" placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.name)}" ${department === item.name ? "selected" : ""}>${escapeHtml(item.name)}</wa-option>`).join("")}
         <wa-option value="__add_department__" data-add-option>Add a new City department…</wa-option>
@@ -4318,42 +4528,127 @@ function siteComplianceSummaryView(state) {
   const sortedTerms = [...state.siteTerms].sort((a, b) =>
     String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
   );
-  const latestTerms = sortedTerms[0];
-  const siteId = state.site?.siteId || "";
-  const newTermPath = `/sites/${encodeURIComponent(siteId)}?section=compliance&view=new-term`;
+  const active = activeSiteTerms(sortedTerms);
+  const missingLetterDetails = complianceLetterDetailsMissing(state);
   return `<section class="site-details-form" aria-labelledby="compliance-title">
-    <h2 id="compliance-title">Current compliance term</h2>
-    ${termsHistory(latestTerms ? [latestTerms] : [], "No current compliance term has been saved.")}
-    <div>
-      <button class="btn-primary" type="button" data-navigate="${escapeHtml(newTermPath)}">Add a new compliance term</button>
-    </div>
-  </section>`;
+    <h2 id="compliance-title">Perimeter checks required</h2>
+    <wa-checkbox id="perimeter-checks-required" ${active ? "checked" : ""} ${missingLetterDetails && !active ? "disabled" : ""} ${missingLetterDetails ? 'aria-describedby="perimeter-checks-prerequisite-error"' : ""}>Require perimeter checks for this site</wa-checkbox>
+    ${missingLetterDetails ? '<p id="perimeter-checks-prerequisite-error" class="error compliance-prerequisite-error" role="alert">Complete the Site manager, address, department, and City program manager contact details before requiring checks.</p>' : ""}
+    ${active ? termsHistory([active]) : '<p class="muted">There is no current perimeter check compliance period.</p>'}
+  </section>
+  ${newChecksPeriodDialog(state)}
+  <dialog id="end-checks-period-dialog" class="places-modal" aria-labelledby="end-checks-period-title" aria-describedby="end-checks-period-copy">
+    <form class="places-modal__card" method="dialog">
+      <div class="places-modal__copy">
+        <h2 id="end-checks-period-title">Stop requiring perimeter checks?</h2>
+        <p id="end-checks-period-copy">The site will no longer be required to complete perimeter checks.</p>
+      </div>
+      <div class="places-modal__actions">
+        <button class="btn-danger" value="confirm">No longer require checks</button>
+        <button class="btn-secondary" value="cancel">Continue to require checks</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
-function siteComplianceTermView(state) {
-  const sortedTerms = [...state.siteTerms].sort((a, b) =>
-    String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
+function complianceLetterDetailsMissing(state) {
+  const site = state.site;
+  if (!site) return true;
+  const primaryContact =
+    site.primaryContact ||
+    state.availableSiteUsers.find(
+      (user) => user.userId === site.primaryContactUserId,
+    );
+  const oversight = site.oversight || {};
+  const programManager = state.programManagers.find(
+    (manager) => manager.userId === oversight.cityProgramManagerId,
   );
-  const latestTerms = sortedTerms[0];
-  const siteId = state.site?.siteId || "";
-  return `<section class="compliance-term-view" aria-labelledby="new-compliance-term-title">
-    <a class="site-back-link" href="/sites/${encodeURIComponent(siteId)}?section=compliance" data-route><span aria-hidden="true">‹</span> Compliance</a>
-    <h2 id="new-compliance-term-title">Add a new compliance term</h2>
-    <form id="site-compliance-form" class="site-details-form" data-dirty-form>
-      <fieldset>
-        <legend class="visually-hidden">New compliance term</legend>
-      <div class="form-grid form-grid--one">
-        <wa-select name="terms-tier" label="Choose tier" required placeholder="Choose tier">
-          ${[0, 1, 2, 3, 4].map((tier) => `<wa-option value="${tier}" ${tier === Number(latestTerms?.tier || 0) ? "selected" : ""}>${tier === 0 ? "Tier 0 — No enhanced monitoring" : `Tier ${tier}`}</wa-option>`).join("")}
-        </wa-select>
-        ${formInput("terms-start", "Start date", firstDayOfNextMonth(), { type: "date", required: true })}
-        ${formInput("terms-expiry", "End date (exclusive; leave blank for indefinite)", "", { type: "date" })}
-        <wa-number-input id="terms-checks-per-day" name="terms-checks-per-day" label="Required checks per day" min="0" max="100" step="1" value="${escapeHtml(latestTerms?.requiredChecksPerDay ?? 0)}" required></wa-number-input>
+  return !(
+    site.name &&
+    site.address &&
+    site.primaryContactUserId &&
+    primaryContact?.firstName &&
+    primaryContact?.lastName &&
+    oversight.managingCityDepartment &&
+    oversight.cityProgramManagerId &&
+    programManager?.name &&
+    programManager?.email &&
+    programManager?.phone
+  );
+}
+
+function newChecksPeriodDialog(state) {
+  const mappedReason = {
+    permanent_supportive_housing: "2",
+    shelter: "3",
+    drop_in: "4",
+  }[state.site?.siteType || ""];
+  const reasons = [
+    [
+      "1",
+      "Recurring or unresolved Good Neighbor concerns have been identified at this site.",
+    ],
+    ["2", "Site is a Permanent Supportive Housing property."],
+    ["3", "Site is a Shelter."],
+    [
+      "4",
+      "Site is a drop-in center characterized by frequent, high-volume visitor traffic, where continuous public-facing conditions make more frequent documentation reasonably necessary.",
+    ],
+    [
+      "5",
+      "The department has evidence of a pattern of undocumented or un-escalated conditions at the site.",
+    ],
+    ["6", "The provider is in Tiers 1–4 of corrective action."],
+  ];
+  return `<dialog id="new-checks-period-dialog" class="places-modal compliance-period-dialog" aria-labelledby="new-checks-period-title">
+    <form id="site-compliance-form" class="places-modal__card site-details-form" novalidate>
+      <div class="places-modal__copy">
+        <h3 class="places-modal__title" id="new-checks-period-title">Set up the perimeter check requirement</h3>
+        <p>Indicate why perimeter checks will apply.</p>
+        <input type="hidden" name="terms-start" value="${todayPacific()}" />
+        <fieldset class="form-grid form-grid--one compliance-period-reasons">
+          <legend>Select one or more reasons</legend>
+          ${reasons.map(([value, label]) => `<wa-checkbox name="terms-reason" value="${value}" ${mappedReason === value ? "checked" : ""}>${escapeHtml(label)}</wa-checkbox>`).join("")}
+        </fieldset>
+        <div class="form-grid form-grid--one compliance-period-fields">
+          <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
+          <wa-select name="terms-tier" label="New corrective-action tier" placeholder="Choose a tier" data-tier-field hidden>
+            ${[1, 2, 3, 4].map((tier) => `<wa-option value="${tier}">Tier ${tier}</wa-option>`).join("")}
+          </wa-select>
+          <wa-number-input name="terms-checks-per-day" label="Required checks per day" min="1" max="100" step="1" value="3" required></wa-number-input>
+        </div>
+        <p class="error site-details-form__message compliance-period-error" role="alert" data-form-save-error hidden></p>
       </div>
-      </fieldset>
-      <button class="btn-primary" type="submit" data-save-button disabled>Save new compliance term</button>
+      <div class="places-modal__actions">
+        <button class="btn-primary" type="submit" data-save-button>Save and generate letter</button>
+        <button class="btn-secondary" type="button" data-cancel-checks-period>Cancel</button>
+      </div>
     </form>
-  </section>`;
+  </dialog>`;
+}
+
+function activeSiteTerms(terms) {
+  const today = todayPacific();
+  return terms.find(
+    (term) =>
+      term.status !== "cancelled" &&
+      term.effectiveStart <= today &&
+      (!term.expiresOnExclusive || term.expiresOnExclusive > today),
+  );
+}
+
+function todayPacific() {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(new Date())
+      .map(({ type, value }) => [type, value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 /**
@@ -4423,7 +4718,12 @@ function syncProviderDetailsForm(form) {
  */
 function syncSiteDetailsForm(form, initialize = false) {
   const sections = {
-    details: ["site-name", "public-contact-email", "public-contact-phone"],
+    details: [
+      "site-name",
+      "site-type",
+      "public-contact-email",
+      "public-contact-phone",
+    ],
     address: ["street-address", "city", "state", "zip"],
     leadProgram: ["lead-program-id"],
     siteManager: ["site-manager-user-id"],
@@ -4439,7 +4739,7 @@ function syncSiteDetailsForm(form, initialize = false) {
           name,
           useDeclaredInitialValue && declaredInitialValue !== null
             ? declaredInitialValue
-            : String(control?.value || ""),
+            : controlValue(form, name),
         ];
       }),
     );
@@ -4497,6 +4797,7 @@ function markSiteDetailsSectionEdited(form, event) {
   const name = target.getAttribute("name") || "";
   const section = {
     "site-name": "details",
+    "site-type": "details",
     "public-contact-email": "details",
     "public-contact-phone": "details",
     "address-query": "address",
@@ -4543,6 +4844,74 @@ function showFormSaveError(form, message) {
     else form.append(error);
   }
   error.textContent = message;
+  error.hidden = false;
+}
+
+/**
+ * Read a Web Awesome or native form control directly. This avoids depending on
+ * form-associated custom elements having finished upgrading before submission.
+ * @param {HTMLFormElement} form
+ * @param {string} name
+ */
+function controlValue(form, name) {
+  const control = /** @type {{ value?: unknown } | null} */ (
+    form.querySelector(`[name='${name}']`)
+  );
+  if (control instanceof Element && control.localName === "wa-select") {
+    const selectedOption = [...control.querySelectorAll("wa-option")].find(
+      (option) =>
+        option.getAttribute("aria-selected") === "true" ||
+        Boolean(/** @type {any} */ (option).selected),
+    );
+    if (selectedOption) {
+      return String(selectedOption.getAttribute("value") ?? "").trim();
+    }
+  }
+  return String(control?.value ?? "").trim();
+}
+
+/**
+ * Keep a Web Awesome select's host value and option state in sync. This is
+ * especially important when restoring the previous choice after an “Add new”
+ * directory action.
+ * @param {Element & { value?: unknown }} select
+ * @param {string} value
+ */
+function setSelectValue(select, value) {
+  select.querySelectorAll("wa-option").forEach((option) => {
+    const selected = option.getAttribute("value") === value;
+    /** @type {any} */ (option).selected = selected;
+    option.toggleAttribute("selected", selected);
+  });
+  select.value = value;
+}
+
+/** @param {HTMLFormElement} form */
+function selectedComplianceReasons(form) {
+  return [...form.querySelectorAll("wa-checkbox[name='terms-reason']")]
+    .filter((checkbox) => /** @type {any} */ (checkbox).checked)
+    .map((checkbox) => String(/** @type {any} */ (checkbox).value));
+}
+
+/** @param {HTMLFormElement} form */
+function compliancePeriodValidationError(form) {
+  const reasons = selectedComplianceReasons(form);
+  if (!reasons.length)
+    return "Select at least one reason for requiring perimeter checks.";
+  if (
+    reasons.some((reason) => ["1", "5", "6"].includes(reason)) &&
+    !controlValue(form, "terms-expiry")
+  ) {
+    return "Enter the last day checks are required for the selected reasons.";
+  }
+  if (reasons.includes("6") && !controlValue(form, "terms-tier")) {
+    return "Choose a corrective-action tier from 1 through 4.";
+  }
+  const checksPerDay = Number(controlValue(form, "terms-checks-per-day"));
+  if (!Number.isInteger(checksPerDay) || checksPerDay < 1) {
+    return "Enter at least one required check per day.";
+  }
+  return "";
 }
 
 /** @param {unknown} value */
@@ -4626,6 +4995,9 @@ function siteSaveErrorMessage(error) {
   if (code === "invalid_oversight") {
     return "Check the City program manager, department, and system of care.";
   }
+  if (code === "valid_phone_required") {
+    return "Enter a valid 10-digit City program manager phone number.";
+  }
   if (code === "invalid_compliance") {
     return "Check the compliance tier, dates, and required checks per day.";
   }
@@ -4643,6 +5015,19 @@ function siteSaveErrorMessage(error) {
     return "Someone else updated this site. Reload it before saving your changes.";
   }
   return "The site couldn't be saved. Try again.";
+}
+
+function compliancePeriodErrorMessage(error) {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "expiry_required")
+    return "Enter the last day checks are required for the selected reasons.";
+  if (code === "invalid_tier")
+    return "Choose a corrective-action tier from 1 through 4.";
+  if (code === "letter_details_required")
+    return "Complete the Site manager, address, department, and City program manager contact details before requiring checks.";
+  if (code === "terms_overlap" || code === "terms_start_conflict")
+    return "This compliance period overlaps another period for the Site.";
+  return "The perimeter check compliance period couldn't be saved. Try again.";
 }
 
 function managerSaveErrorMessage(error) {

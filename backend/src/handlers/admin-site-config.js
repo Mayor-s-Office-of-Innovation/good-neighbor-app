@@ -31,23 +31,40 @@ export const listSiteTerms = (event) =>
 export const createSiteTerms = (event) =>
   adminOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const tier = Number(body.tier);
+    const reasons = normalizeReasons(body.reasons);
+    const tier =
+      body.correctiveActionTier === undefined
+        ? null
+        : Number(body.correctiveActionTier);
     const requiredChecksPerDay = Number(body.requiredChecksPerDay);
     const effectiveStart = isoDate(body.effectiveStart);
-    const expiresOnExclusive = body.expiresOnExclusive
-      ? isoDate(body.expiresOnExclusive)
-      : "";
-    if (!Number.isInteger(tier) || tier < 0 || tier > 4) {
+    const periodEnd = body.periodEnd ? isoDate(body.periodEnd) : "";
+    const expiresOnExclusive = periodEnd ? nextIsoDate(periodEnd) : "";
+    if (!reasons.length)
+      return jsonResponse(400, { error: "reasons_required" });
+    if (
+      reasons.includes("6") &&
+      (!Number.isInteger(tier) || Number(tier) < 1 || Number(tier) > 4)
+    ) {
       return jsonResponse(400, { error: "invalid_tier" });
     }
-    if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 0) {
+    if (!reasons.includes("6") && tier !== null) {
+      return jsonResponse(400, { error: "tier_requires_reason_six" });
+    }
+    if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 1) {
       return jsonResponse(400, { error: "invalid_check_cadence" });
     }
     if (!effectiveStart) {
       return jsonResponse(400, { error: "invalid_effective_start" });
     }
-    if (body.expiresOnExclusive && !expiresOnExclusive) {
+    if (body.periodEnd && !periodEnd) {
       return jsonResponse(400, { error: "invalid_expiry" });
+    }
+    if (
+      reasons.some((reason) => ["1", "5", "6"].includes(reason)) &&
+      !periodEnd
+    ) {
+      return jsonResponse(400, { error: "expiry_required" });
     }
     if (expiresOnExclusive && expiresOnExclusive <= effectiveStart) {
       return jsonResponse(400, { error: "invalid_terms_range" });
@@ -73,6 +90,40 @@ export const createSiteTerms = (event) =>
     ]);
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
+    }
+    const site = siteResult.Item;
+    const primaryContact = site.primaryContact;
+    const oversight = site.oversight;
+    if (
+      !site.name ||
+      !site.address ||
+      !site.primaryContactUserId ||
+      !primaryContact?.firstName ||
+      !primaryContact?.lastName ||
+      !oversight?.managingCityDepartment ||
+      !oversight?.cityProgramManagerId
+    ) {
+      return jsonResponse(409, { error: "letter_details_required" });
+    }
+    const managerResult = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
+      }),
+    );
+    const programManager = (managerResult.Items ?? []).find(
+      (item) => item.userId === oversight.cityProgramManagerId,
+    );
+    if (
+      !programManager?.firstName ||
+      !programManager?.lastName ||
+      !programManager?.email ||
+      !programManager?.phone
+    ) {
+      return jsonResponse(409, { error: "letter_details_required" });
     }
     const existing = (termsResult.Items ?? []).filter(
       (item) => item.status !== "cancelled",
@@ -114,13 +165,28 @@ export const createSiteTerms = (event) =>
       entityType: "COMPLIANCE_TERMS",
       siteId,
       termsVersionId,
-      tier,
+      reasons,
+      ...(tier === null ? {} : { correctiveActionTier: tier }),
       requiredChecksPerDay,
       effectiveStart,
+      ...(periodEnd ? { periodEnd } : {}),
       ...(expiresOnExclusive ? { expiresOnExclusive } : {}),
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
+      letterInputs: {
+        confirmedOn: effectiveStart,
+        siteName: String(site.name),
+        siteManagerFirstName: String(primaryContact.firstName),
+        siteManagerName:
+          `${primaryContact.firstName} ${primaryContact.lastName}`.trim(),
+        siteAddress: String(site.address),
+        departmentName: String(oversight.managingCityDepartment),
+        programManagerName:
+          `${programManager.firstName} ${programManager.lastName}`.trim(),
+        programManagerPhone: String(programManager.phone),
+        programManagerEmail: String(programManager.email),
+      },
     };
     const letterJobId = randomUUID();
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
@@ -131,7 +197,7 @@ export const createSiteTerms = (event) =>
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression:
-            "SET latestComplianceTermsVersionId = :version, complianceTermsUpdatedAt = :now, letterState = :dirty, updatedAt = :now",
+            "SET latestComplianceTermsVersionId = :version, complianceTermsUpdatedAt = :now, letterState = :dirty, compliance = :compliance, updatedAt = :now",
           ConditionExpression:
             observedLatestVersion === undefined
               ? "attribute_exists(pk) AND attribute_not_exists(latestComplianceTermsVersionId)"
@@ -140,6 +206,13 @@ export const createSiteTerms = (event) =>
             ":version": termsVersionId,
             ":now": now,
             ":dirty": "draft_pending",
+            ":compliance": {
+              perimeterChecksRequired: true,
+              periodStart: effectiveStart,
+              ...(periodEnd ? { periodEnd } : {}),
+              requiredChecksPerDay,
+              ...(tier === null ? {} : { currentTier: tier }),
+            },
             ...(observedLatestVersion === undefined
               ? {}
               : { ":observedLatest": observedLatestVersion }),
@@ -150,9 +223,17 @@ export const createSiteTerms = (event) =>
         pk: `SITE#${siteId}`,
         sk: `LETTER_JOB#${now}#${letterJobId}`,
         type: "complianceLetterGenerationJob",
+        entityType: "COMPLIANCE_LETTER_OUTBOX",
         siteId,
         letterJobId,
         termsVersionId,
+        termsSk: terms.sk,
+        previousLetters: [
+          ...(site.complianceLetters?.current
+            ? [site.complianceLetters.current]
+            : []),
+          ...(site.complianceLetters?.past ?? []),
+        ],
         status: "pending",
         createdAt: now,
         createdBy: actor,
@@ -193,6 +274,102 @@ export const createSiteTerms = (event) =>
       throw error;
     }
     return jsonResponse(201, { terms, letterState: "draft_pending" });
+  });
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const endSiteTerms = (event) =>
+  adminOnly(event, async () => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const tableName = getDynamoTableName();
+    const [siteResult, termsResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "COMPLIANCE_TERMS#",
+          },
+        }),
+      ),
+    ]);
+    if (!siteResult.Item || siteResult.Item.status === "inactive") {
+      return jsonResponse(404, { error: "site_not_found" });
+    }
+    const today = pacificIsoDate();
+    const active = (termsResult.Items ?? [])
+      .filter(
+        (item) =>
+          item.status !== "cancelled" &&
+          item.effectiveStart <= today &&
+          (!item.expiresOnExclusive || item.expiresOnExclusive > today),
+      )
+      .sort((a, b) =>
+        String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
+      )[0];
+    if (!active) return jsonResponse(409, { error: "no_active_checks_period" });
+    const now = new Date().toISOString();
+    const actor = String(
+      /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
+        "central-admin",
+    );
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: active.pk, sk: active.sk },
+              UpdateExpression:
+                "SET expiresOnExclusive = :today, endedAt = :now, endedBy = :actor, #status = :ended",
+              ConditionExpression:
+                "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":today": today,
+                ":now": now,
+                ":actor": actor,
+                ":ended": "expired",
+              },
+            },
+          },
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: `SITE#${siteId}`, sk: "#META" },
+              UpdateExpression:
+                "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now",
+              ConditionExpression: "latestComplianceTermsVersionId = :version",
+              ExpressionAttributeValues: {
+                ":compliance": { perimeterChecksRequired: false },
+                ":now": now,
+                ":version": active.termsVersionId,
+              },
+            },
+          },
+          put({
+            pk: `SITE#${siteId}`,
+            sk: `AUDIT#${now}#${randomUUID()}`,
+            type: "siteAuditEvent",
+            eventType: "perimeter_checks_period_ended",
+            siteId,
+            termsVersionId: active.termsVersionId,
+            actor,
+            createdAt: now,
+          }),
+        ],
+      }),
+    );
+    return jsonResponse(200, {
+      termsVersionId: active.termsVersionId,
+      endedAt: now,
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -531,6 +708,35 @@ function isoDate(value) {
     : text;
 }
 
+/** @param {unknown} value */
+function normalizeReasons(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(String))]
+    .filter((reason) => ["1", "2", "3", "4", "5", "6"].includes(reason))
+    .sort();
+}
+
+/** @param {string} value */
+function nextIsoDate(value) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function pacificIsoDate() {
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(new Date())
+      .map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 /**
  * @param {unknown} value
  * @returns {string}
@@ -545,16 +751,7 @@ function clean(value) {
  * @returns {"scheduled" | "expired" | "active"}
  */
 function termsStatus(start, expiry) {
-  const todayParts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const parts = Object.fromEntries(
-    todayParts.map(({ type, value }) => [type, value]),
-  );
-  const today = `${parts.year}-${parts.month}-${parts.day}`;
+  const today = pacificIsoDate();
   if (start > today) return "scheduled";
   if (expiry && expiry <= today) return "expired";
   return "active";

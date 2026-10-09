@@ -14,6 +14,7 @@ const {
   geocodeAddress,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -21,6 +22,7 @@ const {
   geocodeAddress: vi.fn(),
   headObject: vi.fn(),
   presignPut: vi.fn(),
+  presignGet: vi.fn(),
   setObjectTags: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
@@ -38,6 +40,7 @@ vi.mock("../s3.js", () => ({
   deleteObject,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 }));
 
@@ -133,6 +136,7 @@ describe("City program manager administration", () => {
         firstName: "Jamie",
         lastName: "Lee",
         email: "jamie.lee@sfgov.org",
+        phone: "415-555-0123",
       }),
     );
     expect(res.statusCode).toBe(201);

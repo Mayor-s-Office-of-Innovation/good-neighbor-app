@@ -326,10 +326,8 @@ resource "aws_lambda_event_source_mapping" "worker" {
   }
 }
 
-# Revocation requests and their outbox entries are committed atomically. This
-# filtered stream mapping forwards only new pending outbox entries to the worker,
-# which publishes the site reconciliation message to SQS and marks the entry as
-# dispatched. Stream retries close the former commit-then-send failure window.
+# Revocation and compliance-letter requests are committed with durable outbox
+# entries. This filtered stream mapping forwards them to the worker queue.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
   event_source_arn = aws_dynamodb_table.app.stream_arn
   function_name    = aws_lambda_function.worker.arn
@@ -346,7 +344,7 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
         eventName = ["INSERT"]
         dynamodb = {
           NewImage = {
-            entityType = { S = ["REVOCATION_OUTBOX"] }
+            entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] }
           }
         }
       })
