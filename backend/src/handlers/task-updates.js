@@ -533,10 +533,12 @@ export const registerTaskUpdateMedia = async (event) => {
       throw error;
     }
   }
+  // Clears the presign's `state=pending` tag so the 1-day pending rule leaves
+  // the object alone; the bucket-wide 30-day rule owns it from here.
   await setObjectTags({
     bucket: uploadBucket,
     key: s3Key,
-    tags: { state: "accepted" },
+    tags: { state: "registered" },
   });
   return jsonResponse(alreadyRegistered ? 200 : 201, {
     artifactId,

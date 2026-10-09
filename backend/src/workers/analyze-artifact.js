@@ -309,11 +309,6 @@ async function analyzeArtifact(
       return;
     }
     const { bytes, contentType } = downscaled;
-    await setObjectTags({
-      bucket: uploadBucket,
-      key: msg.s3Key,
-      tags: { state: "accepted" },
-    });
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —

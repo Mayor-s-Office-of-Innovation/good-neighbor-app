@@ -236,7 +236,7 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   would not isolate one Site from another.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Pending/rejected media expires after one day, registered-but-unprocessed media after two days, and accepted media after seven days; noncurrent media versions expire after one day.
+- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Every photo expires 30 days after upload via a bucket-wide rule; uploads that were never registered or were rejected during registration/analysis are tagged and expire after one day. Bucket versioning is suspended so expired photos leave no noncurrent copy.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)

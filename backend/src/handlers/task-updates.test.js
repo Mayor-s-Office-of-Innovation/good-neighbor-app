@@ -267,7 +267,7 @@ describe("task update handlers", () => {
 
     expect(response.statusCode).toBe(200);
     expect(setObjectTags).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: { state: "accepted" } }),
+      expect.objectContaining({ tags: { state: "registered" } }),
     );
   });
 

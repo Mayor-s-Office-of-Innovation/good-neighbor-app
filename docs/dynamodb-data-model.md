@@ -537,8 +537,9 @@ routine.
 
 1. **City cross-site queue.** Deferred post-MVP. GSI3 is sparse and can be added with no
    rebuild. The queue view ships with the escalation integrations.
-2. **Retention.** Enforced by upload-state tags: pending/rejected one day,
-   registered two days, accepted seven days, and noncurrent media versions one day.
+2. **Retention.** A bucket-wide rule expires every photo 30 days after upload. Upload-state
+   tags only shorten that: never-registered (pending) and rejected media expire after one
+   day. Bucket versioning is suspended, so expiry removes the bytes outright.
 3. **Analytics scope and metrics.** The Tier 2 S3-export lake is built
    ([ADR 0013](./adr/0013-analytics-read-plane.md)). Tier 1 live KPIs are post-MVP. Metric
    definitions are settled (see above).

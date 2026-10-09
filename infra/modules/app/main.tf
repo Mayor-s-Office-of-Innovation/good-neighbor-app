@@ -328,6 +328,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
 }
 
 resource "aws_s3_bucket" "uploads" {
+  # checkov:skip=CKV_AWS_21:Media is write-once under an unpredictable key and is
+  # never overwritten or restored; the only deletes are the lifecycle rules below.
+  # Versioning would keep expired photos alive as noncurrent versions, working
+  # against the retention window, so it is suspended. The frontend and
+  # compliance-letter buckets keep it on.
   bucket_prefix = "${local.bucket_name_prefix}-uploads-"
   force_destroy = false
 }
@@ -384,8 +389,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 resource "aws_s3_bucket_versioning" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # S3 cannot disable versioning once enabled, only suspend it. Suspended also
+  # works for a fresh bucket, so every environment uses the same value.
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -399,6 +406,11 @@ resource "aws_s3_bucket_logging" "uploads" {
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # Retention policy: every photo expires 30 days after upload. The two tag
+  # rules below only shorten that for uploads the app never registered
+  # (`state=pending`) or rejected during registration/analysis
+  # (`state=rejected`). S3 applies the shortest matching expiration, so this
+  # rule never extends either of those windows.
   rule {
     id     = "expire-incomplete-uploads"
     status = "Enabled"
@@ -407,17 +419,42 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
       prefix = ""
     }
 
+    expiration {
+      days = 30
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
 
+    # Versioning is suspended, so this only drains versions created before the
+    # suspension. It can be removed once none remain.
     noncurrent_version_expiration {
-      noncurrent_days = 90
+      noncurrent_days = 7
     }
   }
 
+  # Expiring an object on a versioning-suspended bucket still leaves a delete
+  # marker behind. Clean those up once nothing sits under them. S3 forbids
+  # combining this with a day-based expiration or a tag filter, hence its own rule.
   rule {
-    id     = "expire-pending-compliance-letters"
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  # The presigned PUT tags every upload `state=pending`; registration retags it
+  # `state=registered`. Anything still pending after a day was abandoned
+  # between the PUT and the register call.
+  rule {
+    id     = "expire-pending-media"
     status = "Enabled"
 
     filter {
@@ -429,26 +466,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  rule {
-    id     = "expire-registered-media"
-    status = "Enabled"
-
-    filter {
-      tag {
-        key   = "state"
-        value = "registered"
-      }
-    }
-
-    expiration {
-      days = 2
     }
 
     noncurrent_version_expiration {
@@ -469,26 +486,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  rule {
-    id     = "expire-accepted-media"
-    status = "Enabled"
-
-    filter {
-      tag {
-        key   = "state"
-        value = "accepted"
-      }
-    }
-
-    expiration {
-      days = 7
     }
 
     noncurrent_version_expiration {
