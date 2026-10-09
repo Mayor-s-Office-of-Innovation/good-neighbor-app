@@ -518,6 +518,12 @@ resource "aws_cloudwatch_metric_alarm" "manager_access_delivery_failed" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
+  # The web ACL is CLOUDFRONT-scoped (created in us-east-1), and AWS/WAFV2
+  # publishes its metrics there. An alarm in the module's home region never
+  # saw this metric; it has to live in us-east-1 and notify the us-east-1
+  # topic (platform-alarms.tf).
+  provider = aws.us_east_1
+
   alarm_name          = "${local.name_prefix}-manager-access-waf-blocked"
   alarm_description   = "The WAF ManagerAccessRateLimit rule is blocking a burst of public recovery requests. Triage with docs/runbooks/manager-access.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -530,13 +536,15 @@ resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
   threshold           = 10
   treat_missing_data  = "notBreaching"
 
+  # AWS/WAFV2 dimensions are the visibility_config METRIC names, not the
+  # rule/ACL names (main.tf sets both; they differ for every rule).
   dimensions = {
     Region = "Global"
-    Rule   = "ManagerAccessRateLimit"
-    WebACL = aws_wafv2_web_acl.web.name
+    Rule   = "${local.name_prefix}-manager-access-rate"
+    WebACL = aws_wafv2_web_acl.web.visibility_config[0].metric_name
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
+  alarm_actions = [aws_sns_topic.alarms_us_east_1.arn]
 
   tags = var.tags
 }

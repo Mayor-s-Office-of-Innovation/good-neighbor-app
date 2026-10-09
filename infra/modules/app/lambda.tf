@@ -117,6 +117,8 @@ resource "aws_lambda_function" "api" {
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
+      # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
+      METRICS_NAMESPACE = local.metrics_namespace
     }, local.sf311_lambda_environment)
   }
 
@@ -266,6 +268,8 @@ resource "aws_lambda_function" "worker" {
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
+      # Business metrics (lib/metrics.js, EMF): Analysis* + AnalyzerLatencyMs.
+      METRICS_NAMESPACE = local.metrics_namespace
     }, local.sf311_lambda_environment)
   }
 

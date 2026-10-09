@@ -77,6 +77,44 @@ describe("createCheck", () => {
     expect(cmd.input.Item.gsi1sk).toBe(cmd.input.Item.startedAt);
   });
 
+  it("emits one CheckStarted metric line on a fresh header", async () => {
+    send.mockResolvedValueOnce({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(
+      checkEvent({ checkId: "chk_01", siteClaim: "site-1", body: {} }),
+    );
+
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toEqual([
+      expect.objectContaining({
+        marker: "CheckStarted",
+        FlowType: "perimeter",
+        CheckStarted: 1,
+        siteId: "site-1",
+        checkId: "chk_01",
+      }),
+    ]);
+    log.mockRestore();
+  });
+
+  it("emits no CheckStarted metric on an idempotent replay", async () => {
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const res = await invoke(
+      checkEvent({ checkId: "chk_01", siteClaim: "site-1", body: {} }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
   it("ignores a legacy places list in the body", async () => {
     send.mockResolvedValueOnce({});
 
@@ -339,6 +377,60 @@ describe("completeCheck", () => {
       textCount: 0,
       evidenceKind: "photos",
     });
+  });
+
+  it("emits one CheckCompleted metric line on the closing write only", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+      ],
+    });
+    send.mockResolvedValueOnce({});
+
+    await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toEqual([
+      expect.objectContaining({
+        marker: "CheckCompleted",
+        FlowType: "perimeter",
+        EvidenceKind: "photos",
+        CheckCompleted: 1,
+        CheckPhotoCount: 1,
+        CheckTextCount: 0,
+        siteId: "site-1",
+        checkId: "chk_01",
+        grade: "Fair",
+        issueCount: 1,
+        maxSeverity: 2,
+      }),
+    ]);
+
+    // Re-completing is an idempotent 200 with no second metric line.
+    log.mockClear();
+    send.mockResolvedValueOnce({
+      Items: [
+        headerItem(),
+        artifactItem("art_1", "place-north", "North"),
+        analyzedItem("art_1", "place-north", "North", "Fair", "Litter", 2),
+      ],
+    });
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("already"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    const again = await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+    expect(again.statusCode).toBe(200);
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
   });
 
   it("records mixed photo + description evidence counts on the header", async () => {

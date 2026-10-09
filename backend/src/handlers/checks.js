@@ -8,6 +8,7 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
+import { emitMetrics } from "../lib/metrics.js";
 import {
   checkAnalysisPrefix,
   checkArtifactPrefix,
@@ -143,6 +144,12 @@ export const createCheck = async (event) => {
         ConditionExpression: "attribute_not_exists(sk)",
       }),
     );
+    emitMetrics({
+      marker: "CheckStarted",
+      dimensions: { FlowType: flowType },
+      metrics: [{ name: "CheckStarted", value: 1 }],
+      props: { siteId, checkId },
+    });
     return jsonResponse(201, { checkId, status: "in_progress", startedAt });
   } catch (err) {
     if (
@@ -282,6 +289,30 @@ export const completeCheck = async (event) => {
         TransactItems: [headerUpdate],
       }),
     );
+    // Counted once, on the write that actually closed the check (the
+    // idempotent re-complete below is not a second completion). Two roll-ups
+    // from one line: by flow type, and by flow type + evidence mix.
+    emitMetrics({
+      marker: "CheckCompleted",
+      dimensions: {
+        FlowType:
+          header.flowType === "single-problem" ? "single-problem" : "perimeter",
+        EvidenceKind: evidence.evidenceKind,
+      },
+      dimensionSets: [["FlowType"], ["FlowType", "EvidenceKind"]],
+      metrics: [
+        { name: "CheckCompleted", value: 1 },
+        { name: "CheckPhotoCount", value: evidence.photoCount },
+        { name: "CheckTextCount", value: evidence.textCount },
+      ],
+      props: {
+        siteId,
+        checkId,
+        grade: scorecard.grade,
+        issueCount: scorecard.issueCount,
+        maxSeverity: scorecard.maxSeverity,
+      },
+    });
   } catch (err) {
     if (err instanceof Error && err.name === "TransactionCanceledException") {
       return jsonResponse(200, {

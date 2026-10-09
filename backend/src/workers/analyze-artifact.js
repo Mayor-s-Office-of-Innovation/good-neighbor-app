@@ -30,6 +30,7 @@ import {
   translateItemsFor,
 } from "../analysis/translate-enqueue.js";
 import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
+import { elapsedMs, emitMetrics } from "../lib/metrics.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -40,6 +41,33 @@ const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 // decides on the value — it is echoed back and lands on tasks as
 // `source.positionDescriptor` — so every artifact sends this fixed literal.
 export const POSITION_DESCRIPTOR = "perimeter";
+
+/**
+ * Evidence kind for the business metrics (observability plan Phase 2): a
+ * message with an S3 key is a photo, anything else is a typed description.
+ * Mirrors evidenceSummary in handlers/checks.js.
+ * @param {Pick<AnalyzeMessage, "s3Key">} msg
+ * @returns {"photo" | "text"}
+ */
+export function evidenceKindOf(msg) {
+  return typeof msg.s3Key === "string" && msg.s3Key.length > 0
+    ? "photo"
+    : "text";
+}
+
+/**
+ * Log-searchable ids every metric line carries (properties, never
+ * dimensions — see lib/metrics.js).
+ * @param {AnalyzeMessage} msg
+ * @returns {{ siteId: string, checkId: string, artifactId: string }}
+ */
+function metricIds(msg) {
+  return {
+    siteId: msg.siteId,
+    checkId: msg.checkId,
+    artifactId: msg.artifactId,
+  };
+}
 
 /**
  * @typedef {object} AnalyzeMessage
@@ -181,7 +209,20 @@ async function markFailed({ dynamoTable, msg, err }) {
     ) {
       throw putErr;
     }
+    return;
   }
+  // Counted once, when the failure is first recorded (a redelivery that finds
+  // the marker already present returns above and is not double-counted).
+  emitMetrics({
+    marker: "AnalysisFailed",
+    dimensions: { Kind: evidenceKindOf(msg) },
+    metrics: [{ name: "AnalysisFailed", value: 1 }],
+    props: {
+      ...metricIds(msg),
+      reason:
+        err.code ?? (err.status ? `http_${err.status}` : "analyzer_error"),
+    },
+  });
 }
 
 /**
@@ -327,6 +368,8 @@ async function analyzeArtifact(
 
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.
+  const kind = evidenceKindOf(msg);
+  const analyzeStartedAt = Date.now();
   let response;
   try {
     response = await client.analyze({
@@ -337,12 +380,44 @@ async function analyzeArtifact(
       ...(msg.language ? { language: msg.language } : {}),
     });
   } catch (err) {
-    if (err instanceof AnalyzerError && !err.retryable) {
-      await markFailed({ dynamoTable, msg, err });
+    const permanent = err instanceof AnalyzerError && !err.retryable;
+    // One AnalyzerLatencyMs sample per call regardless of outcome, so p95
+    // reflects slow failures (timeouts) and not just the happy path.
+    emitMetrics({
+      marker: "AnalyzerCall",
+      dimensions: { Kind: kind },
+      metrics: [
+        {
+          name: "AnalyzerLatencyMs",
+          value: elapsedMs(analyzeStartedAt),
+          unit: "Milliseconds",
+        },
+        // Transient failures are counted here (they rethrow and redeliver);
+        // permanent ones are counted by markFailed as AnalysisFailed.
+        ...(permanent ? [] : [{ name: "AnalysisRetried", value: 1 }]),
+      ],
+      props: {
+        ...metricIds(msg),
+        outcome: permanent ? "permanent" : "retryable",
+        reason:
+          err instanceof AnalyzerError
+            ? (err.code ?? (err.status ? `http_${err.status}` : "network"))
+            : err instanceof Error
+              ? err.name
+              : "UnknownError",
+      },
+    });
+    if (permanent) {
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: /** @type {AnalyzerError} */ (err),
+      });
       return;
     }
     throw err;
   }
+  const analyzerLatencyMs = elapsedMs(analyzeStartedAt);
 
   const adapted = adaptAssessment(response);
   // A missing or failed lookup is a normal fallback to the site's address.
@@ -394,10 +469,29 @@ async function analyzeArtifact(
       err.name === "ConditionalCheckFailedException"
     ) {
       // Redelivery: already analyzed. Don't double-count the counters.
+      emitMetrics({
+        marker: "AnalysisDuplicate",
+        dimensions: { Kind: kind },
+        metrics: [{ name: "AnalysisDuplicate", value: 1 }],
+        props: metricIds(msg),
+      });
       return;
     }
     throw err;
   }
+  emitMetrics({
+    marker: "AnalysisCompleted",
+    dimensions: { Kind: kind },
+    metrics: [
+      { name: "AnalysisCompleted", value: 1 },
+      {
+        name: "AnalyzerLatencyMs",
+        value: analyzerLatencyMs,
+        unit: "Milliseconds",
+      },
+    ],
+    props: { ...metricIds(msg), grade: adapted.grade },
+  });
 
   // 4. Hand the model-written text to the background translate worker so the
   //    locales the analyze call did not produce fill in (best-effort: a lost
