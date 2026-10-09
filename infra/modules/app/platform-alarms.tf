@@ -205,8 +205,11 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   treat_missing_data  = "notBreaching"
 
   metric_query {
-    id          = "throttles"
-    expression  = "reads + writes"
+    id = "throttles"
+    # DynamoDB publishes a throttle metric only in periods where throttling
+    # happened; without FILL a read-only throttle burst would leave `writes`
+    # missing and the sum missing, and the alarm would never evaluate.
+    expression  = "FILL(reads, 0) + FILL(writes, 0)"
     label       = "Read + write throttle events"
     return_data = true
   }
@@ -283,6 +286,11 @@ resource "aws_kms_key" "alarms_us_east_1" {
     Version = "2012-10-17"
     Statement = [
       {
+        # The account-root grant is the AWS-required anchor that lets IAM
+        # policies in this account administer the key at all (without it the
+        # key is unmanageable and Terraform cannot delete or rotate it). It
+        # grants nothing to any user by itself; the same statement opens
+        # aws_kms_key.app and aws_kms_key.smtp_secrets (main.tf).
         Sid    = "EnableIamUserPermissions"
         Effect = "Allow"
         Principal = {

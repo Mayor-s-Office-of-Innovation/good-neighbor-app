@@ -536,10 +536,12 @@ resource "aws_cloudwatch_metric_alarm" "manager_access_waf_blocked" {
   threshold           = 10
   treat_missing_data  = "notBreaching"
 
+  # AWS/WAFV2 dimensions are the visibility_config METRIC names, not the
+  # rule/ACL names (main.tf sets both; they differ for every rule).
   dimensions = {
     Region = "Global"
-    Rule   = "ManagerAccessRateLimit"
-    WebACL = aws_wafv2_web_acl.web.name
+    Rule   = "${local.name_prefix}-manager-access-rate"
+    WebACL = aws_wafv2_web_acl.web.visibility_config[0].metric_name
   }
 
   alarm_actions = [aws_sns_topic.alarms_us_east_1.arn]

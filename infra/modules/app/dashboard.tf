@@ -158,7 +158,12 @@ locals {
         title   = "Analysis failure rate (%)"
         stacked = false
         metrics = [
-          [{ expression = "100 * (fp + ft) / MAX([(cp + ct + fp + ft), 1])", label = "failed / (completed + failed)", id = "rate", color = "#d62728" }],
+          # Sparse metrics: FILL each series so a quiet hour reads 0 rather
+          # than dropping the point; IF guards the zero denominator (an array
+          # passed to MAX/MIN may only hold time series, never a scalar).
+          [{ expression = "FILL(cp, 0) + FILL(ct, 0) + FILL(fp, 0) + FILL(ft, 0)", id = "total", visible = false }],
+          [{ expression = "FILL(fp, 0) + FILL(ft, 0)", id = "failed", visible = false }],
+          [{ expression = "IF(total > 0, 100 * failed / total, 0)", label = "failed / (completed + failed)", id = "rate", color = "#d62728" }],
           [local.ns, "AnalysisCompleted", "Kind", "photo", { id = "cp", visible = false }],
           [local.ns, "AnalysisCompleted", "Kind", "text", { id = "ct", visible = false }],
           [local.ns, "AnalysisFailed", "Kind", "photo", { id = "fp", visible = false }],
@@ -288,8 +293,8 @@ locals {
         period  = 300
         stat    = "Sum"
         metrics = [
-          ["AWS/WAFV2", "AllowedRequests", "Region", "Global", "WebACL", aws_wafv2_web_acl.web.name, "Rule", "ALL", { label = "allowed" }],
-          ["AWS/WAFV2", "BlockedRequests", "Region", "Global", "WebACL", aws_wafv2_web_acl.web.name, "Rule", "ALL", { label = "blocked", color = "#d62728" }],
+          ["AWS/WAFV2", "AllowedRequests", "Region", "Global", "WebACL", aws_wafv2_web_acl.web.visibility_config[0].metric_name, "Rule", "ALL", { label = "allowed" }],
+          ["AWS/WAFV2", "BlockedRequests", "Region", "Global", "WebACL", aws_wafv2_web_acl.web.visibility_config[0].metric_name, "Rule", "ALL", { label = "blocked", color = "#d62728" }],
         ]
         yAxis = { left = { min = 0, showUnits = false } }
       }
