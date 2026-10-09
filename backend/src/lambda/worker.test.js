@@ -7,11 +7,13 @@ const {
   analyzeArtifact,
   reconcileSiteRevocation,
   dispatchRevocationOutbox,
+  translateArtifact,
 } = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
   dispatchRevocationOutbox: vi.fn(async () => {}),
+  translateArtifact: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
@@ -22,6 +24,9 @@ vi.mock("../workers/reconcile-site-revocation.js", () => ({
 }));
 vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
   handler: dispatchRevocationOutbox,
+}));
+vi.mock("../workers/translate-artifact.js", () => ({
+  handler: translateArtifact,
 }));
 
 const { handler } = await import("./worker.js");
@@ -42,6 +47,24 @@ describe("worker dispatch (pickHandler)", () => {
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
     dispatchRevocationOutbox.mockClear();
+    translateArtifact.mockClear();
+  });
+
+  it("routes a translate_artifact message to the translate worker", async () => {
+    await handler(
+      event({
+        type: "translate_artifact",
+        siteId: "s1",
+        checkId: "c1",
+        artifactId: "a1",
+        items: [{ user_friendly_label: "Trash", description: "Bags" }],
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(translateArtifact).toHaveBeenCalledTimes(1);
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {

@@ -1078,6 +1078,42 @@ describe("card redesign", () => {
     }
   });
 
+  it("renders the active locale from a per-locale translations map", async () => {
+    await setLocale("fil");
+    try {
+      const task = {
+        taskId: "task_map",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          es: {
+            user_friendly_label: "Basura que bloquea la acera",
+            description: "Descripción en español",
+          },
+          fil: {
+            user_friendly_label: "Basura na naghaharang ng bangketa",
+            description: "Paglalarawan sa Filipino",
+          },
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain("<h3>Basura na naghaharang ng bangketa</h3>");
+      expect(card).toContain("<p>Paglalarawan sa Filipino</p>");
+      expect(card).not.toContain("Basura que bloquea la acera");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
   it("keeps English analyzer text when the translations target another locale", async () => {
     await setLocale("es");
     try {

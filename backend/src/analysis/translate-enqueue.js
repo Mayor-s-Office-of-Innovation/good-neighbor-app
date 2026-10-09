@@ -1,0 +1,102 @@
+// Enqueue a background translation job for the model-written text of one
+// artifact. The analyze worker calls this after it persists an ANALYSIS# item,
+// and the evaluate handler after it stores CONDITION#/TASK# copies, so every
+// place English analyzer text lands eventually gets every target locale (see
+// workers/translate-artifact.js, which consumes the message).
+//
+// Both callers treat the send as best-effort: translations are display sugar,
+// so a failed enqueue is logged, never allowed to fail the analysis or the
+// assessment that just succeeded.
+
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
+import { missingTranslationLocales } from "./translations.js";
+
+const sqs = new SQSClient({});
+
+/** Message discriminator the worker Lambda dispatches on. */
+export const TRANSLATE_MESSAGE_TYPE = "translate_artifact";
+
+/**
+ * One English label/description pair to translate. Matched back to stored
+ * records by exact text, so no record ids travel on the message.
+ * @typedef {object} TranslateItem
+ * @property {string} user_friendly_label
+ * @property {string} description
+ */
+
+/**
+ * @typedef {object} TranslateMessage
+ * @property {typeof TRANSLATE_MESSAGE_TYPE} type
+ * @property {string} siteId
+ * @property {string} checkId
+ * @property {string} artifactId
+ * @property {TranslateItem[]} items
+ */
+
+/**
+ * Distinct label/description pairs from stored records (ANALYSIS# concerns,
+ * CONDITION# or TASK# items) that still lack at least one target locale.
+ * Records missing either field are skipped: the service translates pairs.
+ * @param {readonly { userFriendlyLabel?: unknown, explanation?: unknown, description?: unknown, translations?: unknown }[]} records
+ * @returns {TranslateItem[]}
+ */
+export function translateItemsFor(records) {
+  /** @type {Map<string, TranslateItem>} */
+  const byText = new Map();
+  for (const record of records) {
+    const label = textOf(record.userFriendlyLabel);
+    const description = textOf(record.explanation ?? record.description);
+    if (!label || !description) continue;
+    if (missingTranslationLocales(record.translations).length === 0) continue;
+    byText.set(JSON.stringify([label, description]), {
+      user_friendly_label: label,
+      description,
+    });
+  }
+  return [...byText.values()];
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function textOf(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Send one translate message; no-op when there is nothing to translate.
+ * @param {object} params
+ * @param {string} params.queueUrl
+ * @param {string} params.siteId
+ * @param {string} params.checkId
+ * @param {string} params.artifactId
+ * @param {TranslateItem[]} params.items
+ * @param {{ send: (command: SendMessageCommand) => Promise<unknown> }} [params.sqsClient]
+ * @returns {Promise<boolean>} whether a message was sent
+ */
+export async function enqueueTranslateArtifact({
+  queueUrl,
+  siteId,
+  checkId,
+  artifactId,
+  items,
+  sqsClient = sqs,
+}) {
+  if (items.length === 0) return false;
+  /** @type {TranslateMessage} */
+  const message = {
+    type: TRANSLATE_MESSAGE_TYPE,
+    siteId,
+    checkId,
+    artifactId,
+    items,
+  };
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+    }),
+  );
+  return true;
+}
