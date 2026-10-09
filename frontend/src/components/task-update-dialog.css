@@ -103,20 +103,7 @@
 .task-update time {
   color: var(--wa-color-text-quiet);
 }
-.task-update__photo {
-  display: block;
-  width: 7.5rem;
-  height: 7.5rem;
-  object-fit: cover;
-  border-radius: var(--wa-border-radius-l);
-}
 
-.task-update__photo-trigger {
-  width: fit-content;
-  /* Photo buttons must reserve the image height, not the form-control height. */
-  height: auto;
-  border-radius: var(--radius-sm);
-}
 .task-update__photo-trigger:has(.task-update__photo--original) {
   margin-block: 1rem;
 }
@@ -165,12 +152,6 @@
 .task-update__updates-title {
   margin-block-end: 0;
 }
-.task-update__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-block: 1rem 1.5rem;
-}
 .task-update__section .task-update__actions > button {
   flex: 0 0 auto;
   width: max-content;
@@ -179,23 +160,8 @@
 .task-update__timeline {
   margin-top: 1.25rem;
 }
-.task-update__timeline-item--general::before {
-  background: var(--wa-color-neutral-60);
-}
-.task-update__timeline-item--escalation::before {
-  background: var(--wa-color-warning-70);
-}
-.task-update__timeline-item--still-there::before {
-  background: var(--wa-color-danger-60);
-}
-.task-update__timeline-item--resolved::before {
-  background: var(--wa-color-success-60);
-}
 .task-update__timeline time {
   margin-inline-start: 0.5rem;
-}
-.task-update__timeline p {
-  white-space: pre-wrap;
 }
 
 .task-update__capture {
@@ -399,4 +365,29 @@
   .task-update__outcome {
     padding-inline-start: 0;
   }
+}
+
+.task-update__city-help {
+  gap: 0;
+  min-height: 0;
+  padding-inline-start: 0;
+}
+.task-update__city-help-note {
+  /* Keep 8px clear below the selected button's 2px ring + 3px offset. */
+  margin: calc(8px + 2px + 3px) 0 0;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.4;
+}
+.task-update__city-help-note[hidden] {
+  /* Reserve the full message height, including wrapped translations. */
+  display: block;
+  visibility: hidden;
+}
+.task-update__city-help [aria-pressed="true"] {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+.task-update__city-help h3 {
+  margin-bottom: 1.1875rem;
 }

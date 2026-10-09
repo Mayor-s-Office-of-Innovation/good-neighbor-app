@@ -1,31 +1,17 @@
+import {
+  cityHelpQuestion,
+  taskUpdateTextCard,
+  taskUpdateActions,
+  taskUpdateTimelineItem,
+} from "./issue-updates.templates.js";
+export { taskUpdateTimelineTone } from "./issue-updates.templates.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { taskRoute } from "../domain/task-route.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
-import {
-  MAX_TASK_UPDATE_NOTES,
-  MAX_TASK_UPDATE_TEXT,
-} from "../domain/task-update-draft.js";
-
-/** @param {string} type */
-export function taskUpdateTimelineTone(type) {
-  if (type === "escalation_action_taken") return "escalation";
-  if (
-    ["presence_still_present", "additional_action_still_present"].includes(type)
-  )
-    return "still-there";
-  if (
-    [
-      "task_completed",
-      "presence_resolved",
-      "additional_action_resolved",
-    ].includes(type)
-  )
-    return "resolved";
-  return "general";
-}
+import { MAX_TASK_UPDATE_NOTES } from "../domain/task-update-draft.js";
 
 /** @param {{ mode: string, state: string, content: string }} view */
 export function taskUpdateDialogShell({ mode, state, content }) {
@@ -253,75 +239,14 @@ export function taskUpdateTimeline({
     ${task.status === "in_progress"
       ? html`<section class="task-update__section">
           <h3>${escapeHtml(t("taskUpdate.updates.title"))}</h3>
-          <div class="task-update__actions">
-            <button
-              type="button"
-              class="${task.presencePromptDue
-                ? "btn-outline btn-outline--sm"
-                : "btn-ink btn-ink--sm"}"
-              data-mode="notes"
-            >
-              ${escapeHtml(t("taskUpdate.updates.addNote"))}
-            </button>
-            <button
-              type="button"
-              class="${task.presencePromptDue
-                ? "btn-outline btn-outline--sm"
-                : "btn-ink btn-ink--sm"}"
-              data-mode="action"
-            >
-              ${escapeHtml(t("taskUpdate.updates.recordAction"))}
-            </button>
-          </div>
+          ${taskUpdateActions(task.presencePromptDue)}
         </section>`
       : html`<h3 class="task-update__updates-title">
           ${escapeHtml(t("taskUpdate.updates.title"))}
         </h3>`}
     <ol class="ticket-timeline task-update__timeline">
       ${timeline
-        .map(
-          (update) =>
-            html`<li
-              class="ticket-timeline__item task-update__timeline-item task-update__timeline-item--${taskUpdateTimelineTone(
-                update.type,
-              )}"
-            >
-              <div class="ticket-timeline__content">
-                <strong
-                  >${escapeHtml(
-                    rulebookText(update.label, "server.taskUpdate"),
-                  )}</strong
-                ><time datetime="${escapeAttr(update.occurredAt)}"
-                  >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
-                >
-                ${update.text ? html`<p>${escapeHtml(update.text)}</p>` : ""}
-                ${(update.notes || [])
-                  .map((note) => html`<p>${escapeHtml(note)}</p>`)
-                  .join("")}
-                ${(update.photoKeys || [])
-                  .map((artifactId) =>
-                    mediaUrls.get(artifactId)
-                      ? html`<button
-                          class="task-update__photo-trigger"
-                          type="button"
-                          data-photo-lightbox
-                          data-photo-address="${escapeAttr(address)}"
-                          data-photo-time="${escapeAttr(update.occurredAt)}"
-                        >
-                          <img
-                            class="task-update__photo"
-                            src="${escapeAttr(mediaUrls.get(artifactId))}"
-                            alt="${escapeAttr(
-                              t("taskUpdate.photo.updateAlt", { title }),
-                            )}"
-                          />
-                        </button>`
-                      : "",
-                  )
-                  .join("")}
-              </div>
-            </li>`,
-        )
+        .map((update) => taskUpdateTimelineItem(update, task, mediaUrls, title))
         .join("")}
     </ol>
     ${nextToken
@@ -332,7 +257,7 @@ export function taskUpdateTimeline({
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 
-/** @param {{ pendingEvent: Record<string, any> | null, results?: boolean, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
+/** @param {{ pendingEvent: Record<string, any> | null, cityHelpNeeded?: boolean | null, results?: boolean, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
 export function taskUpdateCapture({
   pendingEvent,
   results = false,
@@ -340,6 +265,7 @@ export function taskUpdateCapture({
   files,
   notes,
   previews,
+  cityHelpNeeded,
 }) {
   const title = results
     ? t("taskUpdate.capture.resultsTitle")
@@ -382,12 +308,15 @@ export function taskUpdateCapture({
           ${escapeHtml(t("taskUpdate.capture.addNote"))}
         </button>`
       : ""}
+    ${cityHelpQuestion(cityHelpNeeded, !hasContent)}
     <div class="task-update__actions task-update__actions--footer">
       <button
         type="button"
         class="btn-ink"
         data-save-notes
-        ${!pendingEvent && (results || !hasContent) ? "disabled" : ""}
+        ${cityHelpNeeded === null || (!pendingEvent && (results || !hasContent))
+          ? "disabled"
+          : ""}
       >
         ${escapeHtml(t("common.done"))}
       </button>
@@ -456,18 +385,7 @@ function photoPicker(previews, kind, files = [], allowed = true) {
 export function taskUpdateNoteEditor({ note }) {
   return html`<section class="task-update__capture task-update__capture--text">
     <h2 id="task-update-title">${escapeHtml(t("taskUpdate.note.title"))}</h2>
-    <div class="task-update__text-card">
-      <textarea
-        class="task-update__text-field"
-        maxlength="${MAX_TASK_UPDATE_TEXT}"
-        data-note-text
-        aria-label="${escapeAttr(t("taskUpdate.note.aria"))}"
-      >
-${escapeHtml(note)}</textarea
-      ><button type="button" class="task-update__clear" data-clear-note>
-        ${escapeHtml(t("common.clearAll"))}
-      </button>
-    </div>
+    ${taskUpdateTextCard(note, "note")}
     <button
       type="button"
       class="btn-ink task-update__next"
@@ -479,46 +397,48 @@ ${escapeHtml(note)}</textarea
   </section>`;
 }
 
-/** @param {{ text: string }} view */
-export function taskUpdateActionEditor({ text }) {
+/** @param {{ text: string, allowResolution?: boolean, cityHelpNeeded?: boolean | null }} view */
+export function taskUpdateActionEditor({
+  text,
+  allowResolution = true,
+  cityHelpNeeded,
+}) {
   return html`<section class="task-update__capture task-update__capture--text">
     <h2 id="task-update-title">${escapeHtml(t("taskUpdate.action.title"))}</h2>
     <p class="task-update__subtitle">
       ${escapeHtml(t("taskUpdate.action.subtitle"))}
     </p>
-    <div class="task-update__text-card">
-      <textarea
-        class="task-update__text-field"
-        maxlength="${MAX_TASK_UPDATE_TEXT}"
-        data-action-text
-        aria-label="${escapeAttr(t("taskUpdate.action.aria"))}"
-      >
-${escapeHtml(text)}</textarea
-      ><button type="button" class="task-update__clear" data-clear>
-        ${escapeHtml(t("common.clearAll"))}
-      </button>
-    </div>
-    <section class="task-update__outcome">
-      <h3>${escapeHtml(t("taskUpdate.action.outcomeTitle"))}</h3>
-      <div class="task-update__actions">
-        <button
-          type="button"
-          class="btn-theme wa-success wa-accent wa-pill"
-          data-action-outcome="additional_action_resolved"
-          ${text.trim() ? "" : "disabled"}
-        >
-          ${escapeHtml(t("taskUpdate.outcome.resolved"))}
-        </button>
-        <button
-          type="button"
-          class="btn-theme wa-neutral wa-filled wa-pill"
-          data-action-outcome="additional_action_still_present"
-          ${text.trim() ? "" : "disabled"}
-        >
-          ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
-        </button>
-      </div>
-    </section>
+    ${taskUpdateTextCard(text, "action")}
+    ${allowResolution
+      ? html`<section class="task-update__outcome">
+          <h3>${escapeHtml(t("taskUpdate.action.outcomeTitle"))}</h3>
+          <div class="task-update__actions">
+            <button
+              type="button"
+              class="btn-theme wa-success wa-accent wa-pill"
+              data-action-outcome="additional_action_resolved"
+              ${text.trim() ? "" : "disabled"}
+            >
+              ${escapeHtml(t("taskUpdate.outcome.resolved"))}
+            </button>
+            <button
+              type="button"
+              class="btn-theme wa-neutral wa-filled wa-pill"
+              data-action-outcome="additional_action_still_present"
+              ${text.trim() ? "" : "disabled"}
+            >
+              ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
+            </button>
+          </div>
+        </section>`
+      : html`${cityHelpQuestion(cityHelpNeeded, !text.trim())}<button
+            type="button"
+            class="btn-ink"
+            data-save-action
+            ${text.trim() && cityHelpNeeded !== null ? "" : "disabled"}
+          >
+            ${escapeHtml(t("common.done"))}
+          </button>`}
   </section>`;
 }
 

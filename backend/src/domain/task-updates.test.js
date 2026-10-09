@@ -81,3 +81,28 @@ describe("task updates", () => {
     });
   });
 });
+
+it.each([
+  { type: "note_photo_update", notes: ["Still here"], photoKeys: ["photo-1"] },
+  { type: "additional_action", text: "Called the agency", photoKeys: [] },
+])("keeps submitted 311 issues open for $type", (input) => {
+  const ticket = {
+    code: "create_311_ticket",
+    payload: { tickets: [{ srNum: "123" }] },
+  };
+  const result = buildTaskUpdateTransition(
+    { status: "in_progress", appActionResults: [ticket] },
+    input,
+    { taskId: "t1", updateId: "u1", actorId: "a1" },
+  );
+  expect(result).toMatchObject({
+    task: { status: "in_progress", appActionResults: [ticket] },
+    update: { type: input.type, documentationState: "closed" },
+  });
+  if ("error" in result) throw new Error(result.error);
+  expect(result.update.notes || []).toEqual(input.notes || []);
+  expect(result.update.photoKeys || []).toEqual(input.photoKeys);
+  expect(result.update.text).toBe(input.text);
+  expect(result.task).not.toHaveProperty("resolvedAt");
+  expect(result.task).not.toHaveProperty("completedAt");
+});

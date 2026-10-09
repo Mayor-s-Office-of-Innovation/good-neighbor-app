@@ -199,10 +199,20 @@ export function showReanalysisErrorToast() {
   });
 }
 
-export function showTaskUpdateErrorToast() {
+/** @param {unknown} [error] */
+export function showTaskUpdateErrorToast(error) {
+  const saved =
+    error &&
+    typeof error === "object" &&
+    "body" in error &&
+    error.body &&
+    typeof error.body === "object" &&
+    "updateSaved" in error.body &&
+    error.body.updateSaved === true;
+  const key = saved ? "toast.cityUpdateError" : "toast.taskUpdateError";
   return showToast({
-    title: t("toast.taskUpdateError.title"),
-    message: t("toast.taskUpdateError.message"),
+    title: t(`${key}.title`),
+    message: t(`${key}.message`),
     icon: "triangle-exclamation",
     tone: "error",
   });

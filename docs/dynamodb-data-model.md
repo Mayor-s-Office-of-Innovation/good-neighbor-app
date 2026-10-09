@@ -228,6 +228,25 @@ photos reuse ART rows with `purpose: "task_update"`. Registering them skips the 
 analyzer path on purpose. The update event stores the artifact IDs so the media route can
 authorize reads.
 
+**311 documentation and City-help choice.** Informational `note_photo_update` and
+`additional_action` events on filed 311 tasks store `cityHelpNeeded`. A `false`
+choice also stores an immutable `cityNotePayload` built from the authenticated
+site's name and the first filed SR shown on the card. It uses HUB UpdateSR's
+Add Notes contract (`UpdateType: 5`, `NumericSubType: 2`), not a closure update;
+the task remains in progress until the external resolution flow completes.
+
+The event and task are saved atomically before note delivery. `cityNoteStatus`
+tracks `pending`, `sending`, `sent`, or `unknown`; `cityNoteLeaseExpiresAt` gives
+one sender a 60-second lease. The client reuses the same idempotency key when
+retrying an unchanged draft. Successful retries reuse the event and do not
+resend the note. Explicit HUB validation rejections return to `pending`.
+Timeouts, ambiguous responses, and expired attempts are reconciled against the
+City feed using the SR, sending agency, note text, and effective time. If delivery
+cannot be confirmed, the API returns `502` with `updateSaved: true`; it does not
+blindly resend an uncertain note. Such records may need operational investigation
+if the City feed never exposes the matching update. Sending respects
+`GNP_311_SUBMISSION_ENABLED`.
+
 `canBeInProgress` is snapshotted from the versioned guidance rule when the task is
 created. The first successful card action moves eligible tasks to `in_progress`; tasks
 without that flag complete directly.

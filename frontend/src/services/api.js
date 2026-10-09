@@ -642,10 +642,14 @@ export function getTaskUpdates(taskId, nextToken) {
   );
 }
 
-export function createTaskUpdate(taskId, body) {
+export function createTaskUpdate(
+  taskId,
+  body,
+  requestId = crypto.randomUUID(),
+) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,
-    headers: { "idempotency-key": crypto.randomUUID() },
+    headers: { "idempotency-key": requestId },
   });
 }
 

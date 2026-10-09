@@ -212,3 +212,34 @@ describe("SF311 CreateSR client helpers", () => {
     expect(fetchImpl.mock.calls[0][1].signal).toBeTruthy();
   });
 });
+
+it("validates endpoints per operation so UpdateSR works without creation settings", async () => {
+  const fetchImpl = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { return_code: "0", UpdateID: "u1" } }),
+      ),
+    );
+  const client = createSf311Client({
+    config: {
+      uploadBucket: "bucket",
+      queueUrl: "queue",
+      dynamoTable: "table",
+      sf311UpdateSrUrl: "https://hub.test/update",
+      sf311BasicAuthUser: "user",
+      sf311BasicAuthPass: "pass",
+    },
+    fetchImpl,
+  });
+  await expect(
+    client.updateServiceRequest({ SRnum: "123" }),
+  ).resolves.toMatchObject({ updateId: "u1" });
+  await expect(client.createServiceRequest({})).rejects.toThrow(
+    "SF311_CREATESR_URL is required",
+  );
+  await expect(client.lookupResponsibleAgency("code")).rejects.toThrow(
+    "SF311_AGENCY_LOOKUP_URL is required",
+  );
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});

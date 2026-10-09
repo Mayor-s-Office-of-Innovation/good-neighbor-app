@@ -15,10 +15,15 @@ import { rulebookText } from "../i18n/rulebook.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
-import { get311RequestDetail } from "../services/api.js";
+import {
+  get311RequestDetail,
+  getTaskUpdates,
+  getMediaUrl,
+} from "../services/api.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";
 import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import { taskMediaUrl } from "../domain/task-media.js";
+import { showTaskUpdateErrorToast } from "../state/toasts.js";
 import { ticketDetailDialog } from "./ticket-detail-dialog.templates.js";
 
 /**
@@ -63,6 +68,7 @@ class TicketDetailDialog extends HTMLElement {
     this._state = "idle";
     this._open = false;
     this._generation = 0;
+    this._editing = false;
   }
 
   /** @returns {string} */
@@ -109,12 +115,13 @@ class TicketDetailDialog extends HTMLElement {
     }
     this._task = task;
     if (this._detail) {
-      this._detail = { ...this._detail, mediaUrl: taskMediaUrl(task) };
-      if (this.isConnected) this._render();
+      this._detail = { ...this._detail, task, mediaUrl: taskMediaUrl(task) };
+      if (this.isConnected && !this._editing) this._render();
     }
   }
 
-  async _load() {
+  /** @param {string} [nextToken] */
+  async _load(nextToken) {
     const task = this._task;
     const ticket = submitted311Ticket(task);
     if (!task || !ticket) return;
@@ -126,15 +133,93 @@ class TicketDetailDialog extends HTMLElement {
     this._state = "loading";
     this._render();
     try {
-      const response = await get311RequestDetail(task.taskId, ticket.srNum);
+      const [response, page] = await Promise.all([
+        get311RequestDetail(task.taskId, ticket.srNum),
+        getTaskUpdates(task.taskId, nextToken),
+      ]);
+      const updates = [
+        ...(nextToken ? this._detail?.updates || [] : []),
+        ...(page.updates || []).filter(
+          (update) =>
+            update.type === "note_photo_update" ||
+            update.type?.startsWith("additional_action"),
+        ),
+      ];
+      const mediaUrls = new Map(
+        await Promise.all(
+          [...new Set(updates.flatMap((update) => update.photoKeys || []))].map(
+            async (id) => {
+              const media = await getMediaUrl(task.checkId, id).catch(
+                () => null,
+              );
+              return /** @type {[string, string]} */ ([
+                id,
+                media?.downloadUrl || "",
+              ]);
+            },
+          ),
+        ),
+      );
       if (!isCurrent()) return;
-      this._detail = buildTicketDetail(task, this.site || {}, response.request);
+      this._task = { ...task, ...page.task };
+      this._detail = {
+        ...buildTicketDetail(this._task, this.site || {}, response.request),
+        updates,
+        mediaUrls,
+        nextToken: page.nextToken,
+        task: this._task,
+      };
       this._state = "ready";
     } catch {
       if (!isCurrent()) return;
       this._state = "error";
     }
     this._render();
+  }
+
+  /** @param {string} mode */
+  async _openEditor(mode) {
+    if (
+      this._editing ||
+      !this._task ||
+      this._task.status !== "in_progress" ||
+      this._detail?.status === "Closed"
+    )
+      return;
+    this._editing = true;
+    try {
+      await import("./task-update-dialog.js");
+      if (!this._open) return;
+      const editor =
+        /** @type {import("./task-update-dialog.js").TaskUpdateDialog} */ (
+          document.createElement("task-update-dialog")
+        );
+      let saved = false;
+      editor.addEventListener("taskupdated", (event) => {
+        event.stopPropagation();
+        saved = true;
+      });
+      editor.addEventListener(
+        "taskupdateclosed",
+        async () => {
+          editor.remove();
+          this._editing = false;
+          if (saved && this._open) await this._load();
+          else if (this._open) this._render();
+          /** @type {HTMLElement | null} */ (
+            this.querySelector(`[data-mode="${mode}"]`)
+          )?.focus();
+        },
+        { once: true },
+      );
+      document.body.append(editor);
+      await editor.open(this._task, mode);
+    } catch {
+      this._editing = false;
+      showTaskUpdateErrorToast();
+    } finally {
+      if (!this._open) this._editing = false;
+    }
   }
 
   _render() {
@@ -146,6 +231,16 @@ class TicketDetailDialog extends HTMLElement {
       this.querySelector("#ticket-detail-dialog")
     );
     if (!dialog) return;
+    dialog.querySelectorAll("[data-mode]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
+      button.addEventListener(
+        "click",
+        () => void this._openEditor(button.dataset.mode || "notes"),
+      );
+    });
+    dialog.querySelector("[data-load-older]")?.addEventListener("click", () => {
+      if (this._detail?.nextToken) void this._load(this._detail.nextToken);
+    });
     dialog
       .querySelector("[data-close-311]")
       ?.addEventListener("click", () => dialog.close());
