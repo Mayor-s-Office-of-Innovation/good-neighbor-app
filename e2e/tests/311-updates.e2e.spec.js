@@ -248,3 +248,78 @@ test("311 delivery retry keeps the saved event and request identity", async ({
     "No further City help needed",
   );
 });
+
+for (const mode of ["notes", "action"]) {
+  test(`311 nested ${mode} editor: Back respects drafts and returns to ticket`, async ({
+    page,
+  }) => {
+    const state = await filedTicket(page);
+    await page.locator("dialog.task-update[open] [data-close]").click();
+    await expect(page.locator("dialog.task-update[open]")).toHaveCount(0);
+    await page.route(
+      "**/v1/tasks/311-update-fixture/311-requests/123456",
+      (route) =>
+        route.fulfill({
+          json: { request: { srNum: "123456", status: "Open", updates: [] } },
+        }),
+    );
+    // Exercise the dedicated 311 component's public entry point. Current cards
+    // primarily use the shared timeline, but this nested host remains supported.
+    await page.evaluate(async (task) => {
+      await window.customElements.whenDefined("ticket-detail-dialog");
+      const ticket = /** @type {any} */ (
+        document.createElement("ticket-detail-dialog")
+      );
+      document.body.append(ticket);
+      await ticket.open(task);
+    }, state.task);
+    const ticket = page.locator("#ticket-detail-dialog[open]");
+    await expect(ticket.locator(`[data-mode="${mode}"]`)).toBeVisible();
+    await ticket.locator(`[data-mode="${mode}"]`).click();
+    const editor = page.locator("dialog.task-update[open]");
+    await expect(editor).toBeVisible();
+    await page.goBack();
+    await expect(editor).toHaveCount(0);
+    await expect(ticket).toBeVisible();
+    await expect(page).toHaveURL(/#ticket-detail$/);
+    await ticket.locator(`[data-mode="${mode}"]`).click();
+    if (mode === "notes") {
+      await editor.locator("[data-add-note]").click();
+      await editor.locator("[data-note-text]").fill("Keep this draft");
+    } else await editor.locator("[data-action-text]").fill("Keep this draft");
+    await page.goBack();
+    const discard = page.locator("[data-discard-dialog][open]");
+    await expect(discard).toBeVisible();
+    await discard.locator("[data-continue-editing]").click();
+    await expect(
+      editor.locator(
+        mode === "notes" ? "[data-note-text]" : "[data-action-text]",
+      ),
+    ).toHaveValue("Keep this draft");
+    await expect(page).toHaveURL(/#task-update-editor$/);
+    await page.goBack();
+    await discard.locator("[data-confirm-discard]").click();
+    await expect(editor).toHaveCount(0);
+    await expect(ticket).toBeVisible();
+    await expect(page).toHaveURL(/#ticket-detail$/);
+    await ticket.locator(`[data-mode="${mode}"]`).click();
+    if (mode === "notes") {
+      await editor.locator("[data-add-note]").click();
+      await editor.locator("[data-note-text]").fill("Saved from nested editor");
+      await editor.locator("[data-save-note]").click();
+    } else
+      await editor
+        .locator("[data-action-text]")
+        .fill("Saved from nested editor");
+    await editor.locator('[data-city-help="yes"]').click();
+    await editor
+      .locator(mode === "notes" ? "[data-save-notes]" : "[data-save-action]")
+      .click();
+    await expect(editor).toHaveCount(0);
+    await expect(ticket).toContainText("Saved from nested editor");
+    await expect(page).toHaveURL(/#ticket-detail$/);
+    await page.goBack();
+    await expect(ticket).toHaveCount(0);
+    expect(state.requests).toHaveLength(1);
+  });
+}

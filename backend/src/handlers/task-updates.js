@@ -1,5 +1,6 @@
 import {
   cityHelpTicket,
+  logCityNoteFailure,
   prepareCityHelpNote,
   deliverCityHelpNote,
 } from "../task-updates/city-help-note.js";
@@ -209,7 +210,8 @@ export const createTaskUpdate = async (event) => {
           now,
         );
         update.cityNoteStatus = "pending";
-      } catch {
+      } catch (error) {
+        logCityNoteFailure("preparation", error, update);
         return jsonResponse(503, { error: "City update cannot be prepared" });
       }
     }

@@ -185,3 +185,78 @@ it("does not mark an empty City response as a confirmed delivery", async () => {
   expect(await deliverCityHelpNote("table", "site1", event)).toBe(false);
   expect(event.cityNoteStatus).toBe("unknown");
 });
+
+it("logs safe outbound diagnostics without HUB payloads or exception messages", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    mocks.update.mockRejectedValue(
+      new Sf311Error("SECRET note credentials", {
+        code: "26",
+        request: { Notes: "PRIVATE" },
+        body: "PRIVATE",
+      }),
+    );
+    await expect(deliverCityHelpNote("table", "site", update())).resolves.toBe(
+      false,
+    );
+    const entry = JSON.parse(log.mock.calls[0][0]);
+    expect(entry).toMatchObject({
+      route: "city-note",
+      stage: "outbound",
+      taskId: "t1",
+      updateId: "u1",
+      code: "26",
+    });
+    expect(entry.stack).toContain("at ");
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(
+      /SECRET|PRIVATE|credentials/,
+    );
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("does not log expected competing delivery claims as errors", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    mocks.send.mockRejectedValue(
+      Object.assign(new Error("claim lost"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    await expect(deliverCityHelpNote("table", "site", update())).resolves.toBe(
+      false,
+    );
+    expect(log).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it.each(["configuration", "claim", "reconciliation", "checkpoint"])(
+  "reports the %s failure stage",
+  async (stage) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const item = update();
+      if (stage === "configuration") vi.stubEnv("SF311_UPDATESR_URL", "");
+      if (stage === "claim")
+        mocks.send.mockRejectedValueOnce(new Error("database failed"));
+      if (stage === "reconciliation") {
+        item.cityNoteStatus = "unknown";
+        mocks.latest.mockRejectedValueOnce(new Error("feed failed"));
+      }
+      if (stage === "checkpoint")
+        mocks.send
+          .mockResolvedValueOnce({})
+          .mockRejectedValueOnce(new Error("checkpoint failed"));
+      await expect(deliverCityHelpNote("table", "site", item)).resolves.toBe(
+        false,
+      );
+      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ stage });
+    } finally {
+      log.mockRestore();
+    }
+  },
+);

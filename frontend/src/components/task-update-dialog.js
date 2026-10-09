@@ -1,3 +1,4 @@
+import { openOverlayDialog } from "../dialog-history.js";
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
@@ -198,7 +199,15 @@ export class TaskUpdateDialog extends HTMLElement {
       ?.querySelector("[data-continue-editing]")
       ?.addEventListener("click", () => discardDialog.close());
     this._wire(dialog);
-    if (this._open && !dialog.open) dialog.showModal();
+    if (this._open) {
+      if (this._editorOnly)
+        openOverlayDialog(
+          dialog,
+          "task-update-editor",
+          () => void this._close(),
+        );
+      else if (!dialog.open) dialog.showModal();
+    }
   }
 
   /** @param {Record<string, any>} task */

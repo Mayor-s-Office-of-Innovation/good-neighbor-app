@@ -1,3 +1,4 @@
+import { logServerError } from "../lib/log-server-error.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
 import { ddb } from "../db.js";
@@ -9,6 +10,31 @@ import {
   Sf311Error,
 } from "../integrations/sf311-client.js";
 import { findServiceRequest } from "../integrations/sf311-status.js";
+
+/** Log stage and identifiers without serializing HUB payloads or error messages.
+ * @param {string} stage
+ * @param {unknown} error
+ * @param {Record<string, any>} update
+ */
+export function logCityNoteFailure(stage, error, update) {
+  const safe = new Error(`City note ${stage} failed`);
+  if (error instanceof Error) {
+    safe.name = /^[\w.-]{1,80}$/.test(error.name) ? error.name : "Error";
+    safe.stack = `${safe.name}: ${safe.message}\n${(error.stack || "")
+      .split("\n")
+      .filter((line) => /^\s+at /.test(line))
+      .join("\n")}`;
+  }
+  const code = error instanceof Sf311Error ? String(error.code || "") : "";
+  logServerError("city-note", safe, {
+    extra: {
+      stage,
+      taskId: update.taskId,
+      updateId: update.updateId,
+      ...(/^[\w.-]{1,80}$/.test(code) ? { code } : {}),
+    },
+  });
+}
 
 /**
  * The same first filed request displayed by the 311 card.
@@ -130,12 +156,14 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
     update.cityNoteStatus = status;
   };
   let client;
+  let stage = "configuration";
   try {
     // Validate configuration before claiming an outbound attempt.
     const config = getConfig();
-    if (!config.sf311UpdateSrUrl) return false;
+    if (!config.sf311UpdateSrUrl) throw new Error("UpdateSR URL missing");
     await getSf311BasicAuth(config);
     client = createSf311Client({ config });
+    stage = "claim";
     await ddb.send(
       new UpdateCommand({
         TableName: tableName,
@@ -152,28 +180,48 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
         },
       }),
     );
-  } catch {
+  } catch (error) {
+    if (
+      !(
+        stage === "claim" &&
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      )
+    )
+      logCityNoteFailure(stage, error, update);
     return false;
   }
   try {
     if (priorStatus !== "pending") {
+      stage = "reconciliation";
       const latest = await client.getLatestUpdatesBySourceAgency();
       if (!cityHelpNoteExists(latest, update.cityNotePayload)) {
+        logCityNoteFailure(
+          "reconciliation",
+          new Error("Delivery not found"),
+          update,
+        );
+        stage = "checkpoint";
         await state("unknown");
         return false;
       }
     } else {
+      stage = "outbound";
       const receipt = await client.updateServiceRequest(update.cityNotePayload);
       if (!receipt.updateId) throw new Error("City response has no update ID");
     }
+    stage = "checkpoint";
     await state("sent");
     return true;
   } catch (error) {
+    logCityNoteFailure(stage, error, update);
     // Only explicit HUB validation rejections prove the note was not accepted.
     const rejected =
       error instanceof Sf311Error &&
       /^(21|23|24|25|26|27|28|29)$/.test(String(error.code));
-    await state(rejected ? "pending" : "unknown").catch(() => {});
+    await state(rejected ? "pending" : "unknown").catch((error) =>
+      logCityNoteFailure("checkpoint", error, update),
+    );
     return false;
   }
 }

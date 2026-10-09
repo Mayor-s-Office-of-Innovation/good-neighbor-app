@@ -103,6 +103,19 @@ describe("dialog-history", () => {
     dialogHistory = await import("./dialog-history.js");
   });
 
+  it("restores a popped editor sentinel before running its guarded close", async () => {
+    const dialog = fakeDialog();
+    const onBack = vi.fn();
+    dialogHistory.openOverlayDialog(dialog, "editor", onBack);
+    await popWithBack();
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(dialog.open).toBe(true);
+    expect(browser.history.state?.goodNeighborOverlay).toBe("editor");
+    const pushes = browser.history.pushState.mock.calls.length;
+    dialogHistory.openOverlayDialog(dialog, "editor", onBack);
+    expect(browser.history.pushState).toHaveBeenCalledTimes(pushes);
+  });
+
   it("openOverlayDialog shows the dialog and pushes one sentinel per id", () => {
     const dialog = fakeDialog();
     dialogHistory.openOverlayDialog(dialog, "logout");

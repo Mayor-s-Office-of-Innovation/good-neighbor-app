@@ -22,17 +22,20 @@ import { closeOverlay, onOverlayPop, pushOverlay } from "./router.js";
 
 /** @type {Map<string, HTMLDialogElement>} */
 const registry = new Map();
+const backHandlers = new WeakMap();
 let listenersInstalled = false;
 
 /**
  * Show `dialog` modal with an overlay history entry keyed by `overlayId`.
  * @param {HTMLDialogElement} dialog
  * @param {string} overlayId
+ * @param {() => void} [onBack] Optional guarded close lifecycle.
  */
-export function openOverlayDialog(dialog, overlayId) {
+export function openOverlayDialog(dialog, overlayId, onBack) {
   ensurePopListener();
   registry.set(overlayId, dialog);
   if (!dialog) return;
+  if (onBack) backHandlers.set(dialog, onBack);
   if (!dialog.open) dialog.showModal();
   pushOverlay(overlayId);
   // The native `close` event fires for X, backdrop, Escape, programmatic
@@ -91,6 +94,14 @@ function ensurePopListener() {
   listenersInstalled = true;
   onOverlayPop((overlayId) => {
     const dialog = registry.get(overlayId);
+    const onBack = dialog && backHandlers.get(dialog);
+    if (dialog?.open && onBack) {
+      // Restore the popped sentinel before the guard runs. Cancel keeps it;
+      // a confirmed close unwinds it through the normal native-close listener.
+      pushOverlay(overlayId);
+      onBack();
+      return;
+    }
     registry.delete(overlayId);
     // Idempotent: closing an already-closed dialog is a no-op.
     dialog?.close();
