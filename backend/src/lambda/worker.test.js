@@ -8,12 +8,14 @@ const {
   reconcileSiteRevocation,
   dispatchRevocationOutbox,
   generateComplianceLetter,
+  translateArtifact,
 } = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
   dispatchRevocationOutbox: vi.fn(async () => {}),
   generateComplianceLetter: vi.fn(async () => {}),
+  translateArtifact: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
@@ -27,6 +29,9 @@ vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
 }));
 vi.mock("../workers/generate-compliance-letter.js", () => ({
   handler: generateComplianceLetter,
+}));
+vi.mock("../workers/translate-artifact.js", () => ({
+  handler: translateArtifact,
 }));
 
 const { handler } = await import("./worker.js");
@@ -48,6 +53,24 @@ describe("worker dispatch (pickHandler)", () => {
     reconcileSiteRevocation.mockClear();
     dispatchRevocationOutbox.mockClear();
     generateComplianceLetter.mockClear();
+    translateArtifact.mockClear();
+  });
+
+  it("routes a translate_artifact message to the translate worker", async () => {
+    await handler(
+      event({
+        type: "translate_artifact",
+        siteId: "s1",
+        checkId: "c1",
+        artifactId: "a1",
+        items: [{ user_friendly_label: "Trash", description: "Bags" }],
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(translateArtifact).toHaveBeenCalledTimes(1);
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {

@@ -185,6 +185,47 @@ describe("createAnalyzerClient", () => {
     expect(JSON.parse(calls[0].init.body)).not.toHaveProperty("language");
   });
 
+  it("translate() posts items and languages to /v1/translations with the api key", async () => {
+    const response = {
+      model: { provider: "bedrock", model_id: "m" },
+      items: [
+        {
+          id: "0",
+          translations: { es: { user_friendly_label: "Basura" } },
+        },
+      ],
+    };
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: response },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+
+    const result = await client.translate({
+      items: [{ id: "0", user_friendly_label: "Trash", description: "Bags" }],
+      languages: ["es", "vi"],
+      requestId: "chk#art#translate",
+      appId: "good-neighbor-app",
+    });
+
+    expect(result).toEqual(response);
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(String(call.url)).toBe(
+      "https://analysis.example.org/v1/translations",
+    );
+    expect(call.init.method).toBe("POST");
+    expect(call.init.headers["x-api-key"]).toBe("secret-key");
+    expect(JSON.parse(call.init.body)).toEqual({
+      languages: ["es", "vi"],
+      items: [{ id: "0", user_friendly_label: "Trash", description: "Bags" }],
+      caller: { app_id: "good-neighbor-app", request_id: "chk#art#translate" },
+    });
+  });
+
   it("classifyEvidence() sends text to the existing classifier endpoint", async () => {
     const { fetchImpl, calls } = stubFetch([
       { ok: true, status: 200, body: { labels: ["Mattress"] } },

@@ -25,6 +25,10 @@ import {
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import {
+  enqueueTranslateArtifact,
+  translateItemsFor,
+} from "../analysis/translate-enqueue.js";
 import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
@@ -187,13 +191,14 @@ async function markFailed({ dynamoTable, msg, err }) {
  * @param {object} deps
  * @param {import("../analysis/analyzer-client.js").AnalyzerClient} deps.client
  * @param {string} deps.dynamoTable
+ * @param {string} deps.queueUrl where the follow-up translate message goes
  * @param {string} deps.uploadBucket
  * @param {boolean} deps.reverseGeocodingEnabled
  * @returns {Promise<void>}
  */
 async function analyzeArtifact(
   msg,
-  { client, dynamoTable, uploadBucket, reverseGeocodingEnabled },
+  { client, dynamoTable, uploadBucket, queueUrl, reverseGeocodingEnabled },
 ) {
   /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
   const media = [];
@@ -394,7 +399,26 @@ async function analyzeArtifact(
     throw err;
   }
 
-  // 4. Nudge the header's in-progress counters (best-effort).
+  // 4. Hand the model-written text to the background translate worker so the
+  //    locales the analyze call did not produce fill in (best-effort: a lost
+  //    enqueue leaves English, never fails an analysis that just landed).
+  try {
+    await enqueueTranslateArtifact({
+      queueUrl,
+      siteId: msg.siteId,
+      checkId: msg.checkId,
+      artifactId: msg.artifactId,
+      items: translateItemsFor(adapted.concerns),
+    });
+  } catch (err) {
+    console.warn("Translate enqueue failed; analysis keeps English only", {
+      checkId: msg.checkId,
+      artifactId: msg.artifactId,
+      error: err instanceof Error ? err.name : "UnknownError",
+    });
+  }
+
+  // 5. Nudge the header's in-progress counters (best-effort).
   await bumpHeaderCounters({
     dynamoTable,
     siteId: msg.siteId,
@@ -418,6 +442,7 @@ export const handler = async (event) => {
   const {
     dynamoTable,
     uploadBucket,
+    queueUrl,
     analyzerBaseUrl,
     reverseGeocodingEnabled,
   } = getConfig();
@@ -444,6 +469,7 @@ export const handler = async (event) => {
         client,
         dynamoTable,
         uploadBucket,
+        queueUrl,
         reverseGeocodingEnabled: reverseGeocodingEnabled === true,
       });
     }),

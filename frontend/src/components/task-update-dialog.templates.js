@@ -1,6 +1,7 @@
 import { taskRoute } from "../domain/task-route.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import { getLocale, t } from "../i18n/i18n.js";
+import { t } from "../i18n/i18n.js";
+import { analyzerTranslation } from "../i18n/analyzer-text.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 import {
@@ -141,17 +142,10 @@ export function taskUpdateTimeline({
   ]
     .filter((update) => update.occurredAt)
     .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
-  const analyzerTitle = (() => {
-    const translations = task?.translations;
-    if (translations && translations.language === getLocale()) {
-      const localized = translations.user_friendly_label;
-      if (typeof localized === "string" && localized)
-        return task.userFriendlyLabel || task.user_friendly_label
-          ? localized
-          : "";
-    }
-    return task.userFriendlyLabel || task.user_friendly_label || "";
-  })();
+  const englishTitle = task.userFriendlyLabel || task.user_friendly_label || "";
+  const analyzerTitle = englishTitle
+    ? (analyzerTranslation(task, "user_friendly_label") ?? englishTitle)
+    : "";
   const title =
     analyzerTitle ||
     rulebookText(task.category) ||
