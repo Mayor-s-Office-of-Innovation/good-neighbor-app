@@ -58,6 +58,31 @@ describe("buildTicketDetail", () => {
     vi.doUnmock("../i18n/locale.js");
   });
 
+  it("reads the per-locale translations map for the active locale", async () => {
+    vi.resetModules();
+    vi.doMock("../i18n/locale.js", async (importOriginal) => ({
+      ...(await importOriginal()),
+      getLocale: () => "vi",
+    }));
+    const { buildTicketDetail } = await import("./ticket-detail-dialog.js");
+    const detail = buildTicketDetail(
+      {
+        userFriendlyLabel: "Trash in tree well",
+        description: "Card text",
+        translations: {
+          es: { user_friendly_label: "Basura", description: "Texto" },
+          vi: { user_friendly_label: "Rác trong hố cây" },
+        },
+      },
+      {},
+      { problemType: "Litter", description: "311 text" },
+    );
+    expect(detail.title).toBe("Rác trong hố cây");
+    // No Vietnamese description yet: the English card text stays.
+    expect(detail.description).toBe("Card text");
+    vi.doUnmock("../i18n/locale.js");
+  });
+
   it("ignores analyzer translations for a different locale", async () => {
     vi.resetModules();
     vi.doMock("../i18n/locale.js", async (importOriginal) => ({

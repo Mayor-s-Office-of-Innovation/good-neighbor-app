@@ -34,6 +34,23 @@ import {
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 import { logServerError } from "../../lib/log-server-error.js";
 import { shortCodePart } from "../../lib/short-codes.js";
+import {
+  mergeTranslations,
+  normalizeTranslations,
+  translationsEqual,
+} from "../translations.js";
+
+/**
+ * `translations` attribute for a new CONDITION#/TASK# item: the per-locale map,
+ * or nothing. Normalizing here (not only in the evaluate handler) keeps the
+ * storage shape uniform whatever the caller passed.
+ * @param {unknown} value
+ * @returns {{ translations?: import("../translations.js").TranslationsMap }}
+ */
+function translationsField(value) {
+  const translations = normalizeTranslations(value);
+  return translations ? { translations } : {};
+}
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -268,10 +285,10 @@ function applyAssessmentConditionDelta({
 }
 
 /**
- * @typedef {object} ConditionTranslationsInput
- * @property {string} language
- * @property {string} [user_friendly_label]
- * @property {string} [description]
+ * Per-locale copies of `userFriendlyLabel` / `description` (the normalized
+ * map from analysis/translations.js; the evaluate handler converts the
+ * analyzer's single block before it reaches here).
+ * @typedef {import("../translations.js").TranslationsMap} ConditionTranslationsInput
  */
 
 /**
@@ -371,7 +388,7 @@ function buildConditionItem({
     severityLabel: condition.severityLabel,
     userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
-    ...(condition.translations ? { translations: condition.translations } : {}),
+    ...translationsField(condition.translations),
     answers: {},
     status:
       evaluation.kind === "needs_answer"
@@ -464,7 +481,7 @@ function buildTaskItem({
     userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
-    ...(condition.translations ? { translations: condition.translations } : {}),
+    ...translationsField(condition.translations),
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
@@ -616,15 +633,15 @@ export async function storeEvaluatedAssessment(input, options) {
       priorTasks.length === priorTaskIds.length &&
       priorTasks.every((task) => task.status !== "superseded")
     ) {
-      // Last-write-wins for the translations block: a refresh that carries one
-      // applies it to the retained condition (and its tasks below). A refresh
-      // without one keeps the prior block — the UI locale-checks it anyway.
-      /** @type {ConditionTranslationsInput | undefined} */
-      const translations =
-        condition.translations ??
-        /** @type {ConditionTranslationsInput | undefined} */ (
-          prior.translations
-        );
+      // A retained condition has the same English text as before, so every
+      // stored locale is still valid: merge per locale, letting a refresh that
+      // carries a locale replace that locale and keeping the rest (the
+      // background translate worker may have filled them in since). A refresh
+      // without any keeps the prior map.
+      const translations = mergeTranslations(
+        prior.translations,
+        condition.translations,
+      );
       const preserved = {
         ...prior,
         ...(translations ? { translations } : {}),
@@ -652,10 +669,7 @@ export async function storeEvaluatedAssessment(input, options) {
       retainedConditionIds.add(conditionId);
       conditionItems.push(preserved);
       for (const task of priorTasks) {
-        if (
-          JSON.stringify(task.translations ?? null) ===
-          JSON.stringify(translations ?? null)
-        ) {
+        if (translationsEqual(task.translations, translations)) {
           retainedTasks.push(task);
           continue;
         }
@@ -894,8 +908,8 @@ export async function storeEvaluatedAssessment(input, options) {
       },
     });
   }
-  // Keep a retained task's translations block in step with its retained
-  // condition (last-write-wins); only tasks that actually differ get an Update.
+  // Keep a retained task's translations map in step with its retained
+  // condition (per-locale merge); only tasks that actually differ get an Update.
   for (const { taskId, translations } of retainedTaskTranslationUpdates) {
     transactItems.push({
       Update: {

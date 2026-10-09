@@ -10,6 +10,11 @@ import {
   markTaskCannotDo,
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
+import { normalizeTranslations as normalizeTranslationsMap } from "../analysis/translations.js";
+import {
+  enqueueTranslateArtifact,
+  translateItemsFor,
+} from "../analysis/translate-enqueue.js";
 
 import {
   readCheckHeader,
@@ -160,48 +165,75 @@ function normalizeAssessmentBody(body) {
 }
 
 /**
- * @typedef {object} NormalizedTranslations
- * @property {string} language
- * @property {string} [user_friendly_label]
- * @property {string} [description]
+ * @typedef {import("../analysis/translations.js").TranslationsMap} NormalizedTranslations
  */
 
 /**
- * Accept the analyzer's optional per-condition `translations` block (localizer
- * copies of `user_friendly_label`/`description`; see analysis/contract.js) or
- * undefined. Malformed shapes are dropped rather than rejected: translations
- * are display sugar, so bad input degrades to the canonical English fields
- * instead of failing the assessment. Fields the service omitted (or sent
- * malformed) are left off — readers fall back to the canonical English.
+ * Accept the per-condition `translations` field in either shape — the
+ * analyzer's single block (`{ language, … }`) or our per-locale map — and
+ * return the map, or undefined. Malformed shapes are dropped rather than
+ * rejected: translations are display sugar, so bad input degrades to the
+ * canonical English fields instead of failing the assessment.
  * @param {unknown} value
  * @returns {NormalizedTranslations | undefined}
  */
 function normalizeTranslations(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
+  return normalizeTranslationsMap(value);
+}
+
+/**
+ * Ask the background translate worker to fill the locales the stored
+ * CONDITION#/TASK# copies still lack — one message per source artifact, since
+ * the worker scopes its reads by `${checkId}-${artifactId}`. Covers edited,
+ * added, and describe-instead conditions, whose text the analyze-time job
+ * never saw; a condition whose map is already complete sends nothing.
+ * Best-effort: translations are display sugar, so a failed enqueue is logged
+ * and the assessment that just stored still returns 201.
+ * @param {object} params
+ * @param {string} params.queueUrl
+ * @param {string} params.siteId
+ * @param {string} [params.checkId]
+ * @param {Record<string, unknown>[]} params.conditionItems
+ * @returns {Promise<void>}
+ */
+async function enqueueConditionTranslations({
+  queueUrl,
+  siteId,
+  checkId,
+  conditionItems,
+}) {
+  if (!checkId) return;
+  /** @type {Map<string, Record<string, unknown>[]>} */
+  const byArtifact = new Map();
+  for (const item of conditionItems) {
+    const source = /** @type {{ artifactIds?: unknown } | undefined} */ (
+      item.source
+    );
+    const artifactId = Array.isArray(source?.artifactIds)
+      ? source.artifactIds[0]
+      : undefined;
+    if (typeof artifactId !== "string" || !artifactId) continue;
+    const group = byArtifact.get(artifactId) ?? [];
+    group.push(item);
+    byArtifact.set(artifactId, group);
   }
-  const translations = /** @type {Record<string, unknown>} */ (value);
-  const language = translations.language;
-  if (typeof language !== "string" || !language) return undefined;
-  /** @param {string} key */
-  const stringField = (key) => {
-    const text = translations[key];
-    return typeof text === "string" && text ? text : undefined;
-  };
-  const user_friendly_label = stringField("user_friendly_label");
-  const description = stringField("description");
-  if (user_friendly_label === undefined && description === undefined) {
-    return undefined;
+  for (const [artifactId, items] of byArtifact) {
+    try {
+      await enqueueTranslateArtifact({
+        queueUrl,
+        siteId,
+        checkId,
+        artifactId,
+        items: translateItemsFor(items),
+      });
+    } catch (err) {
+      console.warn("Translate enqueue failed; conditions keep English only", {
+        checkId,
+        artifactId,
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+    }
   }
-  /** @type {NormalizedTranslations} */
-  const normalized = { language };
-  if (user_friendly_label !== undefined) {
-    normalized.user_friendly_label = user_friendly_label;
-  }
-  if (description !== undefined) {
-    normalized.description = description;
-  }
-  return normalized;
 }
 
 /**
@@ -209,7 +241,7 @@ function normalizeTranslations(value) {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const evaluateAssessment = async (event) => {
-  const { dynamoTable } = getConfig();
+  const { dynamoTable, queueUrl } = getConfig();
   const siteId = deriveSiteId(event);
 
   let body;
@@ -231,6 +263,12 @@ export const evaluateAssessment = async (event) => {
       { siteId, ...input },
       { tableName: dynamoTable },
     );
+    await enqueueConditionTranslations({
+      queueUrl,
+      siteId,
+      checkId: input.checkId,
+      conditionItems: result.conditionItems,
+    });
     return jsonResponse(201, {
       assessment: result.assessmentItem,
       conditions: result.conditionItems,

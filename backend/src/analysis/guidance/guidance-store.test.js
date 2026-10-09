@@ -72,11 +72,12 @@ describe("storeEvaluatedAssessment", () => {
             severity: 3,
             userFriendlyLabel: "Lots of trash in tree well",
             description: "trash",
-            translations: {
+            // The analyzer's single block: the store normalizes it to a map.
+            translations: /** @type {any} */ ({
               language: "es",
               user_friendly_label: "Montón de basura",
               description: "basura",
-            },
+            }),
             sourceArtifactIds: ["art-1"],
           },
           {
@@ -144,9 +145,10 @@ describe("storeEvaluatedAssessment", () => {
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
       translations: {
-        language: "es",
-        user_friendly_label: "Montón de basura",
-        description: "basura",
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
       },
       taskIds: ["task-1"],
       resolvedToTasks: true,
@@ -187,9 +189,10 @@ describe("storeEvaluatedAssessment", () => {
       severity: 3,
       userFriendlyLabel: "Lots of trash in tree well",
       translations: {
-        language: "es",
-        user_friendly_label: "Montón de basura",
-        description: "basura",
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
       },
       appActionStatus: "pending",
       appActionResults: [],
@@ -461,8 +464,7 @@ describe("answerCondition", () => {
       shortId: "MOI-CIT-042",
       userFriendlyLabel: "Tag covers most of wall",
       translations: {
-        language: "fil",
-        user_friendly_label: "Pinta ang mukha ng pader",
+        fil: { user_friendly_label: "Pinta ang mukha ng pader" },
       },
     });
   });
@@ -1734,18 +1736,19 @@ describe("assessment refresh preserves unchanged conditions", () => {
     expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
   });
 
-  /** Spanish block stored on the prior condition/task before the refresh. */
+  /** Spanish map stored on the prior condition/task before the refresh. */
   const priorSpanish = {
-    language: "es",
-    user_friendly_label: "Sofá en la acera",
-    description: "Sofá",
+    es: { user_friendly_label: "Sofá en la acera", description: "Sofá" },
   };
-  /** Filipino block carried by the refreshed assessment. */
+  /** Filipino map carried by the refreshed assessment. */
   const refreshedFilipino = {
-    language: "fil",
-    user_friendly_label: "Nakatagilid na sofa sa bangketa",
-    description: "Nakatagilid na sofa",
+    fil: {
+      user_friendly_label: "Nakatagilid na sofa sa bangketa",
+      description: "Nakatagilid na sofa",
+    },
   };
+  /** Per-locale merge of the two: the refresh adds Filipino, Spanish stays. */
+  const mergedSpanishFilipino = { ...priorSpanish, ...refreshedFilipino };
 
   /** Read path with a translated prior condition + task for the refresh diffs. */
   function mockTranslatedPrevious() {
@@ -1792,7 +1795,7 @@ describe("assessment refresh preserves unchanged conditions", () => {
     );
   }
 
-  it("applies a refreshed translations block to a retained condition and task", async () => {
+  it("merges a refreshed translations map into a retained condition and task", async () => {
     mockTranslatedPrevious();
     const result = await storeEvaluatedAssessment(
       {
@@ -1803,9 +1806,11 @@ describe("assessment refresh preserves unchanged conditions", () => {
       },
       { tableName: "table" },
     );
-    // The refreshed block wins regardless of what was stored before.
-    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
-    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    // Same English text, so the stored Spanish stays valid and Filipino joins it.
+    expect(result.conditionItems[0].translations).toEqual(
+      mergedSpanishFilipino,
+    );
+    expect(result.taskItems[0].translations).toEqual(mergedSpanishFilipino);
     const tx = send.mock.calls.find(
       ([command]) => command instanceof TransactWriteCommand,
     )?.[0].input.TransactItems;
@@ -1815,7 +1820,9 @@ describe("assessment refresh preserves unchanged conditions", () => {
           Update: expect.objectContaining({
             Key: { pk: "SITE#site-1", sk: "TASK#existing-task" },
             UpdateExpression: "SET translations = :translations",
-            ExpressionAttributeValues: { ":translations": refreshedFilipino },
+            ExpressionAttributeValues: {
+              ":translations": mergedSpanishFilipino,
+            },
           }),
         }),
       ]),
@@ -1829,7 +1836,7 @@ describe("assessment refresh preserves unchanged conditions", () => {
     ).toHaveLength(0);
   });
 
-  it("keeps a retained condition's prior block when the refresh has none", async () => {
+  it("keeps a retained condition's prior map when the refresh has none", async () => {
     mockTranslatedPrevious();
     const result = await storeEvaluatedAssessment(
       {
@@ -1840,14 +1847,14 @@ describe("assessment refresh preserves unchanged conditions", () => {
     );
     expect(result.conditionItems[0].translations).toEqual(priorSpanish);
     expect(result.taskItems[0].translations).toEqual(priorSpanish);
-    // Prior blocks already match, so the transaction carries no task Updates.
+    // Prior maps already match, so the transaction carries no task Updates.
     const tx = send.mock.calls.find(
       ([command]) => command instanceof TransactWriteCommand,
     )?.[0].input.TransactItems;
     expect(taskTranslationUpdates(tx)).toHaveLength(0);
   });
 
-  it("applies a refreshed block to a retained condition that had none", async () => {
+  it("applies a refreshed map to a retained condition that had none", async () => {
     mockPrevious();
     const original = send.getMockImplementation();
     send.mockImplementation(async (command) => {
@@ -1874,7 +1881,7 @@ describe("assessment refresh preserves unchanged conditions", () => {
     expect(taskTranslationUpdates(tx)).toHaveLength(1);
   });
 
-  it("mirrors a translated block onto a retained task that had none", async () => {
+  it("mirrors a translated map onto a retained task that had none", async () => {
     mockPrevious();
     const original = send.getMockImplementation();
     send.mockImplementation(async (command) => {

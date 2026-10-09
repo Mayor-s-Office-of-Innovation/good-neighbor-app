@@ -87,7 +87,7 @@ describe("adaptAssessment", () => {
     expect(litter).not.toHaveProperty("ratingLabel");
   });
 
-  it("carries the condition's translations block through untouched", () => {
+  it("stores the condition's single translations block as a per-locale map", () => {
     const response = {
       ...singleLowConcernResponse,
       assessment: {
@@ -109,10 +109,30 @@ describe("adaptAssessment", () => {
     const adapted = adaptAssessment(response);
 
     expect(adapted.concerns[0].translations).toEqual({
-      language: "es",
-      user_friendly_label: "Basura scatterada",
-      description: "Envolturas a lo largo del bordillo.",
+      es: {
+        user_friendly_label: "Basura scatterada",
+        description: "Envolturas a lo largo del bordillo.",
+      },
     });
+  });
+
+  it("drops a malformed translations block instead of failing the analysis", () => {
+    const response = {
+      ...singleLowConcernResponse,
+      assessment: {
+        ...singleLowConcernResponse.assessment,
+        identified_conditions_of_concern: [
+          {
+            ...singleLowConcernResponse.assessment
+              .identified_conditions_of_concern[0],
+            translations: /** @type {any} */ ({ language: "es" }),
+          },
+        ],
+      },
+    };
+    expect(adaptAssessment(response).concerns[0]).not.toHaveProperty(
+      "translations",
+    );
   });
 
   it("omits translations when the service does not provide one (English request)", () => {
