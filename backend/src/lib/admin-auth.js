@@ -1,3 +1,6 @@
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { getDynamoTableName } from "../config.js";
+import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 
 export const ADMIN_GROUPS = Object.freeze({
@@ -48,6 +51,13 @@ export function adminPrincipal(event) {
     groups,
     subject: String(claims.sub ?? ""),
     username: String(claims["cognito:username"] ?? claims.username ?? ""),
+    email: String(claims.email ?? "")
+      .trim()
+      .toLocaleLowerCase("en-US"),
+    firstName: String(claims.given_name ?? "").trim(),
+    lastName: String(claims.family_name ?? "").trim(),
+    phone: String(claims.phone_number ?? "").trim(),
+    department: String(claims["custom:department"] ?? "").trim(),
     capabilities: supervisor ? SUPERVISOR_CAPABILITIES : MANAGER_CAPABILITIES,
   };
 }
@@ -109,6 +119,52 @@ export async function adminOnly(event, fn) {
 export async function supervisorOnly(event, fn) {
   if (!isComplianceSupervisor(event))
     return jsonResponse(403, { error: "supervisor_required" });
+  return withBody(event, fn);
+}
+
+/**
+ * Allow supervisors to administer every Site and Compliance managers only
+ * Sites to which their directory identity is actively assigned.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {string} siteId
+ * @param {(body: Record<string, unknown>) => Promise<any>} fn
+ */
+export async function siteAdminOnly(event, siteId, fn) {
+  const principal = adminPrincipal(event);
+  if (!principal.authenticated) {
+    return jsonResponse(403, { error: "forbidden" });
+  }
+  if (principal.role === ADMIN_GROUPS.supervisor) return withBody(event, fn);
+  const email = (principal.email || principal.username)
+    .trim()
+    .toLocaleLowerCase("en-US");
+  if (!email) return jsonResponse(403, { error: "site_assignment_required" });
+  const directory = await ddb.send(
+    new GetCommand({
+      TableName: getDynamoTableName(),
+      Key: {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: `MANAGER#${email}`,
+      },
+      ConsistentRead: true,
+    }),
+  );
+  if (!directory.Item?.userId) {
+    return jsonResponse(403, { error: "site_assignment_required" });
+  }
+  const assignment = await ddb.send(
+    new GetCommand({
+      TableName: getDynamoTableName(),
+      Key: {
+        pk: `SITE#${siteId}`,
+        sk: `COMPLIANCE_MANAGER#${directory.Item.userId}`,
+      },
+      ConsistentRead: true,
+    }),
+  );
+  if (!assignment.Item || assignment.Item.status !== "active") {
+    return jsonResponse(403, { error: "site_assignment_required" });
+  }
   return withBody(event, fn);
 }
 

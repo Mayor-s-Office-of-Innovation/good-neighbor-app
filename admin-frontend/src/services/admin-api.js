@@ -197,6 +197,14 @@ export const adminApi = {
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms:close`, {
       method: "POST",
     }),
+  replaceSiteComplianceManagers: (siteId, managerIds) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-managers`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ managerIds }),
+      },
+    ),
   getSitePerimeter: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`),
   updateSitePerimeter: (siteId, perimeter, expectedUpdatedAt) =>

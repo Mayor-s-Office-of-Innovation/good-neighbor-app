@@ -977,6 +977,178 @@ h3 {
   width: min(100%, 320px);
 }
 
+.compliance-manager-assignments {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.site-page .site-details-form .compliance-manager-assignments > legend {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.compliance-manager-assignment-list,
+.compliance-manager-candidates {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compliance-manager-assignment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.compliance-manager-assignment__identity,
+.compliance-manager-candidate > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.compliance-manager-assignment__identity span,
+.compliance-manager-candidate span {
+  overflow-wrap: anywhere;
+}
+
+.compliance-manager-assignment__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-block: 8px 6px;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--wa-color-warning-border-loud);
+  border-radius: var(--wa-border-radius-s);
+  background: var(--wa-color-warning-fill-quiet);
+  color: var(--wa-color-warning-on-quiet);
+  font-size: var(--wa-font-size-s);
+  line-height: var(--wa-line-height-normal);
+}
+
+.compliance-manager-assignment__warning wa-icon {
+  flex: 0 0 auto;
+  margin-block-start: 0.15em;
+}
+
+.compliance-manager-assignment .btn-text {
+  width: fit-content;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link, #005ea8);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.compliance-manager-assignment .btn-text:hover,
+.compliance-manager-assignment .btn-text:focus-visible {
+  text-decoration-thickness: 0.15em;
+}
+
+.compliance-manager-candidate__meta {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  text-align: end;
+}
+
+.compliance-manager-picker {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+  padding: 32px;
+}
+
+#choose-compliance-manager-dialog {
+  width: min(600px, calc(100vw - 32px));
+  max-width: none;
+  overflow: hidden;
+}
+
+#choose-compliance-manager-dialog > .compliance-manager-picker {
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+.compliance-manager-picker__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.compliance-manager-picker__header h2 {
+  margin: 0;
+}
+
+.compliance-manager-picker__header .btn-icon {
+  flex: 0 0 auto;
+}
+
+.compliance-manager-candidates {
+  max-height: min(45vh, 360px);
+  overflow-y: auto;
+}
+
+.compliance-manager-candidates__title {
+  margin: 0 0 -8px;
+  font-size: 1rem;
+}
+
+.compliance-manager-candidate {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.compliance-manager-candidate:hover,
+.compliance-manager-candidate:focus-visible {
+  border-color: var(--text);
+  background: var(--surface-subtle);
+}
+
+.compliance-manager-picker__actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 520px) {
+  .compliance-manager-picker {
+    padding: 24px;
+  }
+
+  .compliance-manager-picker__actions button {
+    width: 100%;
+  }
+}
+
 .address-display {
   display: flex;
   flex-wrap: wrap;

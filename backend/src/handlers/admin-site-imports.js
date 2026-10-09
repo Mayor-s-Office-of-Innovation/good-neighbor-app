@@ -21,16 +21,33 @@ const HEADERS = [
   "Program",
   "Site name",
   "Site address",
-  "Contact first name",
-  "Contact last name",
-  "Contact phone",
-  "Contact extension",
-  "Contact email",
+  "Site type",
+  "Department",
+  "Site manager first name",
+  "Site manager last name",
+  "Site manager phone",
+  "Site manager extension",
+  "Site manager email",
+  "Program manager first name",
+  "Program manager last name",
+  "Program manager phone",
+  "Program manager extension",
+  "Program manager department",
+  "Program manager email",
+  "Provider manager first name",
+  "Provider manager last name",
+  "Provider manager phone",
+  "Provider manager extension",
+  "Provider manager email",
 ];
-const REQUIRED_HEADERS = HEADERS.filter(
-  (header) => header !== "Contact phone" && header !== "Contact extension",
+const OPTIONAL_HEADERS = HEADERS.filter(
+  (header) =>
+    header.endsWith(" extension") ||
+    (header.endsWith(" phone") && header !== "Program manager phone"),
 );
-const OPTIONAL_HEADERS = ["Contact phone", "Contact extension"];
+const REQUIRED_HEADERS = HEADERS.filter(
+  (header) => !OPTIONAL_HEADERS.includes(header),
+);
 const MAX_BYTES = 1024 * 1024;
 const MAX_ROWS = 500;
 const MAX_APPLY_ROWS = 20;
@@ -60,13 +77,6 @@ export const previewSiteImport = (event) =>
     }
     if (!parsed.rows.length || parsed.rows.length > MAX_ROWS) {
       return jsonResponse(400, { error: "invalid_row_count" });
-    }
-    const contradiction = findContradictoryDuplicate(parsed.rows);
-    if (contradiction) {
-      return jsonResponse(400, {
-        error: "contradictory_duplicate_rows",
-        rows: contradiction,
-      });
     }
     const catalog = await loadCatalog();
     const planned = planRows(parsed.rows, catalog);
@@ -332,12 +342,33 @@ async function applyOneRow(importId, row) {
   const plan = /** @type {Record<string, any>} */ (row.plan ?? {});
   const source = /** @type {Record<string, string>} */ (row.source ?? {});
   const contactEmail =
-    clean(plan.contact?.email) || normalized(source["Contact email"]);
+    clean(plan.contact?.email) || normalized(source["Site manager email"]);
   const tableName = getDynamoTableName();
   const now = new Date().toISOString();
   const actor = "site-import";
   /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
   const items = [];
+  for (const department of uniqueBy(
+    (plan.departments || []).filter(
+      /** @param {Record<string, any>} item */
+      (item) => item.action === "create",
+    ),
+    (item) => item.id,
+  )) {
+    items.push(
+      conditionalPut({
+        pk: "ADMIN_DIRECTORY#OVERSIGHT",
+        sk: `DEPARTMENT#${department.id}`,
+        type: "oversightDirectoryOption",
+        optionType: "department",
+        departmentId: department.id,
+        name: department.name,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
   if (plan.provider.action === "reuse") {
     items.push(
       activeMatch(
@@ -362,13 +393,15 @@ async function applyOneRow(importId, row) {
     items.push(
       activeMatch(
         { pk: `SITE#${plan.site.id}`, sk: "#META" },
-        "providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address",
+        "providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND siteType = :siteType AND oversight.managingCityDepartment = :department",
         { "#name": "name" },
         {
           ":providerId": plan.provider.id,
           ":programId": plan.program.id,
           ":name": plan.site.name,
           ":address": plan.site.address,
+          ":siteType": plan.site.siteType,
+          ":department": plan.site.department.name,
         },
       ),
     );
@@ -479,13 +512,12 @@ async function applyOneRow(importId, row) {
         providerName: source.Provider,
         leadProgramId: plan.program.id,
         programName: source.Program,
+        siteType: plan.site.siteType,
+        oversight: {
+          managingCityDepartment: plan.site.department.name,
+          managingCityDepartmentId: plan.site.department.id,
+        },
         providerSiteId,
-        ...(plan.assignment.action === "create"
-          ? {
-              primaryContactUserId: plan.contact.id,
-              primaryContact: contactDetails(source),
-            }
-          : {}),
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -536,11 +568,11 @@ async function applyOneRow(importId, row) {
         entityType: "PROGRAM_USER",
         programId: plan.program.id,
         userId: plan.contact.id,
-        firstName: source["Contact first name"],
-        lastName: source["Contact last name"],
-        phone: source["Contact phone"],
-        phoneExtension: source["Contact extension"],
-        email: normalized(source["Contact email"]),
+        firstName: source["Site manager first name"],
+        lastName: source["Site manager last name"],
+        phone: source["Site manager phone"],
+        phoneExtension: source["Site manager extension"],
+        email: normalized(source["Site manager email"]),
         siteManager: true,
         status: "active",
         siteAssignmentCount: 1,
@@ -590,8 +622,7 @@ async function applyOneRow(importId, row) {
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
-          UpdateExpression:
-            "SET primaryContactUserId = if_not_exists(primaryContactUserId, :userId), primaryContact = if_not_exists(primaryContact, :contact), updatedAt = :now",
+          UpdateExpression: "SET updatedAt = :now",
           ConditionExpression:
             "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address",
           ExpressionAttributeNames: {
@@ -599,8 +630,6 @@ async function applyOneRow(importId, row) {
             "#name": "name",
           },
           ExpressionAttributeValues: {
-            ":userId": plan.contact.id,
-            ":contact": contactDetails(source),
             ":now": now,
             ":active": "active",
             ":providerId": plan.provider.id,
@@ -643,7 +672,7 @@ async function applyOneRow(importId, row) {
       siteId: plan.site.id,
       programId: plan.program.id,
       userId: plan.contact.id,
-      name: `${source["Contact first name"]} ${source["Contact last name"]}`.trim(),
+      name: `${source["Site manager first name"]} ${source["Site manager last name"]}`.trim(),
       email: contactEmail,
       emailHash: verifier,
       role: "manager",
@@ -685,6 +714,114 @@ async function applyOneRow(importId, row) {
       }),
     );
   }
+  const complianceManager = plan.complianceManager;
+  if (complianceManager.action === "reuse") {
+    items.push({
+      ConditionCheck: {
+        TableName: tableName,
+        Key: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: `MANAGER#${complianceManager.email}`,
+        },
+        ConditionExpression:
+          "attribute_exists(pk) AND email = :email AND userId = :userId",
+        ExpressionAttributeValues: {
+          ":email": complianceManager.email,
+          ":userId": complianceManager.id,
+        },
+      },
+    });
+  } else {
+    items.push(
+      conditionalPut({
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: `MANAGER#${complianceManager.email}`,
+        type: "cityProgramManager",
+        entityType: "COMPLIANCE_MANAGER_DIRECTORY",
+        userId: complianceManager.id,
+        firstName: source["Program manager first name"],
+        lastName: source["Program manager last name"],
+        name: `${source["Program manager first name"]} ${source["Program manager last name"]}`.trim(),
+        email: complianceManager.email,
+        phone: source["Program manager phone"],
+        phoneExtension: source["Program manager extension"],
+        departmentId: complianceManager.department.id,
+        departmentName: complianceManager.department.name,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+  if (plan.complianceAssignment.action === "create") {
+    items.push(
+      conditionalPut({
+        pk: `SITE#${plan.site.id}`,
+        sk: `COMPLIANCE_MANAGER#${complianceManager.id}`,
+        type: "siteComplianceManagerAssignment",
+        entityType: "SITE_COMPLIANCE_MANAGER_ASSIGNMENT",
+        siteId: plan.site.id,
+        managerId: complianceManager.id,
+        email: complianceManager.email,
+        status: "active",
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+      }),
+    );
+  }
+  const providerManager = plan.providerManager;
+  if (providerManager.action === "reuse") {
+    items.push(
+      activeMatch(
+        {
+          pk: `PROVIDER#${plan.provider.id}`,
+          sk: `PROVIDER_MANAGER#${providerManager.id}`,
+        },
+        "email = :email",
+        {},
+        { ":email": providerManager.email },
+      ),
+    );
+  } else {
+    const membershipId = stableId(
+      `${plan.provider.id}|${providerManager.email}|provider-manager`,
+    );
+    items.push(
+      conditionalPut({
+        pk: `PROVIDER#${plan.provider.id}`,
+        sk: `PROVIDER_MANAGER#${providerManager.id}`,
+        type: "providerManagerMembership",
+        entityType: "PROVIDER_MANAGER_MEMBERSHIP",
+        membershipId,
+        managerId: providerManager.id,
+        providerId: plan.provider.id,
+        firstName: source["Provider manager first name"],
+        lastName: source["Provider manager last name"],
+        name: `${source["Provider manager first name"]} ${source["Provider manager last name"]}`.trim(),
+        email: providerManager.email,
+        phone: source["Provider manager phone"],
+        phoneExtension: source["Provider manager extension"],
+        status: "active",
+        generation: 1,
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+      }),
+      conditionalPut({
+        pk: `PROVIDER_MANAGER_EMAIL#${stableId(providerManager.email)}`,
+        sk: `PROVIDER#${plan.provider.id}#MEMBERSHIP#${membershipId}`,
+        type: "providerManagerEmailDirectory",
+        membershipId,
+        managerId: providerManager.id,
+        providerId: plan.provider.id,
+        status: "active",
+        createdAt: now,
+      }),
+    );
+  }
   try {
     if (items.length) {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
@@ -694,6 +831,8 @@ async function applyOneRow(importId, row) {
       programId: plan.program.id,
       siteId: plan.site.id,
       userId: plan.contact.id,
+      complianceManagerId: complianceManager.id,
+      providerManagerId: providerManager.id,
     });
   } catch (error) {
     const failure = classifyApplyError(error);
@@ -723,17 +862,6 @@ async function applyOneRow(importId, row) {
       failure.reasonCode,
     );
   }
-}
-
-/** @param {Record<string, string>} source */
-function contactDetails(source) {
-  return {
-    firstName: source["Contact first name"],
-    lastName: source["Contact last name"],
-    phone: source["Contact phone"],
-    phoneExtension: source["Contact extension"],
-    email: normalized(source["Contact email"]),
-  };
 }
 
 /** @param {unknown} error */
@@ -806,19 +934,32 @@ function applyCancellationReasonCodes(error) {
 /** @returns {Promise<Record<string, any>>} */
 async function loadCatalog() {
   const tableName = getDynamoTableName();
-  const [providers, programs, sites] = await Promise.all(
-    [
-      "PROVIDER_SEARCH#ACTIVE",
-      "PROGRAM_SEARCH#ACTIVE",
-      "SITE_SEARCH#ACTIVE",
-    ].map((pk) =>
+  const [providers, programs, sites, complianceManagers, oversightOptions] =
+    await Promise.all([
+      ...[
+        "PROVIDER_SEARCH#ACTIVE",
+        "PROGRAM_SEARCH#ACTIVE",
+        "SITE_SEARCH#ACTIVE",
+      ].map((pk) =>
+        queryAll({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": pk },
+        }),
+      ),
       queryAll({
         TableName: tableName,
         KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": pk },
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
       }),
-    ),
-  );
+      queryAll({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": "ADMIN_DIRECTORY#OVERSIGHT" },
+      }),
+    ]);
   const siteIds = (sites.Items ?? []).map((item) => String(item.siteId));
   /** @type {any} */
   const siteItems = await batchGetSites(tableName, siteIds);
@@ -842,7 +983,20 @@ async function loadCatalog() {
       },
     }),
   );
+  const providerChildren = await mapLimit(
+    (providers.Items ?? []).map((item) => String(item.providerId)),
+    10,
+    (providerId) =>
+      queryAll({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `PROVIDER#${providerId}` },
+      }),
+  );
   const children = siteChildren.flatMap((result) => result.Items ?? []);
+  const providerItems = providerChildren.flatMap(
+    (result) => result.Items ?? [],
+  );
   return {
     providers: providers.Items ?? [],
     programs: programItems,
@@ -853,6 +1007,16 @@ async function loadCatalog() {
     ),
     managerMemberships: children.filter((item) =>
       String(item.sk || "").startsWith("MANAGER_MEMBERSHIP#"),
+    ),
+    complianceManagers: complianceManagers.Items ?? [],
+    complianceManagerAssignments: children.filter((item) =>
+      String(item.sk || "").startsWith("COMPLIANCE_MANAGER#"),
+    ),
+    providerManagers: providerItems.filter((item) =>
+      String(item.sk || "").startsWith("PROVIDER_MANAGER#"),
+    ),
+    departments: (oversightOptions.Items ?? []).filter(
+      (item) => item.optionType === "department" && item.status !== "inactive",
     ),
   };
 }
@@ -886,6 +1050,27 @@ function planRows(rows, catalog) {
     activeManagerMemberships,
     (item) => `${item.siteId}|${item.programId}|${normalized(item.email)}`,
   );
+  const complianceManagers = indexUnique(catalog.complianceManagers, (item) =>
+    normalized(item.email),
+  );
+  const complianceAssignments = indexUnique(
+    catalog.complianceManagerAssignments,
+    (item) => `${item.siteId}|${item.managerId}`,
+  );
+  const complianceManagerCounts = new Map();
+  for (const assignment of catalog.complianceManagerAssignments) {
+    const siteId = String(assignment.siteId || "");
+    if (!siteId || assignment.status === "inactive") continue;
+    const ids = complianceManagerCounts.get(siteId) || new Set();
+    ids.add(String(assignment.managerId || ""));
+    complianceManagerCounts.set(siteId, ids);
+  }
+  const providerManagers = indexUnique(
+    catalog.providerManagers,
+    (item) => `${item.providerId}|${normalized(item.email)}`,
+  );
+  const departments = departmentAliases(catalog.departments);
+  const plannedDepartmentCreates = new Set();
   return rows.map((source, index) => {
     const rowNumber = index + 2;
     const missing = REQUIRED_HEADERS.filter((header) => !clean(source[header]));
@@ -901,6 +1086,46 @@ function planRows(rows, catalog) {
     const missingOptional = OPTIONAL_HEADERS.filter(
       (header) => !clean(source[header]),
     );
+    const siteType = importedSiteType(source["Site type"]);
+    if (!siteType) {
+      return conflictRow(rowNumber, source, "invalid_site_type");
+    }
+    let department = importedDepartment(source.Department, departments);
+    if (!department) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "unknown_department",
+        source.Department,
+      );
+    }
+    let programManagerDepartment = importedDepartment(
+      source["Program manager department"],
+      departments,
+    );
+    if (!programManagerDepartment) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "unknown_program_manager_department",
+        source["Program manager department"],
+      );
+    }
+    if (
+      department.action === "create" &&
+      plannedDepartmentCreates.has(department.id)
+    ) {
+      department = { ...department, action: "reuse" };
+    }
+    if (
+      programManagerDepartment.action === "create" &&
+      plannedDepartmentCreates.has(programManagerDepartment.id)
+    ) {
+      programManagerDepartment = {
+        ...programManagerDepartment,
+        action: "reuse",
+      };
+    }
     const providerKey = normalized(source.Provider);
     const providerExisting = providers.get(providerKey);
     if (Array.isArray(providerExisting)) {
@@ -940,7 +1165,11 @@ function planRows(rows, catalog) {
       siteExisting &&
       (siteExisting.providerId !== providerId ||
         siteExisting.leadProgramId !== programId ||
-        siteIdentity(siteExisting) !== siteKey)
+        siteIdentity(siteExisting) !== siteKey ||
+        (siteExisting.siteType && siteExisting.siteType !== siteType) ||
+        (siteExisting.oversight?.managingCityDepartment &&
+          normalized(siteExisting.oversight.managingCityDepartment) !==
+            normalized(department.name)))
     ) {
       return conflictRow(
         rowNumber,
@@ -957,6 +1186,8 @@ function planRows(rows, catalog) {
       action: siteExisting ? "reuse" : "create",
       name: siteExisting?.name || source["Site name"],
       address: siteExisting?.address || source["Site address"],
+      siteType,
+      department,
     };
     if (!siteExisting)
       sites.set(siteKey, {
@@ -965,8 +1196,10 @@ function planRows(rows, catalog) {
         leadProgramId: programId,
         name: source["Site name"],
         address: source["Site address"],
+        siteType,
+        oversight: { managingCityDepartment: department.name },
       });
-    const contactKey = `${programId}|${normalized(source["Contact email"])}`;
+    const contactKey = `${programId}|${normalized(source["Site manager email"])}`;
     const contactExisting = users.get(contactKey);
     if (Array.isArray(contactExisting)) {
       return conflictRow(rowNumber, source, "duplicate_existing_contact");
@@ -983,18 +1216,18 @@ function planRows(rows, catalog) {
     const contact = {
       id: contactId,
       action: contactExisting ? "reuse" : "create",
-      email: normalized(contactExisting?.email || source["Contact email"]),
+      email: normalized(contactExisting?.email || source["Site manager email"]),
       promote: Boolean(contactExisting && contactExisting.siteManager !== true),
     };
     if (!contactExisting)
       users.set(contactKey, {
         userId: contactId,
         programId,
-        firstName: source["Contact first name"],
-        lastName: source["Contact last name"],
-        phone: source["Contact phone"],
-        phoneExtension: source["Contact extension"],
-        email: source["Contact email"],
+        firstName: source["Site manager first name"],
+        lastName: source["Site manager last name"],
+        phone: source["Site manager phone"],
+        phoneExtension: source["Site manager extension"],
+        email: source["Site manager email"],
       });
     const assignmentKey = `${siteId}|${contactId}`;
     const assignmentExisting = assignments.get(assignmentKey);
@@ -1029,7 +1262,137 @@ function planRows(rows, catalog) {
       managersByUser.set(managerKey, plannedManager);
       managersByEmail.set(managerEmailKey, plannedManager);
     }
-    const actions = [provider, program, site, contact, assignment, manager];
+    const complianceEmail = normalized(source["Program manager email"]);
+    const complianceExisting = complianceManagers.get(complianceEmail);
+    if (Array.isArray(complianceExisting)) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "duplicate_existing_program_manager",
+      );
+    }
+    if (
+      complianceExisting &&
+      !sameImportedPerson(complianceExisting, source, "Program manager")
+    ) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "program_manager_exact_match_conflict",
+        complianceEmail,
+      );
+    }
+    if (
+      complianceExisting?.departmentId &&
+      complianceExisting.departmentId !== programManagerDepartment.id
+    ) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "program_manager_department_conflict",
+        String(complianceExisting.departmentName || ""),
+      );
+    }
+    const complianceManager = {
+      id: complianceExisting?.userId || stableId(complianceEmail),
+      action: complianceExisting ? "reuse" : "create",
+      email: complianceEmail,
+      department: programManagerDepartment,
+    };
+    if (!complianceExisting) {
+      complianceManagers.set(complianceEmail, {
+        userId: complianceManager.id,
+        email: complianceEmail,
+        firstName: source["Program manager first name"],
+        lastName: source["Program manager last name"],
+        phone: source["Program manager phone"],
+        phoneExtension: source["Program manager extension"],
+        departmentId: programManagerDepartment.id,
+        departmentName: programManagerDepartment.name,
+      });
+    }
+    const complianceAssignmentKey = `${siteId}|${complianceManager.id}`;
+    const complianceAssignmentExisting = complianceAssignments.get(
+      complianceAssignmentKey,
+    );
+    if (Array.isArray(complianceAssignmentExisting)) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "duplicate_existing_program_manager_assignment",
+      );
+    }
+    const complianceAssignment = {
+      action: complianceAssignmentExisting ? "reuse" : "create",
+    };
+    if (!complianceAssignmentExisting) {
+      const assignedIds = complianceManagerCounts.get(siteId) || new Set();
+      if (assignedIds.size >= 2) {
+        return conflictRow(rowNumber, source, "too_many_program_managers");
+      }
+      complianceAssignments.set(complianceAssignmentKey, {
+        siteId,
+        managerId: complianceManager.id,
+      });
+      assignedIds.add(complianceManager.id);
+      complianceManagerCounts.set(siteId, assignedIds);
+    }
+    const providerManagerEmail = normalized(source["Provider manager email"]);
+    const providerManagerKey = `${providerId}|${providerManagerEmail}`;
+    const providerManagerExisting = providerManagers.get(providerManagerKey);
+    if (Array.isArray(providerManagerExisting)) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "duplicate_existing_provider_manager",
+      );
+    }
+    if (
+      providerManagerExisting &&
+      !sameImportedPerson(providerManagerExisting, source, "Provider manager")
+    ) {
+      return conflictRow(
+        rowNumber,
+        source,
+        "provider_manager_exact_match_conflict",
+        providerManagerEmail,
+      );
+    }
+    const providerManager = {
+      id: providerManagerExisting?.managerId || stableId(providerManagerEmail),
+      action: providerManagerExisting ? "reuse" : "create",
+      email: providerManagerEmail,
+    };
+    if (!providerManagerExisting) {
+      providerManagers.set(providerManagerKey, {
+        providerId,
+        managerId: providerManager.id,
+        email: providerManagerEmail,
+        firstName: source["Provider manager first name"],
+        lastName: source["Provider manager last name"],
+        phone: source["Provider manager phone"],
+        phoneExtension: source["Provider manager extension"],
+      });
+    }
+    if (department.action === "create") {
+      plannedDepartmentCreates.add(department.id);
+    }
+    if (programManagerDepartment.action === "create") {
+      plannedDepartmentCreates.add(programManagerDepartment.id);
+    }
+    const actions = [
+      provider,
+      program,
+      site,
+      contact,
+      assignment,
+      manager,
+      complianceManager,
+      complianceAssignment,
+      providerManager,
+      department,
+      programManagerDepartment,
+    ];
     return {
       rowNumber,
       source,
@@ -1047,6 +1410,10 @@ function planRows(rows, catalog) {
         contact,
         assignment,
         manager,
+        complianceManager,
+        complianceAssignment,
+        providerManager,
+        departments: [department, programManagerDepartment],
       },
     };
   });
@@ -1229,25 +1596,6 @@ function parseCsv(csv) {
   return { headers, rows };
 }
 
-/** @param {Record<string, string>[]} rows */
-function findContradictoryDuplicate(rows) {
-  const sites = new Map();
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const key = siteIdentity({
-      name: row["Site name"],
-      address: row["Site address"],
-    });
-    const signature = HEADERS.map((header) => normalized(row[header])).join(
-      "|",
-    );
-    const prior = sites.get(key);
-    if (prior && prior.signature !== signature) return [prior.row, index + 2];
-    sites.set(key, { signature, row: index + 2 });
-  }
-  return null;
-}
-
 /** @param {any[]} rows */
 function countClassifications(rows) {
   return rows.reduce(
@@ -1324,15 +1672,96 @@ function indexUnique(items, key) {
 /** @param {Record<string, any>} item @param {Record<string, string>} source */
 function sameContact(item, source) {
   return (
-    normalized(item.firstName) === normalized(source["Contact first name"]) &&
-    normalized(item.lastName) === normalized(source["Contact last name"]) &&
-    (!clean(source["Contact phone"]) ||
-      normalized(item.phone) === normalized(source["Contact phone"])) &&
-    (!clean(source["Contact extension"]) ||
+    normalized(item.firstName) ===
+      normalized(source["Site manager first name"]) &&
+    normalized(item.lastName) ===
+      normalized(source["Site manager last name"]) &&
+    (!clean(source["Site manager phone"]) ||
+      normalized(item.phone) === normalized(source["Site manager phone"])) &&
+    (!clean(source["Site manager extension"]) ||
       normalized(item.phoneExtension) ===
-        normalized(source["Contact extension"])) &&
-    normalized(item.email) === normalized(source["Contact email"])
+        normalized(source["Site manager extension"])) &&
+    normalized(item.email) === normalized(source["Site manager email"])
   );
+}
+
+/** @param {Record<string, any>} item @param {Record<string, string>} source @param {"Program manager" | "Provider manager"} prefix */
+function sameImportedPerson(item, source, prefix) {
+  return (
+    normalized(item.firstName) === normalized(source[`${prefix} first name`]) &&
+    normalized(item.lastName) === normalized(source[`${prefix} last name`]) &&
+    normalized(item.email) === normalized(source[`${prefix} email`]) &&
+    (!clean(source[`${prefix} phone`]) ||
+      normalized(item.phone) === normalized(source[`${prefix} phone`])) &&
+    (!clean(source[`${prefix} extension`]) ||
+      normalized(item.phoneExtension) ===
+        normalized(source[`${prefix} extension`]))
+  );
+}
+
+/** @param {unknown} value */
+function importedSiteType(value) {
+  return new Map([
+    ["permanent supportive housing", "permanent_supportive_housing"],
+    ["drop-in", "drop_in"],
+    ["drop in", "drop_in"],
+    ["shelter", "shelter"],
+  ]).get(normalized(value));
+}
+
+/** @param {Record<string, any>[]} items */
+function departmentAliases(items) {
+  const aliases = new Map();
+  const configured = items.map((item) => ({
+    id: String(item.departmentId || item.sk || "")
+      .replace(/^DEPARTMENT#/, "")
+      .toLocaleLowerCase("en-US"),
+    name: String(item.name || ""),
+    action: "reuse",
+  }));
+  for (const item of configured) aliases.set(normalized(item.name), item);
+  const known = [
+    {
+      id: "dph",
+      name: "Department of Public Health (DPH)",
+      aliases: [
+        "dph",
+        "department of public health",
+        "department of public health (dph)",
+      ],
+    },
+    {
+      id: "hsh",
+      name: "Homelessness and Supportive Housing (HSH)",
+      aliases: [
+        "hsh",
+        "homelessness and supportive housing",
+        "homelessness and supportive housing (hsh)",
+      ],
+    },
+  ];
+  for (const canonical of known) {
+    const existing = canonical.aliases
+      .map((alias) => aliases.get(alias))
+      .find(Boolean);
+    const value = existing || {
+      id: canonical.id,
+      name: canonical.name,
+      action: "create",
+    };
+    for (const alias of canonical.aliases) aliases.set(alias, value);
+  }
+  return aliases;
+}
+
+/** @param {unknown} value @param {Map<string, Record<string, any>>} aliases */
+function importedDepartment(value, aliases) {
+  return aliases.get(normalized(value)) || null;
+}
+
+/** @param {any[]} items @param {(item: any) => string} key */
+function uniqueBy(items, key) {
+  return [...new Map(items.map((item) => [key(item), item])).values()];
 }
 
 /** @param {number} rowNumber @param {Record<string, string>} source @param {string} reasonCode @param {string} [existingValue] */

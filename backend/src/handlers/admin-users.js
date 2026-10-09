@@ -13,7 +13,12 @@ import {
   AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
-import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { getConfig, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
@@ -93,14 +98,45 @@ export const inviteAdminUser = (event) =>
     const email = clean(body.email).toLowerCase();
     const firstName = clean(body.firstName);
     const lastName = clean(body.lastName);
+    const phone = clean(body.phone);
+    const phoneExtension = clean(body.phoneExtension);
+    const departmentId = clean(body.departmentId);
+    const departmentName = clean(body.departmentName);
     const role = clean(body.role);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       return jsonResponse(400, { error: "valid_email_required" });
     if (!firstName || !lastName)
       return jsonResponse(400, { error: "name_required" });
+    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
     if (!(/** @type {string[]} */ (ROLES).includes(role)))
       return jsonResponse(400, { error: "invalid_role" });
+    const directoryResult = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: `MANAGER#${email}`,
+        },
+      }),
+    );
+    const directory = directoryResult.Item;
+    if (
+      directory &&
+      (clean(directory.firstName).toLocaleLowerCase("en-US") !==
+        firstName.toLocaleLowerCase("en-US") ||
+        clean(directory.lastName).toLocaleLowerCase("en-US") !==
+          lastName.toLocaleLowerCase("en-US") ||
+        (phone && clean(directory.phone) && clean(directory.phone) !== phone) ||
+        (departmentId &&
+          clean(directory.departmentId) &&
+          clean(directory.departmentId) !== departmentId))
+    ) {
+      return jsonResponse(409, { error: "compliance_profile_conflict" });
+    }
     let created = false;
+    let shouldAssignRole = true;
+    let effectiveRole = role;
+    let invitationStatus = "invited";
     let existingUser;
     try {
       await cognito.send(
@@ -113,6 +149,7 @@ export const inviteAdminUser = (event) =>
             { Name: "given_name", Value: firstName },
             { Name: "family_name", Value: lastName },
             { Name: "name", Value: `${firstName} ${lastName}` },
+            ...(phone ? [{ Name: "phone_number", Value: phone }] : []),
           ],
         }),
       );
@@ -122,43 +159,124 @@ export const inviteAdminUser = (event) =>
         throw error;
       existingUser = await getUser(pool, email);
       const existingGroups = await groupsForUser(pool, email);
-      if (existingUser.Enabled === false || existingGroups.length > 0)
+      if (existingUser.Enabled === false)
         return jsonResponse(409, { error: "admin_user_exists" });
-    }
-    try {
-      await cognito.send(
-        new AdminAddUserToGroupCommand({
-          UserPoolId: pool,
-          Username: email,
-          GroupName: role,
-        }),
+      const recognizedGroups = existingGroups.filter(
+        (/** @type {string} */ group) => ADMIN_GROUP_SET.has(group),
       );
-    } catch {
-      let rollback = "not_applicable";
-      if (created) {
-        try {
+      if (recognizedGroups.length) {
+        effectiveRole = recognizedGroups.includes(ADMIN_GROUPS.supervisor)
+          ? ADMIN_GROUPS.supervisor
+          : ADMIN_GROUPS.manager;
+        shouldAssignRole = false;
+        invitationStatus =
+          existingUser.UserStatus === "FORCE_CHANGE_PASSWORD"
+            ? "resent"
+            : "active";
+        if (invitationStatus === "resent") {
           await cognito.send(
-            new AdminDeleteUserCommand({
+            new AdminCreateUserCommand({
               UserPoolId: pool,
               Username: email,
+              MessageAction: "RESEND",
+              DesiredDeliveryMediums: ["EMAIL"],
             }),
           );
-          rollback = "completed";
-        } catch (rollbackError) {
-          rollback = "failed";
-          console.error("Failed to roll back ungrouped Cognito user", {
-            username: email,
-            error: rollbackError,
-          });
         }
+      } else if (existingGroups.length) {
+        return jsonResponse(409, { error: "admin_user_exists" });
       }
-      return jsonResponse(502, {
-        error: "admin_group_assignment_failed",
-        rollback,
-      });
+    }
+    if (shouldAssignRole) {
+      try {
+        await cognito.send(
+          new AdminAddUserToGroupCommand({
+            UserPoolId: pool,
+            Username: email,
+            GroupName: effectiveRole,
+          }),
+        );
+      } catch {
+        let rollback = "not_applicable";
+        if (created) {
+          try {
+            await cognito.send(
+              new AdminDeleteUserCommand({
+                UserPoolId: pool,
+                Username: email,
+              }),
+            );
+            rollback = "completed";
+          } catch (rollbackError) {
+            rollback = "failed";
+            console.error("Failed to roll back ungrouped Cognito user", {
+              username: email,
+              error: rollbackError,
+            });
+          }
+        }
+        return jsonResponse(502, {
+          error: "admin_group_assignment_failed",
+          rollback,
+        });
+      }
     }
     const user = existingUser ?? (await getUser(pool, email));
-    return jsonResponse(201, { user: publicUser(user, role) });
+    const cognitoSubject = attributes(user).sub || "";
+    const now = new Date().toISOString();
+    if (directory) {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: directory.pk, sk: directory.sk },
+          UpdateExpression:
+            "SET cognitoSubject = :subject, cognitoRole = :role, phone = :phone, phoneExtension = :extension, departmentId = :department, departmentName = :departmentName, updatedAt = :now",
+          ConditionExpression:
+            "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
+          ExpressionAttributeValues: {
+            ":subject": cognitoSubject,
+            ":role": effectiveRole,
+            ":phone": phone || clean(directory.phone),
+            ":extension": phoneExtension || clean(directory.phoneExtension),
+            ":department": departmentId || clean(directory.departmentId),
+            ":departmentName":
+              departmentName || clean(directory.departmentName),
+            ":now": now,
+          },
+        }),
+      );
+    } else {
+      await ddb.send(
+        new PutCommand({
+          TableName: getDynamoTableName(),
+          Item: {
+            pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+            sk: `MANAGER#${email}`,
+            type: "cityProgramManager",
+            entityType: "COMPLIANCE_MANAGER_DIRECTORY",
+            userId: randomUUID(),
+            firstName,
+            lastName,
+            name: `${firstName} ${lastName}`,
+            email,
+            phone,
+            phoneExtension,
+            departmentId,
+            cognitoSubject,
+            departmentName,
+            cognitoRole: effectiveRole,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+    }
+    return jsonResponse(shouldAssignRole ? 201 : 200, {
+      user: publicUser(user, effectiveRole),
+      invitationStatus,
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
