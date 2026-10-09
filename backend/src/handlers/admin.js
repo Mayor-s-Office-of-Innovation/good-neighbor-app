@@ -9,7 +9,6 @@ import {
 import { randomUUID } from "node:crypto";
 import {
   getComplianceLetterBucket,
-  getConfig,
   getDynamoTableName,
 } from "../config.js";
 import { ddb } from "../db.js";
