@@ -62,7 +62,10 @@ async function filedTicket(
       await route.fulfill({ json: { task, update: updates.at(-1) } });
       return;
     }
-    await route.fulfill({ json: { task, updates } });
+    // Match GET /updates: the backing check permits documentation photos.
+    await route.fulfill({
+      json: { task: { ...task, canUploadPhotos: true }, updates },
+    });
   });
   await page.route("**/v1/checks/311-update-check/artifacts:presign", (route) =>
     route.fulfill({
@@ -119,6 +122,10 @@ for (const width of [393, 1178]) {
       await expect(no).toBeDisabled();
       await expect(done).toBeDisabled();
       if (mode === "notes") {
+        await expect(dialog.locator("[data-photos]")).toBeAttached();
+        await expect(
+          dialog.locator(".task-update__photo-picker"),
+        ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
         await expect(yes).toBeEnabled();
         await expect(no).toBeEnabled();
@@ -129,6 +136,10 @@ for (const width of [393, 1178]) {
         await dialog.locator("[data-add-note]").click();
         await dialog.locator("[data-note-text]").fill("A saved 311 note");
         await dialog.locator("[data-save-note]").click();
+        await expect(dialog.locator("[data-photos]")).toBeAttached();
+        await expect(
+          dialog.locator(".task-update__photo-picker"),
+        ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
       } else {
         await dialog.locator("[data-action-text]").fill(" ");
