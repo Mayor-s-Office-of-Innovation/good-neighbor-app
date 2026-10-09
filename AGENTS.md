@@ -14,6 +14,10 @@ New here? Get your bearings in this order:
 
 ## Current state
 
+- **Duplicate detection is an experiment, not a deployed feature:** a local evaluation
+  harness exists. Before continuing this work, read the user-requested
+  [continuation handoff](./docs/duplicate-detection-handoff.md) for agreed decisions,
+  the data-selection step still needed from the user, and the remaining plan.
 - **Stack & datastore are settled:** JavaScript + JSDoc backend and frontend
   ([ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md)), single-table DynamoDB
   ([ADR 0002](./docs/adr/0002-datastore-dynamodb.md)), 2-env deploy pipeline
