@@ -6,6 +6,7 @@ import {
   getSiteSettings,
   rejectAnalysisCondition,
   waitForAnalyses,
+  uploadTaskUpdatePhoto,
 } from "./api.js";
 
 /**
@@ -244,5 +245,47 @@ describe("dataUrlToBlob", () => {
     await expect(
       dataUrlToBlob("data:image/jpeg;base64"),
     ).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("uploadTaskUpdatePhoto", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("uploads the original file and registers its type and byte length", async () => {
+    const file = new File([new Uint8Array([0, 255, 16, 128])], "result.jpg", {
+      type: "image/jpeg",
+    });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: "photo-1",
+            s3Key: "photos/photo-1",
+            uploadUrl: "https://upload.example.test/photo-1",
+            uploadHeaders: {},
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(""))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      uploadTaskUpdatePhoto("task-1", "check-1", {
+        file,
+        capturedAt: "2026-10-08T12:00:00Z",
+      }),
+    ).resolves.toEqual({ artifactId: "photo-1", s3Key: "photos/photo-1" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch.mock.calls[1][1]).toMatchObject({ method: "PUT", body: file });
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
+      contentType: "image/jpeg",
+      contentLength: 4,
+    });
+    expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({
+      artifactId: "photo-1",
+      contentType: "image/jpeg",
+      contentLength: 4,
+      capturedAt: "2026-10-08T12:00:00Z",
+    });
   });
 });

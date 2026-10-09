@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
+vi.mock("./task-update-dialog.js", () => ({}));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({ showActionSaveErrorToast: vi.fn() }));
 let host, card, button, callbacks, shell, animation;
@@ -109,4 +111,55 @@ it("cancels an unsaved action when its card is detached", async () => {
   await vi.advanceTimersByTimeAsync(1500);
   expect(completeTask).not.toHaveBeenCalled();
   expect(isCompletingAnalysisCard(host)).toBe(false);
+});
+
+it("keeps a completed card waiting until the results dialog closes", async () => {
+  const task = {
+    taskId: "task",
+    status: "completed",
+    canBeInProgress: false,
+    latestUpdateId: "update",
+  };
+  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
+  let close = () => {};
+  const dialog = {
+    addEventListener: vi.fn((type, callback) => {
+      close = callback;
+    }),
+    openResults: vi.fn(),
+    remove: vi.fn(),
+  };
+  vi.stubGlobal("document", {
+    createElement: () => dialog,
+    body: { append: vi.fn() },
+  });
+  document.body.append = vi.fn();
+  const finished = vi.fn();
+  const saving = completeCardAction("task", {
+    completionMethod: "manual",
+  }).then(finished);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(dialog.openResults).toHaveBeenCalledWith(task);
+  expect(finished).not.toHaveBeenCalled();
+  close();
+  await saving;
+  expect(dialog.remove).toHaveBeenCalledOnce();
+  expect(finished).toHaveBeenCalledWith({ task, resultsPending: true });
+});
+
+it("does not reopen capture for a replay whose results are closed", async () => {
+  const result = {
+    task: {
+      status: "completed",
+      canBeInProgress: false,
+      latestUpdateId: "update",
+    },
+    resultsPending: false,
+  };
+  vi.mocked(completeTask).mockResolvedValue(result);
+  const create = vi.spyOn(document, "createElement");
+  await expect(
+    completeCardAction("task", { completionMethod: "manual" }),
+  ).resolves.toEqual(result);
+  expect(create).not.toHaveBeenCalled();
 });

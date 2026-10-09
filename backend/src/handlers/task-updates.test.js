@@ -13,8 +13,12 @@ const { send, headObject, setObjectTags } = vi.hoisted(() => ({
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../s3.js", () => ({ headObject, setObjectTags }));
 
-const { createTaskUpdate, getTaskUpdates, registerTaskUpdateMedia } =
-  await import("./task-updates.js");
+const {
+  createTaskUpdate,
+  getTaskUpdates,
+  registerTaskUpdateMedia,
+  documentTaskUpdate,
+} = await import("./task-updates.js");
 
 /** @param {Record<string, unknown>} body @param {Record<string, string>} [pathParameters] */
 function event(body, pathParameters = { taskId: "task-1" }) {
@@ -54,6 +58,131 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_USER;
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
+
+  it.each([
+    [false, true],
+    [false, false],
+    [true, true],
+    [true, false],
+  ])(
+    "handles documentation replay (race: %s, identical: %s)",
+    async (race, identical) => {
+      const closed = {
+        pk: "SITE#site-1",
+        sk: "event-1",
+        actorId: "device-1",
+        documentationState: "closed",
+        notes: ["Saved note"],
+        photoKeys: ["photo-1"],
+      };
+      send
+        .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+        .mockResolvedValueOnce({
+          Item: {
+            ...closed,
+            documentationState: race ? "open_for_documentation" : "closed",
+          },
+        });
+      if (race)
+        send
+          .mockRejectedValueOnce(
+            Object.assign(new Error("race"), {
+              name: "TransactionCanceledException",
+            }),
+          )
+          .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+          .mockResolvedValueOnce({ Item: closed });
+      const response = await documentTaskUpdate(
+        event(
+          {
+            notes: [identical ? "Saved note" : "Different note"],
+            photoKeys: ["photo-1"],
+          },
+          { taskId: "task-1", updateId: "update-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(identical ? 200 : 409);
+      if (!identical)
+        expect(JSON.parse(response.body).code).toBe("DocumentationConflict");
+      expect(
+        send.mock.calls.filter(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toHaveLength(race ? 1 : 0);
+    },
+  );
+
+  it("treats a retry of a skipped event as success but rejects new content", async () => {
+    const closed = {
+      actorId: "device-1",
+      documentationState: "closed",
+      notes: [],
+      photoKeys: [],
+    };
+    for (const notes of [[], ["New note"]]) {
+      send
+        .mockResolvedValueOnce({ Item: { updateSk: "event-1" } })
+        .mockResolvedValueOnce({ Item: closed });
+      const response = await documentTaskUpdate(
+        event(
+          { notes, photoKeys: [] },
+          { taskId: "task-1", updateId: "update-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(notes.length ? 409 : 200);
+    }
+  });
+
+  it.each(["completed", "in_progress", "missing", "deleted"])(
+    "reports photo availability from the actual check: %s",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({
+          Item: { taskId: "task-1", checkId: "check-1", status: "completed" },
+        })
+        .mockResolvedValueOnce({ Items: [] })
+        .mockResolvedValueOnce({
+          Item: status === "missing" ? undefined : { status },
+        });
+      const response = await getTaskUpdates(event({}));
+      expect(JSON.parse(response.body).task.canUploadPhotos).toBe(
+        ["completed", "in_progress"].includes(status),
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "persists completion documentation (skip: %s)",
+    async (skip) => {
+      const update = {
+        pk: "SITE#site-1",
+        sk: "TASKUPDATE#task-1#now#update-1",
+        taskId: "task-1",
+        updateId: "update-1",
+        actorId: "device-1",
+        type: "task_completed",
+        documentationState: "open_for_documentation",
+      };
+      send
+        .mockResolvedValueOnce({ Item: { updateSk: update.sk } })
+        .mockResolvedValueOnce({ Item: update })
+        .mockResolvedValueOnce({});
+      const body = {
+        notes: skip ? [] : ["Area cleaned"],
+        photoKeys: skip ? [] : ["photo-1"],
+      };
+      const response = await documentTaskUpdate(
+        event(body, { taskId: "task-1", updateId: "update-1" }),
+      );
+      expect(response.statusCode).toBe(200);
+      const transaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+      expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
+        ...update,
+        ...body,
+        documentationState: "closed",
+      });
+    },
+  );
 
   it("registers update media without enqueuing analysis", async () => {
     send

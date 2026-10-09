@@ -121,7 +121,13 @@ export const getTaskUpdates = async (event) => {
     String(task.checkId || ""),
   );
   return jsonResponse(200, {
-    ...detail(task, timelinePage.items),
+    ...detail(
+      {
+        ...task,
+        canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
+      },
+      timelinePage.items,
+    ),
     nextToken: timelinePage.nextToken,
     issueOrigin:
       check?.flowType === "single-problem" ? "single-problem" : "perimeter",
@@ -382,8 +388,19 @@ export const documentTaskUpdate = async (event) => {
   if (!existing) return jsonResponse(404, { error: "Update not found" });
   if (existing.actorId !== deriveActorId(event))
     return jsonResponse(403, { error: "Update belongs to another session" });
-  if (existing.documentationState === "closed")
-    return jsonResponse(200, { update: existing });
+  /** @param {Record<string, any>} saved */
+  const replay = (saved) => {
+    const sameContent =
+      JSON.stringify(saved.notes || []) === JSON.stringify(notes) &&
+      JSON.stringify(saved.photoKeys || []) === JSON.stringify(photoKeys);
+    return sameContent
+      ? jsonResponse(200, { update: saved })
+      : jsonResponse(409, {
+          error: "Documentation is already closed",
+          code: "DocumentationConflict",
+        });
+  };
+  if (existing.documentationState === "closed") return replay(existing);
   if (existing.documentationState !== "open_for_documentation")
     return jsonResponse(409, { error: "Update cannot be documented" });
   const updated = {
@@ -393,7 +410,24 @@ export const documentTaskUpdate = async (event) => {
     documentationState: "closed",
     documentedAt: new Date().toISOString(),
   };
-  await writeDocumentedUpdate(dynamoTable, updated);
+  try {
+    await writeDocumentedUpdate(dynamoTable, updated);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException"
+    ) {
+      // A second tab may have closed the event after our consistent read.
+      const latest = await readUpdateById(
+        dynamoTable,
+        siteId,
+        taskId,
+        updateId,
+      );
+      if (latest?.documentationState === "closed") return replay(latest);
+    }
+    throw error;
+  }
   return jsonResponse(200, { update: updated });
 };
 

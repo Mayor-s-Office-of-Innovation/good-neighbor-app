@@ -16,6 +16,11 @@ import {
   translateItemsFor,
 } from "../analysis/translate-enqueue.js";
 
+import {
+  readCheckHeader,
+  readUpdateById,
+} from "../task-updates/task-update-store.js";
+
 const MAX_ASSESSMENT_CONDITIONS = 49;
 
 /**
@@ -545,6 +550,28 @@ export const completeTask = async (event) => {
         typeof completionMethod === "string" ? completionMethod : undefined,
       actorId: deriveActorId(event),
     });
+    if (task.status === "completed" && task.canBeInProgress === false) {
+      const [update, check] = await Promise.all([
+        task.latestUpdateId
+          ? readUpdateById(
+              dynamoTable,
+              siteId,
+              taskId,
+              String(task.latestUpdateId),
+            )
+          : null,
+        readCheckHeader(dynamoTable, siteId, String(task.checkId || "")),
+      ]);
+      return jsonResponse(200, {
+        task: {
+          ...task,
+          canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
+        },
+        resultsPending:
+          update?.documentationState === "open_for_documentation" &&
+          update.actorId === deriveActorId(event),
+      });
+    }
     return jsonResponse(200, { task });
   } catch (err) {
     if (err instanceof Error && err.name === "NotFound") {

@@ -1,5 +1,6 @@
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
   slideCompletedCard,
 } from "./analysis-card-completion.js";
@@ -58,7 +59,6 @@ import {
 import {
   listChecks,
   listTasks,
-  completeTask,
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
@@ -1733,7 +1733,7 @@ class TodayView extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "311_filed",
       }).catch((err) => {
         console.error("escalation failed", err);
@@ -1751,7 +1751,7 @@ class TodayView extends HTMLElement {
     }
 
     try {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "manual",
       });
       if (card.isConnected) await slideCompletedCard(card);
@@ -1862,7 +1862,7 @@ class TodayView extends HTMLElement {
       this._run(
         card,
         () =>
-          completeTask(task.taskId, {
+          completeCardAction(task.taskId, {
             completionMethod: "311_filed",
           }),
         { requireSubmitted311: true, animateOnSuccess: true },
