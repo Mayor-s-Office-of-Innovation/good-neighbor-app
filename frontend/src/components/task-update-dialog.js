@@ -158,7 +158,12 @@ export class TaskUpdateDialog extends HTMLElement {
       task,
       updates: this._detail?.updates || [],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
-      originalMediaUrl: this._originalPhoto(task),
+      originalMediaUrl:
+        taskMediaUrl(task) ||
+        this._mediaUrls.get(
+          task.evidence?.artifactId || taskArtifactIds(task)[0],
+        ) ||
+        "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
     });
@@ -202,17 +207,6 @@ export class TaskUpdateDialog extends HTMLElement {
       ?.addEventListener("click", () => discardDialog.close());
     this._wire(dialog);
     if (this._open && !dialog.open) dialog.showModal();
-  }
-
-  /** @param {Record<string, any>} task */
-  _originalPhoto(task) {
-    return (
-      taskMediaUrl(task) ||
-      this._mediaUrls.get(
-        task.evidence?.artifactId || taskArtifactIds(task)[0],
-      ) ||
-      ""
-    );
   }
 
   /** @param {HTMLDialogElement} root */
