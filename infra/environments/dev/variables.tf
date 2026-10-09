@@ -71,3 +71,9 @@ variable "bedrock_model_id" {
   type        = string
   default     = "anthropic.claude-sonnet-4-20250514-v1:0"
 }
+
+variable "alarm_emails" {
+  description = "Email addresses subscribed to the CloudWatch alarm SNS topics (home region + us-east-1). Each address receives one confirmation email per topic. Empty = topics exist, nobody is notified."
+  type        = list(string)
+  default     = []
+}

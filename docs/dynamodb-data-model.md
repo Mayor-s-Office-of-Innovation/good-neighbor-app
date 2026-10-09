@@ -412,8 +412,10 @@ The analytics layer has two tiers:
 
 No `#STATS#` items, aggregator Lambda, or shared `scoring` module exist in the repo today.
 DynamoDB Streams are already **on** for the table (`NEW_AND_OLD_IMAGES`,
-`infra/modules/app/main.tf`), with nothing consuming them. The aggregator can be added
-without a table change.
+`infra/modules/app/main.tf`). One filtered consumer exists today, the revocation outbox
+mapping (`infra/modules/app/lambda.tf`, `aws_lambda_event_source_mapping.revocation_outbox`);
+an aggregator would be a second filtered mapping on the same stream, added without a
+table change.
 
 The design: the day is the unit of counting, because the legal duty is 3 checks per day.
 Longer windows add up a range of days. A Streams-triggered Lambda would update the
@@ -453,7 +455,7 @@ needs. The 6-hour export is the design.
 
 All of it is Terraform. Nothing is set up by hand.
 
-- **Built:** DynamoDB Streams on the table (no consumer yet), the S3 analytics lake bucket
+- **Built:** DynamoDB Streams on the table (one consumer: the revocation outbox), the S3 analytics lake bucket
   (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
   Firehose (see T2b above). Dashboards, if any, will be app-rendered or QuickSight.

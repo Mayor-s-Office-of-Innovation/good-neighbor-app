@@ -78,6 +78,7 @@ module "app" {
   # via put-secret-value on gnp-dev-posthog-project-api-key.
   feedback_survey_id       = "01a0633b-35d7-0000-9917-4ad2f1a7aa60"
   feedback_question_id     = "256e7e9d-9579-489a-ad5f-bcdd1b8e6baf"
+  alarm_emails             = var.alarm_emails
   tags                     = local.common_tags
   frontend_domain_names    = [local.frontend_domain_name]
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn

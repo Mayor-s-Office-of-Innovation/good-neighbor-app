@@ -1,6 +1,9 @@
 locals {
   name_prefix        = lower(replace("${var.application}-${var.environment}", "_", "-"))
   bucket_name_prefix = var.s3_bucket_name_prefix != "" ? var.s3_bucket_name_prefix : local.name_prefix
+  # CloudWatch namespace for the business metrics the api/worker Lambdas emit
+  # as EMF lines (backend/src/lib/metrics.js); read by dashboard + alarms.
+  metrics_namespace = "${local.name_prefix}-app"
 }
 
 data "aws_caller_identity" "current" {}

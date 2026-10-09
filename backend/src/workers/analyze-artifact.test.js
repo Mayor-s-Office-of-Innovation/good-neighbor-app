@@ -70,7 +70,26 @@ const invoke = (msg) =>
     )
   );
 
+/**
+ * Parsed metric lines (lib/metrics.js) with the given marker, in order.
+ * @param {import("vitest").MockInstance} log
+ * @param {string} marker
+ * @returns {any[]}
+ */
+function metricLines(log, marker) {
+  return log.mock.calls
+    .map((call) => {
+      try {
+        return JSON.parse(String(call[0]));
+      } catch {
+        return null;
+      }
+    })
+    .filter((line) => line && line.marker === marker);
+}
+
 beforeEach(() => {
+  vi.restoreAllMocks();
   ddbSend.mockReset();
   getObjectBytes.mockReset();
   setObjectTags.mockReset().mockResolvedValue({});
@@ -209,8 +228,23 @@ describe("analyze-artifact worker", () => {
     });
     analyze.mockResolvedValueOnce(singleLowConcernResponse);
     ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await invoke(baseMsg);
+
+    // One AnalysisCompleted metric line, Kind=photo (the message has an S3
+    // key), carrying the ids as searchable properties and the call latency.
+    const completed = metricLines(log, "AnalysisCompleted");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      Kind: "photo",
+      AnalysisCompleted: 1,
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+    });
+    expect(completed[0].AnalyzerLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(metricLines(log, "AnalysisFailed")).toHaveLength(0);
 
     // Media is fetched by S3 key — never carried on the message.
     expect(getObjectBytes).toHaveBeenCalledWith({
@@ -310,11 +344,16 @@ describe("analyze-artifact worker", () => {
       }),
     );
 
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
     await invoke(baseMsg);
 
     // Only the ANALYSIS# put was attempted; no counter updates followed it.
     expect(ddbSend).toHaveBeenCalledTimes(1);
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+    // Counted as a duplicate, never as a second completion.
+    expect(metricLines(log, "AnalysisDuplicate")).toHaveLength(1);
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(0);
   });
 
   it("reports a retryable analyzer error as a batch item failure so SQS redelivers just that message", async () => {
@@ -326,11 +365,26 @@ describe("analyze-artifact worker", () => {
       new AnalyzerError("throttled", { status: 429, retryable: true }),
     );
 
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
     // A rejected artifact no longer throws the whole batch — it comes back in
     // batchItemFailures so only that message redelivers.
     const res = await invoke(baseMsg);
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
     expect(ddbSend).not.toHaveBeenCalled();
+    // A transient failure is a retry, not a failed analysis; the call still
+    // contributes a latency sample so slow failures show up in p95.
+    const calls = metricLines(log, "AnalyzerCall");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      Kind: "photo",
+      AnalysisRetried: 1,
+      outcome: "retryable",
+      reason: "http_429",
+    });
+    expect(calls[0].AnalyzerLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(metricLines(log, "AnalysisFailed")).toHaveLength(0);
   });
 
   it("analyzes a batch concurrently and isolates one failure to its own message", async () => {
@@ -380,8 +434,24 @@ describe("analyze-artifact worker", () => {
       }),
     );
     ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await invoke(baseMsg);
+
+    // Counted once as a permanent failure with the analyzer's reason code.
+    expect(metricLines(log, "AnalysisFailed")).toEqual([
+      expect.objectContaining({
+        Kind: "photo",
+        AnalysisFailed: 1,
+        reason: "invalid_request",
+        checkId: "chk_01",
+        artifactId: "art_1",
+      }),
+    ]);
+    expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
+      outcome: "permanent",
+    });
+    expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
 
     // A single failure marker, conditional so a replay can't duplicate it.
     expect(ddbSend).toHaveBeenCalledTimes(1);
@@ -504,6 +574,7 @@ describe("analyze-artifact worker", () => {
   it("analyzes text-only evidence without fetching S3 bytes", async () => {
     analyze.mockResolvedValueOnce(singleLowConcernResponse);
     ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await invoke({
       siteId: "site-1",
@@ -518,5 +589,10 @@ describe("analyze-artifact worker", () => {
     expect(analyze.mock.calls[0][0].media).toEqual([
       { type: "text", text: "Trash is next to the west entrance." },
     ]);
+    // A description (no S3 key) is counted as Kind=text.
+    expect(metricLines(log, "AnalysisCompleted")[0]).toMatchObject({
+      Kind: "text",
+      artifactId: "art_text_1",
+    });
   });
 });

@@ -116,3 +116,9 @@ variable "setup_code_dev_dkim_tokens" {
     error_message = "Exactly three distinct 32-character DEV Easy DKIM tokens must be provided."
   }
 }
+
+variable "alarm_emails" {
+  description = "Email addresses subscribed to the CloudWatch alarm SNS topics (home region + us-east-1). Each address receives one confirmation email per topic. Empty = topics exist, nobody is notified."
+  type        = list(string)
+  default     = []
+}
