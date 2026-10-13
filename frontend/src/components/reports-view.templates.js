@@ -29,6 +29,7 @@ import {
   PERIOD_KINDS,
   calendarCells,
   dayKeysBetween,
+  hasRecordedChecks,
   isRecordDay,
   countDeltaLine,
   dayInstant,
@@ -263,7 +264,7 @@ export function checksTab({ report, filters, shown }) {
       ${kind === "quarter" ? weekChart(days) : calendarGrid(days)}
       ${legend({
         recorded: days.some(
-          (day) => day.status === "exempt" && day.completed > 0,
+          (day) => day.status === "exempt" && hasRecordedChecks(day),
         ),
       })}
     </div>
@@ -347,12 +348,7 @@ export function weekChart(days) {
           ></rect>`;
         })
         .join("");
-      const label = week.monthLabel
-        ? html`<text class="reports-chart__label" x="${x}" y="${height + 10}">
-            ${escapeHtml(week.monthLabel)}
-          </text>`
-        : "";
-      return rects + label;
+      return rects;
     })
     .join("");
   return html`
@@ -361,7 +357,7 @@ export function weekChart(days) {
     </h3>
     <svg
       class="reports-chart"
-      viewBox="0 0 ${Math.max(width, barWidth)} ${height + 14}"
+      viewBox="0 0 ${Math.max(width, barWidth)} ${height}"
       role="img"
       aria-label="${escapeAttr(
         t("reports.checks.chartAria", { weeks: weeks.length }),
@@ -369,6 +365,7 @@ export function weekChart(days) {
     >
       ${bars}
     </svg>
+    ${chartLabelRow(weeks.map((week) => week.monthLabel || ""))}
     <table class="visually-hidden">
       <caption>
         ${escapeHtml(t("reports.checks.chartTable"))}
@@ -409,6 +406,23 @@ export function weekChart(days) {
 }
 
 /**
+ * Axis labels under a bar chart, outside the SVG so they scale with the
+ * user's text size: one cell per bar, text only where a label belongs. The
+ * hidden table is the chart's text equivalent, so the row is decorative.
+ * @param {string[]} labels one entry per bar, "" for no label
+ */
+function chartLabelRow(labels) {
+  return html`<div class="reports-chart__labels" aria-hidden="true">
+    ${labels
+      .map(
+        (label) =>
+          html`<span class="reports-chart__tick">${escapeHtml(label)}</span>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+/**
  * The month calendar or the single week strip: a 7-column grid of day cells,
  * each carrying its count and status in text.
  * @param {DaySummary[]} days
@@ -445,7 +459,7 @@ export function calendarGrid(days) {
 /** @param {DaySummary} day */
 function dayCell(day) {
   const owed = day.required > 0 && day.status !== "upcoming";
-  const recorded = day.required === 0 && day.completed > 0;
+  const recorded = day.required === 0 && hasRecordedChecks(day);
   const label = t("reports.checks.dayCell", {
     date: formatMonthDay(dayInstant(day.date)),
     completed: day.completed,
@@ -466,10 +480,21 @@ function dayCell(day) {
         >`
       : recorded
         ? html`<span class="reports-calendar__count" aria-hidden="true"
-            >${day.completed}</span
+            >${day.completed + (day.reports ?? 0)}</span
           >`
         : ""}
   </li>`;
+}
+
+/**
+ * "N checks completed" for a day that owed nothing, or "N issue reports
+ * recorded" when only single-issue reports were made.
+ * @param {DaySummary} day
+ */
+function recordedLine(day) {
+  return day.completed > 0
+    ? t("reports.totals.completed", { count: day.completed })
+    : t("reports.day.reportsOnly", { count: day.reports ?? 0 });
 }
 
 /** @param {{ recorded?: boolean }} [vm] show the "recorded, none required" entry */
@@ -554,7 +579,7 @@ function dayCard(day, today) {
               completed: day.completed,
               required: day.required,
             })
-          : t("reports.totals.completed", { count: day.completed }),
+          : recordedLine(day),
       )}
     </p>
     ${day.issueCount
@@ -605,7 +630,7 @@ export function dayDetail({ day, today, checks }) {
                     completed: day.completed,
                     required: day.required,
                   })
-                : t("reports.totals.completed", { count: day.completed }),
+                : recordedLine(day),
             )}
             ${day.issueCount
               ? html`<br />${escapeHtml(
@@ -928,17 +953,16 @@ export function issuesChart(days) {
   const height = 50;
   const max = Math.max(1, ...days.map((d) => d.found));
   const width = Math.max(barWidth, days.length * (barWidth + gap) - gap);
+  const labels = days.map((day, i) =>
+    i === 0 || day.date.endsWith("-01") || weekdayIndexOf(day.date) === 0
+      ? String(Number(day.date.slice(-2)))
+      : "",
+  );
   const bars = days
     .map((day, i) => {
       const x = i * (barWidth + gap);
       const foundH = (height * day.found) / max;
       const respondedH = (height * day.responded) / max;
-      const label =
-        i === 0 || day.date.endsWith("-01") || weekdayIndexOf(day.date) === 0
-          ? html`<text class="reports-chart__label" x="${x}" y="${height + 9}"
-              >${Number(day.date.slice(-2))}</text
-            >`
-          : "";
       return html`<rect
           class="reports-chart__bar reports-chart__bar--found"
           x="${x}"
@@ -952,8 +976,7 @@ export function issuesChart(days) {
           y="${(height - respondedH).toFixed(2)}"
           width="${barWidth}"
           height="${respondedH.toFixed(2)}"
-        ></rect
-        >${label}`;
+        ></rect>`;
     })
     .join("");
   return html`
@@ -962,7 +985,7 @@ export function issuesChart(days) {
     </h3>
     <svg
       class="reports-chart"
-      viewBox="0 0 ${width} ${height + 12}"
+      viewBox="0 0 ${width} ${height}"
       role="img"
       aria-label="${escapeAttr(
         t("reports.issues.chartAria", { days: days.length }),
@@ -970,6 +993,7 @@ export function issuesChart(days) {
     >
       ${bars}
     </svg>
+    ${chartLabelRow(labels)}
     <ul class="reports-legend">
       <li class="reports-legend__item">
         <span

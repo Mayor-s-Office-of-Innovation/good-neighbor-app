@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dayStatus,
   requiredOn,
+  requiredOnResolver,
   requirementFromCompliance,
   summarizeCheckDays,
 } from "./check-compliance.js";
@@ -195,5 +196,93 @@ describe("summarizeCheckDays", () => {
     expect(days[0]).toMatchObject({ status: "exempt", required: 0 });
     expect(days[1]).toMatchObject({ status: "partial", required: 3 });
     expect(totals).toMatchObject({ possible: 3, completed: 1, missed: 2 });
+  });
+
+  it("judges each day by the terms version in force then", () => {
+    // Cadence 2 through Sep 28, then 3 from Sep 29; the projection only
+    // knows the current cadence.
+    const resolveRequired = requiredOnResolver(THREE_A_DAY, [
+      {
+        effectiveStart: "2026-09-29",
+        requiredChecksPerDay: 3,
+        status: "active",
+      },
+      {
+        effectiveStart: "2026-09-01",
+        expiresOnExclusive: "2026-09-29",
+        requiredChecksPerDay: 2,
+        status: "expired",
+      },
+    ]);
+    const { days, totals } = summarizeCheckDays({
+      checks: [
+        completed("a", "2026-09-28T15:00:00.000Z"),
+        completed("b", "2026-09-28T18:00:00.000Z"),
+        completed("c", "2026-09-29T15:00:00.000Z"),
+        completed("d", "2026-09-29T18:00:00.000Z"),
+      ],
+      dayKeys: ["2026-09-28", "2026-09-29"],
+      today,
+      requirement: THREE_A_DAY,
+      resolveRequired,
+    });
+    expect(days[0]).toMatchObject({ required: 2, status: "complete" });
+    expect(days[1]).toMatchObject({ required: 3, status: "partial" });
+    expect(totals).toMatchObject({ possible: 5, completed: 4, missed: 1 });
+  });
+});
+
+describe("requiredOnResolver", () => {
+  const versions = [
+    {
+      effectiveStart: "2026-07-01",
+      expiresOnExclusive: "2026-08-01",
+      requiredChecksPerDay: 2,
+      status: "expired",
+    },
+    {
+      effectiveStart: "2026-09-01",
+      requiredChecksPerDay: 4,
+      status: "active",
+    },
+    {
+      effectiveStart: "2026-08-15",
+      requiredChecksPerDay: 9,
+      status: "cancelled",
+    },
+  ];
+
+  it("picks the version in force on each day and owes nothing between periods", () => {
+    const required = requiredOnResolver(THREE_A_DAY, versions);
+    expect(required("2026-06-30")).toBe(0); // before any terms
+    expect(required("2026-07-01")).toBe(2);
+    expect(required("2026-07-31")).toBe(2);
+    expect(required("2026-08-01")).toBe(0); // first period ended
+    expect(required("2026-08-20")).toBe(0); // cancelled version never applied
+    expect(required("2026-09-01")).toBe(4);
+    expect(required("2027-01-01")).toBe(4); // open-ended
+  });
+
+  it("falls back to the projection when the site has no terms", () => {
+    const required = requiredOnResolver(
+      { ...THREE_A_DAY, periodStart: "2026-09-02" },
+      [],
+    );
+    expect(required("2026-09-01")).toBe(0);
+    expect(required("2026-09-02")).toBe(3);
+  });
+
+  it("respects an explicit 'not required' and a version without a cadence", () => {
+    expect(
+      requiredOnResolver(
+        { ...THREE_A_DAY, required: false },
+        versions,
+      )("2026-09-10"),
+    ).toBe(0);
+    expect(
+      requiredOnResolver(THREE_A_DAY, [
+        { effectiveStart: "2026-09-01", status: "active" },
+      ])("2026-09-10"),
+    ).toBe(3);
   });
 });

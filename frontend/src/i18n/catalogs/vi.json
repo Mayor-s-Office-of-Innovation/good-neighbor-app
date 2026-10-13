@@ -226,6 +226,8 @@
   "reports.day.issues.other": "{count} issues found",
   "reports.day.notFound": "No record for that day.",
   "reports.day.open": "View {title}",
+  "reports.day.reportsOnly.one": "{count} issue report recorded",
+  "reports.day.reportsOnly.other": "{count} issue reports recorded",
   "reports.day.requiredCompletedOf": "{completed} of {required} required checks completed",
   "reports.day.timelineAria": "Checks on this day",
   "reports.day.today": "Today, {date}",

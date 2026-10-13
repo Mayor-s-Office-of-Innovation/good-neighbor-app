@@ -134,6 +134,16 @@ describe("records and titles", () => {
     expect(
       recordDays([day("2026-09-26", "exempt", 2, 0)]).map((d) => d.date),
     ).toEqual(["2026-09-26"]);
+    // So does a day with only single-issue reports: it has check IDs and a
+    // day detail to link to.
+    expect(
+      recordDays([{ ...day("2026-09-25", "exempt", 0, 0), reports: 1 }]).map(
+        (d) => d.date,
+      ),
+    ).toEqual(["2026-09-25"]);
+    expect(
+      weekBuckets([{ ...day("2026-09-25", "exempt", 0, 0), reports: 1 }])[0],
+    ).toMatchObject({ recorded: 1, open: 0 });
   });
 
   it("names days relative to today", () => {

@@ -33,6 +33,7 @@ import {
 } from "../lib/pacific-dates.js";
 import {
   requirementFromCompliance,
+  requiredOnResolver,
   summarizeCheckDays,
 } from "../domain/check-compliance.js";
 import {
@@ -167,6 +168,31 @@ async function readSiteMeta(tableName, siteId) {
 }
 
 /**
+ * Every version of the site's compliance terms (`COMPLIANCE_TERMS#`), so
+ * each reported day is judged by the cadence in force then. A site has a
+ * handful of versions at most, so one page is enough.
+ * @param {string} tableName
+ * @param {string} siteId
+ * @returns {Promise<Array<import("../domain/check-compliance.js").ComplianceTermsVersion>>}
+ */
+async function readComplianceTerms(tableName, siteId) {
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":prefix": "COMPLIANCE_TERMS#",
+      },
+      ProjectionExpression:
+        "effectiveStart, expiresOnExclusive, requiredChecksPerDay, #status",
+      ExpressionAttributeNames: { "#status": "status" },
+    }),
+  );
+  return /** @type {any[]} */ (result.Items ?? []);
+}
+
+/**
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
  * @returns {{ siteId: string, tableName: string, period: import("../lib/pacific-dates.js").Period, today: string } | { response: ReturnType<typeof jsonResponse> }}
  */
@@ -200,24 +226,33 @@ export const getChecksReport = async (event) => {
   const previous = previousPeriod(period);
   const partition = sitePk(siteId);
 
-  const [site, currentChecks, previousChecks] = await Promise.all([
+  const [site, currentChecks, previousChecks, terms] = await Promise.all([
     readSiteMeta(tableName, siteId),
     queryTimeline({ tableName, partition, period }),
     queryTimeline({ tableName, partition, period: previous }),
+    readComplianceTerms(tableName, siteId),
   ]);
   const requirement = requirementFromCompliance(site.compliance);
+  // The projection describes today's terms (for the headline); each day is
+  // judged by the version that applied then. Recorded terms, even if the
+  // projection has since been nulled, mean the cadence is not assumed.
+  const hasTerms = terms.some((v) => v.status !== "cancelled");
+  if (hasTerms) requirement.assumed = false;
+  const resolveRequired = requiredOnResolver(requirement, terms);
 
   const current = summarizeCheckDays({
     checks: currentChecks,
     dayKeys: dayKeysBetween(period.start, period.endExclusive),
     today,
     requirement,
+    resolveRequired,
   });
   const prior = summarizeCheckDays({
     checks: previousChecks,
     dayKeys: dayKeysBetween(previous.start, previous.endExclusive),
     today,
     requirement,
+    resolveRequired,
   });
 
   return jsonResponse(200, {
@@ -252,14 +287,19 @@ export const getTasksReport = async (event) => {
       tableName,
       partition,
       period: previous,
-      projection: ["taskId"],
+      projection: ["taskId", "status"],
     }),
   ]);
+  // Same definition of an issue as the current list: a superseded task was
+  // replaced by an amendment and is not an issue in its own right.
+  const previousCount = previousTasks.filter(
+    (task) => task.status !== "superseded",
+  ).length;
   return jsonResponse(200, {
     period,
     today,
     tasks,
-    previous: { ...previous, count: previousTasks.length },
+    previous: { ...previous, count: previousCount },
   });
 };
 

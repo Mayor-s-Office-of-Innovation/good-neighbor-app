@@ -13,6 +13,7 @@ import {
   taskUpdateMediaPointerKey,
   taskUpdatePointerKey,
   taskUpdateTimelineGsi,
+  taskTimelineGsiFor,
   taskUpdatePrefix,
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
@@ -284,6 +285,7 @@ export async function writeTaskTransition(input) {
             TableName: input.tableName,
             Item: {
               ...input.task,
+              ...taskTimelineGsiFor(input.siteId, input.task),
               ...taskWorklistDateGsi(
                 input.siteId,
                 String(input.task.status || ""),

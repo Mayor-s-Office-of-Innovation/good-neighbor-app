@@ -237,8 +237,18 @@ export function recordDays(days) {
 export function isRecordDay(day) {
   return (
     ["complete", "partial", "missed", "pending"].includes(day.status) ||
-    (day.status === "exempt" && day.completed > 0)
+    (day.status === "exempt" && hasRecordedChecks(day))
   );
+}
+
+/**
+ * Whether anything was recorded on a day that owed nothing: a completed
+ * perimeter check or a single-issue report (both carry check IDs and a day
+ * detail).
+ * @param {DaySummary} day
+ */
+export function hasRecordedChecks(day) {
+  return day.completed > 0 || (day.reports ?? 0) > 0;
 }
 
 /**
@@ -294,7 +304,8 @@ export function weekBuckets(days) {
     if (day.status === "complete") bucket.complete += 1;
     else if (day.status === "partial") bucket.partial += 1;
     else if (day.status === "missed") bucket.missed += 1;
-    else if (day.status === "exempt" && day.completed > 0) bucket.recorded += 1;
+    else if (day.status === "exempt" && hasRecordedChecks(day))
+      bucket.recorded += 1;
     else bucket.open += 1;
     if (day.date.endsWith("-01")) {
       bucket.monthLabel = formatDateTime(dayInstant(day.date), {

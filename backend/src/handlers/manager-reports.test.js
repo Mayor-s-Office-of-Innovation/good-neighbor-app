@@ -90,6 +90,9 @@ describe("getChecksReport", () => {
           },
         });
       }
+      if (cmd.input.ExpressionAttributeValues[":prefix"]) {
+        return Promise.resolve({ Items: [] }); // no versioned terms
+      }
       const from = cmd.input.ExpressionAttributeValues[":from"];
       if (from.startsWith("2026-09-27")) {
         return Promise.resolve({
@@ -171,11 +174,18 @@ describe("getChecksReport", () => {
     // Raw headers never leave the handler.
     expect(res.body).not.toContain('"startedAt"');
 
-    const [current, previous] = queries();
+    const [current, previous, terms] = queries();
     expect(current.input.IndexName).toBe("GSI1");
     expect(current.input.KeyConditionExpression).toBe(
       "gsi1pk = :pk AND gsi1sk BETWEEN :from AND :to",
     );
+    expect(terms.input.KeyConditionExpression).toBe(
+      "pk = :pk AND begins_with(sk, :prefix)",
+    );
+    expect(terms.input.ExpressionAttributeValues).toEqual({
+      ":pk": "SITE#site-1",
+      ":prefix": "COMPLIANCE_TERMS#",
+    });
     expect(current.input.ExpressionAttributeValues).toEqual({
       ":pk": "SITE#site-1",
       ":from": "2026-09-27T07:00:00.000Z",
@@ -189,6 +199,9 @@ describe("getChecksReport", () => {
   it("defaults to the current month and follows pagination cursors", async () => {
     send.mockImplementation((cmd) => {
       if (cmd instanceof GetCommand) return Promise.resolve({ Item: {} });
+      if (cmd.input.ExpressionAttributeValues[":prefix"]) {
+        return Promise.resolve({ Items: [] });
+      }
       if (cmd.input.ExclusiveStartKey) return Promise.resolve({ Items: [] });
       return Promise.resolve({
         Items: [],
@@ -213,9 +226,10 @@ describe("getChecksReport", () => {
     });
     expect(body.days[0].required).toBe(3);
     expect(body.totals.possible).toBe(30 * 3);
-    // Current month needed two pages, previous month one. Both periods
-    // query concurrently, so only the cursor page's position is stable.
-    expect(queries()).toHaveLength(3);
+    // Current month needed two pages, previous month one, plus the terms
+    // read. Both periods query concurrently, so only the cursor page's
+    // position is stable.
+    expect(queries()).toHaveLength(4);
     const cursorPage = queries().find((q) => q.input.ExclusiveStartKey);
     expect(cursorPage.input.ExclusiveStartKey).toEqual({ pk: "x", sk: "y" });
     expect(cursorPage.input.ExpressionAttributeValues[":from"]).toBe(
@@ -231,7 +245,7 @@ describe("getChecksReport", () => {
         });
       }
       if (
-        cmd.input.ExpressionAttributeValues[":from"].startsWith("2026-09-27")
+        cmd.input.ExpressionAttributeValues[":from"]?.startsWith("2026-09-27")
       ) {
         return Promise.resolve({
           Items: [
@@ -250,6 +264,70 @@ describe("getChecksReport", () => {
     );
     const body = JSON.parse(res.body);
     expect(body.totals.recorded).toBe(0);
+  });
+
+  it("judges past days by the terms in force then, not today's projection", async () => {
+    send.mockImplementation((cmd) => {
+      if (cmd instanceof GetCommand) {
+        // The projection was nulled when the first period ended; the new
+        // terms start Sep 29.
+        return Promise.resolve({
+          Item: {
+            compliance: {
+              perimeterChecksRequired: true,
+              periodStart: "2026-09-29",
+              requiredChecksPerDay: 3,
+            },
+          },
+        });
+      }
+      if (cmd.input.ExpressionAttributeValues[":prefix"]) {
+        return Promise.resolve({
+          Items: [
+            {
+              effectiveStart: "2026-09-01",
+              expiresOnExclusive: "2026-09-28",
+              requiredChecksPerDay: 1,
+              status: "expired",
+            },
+            {
+              effectiveStart: "2026-09-29",
+              requiredChecksPerDay: 3,
+              status: "active",
+            },
+          ],
+        });
+      }
+      if (
+        cmd.input.ExpressionAttributeValues[":from"].startsWith("2026-09-27")
+      ) {
+        return Promise.resolve({
+          Items: [
+            header("a", "2026-09-27T15:00:00.000Z"),
+            header("b", "2026-09-29T15:00:00.000Z"),
+          ],
+        });
+      }
+      return Promise.resolve({ Items: [] });
+    });
+    const res = await call(
+      getChecksReport,
+      event({ query: { period: "week", start: "2026-09-30" } }),
+    );
+    const body = JSON.parse(res.body);
+    expect(body.requirement).toMatchObject({ assumed: false });
+    expect(
+      body.days.map((/** @type {any} */ d) => [d.date, d.required, d.status]),
+    ).toEqual([
+      ["2026-09-27", 1, "complete"], // old cadence, met
+      ["2026-09-28", 0, "exempt"], // between the two periods
+      ["2026-09-29", 3, "partial"], // new cadence
+      ["2026-09-30", 3, "pending"],
+      ["2026-10-01", 3, "upcoming"],
+      ["2026-10-02", 3, "upcoming"],
+      ["2026-10-03", 3, "upcoming"],
+    ]);
+    expect(body.totals).toMatchObject({ possible: 7, completed: 2, missed: 2 });
   });
 });
 
@@ -273,7 +351,20 @@ describe("getTasksReport", () => {
                 gsi1sk: "2026-09-01T15:00:00.000Z#t2",
               },
             ]
-          : [{ taskId: "old", gsi1sk: "2026-05-01T15:00:00.000Z#old" }],
+          : [
+              {
+                taskId: "old",
+                status: "completed",
+                gsi1sk: "2026-05-01T15:00:00.000Z#old",
+              },
+              // Replaced by an amendment: not an issue, so not counted,
+              // matching the current list's definition.
+              {
+                taskId: "old-superseded",
+                status: "superseded",
+                gsi1sk: "2026-05-02T15:00:00.000Z#old-superseded",
+              },
+            ],
       });
     });
 
@@ -305,7 +396,7 @@ describe("getTasksReport", () => {
     );
     expect(current.input.ProjectionExpression).toContain("#shortId");
     expect(current.input.ExpressionAttributeNames["#status"]).toBe("status");
-    expect(previous.input.ProjectionExpression).toBe("#taskId");
+    expect(previous.input.ProjectionExpression).toBe("#taskId, #status");
   });
 
   it("refuses general devices", async () => {

@@ -232,6 +232,21 @@ export const taskTimelineGsi = (siteId, createdAt, taskId) => ({
 });
 
 /**
+ * The timeline stamp for an existing task item, for every full-item re-put
+ * (status transitions, supersession). Deriving it on each write means a task
+ * written before the stamp existed is stamped on its next transition, and a
+ * stamp the backfill applied is never dropped by a re-put from an older
+ * snapshot of the item.
+ * @param {string} siteId
+ * @param {Record<string, any>} task
+ * @returns {{ gsi1pk: string, gsi1sk: string } | {}}
+ */
+export const taskTimelineGsiFor = (siteId, task) =>
+  task?.createdAt && task?.taskId
+    ? taskTimelineGsi(siteId, String(task.createdAt), String(task.taskId))
+    : {};
+
+/**
  * GSI1 partition for a site's task update events (the responses to issues)
  * in the order they happened, across every task. Serves the manager reports
  * (AP28); the per-task timeline (AP18) stays a base-table prefix query.

@@ -18,6 +18,7 @@ import {
   taskDisplayCounterKey,
   taskKey,
   taskTimelineGsi,
+  taskTimelineGsiFor,
   taskUpdateKey,
   taskUpdatePointerKey,
   taskUpdateTimelineGsi,
@@ -885,6 +886,7 @@ export async function storeEvaluatedAssessment(input, options) {
         TableName: options.tableName,
         Item: {
           ...task,
+          ...taskTimelineGsiFor(input.siteId, task),
           status: "superseded",
           supersededAt: now,
           supersessionReason: "assessment_refreshed",
@@ -1882,6 +1884,7 @@ function supersedeTaskWrites(tasks, opts, now) {
     const taskId = String(task.taskId);
     const updated = {
       ...task,
+      ...taskTimelineGsiFor(opts.siteId, task),
       status: "superseded",
       supersededAt: now,
       supersessionReason: opts.reason ?? "analysis_condition_amended",

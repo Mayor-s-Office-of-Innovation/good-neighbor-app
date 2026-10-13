@@ -451,6 +451,7 @@ describe("issuesTab", () => {
 
 describe("a site without a configured cadence", () => {
   const exemptDays = [
+    day("2026-09-26", "exempt", 0, { required: 0, reports: 1 }),
     day("2026-09-27", "exempt", 2, { required: 0, issueCount: 1 }),
     day("2026-09-28", "exempt", 0, { required: 0 }),
     day("2026-09-29", "exempt", 1, { required: 0 }),
@@ -478,6 +479,11 @@ describe("a site without a configured cadence", () => {
     expect(markup).toContain('data-day="2026-09-29"');
     expect(markup).toContain('data-day="2026-09-27"');
     expect(markup).not.toContain('data-day="2026-09-28"');
+    // A day with only a single-issue report is still a record with a link.
+    expect(markup).toContain('data-day="2026-09-26"');
+    expect(markup).toContain(
+      escapeHtml(t("reports.day.reportsOnly", { count: 1 })),
+    );
     expect(markup).toContain(escapeHtml(t("reports.status.exempt")));
     expect(markup).toContain(
       escapeHtml(t("reports.totals.completed", { count: 2 })),
@@ -497,6 +503,9 @@ describe("a site without a configured cadence", () => {
       shown: 10,
     });
     expect(quarter).toContain("reports-chart__bar--recorded");
+    // Axis labels are HTML text under the chart, never SVG <text>.
+    expect(quarter).toContain('class="reports-chart__tick"');
+    expect(quarter).not.toContain("<text");
   });
 
   it("says when the standard cadence is standing in for a missing one", () => {

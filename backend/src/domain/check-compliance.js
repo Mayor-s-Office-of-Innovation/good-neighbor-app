@@ -85,6 +85,52 @@ export function requiredOn(requirement, dayKey) {
 }
 
 /**
+ * @typedef {object} ComplianceTermsVersion one `COMPLIANCE_TERMS#` item
+ * @property {string} effectiveStart first day the version applies
+ * @property {string} [expiresOnExclusive] day after the version's last day
+ * @property {number} [requiredChecksPerDay]
+ * @property {string} [status] a "cancelled" version never applied
+ */
+
+/**
+ * How many checks the site owed on each day, judged by the terms in force
+ * on that day rather than by today's `#META.compliance` projection, so a
+ * past period is not rewritten when the cadence changes or a period ends.
+ * The version with the latest `effectiveStart` on or before the day
+ * applies; a day no version covers owes nothing. A site with no terms at
+ * all keeps the projection's rule (and its city-wide default).
+ * @param {Requirement} requirement from `requirementFromCompliance`
+ * @param {ComplianceTermsVersion[]} [terms] every version, any order
+ * @returns {(dayKey: string) => number}
+ */
+export function requiredOnResolver(requirement, terms = []) {
+  const versions = terms
+    .filter(
+      (v) => v.status !== "cancelled" && typeof v.effectiveStart === "string",
+    )
+    .sort((a, b) => a.effectiveStart.localeCompare(b.effectiveStart));
+  if (!versions.length) return (dayKey) => requiredOn(requirement, dayKey);
+  return (dayKey) => {
+    if (!requirement.required) return 0;
+    let applicable = null;
+    for (const version of versions) {
+      if (version.effectiveStart > dayKey) break;
+      applicable = version;
+    }
+    if (!applicable) return 0;
+    if (
+      applicable.expiresOnExclusive &&
+      dayKey >= applicable.expiresOnExclusive
+    )
+      return 0;
+    const perDay = Number(applicable.requiredChecksPerDay);
+    return Number.isInteger(perDay) && perDay > 0
+      ? perDay
+      : requirement.requiredPerDay;
+  };
+}
+
+/**
  * @param {{ required: number, completed: number }} day
  * @param {string} dayKey
  * @param {string} today
@@ -122,9 +168,17 @@ function occurredOn(header) {
  * @param {string[]} input.dayKeys the period's days, ascending
  * @param {string} input.today Pacific day key
  * @param {Requirement} input.requirement
+ * @param {(dayKey: string) => number} [input.resolveRequired] per-day
+ *   requirement (see `requiredOnResolver`); defaults to the flat rule
  * @returns {{ days: DaySummary[], totals: ComplianceTotals }}
  */
-export function summarizeCheckDays({ checks, dayKeys, today, requirement }) {
+export function summarizeCheckDays({
+  checks,
+  dayKeys,
+  today,
+  requirement,
+  resolveRequired,
+}) {
   /** @type {Map<string, Array<Record<string, any>>>} */
   const byDay = new Map();
   for (const header of checks) {
@@ -153,7 +207,9 @@ export function summarizeCheckDays({ checks, dayKeys, today, requirement }) {
       (sum, h) => sum + (Number(h.issueCount) || 0),
       0,
     );
-    const required = requiredOn(requirement, date);
+    const required = resolveRequired
+      ? resolveRequired(date)
+      : requiredOn(requirement, date);
     const status = dayStatus({ required, completed }, date, today);
 
     if (date <= today) {
