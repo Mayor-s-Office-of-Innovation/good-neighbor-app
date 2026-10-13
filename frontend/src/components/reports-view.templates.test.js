@@ -78,6 +78,21 @@ describe("reportsShell", () => {
     expect(markup).toContain("<site-switcher></site-switcher>");
     expect(markup).toContain("data-screen-focus");
     expect(markup).toContain("<p>x</p>");
+    // A way back to the rest of the app, and the same gear menu as home.
+    expect(markup).toContain('href="/today"');
+    expect(markup).toContain(escapeHtml(t("reports.backHome")));
+    expect(markup).toContain('id="home-settings"');
+    expect(markup).toContain('id="language-dialog"');
+    expect(markup).toContain('id="logout-dialog"');
+    expect(markup).not.toContain('role="menu"');
+    expect(
+      reportsShell({
+        heading: "Reports",
+        body: "",
+        tab: "checks",
+        settingsMenuOpen: true,
+      }),
+    ).toContain('id="settings-logout"');
   });
 
   it("renders the Checks and Issues tabs, and no row for a single tab", () => {
@@ -431,5 +446,42 @@ describe("issuesTab", () => {
       shown: 10,
     });
     expect(markup).toContain(escapeHtml(t("reports.issues.none")));
+  });
+});
+
+describe("a site without a configured cadence", () => {
+  const exemptDays = [
+    day("2026-09-27", "exempt", 2, { required: 0, issueCount: 1 }),
+    day("2026-09-28", "exempt", 0, { required: 0 }),
+    day("2026-09-29", "exempt", 1, { required: 0 }),
+  ];
+  const report = {
+    period,
+    today: "2026-09-30",
+    days: exemptDays,
+    totals: {
+      possible: 0,
+      completed: 0,
+      recorded: 3,
+      missed: 0,
+      issueCount: 1,
+    },
+    previous: { ...previous, totals: { ...previous.totals, possible: 0 } },
+  };
+
+  it("still shows its checks instead of an empty report", () => {
+    const markup = checksTab({ report, filters: "", shown: 10 });
+    expect(markup).toContain(
+      escapeHtml(t("reports.totals.completed", { count: 3 })),
+    );
+    expect(markup).toContain(escapeHtml(t("reports.checks.noRequirement")));
+    expect(markup).toContain('data-day="2026-09-29"');
+    expect(markup).toContain('data-day="2026-09-27"');
+    expect(markup).not.toContain('data-day="2026-09-28"');
+    expect(markup).toContain(escapeHtml(t("reports.status.exempt")));
+    expect(markup).toContain(
+      escapeHtml(t("reports.totals.completed", { count: 2 })),
+    );
+    expect(markup).not.toContain(escapeHtml(t("reports.records.empty")));
   });
 });

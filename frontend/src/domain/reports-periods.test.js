@@ -130,6 +130,10 @@ describe("records and titles", () => {
       "2026-09-29",
       "2026-09-27",
     ]);
+    // Checks recorded on a day with no requirement still count as records.
+    expect(
+      recordDays([day("2026-09-26", "exempt", 2, 0)]).map((d) => d.date),
+    ).toEqual(["2026-09-26"]);
   });
 
   it("names days relative to today", () => {

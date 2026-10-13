@@ -101,6 +101,28 @@ test.describe("site manager reports", () => {
     await page.getByRole("link", { name: t("reports.day.back") }).click();
     await expect(page).toHaveURL(/\/reports(\?|$)/);
     await expect(page.locator(".reports__records")).toBeVisible();
+
+    // The gear menu is here too, and the back link returns home.
+    await page.locator("#home-settings").click();
+    const menu = page.getByRole("menu", { name: t("today.settings.aria") });
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      t("today.settings.feedback"),
+      t("today.settings.siteAdmin"),
+      t("today.settings.reports"),
+      t("today.settings.language"),
+      t("today.settings.attributions"),
+      t("today.settings.logout"),
+    ]);
+    await menu
+      .getByRole("menuitem", { name: t("today.settings.attributions") })
+      .click();
+    const attributions = page.locator("#attributions-dialog");
+    await expect(attributions).toBeVisible();
+    await attributions.getByRole("button", { name: t("common.close") }).click();
+    await expect(attributions).toBeHidden();
+    await page.getByRole("link", { name: t("reports.backHome") }).click();
+    await expect(page).toHaveURL(/\/today$/);
+    await expect(page.locator("#start-check")).toBeVisible();
   });
 
   test("the Issues tab combines what was found with what was done", async ({

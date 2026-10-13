@@ -225,12 +225,20 @@ export function countDeltaLine(current, previous, kind) {
  * @param {DaySummary[]} days
  */
 export function recordDays(days) {
-  return days
-    .filter((day) =>
-      ["complete", "partial", "missed", "pending"].includes(day.status),
-    )
-    .slice()
-    .reverse();
+  return days.filter(isRecordDay).slice().reverse();
+}
+
+/**
+ * A day belongs in the records when something was owed and the day has
+ * started, or when checks were recorded even though nothing was owed (a
+ * site with no configured cadence still sees its checks).
+ * @param {DaySummary} day
+ */
+export function isRecordDay(day) {
+  return (
+    ["complete", "partial", "missed", "pending"].includes(day.status) ||
+    (day.status === "exempt" && day.completed > 0)
+  );
 }
 
 /**

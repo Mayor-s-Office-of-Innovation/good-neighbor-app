@@ -14,6 +14,12 @@ import {
 import { rulebookText } from "../i18n/rulebook.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
+  attributionDialog,
+  languageDialog,
+  logoutDialog,
+  settingsMenu,
+} from "./today-view.templates.js";
+import {
   RESPONSE_KINDS,
   issueRows,
   issuesByDay,
@@ -23,6 +29,7 @@ import {
   PERIOD_KINDS,
   calendarCells,
   dayKeysBetween,
+  isRecordDay,
   countDeltaLine,
   dayInstant,
   dayTitle,
@@ -46,13 +53,42 @@ const RECORD_PAGE = 10;
 /* ---- Shell ---- */
 
 /**
- * @param {{ heading: string, body: string, tab: string }} vm
+ * @param {{
+ *   heading: string,
+ *   body: string,
+ *   tab: string,
+ *   settingsMenuOpen?: boolean,
+ *   logoutError?: string,
+ *   logoutPending?: boolean,
+ * }} vm
  *   `body` is already-rendered markup for the active tab.
  */
-export function reportsShell({ heading, body, tab }) {
+export function reportsShell({
+  heading,
+  body,
+  tab,
+  settingsMenuOpen = false,
+  logoutError = "",
+  logoutPending = false,
+}) {
   return html`
     <div class="home reports">
       <section class="home-region home-region--header">
+        <div class="home-top-actions reports__top">
+          <a
+            class="reports-back"
+            id="reports-home"
+            href="/today"
+            aria-label="${escapeAttr(t("reports.backHome"))}"
+          >
+            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+          </a>
+          ${settingsMenu({ open: settingsMenuOpen, adminAccess: true })}
+          <feedback-dialog
+            class="feedback-dialog"
+            hide-trigger
+          ></feedback-dialog>
+        </div>
         <div class="screen screen--today-hero reports__head">
           <site-switcher></site-switcher>
           <h1 class="reports__title" tabindex="-1" data-screen-focus>
@@ -67,6 +103,8 @@ export function reportsShell({ heading, body, tab }) {
       >
         ${body}
       </section>
+      ${attributionDialog()} ${languageDialog()}
+      ${logoutDialog({ error: logoutError, pending: logoutPending })}
     </div>
   `;
 }
@@ -193,18 +231,24 @@ export function checksTab({ report, filters, shown }) {
   });
   return html`
     ${filters}
-    ${totals.possible > 0
+    ${totals.possible > 0 || totals.recorded > 0
       ? html`<div class="reports__headline">
           <h2 class="reports__headline-title">
             ${escapeHtml(
-              t("reports.checks.headline", {
-                completed: totals.completed,
-                possible: totals.possible,
-              }),
+              totals.possible > 0
+                ? t("reports.checks.headline", {
+                    completed: totals.completed,
+                    possible: totals.possible,
+                  })
+                : t("reports.totals.completed", { count: totals.recorded }),
             )}
           </h2>
           <p class="reports__headline-sub">
-            ${escapeHtml(rateDeltaLine(totals, previous.totals, kind))}
+            ${escapeHtml(
+              totals.possible > 0
+                ? rateDeltaLine(totals, previous.totals, kind)
+                : t("reports.checks.noRequirement"),
+            )}
           </p>
         </div>`
       : html`<p class="reports__status" role="status">
@@ -385,6 +429,7 @@ export function calendarGrid(days) {
 /** @param {DaySummary} day */
 function dayCell(day) {
   const owed = day.required > 0 && day.status !== "upcoming";
+  const recorded = day.required === 0 && day.completed > 0;
   const label = t("reports.checks.dayCell", {
     date: formatMonthDay(dayInstant(day.date)),
     completed: day.completed,
@@ -403,7 +448,11 @@ function dayCell(day) {
       ? html`<span class="reports-calendar__count" aria-hidden="true"
           >${day.completed}/${day.required}</span
         >`
-      : ""}
+      : recorded
+        ? html`<span class="reports-calendar__count" aria-hidden="true"
+            >${day.completed}</span
+          >`
+        : ""}
   </li>`;
 }
 
@@ -435,11 +484,7 @@ export function statusPill(status) {
  * @param {{ days: DaySummary[], today: string, period: Period, shown: number }} vm
  */
 export function recordsList({ days, today, period, shown }) {
-  const records = days
-    .filter((day) =>
-      ["complete", "partial", "missed", "pending"].includes(day.status),
-    )
-    .reverse();
+  const records = days.filter((day) => isRecordDay(day)).reverse();
   const visible = records.slice(0, shown);
   return html`
     <section class="reports__records" aria-labelledby="reports-records-title">
@@ -484,10 +529,12 @@ function dayCard(day, today) {
     </div>
     <p class="reports__record-sub">
       ${escapeHtml(
-        t("reports.day.completedOf", {
-          completed: day.completed,
-          required: day.required,
-        }),
+        day.required > 0
+          ? t("reports.day.completedOf", {
+              completed: day.completed,
+              required: day.required,
+            })
+          : t("reports.totals.completed", { count: day.completed }),
       )}
     </p>
     ${day.issueCount
@@ -533,10 +580,12 @@ export function dayDetail({ day, today, checks }) {
           </h1>
           <p class="topbar__sub">
             ${escapeHtml(
-              t("reports.day.requiredCompletedOf", {
-                completed: day.completed,
-                required: day.required,
-              }),
+              day.required > 0
+                ? t("reports.day.requiredCompletedOf", {
+                    completed: day.completed,
+                    required: day.required,
+                  })
+                : t("reports.totals.completed", { count: day.completed }),
             )}
             ${day.issueCount
               ? html`<br />${escapeHtml(

@@ -15,8 +15,15 @@ import "./reports-view.css";
 import "./site-switcher.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
-import { getSite, hasAdminAccess, listBoundSites } from "../db.js";
-import { t } from "../i18n/i18n.js";
+import {
+  clearSiteSession,
+  getSite,
+  hasAdminAccess,
+  listBoundSites,
+} from "../db.js";
+import { openOverlayDialog } from "../dialog-history.js";
+import { getLocale, setLocale, t } from "../i18n/i18n.js";
+import { discardInMemorySession } from "../state/check-session.js";
 import { currentRoute, navigate } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -27,7 +34,10 @@ import {
 } from "../services/api.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
-import { showSiteCatalogErrorToast } from "../state/toasts.js";
+import {
+  showLanguageErrorToast,
+  showSiteCatalogErrorToast,
+} from "../state/toasts.js";
 import {
   daysToCsv,
   isDayKey,
@@ -172,10 +182,28 @@ class ReportsView extends ReportsScreen {
     this._generation = 0;
     /** @type {string | null} id of the control to refocus after a render */
     this._refocus = null;
+    this._settingsMenuOpen = false;
+    this._logoutDialogOpen = false;
+    this._logoutPending = false;
+    this._logoutError = "";
+    this._onDocumentClick = (/** @type {Event} */ event) => {
+      if (!this._settingsMenuOpen) return;
+      const path = event.composedPath?.() || [];
+      const inside = path.some(
+        (node) =>
+          node instanceof Element && node.matches(".home-settings-wrap"),
+      );
+      if (!inside) this._toggleSettingsMenu(false);
+    };
+  }
+
+  disconnectedCallback() {
+    document.removeEventListener("click", this._onDocumentClick);
   }
 
   async connectedCallback() {
     if (!(await this._requireManager())) return;
+    document.addEventListener("click", this._onDocumentClick);
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
     if (tab === "issues" || tab === "checks") this._tab = tab;
@@ -270,10 +298,131 @@ class ReportsView extends ReportsScreen {
       heading: t("reports.title"),
       body,
       tab: this._tab,
+      settingsMenuOpen: this._settingsMenuOpen,
+      logoutError: this._logoutError,
+      logoutPending: this._logoutPending,
     });
     this._mountSiteSwitcher("/reports");
     this._wire();
+    this._wireSettings();
     this._restoreFocus();
+  }
+
+  /** @param {boolean} [open] */
+  _toggleSettingsMenu(open = !this._settingsMenuOpen) {
+    if (open === this._settingsMenuOpen) return;
+    this._settingsMenuOpen = open;
+    this._refocus = "home-settings";
+    this._render();
+  }
+
+  /**
+   * The same gear menu as the home hub (template shared), with the three
+   * dialogs it opens. Site admin and Reports are plain navigations; the
+   * feedback sheet is its own element; language, attributions, and logout
+   * are overlay dialogs so system back closes them.
+   */
+  _wireSettings() {
+    const feedback = /** @type {any} */ (this.querySelector("feedback-dialog"));
+    if (feedback) feedback.siteId = this._siteId;
+    this.querySelector("#home-settings")?.addEventListener("click", () =>
+      this._toggleSettingsMenu(),
+    );
+    /** @param {() => void} action */
+    const choose = (action) => {
+      this._settingsMenuOpen = false;
+      this.querySelector(".home-settings-menu")?.remove();
+      this.querySelector("#home-settings")?.setAttribute(
+        "aria-expanded",
+        "false",
+      );
+      action();
+    };
+    this.querySelector("#settings-feedback")?.addEventListener("click", () =>
+      choose(() => feedback?.open()),
+    );
+    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
+      choose(() => navigate("/site-admin")),
+    );
+    this.querySelector("#settings-reports")?.addEventListener("click", () =>
+      choose(() => {}),
+    );
+    const language = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#language-dialog")
+    );
+    this.querySelector("#settings-language")?.addEventListener("click", () =>
+      choose(() => language && openOverlayDialog(language, "language")),
+    );
+    language?.addEventListener("close", () => {
+      const chosen = language.returnValue || "";
+      language.returnValue = "";
+      if (chosen && chosen !== getLocale()) {
+        void setLocale(chosen).then((ok) => {
+          if (!ok) showLanguageErrorToast();
+        });
+        return;
+      }
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
+    const attributions = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#attributions-dialog")
+    );
+    this.querySelector("#settings-attributions")?.addEventListener(
+      "click",
+      () =>
+        choose(
+          () => attributions && openOverlayDialog(attributions, "attributions"),
+        ),
+    );
+    attributions?.addEventListener("close", () => {
+      /** @type {HTMLElement | null} */ (
+        this.querySelector("#home-settings")
+      )?.focus();
+    });
+    const logout = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#logout-dialog")
+    );
+    this.querySelector("#settings-logout")?.addEventListener("click", () =>
+      choose(() => {
+        this._logoutDialogOpen = true;
+        if (logout) openOverlayDialog(logout, "logout");
+      }),
+    );
+    logout?.addEventListener("close", () => {
+      this._logoutDialogOpen = false;
+    });
+    this.querySelector("#logout-confirm")?.addEventListener("click", () =>
+      this._logout(),
+    );
+    for (const dialog of [language, attributions, logout]) {
+      dialog?.addEventListener("click", (event) => {
+        if (event.target === dialog) dialog.close();
+      });
+    }
+    // A re-render while the logout dialog is up (pending / error) rebuilds
+    // it closed; re-open it so the state change is visible.
+    if (this._logoutDialogOpen && logout && !logout.open) {
+      openOverlayDialog(logout, "logout");
+    }
+  }
+
+  async _logout() {
+    if (this._logoutPending) return;
+    this._logoutPending = true;
+    this._logoutError = "";
+    this._render();
+    try {
+      await clearSiteSession();
+      discardInMemorySession();
+      this._logoutDialogOpen = false;
+      window.dispatchEvent(new CustomEvent("authsignout"));
+    } catch {
+      this._logoutPending = false;
+      this._logoutError = t("today.logout.error");
+      this._render();
+    }
   }
 
   _wire() {
@@ -395,7 +544,11 @@ class ReportsDayView extends ReportsScreen {
       ]);
       if (!this.isConnected) return;
       const day = report.days.find((d) => d.date === date);
-      if (!day || day.status === "upcoming" || day.status === "exempt") {
+      if (
+        !day ||
+        day.status === "upcoming" ||
+        (!day.checkIds.length && day.status === "exempt")
+      ) {
         this.innerHTML = dayNotFound();
         announceScreenHeading(this, "[data-screen-focus]");
         return;
