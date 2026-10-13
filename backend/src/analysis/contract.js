@@ -112,6 +112,8 @@
  * @property {ModelRef} model
  * @property {{ app_id: string, request_id?: string }} [caller]
  * @property {InputStorageItem[]} [input_storage]
+ * @property {Array<{index: number, type: string, content_type?: string, shot_type?: "wide" | "detail"}>} [media_manifest]
+ * @property {{id: string, version: string}} [photo_framing]
  * @property {Assessment} assessment
  * @property {{ s3_uri: string }} [result_storage]
  */

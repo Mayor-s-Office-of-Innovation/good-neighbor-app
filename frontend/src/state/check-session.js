@@ -73,7 +73,7 @@ function normalizeCheck(check) {
   };
 }
 
-/** @type {null | {id,siteId,window,startedAt,items:any[],status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any}} */
+/** @type {null | {id,siteId,window,startedAt,items:any[],status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any,captureGuidanceContext?:{titleKey:string}}} */
 let current = null;
 const listeners = new Set();
 
@@ -133,6 +133,14 @@ function startFlow(siteId, flowType) {
   persist();
   emit();
   return current;
+}
+
+/** Persist the starting title so resuming a check does not change its day/ordinal. */
+export function setCaptureGuidanceContext(checkId, context) {
+  if (current?.id !== checkId) return;
+  current.captureGuidanceContext = context;
+  persist();
+  emit();
 }
 
 export function getCurrentCheck() {
