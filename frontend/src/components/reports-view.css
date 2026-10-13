@@ -164,10 +164,10 @@
   fill: var(--c-hazard);
 }
 
+/* Days not yet decided (or not owed): a hairline-colored bar, visible on
+   the card surface in both themes. */
 .reports-chart__bar--open {
-  fill: var(--surface-3);
-  stroke: var(--c-line);
-  stroke-width: 0.3;
+  fill: var(--c-line);
 }
 
 .reports-chart__label {
@@ -244,6 +244,14 @@
   color: var(--text-faint);
 }
 
+/* Checks recorded on a day with no requirement: a neutral ring with the
+   count, so the work shows even before the site's cadence is configured. */
+.reports-calendar__day--exempt:has(.reports-calendar__count) {
+  background: var(--surface-2);
+  border-color: var(--c-line);
+  color: var(--text);
+}
+
 /* ---- Legend and pills ---- */
 
 .reports-legend {
@@ -287,7 +295,7 @@
 }
 
 .reports-legend__dot--open {
-  background: var(--surface-3);
+  background: var(--c-line);
 }
 
 .reports-pill {
@@ -391,8 +399,18 @@
 }
 
 .reports__top {
-  justify-content: space-between;
+  justify-content: flex-start;
   margin-bottom: 0;
+}
+
+/* Back link left, gear right; the feedback sheet element in between takes
+   no space, so it must not be a third flex item splitting the row. */
+.reports__top .home-settings-wrap {
+  margin-left: auto;
+}
+
+.reports__top feedback-dialog {
+  display: contents;
 }
 
 /* The design draws no rule under the tab row. */
@@ -546,9 +564,7 @@
 /* ---- Issues tab ---- */
 
 .reports-chart__bar--found {
-  fill: var(--surface-3);
-  stroke: var(--c-line);
-  stroke-width: 0.3;
+  fill: var(--c-line);
 }
 
 .reports-chart__bar--responded {
@@ -556,7 +572,7 @@
 }
 
 .reports-legend__dot--found {
-  background: var(--surface-3);
+  background: var(--c-line);
 }
 
 .reports-legend__dot--responded {

@@ -261,7 +261,7 @@ export function checksTab({ report, filters, shown }) {
       <p class="reports__total">
         <strong
           >${escapeHtml(
-            t("reports.totals.completed", { count: totals.completed }),
+            t("reports.totals.completed", { count: totals.recorded }),
           )}</strong
         >
         <span
@@ -276,20 +276,22 @@ export function checksTab({ report, filters, shown }) {
           )}</span
         >
       </p>
-      <p class="reports__total">
-        <strong
-          >${escapeHtml(
-            t("reports.totals.missed", { count: totals.missed }),
-          )}</strong
-        >
-        ${periodOver
-          ? html`<span
+      ${totals.possible > 0
+        ? html`<p class="reports__total">
+            <strong
               >${escapeHtml(
-                countDeltaLine(totals.missed, previous.totals.missed, kind),
-              )}</span
-            >`
-          : ""}
-      </p>
+                t("reports.totals.missed", { count: totals.missed }),
+              )}</strong
+            >
+            ${periodOver
+              ? html`<span
+                  >${escapeHtml(
+                    countDeltaLine(totals.missed, previous.totals.missed, kind),
+                  )}</span
+                >`
+              : ""}
+          </p>`
+        : ""}
     </div>
     ${recordsList({ days, today: report.today, period, shown })}
   `;
