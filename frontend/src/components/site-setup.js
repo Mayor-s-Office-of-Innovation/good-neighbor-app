@@ -5,7 +5,7 @@
   site this shared device should operate as.
 */
 import "./site-setup.css";
-import { getSite, setSite } from "../db.js";
+import { getSite, saveDiscoveredBindings, setSite } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -472,6 +472,10 @@ export class SiteSetup extends HTMLElement {
         tokenGeneration: session.tokenGeneration,
         accessLevel: session.accessLevel,
       });
+      await saveDiscoveredBindings(
+        session.bindings || [],
+        session.physicalDeviceId,
+      );
       this.dispatchEvent(
         new CustomEvent("sitebound", { bubbles: true, detail: site }),
       );

@@ -39,6 +39,9 @@
 - **[ADR 0015](./adr/0015-compliance-admin-roles.md)** — Compliance manager and
   Compliance supervisor authorization, Cognito lifecycle safeguards, and the
   retirement of legacy setup-code contacts.
+- **[ADR 0016](./adr/0016-provider-manager-enrollment.md)** — supervisor-only
+  Provider Manager lifecycle and all-or-nothing enrollment across the Provider's
+  active Sites.
 
 ## Operations
 

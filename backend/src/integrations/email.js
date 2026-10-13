@@ -199,6 +199,93 @@ export async function sendManagerEnrollmentEmail(email) {
 }
 
 /**
+ * Send one provider-wide Manager enrollment link. The active Site set is
+ * resolved again at redemption, so the message states the current count but
+ * does not enumerate Sites or promise that a stale count will be used.
+ * @param {{ to:string, managerName:string, providerName:string, siteCount:number, enrollmentUrl:string, expiresAt:string }} email
+ * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
+ */
+export async function sendProviderManagerEnrollmentEmail(email) {
+  const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
+  const metadata = {
+    marker: "provider_manager_enrollment_email",
+    contactHash: createHash("sha256")
+      .update(email.to.trim().toLowerCase())
+      .digest("hex"),
+    providerName: email.providerName,
+    siteCount: email.siteCount,
+    expiresAt: email.expiresAt,
+  };
+  if (localPreview) {
+    const messageId = `local-${Date.now()}`;
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "log",
+        status: "preview",
+        messageId,
+        localOpenUrl: email.enrollmentUrl,
+      }),
+    );
+    return { provider: "log", messageId };
+  }
+  try {
+    const from = process.env.SETUP_CODE_EMAIL_FROM;
+    if (!from) throw new Error("Missing email sender");
+    const url = new URL(email.enrollmentUrl);
+    if (url.protocol !== "https:" || url.username || url.password) {
+      throw new Error("Invalid enrollment URL");
+    }
+    const expires = managerExpiry(email.expiresAt);
+    const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
+    const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
+    const sites = `${email.siteCount} active ${email.siteCount === 1 ? "Site" : "Sites"}`;
+    const text = `Hello ${email.managerName},\n\nUse this one-time link to enroll a device as a Provider Manager for ${email.providerName}. At the time this invitation was issued, the Provider had ${sites}. The active Site set will be verified when you redeem the link.\n\n${email.enrollmentUrl}\n\nThis link expires ${expires}. Do not forward it.`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>Use this one-time link to enroll a device as a Provider Manager for <strong>${escapeHtml(email.providerName)}</strong>. At the time this invitation was issued, the Provider had ${escapeHtml(sites)}. The active Site set will be verified when you redeem the link.</p><p><a href="${escapeHtml(email.enrollmentUrl)}">Enroll Provider Manager device</a></p><p>This link expires ${escapeHtml(expires)}. Do not forward it.</p>`;
+    const response = await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: from,
+        Destination: { ToAddresses: [email.to] },
+        ...(replyTo && { ReplyToAddresses: [replyTo] }),
+        Content: {
+          Simple: {
+            Subject: {
+              Data: `${prefix}Enroll as a Good Neighbor Provider Manager`,
+              Charset: "UTF-8",
+            },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              Html: { Data: html, Charset: "UTF-8" },
+            },
+          },
+        },
+      }),
+    );
+    if (!response.MessageId) throw new Error("Missing SES message ID");
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "ses",
+        status: "accepted",
+        messageId: response.MessageId,
+      }),
+    );
+    return { provider: "ses", messageId: response.MessageId };
+  } catch {
+    console.error(
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
+    );
+    throw new Error("Provider Manager enrollment email delivery failed");
+  }
+}
+
+/**
  * Send one recovery message containing separate single-Site Manager links.
  * @param {{ to: string, managerName: string, links: Array<{siteName:string, enrollmentUrl:string, expiresAt:string}> }} email
  * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
@@ -370,6 +457,89 @@ export async function sendManagerSecurityNotification(email) {
       }),
     );
     throw new Error("Manager security notification delivery failed");
+  }
+}
+
+/**
+ * Notify a Provider Manager after a provider-wide device enrollment. The
+ * message deliberately summarizes the scope instead of listing Site names.
+ * @param {{ to:string, managerName:string, providerName:string, siteCount:number, deviceLabel:string, clientDescription:string, enrolledAt:string, revocationContact?:string }} email
+ * @returns {Promise<{ provider: "log" | "ses", messageId: string }>}
+ */
+export async function sendProviderManagerSecurityNotification(email) {
+  const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
+  const metadata = {
+    marker: "provider_manager_security_notification_email",
+    contactHash: createHash("sha256")
+      .update(email.to.trim().toLowerCase())
+      .digest("hex"),
+    providerName: email.providerName,
+    siteCount: email.siteCount,
+  };
+  if (localPreview) {
+    const messageId = `local-${Date.now()}`;
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "log",
+        status: "preview",
+        messageId,
+      }),
+    );
+    return { provider: "log", messageId };
+  }
+  try {
+    const from = process.env.SETUP_CODE_EMAIL_FROM;
+    if (!from) throw new Error("Missing email sender");
+    const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
+    const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
+    const enrolled = managerExpiry(email.enrolledAt);
+    const contact = email.revocationContact
+      ? `Contact ${email.revocationContact} immediately to review or revoke this device.`
+      : "Contact your City administrator immediately to review or revoke this device.";
+    const scope = `${email.siteCount} active ${email.siteCount === 1 ? "Site" : "Sites"}`;
+    const text = `Hello ${email.managerName},\n\nA device was enrolled as a Good Neighbor Provider Manager for ${email.providerName}, with access to ${scope}.\n\nTime: ${enrolled}\nDevice label: ${email.deviceLabel}\nBrowser/device: ${email.clientDescription}\n\nIf this was you, no action is needed. If you do not recognize this enrollment, ${contact}`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>A device was enrolled as a Good Neighbor Provider Manager for <strong>${escapeHtml(email.providerName)}</strong>, with access to ${escapeHtml(scope)}.</p><dl><dt>Time</dt><dd>${escapeHtml(enrolled)}</dd><dt>Device label</dt><dd>${escapeHtml(email.deviceLabel)}</dd><dt>Browser/device</dt><dd>${escapeHtml(email.clientDescription)}</dd></dl><p>If this was you, no action is needed. If you do not recognize this enrollment, ${escapeHtml(contact)}</p>`;
+    const response = await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: from,
+        Destination: { ToAddresses: [email.to] },
+        ...(replyTo && { ReplyToAddresses: [replyTo] }),
+        Content: {
+          Simple: {
+            Subject: {
+              Data: `${prefix}New Good Neighbor Provider Manager device enrolled`,
+              Charset: "UTF-8",
+            },
+            Body: {
+              Text: { Data: text, Charset: "UTF-8" },
+              Html: { Data: html, Charset: "UTF-8" },
+            },
+          },
+        },
+      }),
+    );
+    if (!response.MessageId) throw new Error("Missing SES message ID");
+    console.info(
+      JSON.stringify({
+        ...metadata,
+        provider: "ses",
+        status: "accepted",
+        messageId: response.MessageId,
+      }),
+    );
+    return { provider: "ses", messageId: response.MessageId };
+  } catch {
+    console.error(
+      JSON.stringify({
+        ...metadata,
+        level: "ERROR",
+        provider: "ses",
+        status: "failed",
+      }),
+    );
+    throw new Error("Provider Manager security notification failed");
   }
 }
 

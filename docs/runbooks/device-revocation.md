@@ -3,7 +3,8 @@
 ## Scope
 
 This runbook covers City individual-binding, selected-binding, Site-wide, and
-physical-device-wide, and emergency multi-Site revocation.
+physical-device-wide, emergency multi-Site revocation, and Provider Manager
+enrollment revocation.
 All operations preserve history. Re-enrollment creates a new binding; it never reactivates a
 revoked binding or lowers a credential generation.
 
@@ -21,6 +22,11 @@ revoked binding or lowers a credential generation.
 - Emergency multi-Site revocation previews every current binding for 2–20 selected Sites and
   requires the generated phrase. One transaction advances every selected Site generation
   before one asynchronous reconciliation job is queued per Site.
+- Provider Manager enrollment revocation is Supervisor-only and atomically revokes the
+  canonical binding, compatibility Device row, and physical pointer for every Site in that
+  enrollment (maximum 21). Deactivating the Provider Manager instead advances the membership
+  generation, immediately denying every derived binding; reinstatement does not reactivate
+  those older bindings.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
