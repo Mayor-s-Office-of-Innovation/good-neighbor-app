@@ -51,6 +51,7 @@ import {
  * @property {AdminProvider | null} provider
  * @property {AdminSite | null} site
  * @property {any[]} assignedUsers
+ * @property {any[]} assignedComplianceManagers
  * @property {any[]} availableSiteUsers
  * @property {any[]} newSiteUsers
  * @property {any[]} siteTerms
@@ -105,6 +106,7 @@ class AdminApp extends HTMLElement {
       provider: null,
       site: null,
       assignedUsers: [],
+      assignedComplianceManagers: [],
       availableSiteUsers: [],
       newSiteUsers: [],
       siteTerms: [],
@@ -665,21 +667,139 @@ class AdminApp extends HTMLElement {
 
   async createCityProgramManager(form) {
     const data = new FormData(form);
-    const result = await adminApi.createCityProgramManager({
+    const email = formValue(data, "manager-email").toLowerCase();
+    const departmentId = controlValue(form, "manager-department");
+    const department = this.state.oversightOptions.departments.find(
+      (item) => (item.departmentId || item.name) === departmentId,
+    );
+    const invitation = await adminApi.inviteAdminUser({
       firstName: formValue(data, "manager-first-name"),
       lastName: formValue(data, "manager-last-name"),
-      email: formValue(data, "manager-email"),
+      email,
       phone: formValue(data, "manager-phone"),
+      phoneExtension: formValue(data, "manager-extension"),
+      departmentId,
+      departmentName: department?.name || "",
+      role: "compliance-manager",
     });
-    this.state.programManagers = [
-      ...this.state.programManagers,
-      result.programManager,
-    ].sort((a, b) => a.name.localeCompare(b.name));
-    this.finishOversightOptionFlow(
-      "program-manager-id",
-      result.programManager.userId,
-      form,
+    const result = await adminApi.listCityProgramManagers();
+    this.state.programManagers = result.programManagers || [];
+    const manager = this.state.programManagers.find(
+      (item) => String(item.email || "").toLowerCase() === email,
     );
+    if (!manager) throw new Error("program_manager_directory_sync_failed");
+    this.addComplianceManagerAssignment(manager);
+    this.state.siteSaveMessage =
+      invitation.invitationStatus === "active"
+        ? "Existing account selected. Save changes to assign this manager."
+        : invitation.invitationStatus === "resent"
+          ? "Invitation re-sent. Save changes to assign this manager."
+          : "Invitation sent. Save changes to assign this manager.";
+    form.closest("dialog")?.close();
+    form.reset();
+  }
+
+  /** @param {any} manager */
+  addComplianceManagerAssignment(manager) {
+    const list = this.querySelector("[data-compliance-manager-list]");
+    if (!list) return;
+    const managerId = String(manager.userId || manager.managerId || "");
+    if (
+      !managerId ||
+      list.querySelector(`[data-manager-id="${CSS.escape(managerId)}"]`)
+    )
+      return;
+    if (list.querySelectorAll("[data-manager-id]").length >= 2) {
+      throw new Error("A site can have no more than two Program managers.");
+    }
+    list.insertAdjacentHTML(
+      "beforeend",
+      complianceManagerAssignmentRow(manager),
+    );
+    this.bindComplianceManagerAssignmentControls();
+    const form = list.closest("form");
+    if (form instanceof HTMLFormElement) syncDirtyForm(form);
+    this.updateComplianceManagerCount();
+  }
+
+  bindComplianceManagerAssignmentControls() {
+    this.querySelectorAll("[data-remove-compliance-manager]").forEach(
+      (button) => {
+        if (button.dataset.bound === "true") return;
+        button.dataset.bound = "true";
+        button.addEventListener("click", () => {
+          button.closest("[data-manager-id]")?.remove();
+          const form = this.querySelector("#site-oversight-form");
+          if (form instanceof HTMLFormElement) syncDirtyForm(form);
+          this.updateComplianceManagerCount();
+        });
+      },
+    );
+    this.querySelectorAll("[data-invite-compliance-manager]").forEach(
+      (button) => {
+        if (button.dataset.bound === "true") return;
+        button.dataset.bound = "true";
+        button.addEventListener("click", () => {
+          this.inviteExistingComplianceManager(button);
+        });
+      },
+    );
+  }
+
+  /** @param {HTMLButtonElement} button */
+  async inviteExistingComplianceManager(button) {
+    const manager = this.state.programManagers.find(
+      (item) => item.userId === button.dataset.managerId,
+    );
+    if (!manager) return;
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Sending…";
+    const row = button.closest("[data-manager-id]");
+    row?.querySelector("[data-invite-status]")?.remove();
+    try {
+      const invitation = await adminApi.inviteAdminUser({
+        firstName: manager.firstName,
+        lastName: manager.lastName,
+        email: manager.email,
+        phone: manager.phone,
+        phoneExtension: manager.phoneExtension,
+        departmentId: manager.departmentId,
+        departmentName: manager.departmentName,
+        role: "compliance-manager",
+      });
+      manager.accountStatus = "linked";
+      const status = document.createElement("span");
+      status.className = "muted";
+      status.dataset.inviteStatus = "";
+      status.setAttribute("role", "status");
+      status.textContent =
+        invitation.invitationStatus === "active"
+          ? "Account already active"
+          : invitation.invitationStatus === "resent"
+            ? "Invite re-sent"
+            : "Invite sent";
+      button.replaceWith(status);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+      const status = document.createElement("span");
+      status.className = "error";
+      status.dataset.inviteStatus = "";
+      status.setAttribute("role", "alert");
+      status.textContent = siteSaveErrorMessage(error);
+      button.after(status);
+    }
+  }
+
+  updateComplianceManagerCount() {
+    const count = this.querySelectorAll(
+      "[data-compliance-manager-list] [data-manager-id]",
+    ).length;
+    const addButton = this.querySelector("#add-compliance-manager");
+    if (addButton) addButton.disabled = count >= 2;
+    const empty = this.querySelector("[data-no-compliance-managers]");
+    if (empty) empty.hidden = count > 0;
   }
 
   async createOversightOption(form) {
@@ -708,26 +828,11 @@ class AdminApp extends HTMLElement {
     if (select) {
       const option = document.createElement("wa-option");
       option.value = value;
-      option.textContent =
-        selectName === "program-manager-id"
-          ? this.state.programManagers.find((item) => item.userId === value)
-              ?.name || value
-          : value;
+      option.textContent = value;
       select.querySelector(`[value='${CSS.escape(value)}']`)?.remove();
       select.querySelector("[data-add-option]")?.before(option);
       setSelectValue(select, value);
       select.dispatchEvent(new Event("change", { bubbles: true }));
-      if (selectName === "program-manager-id") {
-        const phone = this.querySelector("[name='program-manager-phone']");
-        const manager = this.state.programManagers.find(
-          (item) => item.userId === value,
-        );
-        if (phone) {
-          phone.value = manager?.phone || "";
-          phone.toggleAttribute("required", Boolean(manager));
-          phone.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }
     }
     form.closest("dialog")?.close();
     form.reset();
@@ -902,44 +1007,48 @@ class AdminApp extends HTMLElement {
 
   async updateOversight(form) {
     if (!this.state.site) return false;
-    const programManagerId = controlValue(form, "program-manager-id");
-    const selectedProgramManager = this.state.programManagers.find(
-      (manager) => manager.userId === programManagerId,
-    );
+    const managerIds = [
+      ...form.querySelectorAll("input[name='compliance-manager-id']"),
+    ].map((input) => input.value);
     const oversight = {
       managingCityDepartment: controlValue(form, "managing-city-department"),
       managingSystemOfCare: controlValue(form, "managing-system-of-care"),
-      cityProgramManagerId:
-        selectedProgramManager?.userId ||
-        (programManagerId === "legacy-existing"
-          ? this.state.site.oversight?.cityProgramManagerId || ""
-          : ""),
-      cityProgramManager:
-        selectedProgramManager?.name ||
-        (programManagerId === "legacy-existing"
-          ? this.state.site.oversight?.cityProgramManager || ""
-          : ""),
     };
+    const currentManagerIds = this.state.assignedComplianceManagers
+      .map((manager) => String(manager.managerId || manager.userId || ""))
+      .filter(Boolean)
+      .sort();
+    const nextManagerIds = [...managerIds].sort();
+    const assignmentsChanged =
+      currentManagerIds.length !== nextManagerIds.length ||
+      currentManagerIds.some(
+        (managerId, index) => managerId !== nextManagerIds[index],
+      );
     this.state.siteSaving = true;
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.state.error = "";
+    if (managerIds.length > 2) {
+      this.state.siteSaveError =
+        "A site can have no more than two Program managers.";
+      showFormSaveError(form, this.state.siteSaveError);
+      return false;
+    }
     try {
-      const programManagerPhone = selectedProgramManager
-        ? controlValue(form, "program-manager-phone")
-        : undefined;
       const result = await adminApi.updateSite(this.state.site.siteId, {
         name: this.state.site.name,
         oversight,
-        ...(programManagerPhone === undefined ? {} : { programManagerPhone }),
       });
-      if (selectedProgramManager && programManagerPhone !== undefined) {
-        this.state.programManagers = this.state.programManagers.map(
-          (manager) =>
-            manager.userId === selectedProgramManager.userId
-              ? { ...manager, phone: programManagerPhone }
-              : manager,
+      if (
+        this.state.capabilities.createEntities === true &&
+        assignmentsChanged
+      ) {
+        const assignmentResult = await adminApi.replaceSiteComplianceManagers(
+          this.state.site.siteId,
+          managerIds,
         );
+        this.state.assignedComplianceManagers =
+          assignmentResult.assignments || [];
       }
       this.state.site = { ...this.state.site, ...result.site };
       this.state.sites = this.state.sites.map((site) =>
@@ -1021,6 +1130,14 @@ class AdminApp extends HTMLElement {
     this.state.assignedUsers = (site.items || []).filter((item) =>
       String(item.sk || "").startsWith("ASSIGNED_USER#"),
     );
+    this.state.assignedComplianceManagers = (site.items || [])
+      .filter((item) => String(item.sk || "").startsWith("COMPLIANCE_MANAGER#"))
+      .map((assignment) => ({
+        ...assignment,
+        ...this.state.programManagers.find(
+          (manager) => manager.userId === assignment.managerId,
+        ),
+      }));
     this.state.availableSiteUsers = [];
     if (this.state.site?.leadProgramId) {
       const program = await adminApi.getProgram(this.state.site.leadProgramId);
@@ -1057,6 +1174,7 @@ class AdminApp extends HTMLElement {
     const siteId = this.state.site.siteId;
     await adminApi.createSiteTerms(this.state.site.siteId, {
       reasons,
+      siteManagerUserId: controlValue(form, "terms-site-manager-id"),
       ...(reasons.includes("6")
         ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
         : {}),
@@ -1692,6 +1810,9 @@ class AdminApp extends HTMLElement {
             firstName: String(data.get("firstName") || ""),
             lastName: String(data.get("lastName") || ""),
             email: String(data.get("email") || ""),
+            phone: String(data.get("phone") || ""),
+            phoneExtension: String(data.get("phoneExtension") || ""),
+            departmentId: String(data.get("departmentId") || ""),
             role: String(data.get("role") || ""),
           })
           .then(() => {
@@ -2137,6 +2258,84 @@ class AdminApp extends HTMLElement {
         this.updateOversight(asForm(e.currentTarget));
       },
     );
+    this.querySelector("#add-compliance-manager")?.addEventListener(
+      "click",
+      () => {
+        const dialog = this.querySelector("#choose-compliance-manager-dialog");
+        const search = /** @type {(HTMLElement & { value: string }) | null} */ (
+          dialog?.querySelector("#compliance-manager-search") || null
+        );
+        if (search) search.value = "";
+        dialog
+          ?.querySelectorAll("[data-select-compliance-manager]")
+          .forEach((button) => {
+            button.closest("li").hidden = true;
+          });
+        const resultsHeading = dialog?.querySelector(
+          "[data-manager-results-heading]",
+        );
+        if (resultsHeading) resultsHeading.hidden = true;
+        const status = dialog?.querySelector("[data-manager-search-status]");
+        if (status)
+          status.textContent =
+            "Search by name, email, or department to find a program manager.";
+        dialog?.showModal();
+        search?.focus();
+      },
+    );
+    this.bindComplianceManagerAssignmentControls();
+    this.updateComplianceManagerCount();
+    this.querySelector("#invite-new-compliance-manager")?.addEventListener(
+      "click",
+      () => {
+        this.querySelector("#choose-compliance-manager-dialog")?.close();
+        const dialog = this.querySelector("#new-city-program-manager-dialog");
+        dialog?.showModal();
+        dialog?.querySelector("wa-input")?.focus();
+      },
+    );
+    this.querySelectorAll("[data-select-compliance-manager]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          const manager = this.state.programManagers.find(
+            (item) => item.userId === button.dataset.managerId,
+          );
+          if (!manager) return;
+          this.addComplianceManagerAssignment(manager);
+          this.querySelector("#choose-compliance-manager-dialog")?.close();
+        });
+      },
+    );
+    this.querySelector("#compliance-manager-search")?.addEventListener(
+      "input",
+      (event) => {
+        const query = String(event.currentTarget.value || "")
+          .trim()
+          .toLocaleLowerCase("en-US");
+        let visible = 0;
+        this.querySelectorAll("[data-select-compliance-manager]").forEach(
+          (button) => {
+            const matches =
+              Boolean(query) &&
+              String(button.dataset.searchText || "").includes(query);
+            button.closest("li").hidden = !matches;
+            if (matches) visible += 1;
+          },
+        );
+        const resultsHeading = this.querySelector(
+          "[data-manager-results-heading]",
+        );
+        if (resultsHeading) resultsHeading.hidden = !query;
+        const status = this.querySelector("[data-manager-search-status]");
+        if (status) {
+          status.textContent = !query
+            ? "Search by name, email, or department to find a program manager."
+            : visible
+              ? `${visible} program manager${visible === 1 ? "" : "s"} found.`
+              : "No matching program managers. You can invite a new one.";
+        }
+      },
+    );
     this.querySelectorAll("#site-oversight-form wa-select").forEach(
       (select) => {
         select.addEventListener("change", () => {
@@ -2145,42 +2344,24 @@ class AdminApp extends HTMLElement {
             oversightForm instanceof HTMLFormElement
               ? controlValue(oversightForm, select.name)
               : String(select.value || "");
-          if (!value.startsWith("__add_")) {
-            if (select.name === "program-manager-id") {
-              const phone = this.querySelector(
-                "[name='program-manager-phone']",
-              );
-              const manager = this.state.programManagers.find(
-                (item) => item.userId === value,
-              );
-              if (phone) {
-                phone.value = manager?.phone || "";
-                phone.toggleAttribute("required", Boolean(manager));
-                phone.dispatchEvent(new Event("input", { bubbles: true }));
-              }
-            }
-            return;
-          }
+          if (!value.startsWith("__add_")) return;
           const dialogId = {
-            __add_manager__: "#new-city-program-manager-dialog",
             __add_department__: "#new-oversight-option-dialog",
             __add_system__: "#new-oversight-option-dialog",
           }[value];
           const dialog = this.querySelector(dialogId);
           if (!dialog) return;
-          if (value !== "__add_manager__") {
-            const form = dialog.querySelector("form");
-            const type =
-              value === "__add_department__" ? "department" : "systemOfCare";
-            const label =
-              type === "department" ? "City department" : "System of care";
-            form.querySelector("[name='option-type']").value = type;
-            form.querySelector("[data-option-title]").textContent =
-              `Add a new ${label.toLowerCase()}`;
-            form
-              .querySelector("[data-option-input]")
-              ?.setAttribute("label", `${label} name`);
-          }
+          const form = dialog.querySelector("form");
+          const type =
+            value === "__add_department__" ? "department" : "systemOfCare";
+          const label =
+            type === "department" ? "City department" : "System of care";
+          form.querySelector("[name='option-type']").value = type;
+          form.querySelector("[data-option-title]").textContent =
+            `Add a new ${label.toLowerCase()}`;
+          form
+            .querySelector("[data-option-input]")
+            ?.setAttribute("label", `${label} name`);
           setSelectValue(select, select.dataset.previousValue || "");
           dialog.showModal();
           dialog.querySelector("wa-input")?.focus();
@@ -3045,12 +3226,7 @@ class AdminApp extends HTMLElement {
         ${
           this.state.hasToken && !provider && !program && !site && !siteManager
             ? route.name === "administrators"
-              ? administratorView(
-                  this.state.adminUsers,
-                  this.state.adminUserStatusFilter,
-                  this.state.adminUserMessage,
-                  this.state.adminUserDirectoryMode,
-                )
+              ? administratorView(this.state.adminUsers, this.state)
               : route.name === "site-import"
                 ? siteImportView(this.state)
                 : route.name === "site-new"
@@ -3124,16 +3300,15 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
   </div>`;
 }
 
-function administratorView(
-  users,
-  statusFilter = "all",
-  message = "",
-  directoryMode = "cognito",
-) {
+function administratorView(users, state) {
+  const statusFilter = state.adminUserStatusFilter || "all";
+  const message = state.adminUserMessage || "";
+  const directoryMode = state.adminUserDirectoryMode || "cognito";
   const filteredUsers = users.filter(
     (user) =>
       statusFilter === "all" || adminUserLifecycleStatus(user) === statusFilter,
   );
+  const departments = uniqueNamedOptions(state.oversightOptions.departments);
   return `<section class="panel" aria-labelledby="administrators-title">
     <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> Site admin</a>
     <div class="panel__head"><div><h1 id="administrators-title" tabindex="-1">Manage users</h1><p class="muted">Invite, suspend, reinstate, or manage user access.</p></div></div>
@@ -3145,6 +3320,11 @@ function administratorView(
           <wa-input name="firstName" label="First name" required></wa-input>
           <wa-input name="lastName" label="Last name" required></wa-input>
           <wa-input name="email" type="email" label="Work email" autocomplete="email" required></wa-input>
+          <wa-input name="phone" type="tel" label="Phone" required></wa-input>
+          <wa-input name="phoneExtension" label="Extension"></wa-input>
+          <wa-select name="departmentId" label="Department" placeholder="Choose a department">
+            ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
+          </wa-select>
           <div class="admin-role-label">
             <span id="invite-admin-role-label">Role</span>
             <button class="btn-icon" id="show-admin-role-help" type="button" aria-label="Learn about user roles"><wa-icon name="circle-info" aria-hidden="true"></wa-icon></button>
@@ -3888,9 +4068,10 @@ function siteImportHelpDialog() {
         <div class="import-help__body">
           <p>Upload a UTF-8 CSV no larger than 1 MB or 500 data rows.</p>
           <p>The first row must contain these columns in this exact order:</p>
-          <p class="column-list"><code>Provider</code>, <code>Program</code>, <code>Site name</code>, <code>Site address</code>, <code>Contact first name</code>, <code>Contact last name</code>, <code>Contact phone</code>, <code>Contact extension</code>, <code>Contact email</code>.</p>
-          <p><strong>Contact phone</strong> and <strong>Contact extension</strong> may be blank. All other fields are required.</p>
-          <p>Use one site and contact assignment per row. Put values containing commas in double quotes.</p>
+          <p class="column-list"><code>Provider</code>, <code>Program</code>, <code>Site name</code>, <code>Site address</code>, <code>Site type</code>, <code>Department</code>, <code>Site manager first name</code>, <code>Site manager last name</code>, <code>Site manager phone</code>, <code>Site manager extension</code>, <code>Site manager email</code>, <code>Program manager first name</code>, <code>Program manager last name</code>, <code>Program manager phone</code>, <code>Program manager extension</code>, <code>Program manager department</code>, <code>Program manager email</code>, <code>Provider manager first name</code>, <code>Provider manager last name</code>, <code>Provider manager phone</code>, <code>Provider manager extension</code>, <code>Provider manager email</code>.</p>
+          <p>Program manager phone is required. Other phone and all extension columns may be blank. All remaining fields are required.</p>
+          <p>Use another row with the same Site to add another Site manager, Program manager, or Provider manager. Put values containing commas in double quotes.</p>
+          <p>Department names must match an existing department or one of the supported DPH and HSH names. Unknown names are held for manual resolution.</p>
         </div>
       </div>
       <div class="places-modal__actions"><button class="btn-primary" value="close">Close</button></div>
@@ -4584,20 +4765,48 @@ function uniqueNamedOptions(items) {
   ].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function oversightCreationDialogs() {
-  return `<dialog id="new-city-program-manager-dialog" class="site-unsaved-dialog" aria-labelledby="new-city-program-manager-title">
+function oversightCreationDialogs(state) {
+  const departments = uniqueNamedOptions(state.oversightOptions.departments);
+  const assignedManagerIds = new Set(
+    state.assignedComplianceManagers.map((manager) => manager.managerId),
+  );
+  const candidates = state.programManagers.filter(
+    (manager) => !assignedManagerIds.has(manager.userId),
+  );
+  return `<dialog id="choose-compliance-manager-dialog" class="site-unsaved-dialog" aria-labelledby="choose-compliance-manager-title">
+    <div class="site-unsaved-dialog__card compliance-manager-picker">
+      <header class="compliance-manager-picker__header">
+        <h2 id="choose-compliance-manager-title">Add program manager</h2>
+        <button class="btn-icon" type="button" data-close-dialog aria-label="Close add program manager dialog"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
+      </header>
+      <wa-input id="compliance-manager-search" type="search" label="Search program managers" placeholder="Search by name, email, or department" autocomplete="off" with-clear></wa-input>
+      <p class="visually-hidden" aria-live="polite" data-manager-search-status>Search by name, email, or department to find a program manager.</p>
+      <h3 class="compliance-manager-candidates__title" data-manager-results-heading hidden>Search results</h3>
+      <ul class="compliance-manager-candidates">
+        ${candidates.map((manager) => `<li hidden><button class="compliance-manager-candidate" type="button" data-select-compliance-manager data-manager-id="${escapeHtml(manager.userId)}" data-search-text="${escapeHtml([manager.name, manager.email, manager.departmentName].filter(Boolean).join(" ").toLocaleLowerCase("en-US"))}"><span><strong>${escapeHtml(manager.name)}</strong><span>${escapeHtml(manager.email || "No email")}</span></span><span class="compliance-manager-candidate__meta">${manager.departmentName ? `<span>${escapeHtml(manager.departmentName)}</span>` : ""}<span>${manager.accountStatus === "not-invited" ? "Invitation needed" : "Account linked"}</span></span></button></li>`).join("")}
+      </ul>
+      <div class="site-unsaved-dialog__actions compliance-manager-picker__actions">
+        <button class="btn-secondary" id="invite-new-compliance-manager" type="button">Invite new program manager</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="new-city-program-manager-dialog" class="site-unsaved-dialog" aria-labelledby="new-city-program-manager-title">
     <form id="new-city-program-manager-form" class="site-unsaved-dialog__card site-details-form">
-      <h2 id="new-city-program-manager-title">Add a new City program manager</h2>
-      <p class="muted">The manager will be added to the City administrator directory and marked as a Program manager.</p>
+      <h2 id="new-city-program-manager-title">Invite new program manager</h2>
+      <p class="muted">This creates the manager's directory profile, sends them an invite to join the app, and selects them for this site.</p>
       <div class="form-grid form-grid--two">
         ${formInput("manager-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
         ${formInput("manager-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
       </div>
-      ${formInput("manager-email", "City email", "", { required: true, type: "email", autocomplete: "email" })}
+      ${formInput("manager-email", "CCSF email", "", { required: true, type: "email", autocomplete: "email" })}
       ${formInput("manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
+      ${formInput("manager-extension", "Extension", "", { autocomplete: "tel-extension" })}
+      <wa-select name="manager-department" label="Department" required placeholder="Choose department">
+        ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
+      </wa-select>
       <div class="site-unsaved-dialog__actions">
         <button class="btn-secondary" type="button" data-close-dialog>Cancel</button>
-        <button class="btn-primary" type="submit" data-save-button>Add manager</button>
+        <button class="btn-primary" type="submit" data-save-button>Send invitation</button>
       </div>
     </form>
   </dialog>
@@ -4614,23 +4823,35 @@ function oversightCreationDialogs() {
   </dialog>`;
 }
 
+function complianceManagerAssignmentRow(manager, canManageAssignments) {
+  const managerId = String(manager.userId || manager.managerId || "");
+  const profile = manager.manager || manager;
+  const name = profile.name || manager.name || "Program manager";
+  const email = profile.email || manager.email || "";
+  const accountStatus = profile.accountStatus || manager.accountStatus || "";
+  const statusLabel =
+    accountStatus === "not-invited"
+      ? "Invitation needed"
+      : accountStatus === "linked"
+        ? "Account linked"
+        : "";
+  return `<li class="compliance-manager-assignment" data-manager-id="${escapeHtml(managerId)}">
+    <input type="hidden" name="compliance-manager-id" value="${escapeHtml(managerId)}" />
+    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning"><wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon><span>${escapeHtml(name)} needs to be invited to join the app.</span></span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
+    ${canManageAssignments ? `<button class="btn-icon" type="button" data-remove-compliance-manager aria-label="Remove ${escapeHtml(name)} from this site"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>` : ""}
+  </li>`;
+}
+
 function siteOversightView(state) {
   const oversight = state.site?.oversight || {};
-  const department = normalizeDepartment(oversight.managingCityDepartment);
+  const department = oversight.managingCityDepartment || "";
   const managers = state.programManagers || [];
-  const managerValue = managers.some(
-    (manager) => manager.userId === oversight.cityProgramManagerId,
-  )
-    ? oversight.cityProgramManagerId
-    : managers.find((manager) => manager.name === oversight.cityProgramManager)
-        ?.userId || (oversight.cityProgramManager ? "legacy-existing" : "");
-  const selectedManager = managers.find(
-    (manager) => manager.userId === managerValue,
+  const assignedManagerIds = new Set(
+    state.assignedComplianceManagers.map((manager) => manager.managerId),
   );
+  const canManageAssignments = state.capabilities.createEntities === true;
   const departments = uniqueNamedOptions([
     ...state.oversightOptions.departments,
-    { name: "DPH" },
-    { name: "HSH" },
     ...(department ? [{ name: department }] : []),
   ]);
   const systemsOfCare = uniqueNamedOptions([
@@ -4642,12 +4863,18 @@ function siteOversightView(state) {
   ]);
   return `<form id="site-oversight-form" class="site-details-form" data-dirty-form>
     <fieldset><legend>Oversight</legend><div class="form-grid form-grid--one">
-      <wa-select name="program-manager-id" label="City program manager" placeholder="Choose City program manager">
-        ${managers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${manager.userId === managerValue ? "selected" : ""}>${escapeHtml(manager.name)}</wa-option>`).join("")}
-        ${managerValue === "legacy-existing" ? `<wa-option value="legacy-existing" selected>${escapeHtml(oversight.cityProgramManager)}</wa-option>` : ""}
-        <wa-option value="__add_manager__" data-add-option>Add a new City program manager…</wa-option>
-      </wa-select>
-      ${formInput("program-manager-phone", "City program manager phone", selectedManager?.phone || "", { required: Boolean(selectedManager), type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
+      <fieldset class="compliance-manager-assignments"><legend>Program managers</legend>
+        <ul class="compliance-manager-assignment-list" data-compliance-manager-list>
+          ${managers
+            .filter((manager) => assignedManagerIds.has(manager.userId))
+            .map((manager) =>
+              complianceManagerAssignmentRow(manager, canManageAssignments),
+            )
+            .join("")}
+        </ul>
+        ${assignedManagerIds.size ? "" : '<p class="muted" data-no-compliance-managers>No program managers assigned.</p>'}
+        ${canManageAssignments ? '<button class="btn-secondary" id="add-compliance-manager" type="button">Add program manager</button>' : ""}
+      </fieldset>
       <wa-select name="managing-city-department" label="Managing City department" placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.name)}" ${department === item.name ? "selected" : ""}>${escapeHtml(item.name)}</wa-option>`).join("")}
         <wa-option value="__add_department__" data-add-option>Add a new City department…</wa-option>
@@ -4660,7 +4887,7 @@ function siteOversightView(state) {
     ${state.siteSaveError ? `<p class="error" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
     <button class="btn-primary" type="submit" data-save-button disabled>Save changes</button>
   </form>
-  ${oversightCreationDialogs()}`;
+  ${oversightCreationDialogs(state)}`;
 }
 
 function siteComplianceSummaryView(state) {
@@ -4693,26 +4920,14 @@ function siteComplianceSummaryView(state) {
 function complianceLetterDetailsMissing(state) {
   const site = state.site;
   if (!site) return true;
-  const primaryContact =
-    site.primaryContact ||
-    state.availableSiteUsers.find(
-      (user) => user.userId === site.primaryContactUserId,
-    );
   const oversight = site.oversight || {};
-  const programManager = state.programManagers.find(
-    (manager) => manager.userId === oversight.cityProgramManagerId,
-  );
   return !(
     site.name &&
     site.address &&
-    site.primaryContactUserId &&
-    primaryContact?.firstName &&
-    primaryContact?.lastName &&
-    oversight.managingCityDepartment &&
-    oversight.cityProgramManagerId &&
-    programManager?.name &&
-    programManager?.email &&
-    programManager?.phone
+    state.assignedUsers.some((manager) =>
+      Boolean(manager.firstName && manager.lastName),
+    ) &&
+    oversight.managingCityDepartment
   );
 }
 
@@ -4749,6 +4964,9 @@ function newChecksPeriodDialog(state) {
           ${reasons.map(([value, label]) => `<wa-checkbox name="terms-reason" value="${value}" ${mappedReason === value ? "checked" : ""}>${escapeHtml(label)}</wa-checkbox>`).join("")}
         </fieldset>
         <div class="form-grid form-grid--one compliance-period-fields">
+          <wa-select name="terms-site-manager-id" label="Site manager for this letter" placeholder="Choose a Site manager" required>
+            ${state.assignedUsers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${state.assignedUsers.length === 1 ? "selected" : ""}>${escapeHtml(`${manager.firstName || ""} ${manager.lastName || ""}`.trim())}</wa-option>`).join("")}
+          </wa-select>
           <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
           <wa-select name="terms-tier" label="New corrective-action tier" placeholder="Choose a tier" data-tier-field hidden>
             ${[1, 2, 3, 4].map((tier) => `<wa-option value="${tier}">Tier ${tier}</wa-option>`).join("")}
@@ -5059,18 +5277,6 @@ function splitPersonName(value) {
     .split(/\s+/)
     .filter(Boolean);
   return { firstName: parts.shift() || "", lastName: parts.join(" ") };
-}
-
-/** @param {unknown} value */
-function normalizeDepartment(value) {
-  const department = String(value || "").trim();
-  if (!department) return "";
-  const uppercase = department.toUpperCase();
-  return uppercase === "HSH" || uppercase.includes("HOMELESS")
-    ? "HSH"
-    : uppercase === "DPH" || uppercase.includes("PUBLIC HEALTH")
-      ? "DPH"
-      : department;
 }
 
 /** @param {Record<string, unknown>} values */

@@ -128,6 +128,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
 import {
@@ -243,6 +244,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
   "POST /admin/v1/sites/{siteId}/users": assignSiteUser,
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
+  "PUT /admin/v1/sites/{siteId}/compliance-managers":
+    replaceSiteComplianceManagers,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms:close": endSiteTerms,

@@ -29,7 +29,7 @@ import {
   normalizeEmail,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
+import { adminOnly, siteAdminOnly, supervisorOnly } from "../lib/admin-auth.js";
 
 /** GET /admin/v1/program-managers — non-authenticating domain directory. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -42,11 +42,13 @@ export const listCityProgramManagers = (event) =>
       },
     });
     return jsonResponse(200, {
-      programManagers: items.map(publicProgramManager),
+      programManagers: items
+        .filter((item) => item.status !== "inactive")
+        .map(publicProgramManager),
     });
   });
 
-/** POST /admin/v1/program-managers — add a non-authenticating domain contact. */
+/** POST /admin/v1/program-managers — add a Compliance manager directory identity. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createCityProgramManager = (event) =>
   supervisorOnly(event, async (body) => {
@@ -72,6 +74,10 @@ export const createCityProgramManager = (event) =>
       name: `${firstName} ${lastName}`,
       email,
       phone,
+      phoneExtension: cleanText(body.phoneExtension),
+      departmentId: cleanText(body.departmentId),
+      departmentName: cleanText(body.departmentName),
+      status: "active",
       createdAt: now,
       updatedAt: now,
     };
@@ -766,7 +772,7 @@ export const presignComplianceLetter = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const updateSite = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
@@ -1659,6 +1665,8 @@ function cleanText(value) {
 function publicProgramManager(item) {
   return {
     userId: String(item.userId || ""),
+    firstName: cleanText(item.firstName),
+    lastName: cleanText(item.lastName),
     name:
       cleanText(item.name) ||
       [cleanText(item.firstName), cleanText(item.lastName)]
@@ -1666,6 +1674,10 @@ function publicProgramManager(item) {
         .join(" "),
     email: cleanText(item.email),
     phone: cleanText(item.phone),
+    phoneExtension: cleanText(item.phoneExtension),
+    departmentId: cleanText(item.departmentId),
+    departmentName: cleanText(item.departmentName),
+    accountStatus: cleanText(item.cognitoSubject) ? "linked" : "not-invited",
   };
 }
 

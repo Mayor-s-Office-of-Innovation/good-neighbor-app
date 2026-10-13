@@ -7,7 +7,159 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  siteAdminOnly,
+  supervisorOnly,
+} from "../lib/admin-auth.js";
+
+/** Replace the Compliance managers assigned to one Site. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const replaceSiteComplianceManagers = (event) =>
+  supervisorOnly(event, async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const managerIds = [
+      ...new Set(
+        (Array.isArray(body.managerIds) ? body.managerIds : [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (managerIds.length > 2) {
+      return jsonResponse(400, { error: "too_many_compliance_managers" });
+    }
+    const tableName = getDynamoTableName();
+    const [siteResult, managersResult, siteItemsResult] = await Promise.all([
+      ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+        }),
+      ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: {
+            ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          },
+        }),
+      ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "COMPLIANCE_MANAGER#",
+          },
+        }),
+      ),
+    ]);
+    if (!siteResult.Item || siteResult.Item.status === "inactive") {
+      return jsonResponse(404, { error: "site_not_found" });
+    }
+    const managers = (managersResult.Items ?? []).filter(
+      (item) => item.status !== "inactive",
+    );
+    const managersById = new Map(
+      managers.map((manager) => [String(manager.userId), manager]),
+    );
+    if (managerIds.some((managerId) => !managersById.has(managerId))) {
+      return jsonResponse(400, { error: "invalid_compliance_manager" });
+    }
+    const current = siteItemsResult.Items ?? [];
+    const currentById = new Map(
+      current.map((assignment) => [String(assignment.managerId), assignment]),
+    );
+    const currentIds = new Set(
+      current
+        .filter((assignment) => assignment.status === "active")
+        .map((assignment) => String(assignment.managerId)),
+    );
+    const nextIds = new Set(managerIds);
+    const now = new Date().toISOString();
+    const actor = adminPrincipal(event).subject || "central-admin";
+    /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
+    const items = [];
+    for (const managerId of managerIds) {
+      if (currentIds.has(managerId)) continue;
+      const currentAssignment = currentById.get(managerId);
+      if (currentAssignment) {
+        items.push({
+          Update: {
+            TableName: tableName,
+            Key: {
+              pk: currentAssignment.pk,
+              sk: currentAssignment.sk,
+            },
+            UpdateExpression:
+              "SET #status = :active, updatedAt = :now, updatedBy = :actor",
+            ConditionExpression: "attribute_exists(pk) AND #status = :inactive",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":active": "active",
+              ":inactive": "inactive",
+              ":now": now,
+              ":actor": actor,
+            },
+          },
+        });
+        continue;
+      }
+      const manager = managersById.get(managerId);
+      items.push(
+        put({
+          pk: `SITE#${siteId}`,
+          sk: `COMPLIANCE_MANAGER#${managerId}`,
+          type: "siteComplianceManagerAssignment",
+          entityType: "SITE_COMPLIANCE_MANAGER_ASSIGNMENT",
+          siteId,
+          managerId,
+          email: String(manager?.email || ""),
+          status: "active",
+          createdAt: now,
+          createdBy: actor,
+          updatedAt: now,
+          updatedBy: actor,
+        }),
+      );
+    }
+    for (const assignment of current) {
+      if (nextIds.has(String(assignment.managerId))) continue;
+      items.push({
+        Delete: {
+          TableName: tableName,
+          Key: { pk: assignment.pk, sk: assignment.sk },
+          ConditionExpression: "attribute_exists(pk)",
+        },
+      });
+    }
+    if (items.length) {
+      items.push(
+        put({
+          pk: `SITE#${siteId}`,
+          sk: `AUDIT#${now}#${randomUUID()}`,
+          type: "siteAuditEvent",
+          eventType: "site_compliance_managers_replaced",
+          siteId,
+          managerIds,
+          actor,
+          createdAt: now,
+        }),
+      );
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+    }
+    return jsonResponse(200, {
+      assignments: managerIds.map((managerId) => ({
+        siteId,
+        managerId,
+        manager: managersById.get(managerId),
+      })),
+    });
+  });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listSiteTerms = (event) =>
@@ -29,7 +181,7 @@ export const listSiteTerms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createSiteTerms = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const reasons = normalizeReasons(body.reasons);
     const tier =
@@ -37,6 +189,7 @@ export const createSiteTerms = (event) =>
         ? null
         : Number(body.correctiveActionTier);
     const requiredChecksPerDay = Number(body.requiredChecksPerDay);
+    const siteManagerUserId = String(body.siteManagerUserId || "").trim();
     // Periods always begin when they are saved. Keep the effective date
     // server-owned so API callers cannot create unsupported scheduled terms.
     const effectiveStart = pacificIsoDate();
@@ -44,6 +197,9 @@ export const createSiteTerms = (event) =>
     const expiresOnExclusive = periodEnd ? nextIsoDate(periodEnd) : "";
     if (!reasons.length)
       return jsonResponse(400, { error: "reasons_required" });
+    if (!siteManagerUserId) {
+      return jsonResponse(400, { error: "site_manager_required" });
+    }
     if (
       reasons.includes("6") &&
       (!Number.isInteger(tier) || Number(tier) < 1 || Number(tier) > 4)
@@ -91,38 +247,69 @@ export const createSiteTerms = (event) =>
       return jsonResponse(404, { error: "site_not_found" });
     }
     const site = siteResult.Item;
-    const primaryContact = site.primaryContact;
     const oversight = site.oversight;
-    if (
-      !site.name ||
-      !site.address ||
-      !site.primaryContactUserId ||
-      !primaryContact?.firstName ||
-      !primaryContact?.lastName ||
-      !oversight?.managingCityDepartment ||
-      !oversight?.cityProgramManagerId
-    ) {
+    if (!site.name || !site.address || !oversight?.managingCityDepartment) {
       return jsonResponse(409, { error: "letter_details_required" });
     }
-    const managerResult = await ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: {
-          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
-        },
-      }),
-    );
-    const programManager = (managerResult.Items ?? []).find(
-      (item) => item.userId === oversight.cityProgramManagerId,
-    );
+    const [siteManagerAssignment, siteManagerResult, generatorResult] =
+      await Promise.all([
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              pk: `SITE#${siteId}`,
+              sk: `ASSIGNED_USER#${siteManagerUserId}`,
+            },
+          }),
+        ),
+        ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              pk: `PROGRAM#${site.leadProgramId}`,
+              sk: `USER#${siteManagerUserId}`,
+            },
+          }),
+        ),
+        resolveLetterGenerator(event, siteId, tableName),
+      ]);
+    const siteManager = siteManagerResult.Item;
     if (
-      !programManager?.firstName ||
-      !programManager?.lastName ||
-      !programManager?.email ||
-      !programManager?.phone
+      !siteManagerAssignment.Item ||
+      siteManagerAssignment.Item.status === "inactive" ||
+      !siteManager ||
+      siteManager.status === "inactive" ||
+      !siteManager.firstName ||
+      !siteManager.lastName
     ) {
-      return jsonResponse(409, { error: "letter_details_required" });
+      return jsonResponse(409, { error: "site_manager_required" });
+    }
+    if (generatorResult.error) {
+      return jsonResponse(generatorResult.status, {
+        error: generatorResult.error,
+      });
+    }
+    const generator = generatorResult.manager;
+    if (
+      !generator?.firstName ||
+      !generator?.lastName ||
+      !generator?.email ||
+      !generator?.phone
+    ) {
+      return jsonResponse(409, { error: "generator_contact_required" });
+    }
+    const programManager = generator;
+    /* The authenticated generator is snapshotted onto the immutable terms.
+     * The client cannot nominate another sender. */
+    const generatorDepartment =
+      generator.departmentName || oversight.managingCityDepartment;
+    if (!generatorDepartment) {
+      return jsonResponse(409, { error: "generator_department_required" });
+    }
+    /* Preserve a strongly typed assignment check for the selected Site
+     * manager independently of the letter sender. */
+    if (siteManagerAssignment.Item.programId !== site.leadProgramId) {
+      return jsonResponse(409, { error: "site_manager_required" });
     }
     const existing = (termsResult.Items ?? []).filter(
       (item) => item.status !== "cancelled",
@@ -160,10 +347,7 @@ export const createSiteTerms = (event) =>
     const termsVersionId = randomUUID();
     const observedLatestVersion =
       siteResult.Item.latestComplianceTermsVersionId;
-    const actor = String(
-      /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
-        "central-admin",
-    );
+    const actor = adminPrincipal(event).subject || "central-admin";
     const terms = {
       pk: `SITE#${siteId}`,
       sk: `COMPLIANCE_TERMS#${effectiveStart}#${termsVersionId}`,
@@ -183,14 +367,17 @@ export const createSiteTerms = (event) =>
       letterInputs: {
         confirmedOn: effectiveStart,
         siteName: String(site.name),
-        siteManagerFirstName: String(primaryContact.firstName),
+        siteManagerId: siteManagerUserId,
+        siteManagerFirstName: String(siteManager.firstName),
         siteManagerName:
-          `${primaryContact.firstName} ${primaryContact.lastName}`.trim(),
+          `${siteManager.firstName} ${siteManager.lastName}`.trim(),
         siteAddress: String(site.address),
-        departmentName: String(oversight.managingCityDepartment),
+        departmentName: String(generatorDepartment),
+        generatedByRole: adminPrincipal(event).role,
         programManagerName:
           `${programManager.firstName} ${programManager.lastName}`.trim(),
         programManagerPhone: String(programManager.phone),
+        programManagerExtension: String(programManager.phoneExtension || ""),
         programManagerEmail: String(programManager.email),
       },
     };
@@ -278,7 +465,7 @@ export const createSiteTerms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const endSiteTerms = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const tableName = getDynamoTableName();
     const [siteResult, termsResult] = await Promise.all([
@@ -591,7 +778,7 @@ export const getSitePerimeter = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const putSitePerimeter = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     if (typeof body.perimeter !== "string") {
       return jsonResponse(400, { error: "perimeter_required" });
@@ -689,6 +876,81 @@ function primaryContactUpdate(tableName, siteId, user, now) {
       },
     },
   };
+}
+
+/**
+ * Resolve the authenticated letter sender and enforce Site assignment for
+ * Compliance managers. Supervisors intentionally bypass Site assignment.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {string} siteId
+ * @param {string} tableName
+ */
+async function resolveLetterGenerator(event, siteId, tableName) {
+  const principal = adminPrincipal(event);
+  const email = (principal.email || principal.username)
+    .trim()
+    .toLocaleLowerCase("en-US");
+  if (
+    principal.role === ADMIN_GROUPS.supervisor &&
+    principal.firstName &&
+    principal.lastName &&
+    email &&
+    principal.phone
+  ) {
+    return {
+      status: 200,
+      manager: {
+        firstName: principal.firstName,
+        lastName: principal.lastName,
+        email,
+        phone: principal.phone,
+        phoneExtension: "",
+        departmentName: principal.department,
+        userId: principal.subject,
+      },
+    };
+  }
+  const directoryResult = email
+    ? await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+            sk: `MANAGER#${email}`,
+          },
+        }),
+      )
+    : { Item: undefined };
+  const directory = directoryResult.Item;
+  const manager = {
+    firstName: directory?.firstName || principal.firstName,
+    lastName: directory?.lastName || principal.lastName,
+    email: directory?.email || email,
+    phone: directory?.phone || principal.phone,
+    phoneExtension: directory?.phoneExtension || "",
+    departmentName: directory?.departmentName || principal.department,
+    userId: directory?.userId || "",
+  };
+  if (principal.role === ADMIN_GROUPS.supervisor) {
+    return { status: 200, manager };
+  }
+  if (!directory?.userId || directory.status !== "active") {
+    return { status: 403, error: "compliance_manager_profile_required" };
+  }
+  const assignment = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: {
+        pk: `SITE#${siteId}`,
+        sk: `COMPLIANCE_MANAGER#${directory.userId}`,
+      },
+      ConsistentRead: true,
+    }),
+  );
+  if (!assignment.Item || assignment.Item.status !== "active") {
+    return { status: 403, error: "site_assignment_required" };
+  }
+  return { status: 200, manager };
 }
 
 /**
