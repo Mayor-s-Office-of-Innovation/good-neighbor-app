@@ -1179,7 +1179,6 @@ describe("311 ticket closure", () => {
             {
               serviceCode: "1.1.4.7.20.0",
               srNum: "2000008106",
-              closedReasonCode: "1",
               status: "closed",
               reconciled: true,
             },
@@ -1191,6 +1190,56 @@ describe("311 ticket closure", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
   });
+
+  it.each([
+    { ClosedReason: "8" },
+    {
+      ClosedReason: "1",
+      Updates: [
+        {
+          UpdateType: "11",
+          NumericSubType: "8",
+          EffectiveDate: "2026-08-18T12:00:00Z",
+        },
+      ],
+    },
+  ])(
+    "preserves the observed HUB reason during recovery: %j",
+    async (fields) => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            requests: [{ SRNum: "2000008106", Status: "4", ...fields }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchImpl);
+      const results = await executeAppActions(
+        [{ code: "close_311_ticket", payload: {} }],
+        {
+          env: ENV,
+          now,
+          priorResults: [SUBMITTED_311_RESULT],
+          reconcile311Closures: true,
+        },
+      );
+      expect(results[0].payload?.closures).toEqual([
+        {
+          serviceCode: "1.1.4.7.20.0",
+          srNum: "2000008106",
+          closedReasonCode: "8",
+          status: "closed",
+          reconciled: true,
+        },
+      ]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
+    },
+  );
 
   it("does not issue a duplicate close when recovery cannot find the SR", async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(

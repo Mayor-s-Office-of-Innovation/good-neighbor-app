@@ -940,7 +940,7 @@ describe("completeTaskWithAppActions", () => {
       expect(JSON.parse(closeCall[1].body)).toMatchObject({
         SRnum: "2000008106",
         UpdateType: "11",
-        NumericSubType: "8",
+        NumericSubType: "1",
       });
     } finally {
       vi.unstubAllGlobals();

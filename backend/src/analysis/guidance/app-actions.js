@@ -19,7 +19,10 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import { serviceRequestClosureState } from "../../integrations/sf311-status.js";
+import {
+  serviceRequestClosureReason,
+  serviceRequestClosureState,
+} from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -902,10 +905,14 @@ async function execute311ClosureAction({
         String(ticket.srNum),
       );
       if (closureState === "closed") {
+        const closedReasonCode = serviceRequestClosureReason(
+          latestUpdates,
+          String(ticket.srNum),
+        );
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
+          ...(closedReasonCode ? { closedReasonCode } : {}),
           status: "closed",
           reconciled: true,
         });
