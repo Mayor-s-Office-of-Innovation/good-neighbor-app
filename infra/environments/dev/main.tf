@@ -56,10 +56,9 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
-  # Preserve the foundation while Proofpoint authentication is unavailable.
-  # Re-enable the gateway after SMTP auth succeeds; see docs/runbooks/city-smtp.md.
+  # The authenticated relay was verified directly against Proofpoint before enablement.
   provision_city_smtp_relay_foundation = true
-  enable_city_smtp_relay               = false
+  enable_city_smtp_relay               = true
   city_smtp_from_address               = "goodneighbor-dev@sf.gov"
 
   providers = {
