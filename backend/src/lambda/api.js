@@ -143,6 +143,17 @@ import {
   listManagerGrants,
 } from "../handlers/admin-manager-grants.js";
 import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+} from "../handlers/admin-provider-managers.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -260,6 +271,23 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/sites/{siteId}/grants": listManagerGrants,
   "POST /admin/v1/sites/{siteId}/manager-grants": createManagerGrant,
   "DELETE /admin/v1/sites/{siteId}/grants/{grantId}": cancelManagerGrant,
+  "GET /admin/v1/providers/{providerId}/manager-memberships":
+    listProviderManagers,
+  "POST /admin/v1/providers/{providerId}/manager-memberships":
+    createProviderManager,
+  "PATCH /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    updateProviderManager,
+  "DELETE /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    deactivateProviderManager,
+  "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate":
+    reinstateProviderManager,
+  "GET /admin/v1/providers/{providerId}/grants": listProviderManagerGrants,
+  "POST /admin/v1/providers/{providerId}/manager-grants":
+    createProviderManagerGrant,
+  "DELETE /admin/v1/providers/{providerId}/grants/{grantId}":
+    cancelProviderManagerGrant,
+  "POST /admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke":
+    revokeProviderManagerEnrollment,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "GET /admin/v1/site-imports": listSiteImports,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,

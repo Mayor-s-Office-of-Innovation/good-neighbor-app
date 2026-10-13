@@ -49,6 +49,9 @@ import {
  * @property {{ departments: any[], systemsOfCare: any[] }} oversightOptions
  * @property {any | null} program
  * @property {AdminProvider | null} provider
+ * @property {any[]} providerManagers
+ * @property {any[]} providerManagerGrants
+ * @property {any[]} providerManagerEnrollments
  * @property {AdminSite | null} site
  * @property {any[]} assignedUsers
  * @property {any[]} assignedComplianceManagers
@@ -104,6 +107,9 @@ class AdminApp extends HTMLElement {
       oversightOptions: { departments: [], systemsOfCare: [] },
       program: null,
       provider: null,
+      providerManagers: [],
+      providerManagerGrants: [],
+      providerManagerEnrollments: [],
       site: null,
       assignedUsers: [],
       assignedComplianceManagers: [],
@@ -160,6 +166,9 @@ class AdminApp extends HTMLElement {
       oversightOptions: { departments: [], systemsOfCare: [] },
       program: null,
       provider: null,
+      providerManagers: [],
+      providerManagerGrants: [],
+      providerManagerEnrollments: [],
       site: null,
       assignedUsers: [],
       availableSiteUsers: [],
@@ -567,6 +576,84 @@ class AdminApp extends HTMLElement {
     this.render();
   }
 
+  async saveProviderManager(form) {
+    if (!this.state.provider) return;
+    const data = new FormData(form);
+    const values = {
+      firstName: formValue(data, "provider-manager-first-name"),
+      lastName: formValue(data, "provider-manager-last-name"),
+      email: formValue(data, "provider-manager-email"),
+      phone: formValue(data, "provider-manager-phone"),
+      phoneExtension: formValue(data, "provider-manager-extension"),
+    };
+    const membershipId = formValue(data, "provider-manager-membership-id");
+    if (membershipId) {
+      await adminApi.updateProviderManager(
+        this.state.provider.providerId,
+        membershipId,
+        values,
+      );
+    } else {
+      await adminApi.createProviderManager(
+        this.state.provider.providerId,
+        values,
+      );
+    }
+    await this.openProvider(this.state.provider.providerId, false);
+    this.state.siteSaveMessage = membershipId
+      ? "Provider manager saved."
+      : "Provider manager added.";
+    this.render();
+  }
+
+  async setProviderManagerActive(membershipId, active) {
+    if (!this.state.provider) return;
+    if (active) {
+      await adminApi.reinstateProviderManager(
+        this.state.provider.providerId,
+        membershipId,
+      );
+    } else {
+      await adminApi.deactivateProviderManager(
+        this.state.provider.providerId,
+        membershipId,
+      );
+    }
+    await this.openProvider(this.state.provider.providerId, false);
+  }
+
+  async issueProviderManagerGrant(membershipId) {
+    if (!this.state.provider) return;
+    const created = await adminApi.createProviderManagerGrant(
+      this.state.provider.providerId,
+      membershipId,
+    );
+    await this.openProvider(this.state.provider.providerId, false);
+    this.state.providerManagerGrants = attachCreatedEnrollmentUrl(
+      this.state.providerManagerGrants,
+      created,
+    );
+    this.render();
+  }
+
+  async cancelProviderManagerGrant(grantId) {
+    if (!this.state.provider) return;
+    await adminApi.cancelProviderManagerGrant(
+      this.state.provider.providerId,
+      grantId,
+    );
+    await this.openProvider(this.state.provider.providerId, false);
+  }
+
+  async revokeProviderManagerEnrollment(enrollmentId) {
+    if (!this.state.provider) return;
+    await adminApi.revokeProviderManagerEnrollment(
+      this.state.provider.providerId,
+      enrollmentId,
+    );
+    await this.openProvider(this.state.provider.providerId, false);
+  }
+
   async addProgramToProvider(form) {
     if (!this.state.provider) return;
     const providerId = this.state.provider.providerId;
@@ -584,8 +671,20 @@ class AdminApp extends HTMLElement {
   async openProvider(providerId, updateUrl = true) {
     if (updateUrl)
       return navigate(`/providers/${encodeURIComponent(providerId)}`);
-    const data = await adminApi.getProvider(providerId);
+    const canManage = this.state.capabilities.manageProviderManagers === true;
+    const [data, managers, grants] = await Promise.all([
+      adminApi.getProvider(providerId),
+      canManage
+        ? adminApi.listProviderManagers(providerId)
+        : Promise.resolve({ managers: [] }),
+      canManage
+        ? adminApi.listProviderManagerGrants(providerId)
+        : Promise.resolve({ grants: [] }),
+    ]);
     this.state.provider = data.provider;
+    this.state.providerManagers = managers.managers || [];
+    this.state.providerManagerEnrollments = managers.enrollments || [];
+    this.state.providerManagerGrants = grants.grants || [];
     this.state.program = null;
     this.state.site = null;
     this.state.siteSaveMessage = "";
@@ -1978,6 +2077,68 @@ class AdminApp extends HTMLElement {
         this.updateProvider(asForm(event.currentTarget)).catch((error) => {
           this.state.error = error.message;
           this.render();
+        });
+      },
+    );
+    this.querySelectorAll("[data-provider-manager-form]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        this.saveProviderManager(asForm(event.currentTarget)).catch((error) => {
+          showFormSaveError(
+            asForm(event.currentTarget),
+            error instanceof Error
+              ? error.message
+              : "The Provider Manager could not be saved.",
+          );
+        });
+      });
+    });
+    this.querySelectorAll("[data-provider-manager-status]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          this.setProviderManagerActive(
+            dataAttr(button, "data-provider-manager-status"),
+            dataAttr(button, "data-provider-manager-active") === "true",
+          ).catch((error) => {
+            this.state.error = error.message;
+            this.render();
+          });
+        });
+      },
+    );
+    this.querySelectorAll("[data-issue-provider-manager-grant]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          this.issueProviderManagerGrant(
+            dataAttr(button, "data-issue-provider-manager-grant"),
+          ).catch((error) => {
+            this.state.error = error.message;
+            this.render();
+          });
+        });
+      },
+    );
+    this.querySelectorAll("[data-cancel-provider-manager-grant]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          this.cancelProviderManagerGrant(
+            dataAttr(button, "data-cancel-provider-manager-grant"),
+          ).catch((error) => {
+            this.state.error = error.message;
+            this.render();
+          });
+        });
+      },
+    );
+    this.querySelectorAll("[data-revoke-provider-enrollment]").forEach(
+      (button) => {
+        button.addEventListener("click", () => {
+          this.revokeProviderManagerEnrollment(
+            dataAttr(button, "data-revoke-provider-enrollment"),
+          ).catch((error) => {
+            this.state.error = error.message;
+            this.render();
+          });
         });
       },
     );
@@ -4433,6 +4594,7 @@ function providerView(state) {
       <button class="btn-primary" type="submit" data-save-button disabled>Save changes</button>
     </form>
     ${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
+    ${state.capabilities.manageProviderManagers ? providerManagerPanel(state) : ""}
     <section class="subsection" aria-labelledby="provider-programs-title">
       <div class="panel__head">
         <h2 id="provider-programs-title">Programs</h2>
@@ -4449,6 +4611,84 @@ function providerView(state) {
     </section>
     ${deactivateProviderDialog(provider.name)}
   </section>`;
+}
+
+/** @param {AdminState} state */
+function providerManagerPanel(state) {
+  const activeSiteCount = (state.provider?.sites || []).filter(
+    (site) => site.status !== "inactive",
+  ).length;
+  return `<section class="subsection" aria-labelledby="provider-managers-title">
+    <div class="panel__head"><div><h2 id="provider-managers-title">Provider managers</h2><p class="muted">Provider Manager devices receive access to every active Site associated with this Provider when the enrollment link is redeemed.</p></div><span class="status-badge">${escapeHtml(activeSiteCount)} active ${activeSiteCount === 1 ? "Site" : "Sites"}</span></div>
+    ${state.providerManagers.map(providerManagerForm).join("")}
+    <details class="table-disclosure"><summary>Add Provider Manager</summary>
+      <form class="site-details-form" data-provider-manager-form>
+        <div class="form-grid">
+          ${formInput("provider-manager-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
+          ${formInput("provider-manager-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
+          ${formInput("provider-manager-email", "Email", "", { required: true, type: "email", autocomplete: "email" })}
+          ${formInput("provider-manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
+          ${formInput("provider-manager-extension", "Extension", "")}
+        </div>
+        <button class="btn-primary" type="submit">Add Provider Manager</button>
+      </form>
+    </details>
+    <h3>Enrollment links</h3>
+    <p class="muted">Links expire after 15 minutes and enroll one physical device for all active Sites. Providers with more than 21 active Sites cannot issue a link.</p>
+    <div class="row">${state.providerManagers
+      .filter((manager) => manager.status === "active")
+      .map(
+        (manager) =>
+          `<button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}">Email enrollment link to ${escapeHtml(manager.name)}</button>`,
+      )
+      .join("")}</div>
+    ${providerManagerGrantList(state.providerManagerGrants)}
+    ${providerManagerEnrollmentList(state.providerManagerEnrollments, state.providerManagers)}
+  </section>`;
+}
+
+/** @param {any} manager */
+function providerManagerForm(manager) {
+  const inactive = manager.status === "inactive";
+  return `<form class="site-details-form" data-provider-manager-form>
+    <input type="hidden" name="provider-manager-membership-id" value="${escapeHtml(manager.membershipId)}" />
+    <div class="panel__head"><div><h3>${escapeHtml(manager.name)}</h3><p class="muted">${escapeHtml(manager.activeDeviceCount || 0)} active provider-wide device${Number(manager.activeDeviceCount || 0) === 1 ? "" : "s"} · ${escapeHtml(manager.status)}</p></div><button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${inactive ? "Reinstate" : "Deactivate"}</button></div>
+    <div class="form-grid">
+      ${formInput("provider-manager-first-name", "First name", manager.firstName, { required: true, autocomplete: "given-name" })}
+      ${formInput("provider-manager-last-name", "Last name", manager.lastName, { required: true, autocomplete: "family-name" })}
+      ${formInput("provider-manager-email", "Email", manager.email, { required: true, type: "email", autocomplete: "email" })}
+      ${formInput("provider-manager-phone", "Phone", manager.phone, { required: true, type: "tel", autocomplete: "tel" })}
+      ${formInput("provider-manager-extension", "Extension", manager.phoneExtension || "")}
+    </div>
+    <button class="btn-primary" type="submit">Save Provider Manager</button>
+  </form>`;
+}
+
+/** @param {any[]} grants */
+function providerManagerGrantList(grants) {
+  if (!grants.length) {
+    return '<p class="empty-state">No provider-wide enrollment links issued.</p>';
+  }
+  return `<details class="table-disclosure"><summary>Provider enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
+    .map(
+      (grant) =>
+        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+    )
+    .join("")}</tbody></table></div></details>`;
+}
+
+function providerManagerEnrollmentList(enrollments, managers) {
+  const active = enrollments.filter((item) => item.status !== "revoked");
+  if (!active.length) return "";
+  const names = new Map(
+    managers.map((manager) => [manager.membershipId, manager.name]),
+  );
+  return `<h3>Enrolled devices</h3><div class="table-wrap"><table><thead><tr><th>Provider Manager</th><th>Device</th><th>Sites</th><th>Enrolled</th><th>Action</th></tr></thead><tbody>${active
+    .map(
+      (enrollment) =>
+        `<tr><td>${escapeHtml(names.get(enrollment.membershipId) || "Provider Manager")}</td><td>ID ${escapeHtml(shortOpaqueId(enrollment.physicalDeviceId))}</td><td>${escapeHtml(enrollment.activeSiteCount ?? enrollment.siteCount ?? 0)} of ${escapeHtml(enrollment.siteCount || 0)} active</td><td>${escapeHtml(formatTimestamp(enrollment.createdAt))}</td><td><button class="btn-danger" type="button" data-revoke-provider-enrollment="${escapeHtml(enrollment.enrollmentId)}">Revoke device</button></td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
 }
 
 /** @param {string} providerName */

@@ -15,6 +15,7 @@ const setup = vi.hoisted(() => ({
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
   getSite: vi.fn(),
+  saveDiscoveredBindings: vi.fn(),
   setSite: vi.fn(),
 }));
 vi.mock("../services/onboarding.js", () => ({
@@ -29,6 +30,7 @@ vi.mock("../services/devices.js", () => ({
 }));
 vi.mock("../db.js", () => ({
   getSite: setup.getSite,
+  saveDiscoveredBindings: setup.saveDiscoveredBindings,
   setSite: setup.setSite,
 }));
 
@@ -56,6 +58,7 @@ afterEach(() => {
   setup.registerDevice.mockReset();
   setup.redeemEnrollmentGrant.mockReset();
   setup.getSite.mockReset();
+  setup.saveDiscoveredBindings.mockReset();
   setup.setSite.mockReset();
 });
 

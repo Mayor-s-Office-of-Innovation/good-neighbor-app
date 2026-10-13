@@ -151,6 +151,17 @@ import {
   listManagerGrants,
 } from "../src/handlers/admin-manager-grants.js";
 import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+} from "../src/handlers/admin-provider-managers.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -385,6 +396,51 @@ const routes = [
     "DELETE",
     "/admin/v1/sites/{siteId}/grants/{grantId}",
     cancelManagerGrant,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    listProviderManagers,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    createProviderManager,
+  ),
+  route(
+    "PATCH",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    updateProviderManager,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    deactivateProviderManager,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate",
+    reinstateProviderManager,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/grants",
+    listProviderManagerGrants,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-grants",
+    createProviderManagerGrant,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/grants/{grantId}",
+    cancelProviderManagerGrant,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke",
+    revokeProviderManagerEnrollment,
   ),
   route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
   route("GET", "/admin/v1/site-imports", listSiteImports),

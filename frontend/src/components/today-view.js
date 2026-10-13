@@ -1249,7 +1249,10 @@ class TodayView extends HTMLElement {
     }
     const target = this._providerSites.find((site) => site.siteId === siteId);
     const bound = this._boundSites.find(
-      (site) => site.siteId === siteId && site.token && site.refreshToken,
+      (site) =>
+        site.siteId === siteId &&
+        ((site.token && site.refreshToken) ||
+          (site.bindingId && site.physicalDeviceId)),
     );
     if (!bound) {
       await this._requestAnotherSite("code", siteId, target?.name || "");

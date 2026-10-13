@@ -15,6 +15,7 @@ const SUPERVISOR_CAPABILITIES = Object.freeze({
   deactivateEntities: true,
   changeLeadProgram: true,
   manageSiteManagers: true,
+  manageProviderManagers: true,
   runImports: true,
 });
 const MANAGER_CAPABILITIES = Object.freeze({
@@ -23,6 +24,7 @@ const MANAGER_CAPABILITIES = Object.freeze({
   deactivateEntities: false,
   changeLeadProgram: false,
   manageSiteManagers: false,
+  manageProviderManagers: false,
   runImports: false,
 });
 
