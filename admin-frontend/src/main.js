@@ -4678,7 +4678,7 @@ function providerManagerGrantList(grants) {
 }
 
 function providerManagerEnrollmentList(enrollments, managers) {
-  const active = enrollments.filter((item) => item.status === "active");
+  const active = enrollments.filter((item) => item.status !== "revoked");
   if (!active.length) return "";
   const names = new Map(
     managers.map((manager) => [manager.membershipId, manager.name]),
@@ -4686,7 +4686,7 @@ function providerManagerEnrollmentList(enrollments, managers) {
   return `<h3>Enrolled devices</h3><div class="table-wrap"><table><thead><tr><th>Provider Manager</th><th>Device</th><th>Sites</th><th>Enrolled</th><th>Action</th></tr></thead><tbody>${active
     .map(
       (enrollment) =>
-        `<tr><td>${escapeHtml(names.get(enrollment.membershipId) || "Provider Manager")}</td><td>ID ${escapeHtml(shortOpaqueId(enrollment.physicalDeviceId))}</td><td>${escapeHtml(enrollment.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(enrollment.createdAt))}</td><td><button class="btn-danger" type="button" data-revoke-provider-enrollment="${escapeHtml(enrollment.enrollmentId)}">Revoke device</button></td></tr>`,
+        `<tr><td>${escapeHtml(names.get(enrollment.membershipId) || "Provider Manager")}</td><td>ID ${escapeHtml(shortOpaqueId(enrollment.physicalDeviceId))}</td><td>${escapeHtml(enrollment.activeSiteCount ?? enrollment.siteCount ?? 0)} of ${escapeHtml(enrollment.siteCount || 0)} active</td><td>${escapeHtml(formatTimestamp(enrollment.createdAt))}</td><td><button class="btn-danger" type="button" data-revoke-provider-enrollment="${escapeHtml(enrollment.enrollmentId)}">Revoke device</button></td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 }

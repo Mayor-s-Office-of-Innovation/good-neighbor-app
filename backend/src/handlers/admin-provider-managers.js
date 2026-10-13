@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
+  BatchGetCommand,
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
@@ -28,9 +29,12 @@ export const listProviderManagers = (event) =>
     if (!providerResult.Item) {
       return jsonResponse(404, { error: "provider_not_found" });
     }
+    const enrollments = await reconcileEnrollmentStatus(
+      enrollmentsResult.Items ?? [],
+    );
     const counts = new Map();
-    for (const enrollment of enrollmentsResult.Items ?? []) {
-      if (enrollment.status !== "active") continue;
+    for (const enrollment of enrollments) {
+      if (enrollment.status === "revoked") continue;
       counts.set(
         enrollment.membershipId,
         Number(counts.get(enrollment.membershipId) ?? 0) + 1,
@@ -44,7 +48,7 @@ export const listProviderManagers = (event) =>
             ? Number(counts.get(item.membershipId) ?? 0)
             : 0,
       })),
-      enrollments: (enrollmentsResult.Items ?? []).map(publicEnrollment),
+      enrollments: enrollments.map(publicEnrollment),
     });
   });
 
@@ -262,10 +266,11 @@ export const createProviderManagerGrant = (event) =>
       expiresAt,
     };
     const current = currentResult.Item;
-    const replaced =
-      current && current.expiresAt > nowIso
-        ? (await get({ pk: current.grantPk, sk: current.grantSk }, true)).Item
-        : undefined;
+    if (current && current.expiresAt > nowIso) {
+      return jsonResponse(409, {
+        error: "provider_manager_grant_already_active",
+      });
+    }
     /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
     const items = [
       put(grant),
@@ -296,12 +301,8 @@ export const createProviderManagerGrant = (event) =>
             expiresAt,
             updatedAt: nowIso,
           },
-          ConditionExpression: replaced
-            ? "attribute_not_exists(pk) OR grantId = :replaced"
-            : "attribute_not_exists(pk) OR expiresAt <= :now",
-          ExpressionAttributeValues: replaced
-            ? { ":replaced": replaced.grantId }
-            : { ":now": nowIso },
+          ConditionExpression: "attribute_not_exists(pk) OR expiresAt <= :now",
+          ExpressionAttributeValues: { ":now": nowIso },
         },
       },
       put(
@@ -313,35 +314,6 @@ export const createProviderManagerGrant = (event) =>
         }),
       ),
     ];
-    if (replaced?.status === "pending") {
-      items.push(
-        {
-          Update: {
-            TableName: getDynamoTableName(),
-            Key: { pk: replaced.pk, sk: replaced.sk },
-            UpdateExpression:
-              "SET #status = :replaced, replacedAt = :now, replacedByGrantId = :grantId",
-            ConditionExpression: "#status = :pending",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":pending": "pending",
-              ":replaced": "replaced",
-              ":now": nowIso,
-              ":grantId": grantId,
-            },
-          },
-        },
-        {
-          Delete: {
-            TableName: getDynamoTableName(),
-            Key: {
-              pk: `ENROLLMENT_TOKEN#${replaced.tokenHash}`,
-              sk: "#META",
-            },
-          },
-        },
-      );
-    }
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
@@ -450,10 +422,12 @@ export const revokeProviderManagerEnrollment = (event) =>
   supervisorOnly(event, async () => {
     const providerId = event.pathParameters?.providerId ?? "";
     const enrollmentId = event.pathParameters?.enrollmentId ?? "";
-    const result = await query(providerId, "PROVIDER_MANAGER_ENROLLMENT#");
-    const enrollment = (result.Items ?? []).find(
-      (item) => item.enrollmentId === enrollmentId,
-    );
+    const enrollment = (
+      await get(
+        providerKey(providerId, `PROVIDER_MANAGER_ENROLLMENT#${enrollmentId}`),
+        true,
+      )
+    ).Item;
     if (!enrollment || enrollment.status !== "active") {
       return jsonResponse(404, {
         error: "provider_manager_enrollment_not_found",
@@ -467,7 +441,21 @@ export const revokeProviderManagerEnrollment = (event) =>
     }
     const now = new Date().toISOString();
     const actor = actorId(event);
-    const updates = bindings.flatMap((binding) => [
+    const currentBindings = await Promise.all(
+      bindings.map((binding) =>
+        get(
+          {
+            pk: `SITE#${binding.siteId}`,
+            sk: `DEVICE_BINDING#${binding.bindingId}`,
+          },
+          true,
+        ),
+      ),
+    );
+    const activeBindings = bindings.filter(
+      (_binding, index) => currentBindings[index].Item?.status === "active",
+    );
+    const updates = activeBindings.flatMap((binding) => [
       revokeBinding(
         `SITE#${binding.siteId}`,
         `DEVICE_BINDING#${binding.bindingId}`,
@@ -544,7 +532,7 @@ export const revokeProviderManagerEnrollment = (event) =>
     return jsonResponse(200, {
       revoked: true,
       enrollmentId,
-      revokedBindingCount: bindings.length,
+      revokedBindingCount: activeBindings.length,
     });
   });
 
@@ -715,6 +703,10 @@ function publicEnrollment(item) {
     physicalDeviceId: item.physicalDeviceId,
     status: item.status,
     siteCount: item.siteCount,
+    activeSiteCount:
+      item.status === "revoked"
+        ? 0
+        : Number(item.activeBindingCount ?? item.siteCount ?? 0),
     createdAt: item.createdAt,
   };
 }
@@ -786,14 +778,12 @@ async function updateDelivery(grant, status, provider, messageId) {
       Key: { pk: grant.pk, sk: grant.sk },
       UpdateExpression:
         "SET deliveryStatus = :status, deliveryProvider = :provider, deliveryMessageId = :messageId, deliveryUpdatedAt = :now",
-      ConditionExpression: "#grantStatus = :pending",
-      ExpressionAttributeNames: { "#grantStatus": "status" },
+      ConditionExpression: "attribute_exists(pk)",
       ExpressionAttributeValues: {
         ":status": status,
         ":provider": provider,
         ":messageId": messageId,
         ":now": new Date().toISOString(),
-        ":pending": "pending",
       },
     }),
   );
@@ -826,18 +816,96 @@ function get(Key, ConsistentRead = false) {
 }
 
 /** @param {string} providerId @param {string} prefix @param {boolean} [ascending] */
-function query(providerId, prefix, ascending = true) {
-  return ddb.send(
-    new QueryCommand({
-      TableName: getDynamoTableName(),
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `PROVIDER#${providerId}`,
-        ":prefix": prefix,
-      },
-      ScanIndexForward: ascending,
-    }),
-  );
+async function query(providerId, prefix, ascending = true) {
+  const Items = [];
+  let ExclusiveStartKey;
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: getDynamoTableName(),
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PROVIDER#${providerId}`,
+          ":prefix": prefix,
+        },
+        ScanIndexForward: ascending,
+        ...(ExclusiveStartKey ? { ExclusiveStartKey } : {}),
+      }),
+    );
+    Items.push(...(page.Items ?? []));
+    ExclusiveStartKey = page.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return { Items };
+}
+
+/**
+ * Resolve enrollment display state from authoritative physical and binding rows.
+ * @param {Array<Record<string, any>>} enrollments
+ */
+async function reconcileEnrollmentStatus(enrollments) {
+  const candidates = enrollments.filter((item) => item.status !== "revoked");
+  /** @type {Array<Record<string, any>>} */
+  const requestedKeys = candidates.flatMap((item) => [
+    { pk: `PHYSICAL_DEVICE#${item.physicalDeviceId}`, sk: "#META" },
+    ...(Array.isArray(item.siteBindings)
+      ? item.siteBindings.map((binding) => ({
+          pk: `SITE#${binding.siteId}`,
+          sk: `DEVICE_BINDING#${binding.bindingId}`,
+        }))
+      : []),
+  ]);
+  const keys = [
+    ...new Map(
+      requestedKeys.map((key) => [`${key.pk}|${key.sk}`, key]),
+    ).values(),
+  ];
+  /** @type {Map<string, Record<string, any>>} */
+  const records = new Map();
+  for (let offset = 0; offset < keys.length; offset += 100) {
+    /** @type {Array<Record<string, any>>} */
+    let pending = keys.slice(offset, offset + 100);
+    let attempts = 0;
+    do {
+      attempts += 1;
+      const result = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: {
+            [getDynamoTableName()]: { Keys: pending, ConsistentRead: true },
+          },
+        }),
+      );
+      for (const item of result.Responses?.[getDynamoTableName()] ?? []) {
+        records.set(`${item.pk}|${item.sk}`, item);
+      }
+      pending = result.UnprocessedKeys?.[getDynamoTableName()]?.Keys ?? [];
+      if (pending.length && attempts >= 3) {
+        throw new Error("provider_enrollment_state_unavailable");
+      }
+    } while (pending.length);
+  }
+  return enrollments.map((item) => {
+    if (item.status === "revoked") return item;
+    const physical = records.get(
+      `PHYSICAL_DEVICE#${item.physicalDeviceId}|#META`,
+    );
+    const bindings = Array.isArray(item.siteBindings) ? item.siteBindings : [];
+    const liveBindingCount = bindings.filter(
+      (binding) =>
+        records.get(
+          `SITE#${binding.siteId}|DEVICE_BINDING#${binding.bindingId}`,
+        )?.status === "active",
+    ).length;
+    const activeBindingCount =
+      physical?.status === "active" ? liveBindingCount : 0;
+    const status =
+      activeBindingCount === 0
+        ? "revoked"
+        : activeBindingCount < bindings.length
+          ? "partially_revoked"
+          : "active";
+    return { ...item, status, activeBindingCount };
+  });
 }
 
 /** @param {Record<string, any>} Item */

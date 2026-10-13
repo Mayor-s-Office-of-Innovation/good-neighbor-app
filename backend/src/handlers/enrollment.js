@@ -466,17 +466,7 @@ async function redeemProviderEnrollment(context) {
         }),
       ),
       findProviderManager(tableName, providerId, membershipId),
-      ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `PROVIDER#${providerId}`,
-            ":prefix": "SITE#",
-          },
-          ConsistentRead: true,
-        }),
-      ),
+      queryProviderItems(tableName, providerId, "SITE#"),
       requestedPhysicalDeviceId
         ? ddb.send(
             new GetCommand({
@@ -602,11 +592,14 @@ async function redeemProviderEnrollment(context) {
         ConditionCheck: {
           TableName: tableName,
           Key: { pk: `SITE#${entry.siteId}`, sk: "#META" },
-          ConditionExpression: "#status = :active AND providerId = :providerId",
+          ConditionExpression:
+            "#status = :active AND providerId = :providerId AND (siteCredentialGeneration = :siteGeneration OR (attribute_not_exists(siteCredentialGeneration) AND :siteGeneration = :zero))",
           ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
             ":active": "active",
             ":providerId": providerId,
+            ":siteGeneration": entry.siteCredentialGeneration,
+            ":zero": 0,
           },
         },
       },
@@ -642,7 +635,7 @@ async function redeemProviderEnrollment(context) {
 
   const enrollment = {
     pk: `PROVIDER#${providerId}`,
-    sk: `PROVIDER_MANAGER_ENROLLMENT#${membershipId}#${nowIso}#${enrollmentId}`,
+    sk: `PROVIDER_MANAGER_ENROLLMENT#${enrollmentId}`,
     type: "providerManagerEnrollment",
     entityType: "PROVIDER_MANAGER_ENROLLMENT",
     enrollmentId,
@@ -658,6 +651,7 @@ async function redeemProviderEnrollment(context) {
       bindingId: entry.bindingId,
     })),
     siteCount: bindings.length,
+    activeBindingCount: bindings.length,
     createdAt: nowIso,
   };
   try {
@@ -856,20 +850,38 @@ async function notifyManagerEnrollment(input) {
 
 /** @param {string} tableName @param {string} providerId @param {string} membershipId */
 async function findProviderManager(tableName, providerId, membershipId) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `PROVIDER#${providerId}`,
-        ":prefix": "PROVIDER_MANAGER#",
-      },
-      ConsistentRead: true,
-    }),
+  const result = await queryProviderItems(
+    tableName,
+    providerId,
+    "PROVIDER_MANAGER#",
   );
   return (result.Items ?? []).find(
     (item) => String(item.membershipId) === membershipId,
   );
+}
+
+/** @param {string} tableName @param {string} providerId @param {string} prefix */
+async function queryProviderItems(tableName, providerId, prefix) {
+  const Items = [];
+  let ExclusiveStartKey;
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PROVIDER#${providerId}`,
+          ":prefix": prefix,
+        },
+        ConsistentRead: true,
+        ...(ExclusiveStartKey ? { ExclusiveStartKey } : {}),
+      }),
+    );
+    Items.push(...(page.Items ?? []));
+    ExclusiveStartKey = page.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return { Items };
 }
 
 /**

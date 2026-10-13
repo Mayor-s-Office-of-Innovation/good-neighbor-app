@@ -21,6 +21,9 @@ those Site boundaries.
 - A provider enrollment link is valid for 15 minutes and is single use. Its
   redemption resolves the Provider's active Sites at redemption time, not at
   issuance time.
+- A membership may have only one unexpired provider link. Issuing another link
+  returns a conflict until the first is cancelled or expires, preventing a
+  concurrent request from emailing a link that replacement has invalidated.
 - Redemption creates one independently selectable Site binding per active Site
   in a single DynamoDB transaction. It succeeds completely or writes nothing.
   Providers with more than 21 active Sites are rejected before issuance and at
@@ -34,6 +37,9 @@ those Site boundaries.
   derived binding. Reinstatement does not restore old bindings. A Supervisor
   may also revoke one provider enrollment, atomically revoking all of its Site
   binding projections.
+- Enrollment history uses a directly addressable root for revocation. Admin
+  display state is derived from live physical-device and canonical binding rows
+  so other revocation paths cannot leave a device falsely shown as active.
 - Enrollment and security emails identify the Provider and Site count but do
   not enumerate Site names.
 

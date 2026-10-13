@@ -99,16 +99,21 @@ describe("Manager enrollment redemption", () => {
       .mockResolvedValueOnce({
         Items: [
           {
-            siteId: "site-2",
-            siteName: "Site Two",
-            status: "active",
-            siteCredentialGeneration: 4,
-          },
-          {
             siteId: "site-1",
             siteName: "Site One",
             status: "active",
             siteCredentialGeneration: 2,
+          },
+        ],
+        LastEvaluatedKey: { pk: "PROVIDER#provider-1", sk: "SITE#site-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-2",
+            siteName: "Site Two",
+            status: "active",
+            siteCredentialGeneration: 4,
           },
           { siteId: "site-old", status: "inactive" },
         ],
@@ -131,7 +136,7 @@ describe("Manager enrollment redemption", () => {
     ).toEqual(["site-1", "site-2"]);
     expect(send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
     expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
-    const transaction = send.mock.calls[5][0];
+    const transaction = send.mock.calls[6][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems).toHaveLength(16);
     const siteConditions = transaction.input.TransactItems.filter(
@@ -139,6 +144,15 @@ describe("Manager enrollment redemption", () => {
         item.ConditionCheck?.Key?.pk?.startsWith("SITE#"),
     );
     expect(siteConditions).toHaveLength(2);
+    expect(siteConditions[0].ConditionCheck.ConditionExpression).toContain(
+      "siteCredentialGeneration = :siteGeneration",
+    );
+    expect(
+      siteConditions.map(
+        (/** @type {any} */ item) =>
+          item.ConditionCheck.ExpressionAttributeValues[":siteGeneration"],
+      ),
+    ).toEqual([2, 4]);
     expect(
       transaction.input.TransactItems.filter(
         (/** @type {any} */ item) =>
