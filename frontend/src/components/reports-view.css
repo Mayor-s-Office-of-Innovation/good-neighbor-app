@@ -45,6 +45,14 @@
   gap: 0.5rem;
 }
 
+/* Below ~360px the two pills and the export button no longer fit on one
+   line; let the row wrap instead of pushing the button off screen (1.4.10). */
+@media (max-width: 22.5rem) {
+  .reports__filters {
+    flex-wrap: wrap;
+  }
+}
+
 .reports__filters wa-select {
   flex: 0 0 auto;
   display: inline-block;
@@ -95,6 +103,7 @@
 
 .reports__export {
   appearance: none;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
   width: 44px;
