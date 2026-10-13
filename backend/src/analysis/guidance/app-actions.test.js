@@ -1127,7 +1127,7 @@ describe("311 ticket closure", () => {
             {
               serviceCode: "1.1.4.7.20.0",
               srNum: "2000008106",
-              closedReasonCode: "8",
+              closedReasonCode: "1",
               status: "closed",
               updateId: "4321",
             },
@@ -1141,7 +1141,7 @@ describe("311 ticket closure", () => {
       UpdateType: "11",
       SendingAgency: "76",
       SourceOperator: "Good Neighbor App",
-      NumericSubType: "8",
+      NumericSubType: "1",
       TextSubType: "",
       EffectiveDate: "2026-08-18 12:00:00",
       ToAgencyDate: "",
@@ -1179,7 +1179,7 @@ describe("311 ticket closure", () => {
             {
               serviceCode: "1.1.4.7.20.0",
               srNum: "2000008106",
-              closedReasonCode: "8",
+              closedReasonCode: "1",
               status: "closed",
               reconciled: true,
             },
@@ -1267,14 +1267,14 @@ describe("311 ticket closure", () => {
       {
         serviceCode: "1.1.4.7.10.0",
         srNum: "2000008106",
-        closedReasonCode: "8",
+        closedReasonCode: "1",
         status: "closed",
         updateId: "4321",
       },
       {
         serviceCode: "1.1.4.7.7.0",
         srNum: "2000008107",
-        closedReasonCode: "8",
+        closedReasonCode: "1",
         status: "closed",
         updateId: "4322",
       },
@@ -1416,7 +1416,7 @@ describe("311 ticket closure", () => {
             {
               serviceCode: "1.1.4.7.10.0",
               srNum: "2000008107",
-              closedReasonCode: "8",
+              closedReasonCode: "1",
               status: "closed",
               updateId: "4323",
             },
@@ -1592,7 +1592,7 @@ describe("311 ticket closure", () => {
             {
               serviceCode: "1.1.4.7.20.0",
               srNum: "2000008106",
-              closedReasonCode: "8",
+              closedReasonCode: "1",
               status: "closed",
               updateId: "4321",
             },

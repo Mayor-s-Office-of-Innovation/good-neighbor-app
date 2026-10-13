@@ -114,7 +114,7 @@ describe("SF311 CreateSR client helpers", () => {
       UpdateType: "11",
       SendingAgency: "76",
       SourceOperator: "Good Neighbor App",
-      NumericSubType: "8",
+      NumericSubType: "1",
       TextSubType: "",
       EffectiveDate: "2026-09-02 17:11:12",
       ToAgencyDate: "",

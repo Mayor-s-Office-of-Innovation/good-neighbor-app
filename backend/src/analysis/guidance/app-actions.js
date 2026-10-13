@@ -9,7 +9,7 @@ import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
   buildCreateSrPayload,
-  CLOSE_REASON_FIELD_WORK_COMPLETED,
+  SILENT_TICKET_CLOSED_REASON,
   createSf311Client,
   GOOD_NEIGHBOR_AGENCY,
   Sf311Error,
@@ -758,7 +758,7 @@ export function eligibleTicketsForClosure(priorResults) {
       }
       eligible.set(serviceCode, {
         ticket,
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
       });
     }
   }
@@ -852,7 +852,7 @@ async function execute311ClosureAction({
         closures: [...eligible].map(([serviceCode, { ticket }]) => ({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_reconciliation_failed",
         })),
@@ -905,7 +905,7 @@ async function execute311ClosureAction({
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "closed",
           reconciled: true,
         });
@@ -916,7 +916,7 @@ async function execute311ClosureAction({
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_state_unknown",
         });
@@ -932,7 +932,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
@@ -947,7 +947,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "failed",
         reason: appActionErrorReason(error),
         ...(appActionErrorDiagnostics(error)
