@@ -67,7 +67,10 @@ test.describe("site manager reports", () => {
     const kindControl = kind.getByRole("combobox", {
       name: t("reports.filters.kind"),
     });
-    await kind.locator("label").click();
+    // The text label is visually hidden (the value is the label); the
+    // control still announces it.
+    await expect(kindControl).toHaveAccessibleName(t("reports.filters.kind"));
+    await kindControl.focus();
     await expect(kindControl).toBeFocused();
     await kindControl.press("ArrowDown");
     await kindControl.press("End");

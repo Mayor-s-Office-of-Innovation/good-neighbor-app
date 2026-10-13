@@ -34,17 +34,24 @@ describe("requirementFromCompliance", () => {
     ).toEqual({
       requiredPerDay: 3,
       required: true,
+      assumed: false,
       periodStart: "2026-07-01",
       periodEnd: "2026-12-31",
     });
   });
 
-  it("treats a missing or invalid cadence as no requirement", () => {
-    expect(requirementFromCompliance(undefined).requiredPerDay).toBe(0);
+  it("falls back to the city-wide 3 a day when no cadence is configured", () => {
+    expect(requirementFromCompliance(undefined)).toMatchObject({
+      requiredPerDay: 3,
+      assumed: true,
+    });
     expect(
-      requirementFromCompliance({ requiredChecksPerDay: "lots" })
-        .requiredPerDay,
-    ).toBe(0);
+      requirementFromCompliance({ requiredChecksPerDay: "lots" }),
+    ).toMatchObject({ requiredPerDay: 3, assumed: true });
+    expect(
+      requirementFromCompliance({ requiredChecksPerDay: 2 }),
+    ).toMatchObject({ requiredPerDay: 2, assumed: false });
+    // An explicit "not required" still owes nothing.
     expect(
       requirementFromCompliance({ perimeterChecksRequired: false }).required,
     ).toBe(false);

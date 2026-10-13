@@ -40,24 +40,33 @@ import { pacificDateKey } from "../lib/pacific-dates.js";
  * @property {number} issueCount issues found over the period
  */
 
+/** The city-wide norm, used when a site has no cadence of its own yet. */
+export const DEFAULT_REQUIRED_CHECKS_PER_DAY = 3;
+
 /**
  * @typedef {object} Requirement
  * @property {number} requiredPerDay
  * @property {boolean} required whether perimeter checks are required at all
+ * @property {boolean} [assumed] true when no cadence is configured and the
+ *   city-wide default stands in for it
  * @property {string} [periodStart] first day the requirement applies
  * @property {string} [periodEnd] last day the requirement applies (inclusive)
  */
 
 /**
- * The site's requirement as stored on `#META.compliance`.
+ * The site's requirement as stored on `#META.compliance`. A site with no
+ * configured cadence is measured against the city-wide default so its
+ * report is meaningful from day one; an explicit "not required" is kept.
  * @param {Record<string, any> | undefined} compliance
  * @returns {Requirement}
  */
 export function requirementFromCompliance(compliance) {
   const perDay = Number(compliance?.requiredChecksPerDay);
+  const configured = Number.isInteger(perDay) && perDay > 0;
   return {
-    requiredPerDay: Number.isInteger(perDay) && perDay > 0 ? perDay : 0,
+    requiredPerDay: configured ? perDay : DEFAULT_REQUIRED_CHECKS_PER_DAY,
     required: compliance?.perimeterChecksRequired !== false,
+    assumed: !configured,
     ...(compliance?.periodStart ? { periodStart: compliance.periodStart } : {}),
     ...(compliance?.periodEnd ? { periodEnd: compliance.periodEnd } : {}),
   };

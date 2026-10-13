@@ -483,5 +483,43 @@ describe("a site without a configured cadence", () => {
       escapeHtml(t("reports.totals.completed", { count: 2 })),
     );
     expect(markup).not.toContain(escapeHtml(t("reports.records.empty")));
+    expect(markup).toContain(escapeHtml(t("reports.legend.recorded")));
+    const quarter = checksTab({
+      report: {
+        ...report,
+        period: {
+          kind: "quarter",
+          start: "2026-07-01",
+          endExclusive: "2026-10-01",
+        },
+      },
+      filters: "",
+      shown: 10,
+    });
+    expect(quarter).toContain("reports-chart__bar--recorded");
+  });
+
+  it("says when the standard cadence is standing in for a missing one", () => {
+    const withNote = checksTab({
+      report: {
+        period,
+        today: "2026-09-30",
+        days,
+        totals,
+        previous,
+        requirement: { requiredPerDay: 3, required: true, assumed: true },
+      },
+      filters: "",
+      shown: 10,
+    });
+    expect(withNote).toContain(escapeHtml(t("reports.checks.assumedCadence")));
+    const configured = checksTab({
+      report: { period, today: "2026-09-30", days, totals, previous },
+      filters: "",
+      shown: 10,
+    });
+    expect(configured).not.toContain(
+      escapeHtml(t("reports.checks.assumedCadence")),
+    );
   });
 });

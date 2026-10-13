@@ -166,11 +166,24 @@ describe("chart and calendar buckets", () => {
         complete: 1,
         partial: 1,
         missed: 1,
+        recorded: 0,
         open: 2,
         monthLabel: "Oct",
       },
-      { start: "2026-10-04", complete: 0, partial: 0, missed: 0, open: 1 },
+      {
+        start: "2026-10-04",
+        complete: 0,
+        partial: 0,
+        missed: 0,
+        recorded: 0,
+        open: 1,
+      },
     ]);
+    // Checks on a day that owed none are "recorded", not "open".
+    expect(weekBuckets([day("2026-09-28", "exempt", 2, 0)])[0]).toMatchObject({
+      recorded: 1,
+      open: 0,
+    });
   });
 
   it("pads the calendar so the first day sits under its weekday", () => {

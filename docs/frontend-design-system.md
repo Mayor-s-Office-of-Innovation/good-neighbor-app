@@ -113,8 +113,16 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 - **`.card`** — a generic surface (lighter than `.screen`); **`.stack`** / **`.stack--tight`**
   for vertical rhythm (flex column, 1rem / 0.5rem gap).
 - **`.hint`** — muted helper text; **`.eyebrow`** — small label above a heading.
-- **`.pill` + `.pill--route|pending|confirm`** — status chips; **`.legend` / `.legend__dot--*`**
-  — chart legends. Every status pill/dot is **paired with its word** — color never stands alone.
+- **Status pills, legends, and charts** live with the screen that renders them rather than
+  in base.css. The first implementation is the site manager reports
+  ([reports-view.css](../frontend/src/components/reports-view.css)): `.reports-pill--*`
+  (complete / partial / missed / pending, and the Issues response kinds), `.reports-legend`
+  with `__dot--*`, inline-SVG bar charts filled from tokens via class (`.reports-chart__bar--*`)
+  with a visually hidden `<table>` as the text equivalent, and a 7-column CSS-grid calendar
+  whose cells carry their count and status in text. Compliance colors are `--c-ok`,
+  `--c-flag`, `--c-hazard` with their `-bg` pairs. Every pill/dot/bar is **paired with its
+  word or count** — color never stands alone. Compact `wa-select` pills use `::part()`
+  overrides there too (label kept for assistive tech, hidden visually).
 
 ## Forms
 

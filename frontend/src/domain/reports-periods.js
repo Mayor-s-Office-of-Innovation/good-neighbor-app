@@ -264,7 +264,8 @@ export function dayTitle(dayKey, today) {
  * @property {number} complete
  * @property {number} partial
  * @property {number} missed
- * @property {number} open pending + upcoming + exempt (not yet decided / not owed)
+ * @property {number} recorded exempt days that still had checks (nothing owed)
+ * @property {number} open pending + upcoming + exempt without checks
  * @property {string} [monthLabel] set on the first week that contains the 1st of a month
  */
 
@@ -280,12 +281,20 @@ export function weekBuckets(days) {
     const start = addDays(day.date, -weekdayIndex(day.date));
     let bucket = weeks.get(start);
     if (!bucket) {
-      bucket = { start, complete: 0, partial: 0, missed: 0, open: 0 };
+      bucket = {
+        start,
+        complete: 0,
+        partial: 0,
+        missed: 0,
+        recorded: 0,
+        open: 0,
+      };
       weeks.set(start, bucket);
     }
     if (day.status === "complete") bucket.complete += 1;
     else if (day.status === "partial") bucket.partial += 1;
     else if (day.status === "missed") bucket.missed += 1;
+    else if (day.status === "exempt" && day.completed > 0) bucket.recorded += 1;
     else bucket.open += 1;
     if (day.date.endsWith("-01")) {
       bucket.monthLabel = formatDateTime(dayInstant(day.date), {

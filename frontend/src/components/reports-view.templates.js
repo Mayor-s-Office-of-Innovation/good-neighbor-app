@@ -213,7 +213,7 @@ export function errorBlock() {
 
 /**
  * @param {{
- *   report: { period: Period, today: string, days: DaySummary[], totals: any, previous: { totals: any } },
+ *   report: { period: Period, today: string, days: DaySummary[], totals: any, previous: { totals: any }, requirement?: { requiredPerDay?: number, required?: boolean, assumed?: boolean } },
  *   filters: string,
  *   shown: number,
  * }} vm
@@ -250,12 +250,22 @@ export function checksTab({ report, filters, shown }) {
                 : t("reports.checks.noRequirement"),
             )}
           </p>
+          ${report.requirement?.assumed
+            ? html`<p class="reports__headline-sub reports__headline-note">
+                ${escapeHtml(t("reports.checks.assumedCadence"))}
+              </p>`
+            : ""}
         </div>`
       : html`<p class="reports__status" role="status">
           ${escapeHtml(t("reports.checks.noRequirement"))}
         </p>`}
     <div class="reports__card">
-      ${kind === "quarter" ? weekChart(days) : calendarGrid(days)} ${legend()}
+      ${kind === "quarter" ? weekChart(days) : calendarGrid(days)}
+      ${legend({
+        recorded: days.some(
+          (day) => day.status === "exempt" && day.completed > 0,
+        ),
+      })}
     </div>
     <div class="reports__card reports__totals">
       <p class="reports__total">
@@ -311,12 +321,14 @@ export function weekChart(days) {
     ["missed", "missed"],
     ["partial", "partial"],
     ["complete", "complete"],
+    ["recorded", "recorded"],
     ["open", "open"],
   ]);
   const bars = weeks
     .map((week, i) => {
       const x = i * (barWidth + gap);
-      const total = week.complete + week.partial + week.missed + week.open;
+      const total =
+        week.complete + week.partial + week.missed + week.recorded + week.open;
       let y = height;
       const rects = segments
         .map(([field, cls]) => {
@@ -367,6 +379,7 @@ export function weekChart(days) {
           <th scope="col">${escapeHtml(t("reports.legend.complete"))}</th>
           <th scope="col">${escapeHtml(t("reports.legend.partial"))}</th>
           <th scope="col">${escapeHtml(t("reports.legend.missed"))}</th>
+          <th scope="col">${escapeHtml(t("reports.legend.recorded"))}</th>
           <th scope="col">${escapeHtml(t("reports.legend.open"))}</th>
         </tr>
       </thead>
@@ -385,6 +398,7 @@ export function weekChart(days) {
                 <td>${week.complete}</td>
                 <td>${week.partial}</td>
                 <td>${week.missed}</td>
+                <td>${week.recorded}</td>
                 <td>${week.open}</td>
               </tr>`,
           )
@@ -458,9 +472,13 @@ function dayCell(day) {
   </li>`;
 }
 
-export function legend() {
+/** @param {{ recorded?: boolean }} [vm] show the "recorded, none required" entry */
+export function legend({ recorded = false } = {}) {
+  const entries = recorded
+    ? ["complete", "partial", "missed", "recorded", "open"]
+    : ["complete", "partial", "missed", "open"];
   return html`<ul class="reports-legend">
-    ${["complete", "partial", "missed", "open"]
+    ${entries
       .map(
         (status) =>
           html`<li class="reports-legend__item">

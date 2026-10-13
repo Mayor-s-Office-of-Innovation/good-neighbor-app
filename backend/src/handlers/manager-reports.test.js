@@ -136,6 +136,7 @@ describe("getChecksReport", () => {
     expect(body.requirement).toEqual({
       requiredPerDay: 3,
       required: true,
+      assumed: false,
       periodStart: "2026-07-01",
     });
     expect(body.days.map((/** @type {any} */ d) => [d.date, d.status])).toEqual(
@@ -205,11 +206,13 @@ describe("getChecksReport", () => {
       endExclusive: "2026-10-01",
     });
     expect(body.days).toHaveLength(30);
-    // No cadence on the site: every day is exempt, nothing is owed.
-    expect(
-      body.days.every((/** @type {any} */ d) => d.status === "exempt"),
-    ).toBe(true);
-    expect(body.totals.possible).toBe(0);
+    // No cadence on the site: the city-wide 3 a day stands in, flagged.
+    expect(body.requirement).toMatchObject({
+      requiredPerDay: 3,
+      assumed: true,
+    });
+    expect(body.days[0].required).toBe(3);
+    expect(body.totals.possible).toBe(30 * 3);
     // Current month needed two pages, previous month one. Both periods
     // query concurrently, so only the cursor page's position is stable.
     expect(queries()).toHaveLength(3);
