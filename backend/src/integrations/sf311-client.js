@@ -151,11 +151,11 @@ export function buildNoteUpdatePayload({ srNum, siteName, now }) {
 }
 
 // HUB UpdateType 11 = ClosedReason; "HUB changes update status to closed"
-// (HUB_Lookup_Tables.xlsx UpdateType sheet). NumericSubType 8 = "Field Work
-// Completed" (ClosedReasonCode sheet). HUB rejects the update with return
+// (HUB_Lookup_Tables.xlsx UpdateType sheet). Silent ticket closures must use
+// ClosedReason 1 (NumericSubType). HUB rejects the update with return
 // code 26 unless SendingAgency is the SR's responsible agency, so closure is
 // only ever attempted for tickets we filed under our own agency id.
-export const CLOSE_REASON_FIELD_WORK_COMPLETED = "8";
+export const SILENT_TICKET_CLOSED_REASON = "1";
 
 /**
  * @param {object} params
@@ -167,7 +167,7 @@ export const CLOSE_REASON_FIELD_WORK_COMPLETED = "8";
  */
 export function buildCloseSrPayload({
   srNum,
-  closedReasonCode = CLOSE_REASON_FIELD_WORK_COMPLETED,
+  closedReasonCode = SILENT_TICKET_CLOSED_REASON,
   notes = "",
   now,
 }) {

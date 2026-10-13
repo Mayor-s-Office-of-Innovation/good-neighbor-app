@@ -280,8 +280,10 @@ number.
 - **`create_311_ticket`**: `payload.tickets[]` with `srNum` and `responsibleAgency`.
   `externalId` joins the SR numbers.
 - **`close_311_ticket`**: `payload.closures[]`, one entry per eligible ticket. Each entry
-  has `serviceCode`, `srNum`, `closedReasonCode: "8"`, and `status: "closed" | "failed"`,
-  plus `updateId` on success or `reason` on failure. No `externalId`. On a retry, tickets
+  has `serviceCode`, `srNum`, and `status: "closed" | "failed"`, plus `updateId` on
+  success or `reason` on failure. New closure requests record `closedReasonCode: "1"`.
+  Reconciled closures record the observed HUB reason when available and omit
+  `closedReasonCode` when HUB supplies no reason. No `externalId`. On a retry, tickets
   closed by earlier attempts are copied into `closures[]` as they were, so the latest
   result is always complete. The result status rolls up to `submitted`, `partial`, or
   `failed`. A failed closure never blocks task completion. See
