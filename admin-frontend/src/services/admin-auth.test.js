@@ -74,3 +74,54 @@ test("completes Cognito MFA callback when sessionStorage was replaced", async ()
   assert.equal(local.getItem("good-neighbor-admin-oauth-transaction"), null);
   assert.equal(location.search, "");
 });
+
+test("clears an expired session before creating a new login transaction", async () => {
+  const session = new MemoryStorage();
+  const local = new MemoryStorage();
+  let assignedUrl = "";
+  const location = {
+    origin: "https://admin.example.test",
+    pathname: "/",
+    search: "",
+    href: "https://admin.example.test/",
+    assign(value) {
+      assignedUrl = String(value);
+    },
+  };
+  globalThis.window = {
+    GOOD_NEIGHBOR_ADMIN_CONFIG: {
+      cognitoDomain: "https://login.example.test",
+      clientId: "client-1",
+      redirectUri: "https://admin.example.test/auth/callback",
+      logoutUri: "https://admin.example.test/",
+    },
+  };
+  globalThis.location = location;
+  globalThis.history = {
+    replaceState(_state, _title, path) {
+      location.pathname = String(path);
+      location.search = "";
+    },
+  };
+  globalThis.sessionStorage = session;
+  globalThis.localStorage = local;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ access_token: "access-2", expires_in: 3600 }),
+  });
+
+  session.setItem("good-neighbor-admin-access-token", "expired-access");
+  session.setItem("good-neighbor-admin-expires-at", "1");
+
+  const { completeAdminLoginFromUrl, hasAdminSession, startAdminLogin } =
+    await import(`./admin-auth.js?expired-session-test=${Date.now()}`);
+  await startAdminLogin();
+  const authorize = new URL(assignedUrl);
+  location.pathname = "/auth/callback";
+  location.search = `?code=code-2&state=${authorize.searchParams.get("state")}`;
+
+  // AdminApp performs this session check before it handles the callback.
+  assert.equal(hasAdminSession(), false);
+  assert.deepEqual(await completeAdminLoginFromUrl(), { handled: true });
+  assert.equal(session.getItem("good-neighbor-admin-access-token"), "access-2");
+});

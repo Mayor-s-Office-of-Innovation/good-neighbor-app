@@ -19,6 +19,7 @@ import {
 } from "./services/admin-auth.js";
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
+import { mapWithConcurrency } from "./concurrency.js";
 import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 import { currentRoute, navigate } from "./router.js";
 import { selectedLeadProgram } from "./site-assignment.js";
@@ -87,6 +88,8 @@ import {
  * @property {any | null} suspensionTarget
  * @property {any | null} managerMembershipRemovalTarget
  */
+
+const DIRECTORY_REQUEST_CONCURRENCY = 3;
 
 class AdminApp extends HTMLElement {
   constructor() {
@@ -311,17 +314,21 @@ class AdminApp extends HTMLElement {
       systemsOfCare: oversightOptions.systemsOfCare || [],
     };
     const memberships = (
-      await Promise.all(
-        this.state.providers.map(async (provider) => {
+      await mapWithConcurrency(
+        this.state.providers,
+        DIRECTORY_REQUEST_CONCURRENCY,
+        async (provider) => {
           const result = await adminApi.getProvider(provider.providerId);
           return result.sites || [];
-        }),
+        },
       )
     ).flat();
     const uniqueSiteIds = [...new Set(memberships.map((site) => site.siteId))];
     this.state.sites = (
-      await Promise.all(
-        uniqueSiteIds.map(async (siteId) => {
+      await mapWithConcurrency(
+        uniqueSiteIds,
+        DIRECTORY_REQUEST_CONCURRENCY,
+        async (siteId) => {
           const result = await adminApi.getSite(siteId);
           const site = result.items?.find((item) => item.sk === "#META");
           return site
@@ -334,7 +341,7 @@ class AdminApp extends HTMLElement {
                 ),
               }
             : null;
-        }),
+        },
       )
     ).filter(Boolean);
     await this.openRoute();
