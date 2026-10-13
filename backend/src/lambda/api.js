@@ -9,6 +9,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../handlers/checks.js";
 import {
@@ -179,6 +180,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,
+  "GET /v1/checks:capture-guidance": getCaptureGuidance,
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,

@@ -1,19 +1,25 @@
-import { listChecks } from "./api.js";
+import { getCaptureGuidance } from "./api.js";
 import { startingGuidance } from "../domain/capture-guidance.js";
 
 /**
- * Read every page: checks are ordered by start, while guidance uses completion
- * day, so an old start date cannot safely terminate pagination.
- * @param {{id: string, startedAt: string}} check
+ * One bounded, strongly consistent guidance read; caller cancels on navigation.
+ * @param {{id: string, startedAt: string, siteId?: string}} check
+ * @param {AbortSignal} [signal]
  * @returns {Promise<{titleKey: string}>}
  */
-export async function loadStartingGuidance(check) {
-  const headers = [];
-  let nextToken;
-  do {
-    const page = await listChecks({ limit: 100, nextToken });
-    headers.push(...page.checks);
-    nextToken = page.nextToken;
-  } while (nextToken);
-  return startingGuidance(headers, check.startedAt, check.id);
+export async function loadStartingGuidance(check, signal) {
+  const { counts } = await getCaptureGuidance({
+    startedAt: check.startedAt,
+    checkId: check.id,
+    siteId: check.siteId,
+    signal,
+  });
+  if (
+    !Array.isArray(counts) ||
+    counts.length !== 5 ||
+    counts.some((count) => !Number.isInteger(count) || count < 0)
+  ) {
+    throw new Error("Invalid capture guidance counts");
+  }
+  return startingGuidance(counts);
 }

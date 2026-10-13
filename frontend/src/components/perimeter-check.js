@@ -215,7 +215,9 @@ class PerimeterCheck extends HTMLElement {
     this._resumePendingEvidence();
     const active = getCurrentCheck();
     if (!active.captureGuidanceContext) {
-      void loadStartingGuidance(active)
+      this._guidanceAbort?.abort();
+      this._guidanceAbort = new AbortController();
+      void loadStartingGuidance(active, this._guidanceAbort.signal)
         .then((context) => {
           if (this.isConnected && getCurrentCheck()?.id === active.id) {
             setCaptureGuidanceContext(active.id, context);
@@ -770,6 +772,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
     if (this._fileReader?.readyState === FileReader.LOADING) {

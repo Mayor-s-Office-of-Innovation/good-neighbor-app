@@ -64,8 +64,18 @@ counted by Pacific completion date. The third check of the day gets its own titl
 the first check after exactly three consecutive days with at least three checks
 per day gets the fourth-day celebration. Other starts use the three-photo guidance.
 The starting title is saved in the local draft as `captureGuidanceContext` and
-retained on resume. History is paginated because start order cannot safely bound
-completion dates; if history is unavailable, capture uses the default title.
+retained on resume. `GET /v1/checks:capture-guidance` reads base-table completion
+records consistently for the five Pacific days ending at the capture start instant.
+It includes completions at or before that instant and excludes the current check.
+A completion record is written in the same conditional transaction as its header,
+so retries do not double-count and GSI propagation is irrelevant. The query is
+bounded by completion date, including older-started checks completed recently.
+Navigation cancels the frontend request. Unavailable history uses the default title
+without persisting it as a resolved starting context.
+
+Existing headers require the completion backfill before guidance is enabled. The
+endpoint returns 503 until the global migration readiness record is set; fresh
+empty tables also require this initialization. See [the backfill runbook](runbooks/check-completion-guidance.md).
 
 ## Facts that shape the model
 
@@ -178,6 +188,8 @@ as task update events and every GSI sort key.
 | Physical-device binding pointer | `PHYSICAL_DEVICE#<physicalDeviceId>` | `BINDING#<bindingId>` | Non-secret ownership and discovery pointer to one Site binding. It grants no access by itself; listing and selection revalidate the canonical binding, compatibility Device row, Site generation/status, expiry/inactivity, and Manager membership where applicable. |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status (`in_progress` → `completed`), startedAt, `flowType` (`perimeter` or `single-problem`), running `issueCount` / `maxSeverity` counters that the worker bumps. **At `complete` the header also gets:** `grade`, `summary`, `categories`, `rubricVersion`, `photoCount` / `textCount` / `evidenceKind`, `synthesizedAt`, `completedAt`. See [Scorecard on the header](#scorecard-on-the-header). |
 | **Artifact** (one photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType. See [Old artifact rows](#old-artifact-rows). |
+| **Perimeter completion** | `SITE#<siteId>` | `CHECK_COMPLETION#<Pacific date>#<completedAt ISO>#<checkId>` | Immutable `checkId` and `completedAt`, written atomically with perimeter completion; no GSI attributes or TTL. Strongly consistent completion-date queries power capture guidance. Single-problem reports have no marker. |
+| **Completion migration readiness** | `SYSTEM#MIGRATIONS` | `CHECK_COMPLETIONS_V1` | `status: "ready"` and migration `completedAt`; written only after the entire historical backfill succeeds. |
 | **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional `shotType` (`wide` or `detail`, from image manifest index 0), optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results. It is the one case a retry may overwrite, and the only item the translate worker updates in place. |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `cannotDo`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |

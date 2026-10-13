@@ -32,6 +32,7 @@ locals {
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
     "GET /v1/checks",
+    "GET /v1/checks:capture-guidance",
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "DELETE /v1/checks/{checkId}/artifacts/{artifactId}",

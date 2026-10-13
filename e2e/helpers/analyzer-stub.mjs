@@ -22,6 +22,7 @@ const PORT = Number(process.env.LOCAL_ANALYZER_PORT ?? 3101);
 
 /** Fixture served for /v1/analyses until /__control changes it. */
 let pendingFixture = "multi";
+let pendingShotType = null;
 
 const multi = {
   analysis_id: "ana_e2e_multi01",
@@ -114,6 +115,9 @@ const server = createServer((req, res) => {
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         if (body?.fixture === "multi" || body?.fixture === "excellent") {
           pendingFixture = body.fixture;
+          pendingShotType = ["wide", "detail"].includes(body.shotType)
+            ? body.shotType
+            : null;
           console.log(
             `[analyzer-stub] control: next fixture = ${pendingFixture}`,
           );
@@ -136,7 +140,21 @@ const server = createServer((req, res) => {
       console.log(`[analyzer-stub] /v1/analyses -> ${pendingFixture}`);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify(pendingFixture === "excellent" ? excellent : multi),
+        JSON.stringify({
+          ...(pendingFixture === "excellent" ? excellent : multi),
+          ...(pendingShotType
+            ? {
+                media_manifest: [
+                  {
+                    index: 0,
+                    type: "image",
+                    content_type: "image/jpeg",
+                    shot_type: pendingShotType,
+                  },
+                ],
+              }
+            : {}),
+        }),
       );
     });
     return;
