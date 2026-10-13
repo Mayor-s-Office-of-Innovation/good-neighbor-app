@@ -98,7 +98,6 @@ resource "aws_cloudformation_stack" "city_smtp_relay" {
         Properties = {
           IngressPointName = "${local.name_prefix}-application-mail"
           Type             = "AUTH"
-          StatusToUpdate   = "ACTIVE"
           TlsPolicy        = "REQUIRED"
           IngressPointConfiguration = {
             SecretArn = aws_secretsmanager_secret.mail_manager_ingress[0].arn
