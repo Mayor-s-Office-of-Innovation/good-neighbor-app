@@ -234,6 +234,13 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   A further platform backstop therefore requires a separate tenant-only data-plane
   function/role or per-request tagged-role assumption; a static `SITE#*` condition
   would not isolate one Site from another.
+- A Provider Manager still receives Site-scoped device tokens and independently
+  selectable Site bindings. The provider-wide enrollment link is only a
+  provisioning mechanism: redemption resolves all active Provider Sites in one
+  transaction (maximum 21), and every later authorization/refresh revalidates
+  the Provider membership generation and the Site's current `providerId`.
+  Provider Manager lifecycle and link issuance are restricted to Compliance
+  Supervisors; Compliance Managers cannot exercise this cross-Site authority.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
 - Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Every photo expires 30 days after upload via a bucket-wide rule; uploads that were never registered or were rejected during registration/analysis are tagged and expire after one day. Bucket versioning is suspended so expired photos leave no noncurrent copy.

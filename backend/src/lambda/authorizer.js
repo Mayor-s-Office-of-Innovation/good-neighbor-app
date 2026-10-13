@@ -10,7 +10,7 @@
 // API Gateway caching is disabled in Terraform so every protected request sees
 // the current binding, Site, and Manager membership state.
 
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import {
   canonicalAccessLevel,
@@ -104,7 +104,49 @@ export const handler = async (event) => {
   ) {
     return DENY({ reason: "revoked" });
   }
-  if (claims.accessLevel === "manager" && device.membershipId) {
+  if (
+    claims.accessLevel === "manager" &&
+    device.authorityScope === "provider"
+  ) {
+    if (!device.providerId || site.providerId !== device.providerId) {
+      return DENY({ reason: "revoked" });
+    }
+    const membershipResult = await ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: {
+          pk: `PROVIDER#${device.providerId}`,
+          sk: `PROVIDER_MANAGER#${device.providerMembershipId}`,
+        },
+      }),
+    );
+    let membership = membershipResult.Item;
+    // Imported memberships may have a managerId-based sort key that predates
+    // provider enrollment. Resolve that bounded Provider partition safely.
+    if (!membership) {
+      const matches = await ddb.send(
+        new QueryCommand({
+          TableName: process.env.DYNAMO_TABLE,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `PROVIDER#${device.providerId}`,
+            ":prefix": "PROVIDER_MANAGER#",
+          },
+        }),
+      );
+      membership = matches.Items?.find(
+        (item) => item.membershipId === device.providerMembershipId,
+      );
+    }
+    if (
+      !membership ||
+      membership.status !== "active" ||
+      Number(membership.generation ?? 0) !==
+        Number(device.providerMembershipGeneration ?? -1)
+    ) {
+      return DENY({ reason: "revoked" });
+    }
+  } else if (claims.accessLevel === "manager" && device.membershipId) {
     const membershipResult = await ddb.send(
       new GetCommand({
         TableName: process.env.DYNAMO_TABLE,

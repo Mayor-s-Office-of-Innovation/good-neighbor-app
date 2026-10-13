@@ -146,6 +146,47 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
+  listProviderManagers: (providerId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships`,
+    ),
+  createProviderManager: (providerId, values) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships`,
+      { method: "POST", body: JSON.stringify(values) },
+    ),
+  updateProviderManager: (providerId, membershipId, values) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "PATCH", body: JSON.stringify(values) },
+    ),
+  deactivateProviderManager: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
+  reinstateProviderManager: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}/reinstate`,
+      { method: "POST" },
+    ),
+  listProviderManagerGrants: (providerId) =>
+    adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/grants`),
+  createProviderManagerGrant: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-grants`,
+      { method: "POST", body: JSON.stringify({ membershipId }) },
+    ),
+  cancelProviderManagerGrant: (providerId, grantId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/grants/${encodeURIComponent(grantId)}`,
+      { method: "DELETE" },
+    ),
+  revokeProviderManagerEnrollment: (providerId, enrollmentId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-enrollments/${encodeURIComponent(enrollmentId)}/revoke`,
+      { method: "POST" },
+    ),
   updateProvider: (providerId, values) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`, {
       method: "PATCH",

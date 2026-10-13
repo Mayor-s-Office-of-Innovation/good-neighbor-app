@@ -65,6 +65,11 @@
 - A zero-hour response value explicitly disables response-overdue assessment.
 - Preserved `actions-escalations-v2` for historical assessments and tasks.
 
+## 311 ticket closure reason correction - 2026-10-13
+
+- Silent informational ticket closures now use `UpdateType 11` with `ClosedReason` 1
+  (`NumericSubType: "1"`). The previously used reason 8 caused API closure errors.
+
 ## 311 ticket closure - 2026-09-04
 
 - App-behavior addition (no rulebase change): when a task with a submitted informational

@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -320,7 +321,22 @@ async function bindingLifecycleValid(device, role) {
   ) {
     return false;
   }
-  if (role !== "manager" || !device.membershipId) return true;
+  if (role !== "manager") return true;
+  if (device.authorityScope === "provider") {
+    if (!device.providerId || site.providerId !== device.providerId)
+      return false;
+    const membership = await findProviderManager(
+      tableName,
+      String(device.providerId),
+      String(device.providerMembershipId),
+    );
+    return Boolean(
+      membership?.status === "active" &&
+        Number(membership.generation ?? 0) ===
+          Number(device.providerMembershipGeneration ?? -1),
+    );
+  }
+  if (!device.membershipId) return true;
   const membershipResult = await ddb.send(
     new GetCommand({
       TableName: tableName,
@@ -335,6 +351,23 @@ async function bindingLifecycleValid(device, role) {
     membership?.status === "active" &&
       Number(membership.generation ?? 0) ===
         Number(device.membershipGeneration ?? -1),
+  );
+}
+
+/** @param {string} tableName @param {string} providerId @param {string} membershipId */
+async function findProviderManager(tableName, providerId, membershipId) {
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `PROVIDER#${providerId}`,
+        ":prefix": "PROVIDER_MANAGER#",
+      },
+    }),
+  );
+  return (result.Items ?? []).find(
+    (item) => String(item.membershipId) === membershipId,
   );
 }
 
