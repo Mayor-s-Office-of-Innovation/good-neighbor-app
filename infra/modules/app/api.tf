@@ -23,6 +23,9 @@ locals {
     "DELETE /app/v1/manager/staff-grants/{grantId}",
     "GET /app/v1/manager/device-bindings",
     "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
+    "GET /app/v1/manager/reports/checks",
+    "GET /app/v1/manager/reports/tasks",
+    "GET /app/v1/manager/reports/task-updates",
     "GET /v1/sites:search",
     # Site config
     "GET /v1/site",

@@ -33,9 +33,7 @@ import {
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showSiteSwitchSuccessToast,
   showLanguageErrorToast,
-  queueSiteSwitchSuccessToast,
 } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -49,12 +47,10 @@ import { navigate } from "../router.js";
 import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
-  activateSiteBinding,
   clearSiteSession,
   getSite,
   hasAdminAccess,
   listBoundSites,
-  setSite,
 } from "../db.js";
 import {
   listChecks,
@@ -62,7 +58,6 @@ import {
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
-  selectDeviceBinding,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -146,6 +141,7 @@ import "./ticket-detail-dialog.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
+import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
@@ -520,6 +516,9 @@ class TodayView extends HTMLElement {
     });
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       navigate("/site-admin"),
+    );
+    this.querySelector("#settings-reports")?.addEventListener("click", () =>
+      navigate("/reports"),
     );
     this._languageDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #language-dialog")
@@ -1243,53 +1242,19 @@ class TodayView extends HTMLElement {
   }
 
   async _switchToSite(siteId) {
-    if (!siteId || siteId === this._siteId) {
+    const outcome = await switchToBoundSite({
+      siteId,
+      currentSiteId: this._siteId,
+      boundSites: this._boundSites,
+      destination: "/today",
+    });
+    if (outcome === "same") {
       this._siteSwitcher?.close();
       return;
     }
-    const target = this._providerSites.find((site) => site.siteId === siteId);
-    const bound = this._boundSites.find(
-      (site) => site.siteId === siteId && site.token && site.refreshToken,
-    );
-    if (!bound) {
+    if (outcome === "needs-binding") {
+      const target = this._providerSites.find((site) => site.siteId === siteId);
       await this._requestAnotherSite("code", siteId, target?.name || "");
-      return;
-    }
-    const active = getCurrentCheck();
-    if (active?.status === "capture-complete") {
-      showSiteSwitchBlockedToast();
-      return;
-    }
-    try {
-      if (active) await pauseCheck();
-      let selected;
-      if (bound.bindingId && bound.physicalDeviceId) {
-        const session = await selectDeviceBinding(bound.bindingId);
-        selected = await setSite(session.site.name, {
-          siteId: session.site.siteId,
-          deviceId: session.deviceId,
-          bindingId: session.bindingId,
-          physicalDeviceId: session.physicalDeviceId,
-          token: session.token,
-          refreshToken: session.refreshToken,
-          tokenExpiresAt: Date.now() + session.expiresIn * 1000,
-          tokenGeneration: session.tokenGeneration,
-          accessLevel: session.accessLevel,
-          absoluteExpiresAt: session.absoluteExpiresAt,
-        });
-      } else {
-        selected = await activateSiteBinding(siteId);
-      }
-      if (!selected) {
-        await this._requestAnotherSite("code", siteId, target?.name || "");
-        return;
-      }
-      discardInMemorySession();
-      if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
-      window.location.assign("/today");
-    } catch (error) {
-      console.error("site switch failed", error);
-      showSiteSwitchErrorToast();
     }
   }
 

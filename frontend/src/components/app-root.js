@@ -4,7 +4,8 @@
   the main view based on the route. Everything is scoped to the bound site.
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
-  problem-report, /check/describe + /problem/describe → describe-instead.
+  problem-report, /check/describe + /problem/describe → describe-instead,
+  /site-admin* and /reports* → lazily loaded manager-only screens.
   Setup (device→site binding) is retained and gates everything. There is no
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
@@ -55,6 +56,8 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/reports/checks/", "reports-day-view"],
+  ["/reports", "reports-view"],
   ["/site-admin/edit", "site-admin-edit"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
@@ -309,7 +312,11 @@ export class AppRoot extends HTMLElement {
       void this._resetFirstLaunch();
       return;
     }
-    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
+    // Manager-only screens: site admin and the reports. The access level is
+    // a navigation hint from the stored token; the backend enforces it.
+    const managerOnly =
+      route.startsWith("/site-admin") || route.startsWith("/reports");
+    if (managerOnly && !hasAdminAccess(this._site)) {
       navigate("/today");
       return;
     }
@@ -320,6 +327,13 @@ export class AppRoot extends HTMLElement {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
         if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
+      return;
+    }
+    if (route.startsWith("/reports") && !customElements.get("reports-view")) {
+      this._view.replaceChildren();
+      void import("./reports-view.js").then(() => {
+        if (currentRoute().startsWith("/reports")) this._renderView();
       });
       return;
     }

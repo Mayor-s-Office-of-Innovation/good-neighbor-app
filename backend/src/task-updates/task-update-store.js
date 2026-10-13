@@ -12,6 +12,7 @@ import {
   taskUpdateMediaKey,
   taskUpdateMediaPointerKey,
   taskUpdatePointerKey,
+  taskUpdateTimelineGsi,
   taskUpdatePrefix,
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
@@ -251,6 +252,11 @@ export async function writeTaskTransition(input) {
             TableName: input.tableName,
             Item: {
               ...updateKey,
+              ...taskUpdateTimelineGsi(
+                input.siteId,
+                input.occurredAt,
+                input.update.updateId,
+              ),
               ...input.update,
             },
             ConditionExpression: "attribute_not_exists(pk)",

@@ -14,6 +14,7 @@ import {
   siteAdminOnly,
   supervisorOnly,
 } from "../lib/admin-auth.js";
+import { pacificToday } from "../lib/pacific-dates.js";
 
 /** Replace the Compliance managers assigned to one Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -192,7 +193,7 @@ export const createSiteTerms = (event) =>
     const siteManagerUserId = String(body.siteManagerUserId || "").trim();
     // Periods always begin when they are saved. Keep the effective date
     // server-owned so API callers cannot create unsupported scheduled terms.
-    const effectiveStart = pacificIsoDate();
+    const effectiveStart = pacificToday();
     const periodEnd = body.periodEnd ? isoDate(body.periodEnd) : "";
     const expiresOnExclusive = periodEnd ? nextIsoDate(periodEnd) : "";
     if (!reasons.length)
@@ -490,7 +491,7 @@ export const endSiteTerms = (event) =>
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
     }
-    const today = pacificIsoDate();
+    const today = pacificToday();
     const active = (termsResult.Items ?? [])
       .filter(
         (item) =>
@@ -997,20 +998,6 @@ function nextIsoDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function pacificIsoDate() {
-  const values = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Los_Angeles",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-      .formatToParts(new Date())
-      .map(({ type, value }) => [type, value]),
-  );
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 /**
  * @param {unknown} value
  * @returns {string}
@@ -1025,7 +1012,7 @@ function clean(value) {
  * @returns {"scheduled" | "expired" | "active"}
  */
 function termsStatus(start, expiry) {
-  const today = pacificIsoDate();
+  const today = pacificToday();
   if (start > today) return "scheduled";
   if (expiry && expiry <= today) return "expired";
   return "active";

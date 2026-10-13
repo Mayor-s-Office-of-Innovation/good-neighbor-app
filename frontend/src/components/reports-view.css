@@ -1,0 +1,628 @@
+/*
+  Styles for <reports-view> and <reports-day-view> (reports-view.js). The
+  screen reuses the home hub's shell (.home, .home-region, .home-tabs) and
+  the flow column (.flow, .topbar) from base.css; everything below is the
+  report-specific vocabulary: filters, headline, chart, calendar, legend,
+  status pills, record cards, and the day timeline.
+
+  Status colors reinforce a word or count that is always present:
+    complete → --c-ok, partial → --c-flag, missed → --c-hazard,
+    pending / upcoming / exempt → neutral.
+*/
+
+.reports__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+}
+
+.reports__title {
+  margin: 0;
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
+  text-wrap: balance;
+  outline: none; /* programmatic focus target (route announcement) */
+}
+
+.reports__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0 1rem 2rem;
+}
+
+/* ---- Filters ---- */
+
+.reports__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.reports__filters wa-select {
+  flex: 1 1 8rem;
+  min-width: 7rem;
+}
+
+.reports__export {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.reports__export wa-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.reports__export:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+/* ---- Headline, cards, totals ---- */
+
+.reports__headline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.reports__headline-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.reports__headline-sub,
+.reports__records-sub,
+.reports__record-sub,
+.reports__total span,
+.reports-timeline__meta,
+.reports-task__meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+}
+
+.reports__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.reports__card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.reports__total {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+}
+
+.reports__total strong {
+  font-size: 1.05rem;
+}
+
+.reports__status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+  color: var(--text-secondary);
+}
+
+.reports__status p {
+  margin: 0;
+}
+
+/* ---- Week chart (quarter) ---- */
+
+.reports-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 11rem;
+  overflow: visible;
+}
+
+.reports-chart__bar--complete {
+  fill: var(--c-ok);
+}
+
+.reports-chart__bar--partial {
+  fill: var(--c-flag);
+}
+
+.reports-chart__bar--missed {
+  fill: var(--c-hazard);
+}
+
+.reports-chart__bar--open {
+  fill: var(--surface-3);
+  stroke: var(--c-line);
+  stroke-width: 0.3;
+}
+
+.reports-chart__label {
+  fill: var(--text-secondary);
+  font-size: 5px;
+  font-family: var(--font-sans);
+}
+
+/* ---- Calendar (month) and week strip ---- */
+
+.reports-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-calendar__weekday {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  font-weight: 600;
+}
+
+.reports-calendar__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  aspect-ratio: 1;
+  min-height: 2.75rem;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.1;
+}
+
+.reports-calendar__number {
+  font-weight: 600;
+}
+
+.reports-calendar__count {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+.reports-calendar__day--complete {
+  background: var(--c-ok-bg);
+  border-color: var(--c-ok);
+}
+
+.reports-calendar__day--partial {
+  background: var(--c-flag-bg);
+  border-color: var(--c-flag);
+}
+
+.reports-calendar__day--missed {
+  background: var(--c-hazard-bg);
+  border-color: var(--c-hazard);
+}
+
+.reports-calendar__day--pending {
+  background: var(--surface-3);
+  border-color: var(--c-line);
+  border-style: dashed;
+}
+
+.reports-calendar__day--upcoming,
+.reports-calendar__day--exempt {
+  color: var(--text-faint);
+}
+
+/* ---- Legend and pills ---- */
+
+.reports-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+}
+
+.reports-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reports-legend__dot {
+  flex: 0 0 auto;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 1px solid var(--c-line);
+}
+
+.reports-legend__dot--complete {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-legend__dot--partial {
+  background: var(--c-flag);
+  border-color: var(--c-flag);
+}
+
+.reports-legend__dot--missed {
+  background: var(--c-hazard);
+  border-color: var(--c-hazard);
+}
+
+.reports-legend__dot--open {
+  background: var(--surface-3);
+}
+
+.reports-pill {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.reports-pill--complete {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-pill--partial {
+  background: var(--c-flag-bg);
+  color: var(--c-flag);
+}
+
+.reports-pill--missed {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}
+
+/* ---- Records ---- */
+
+.reports__records {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reports__records-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.reports__record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports__record {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.reports__record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.reports__record-title {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.reports__record-title:hover,
+.reports__record-issues:hover {
+  text-decoration: underline;
+}
+
+.reports__record-issues {
+  align-self: flex-start;
+  min-height: 2rem;
+  padding-top: 0.25rem;
+  color: var(--brand-blue);
+  font-size: var(--wa-font-size-s, 0.875rem);
+}
+
+.reports__more {
+  align-self: center;
+  margin-top: 0.75rem;
+}
+
+/* ---- Day detail ---- */
+
+.reports-day__back {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.reports-day__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.4rem;
+  line-height: 1.2;
+  outline: none;
+}
+
+.reports-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-timeline__item {
+  position: relative;
+  padding: 0 0 1.5rem 2.75rem;
+}
+
+.reports-timeline__item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 0.95rem;
+  top: 2.1rem;
+  bottom: 0.25rem;
+  width: 2px;
+  background: var(--c-line);
+}
+
+.reports-timeline__mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.reports-timeline__item--done .reports-timeline__mark {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-timeline__item--missed .reports-timeline__mark {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}
+
+.reports-timeline__time {
+  margin: 0.25rem 0 0.1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.reports-timeline__photos {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0 0 0.25rem;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.reports-timeline__photo {
+  display: block;
+  width: 5.5rem;
+  height: 5.5rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  box-shadow: none;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.reports-timeline__photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reports-timeline__photo--placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.reports-timeline__photo:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+.reports-timeline__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-task {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.reports-task__title {
+  font-weight: 600;
+}
+
+/* ---- Issues tab ---- */
+
+.reports-chart__bar--found {
+  fill: var(--surface-3);
+  stroke: var(--c-line);
+  stroke-width: 0.3;
+}
+
+.reports-chart__bar--responded {
+  fill: var(--c-ok);
+}
+
+.reports-legend__dot--found {
+  background: var(--surface-3);
+}
+
+.reports-legend__dot--responded {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-types,
+.reports-responses {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-types__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.reports-types__name {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-weight: 600;
+}
+
+.reports-types__count,
+.reports-types__meta {
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 400;
+}
+
+.reports-responses__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reports-responses__dot {
+  flex: 0 0 auto;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 1px solid var(--c-line);
+  background: var(--surface-3);
+}
+
+.reports-responses__item--onSite .reports-responses__dot {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-responses__item--sr311 .reports-responses__dot {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+}
+
+.reports-responses__item--call .reports-responses__dot,
+.reports-responses__item--emergencyCall .reports-responses__dot {
+  background: var(--c-flag);
+  border-color: var(--c-flag);
+}
+
+.reports-responses__item--cannotDo .reports-responses__dot {
+  background: var(--c-hazard);
+  border-color: var(--c-hazard);
+}
+
+.reports-pill--onSite {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-pill--sr311 {
+  background: var(--brand-blue-bg);
+  color: var(--brand-blue);
+}
+
+.reports-pill--call,
+.reports-pill--emergencyCall {
+  background: var(--c-flag-bg);
+  color: var(--c-flag);
+}
+
+.reports-pill--cannotDo {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}

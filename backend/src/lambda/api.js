@@ -51,6 +51,11 @@ import {
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
+import {
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../handlers/manager-reports.js";
 import { requestManagerAccess } from "../handlers/manager-access-requests.js";
 import { searchSites } from "../handlers/setup-code-requests.js";
 import {
@@ -170,6 +175,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /app/v1/manager/device-bindings": listGeneralBindings,
   "POST /app/v1/manager/device-bindings/{bindingId}/revoke":
     revokeGeneralBinding,
+  // Site manager reports (AP27, AP28): manager-only, site from the token.
+  "GET /app/v1/manager/reports/checks": getChecksReport,
+  "GET /app/v1/manager/reports/tasks": getTasksReport,
+  "GET /app/v1/manager/reports/task-updates": getTaskUpdatesReport,
   "GET /v1/sites:search": searchSites,
   // Site config
   "GET /v1/site": getSite,
