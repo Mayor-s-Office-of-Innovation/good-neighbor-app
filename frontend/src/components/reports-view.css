@@ -299,8 +299,11 @@
   border-style: dashed;
 }
 
+/* Days that owe nothing yet (future) or at all (exempt) still draw a ring,
+   so every day on the grid is a circle; only owed days carry a color. */
 .reports-calendar__day--upcoming,
 .reports-calendar__day--exempt {
+  border-color: var(--c-line);
   color: var(--text-faint);
 }
 
@@ -623,8 +626,11 @@
 
 /* ---- Issues tab ---- */
 
+/* Issues found is the data series, so it gets a solid neutral, not the
+   hairline color (which vanishes on a white card); the responded share is
+   drawn over it in green. */
 .reports-chart__bar--found {
-  fill: var(--c-line);
+  fill: var(--text-faint);
 }
 
 .reports-chart__bar--responded {
@@ -632,7 +638,8 @@
 }
 
 .reports-legend__dot--found {
-  background: var(--c-line);
+  background: var(--text-faint);
+  border-color: var(--text-faint);
 }
 
 .reports-legend__dot--responded {
