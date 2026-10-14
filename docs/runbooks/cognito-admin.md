@@ -14,7 +14,12 @@ The dev pool is `us-west-2_8d60iAcSL`, in the DEV account, region
 client secret. Its login domain is
 `https://good-neighbor-app-dev.auth.us-west-2.amazoncognito.com`.
 The domain uses Cognito's classic hosted UI (version 1), which supports the
-configured password and TOTP flow.
+configured password and TOTP flow. The admin app client applies the small,
+repository-managed customization in
+`infra/modules/app/cognito-hosted-ui.css`. Cognito carries that palette across
+sign-in, temporary-password, recovery, and TOTP screens. Classic Hosted UI text
+and layout remain Cognito-owned; the customization intentionally has no logo
+until an approved Good Neighbor asset exists.
 
 Dev admin console: <https://ds7mtnddz2r23.cloudfront.net/>.
 The registered callback is `/auth/callback` on that origin; logout returns to

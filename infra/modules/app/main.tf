@@ -918,6 +918,17 @@ resource "aws_cognito_user_pool_domain" "managed_login" {
   user_pool_id = aws_cognito_user_pool.users.id
 }
 
+# Keep the classic Cognito-hosted authentication flow, but apply the app's
+# neutral palette to sign-in, password, recovery, and TOTP screens. Cognito
+# accepts only a restricted CSS vocabulary here; see cognito-hosted-ui.css.
+resource "aws_cognito_user_pool_ui_customization" "admin" {
+  client_id    = aws_cognito_user_pool_client.admin.id
+  css          = file("${path.module}/cognito-hosted-ui.css")
+  # Referencing the domain ensures Cognito has activated it before accepting
+  # the customization request.
+  user_pool_id = aws_cognito_user_pool_domain.managed_login.user_pool_id
+}
+
 resource "aws_cognito_user_group" "central_admin" {
   name         = "central-admin"
   user_pool_id = aws_cognito_user_pool.users.id
