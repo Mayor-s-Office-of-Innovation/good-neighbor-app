@@ -27,12 +27,9 @@
   cursor: pointer;
 }
 
-.complaints__back-icon {
-  width: 20px;
-  height: 20px;
-  background: currentColor;
-  -webkit-mask: url(/icons/chevron-left.svg) center / contain no-repeat;
-  mask: url(/icons/chevron-left.svg) center / contain no-repeat;
+.complaints .topbar__back wa-icon,
+.complaint-compose__close wa-icon {
+  font-size: 1.25rem;
 }
 
 .complaints .topbar__back:focus-visible {
@@ -129,14 +126,6 @@
   cursor: pointer;
 }
 
-.complaint-compose__close span {
-  width: 20px;
-  height: 20px;
-  background: currentColor;
-  -webkit-mask: url(/icons/xmark.svg) center / contain no-repeat;
-  mask: url(/icons/xmark.svg) center / contain no-repeat;
-}
-
 .complaint-compose__close:focus-visible,
 .complaint-upload-button:focus-within,
 .complaint-describe-link:focus-visible {
@@ -185,10 +174,8 @@
   cursor: pointer;
 }
 
-.complaint-upload-button > span:first-child {
-  font-size: 2rem;
-  font-weight: 300;
-  line-height: 1;
+.complaint-upload-button > wa-icon {
+  font-size: 1.5rem;
 }
 
 .complaint-upload-section > input {

@@ -597,6 +597,7 @@ resource "aws_s3_bucket" "complaints" {
   # checkov:skip=CKV_AWS_21:Complaint evidence is write-once and lifecycle-deleted; versioning would retain expired sensitive media beyond its approved window.
   bucket_prefix = "${local.bucket_name_prefix}-complaints-"
   force_destroy = false
+  tags          = var.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "complaints" {

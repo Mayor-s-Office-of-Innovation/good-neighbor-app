@@ -26,10 +26,13 @@ presigned URL, and the handler stores only the S3 key.
 
 Public complaints use the same private upload boundary. The app owns complaint
 authorization, lifecycle, persistence, retry, and deletion. The analyzer owns only
-structured multimodal extraction through `POST /v1/complaints:extract`. Normalized
-images are sent inline; documents are fetched by the analyzer through five-minute,
-read-only S3 URLs with strict host and byte checks, avoiding API Gateway's request-size
-ceiling. The analyzer does not retain complaint input.
+structured multimodal extraction through `POST /v1/complaints:extract`. JPEG, PNG,
+WebP, HEIC, and HEIF images may be uploaded up to 10 MiB and are normalized before
+being sent inline. PDF and UTF-8 text documents are limited to 4.5 MiB, matching the
+Bedrock document ceiling, and are fetched by the analyzer through five-minute,
+read-only S3 URLs with strict host and byte checks. Legacy Word `.doc` uploads are not
+accepted because an OLE signature alone cannot safely validate their structure. The
+analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
@@ -128,8 +131,9 @@ marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
 ## Public complaint flow
 
 The browser uploads up to five validated complaint files directly to the dedicated
-complaint-evidence S3 bucket, registers
-their metadata, and creates a Site-scoped `COMPLAINT#` header. The API immediately
+complaint-evidence S3 bucket and registers their metadata. Submission retags every
+object while the header remains a draft, then transactionally publishes the Site-scoped
+`COMPLAINT#` header and extends every artifact row's retention. The API immediately
 returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
 loads the evidence, calls the analyzer's complaint-extraction contract, validates the
 six required string fields, and updates the row to `ready`. After the fifth failed SQS

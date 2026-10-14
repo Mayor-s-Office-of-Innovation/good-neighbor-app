@@ -1,6 +1,6 @@
 // @ts-nocheck -- routed view; JSDoc ratchet follows established frontend migration.
 import "./complaint-view.css";
-import { currentRoute, navigate } from "../router.js";
+import { currentRoute, navigate, setPopstateGuard } from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { formatMonthDayTime } from "../i18n/dates.js";
@@ -18,8 +18,9 @@ import {
 } from "../services/api.js";
 import { showComplaintLoggedToast } from "../state/toasts.js";
 
-const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc";
-const MAX_FILE = 10 * 1024 * 1024;
+const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt";
+const MAX_IMAGE_FILE = 10 * 1024 * 1024;
+const MAX_DOCUMENT_FILE = Math.floor(4.5 * 1024 * 1024);
 const MAX_TOTAL = 25 * 1024 * 1024;
 const MAX_FILES = 5;
 const DESCRIPTION_MAX = 4000;
@@ -32,13 +33,15 @@ const contentTypeFor = (file) =>
     heif: "image/heif",
     pdf: "application/pdf",
     txt: "text/plain",
-    doc: "application/msword",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
     webp: "image/webp",
   }[file.name.split(".").pop()?.toLowerCase()] ||
   "application/octet-stream";
+
+const isDocument = (file) =>
+  ["application/pdf", "text/plain"].includes(contentTypeFor(file));
 
 const freshDraft = () => ({
   complaintId: crypto.randomUUID(),
@@ -61,6 +64,12 @@ class ComplaintView extends HTMLElement {
     window.addEventListener("beforeunload", this._beforeUnload);
     if (this._route === "/complaints/new") {
       draft ||= freshDraft();
+      this._removePopstateGuard = setPopstateGuard(() => {
+        if (!draft?.uploading) return true;
+        const leave = window.confirm(t("complaints.upload.leave"));
+        if (leave) draft = null;
+        return leave;
+      });
       this._renderDraft();
       return;
     }
@@ -73,6 +82,7 @@ class ComplaintView extends HTMLElement {
     for (const controller of this._aborters?.values() || []) controller.abort();
     clearTimeout(this._pollTimer);
     window.removeEventListener("beforeunload", this._beforeUnload);
+    this._removePopstateGuard?.();
   }
 
   _topbar(title) {
@@ -83,7 +93,7 @@ class ComplaintView extends HTMLElement {
         data-back
         aria-label="${escapeAttr(t("common.back"))}"
       >
-        <span class="complaints__back-icon" aria-hidden="true"></span>
+        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
       </button>
       <div class="topbar__titles">
         <h1 class="topbar__title" tabindex="-1">${escapeHtml(title)}</h1>
@@ -95,6 +105,7 @@ class ComplaintView extends HTMLElement {
     this.querySelector("[data-back]")?.addEventListener("click", () => {
       if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
         return;
+      if (draft?.uploading) draft = null;
       navigate(fallback);
     });
   }
@@ -111,6 +122,9 @@ class ComplaintView extends HTMLElement {
         >
           ${escapeHtml(t("complaints.log"))}
         </button>
+        ${this._listActionError
+          ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
+          : ""}
         <div class="complaints__list" role="list">
           ${complaints.length
             ? complaints.map((item) => this._row(item)).join("")
@@ -133,8 +147,13 @@ class ComplaintView extends HTMLElement {
         button.addEventListener("click", async (event) => {
           event.stopPropagation();
           button.disabled = true;
-          await retryComplaint(button.dataset.retry);
-          await this._renderList();
+          try {
+            await retryComplaint(button.dataset.retry);
+            this._listActionError = "";
+          } catch {
+            this._listActionError = "complaints.retryError";
+          }
+          await this._renderList({ focusHeading: false });
         }),
       );
       this.querySelectorAll("[data-delete]").forEach((button) =>
@@ -252,7 +271,7 @@ class ComplaintView extends HTMLElement {
         type="button"
         aria-label="${escapeAttr(t("common.close"))}"
       >
-        <span aria-hidden="true"></span>
+        <wa-icon name="xmark" aria-hidden="true"></wa-icon>
       </button>
       <div class="complaint-compose__intro">
         <h1 tabindex="-1">${escapeHtml(t("complaints.compose.title"))}</h1>
@@ -260,7 +279,7 @@ class ComplaintView extends HTMLElement {
       </div>
       <div class="complaint-upload-section">
         <label class="complaint-upload-button" for="complaint-files">
-          <span aria-hidden="true">+</span>
+          <wa-icon name="circle-plus" aria-hidden="true"></wa-icon>
           <span class="visually-hidden"
             >${escapeHtml(t("complaints.upload.title"))}</span
           >
@@ -388,10 +407,17 @@ ${escapeHtml(draft.description)}</textarea
   }
 
   async _selectFiles(files) {
+    const activeDraft = draft;
     if (
-      draft.files.length + files.length > MAX_FILES ||
-      files.some((file) => file.size > MAX_FILE) ||
-      draft.files.reduce((n, entry) => n + entry.file.size, 0) +
+      files.some((file) => isDocument(file) && file.size > MAX_DOCUMENT_FILE)
+    ) {
+      alert(t("complaints.upload.documentLimit"));
+      return;
+    }
+    if (
+      activeDraft.files.length + files.length > MAX_FILES ||
+      files.some((file) => !isDocument(file) && file.size > MAX_IMAGE_FILE) ||
+      activeDraft.files.reduce((n, entry) => n + entry.file.size, 0) +
         files.reduce((n, file) => n + file.size, 0) >
         MAX_TOTAL
     ) {
@@ -405,15 +431,15 @@ ${escapeHtml(draft.description)}</textarea
         progress: 0,
         status: "uploading",
       };
-      draft.files.push(entry);
-      draft.uploading += 1;
+      activeDraft.files.push(entry);
+      activeDraft.uploading += 1;
       this._renderDraft();
       const controller = new AbortController();
       this._aborters.set(entry.id, controller);
       try {
         const contentType = contentTypeFor(file);
         const signed = await presignComplaintArtifact(
-          draft.complaintId,
+          activeDraft.complaintId,
           {
             contentType,
             contentLength: file.size,
@@ -438,7 +464,7 @@ ${escapeHtml(draft.description)}</textarea
           controller.signal,
         );
         await registerComplaintArtifact(
-          draft.complaintId,
+          activeDraft.complaintId,
           {
             artifactId: entry.artifactId,
             s3Key: entry.s3Key,
@@ -453,9 +479,9 @@ ${escapeHtml(draft.description)}</textarea
       } catch (error) {
         if (error.name !== "AbortError") entry.status = "error";
       } finally {
-        draft.uploading -= 1;
+        activeDraft.uploading -= 1;
         this._aborters.delete(entry.id);
-        this._renderDraft();
+        if (draft === activeDraft && this.isConnected) this._renderDraft();
       }
     }
   }
@@ -519,15 +545,31 @@ ${escapeHtml(draft.description)}</textarea
           )
           .join("")}
       </ul>
+      <p
+        class="complaint-compose__error"
+        data-media-error
+        role="alert"
+        hidden
+      ></p>
     </div>`;
     this._bindBack("/complaints");
     this.querySelectorAll("[data-media]").forEach((button) =>
       button.addEventListener("click", async () => {
-        const { downloadUrl } = await getComplaintMediaUrl(
-          id,
-          button.dataset.media,
-        );
-        window.open(downloadUrl, "_blank", "noopener");
+        button.disabled = true;
+        const error = this.querySelector("[data-media-error]");
+        try {
+          const { downloadUrl } = await getComplaintMediaUrl(
+            id,
+            button.dataset.media,
+          );
+          window.open(downloadUrl, "_blank", "noopener");
+          error.hidden = true;
+        } catch {
+          error.textContent = t("complaints.fileOpenError");
+          error.hidden = false;
+        } finally {
+          button.disabled = false;
+        }
       }),
     );
     for (const image of this.querySelectorAll("[data-image]")) {

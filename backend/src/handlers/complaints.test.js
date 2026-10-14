@@ -136,6 +136,26 @@ describe("complaint upload lifecycle", () => {
     expect(presignPut).not.toHaveBeenCalled();
   });
 
+  it("rejects legacy DOC and documents above the analyzer limit", async () => {
+    const legacyDoc = await presignComplaintArtifact(
+      event({
+        body: { contentType: "application/msword", contentLength: 1024 },
+      }),
+    );
+    const oversizedPdf = await presignComplaintArtifact(
+      event({
+        body: {
+          contentType: "application/pdf",
+          contentLength: Math.floor(4.5 * 1024 * 1024) + 1,
+        },
+      }),
+    );
+
+    expect(legacyDoc.statusCode).toBe(400);
+    expect(oversizedPdf.statusCode).toBe(400);
+    expect(presignPut).not.toHaveBeenCalled();
+  });
+
   it("registers only while the parent complaint is a draft", async () => {
     headObject.mockResolvedValue({
       contentType: "image/jpeg",
@@ -221,10 +241,87 @@ describe("complaint upload lifecycle", () => {
       ddbSend.mock.calls[1][0].input.TransactItems[0].ConditionCheck
         .ConditionExpression,
     ).toBe("#status = :draft");
+    expect(deleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+      ddbSend.mock.invocationCallOrder[2],
+    );
+  });
+
+  it("keeps a retryable deletion tombstone when S3 deletion fails", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: { s3Key: "complaints/key", status: "registered" },
+      })
+      .mockResolvedValueOnce({});
+    deleteObject.mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await expect(
+      deleteComplaintArtifact(event({ artifactId: ARTIFACT_ID })),
+    ).rejects.toThrow("S3 unavailable");
+
+    expect(ddbSend).toHaveBeenCalledTimes(2);
+    expect(
+      ddbSend.mock.calls[1][0].input.TransactItems[1].Update
+        .ExpressionAttributeValues[":deleting"],
+    ).toBe("deleting");
   });
 });
 
 describe("complaint scheduling", () => {
+  it("keeps the complaint as a draft when evidence retagging fails", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: `COMPLAINT#${COMPLAINT_ID}#ART#${ARTIFACT_ID}`,
+          s3Key: "complaints/key",
+          contentLength: 1024,
+          status: "registered",
+        },
+      ],
+    });
+    setObjectTags.mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await expect(
+      createComplaint(
+        event({ body: { complaintId: COMPLAINT_ID, description: "Noise" } }),
+      ),
+    ).rejects.toThrow("S3 unavailable");
+
+    expect(ddbSend).toHaveBeenCalledTimes(1);
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
+
+  it("publishes the complaint and artifact retention atomically", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: `COMPLAINT#${COMPLAINT_ID}#ART#${ARTIFACT_ID}`,
+            s3Key: "complaints/key",
+            contentLength: 1024,
+            status: "registered",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const response = await createComplaint(
+      event({ body: { complaintId: COMPLAINT_ID, description: "Noise" } }),
+    );
+
+    expect(response.statusCode).toBe(202);
+    const transaction = ddbSend.mock.calls[1][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(2);
+    expect(transaction.input.TransactItems[0].Update).toBeDefined();
+    expect(transaction.input.TransactItems[1].Update.Key.sk).toContain(
+      ARTIFACT_ID,
+    );
+    expect(sqsSend).toHaveBeenCalledTimes(1);
+  });
+
   it("returns the persisted complaint without enqueueing a duplicate submission", async () => {
     ddbSend
       .mockResolvedValueOnce({ Items: [] })
