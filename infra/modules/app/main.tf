@@ -7,6 +7,9 @@ locals {
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
 data "aws_region" "current" {}
 
 # SMTP credentials use a purpose-specific key because SES Mail Manager, rather
@@ -90,7 +93,11 @@ resource "aws_kms_key" "cognito_email" {
       {
         Sid       = "AllowDeployRoleCreateCognitoGrant"
         Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.application}-deploy-${var.environment}" }
+        # GitHub Actions authenticates with an assumed-role session. Resolve
+        # that session to its actual IAM role ARN instead of guessing the role
+        # name: KMS validates every AWS principal while creating a key and
+        # rejects a policy that names a role that does not exist.
+        Principal = { AWS = data.aws_iam_session_context.current.issuer_arn }
         Action    = "kms:CreateGrant"
         Resource  = "*"
         Condition = {
