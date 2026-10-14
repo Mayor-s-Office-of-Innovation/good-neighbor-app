@@ -126,6 +126,10 @@ resource "aws_lambda_function" "cognito_email_sender" {
   kms_key_arn                    = aws_kms_key.app.arn
   reserved_concurrent_executions = 2
 
+  tracing_config {
+    mode = "Active"
+  }
+
   environment {
     variables = {
       ADMIN_APP_URL                   = var.cognito_admin_app_url

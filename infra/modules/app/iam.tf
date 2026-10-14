@@ -74,11 +74,19 @@ data "aws_iam_policy_document" "cognito_email_sender" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.cognito_email_sender[0].arn}:*"]
   }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "cognito_email_sender" {
   count = var.enable_cognito_custom_email_sender ? 1 : 0
 
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
   name   = "${local.name_prefix}-cognito-email-sender"
   role   = aws_iam_role.cognito_email_sender[0].id
   policy = data.aws_iam_policy_document.cognito_email_sender[0].json
