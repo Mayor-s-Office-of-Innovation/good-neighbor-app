@@ -30,7 +30,6 @@ import { PHOTO_ISSUES, PHOTO_CLEAR } from "../helpers/fixtures.js";
 */
 
 const MIN_PHOTOS = 1;
-const RECOMMENDED_PHOTOS = 3;
 
 test.describe("perimeter check", () => {
   test("an all-clear check remains visible on home after finishing", async ({
@@ -66,16 +65,14 @@ test.describe("perimeter check", () => {
   }) => {
     await startCheck(page);
     const progress = page.locator("#check-progress");
-    const photoCount = progress.locator("strong");
+    const photoCount = progress;
     const done = page.locator("#done-check");
     const shots = page.locator(".shot img");
     const analyzingTray = page.locator(
       `section[aria-label="${t("check.analyzing.aria")}"]`,
     );
 
-    await expect(photoCount).toHaveText(
-      t("check.progress.count", { photos: 0, recommended: RECOMMENDED_PHOTOS }),
-    );
+    await expect(photoCount).toBeHidden();
     await expect(done).toBeDisabled();
 
     // --- Photo 1: the issues scene ----------------------------------------
@@ -84,9 +81,7 @@ test.describe("perimeter check", () => {
 
     // Upload leg: the photo tile lands in the roll.
     await expect(shots).toHaveCount(1, { timeout: 30_000 });
-    await expect(photoCount).toHaveText(
-      t("check.progress.count", { photos: 1, recommended: RECOMMENDED_PHOTOS }),
-    );
+    await expect(photoCount).toHaveText(t("check.photos.one", { photos: 1 }));
     await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
 
@@ -103,10 +98,7 @@ test.describe("perimeter check", () => {
 
     // The first photo satisfies the completion rule.
     await expect(photoCount).toHaveText(
-      t("check.progress.count", {
-        photos: MIN_PHOTOS,
-        recommended: RECOMMENDED_PHOTOS,
-      }),
+      t("check.photos.one", { photos: MIN_PHOTOS }),
     );
 
     // Wait for the photo's analysis to finish. An issue check must not add a

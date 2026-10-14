@@ -6,6 +6,7 @@
   "scripts": {
     "build": "echo 'backend: no build step (JSDoc, deployed as source)'",
     "build:lambdas": "node scripts/build-lambdas.mjs",
+    "backfill:check-completions": "node scripts/backfill-check-completions.mjs",
     "backfill:site-short-codes": "node scripts/backfill-site-short-codes.mjs",
     "backfill:manager-membership-directory": "node scripts/backfill-manager-membership-directory.mjs",
     "migrate:master-contacts": "node scripts/migrate-master-contacts-to-managers.mjs",

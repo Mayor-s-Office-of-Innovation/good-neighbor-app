@@ -226,7 +226,10 @@ describe("analyze-artifact worker", () => {
       bytes: Buffer.from("img-bytes"),
       contentType: "image/jpeg",
     });
-    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    analyze.mockResolvedValueOnce({
+      ...singleLowConcernResponse,
+      media_manifest: [{ index: 0, type: "image", shot_type: "wide" }],
+    });
     ddbSend.mockResolvedValue({});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -285,6 +288,7 @@ describe("analyze-artifact worker", () => {
       ":failed": "failed",
     });
     expect(put.input.Item).toMatchObject({
+      shotType: "wide",
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "analyzed",

@@ -353,19 +353,21 @@
    status. Reuses the
    .check-timeline chrome (topbar, title, footer buttons) and the .shotgrid /
    .shot / .addshot tiles shared with the single-issue flow. */
-.check-roll__progress {
-  display: grid;
-  gap: 0.25rem;
-  text-align: center;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 1.0625rem;
-  line-height: 1.4;
+.check-roll {
+  gap: 1.125rem;
 }
 
-.check-roll__progress strong {
-  color: var(--check-flow-text);
-  font-weight: 700;
+.check-roll__progress {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: var(--wa-font-weight-action, 500);
+  line-height: 1.6;
+  text-align: start;
+}
+
+.check-roll__progress[hidden] {
+  display: none;
 }
 
 .check-roll__grid {

@@ -4,6 +4,7 @@ import {
   dataUrlToBlob,
   editAnalysisCondition,
   getSiteSettings,
+  getCaptureGuidance,
   rejectAnalysisCondition,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
@@ -287,5 +288,28 @@ describe("uploadTaskUpdatePhoto", () => {
       contentLength: 4,
       capturedAt: "2026-10-08T12:00:00Z",
     });
+  });
+});
+
+describe("capture guidance requests", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("passes the abort signal and preserves cancellation errors", async () => {
+    const controller = new AbortController();
+    const aborted = new DOMException("Canceled", "AbortError");
+    const fetch = vi.fn(async (url, options) => {
+      expect(url).toContain("/v1/checks:capture-guidance?");
+      expect(options.signal).toBe(controller.signal);
+      controller.abort();
+      throw aborted;
+    });
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      getCaptureGuidance({
+        checkId: "new",
+        startedAt: "2026-10-13T19:00:00Z",
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(aborted);
+    expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
   });
 });
