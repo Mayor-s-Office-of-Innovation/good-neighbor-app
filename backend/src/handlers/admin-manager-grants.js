@@ -233,7 +233,7 @@ export const createManagerGrant = (event) =>
     }
 
     let deliveryStatus = "accepted";
-    let deliveryProvider = "ses";
+    let deliveryProvider = configuredDeliveryProvider();
     let messageId = "";
     try {
       const delivery = await sendManagerEnrollmentEmail({
@@ -386,6 +386,10 @@ function publicGrant(item, now) {
     createdAt: item.createdAt,
     expiresAt: item.expiresAt,
   };
+}
+
+function configuredDeliveryProvider() {
+  return process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
 }
 
 /**

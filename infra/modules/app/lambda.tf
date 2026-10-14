@@ -16,6 +16,20 @@ locals {
     SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
     SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
   }
+
+  email_lambda_environment = var.enable_city_smtp_relay ? {
+    EMAIL_TRANSPORT              = "smtp"
+    MAIL_MANAGER_SMTP_HOST       = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+    MAIL_MANAGER_SMTP_USERNAME   = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+    MAIL_MANAGER_SMTP_SECRET_ARN = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+    SETUP_CODE_EMAIL_FROM        = var.city_smtp_from_address
+    } : {
+    EMAIL_TRANSPORT              = "ses"
+    MAIL_MANAGER_SMTP_HOST       = ""
+    MAIL_MANAGER_SMTP_USERNAME   = ""
+    MAIL_MANAGER_SMTP_SECRET_ARN = ""
+    SETUP_CODE_EMAIL_FROM        = var.setup_code_email_from
+  }
 }
 
 data "archive_file" "api" {
@@ -113,13 +127,12 @@ resource "aws_lambda_function" "api" {
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn
-      SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
       # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
       METRICS_NAMESPACE = local.metrics_namespace
-    }, local.sf311_lambda_environment)
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]

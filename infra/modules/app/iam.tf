@@ -43,16 +43,39 @@ resource "aws_iam_role" "api" {
 }
 
 data "aws_iam_policy_document" "api" {
-  statement {
-    sid       = "SendSetupCodeEmails"
-    effect    = "Allow"
-    actions   = ["ses:SendEmail"]
-    resources = [var.setup_code_email_identity_arn]
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [] : [1]
+    content {
+      sid       = "SendSetupCodeEmails"
+      effect    = "Allow"
+      actions   = ["ses:SendEmail"]
+      resources = [var.setup_code_email_identity_arn]
 
-    condition {
-      test     = "StringEquals"
-      variable = "ses:FromAddress"
-      values   = [var.setup_code_email_from]
+      condition {
+        test     = "StringEquals"
+        variable = "ses:FromAddress"
+        values   = [var.setup_code_email_from]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "ReadMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "DecryptMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [aws_kms_key.smtp_secrets[0].arn]
     }
   }
 

@@ -7,8 +7,12 @@ STARTTLS. DEV uses `goodneighbor-dev@sf.gov`; PROD will use
 recipients, shared credentials across the two AWS accounts, and confirmed that
 no source-IP allowlist or application-side DNS changes are required.
 
-The existing direct-SES senders remain active until the dev relay is proven.
-Do not switch Cognito or Manager enrollment as part of this bootstrap.
+When `enable_city_smtp_relay` is true, the API Lambda sends setup codes,
+Manager enrollment and recovery links, and device-enrollment notifications
+through the Mail Manager ingress. Its execution role can read only the ingress
+credential; it cannot read the Proofpoint relay credential. Cognito-generated
+login email continues to use direct SES until a separate custom-email-sender
+cutover is designed and tested.
 
 ## Bootstrap dev
 
@@ -58,13 +62,29 @@ authentication fails, set `enable_city_smtp_relay = false` in
 `infra/environments/dev/main.tf`, keeping
 `provision_city_smtp_relay_foundation = true`. Run a fresh CI plan and apply.
 Terraform removes the failed gateway stack from its managed configuration while
-preserving the SMTP secrets, KMS key, log group, and alarms. The existing
-direct-SES application senders and Cognito delivery remain unchanged.
+preserving the SMTP secrets, KMS key, log group, and alarms. The API Lambda
+then returns to its existing direct-SES sender; Cognito delivery is unchanged.
 
 This is a bootstrap recovery path, before application senders use the gateway.
 Once Proofpoint authentication succeeds, set `enable_city_smtp_relay = true`
 and deploy through CI, then complete the connectivity tests below before
-switching any senders.
+enabling application delivery through the gateway.
+
+## Application cutover
+
+The same `enable_city_smtp_relay` switch controls both the gateway and the API
+Lambda transport. When enabled, Terraform configures the Lambda with the Mail
+Manager hostname, ingress-point ID, ingress secret ARN, and the environment's
+approved `city_smtp_from_address`. It replaces the Lambda's direct-SES send
+permission with least-privilege access to the ingress secret and its KMS key.
+
+After deployment, trigger at least one real application-generated message in
+dev and confirm the From address, `[dev]` subject prefix, content, links, and
+receipt. Check the API log entry reports `provider: "smtp"`; logs must not
+contain the recipient, message body, token, code, or SMTP credential. Exercise
+each distinct workflow before promoting the same configuration pattern to
+prod. A connectivity-probe success alone does not prove that the application
+Lambda has the required configuration and IAM permissions.
 
 ## Connectivity test
 

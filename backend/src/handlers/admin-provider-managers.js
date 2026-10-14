@@ -328,7 +328,7 @@ export const createProviderManagerGrant = (event) =>
       token,
     );
     let deliveryStatus = "accepted";
-    let deliveryProvider = "ses";
+    let deliveryProvider = configuredDeliveryProvider();
     let messageId = "";
     try {
       const delivery = await sendProviderManagerEnrollmentEmail({
@@ -613,6 +613,10 @@ async function setProviderManagerStatus(event, status) {
       updatedAt: now,
     }),
   });
+}
+
+function configuredDeliveryProvider() {
+  return process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
 }
 
 /** @param {string} providerId @param {string} membershipId */
