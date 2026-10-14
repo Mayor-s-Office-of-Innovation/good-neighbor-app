@@ -125,7 +125,11 @@ async function issueRecoveryLinks(email, verifier, now) {
   }
   if (!issued.length) return;
 
-  let delivery = { provider: "ses", messageId: "", status: "failed" };
+  let delivery = {
+    provider: process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses",
+    messageId: "",
+    status: "failed",
+  };
   try {
     const result = await sendManagerAccessEmail({
       to: email,

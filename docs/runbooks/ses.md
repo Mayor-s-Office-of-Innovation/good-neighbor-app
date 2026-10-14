@@ -47,12 +47,17 @@ it does not create an inbox or inbound mail routing. The identity uses
 SES's default MAIL FROM domain. Easy DKIM authenticates the visible
 Good Neighbor sender domain.
 
-The API Lambda sends setup-code messages through the SES v2 SDK using its
-execution role. IAM limits `ses:SendEmail` to the environment's domain
-identity and the exact `codes@goodneighborsf.org` From address. Terraform
-sets the sender and provider app URL; dev subjects receive a `[dev]` prefix.
-Messages include plain text and escaped HTML, the code, the setup link,
-expiration in Pacific time, and a trusted-device reminder.
+The API Lambda uses the SES v2 SDK only in environments where the City SMTP
+relay is disabled. In that mode, IAM limits `ses:SendEmail` to the
+environment's domain identity and the exact `codes@goodneighborsf.org` From
+address. When the relay is enabled, Terraform removes that permission and
+routes API-generated email through SES Mail Manager instead; see
+[city-smtp.md](./city-smtp.md). Cognito also uses the gateway when its custom
+sender switch is enabled; this direct SES identity remains its rollback path.
+Terraform sets the sender and provider app URL; dev subjects receive a `[dev]`
+prefix. Setup-code messages include plain text and
+escaped HTML, the code, the setup link, expiration in Pacific time, and a
+trusted-device reminder.
 
 The module's optional `setup_code_email_reply_to` input configures a monitored
 support address. It is unset until a support destination is chosen. Configure
@@ -67,9 +72,10 @@ logs without calling SES. `SETUP_CODE_EMAIL_LOG_CODES=true` also enables
 explicit local preview outside Lambda. Lambda ignores both preview flags.
 Outside local preview, a missing sender or non-HTTPS app URL fails closed.
 
-SES success logs contain the recipient hash, site name, expiry, provider message
-ID, and `status: accepted`; acceptance does not prove inbox delivery. Failure
-logs use `status: failed` without SDK error text, raw addresses, or setup codes.
+Delivery success logs contain the recipient hash, site name, expiry, provider
+message ID, the selected `ses` or `smtp` provider, and `status: accepted`;
+acceptance does not prove inbox delivery. Failure logs use `status: failed`
+without SDK error text, raw addresses, or setup codes.
 The request endpoint retains its generic 202 response on delivery failure so
 the public response does not reveal whether a contact is authorized. Its
 15-minute cooldown stays in place, including after ambiguous send timeouts;

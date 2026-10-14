@@ -15,6 +15,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../src/handlers/checks.js";
 import {
@@ -259,6 +260,7 @@ const routes = [
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
+  route("GET", "/v1/checks:capture-guidance", getCaptureGuidance),
   route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
   route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
   route(

@@ -438,6 +438,7 @@ async function analyzeArtifact(
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,
     model: adapted.model,
+    ...(adapted.shotType ? { shotType: adapted.shotType } : {}),
     grade: adapted.grade,
     gradeDescription: adapted.gradeDescription,
     concerns: adapted.concerns,

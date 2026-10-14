@@ -1,4 +1,6 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { captureGuidance } from "../domain/capture-guidance.js";
+import { loadStartingGuidance } from "../services/capture-guidance.js";
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
@@ -70,6 +72,7 @@ import {
 } from "../domain/check-completion.js";
 import {
   ensureCheck,
+  setCaptureGuidanceContext,
   startCheck,
   loadDraft,
   clearCheck,
@@ -210,6 +213,20 @@ class PerimeterCheck extends HTMLElement {
 
     this._render();
     this._resumePendingEvidence();
+    const active = getCurrentCheck();
+    if (!active.captureGuidanceContext) {
+      this._guidanceAbort?.abort();
+      this._guidanceAbort = new AbortController();
+      void loadStartingGuidance(active, this._guidanceAbort.signal)
+        .then((context) => {
+          if (this.isConnected && getCurrentCheck()?.id === active.id) {
+            setCaptureGuidanceContext(active.id, context);
+          }
+        })
+        .catch(() => {
+          // History unavailable: keep the default so capture remains usable.
+        });
+    }
     // Async-init announcement: the heading may not exist at route-mount time.
     announceScreenHeading(this, ".check-timeline__title");
   }
@@ -715,7 +732,16 @@ class PerimeterCheck extends HTMLElement {
     const photos = photoItems(check);
     const description = textItems(check)[0] || null;
 
-    this.querySelector("#check-progress").innerHTML = progressLine(status);
+    const guidance = captureGuidance(
+      check,
+      check.captureGuidanceContext?.titleKey,
+    );
+    this.querySelector(".check-timeline__title").textContent = t(
+      guidance.titleKey,
+    );
+    const progress = this.querySelector("#check-progress");
+    progress.hidden = guidance.photos === 0;
+    progress.innerHTML = progressLine(guidance);
     const grid = this.querySelector("#shotgrid");
     grid.classList.toggle(
       "shotgrid--empty",
@@ -746,6 +772,7 @@ class PerimeterCheck extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
     if (this._fileReader?.readyState === FileReader.LOADING) {

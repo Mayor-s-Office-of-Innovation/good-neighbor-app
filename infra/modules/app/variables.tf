@@ -213,6 +213,28 @@ variable "city_smtp_from_address" {
   }
 }
 
+variable "enable_cognito_custom_email_sender" {
+  description = "Route Cognito user-pool email through the City SMTP relay using a custom sender Lambda."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_cognito_custom_email_sender || var.enable_city_smtp_relay
+    error_message = "The Cognito custom email sender requires the City SMTP relay to be enabled."
+  }
+}
+
+variable "cognito_admin_app_url" {
+  description = "Environment-specific Good Neighbor compliance app URL included in Cognito invitations."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_cognito_custom_email_sender || startswith(var.cognito_admin_app_url, "https://")
+    error_message = "An enabled Cognito custom email sender requires an HTTPS compliance app URL."
+  }
+}
+
 variable "provider_app_url" {
   description = "Public HTTPS provider app URL used in setup-code emails."
   type        = string

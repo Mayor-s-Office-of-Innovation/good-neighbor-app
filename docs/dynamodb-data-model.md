@@ -49,7 +49,35 @@ For a worked example of one check's records as JSON, see
 - Concerns become **tasks**. Business rules decide whether a task goes to on-site staff or
   is **escalated to the city** (for example, toxic material cleanup).
 
-### Facts that shape the model
+#### Capture guidance
+
+The capture title recommends three photos without changing the completion gate.
+Two detailed photos with no wide shot prompt for the whole sidewalk; two wide
+shots with no detailed shot prompt for issue details. A subsequent complementary
+shot earns an acknowledgement. Four live photos override all titles with the
+additional-photo encouragement. Pending or unclassified photos count toward the
+visible total but not framing counts; failed uploads are excluded. Deletion
+recalculates the title and count from retained evidence.
+
+Starting titles use completed perimeter checks across every device at the Site,
+counted by Pacific completion date. The third check of the day gets its own title;
+the first check after exactly three consecutive days with at least three checks
+per day gets the fourth-day celebration. Other starts use the three-photo guidance.
+The starting title is saved in the local draft as `captureGuidanceContext` and
+retained on resume. `GET /v1/checks:capture-guidance` reads base-table completion
+records consistently for the five Pacific days ending at the capture start instant.
+It includes completions at or before that instant and excludes the current check.
+A completion record is written in the same conditional transaction as its header,
+so retries do not double-count and GSI propagation is irrelevant. The query is
+bounded by completion date, including older-started checks completed recently.
+Navigation cancels the frontend request. Unavailable history uses the default title
+without persisting it as a resolved starting context.
+
+Existing headers require the completion backfill before guidance is enabled. The
+endpoint returns 503 until the global migration readiness record is set; fresh
+empty tables also require this initialization. See [the backfill runbook](runbooks/check-completion-guidance.md).
+
+## Facts that shape the model
 
 1. **The city needs one queue of escalations across all sites.** This is the only
    cross-site read we planned for. It would use GSI3. GSI3 is deferred past MVP. It is
@@ -57,9 +85,10 @@ For a worked example of one check's records as JSON, see
 2. **Staff are anonymous.** A check is attributed to the site and the device, never to a
    person. See [Identity model](#identity-model).
 3. **Photos live in S3, not DynamoDB.** Items store the S3 key. See R4.
-4. **Media retention is enforced by tag-scoped S3 lifecycle rules.** Registered
-   check/task media expires after 30 days, abandoned/rejected uploads after one day,
-   and complaint evidence after one year. DynamoDB TTL is enabled on
+4. **Media retention is enforced by bucket-wide S3 lifecycle rules.** Check/task
+   media expires after 30 days, while complaint evidence lives in a separate bucket
+   and expires after one year. In either bucket, pending/rejected upload tags shorten
+   retention to one day. DynamoDB TTL is enabled on
    `expiresAt` for numeric operational expiries such as upload reservations, daily
    quota counters, rate limits, and import staging. Legacy/domain rows that store an
    ISO date string in the same attribute are ignored by DynamoDB TTL and continue to
@@ -160,7 +189,9 @@ as task update events and every GSI sort key.
 | Physical-device binding pointer | `PHYSICAL_DEVICE#<physicalDeviceId>` | `BINDING#<bindingId>` | Non-secret ownership and discovery pointer to one Site binding. It grants no access by itself; listing and selection revalidate the canonical binding, compatibility Device row, Site generation/status, expiry/inactivity, and Manager membership where applicable. |
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status (`in_progress` → `completed`), startedAt, `flowType` (`perimeter` or `single-problem`), running `issueCount` / `maxSeverity` counters that the worker bumps. **At `complete` the header also gets:** `grade`, `summary`, `categories`, `rubricVersion`, `photoCount` / `textCount` / `evidenceKind`, `synthesizedAt`, `completedAt`. See [Scorecard on the header](#scorecard-on-the-header). |
 | **Artifact** (one photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType. See [Old artifact rows](#old-artifact-rows). |
-| **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results. It is the one case a retry may overwrite, and the only item the translate worker updates in place. |
+| **Perimeter completion** | `SITE#<siteId>` | `CHECK_COMPLETION#<Pacific date>#<completedAt ISO>#<checkId>` | Immutable `checkId` and `completedAt`, written atomically with perimeter completion; no GSI attributes or TTL. Strongly consistent completion-date queries power capture guidance. Single-problem reports have no marker. |
+| **Completion migration readiness** | `SYSTEM#MIGRATIONS` | `CHECK_COMPLETIONS_V1` | `status: "ready"` and migration `completedAt`; written only after the entire historical backfill succeeds. |
+| **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional `shotType` (`wide` or `detail`, from image manifest index 0), optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results. It is the one case a retry may overwrite, and the only item the translate worker updates in place. |
 | **Complaint header** | `SITE#<siteId>` | `COMPLAINT#<complaintId>` | `status` (`analyzing`, `ready`, or `analysis_failed`), list `label`, generated `detail`/`what`/`where`/`when`/`notes`, optional submitted description, artifact count, timestamps, and numeric one-year `expiresAt`. GSI1 uses `SITE#<siteId>#COMPLAINTS` plus `createdAt#complaintId` for newest-first listing. |
 | **Complaint artifact** | `SITE#<siteId>` | `COMPLAINT#<complaintId>#ART#<artifactId>` | Private S3 key, original name, verified content type/length, and numeric `expiresAt`. Draft rows expire after one day; submission advances them to one year and retags the object `state=complaint`. |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |

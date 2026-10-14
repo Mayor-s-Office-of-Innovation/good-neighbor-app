@@ -197,6 +197,7 @@ async function request(
       signal,
     });
   } catch (err) {
+    if (signal?.aborted) throw err;
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
     classifyApiFailure(
       new ApiError(`Network error calling ${method} ${path}: ${err}`, {
@@ -512,6 +513,18 @@ export function rejectAnalysisCondition(
  */
 export function listChecks({ limit, nextToken } = {}) {
   return request("GET", `/v1/checks${qs({ limit, nextToken })}`);
+}
+
+/**
+ * @param {{startedAt: string, checkId: string, signal?: AbortSignal, siteId?: string}} opts
+ * @returns {Promise<{counts: number[]}>}
+ */
+export function getCaptureGuidance({ startedAt, checkId, signal, siteId }) {
+  return request(
+    "GET",
+    `/v1/checks:capture-guidance${qs({ startedAt, checkId })}`,
+    { signal, originSiteId: siteId },
+  );
 }
 
 /**

@@ -6,6 +6,41 @@ import { multiHighConcernResponse } from "./fixtures/multi-high-concern.js";
 import { realPoorSampleResponse } from "./fixtures/real-poor-sample.js";
 
 describe("adaptAssessment", () => {
+  it.each(["wide", "detail"])(
+    "carries %s photo framing from manifest index zero",
+    (shotType) => {
+      const response = {
+        ...excellentResponse,
+        media_manifest: [
+          { index: 1, type: "image", shot_type: "detail" },
+          { index: 0, type: "image", shot_type: shotType },
+        ],
+      };
+      expect(
+        adaptAssessment(
+          /** @type {import("./contract.js").AnalysisResponse} */ (response),
+        ).shotType,
+      ).toBe(shotType);
+    },
+  );
+  it("ignores absent, unknown, text, or other-index framing", () => {
+    for (const manifest of [
+      undefined,
+      [{ index: 0, type: "image", shot_type: "unknown" }],
+      [{ index: 0, type: "text", shot_type: "wide" }],
+      [{ index: 1, type: "image", shot_type: "wide" }],
+    ]) {
+      expect(
+        adaptAssessment(
+          /** @type {import("./contract.js").AnalysisResponse} */ ({
+            ...excellentResponse,
+            media_manifest: manifest,
+          }),
+        ),
+      ).not.toHaveProperty("shotType");
+    }
+  });
+
   it("adopts the service grade and carries provenance", () => {
     const adapted = adaptAssessment(excellentResponse);
     expect(adapted.grade).toBe("Excellent");

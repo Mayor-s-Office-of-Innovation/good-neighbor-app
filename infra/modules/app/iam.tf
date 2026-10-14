@@ -34,6 +34,64 @@ locals {
   ]
 }
 
+# ---- Cognito custom email sender role ---------------------------------------
+
+resource "aws_iam_role" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name               = "${local.name_prefix}-cognito-email-sender"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement {
+    sid       = "DecryptCognitoMessageSecrets"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.cognito_email[0].arn]
+  }
+
+  statement {
+    sid       = "ReadMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+  }
+
+  statement {
+    sid       = "DecryptMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.smtp_secrets[0].arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.cognito_email_sender[0].arn}:*"]
+  }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
+  name   = "${local.name_prefix}-cognito-email-sender"
+  role   = aws_iam_role.cognito_email_sender[0].id
+  policy = data.aws_iam_policy_document.cognito_email_sender[0].json
+}
+
 # ---- api Lambda role ----------------------------------------------------------
 
 resource "aws_iam_role" "api" {
@@ -43,16 +101,39 @@ resource "aws_iam_role" "api" {
 }
 
 data "aws_iam_policy_document" "api" {
-  statement {
-    sid       = "SendSetupCodeEmails"
-    effect    = "Allow"
-    actions   = ["ses:SendEmail"]
-    resources = [var.setup_code_email_identity_arn]
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [] : [1]
+    content {
+      sid       = "SendSetupCodeEmails"
+      effect    = "Allow"
+      actions   = ["ses:SendEmail"]
+      resources = [var.setup_code_email_identity_arn]
 
-    condition {
-      test     = "StringEquals"
-      variable = "ses:FromAddress"
-      values   = [var.setup_code_email_from]
+      condition {
+        test     = "StringEquals"
+        variable = "ses:FromAddress"
+        values   = [var.setup_code_email_from]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "ReadMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "DecryptMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [aws_kms_key.smtp_secrets[0].arn]
     }
   }
 

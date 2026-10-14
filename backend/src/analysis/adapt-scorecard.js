@@ -41,6 +41,7 @@ import { normalizeTranslations } from "./translations.js";
  * @property {AdaptedConcern[]} concerns
  * @property {number} issueCount
  * @property {number} maxSeverity
+ * @property {"wide" | "detail"} [shotType]
  */
 
 /**
@@ -71,7 +72,14 @@ export function adaptAssessment(response) {
 
   const maxSeverity = concerns.reduce((max, c) => Math.max(max, c.rating), 0);
 
+  // Each artifact is analyzed with one media item at manifest index zero.
+  const framing = response.media_manifest?.find(
+    (item) => item.index === 0 && item.type === "image",
+  )?.shot_type;
   return {
+    ...(framing === "wide" || framing === "detail"
+      ? { shotType: framing }
+      : {}),
     analysisId: response.analysis_id,
     rubricVersion: response.rubric.version,
     model: response.model,

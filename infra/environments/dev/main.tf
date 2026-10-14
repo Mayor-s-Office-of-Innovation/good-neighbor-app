@@ -60,6 +60,8 @@ module "app" {
   provision_city_smtp_relay_foundation = true
   enable_city_smtp_relay               = true
   city_smtp_from_address               = "goodneighbor-dev@sf.gov"
+  enable_cognito_custom_email_sender   = true
+  cognito_admin_app_url                = "https://ds7mtnddz2r23.cloudfront.net/"
 
   providers = {
     aws           = aws

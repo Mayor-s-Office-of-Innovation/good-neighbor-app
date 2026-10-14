@@ -9,8 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { createCheck, completeCheck, listChecks, getCheck, evidenceSummary } =
-  await import("./checks.js");
+const {
+  createCheck,
+  completeCheck,
+  listChecks,
+  getCheck,
+  getCaptureGuidance,
+  evidenceSummary,
+} = await import("./checks.js");
 
 /**
  * @param {object} opts
@@ -305,6 +311,18 @@ describe("completeCheck", () => {
     process.env.DYNAMO_TABLE = "gnp-test-app";
   });
 
+  it("does not record single-problem completions in capture guidance", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [{ ...headerItem(), flowType: "single-problem" }],
+      })
+      .mockResolvedValueOnce({});
+    await invokeComplete(
+      completeEvent({ checkId: "chk_01", siteClaim: "site-1" }),
+    );
+    expect(send.mock.calls[1][0].input.TransactItems).toHaveLength(1);
+  });
+
   it("400s without a checkId", async () => {
     const res = await invokeComplete(completeEvent({ siteClaim: "site-1" }));
     expect(res.statusCode).toBe(400);
@@ -365,9 +383,15 @@ describe("completeCheck", () => {
     expect(header.ExpressionAttributeValues[":textCount"]).toBe(0);
     expect(header.ExpressionAttributeValues[":evidenceKind"]).toBe("photos");
 
-    // Phase 4: complete only updates the check header. Guidance tasks are
-    // minted per-item at capture time via POST /v1/assessments:evaluate.
-    expect(items).toHaveLength(1);
+    // Header and completion marker commit together; no task writes here.
+    expect(items).toHaveLength(2);
+    expect(items[1].Put.ConditionExpression).toBe("attribute_not_exists(sk)");
+    expect(items[1].Put.Item).toMatchObject({
+      pk: "SITE#site-1",
+      checkId: "chk_01",
+      completedAt: header.ExpressionAttributeValues[":now"],
+    });
+    expect(items[1].Put.Item.sk).toMatch(/^CHECK_COMPLETION#/);
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({
@@ -522,7 +546,7 @@ describe("completeCheck", () => {
     );
     // Grade comes only from the analyzed artifact; no tasks are written here.
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBe("Fair");
-    expect(items).toHaveLength(1);
+    expect(items).toHaveLength(2);
   });
 
   it("excludes a deleted artifact's stale analysis from the fold", async () => {
@@ -618,8 +642,8 @@ describe("completeCheck", () => {
     const items = /** @type {any[]} */ (
       send.mock.calls[1][0].input.TransactItems
     );
-    // Header-only transaction — no tasks.
-    expect(items).toHaveLength(1);
+    // Header and completion marker transaction — no tasks.
+    expect(items).toHaveLength(2);
     expect(items[0].Update.ExpressionAttributeValues[":grade"]).toBeNull();
     expect(items[0].Update.ExpressionAttributeValues[":summary"]).toBeNull();
     expect(items[0].Update.ExpressionAttributeValues[":photoCount"]).toBe(0);
@@ -911,5 +935,67 @@ describe("getCheck", () => {
     );
 
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("getCaptureGuidance", () => {
+  beforeEach(() => {
+    send.mockReset();
+    process.env.S3_UPLOAD_BUCKET = "bucket";
+    process.env.SQS_QUEUE_URL = "queue";
+    process.env.DYNAMO_TABLE = "gnp-test-app";
+  });
+  /**
+   * @param {Record<string, string | undefined>} queryStringParameters
+   * @returns {Promise<import("aws-lambda").APIGatewayProxyStructuredResultV2>}
+   */
+  const invokeGuidance = (queryStringParameters) =>
+    /** @type {Promise<import("aws-lambda").APIGatewayProxyStructuredResultV2>} */ (
+      getCaptureGuidance(
+        /** @type {any} */ ({
+          ...checkEvent({ siteClaim: "site-1" }),
+          queryStringParameters,
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      )
+    );
+  it("rejects missing/invalid capture parameters without reading storage", async () => {
+    for (const params of [
+      {},
+      { startedAt: "invalid", checkId: "c" },
+      { startedAt: "2999-01-01T00:00:00Z", checkId: "c" },
+    ]) {
+      expect((await invokeGuidance(params)).statusCode).toBe(400);
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("withholds guidance until historical completion migration finishes", async () => {
+    send.mockResolvedValueOnce({});
+    const res = await invokeGuidance({
+      startedAt: "2026-10-13T19:00:00Z",
+      checkId: "current",
+    });
+    expect(res.statusCode).toBe(503);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
+  });
+  it("returns fresh completion counts scoped by authenticated site, not client site", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { status: "ready" } })
+      .mockResolvedValueOnce({
+        Items: [{ checkId: "old", completedAt: "2026-10-13T18:00:00.000Z" }],
+      });
+    const res = await invokeGuidance({
+      startedAt: "2026-10-13T19:00:00Z",
+      checkId: "current",
+      siteId: "other-site",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(String(res.body))).toEqual({ counts: [1, 0, 0, 0, 0] });
+    expect(send.mock.calls[1][0].input.ExpressionAttributeValues[":pk"]).toBe(
+      "SITE#site-1",
+    );
+    expect(send.mock.calls[1][0].input.ConsistentRead).toBe(true);
   });
 });

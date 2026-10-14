@@ -4,8 +4,11 @@ Good Neighbor's admin console uses Cognito authorization code flow with PKCE.
 Account creation is administrator-only. The pool requires authenticator-app
 (TOTP) MFA and passwords of at least 14 characters with uppercase, lowercase,
 numbers, and symbols. Temporary invitation passwords expire after seven days.
-Cognito sends invitations and recovery messages through the environment's SES
-identity as `Good Neighbor <codes@goodneighborsf.org>`.
+When `enable_cognito_custom_email_sender` is true, Cognito invokes a dedicated
+Lambda that decrypts its temporary password or verification code and sends the
+message through the City SMTP gateway. DEV uses `goodneighbor-dev@sf.gov`; PROD
+uses `goodneighbor@sf.gov`. The existing SES configuration remains declared as
+the rollback path when the custom sender is disabled.
 
 ## Environment configuration
 
@@ -58,6 +61,11 @@ email verified until control of that address has been established.
 The session endpoint records `email_verified=true` only after an invited
 administrator has successfully authenticated with an email-address username;
 password reset remains unavailable without a verified email or phone number.
+
+The invitation identifies the Good Neighbor compliance app, includes the
+environment-specific admin URL and support mailbox, and retains the seven-day
+expiry. Other Cognito events use minimal code-based wording equivalent to the
+current Cognito defaults.
 
 The invited user opens the admin console, chooses Sign in, enters the exact
 username and emailed temporary password, chooses a permanent password, and

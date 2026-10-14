@@ -39,6 +39,7 @@
   If either check fails, the setup aborts BEFORE any AWS call, failing the
   e2e job loudly instead of silently mutating shared data.
 */
+import { backfillCheckCompletions } from "../backend/src/domain/backfill-check-completions.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -199,6 +200,8 @@ async function waitAndReset() {
         );
       }
       console.log(`[e2e-global] cleared ${tasks.length} leftover task(s)`);
+      // Exercise the same migration/readiness gate required before deployment.
+      await backfillCheckCompletions(doc, tableName, true);
       return;
     } catch (err) {
       if (attempt === RETRIES) throw err;
