@@ -11,7 +11,7 @@
   background: rgb(0 0 0 / 0.5);
 }
 
-/* Open/close: a very short fade with a scale pop, pure CSS (no JS timing).
+/* Open/close: a very short fade, pure CSS (no JS timing).
    @starting-style is the pre-open state; allow-discrete keeps the element
    painted while it fades out after close(). Same pattern as .sheet in
    base.css, at a fraction of the duration. The element re-renders its
@@ -20,21 +20,17 @@
    cleared on close); later renders keep the sheet still. */
 .task-update {
   opacity: 1;
-  scale: 1;
   transition:
     opacity 80ms ease-out,
-    scale 80ms ease-out,
     overlay 80ms ease-out allow-discrete,
     display 80ms ease-out allow-discrete;
 }
 task-update-dialog:not([data-settled]) .task-update:not([open]) {
   opacity: 0;
-  scale: 0.96;
 }
 @starting-style {
   task-update-dialog:not([data-settled]) .task-update[open] {
     opacity: 0;
-    scale: 0.96;
   }
 }
 .task-update::backdrop {
@@ -49,17 +45,6 @@ task-update-dialog:not([data-settled]) .task-update:not([open])::backdrop {
 @starting-style {
   task-update-dialog:not([data-settled]) .task-update[open]::backdrop {
     opacity: 0;
-  }
-}
-/* Reduced motion: fade only, no scale. */
-@media (prefers-reduced-motion: reduce) {
-  task-update-dialog:not([data-settled]) .task-update:not([open]) {
-    scale: 1;
-  }
-  @starting-style {
-    task-update-dialog:not([data-settled]) .task-update[open] {
-      scale: 1;
-    }
   }
 }
 .task-update__discard-dialog {
