@@ -15,7 +15,12 @@
 */
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
-import { formatDateTime, pacificDateKey } from "../i18n/dates.js";
+import {
+  formatDateTime,
+  formatMonthDay,
+  pacificDateKey,
+  pacificDaysAgo,
+} from "../i18n/dates.js";
 import { addDays, dayInstant, weekdayIndex } from "./reports-periods.js";
 
 /** @typedef {"onSite" | "sr311" | "emergencyCall" | "call" | "cannotDo" | "open"} ResponseKind */
@@ -101,10 +106,62 @@ export function issueTitle(task) {
 }
 
 /**
+ * The key issues are grouped by: the raw rulebook category, so it survives
+ * a language switch and can live in a report URL. Mirrors the backend's
+ * `domain/issue-type.js`, which counts the previous period with it.
+ * @param {any} task
+ */
+export function issueTypeKey(task) {
+  return (
+    String(task?.category || "").trim() ||
+    String(task?.userFriendlyLabel || "").trim() ||
+    "other"
+  );
+}
+
+/**
+ * Issues of one type, newest first.
+ * @param {any[]} tasks
+ * @param {string} key from issueTypeKey
+ */
+export function issuesOfType(tasks, key) {
+  return tasks
+    .filter((task) => isIssue(task) && issueTypeKey(task) === key)
+    .sort((a, b) =>
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+    );
+}
+
+/**
+ * Display title for a type key: the title of any issue of that type, else
+ * the key itself through the rulebook.
+ * @param {any[]} tasks
+ * @param {string} key
+ */
+export function issueTypeTitle(tasks, key) {
+  const sample = tasks.find((task) => issueTypeKey(task) === key);
+  return sample ? issueTitle(sample) : rulebookText(key) || key;
+}
+
+/**
+ * "Last reported …": relative inside the last week, a date beyond it.
+ * @param {string} iso
+ * @param {Date} [now]
+ */
+export function lastReportedLabel(iso, now = new Date()) {
+  const daysAgo = pacificDaysAgo(iso, now);
+  if (daysAgo === 0) return t("reports.issues.lastReported.today");
+  if (daysAgo === 1) return t("reports.issues.lastReported.yesterday");
+  if (daysAgo !== null && daysAgo > 1 && daysAgo < 7)
+    return t("reports.issues.lastReported.daysAgo", { count: daysAgo });
+  return t("reports.issues.lastReported.date", { date: formatMonthDay(iso) });
+}
+
+/**
  * @typedef {object} IssueSummary
  * @property {number} total
  * @property {number} responded issues with any response but "open"
- * @property {Array<{ category: string, count: number, lastReportedAt: string }>} byCategory most frequent first
+ * @property {Array<{ key: string, category: string, count: number, lastReportedAt: string }>} byCategory most frequent first
  * @property {Record<ResponseKind, number>} responses
  */
 
@@ -114,23 +171,24 @@ export function issueTitle(task) {
  */
 export function summarizeIssues(tasks) {
   const issues = tasks.filter(isIssue);
-  /** @type {Map<string, { category: string, count: number, lastReportedAt: string }>} */
+  /** @type {Map<string, { key: string, category: string, count: number, lastReportedAt: string }>} */
   const categories = new Map();
   const responses = /** @type {Record<ResponseKind, number>} */ (
     Object.fromEntries(RESPONSE_KINDS.map((kind) => [kind, 0]))
   );
   let responded = 0;
   for (const task of issues) {
-    const category = issueTitle(task);
-    const entry = categories.get(category) ?? {
-      category,
+    const key = issueTypeKey(task);
+    const entry = categories.get(key) ?? {
+      key,
+      category: issueTitle(task),
       count: 0,
       lastReportedAt: "",
     };
     entry.count += 1;
     const at = String(task.createdAt || "");
     if (at > entry.lastReportedAt) entry.lastReportedAt = at;
-    categories.set(category, entry);
+    categories.set(key, entry);
     const { kind } = responseFor(task);
     responses[kind] += 1;
     if (kind !== "open") responded += 1;

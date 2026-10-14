@@ -181,6 +181,36 @@ test.describe("site manager reports", () => {
     await expect(
       page.getByRole("button", { name: t("reports.tab.issues") }),
     ).toBeFocused();
+
+    // A type row drills into that type's screen: the period travels with
+    // it, the cards are the home hub's, and the 311 sheet opens from one.
+    await page
+      .getByRole("link", {
+        name: t("reports.issues.types.open", { type: "Litter" }),
+      })
+      .click();
+    await expect(page).toHaveURL(
+      /\/reports\/issues\/Litter\?period=week&start=2026-09-27$/,
+    );
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Litter");
+    await expect(page.locator(".reports-chart")).toBeVisible();
+    const typeCard = page.locator('.analysis-card[data-task-id="t1"]');
+    await expect(typeCard).toContainText("15th St");
+    await expect(page.locator('.analysis-card[data-task-id="t2"]')).toHaveCount(
+      0,
+    );
+    await typeCard.locator('[data-action="view311"]').click();
+    await expect(
+      page.locator("#ticket-detail-dialog[open] #ticket-detail-title"),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(typeCard.locator('[data-action="view311"]')).toBeFocused();
+    await page.getByRole("link", { name: t("reports.type.back") }).click();
+    await expect(page).toHaveURL(/tab=issues&period=week&start=2026-09-27/);
+    await expect(
+      page.locator('.reports__record[data-task-id="t1"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: t("reports.tab.issues") }).focus();
     // Arrow keys move between tabs.
     await page.keyboard.press("ArrowLeft");
     await expect(page).toHaveURL(/tab=checks/);

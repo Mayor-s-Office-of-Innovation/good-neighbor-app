@@ -5,7 +5,11 @@ import {
   issueRows,
   issuesByDay,
   issuesByWeek,
+  issuesOfType,
   issuesToCsv,
+  issueTypeKey,
+  issueTypeTitle,
+  lastReportedLabel,
   responseFor,
   summarizeIssues,
 } from "./reports-issues.js";
@@ -95,17 +99,50 @@ describe("summarizeIssues and issuesByDay", () => {
     expect(summary.responded).toBe(2);
     expect(summary.byCategory).toEqual([
       {
+        key: "Litter",
         category: "Litter",
         count: 2,
         lastReportedAt: "2026-09-28T05:30:00.000Z",
       },
       {
+        key: "Graffiti",
         category: "Graffiti",
         count: 1,
         lastReportedAt: "2026-09-29T16:00:00.000Z",
       },
     ]);
     expect(summary.responses).toMatchObject({ onSite: 1, sr311: 1, open: 1 });
+  });
+
+  it("keys types by the raw category with label and 'other' fallbacks", () => {
+    expect(issueTypeKey({ category: "Litter", userFriendlyLabel: "x" })).toBe(
+      "Litter",
+    );
+    expect(issueTypeKey({ userFriendlyLabel: "Loose bag" })).toBe("Loose bag");
+    expect(issueTypeKey({})).toBe("other");
+    expect(issuesOfType(tasks, "Litter").map((task) => task.taskId)).toEqual([
+      "b",
+      "a",
+    ]);
+    expect(issuesOfType(tasks, "Graffiti").map((t) => t.taskId)).toEqual(["c"]);
+    expect(issueTypeTitle(tasks, "Graffiti")).toBe("Graffiti");
+    expect(issueTypeTitle([], "Needles")).toBe("Needles");
+  });
+
+  it("words 'last reported' relatively inside a week, as a date beyond it", () => {
+    const now = new Date("2026-09-30T20:00:00.000Z");
+    expect(lastReportedLabel("2026-09-30T16:00:00.000Z", now)).toBe(
+      t("reports.issues.lastReported.today"),
+    );
+    expect(lastReportedLabel("2026-09-29T16:00:00.000Z", now)).toBe(
+      t("reports.issues.lastReported.yesterday"),
+    );
+    expect(lastReportedLabel("2026-09-27T16:00:00.000Z", now)).toBe(
+      t("reports.issues.lastReported.daysAgo", { count: 3 }),
+    );
+    expect(lastReportedLabel("2026-09-10T16:00:00.000Z", now)).toBe(
+      t("reports.issues.lastReported.date", { date: "Sep 10" }),
+    );
   });
 
   it("buckets by Pacific day", () => {

@@ -25,6 +25,9 @@ import {
   issueRows,
   issuesByDay,
   issuesByWeek,
+  issuesOfType,
+  issueTypeTitle,
+  lastReportedLabel,
   summarizeIssues,
 } from "../domain/reports-issues.js";
 import {
@@ -52,6 +55,8 @@ export const REPORT_TABS = [
 ];
 
 const RECORD_PAGE = 10;
+/** Types shown on the Issues tab before "View all issue types". */
+export const TYPE_ROWS = 5;
 
 /* ---- Shell ---- */
 
@@ -836,9 +841,10 @@ export function dayNotFound() {
  *   report: { period: Period, today: string, tasks: any[], previous: { count: number } },
  *   filters: string,
  *   shown: number,
- * }} vm
+ *   shownTypes?: number,
+ * }} vm shownTypes: how many type rows before "View all" (default TYPE_ROWS)
  */
-export function issuesTab({ report, filters, shown }) {
+export function issuesTab({ report, filters, shown, shownTypes = TYPE_ROWS }) {
   const { period, tasks, previous } = report;
   const summary = summarizeIssues(tasks || []);
   const periodOver = periodEnd(period) < report.today;
@@ -873,36 +879,23 @@ export function issuesTab({ report, filters, shown }) {
           </div>
           <div class="reports__card">
             <h3 class="reports__card-title">
-              ${escapeHtml(t("reports.issues.byType.title"))}
+              ${escapeHtml(t("reports.issues.types.title"))}
             </h3>
             <ul class="reports-types">
               ${summary.byCategory
-                .map(
-                  (entry) =>
-                    html`<li class="reports-types__item">
-                      <span class="reports-types__name">
-                        ${escapeHtml(entry.category)}
-                        <span class="reports-types__count"
-                          >${escapeHtml(
-                            t("reports.issues.byType.count", {
-                              count: entry.count,
-                            }),
-                          )}</span
-                        >
-                      </span>
-                      ${entry.lastReportedAt
-                        ? html`<span class="reports-types__meta"
-                            >${escapeHtml(
-                              t("reports.issues.byType.last", {
-                                date: formatMonthDay(entry.lastReportedAt),
-                              }),
-                            )}</span
-                          >`
-                        : ""}
-                    </li>`,
-                )
+                .slice(0, shownTypes)
+                .map((entry) => typeRow(entry, period))
                 .join("")}
             </ul>
+            ${summary.byCategory.length > shownTypes
+              ? html`<button
+                  class="btn-outline btn-outline--sm reports-types__all"
+                  id="reports-types-all"
+                  type="button"
+                >
+                  ${escapeHtml(t("reports.issues.types.viewAll"))}
+                </button>`
+              : ""}
           </div>
           <div class="reports__card">
             <h3 class="reports__card-title">
@@ -957,6 +950,160 @@ export function issuesTab({ report, filters, shown }) {
   `;
 }
 
+/**
+ * @param {string} key issue type key
+ * @param {Period} period
+ */
+export function typeHref(key, period) {
+  return `/reports/issues/${encodeURIComponent(key)}?period=${period.kind}&start=${period.start}`;
+}
+
+/** @param {Period} period */
+function issuesTabHref(period) {
+  return `/reports?tab=issues&period=${period.kind}&start=${period.start}`;
+}
+
+/**
+ * One "Recurring issue types" row: the whole row links to the type screen.
+ * @param {{ key: string, category: string, count: number, lastReportedAt: string }} entry
+ * @param {Period} period
+ */
+function typeRow(entry, period) {
+  return html`<li class="reports-types__item">
+    <a
+      class="reports-types__link"
+      href="${escapeAttr(typeHref(entry.key, period))}"
+      aria-label="${escapeAttr(
+        t("reports.issues.types.open", { type: entry.category }),
+      )}"
+    >
+      <span class="reports-types__copy">
+        <span class="reports-types__name">
+          ${escapeHtml(entry.category)}
+          <span class="reports-types__count"
+            >${escapeHtml(
+              t("reports.issues.byType.count", { count: entry.count }),
+            )}</span
+          >
+        </span>
+        ${entry.lastReportedAt
+          ? html`<span class="reports-types__meta"
+              >${escapeHtml(lastReportedLabel(entry.lastReportedAt))}</span
+            >`
+          : ""}
+      </span>
+      <wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
+    </a>
+  </li>`;
+}
+
+/* ---- Type screen: one issue type's reports in the period ---- */
+
+/**
+ * @param {{
+ *   report: { period: Period, today: string, tasks: any[], previous: { count: number, byType?: Record<string, number> } },
+ *   key: string,
+ *   shown: number,
+ *   siteName?: string,
+ * }} vm tasks already hydrated by the view (evidence, media, 311 status)
+ */
+export function typeScreen({ report, key, shown, siteName = "" }) {
+  const { period } = report;
+  const tasks = issuesOfType(report.tasks || [], key);
+  if (!tasks.length) return typeNotFound(issuesTabHref(period));
+  const title = issueTypeTitle(tasks, key);
+  const periodOver = periodEnd(period) < report.today;
+  const headline = t("reports.type.headline", {
+    count: tasks.length,
+    period: periodLabel(period),
+  });
+  const visible = tasks.slice(0, shown);
+  return html`
+    <div class="flow reports reports-day reports-type">
+      <header class="topbar">
+        <a
+          class="topbar__back reports-day__back"
+          href="${escapeAttr(issuesTabHref(period))}"
+          aria-label="${escapeAttr(t("reports.type.back"))}"
+        >
+          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+        </a>
+        <div class="topbar__titles">
+          <h1
+            class="topbar__title reports-day__title"
+            tabindex="-1"
+            data-screen-focus
+          >
+            ${escapeHtml(title)}
+          </h1>
+          <p class="reports-type__headline">${escapeHtml(headline)}</p>
+          <p class="topbar__sub">
+            ${periodOver
+              ? html`${escapeHtml(
+                    countDeltaLine(
+                      tasks.length,
+                      report.previous?.byType?.[key] || 0,
+                      period.kind,
+                    ),
+                  )}<br />`
+              : ""}${escapeHtml(lastReportedLabel(tasks[0].createdAt || ""))}
+          </p>
+        </div>
+      </header>
+      <div class="reports__card">
+        ${dailyIssuesChart(tasks, period, {
+          title: t("reports.type.chartTitle", { type: title }),
+          level: "h2",
+        })}
+      </div>
+      <section class="reports__records" aria-labelledby="reports-type-title">
+        <h2 class="reports__records-title" id="reports-type-title">
+          ${escapeHtml(t("reports.type.records.title"))}
+        </h2>
+        <p class="reports__records-sub">${escapeHtml(headline)}</p>
+        <ol class="reports-type__cards">
+          ${visible
+            .map((task) => html`<li>${reportTaskCard(task, siteName)}</li>`)
+            .join("")}
+        </ol>
+        ${tasks.length > visible.length
+          ? html`<button
+              class="btn-outline btn-outline--sm reports__more"
+              id="reports-show-more"
+              type="button"
+              data-next="${visible.length + RECORD_PAGE}"
+            >
+              ${escapeHtml(t("reports.records.showMore"))}
+            </button>`
+          : ""}
+      </section>
+    </div>
+  `;
+}
+
+/** @param {string} backHref */
+export function typeNotFound(backHref) {
+  return html`<div class="flow reports reports-day">
+    <header class="topbar">
+      <a
+        class="topbar__back reports-day__back"
+        href="${escapeAttr(backHref)}"
+        aria-label="${escapeAttr(t("reports.type.back"))}"
+      >
+        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+      </a>
+      <div class="topbar__titles">
+        <h1 class="topbar__title" tabindex="-1" data-screen-focus>
+          ${escapeHtml(t("reports.title"))}
+        </h1>
+      </div>
+    </header>
+    <p class="reports__status" role="status">
+      ${escapeHtml(t("reports.type.notFound"))}
+    </p>
+  </div>`;
+}
+
 /** @param {ReturnType<typeof issueRows>[number]} row */
 function issueRow(row) {
   return html`<li
@@ -988,14 +1135,30 @@ function issueRow(row) {
  * @param {any[]} tasks
  * @param {Period} period
  */
-function dailyIssuesChart(tasks, period) {
+/**
+ * @param {any[]} tasks
+ * @param {Period} period
+ * @param {ChartHeading} [heading] override the chart's own title
+ */
+function dailyIssuesChart(tasks, period, heading) {
   const days = issuesByDay(
     tasks,
     dayKeysBetween(period.start, period.endExclusive),
   );
   return period.kind === "quarter"
-    ? issuesWeekChart(issuesByWeek(days))
-    : issuesChart(days);
+    ? issuesWeekChart(issuesByWeek(days), heading)
+    : issuesChart(days, heading);
+}
+
+/**
+ * @typedef {{ title: string, level?: "h2" | "h3" }} ChartHeading
+ */
+
+/** @param {ChartHeading} heading */
+function chartHeading({ title, level = "h3" }) {
+  return level === "h2"
+    ? html`<h2 class="reports__card-title">${escapeHtml(title)}</h2>`
+    : html`<h3 class="reports__card-title">${escapeHtml(title)}</h3>`;
 }
 
 /**
@@ -1007,7 +1170,10 @@ function dailyIssuesChart(tasks, period) {
  * @param {Array<{ start: string, found: number, responded: number, monthLabel?: string }>} weeks
  *   from issuesByWeek, ascending
  */
-export function issuesWeekChart(weeks) {
+export function issuesWeekChart(
+  weeks,
+  heading = { title: t("reports.issues.weekChartTitle") },
+) {
   const barWidth = 10;
   const gap = 3;
   const height = 60;
@@ -1044,9 +1210,7 @@ export function issuesWeekChart(weeks) {
     })
     .join("");
   return html`
-    <h3 class="reports__card-title">
-      ${escapeHtml(t("reports.issues.weekChartTitle"))}
-    </h3>
+    ${chartHeading(heading)}
     <svg
       class="reports-chart"
       viewBox="0 0 ${width} ${height}"
@@ -1114,7 +1278,10 @@ export function issuesWeekChart(weeks) {
  * Daily bars: issues found, with the responded share filled.
  * @param {Array<{ date: string, found: number, responded: number }>} days
  */
-export function issuesChart(days) {
+export function issuesChart(
+  days,
+  heading = { title: t("reports.issues.chartTitle") },
+) {
   const barWidth = 6;
   const gap = 2;
   const height = 50;
@@ -1152,9 +1319,7 @@ export function issuesChart(days) {
     })
     .join("");
   return html`
-    <h3 class="reports__card-title">
-      ${escapeHtml(t("reports.issues.chartTitle"))}
-    </h3>
+    ${chartHeading(heading)}
     <svg
       class="reports-chart"
       viewBox="0 0 ${width} ${height}"

@@ -36,7 +36,9 @@ import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
 import {
   cachedMediaUrl,
+  hydrateTaskEvidence,
   hydrateTaskEvidenceFromCheck,
+  needsTaskEvidenceHydration,
 } from "../services/task-evidence.js";
 import {
   map311StatusResponse,
@@ -56,9 +58,10 @@ import {
   periodEnd,
   periodOptions,
 } from "../domain/reports-periods.js";
-import { issuesToCsv } from "../domain/reports-issues.js";
+import { issuesOfType, issuesToCsv } from "../domain/reports-issues.js";
 import {
   REPORT_TABS,
+  TYPE_ROWS,
   checksTab,
   dayDetail,
   issuesTab,
@@ -67,6 +70,7 @@ import {
   loadingBlock,
   periodFilters,
   reportsShell,
+  typeScreen,
 } from "./reports-view.templates.js";
 
 const RECORD_PAGE = 10;
@@ -189,6 +193,7 @@ class ReportsView extends ReportsScreen {
     this._report = null;
     this._status = "loading";
     this._shown = RECORD_PAGE;
+    this._shownTypes = TYPE_ROWS;
     this._generation = 0;
     /** @type {string | null} id of the control to refocus after a render */
     this._refocus = null;
@@ -270,6 +275,7 @@ class ReportsView extends ReportsScreen {
     this._tab = tab;
     this._report = null;
     this._shown = RECORD_PAGE;
+    this._shownTypes = TYPE_ROWS;
     this._refocus = "reports-tab-current";
     void this._loadReport();
   }
@@ -296,6 +302,7 @@ class ReportsView extends ReportsScreen {
         report: /** @type {any} */ (this._report),
         filters,
         shown: this._shown,
+        shownTypes: this._shownTypes,
       });
     else
       body = checksTab({
@@ -491,6 +498,11 @@ class ReportsView extends ReportsScreen {
     this.querySelector("#reports-export")?.addEventListener("click", () =>
       this._exportCsv(),
     );
+    this.querySelector("#reports-types-all")?.addEventListener("click", () => {
+      this._shownTypes = Number.POSITIVE_INFINITY;
+      this._refocus = "reports-types-first-extra";
+      this._render();
+    });
   }
 
   async _restoreFocus() {
@@ -502,7 +514,9 @@ class ReportsView extends ReportsScreen {
     const target = /** @type {any} */ (
       id === "reports-tab-current"
         ? this.querySelector(".home-tabs__tab--active")
-        : this.querySelector(`#${id}`)
+        : id === "reports-types-first-extra"
+          ? this.querySelectorAll(".reports-types__link")[TYPE_ROWS]
+          : this.querySelector(`#${id}`)
     );
     if (!target) return;
     await target.updateComplete;
@@ -738,5 +752,195 @@ class ReportsDayView extends ReportsScreen {
   }
 }
 
+/**
+ * One issue type's reports in a period: /reports/issues/<key>?period&start.
+ * Cards are hydrated a page at a time (place, street, thumbnail, 311
+ * status), since a month at a busy site spans dozens of checks.
+ */
+class ReportsTypeView extends ReportsScreen {
+  constructor() {
+    super();
+    this._key = "";
+    /** @type {"week" | "month" | "quarter"} */
+    this._kind = "month";
+    this._start = "";
+    /** @type {any} */
+    this._report = null;
+    this._shown = RECORD_PAGE;
+    /** @type {Map<string, any>} hydrated copies by task id */
+    this._hydrated = new Map();
+    /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
+    this._statuses = new Map();
+    /** @type {Map<string, any>} the tasks as rendered, by id */
+    this._tasksById = new Map();
+    /** @type {TaskSheets | null} */
+    this._sheets = null;
+    this._generation = 0;
+    this._rendered = false;
+    /** @type {string | null} */
+    this._refocus = null;
+  }
+
+  async connectedCallback() {
+    if (!(await this._requireManager())) return;
+    const route = currentRoute();
+    this._key = decodeURIComponent(route.split("/").pop() || "");
+    const params = new URLSearchParams(window.location.search);
+    const kind = params.get("period");
+    if (isPeriodKind(kind)) this._kind = kind;
+    const start = params.get("start");
+    if (isDayKey(start)) this._start = start;
+    this.innerHTML = loadingBlock();
+    this._rendered = false;
+    await this._load();
+  }
+
+  async _load() {
+    const generation = ++this._generation;
+    try {
+      const report = await getTasksReport({
+        period: this._kind,
+        start: this._start || undefined,
+      });
+      if (generation !== this._generation || !this.isConnected) return;
+      this._report = report;
+      this._kind = report.period.kind;
+      this._start = report.period.start;
+      this._render();
+      await this._hydrateVisible(generation);
+    } catch (error) {
+      if (generation !== this._generation || !this.isConnected) return;
+      console.error("type report failed", error);
+      this.innerHTML = errorBlock();
+      this.querySelector("#reports-retry")?.addEventListener("click", () => {
+        void this.connectedCallback();
+      });
+    }
+  }
+
+  /** The type's issues, newest first, with hydration and 311 status folded in. */
+  _tasks() {
+    return issuesOfType(this._report?.tasks || [], this._key).map((task) =>
+      taskWith311Status(
+        this._hydrated.get(task.taskId) || task,
+        this._statuses,
+      ),
+    );
+  }
+
+  _render() {
+    if (!this._report) return;
+    const tasks = this._tasks();
+    this._tasksById = new Map(tasks.map((task) => [task.taskId, task]));
+    this.innerHTML = typeScreen({
+      report: { ...this._report, tasks },
+      key: this._key,
+      shown: this._shown,
+      siteName: this._site?.name || "",
+    });
+    if (!this._rendered) announceScreenHeading(this, "[data-screen-focus]");
+    this._rendered = true;
+    this._mountSheets();
+    this._wire();
+    this._restoreFocus();
+  }
+
+  /**
+   * Evidence and live 311 status for the visible page only.
+   * @param {number} generation
+   */
+  async _hydrateVisible(generation) {
+    const visible = this._tasks().slice(0, this._shown);
+    const pending = visible.filter(
+      (task) =>
+        needsTaskEvidenceHydration(task) && !this._hydrated.has(task.taskId),
+    );
+    const requests = submitted311Requests(visible).filter(
+      ({ taskId }) => !this._statuses.has(taskId),
+    );
+    if (!pending.length && !requests.length) return;
+    const [hydrated, statuses] = await Promise.all([
+      pending.length
+        ? hydrateTaskEvidence(
+            pending.map((task) => ({
+              ...task,
+              siteAddress: task.siteAddress || this._site?.address || "",
+            })),
+          )
+        : [],
+      requests.length
+        ? get311RequestDetails(requests)
+            .then(map311StatusResponse)
+            .catch(() => new Map())
+        : new Map(),
+    ]);
+    if (generation !== this._generation || !this.isConnected) return;
+    for (const task of hydrated) this._hydrated.set(task.taskId, task);
+    for (const [taskId, state] of statuses) this._statuses.set(taskId, state);
+    this._render();
+  }
+
+  _mountSheets() {
+    if (!this._sheets) {
+      this._sheets = new TaskSheets({
+        host: this,
+        container: () => this.querySelector(":scope > .reports-type"),
+        resolveTask: (task) => this._tasksById.get(task.taskId) || task,
+        reload: () => this._load(),
+        fallbackFocus: () => this.querySelector("[data-screen-focus]"),
+      });
+    }
+    this._sheets.site = this._site;
+    this._sheets.mount();
+  }
+
+  _wire() {
+    this.querySelector("#reports-show-more")?.addEventListener("click", (e) => {
+      const next = Number(
+        /** @type {HTMLElement} */ (e.currentTarget).getAttribute("data-next"),
+      );
+      this._shown = next || this._shown + RECORD_PAGE;
+      this._refocus = "reports-show-more";
+      this._render();
+      void this._hydrateVisible(this._generation);
+    });
+    this.querySelector(".reports-type__cards")?.addEventListener(
+      "click",
+      (event) => {
+        const button = /** @type {HTMLElement | null} */ (
+          /** @type {HTMLElement} */ (event.target).closest?.("[data-action]")
+        );
+        const card = button?.closest("[data-task-id]");
+        const task = card
+          ? this._tasksById.get(card.getAttribute("data-task-id") || "")
+          : null;
+        if (!button || !task) return;
+        const action = button.getAttribute("data-action");
+        if (action === "view311") this._sheets?.open311(task, button);
+        else if (action === "update")
+          void this._sheets?.openUpdates(task, button);
+      },
+    );
+  }
+
+  /**
+   * After Show more: the button if it is still there, else the first newly
+   * revealed card's updates row.
+   */
+  _restoreFocus() {
+    const id = this._refocus;
+    if (!id) return;
+    this._refocus = null;
+    const target = /** @type {HTMLElement | null} */ (
+      this.querySelector(`#${id}`) ||
+        this.querySelectorAll(".reports-type__cards > li")[
+          this._shown - RECORD_PAGE
+        ]?.querySelector("[data-action]")
+    );
+    target?.focus({ preventScroll: true });
+  }
+}
+
 customElements.define("reports-view", ReportsView);
 customElements.define("reports-day-view", ReportsDayView);
+customElements.define("reports-type-view", ReportsTypeView);

@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
+import { periodLabel } from "../domain/reports-periods.js";
 import {
   calendarGrid,
   checksTab,
   dayDetail,
   issuesChart,
   issuesTab,
+  typeScreen,
+  TYPE_ROWS,
   issuesWeekChart,
   periodFilters,
   recordsList,
@@ -476,7 +479,7 @@ describe("issuesTab", () => {
     });
     expect(markup).toContain(escapeHtml(t("reports.issues.none")));
     expect(markup).not.toContain('class="reports-chart"');
-    expect(markup).not.toContain(escapeHtml(t("reports.issues.byType.title")));
+    expect(markup).not.toContain(escapeHtml(t("reports.issues.types.title")));
     expect(markup).not.toContain(
       escapeHtml(t("reports.issues.responses.title")),
     );
@@ -606,6 +609,14 @@ describe("issuesTab", () => {
     expect(markup).toContain(
       escapeHtml(t("reports.issues.byType.count", { count: 2 })),
     );
+    // Each type row links to its screen with the period carried along.
+    expect(markup).toContain(
+      'href="/reports/issues/Litter?period=week&amp;start=2026-09-27"',
+    );
+    expect(markup).toContain(
+      escapeHtml(t("reports.issues.types.open", { type: "Litter" })),
+    );
+    expect(markup).not.toContain('id="reports-types-all"');
     expect(markup).toContain(
       escapeHtml(t("reports.issues.responses.sr311", { count: 1 })),
     );
@@ -724,6 +735,115 @@ describe("a site without a configured cadence", () => {
     });
     expect(configured).not.toContain(
       escapeHtml(t("reports.checks.assumedCadence")),
+    );
+  });
+});
+
+describe("recurring issue types", () => {
+  const period = /** @type {import("../domain/reports-periods.js").Period} */ ({
+    kind: "week",
+    start: "2026-09-27",
+    endExclusive: "2026-10-04",
+  });
+  const types = ["Litter", "Graffiti", "Needles", "Dog waste", "Bins", "Glass"];
+  const tasks = types.flatMap((category, i) =>
+    Array.from({ length: types.length - i }, (_, n) => ({
+      taskId: `${category}-${n}`,
+      category,
+      kind: "action",
+      status: "open",
+      createdAt: `2026-09-28T1${n}:00:00.000Z`,
+    })),
+  );
+  const report = { period, today: "2026-09-30", tasks, previous: { count: 0 } };
+
+  it("caps the card at five types with a View all button", () => {
+    const markup = issuesTab({ report, filters: "", shown: 10 });
+    expect(markup.match(/reports-types__link/g)).toHaveLength(TYPE_ROWS);
+    expect(markup).not.toContain("/reports/issues/Glass");
+    expect(markup).toContain('id="reports-types-all"');
+    expect(markup).toContain(escapeHtml(t("reports.issues.types.viewAll")));
+    const all = issuesTab({
+      report,
+      filters: "",
+      shown: 10,
+      shownTypes: Infinity,
+    });
+    expect(all.match(/reports-types__link/g)).toHaveLength(types.length);
+    expect(all).not.toContain('id="reports-types-all"');
+  });
+});
+
+describe("typeScreen", () => {
+  const period = /** @type {import("../domain/reports-periods.js").Period} */ ({
+    kind: "week",
+    start: "2026-09-20",
+    endExclusive: "2026-09-27",
+  });
+  const task = (id, category, createdAt, extra = {}) => ({
+    taskId: id,
+    checkId: "c1",
+    category,
+    shortId: `GUB-${id}`,
+    kind: "action",
+    status: "completed",
+    createdAt,
+    ...extra,
+  });
+  const report = {
+    period,
+    today: "2026-09-30",
+    tasks: [
+      task("t1", "Litter", "2026-09-21T16:00:00.000Z"),
+      task("t2", "Litter", "2026-09-23T16:00:00.000Z", {
+        appActionResults: [
+          { code: "create_311_ticket", payload: { tickets: [{ srNum: "1" }] } },
+        ],
+      }),
+      task("t3", "Graffiti", "2026-09-22T16:00:00.000Z"),
+      {
+        ...task("t4", "Litter", "2026-09-24T16:00:00.000Z"),
+        status: "superseded",
+      },
+    ],
+    previous: { count: 5, byType: { Litter: 1 } },
+  };
+
+  it("heads with the type, the count, the delta, and lists its cards newest first", () => {
+    const markup = typeScreen({ report, key: "Litter", shown: 10 });
+    expect(markup).toContain(
+      'href="/reports?tab=issues&amp;period=week&amp;start=2026-09-20"',
+    );
+    expect(markup).toContain(
+      escapeHtml(
+        t("reports.type.headline", { count: 2, period: periodLabel(period) }),
+      ),
+    );
+    // The week is over, so the delta against the previous week shows.
+    expect(markup).toContain(escapeHtml(t("reports.period.previous.week")));
+    expect(markup).toContain(
+      escapeHtml(t("reports.type.chartTitle", { type: "Litter" })),
+    );
+    expect(markup).toContain('class="reports-chart"');
+    expect(markup.match(/class="analysis-card /g)).toHaveLength(2);
+    expect(markup.indexOf('data-task-id="t2"')).toBeLessThan(
+      markup.indexOf('data-task-id="t1"'),
+    );
+    expect(markup).not.toContain('data-task-id="t3"');
+    expect(markup).not.toContain('data-task-id="t4"');
+    expect(markup).toContain('data-action="view311"');
+    expect(markup).toContain('data-action="update"');
+    expect(markup).not.toContain('id="reports-show-more"');
+  });
+
+  it("pages the cards and says when the type has no reports", () => {
+    const paged = typeScreen({ report, key: "Litter", shown: 1 });
+    expect(paged.match(/class="analysis-card /g)).toHaveLength(1);
+    expect(paged).toContain('id="reports-show-more"');
+    const none = typeScreen({ report, key: "Needles", shown: 10 });
+    expect(none).toContain(escapeHtml(t("reports.type.notFound")));
+    expect(none).toContain(
+      'href="/reports?tab=issues&amp;period=week&amp;start=2026-09-20"',
     );
   });
 });

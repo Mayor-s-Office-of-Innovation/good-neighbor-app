@@ -57,6 +57,7 @@ import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
   ["/reports/checks/", "reports-day-view"],
+  ["/reports/issues/", "reports-type-view"],
   ["/reports", "reports-view"],
   ["/site-admin/edit", "site-admin-edit"],
   ["/site-admin/access", "site-access-view"],
@@ -68,7 +69,27 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
+/**
+ * Which way a route swap moves: deeper paths slide in from the right (they
+ * carry a back arrow to the screen underneath), shallower ones slide back
+ * out, siblings cross-fade.
+ * @param {string | null} from the route on screen, null on first paint
+ * @param {string} to
+ * @returns {"push" | "pop" | "fade"}
+ */
+export function routeTransitionDirection(from, to) {
+  if (from == null) return "fade";
+  const depth = (/** @type {string} */ route) =>
+    route.split("?")[0].split("/").filter(Boolean).length;
+  const delta = depth(to) - depth(from);
+  return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
+}
+
 export class AppRoot extends HTMLElement {
+  /** @type {string | null} the route the view last swapped to */
+  _swappedRoute = null;
+  _routeTransitionId = 0;
+
   async connectedCallback() {
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
@@ -345,22 +366,39 @@ export class AppRoot extends HTMLElement {
     if (this._shell) {
       this._shell.classList.add("app--chromeless");
     }
+    const direction = routeTransitionDirection(this._swappedRoute, route);
     const swap = () => {
       // Always mount a fresh element (each screen reads current state on
       // connect).
+      this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
       this._restateScreenFocus();
     };
-    // Same-document View Transition: cross-fades the route swap (full-blown
-    // zoom animations could re-use this hook later). No-op where unsupported.
-    // The API does NOT honor prefers-reduced-motion on its own: base.css
-    // zeroes the ::view-transition-* animations as the safety net, and we skip
-    // the call entirely here so those users also avoid the snapshot pause.
+    // Same-document View Transition: a cross-fade between sibling screens,
+    // a slide from the right when the new screen is a level deeper (its
+    // back arrow returns here) and back out when it is a level shallower;
+    // base.css keys the animations off <html data-route-transition>. No-op
+    // where unsupported. The API does NOT honor prefers-reduced-motion on
+    // its own: base.css zeroes the ::view-transition-* animations as the
+    // safety net, and we skip the call entirely here so those users also
+    // avoid the snapshot pause.
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduceMotion && typeof document.startViewTransition === "function") {
-      document.startViewTransition(swap);
+      const id = ++this._routeTransitionId;
+      document.documentElement.dataset.routeTransition = direction;
+      const transition = document.startViewTransition(swap);
+      // A navigation that lands mid-swap skips this transition; those
+      // rejections are expected, not errors.
+      transition.ready.catch(() => {});
+      transition.updateCallbackDone.catch(() => {});
+      transition.finished
+        .catch(() => {})
+        .then(() => {
+          if (id === this._routeTransitionId)
+            delete document.documentElement.dataset.routeTransition;
+        });
     } else {
       swap();
     }

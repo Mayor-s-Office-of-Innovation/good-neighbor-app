@@ -36,6 +36,7 @@ import {
   requiredOnResolver,
   summarizeCheckDays,
 } from "../domain/check-compliance.js";
+import { issueTypeKey } from "../domain/issue-type.js";
 import {
   GSI1_NAME,
   siteMetaKey,
@@ -295,19 +296,26 @@ export const getTasksReport = async (event) => {
       tableName,
       partition,
       period: previous,
-      projection: ["taskId", "status"],
+      projection: ["taskId", "status", "category", "userFriendlyLabel"],
     }),
   ]);
   // Same definition of an issue as the current list: a superseded task was
-  // replaced by an amendment and is not an issue in its own right.
-  const previousCount = previousTasks.filter(
+  // replaced by an amendment and is not an issue in its own right. The
+  // per-type counts feed the type screen's "N% more than last period".
+  const previousIssues = previousTasks.filter(
     (task) => task.status !== "superseded",
-  ).length;
+  );
+  /** @type {Record<string, number>} */
+  const byType = {};
+  for (const task of previousIssues) {
+    const key = issueTypeKey(task);
+    byType[key] = (byType[key] || 0) + 1;
+  }
   return jsonResponse(200, {
     period,
     today,
     tasks,
-    previous: { ...previous, count: previousCount },
+    previous: { ...previous, count: previousIssues.length, byType },
   });
 };
 

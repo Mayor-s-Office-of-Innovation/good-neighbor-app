@@ -354,8 +354,14 @@ describe("getTasksReport", () => {
           : [
               {
                 taskId: "old",
+                category: "Litter",
                 status: "completed",
                 gsi1sk: "2026-05-01T15:00:00.000Z#old",
+              },
+              {
+                taskId: "old-unlabeled",
+                status: "completed",
+                gsi1sk: "2026-05-01T16:00:00.000Z#old-unlabeled",
               },
               // Replaced by an amendment: not an issue, so not counted,
               // matching the current list's definition.
@@ -387,7 +393,9 @@ describe("getTasksReport", () => {
       kind: "quarter",
       start: "2026-04-01",
       endExclusive: "2026-07-01",
-      count: 1,
+      count: 2,
+      // Per type, for the type screen's delta; no category falls to "other".
+      byType: { Litter: 1, other: 1 },
     });
 
     const [current, previous] = queries();
@@ -399,7 +407,9 @@ describe("getTasksReport", () => {
     expect(current.input.ProjectionExpression).toContain("#appActionResults");
     expect(current.input.ProjectionExpression).toContain("#guidance");
     expect(current.input.ExpressionAttributeNames["#status"]).toBe("status");
-    expect(previous.input.ProjectionExpression).toBe("#taskId, #status");
+    expect(previous.input.ProjectionExpression).toBe(
+      "#taskId, #status, #category, #userFriendlyLabel",
+    );
   });
 
   it("refuses general devices", async () => {

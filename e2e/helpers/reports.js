@@ -99,6 +99,7 @@ export const TASKS_REPORT = {
     start: "2026-09-20",
     endExclusive: "2026-09-27",
     count: 4,
+    byType: { Litter: 3, Graffiti: 1 },
   },
 };
 

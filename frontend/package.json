@@ -48,7 +48,7 @@
     {
       "name": "reports js",
       "path": "dist/assets/reports-view-*.js",
-      "limit": "10 kB"
+      "limit": "13 kB"
     },
     {
       "name": "reports css",

@@ -102,6 +102,46 @@ body:has(dialog:modal) {
   overflow: hidden;
 }
 
+/* Route swaps (app-root's View Transition). The default is the UA cross-fade;
+   <html data-route-transition> is "push" when the new screen is a level
+   deeper (it has a back arrow to the one underneath) and "pop" on the way
+   back, and those slide instead. Reduced motion zeroes all of it below. */
+@keyframes route-slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes route-slide-out-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes route-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+html[data-route-transition="push"]::view-transition-old(root) {
+  animation: 220ms ease-out both route-fade-out;
+}
+
+html[data-route-transition="push"]::view-transition-new(root) {
+  animation: 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both route-slide-in-right;
+}
+
+/* The leaving screen slides out over the one it returns to. */
+html[data-route-transition="pop"]::view-transition-old(root) {
+  z-index: 1;
+  animation: 200ms cubic-bezier(0.4, 0, 1, 1) both route-slide-out-right;
+}
+
+html[data-route-transition="pop"]::view-transition-new(root) {
+  animation: none;
+}
+
 /* Respect reduced-motion globally: kill non-essential transitions/animation.
    Policy and the list of sites this rule can't reach: docs/frontend-design-system.md
    "Motion". */

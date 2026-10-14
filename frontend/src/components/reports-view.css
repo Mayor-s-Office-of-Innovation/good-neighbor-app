@@ -537,8 +537,10 @@
   outline-offset: 0.125rem;
 }
 
-/* The design draws no rule under the day header. */
+/* The design draws no rule under the day header, and its round back button
+   sits at the top of the title block, not centred on it. */
 .reports-day .topbar {
+  align-items: flex-start;
   border-bottom: 0;
 }
 
@@ -701,11 +703,70 @@
   gap: 0.1rem;
 }
 
+/* The whole row is the link to the type's screen (design: chevron right). */
+.reports-types__link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: inherit;
+  text-decoration: none;
+  min-height: 44px;
+}
+
+.reports-types__link wa-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.reports-types__link:hover .reports-types__name,
+.reports-types__link:focus-visible .reports-types__name {
+  text-decoration: underline;
+}
+
+.reports-types__link:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+  border-radius: var(--radius-sm);
+}
+
+.reports-types__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.reports-types__all {
+  margin-top: 0.75rem;
+}
+
 .reports-types__name {
   display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   font-weight: 600;
+}
+
+/* ---- Type screen ---- */
+
+.reports-type__headline {
+  margin: 0.15rem 0 0.25rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.reports-type__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-type__cards li {
+  margin: 0;
 }
 
 .reports-types__count,

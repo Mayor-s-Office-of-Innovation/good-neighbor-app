@@ -199,6 +199,18 @@ matrix(
       },
     );
 
+    boundA11y(
+      "a11y: report type",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await page.goto("/reports/issues/Litter?period=week&start=2026-09-27");
+        await expect(
+          page.locator('.analysis-card[data-task-id="t1"]'),
+        ).toContainText("15th St");
+        await a11y.check("report type");
+      },
+    );
+
     // Home's History tab with real historical check trays. The only scanned
     // state that renders .analysis-tray--history — required to catch
     // theme-dependent styling on tray surfaces (a dark-mode title/background
