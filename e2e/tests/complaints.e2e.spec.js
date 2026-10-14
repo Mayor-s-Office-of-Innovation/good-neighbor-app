@@ -96,10 +96,7 @@ test.describe("public complaints", () => {
 
     const back = page.locator(".complaints .topbar__back");
     await expect(back).toHaveAccessibleName(t("common.back"));
-    await expect(page.locator(".complaints__back-icon")).toHaveCSS(
-      "mask-image",
-      /chevron-left\.svg/,
-    );
+    await expect(back.locator('wa-icon[name="chevron-left"]')).toBeVisible();
 
     const logButton = page.locator("#log-complaint");
     const empty = page.locator(".complaints__empty");
@@ -129,7 +126,7 @@ test.describe("public complaints", () => {
     );
     await expect(page.locator("#complaint-files")).toHaveAttribute(
       "accept",
-      ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc",
+      ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt",
     );
 
     const submit = page.locator("#submit-complaint");
