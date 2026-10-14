@@ -5,12 +5,15 @@ import {
   sendEmail,
 } from "./email-transport.js";
 
-const { sesSend, secretSend, sendMail, createTransport } = vi.hoisted(() => ({
-  sesSend: vi.fn(),
-  secretSend: vi.fn(),
-  sendMail: vi.fn(),
-  createTransport: vi.fn(),
-}));
+const { sesSend, secretSend, sendMail, close, createTransport } = vi.hoisted(
+  () => ({
+    sesSend: vi.fn(),
+    secretSend: vi.fn(),
+    sendMail: vi.fn(),
+    close: vi.fn(),
+    createTransport: vi.fn(),
+  }),
+);
 
 vi.mock("@aws-sdk/client-sesv2", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -49,10 +52,14 @@ beforeEach(() => {
   sesSend.mockReset().mockResolvedValue({ MessageId: "ses-123" });
   secretSend.mockReset();
   sendMail.mockReset().mockResolvedValue({ messageId: "smtp-123" });
-  createTransport.mockReset().mockReturnValue({ sendMail });
+  close.mockReset();
+  createTransport.mockReset().mockReturnValue({ sendMail, close });
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 describe("sendEmail", () => {
   it("uses direct SES when SMTP is not enabled", async () => {
@@ -116,4 +123,105 @@ describe("sendEmail", () => {
     expect(createTransport).not.toHaveBeenCalled();
     expect(sendMail).not.toHaveBeenCalled();
   });
+
+  it("refreshes the ingress credential after the transport cache expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-14T12:00:00Z"));
+    configureSmtp();
+    secretSend
+      .mockResolvedValueOnce({
+        SecretString: JSON.stringify({ password: "first-password" }),
+      })
+      .mockResolvedValueOnce({
+        SecretString: JSON.stringify({ password: "rotated-password" }),
+      });
+
+    await sendEmail(email);
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    await sendEmail(email);
+
+    expect(secretSend).toHaveBeenCalledTimes(2);
+    expect(createTransport).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        auth: { user: "inp-example", pass: "rotated-password" },
+      }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("reloads the credential and retries once after an auth rejection", async () => {
+    configureSmtp();
+    secretSend
+      .mockResolvedValueOnce({
+        SecretString: JSON.stringify({ password: "first-password" }),
+      })
+      .mockResolvedValueOnce({
+        SecretString: JSON.stringify({ password: "rotated-password" }),
+      });
+    sendMail
+      .mockRejectedValueOnce(
+        Object.assign(new Error("rejected"), { code: "EAUTH" }),
+      )
+      .mockResolvedValueOnce({ messageId: "smtp-after-rotation" });
+
+    await expect(sendEmail(email)).resolves.toEqual({
+      provider: "smtp",
+      messageId: "smtp-after-rotation",
+    });
+
+    expect(secretSend).toHaveBeenCalledTimes(2);
+    expect(sendMail).toHaveBeenCalledTimes(2);
+    expect(createTransport).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        auth: { user: "inp-example", pass: "rotated-password" },
+      }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("stops after one retry when authentication is rejected again", async () => {
+    configureSmtp();
+    secretSend.mockResolvedValue({
+      SecretString: JSON.stringify({ password: "rejected-password" }),
+    });
+    const authenticationError = Object.assign(new Error("rejected"), {
+      code: "EAUTH",
+    });
+    sendMail.mockRejectedValue(authenticationError);
+
+    await expect(sendEmail(email)).rejects.toBe(authenticationError);
+
+    expect(secretSend).toHaveBeenCalledTimes(2);
+    expect(sendMail).toHaveBeenCalledTimes(2);
+    expect(createTransport).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry an SMTP failure with ambiguous delivery status", async () => {
+    configureSmtp();
+    secretSend.mockResolvedValue({
+      SecretString: JSON.stringify({ password: "current-password" }),
+    });
+    const timeout = Object.assign(new Error("socket timed out"), {
+      code: "ETIMEDOUT",
+    });
+    sendMail.mockRejectedValueOnce(timeout);
+
+    await expect(sendEmail(email)).rejects.toBe(timeout);
+
+    expect(secretSend).toHaveBeenCalledOnce();
+    expect(sendMail).toHaveBeenCalledOnce();
+    expect(createTransport).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
 });
+
+/** Configure the environment for the SMTP transport tests. */
+function configureSmtp() {
+  vi.stubEnv("EMAIL_TRANSPORT", "smtp");
+  vi.stubEnv("MAIL_MANAGER_SMTP_HOST", "mail-manager.example");
+  vi.stubEnv("MAIL_MANAGER_SMTP_USERNAME", "inp-example");
+  vi.stubEnv("MAIL_MANAGER_SMTP_SECRET_ARN", "arn:aws:secretsmanager:secret");
+}

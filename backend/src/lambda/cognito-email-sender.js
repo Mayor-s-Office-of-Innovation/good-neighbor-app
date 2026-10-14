@@ -127,12 +127,22 @@ async function decryptSecret(ciphertext, poolId) {
  * @returns {string}
  */
 function decodeCognitoPassword(value) {
-  return value
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+  return value.replace(/&(?:lt|gt|amp|quot|#39);/g, (entity) => {
+    switch (entity) {
+      case "&lt;":
+        return "<";
+      case "&gt;":
+        return ">";
+      case "&amp;":
+        return "&";
+      case "&quot;":
+        return '"';
+      case "&#39;":
+        return "'";
+      default:
+        return entity;
+    }
+  });
 }
 
 /**

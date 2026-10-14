@@ -7,9 +7,11 @@ import nodemailer from "nodemailer";
 
 const ses = new SESv2Client({});
 const secrets = new SecretsManagerClient({});
+const SMTP_TRANSPORT_TTL_MS = 5 * 60 * 1000;
 
 /** @type {import("nodemailer").Transporter | undefined} */
 let smtpTransport;
+let smtpTransportCreatedAt = 0;
 
 /**
  * @typedef {object} OutboundEmail
@@ -28,16 +30,7 @@ let smtpTransport;
  */
 export async function sendEmail(email) {
   if (configuredEmailProvider() === "smtp") {
-    const transport = await getSmtpTransport();
-    const response = await transport.sendMail({
-      from: email.from,
-      envelope: { from: email.from, to: [email.to] },
-      to: email.to,
-      ...(email.replyTo && { replyTo: email.replyTo }),
-      subject: email.subject,
-      text: email.text,
-      html: email.html,
-    });
+    const response = await sendSmtpEmail(email);
     if (!response.messageId) throw new Error("Missing SMTP message ID");
     return { provider: "smtp", messageId: response.messageId };
   }
@@ -62,6 +55,35 @@ export async function sendEmail(email) {
   return { provider: "ses", messageId: response.MessageId };
 }
 
+/**
+ * Retry exactly once when SMTP explicitly rejects authentication. Network and
+ * timeout errors may occur after delivery, so retrying those could duplicate a
+ * message.
+ * @param {OutboundEmail} email
+ * @param {boolean} [canRetryAuthentication]
+ * @returns {Promise<import("nodemailer").SentMessageInfo>}
+ */
+async function sendSmtpEmail(email, canRetryAuthentication = true) {
+  const transport = await getSmtpTransport();
+  try {
+    return await transport.sendMail({
+      from: email.from,
+      envelope: { from: email.from, to: [email.to] },
+      to: email.to,
+      ...(email.replyTo && { replyTo: email.replyTo }),
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+    });
+  } catch (error) {
+    if (isSmtpAuthenticationError(error)) {
+      invalidateSmtpTransport();
+      if (canRetryAuthentication) return sendSmtpEmail(email, false);
+    }
+    throw error;
+  }
+}
+
 /** @returns {"ses" | "smtp"} */
 export function configuredEmailProvider() {
   return process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
@@ -69,7 +91,13 @@ export function configuredEmailProvider() {
 
 /** @returns {Promise<import("nodemailer").Transporter>} */
 async function getSmtpTransport() {
-  if (smtpTransport) return smtpTransport;
+  if (
+    smtpTransport &&
+    Date.now() - smtpTransportCreatedAt < SMTP_TRANSPORT_TTL_MS
+  ) {
+    return smtpTransport;
+  }
+  invalidateSmtpTransport();
 
   const host = requiredEnvironment("MAIL_MANAGER_SMTP_HOST");
   const username = requiredEnvironment("MAIL_MANAGER_SMTP_USERNAME");
@@ -100,7 +128,29 @@ async function getSmtpTransport() {
     auth: { user: username, pass: value.password },
     tls: { minVersion: "TLSv1.2", servername: host },
   });
+  smtpTransportCreatedAt = Date.now();
   return smtpTransport;
+}
+
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isSmtpAuthenticationError(error) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EAUTH"
+  );
+}
+
+/** Close and discard any cached SMTP transport. */
+function invalidateSmtpTransport() {
+  const transport = smtpTransport;
+  smtpTransport = undefined;
+  smtpTransportCreatedAt = 0;
+  transport?.close();
 }
 
 /**
@@ -116,5 +166,5 @@ function requiredEnvironment(name) {
 /** Reset warm-runtime state for isolated tests. */
 export function resetEmailTransportForTest() {
   if (process.env.NODE_ENV !== "test") return;
-  smtpTransport = undefined;
+  invalidateSmtpTransport();
 }

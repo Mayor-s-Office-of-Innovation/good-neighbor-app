@@ -83,6 +83,22 @@ describe("Cognito custom email sender", () => {
     });
   });
 
+  it("decodes Cognito password entities exactly once", async () => {
+    decrypt.mockResolvedValue({
+      plaintext: Buffer.from("Literal&amp;quot;Value"),
+      messageHeader: {
+        encryptionContext: { "userpool-id": "us-west-2_example" },
+      },
+    });
+
+    await handler(baseEvent);
+
+    const message = sendEmail.mock.calls[0][0];
+    expect(message.text).toContain("Literal&quot;Value");
+    expect(message.text).not.toContain('Literal"Value');
+    expect(message.html).toContain("Literal&amp;quot;Value");
+  });
+
   it("fails closed when the encryption context names another pool", async () => {
     decrypt.mockResolvedValue({
       plaintext: Buffer.from("secret"),

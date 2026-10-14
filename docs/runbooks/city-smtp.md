@@ -118,7 +118,11 @@ DT says Proofpoint credentials do not normally expire. DT provides 30 days for
 a routine rotation, but may require immediate replacement during a security
 incident. Put the new value as a new `AWSCURRENT` secret version. Mail Manager
 can continue accepting `AWSPREVIOUS` during coordinated ingress-password
-rotation; remove the old version after every client has changed.
+rotation; remove the old version after every client has changed. Application
+SMTP clients cache the current credential for at most five minutes. An explicit
+SMTP authentication rejection discards the cached credential and retries once
+with the current secret version. Timeouts and other errors with ambiguous
+delivery status are never retried automatically, to avoid duplicate messages.
 
 On failure, check in order: CloudFormation stack status, Mail Manager rule-set
 logs, the relay-failure alarm, sender authorization, mailbox notices, and the DT

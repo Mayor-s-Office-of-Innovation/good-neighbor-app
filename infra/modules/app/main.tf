@@ -77,6 +77,10 @@ resource "aws_kms_key" "cognito_email" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Standard KMS account-administration statement. The account principal
+        # enables IAM delegation and key recovery; it does not grant arbitrary
+        # principals runtime access. Resource "*" is required inside a KMS key
+        # policy and refers only to the key to which this policy is attached.
         Sid       = "EnableIamUserPermissions"
         Effect    = "Allow"
         Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
