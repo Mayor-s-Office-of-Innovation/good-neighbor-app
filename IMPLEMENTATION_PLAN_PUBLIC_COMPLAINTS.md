@@ -277,7 +277,7 @@ There are no remaining product questions. Phase 0 must verify a safe, deployable
 ### Explicit post-MVP follow-ups
 
 - [good-neighbor-app #487](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/487): add opaque cursor pagination to the complaints API and a corresponding load-more/infinite-list interaction before any site approaches DynamoDB's 1 MiB query-page limit.
-- [good-neighbor-app #486](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/486): before the first production rollout of tag-scoped upload retention, inventory existing untagged upload objects and tag or migrate them into an explicit retention class. Do not add a bucket-wide day-based fallback that would shorten the one-year complaint retention period.
+- [good-neighbor-app #486](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/486): resolved structurally by storing complaint evidence in a dedicated one-year bucket and restoring the existing uploads bucket's bucket-wide 30-day retention backstop.
 - [street-conditions-analysis #34](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/issues/34): reassess DOCX only after bounded ZIP/package validation, external-relationship rejection, and analyzer-side resource limits have a tested implementation.
 
 ## 9. Suggested delivery slices

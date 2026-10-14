@@ -41,6 +41,7 @@ beforeEach(() => {
   extractComplaint.mockReset();
   process.env.DYNAMO_TABLE = "table";
   process.env.S3_UPLOAD_BUCKET = "bucket";
+  process.env.S3_COMPLAINT_BUCKET = "complaints";
   process.env.SQS_QUEUE_URL = "queue";
   process.env.ANALYZER_BASE_URL = "https://analyzer.example";
   process.env.ANALYZER_API_KEY_SECRET_ARN = "secret";

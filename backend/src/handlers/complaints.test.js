@@ -84,6 +84,7 @@ beforeEach(() => {
   setObjectTags.mockReset().mockResolvedValue({});
   process.env.DYNAMO_TABLE = "table";
   process.env.S3_UPLOAD_BUCKET = "bucket";
+  process.env.S3_COMPLAINT_BUCKET = "complaints";
   process.env.SQS_QUEUE_URL = "queue";
 });
 
@@ -107,6 +108,9 @@ describe("complaint upload lifecycle", () => {
     });
     expect(transaction.input.TransactItems[1].Update.Key.sk).toMatch(
       new RegExp(`COMPLAINT#${COMPLAINT_ID}$`),
+    );
+    expect(presignPut).toHaveBeenCalledWith(
+      expect.objectContaining({ bucket: "complaints" }),
     );
   });
 
@@ -155,6 +159,9 @@ describe("complaint upload lifecycle", () => {
     );
 
     expect(response.statusCode).toBe(201);
+    expect(headObject).toHaveBeenCalledWith(
+      expect.objectContaining({ bucket: "complaints" }),
+    );
     const transaction = ddbSend.mock.calls[0][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems[0].ConditionCheck).toMatchObject({

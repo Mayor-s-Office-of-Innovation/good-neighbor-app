@@ -11,7 +11,7 @@ import {
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { PDFDocument } from "pdf-lib";
 import { ddb } from "../db.js";
-import { getConfig } from "../config.js";
+import { getComplaintBucket, getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
@@ -210,7 +210,7 @@ export async function presignComplaintArtifact(event) {
     throw error;
   }
   const uploadUrl = await presignPut({
-    bucket: getConfig().uploadBucket,
+    bucket: getComplaintBucket(),
     key: s3Key,
     contentType: body.contentType,
     contentLength: body.contentLength,
@@ -245,7 +245,7 @@ export async function registerComplaintArtifact(event) {
   )
     return jsonResponse(400, { error: "invalid_artifact" });
   const head = await headObject({
-    bucket: getConfig().uploadBucket,
+    bucket: getComplaintBucket(),
     key: expected,
   });
   if (
@@ -255,7 +255,7 @@ export async function registerComplaintArtifact(event) {
   )
     return jsonResponse(400, { error: "media_mismatch" });
   const object = await getObjectBytes({
-    bucket: getConfig().uploadBucket,
+    bucket: getComplaintBucket(),
     key: expected,
   });
   let signatureValid = false;
@@ -409,7 +409,7 @@ export async function createComplaint(event) {
   await Promise.all(
     artifacts.flatMap((artifact) => [
       setObjectTags({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplaintBucket(),
         key: artifact.s3Key,
         tags: { state: "complaint" },
       }),
@@ -604,7 +604,7 @@ export async function deleteComplaint(event) {
   const artifacts = await readArtifacts(siteId, complaintId);
   await Promise.all(
     artifacts.map((a) =>
-      deleteObject({ bucket: getConfig().uploadBucket, key: a.s3Key }),
+      deleteObject({ bucket: getComplaintBucket(), key: a.s3Key }),
     ),
   );
   await Promise.all([
@@ -671,7 +671,7 @@ export async function deleteComplaintArtifact(event) {
     throw error;
   }
   await deleteObject({
-    bucket: getConfig().uploadBucket,
+    bucket: getComplaintBucket(),
     key: item.Item.s3Key,
   });
   return jsonResponse(200, { status: "deleted" });
@@ -701,7 +701,7 @@ export async function presignComplaintMedia(event) {
   if (!item.Item) return jsonResponse(404, { error: "artifact_not_found" });
   return jsonResponse(200, {
     downloadUrl: await presignGet({
-      bucket: getConfig().uploadBucket,
+      bucket: getComplaintBucket(),
       key: item.Item.s3Key,
       expiresIn: 300,
     }),

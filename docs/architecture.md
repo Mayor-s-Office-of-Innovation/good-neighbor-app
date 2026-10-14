@@ -127,7 +127,8 @@ marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
 
 ## Public complaint flow
 
-The browser uploads up to five validated complaint files directly to S3, registers
+The browser uploads up to five validated complaint files directly to the dedicated
+complaint-evidence S3 bucket, registers
 their metadata, and creates a Site-scoped `COMPLAINT#` header. The API immediately
 returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
 loads the evidence, calls the analyzer's complaint-extraction contract, validates the
@@ -135,7 +136,8 @@ six required string fields, and updates the row to `ready`. After the fifth fail
 delivery it records `analysis_failed`; the UI exposes an explicit retry. Confirmed
 deletion removes every S3 object before deleting DynamoDB metadata. Complaint objects
 and records carry a one-year lifecycle/TTL; unsubmitted draft uploads retain the
-existing one-day pending lifecycle.
+one-day pending lifecycle. The separate bucket preserves the check/task photo
+bucket's unconditional 30-day retention backstop.
 
 ## Site address lookup and validation
 
@@ -262,7 +264,7 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   Supervisors; Compliance Managers cannot exercise this cross-Site authority.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Every photo expires 30 days after upload via a bucket-wide rule; uploads that were never registered or were rejected during registration/analysis are tagged and expire after one day. Bucket versioning is suspended so expired photos leave no noncurrent copy.
+- Lambda roles are scoped per function and avoid wildcard resource access. The check/task media bucket and the separate complaint-evidence bucket both block public access and require SSE-KMS + TLS. Every check/task photo expires 30 days after upload via a bucket-wide rule. Complaint evidence expires after one year via its own bucket-wide rule. In either bucket, uploads that were never registered or were rejected expire after one day. Bucket versioning is suspended so expired media leaves no noncurrent copy.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)

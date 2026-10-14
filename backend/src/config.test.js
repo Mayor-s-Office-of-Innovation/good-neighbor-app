@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getComplianceLetterBucket,
+  getComplaintBucket,
   getConfig,
   getDynamoTableName,
 } from "./config.js";
@@ -38,6 +39,15 @@ describe("getConfig", () => {
       uploadBucket: "uploads",
       complianceLetterBucket: "letters",
     });
+  });
+
+  it("requires dedicated storage when a complaint operation runs", () => {
+    expect(() => getComplaintBucket({})).toThrow(
+      "Missing required environment variable for complaintBucket",
+    );
+    expect(getComplaintBucket({ S3_COMPLAINT_BUCKET: "complaints" })).toBe(
+      "complaints",
+    );
   });
 
   it("requires dedicated storage when a compliance-letter operation runs", () => {

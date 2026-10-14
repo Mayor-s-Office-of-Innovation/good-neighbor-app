@@ -1,7 +1,7 @@
 // @ts-nocheck -- SQS/Dynamo payloads are runtime-validated at this boundary.
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { getConfig } from "../config.js";
+import { getComplaintBucket, getConfig } from "../config.js";
 import { getObjectBytes, presignGet } from "../s3.js";
 import { downscaleImage } from "../media/downscale.js";
 import { createAnalyzerClient } from "../analysis/analyzer-client.js";
@@ -31,6 +31,7 @@ const validatedResult = (body) => {
 
 async function processComplaint(msg) {
   const config = getConfig();
+  const complaintBucket = getComplaintBucket();
   const headerKey = complaintKey(msg.siteId, msg.complaintId);
   const [header, artifactResult] = await Promise.all([
     ddb.send(new GetCommand({ TableName: config.dynamoTable, Key: headerKey })),
@@ -65,7 +66,7 @@ async function processComplaint(msg) {
         name: artifact.name,
         content_type: artifact.contentType,
         source_url: await presignGet({
-          bucket: config.uploadBucket,
+          bucket: complaintBucket,
           key: artifact.s3Key,
           expiresIn: 300,
         }),
@@ -73,7 +74,7 @@ async function processComplaint(msg) {
       continue;
     }
     const object = await getObjectBytes({
-      bucket: config.uploadBucket,
+      bucket: complaintBucket,
       key: artifact.s3Key,
     });
     let bytes = object.bytes;

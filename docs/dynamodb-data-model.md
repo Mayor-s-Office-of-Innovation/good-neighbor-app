@@ -537,7 +537,7 @@ migration cost.
 | **R1** | The city needs a **cross-site** view, which breaks per-site partitioning | Deferred post-MVP | GSI3 collects `city_escalation` tasks across sites. Toxic escalations are rare, so the `ESCALATION#open` partition stays small. Shard the key later only if volume demands it. |
 | **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) serves the admin analytics routes today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
 | **R3** | Detecting a **missing** check (a site did fewer than 3 today). You cannot query for something that was never written. | Not built | Design: a scheduled EventBridge sweep walks the site registry and counts GSI1 rows per site. Not a single query, but it is a cron job, not a hot path. Today the daily Tier 2 report answers this after the fact from the Parquet lake. |
-| **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Blobs go to the existing S3 uploads bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
+| **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Check/task blobs go to the S3 uploads bucket and complaint evidence goes to its dedicated S3 bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
 | **R5** | Tenant isolation must be **airtight** across 400 tenants | **Runtime authorization and negative tests enforced; shared-role IAM cannot express caller-dynamic scoping.** | Every protected route authenticates, derives `siteId` from the verified principal, and builds partition keys server-side. Media also uses exact server-owned keys and refuses to sign a stored pointer outside that Site/check. A `LeadingKeys = SITE#${custom:siteId}` condition cannot be applied to the shared API Lambda execution role: DynamoDB sees the Lambda role, not the JWT/device principal, and central-admin operations intentionally access global partitions. A future platform backstop requires a separate tenant-only data-plane function/role or per-request tagged-role assumption; do not add a misleading `SITE#*` condition. |
 | **R6** | Anonymous staff, so **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local PIN or roster. Not required now. |
 | **R7** | Each task status change rewrites its GSI2 entry | Normal | Expected DynamoDB behavior. Volume is tiny. |
@@ -549,9 +549,11 @@ routine.
 
 1. **City cross-site queue.** Deferred post-MVP. GSI3 is sparse and can be added with no
    rebuild. The queue view ships with the escalation integrations.
-2. **Retention.** A bucket-wide rule expires every photo 30 days after upload. Upload-state
-   tags only shorten that: never-registered (pending) and rejected media expire after one
-   day. Bucket versioning is suspended, so expiry removes the bytes outright.
+2. **Retention.** A bucket-wide rule expires every check/task photo 30 days after upload.
+   Complaint evidence lives in a separate bucket with a bucket-wide one-year rule. In
+   either bucket, upload-state tags only shorten retention: never-registered (pending)
+   and rejected media expire after one day. Bucket versioning is suspended, so expiry
+   removes the bytes outright.
 3. **Analytics scope and metrics.** The Tier 2 S3-export lake is built
    ([ADR 0013](./adr/0013-analytics-read-plane.md)). Tier 1 live KPIs are post-MVP. Metric
    definitions are settled (see above).
