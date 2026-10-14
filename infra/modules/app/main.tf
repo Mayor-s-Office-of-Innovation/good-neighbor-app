@@ -532,6 +532,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
       noncurrent_days = 1
     }
   }
+
+  # Apply incomplete-multipart cleanup across the whole bucket. Checkov's
+  # CKV_AWS_300 requires an unfiltered abort rule; tag-scoped retention rules
+  # do not cover uploads that have not yet become objects and received tags.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 resource "aws_s3_bucket_cors_configuration" "uploads" {
