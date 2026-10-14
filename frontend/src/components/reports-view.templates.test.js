@@ -7,6 +7,7 @@ import {
   checksTab,
   dayDetail,
   issuesTab,
+  issuesWeekChart,
   periodFilters,
   recordsList,
   reportTabs,
@@ -210,6 +211,76 @@ describe("weekChart", () => {
       escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
     );
   });
+
+  it("pairs each bar with its week as a hover tooltip", () => {
+    const markup = weekChart(days);
+    // One <g><title> per week, the same localized label the hidden table
+    // uses, so hovering a bar names the week it represents.
+    const titles = markup.match(/<title[\s\S]*?<\/title/g) ?? [];
+    expect(titles).toHaveLength(1);
+    expect(titles[0]).toContain(
+      escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
+    );
+    // The rects stay inside their week's group, alongside the title.
+    const groups = markup.match(/<g>[\s\S]*?<\/g>/g) ?? [];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toContain('class="reports-chart__bar');
+  });
+
+  it("centers each month label over its month's bars", () => {
+    // Jul 29 – Sep 12: Jul 26's week holds Aug 1, Aug 30's week holds Sep 1.
+    const epoch = new Date(Date.UTC(2026, 6, 29)); // 2026-07-29
+    const cross = Array.from({ length: 46 }, (_, i) => {
+      const at = new Date(epoch);
+      at.setUTCDate(at.getUTCDate() + i);
+      return day(at.toISOString().slice(0, 10), "complete", 3);
+    });
+    const markup = weekChart(cross);
+    // One tick per labelled month — not per bar — grown across that month's
+    // bars: Jul 26/Aug 1 week is bar 0 and spans 5 weeks; Aug 30/Sep 1 week
+    // is bar 5 and spans the remaining 2.
+    const ticks = markup.match(/reports-chart__tick/g) ?? [];
+    expect(ticks).toHaveLength(2);
+    expect(markup).toContain('style="flex-grow: 5"');
+    expect(markup).toContain('style="flex-grow: 2"');
+    expect(markup).toContain(">Aug</span");
+    expect(markup).toContain(">Sep</span");
+    expect(markup).not.toContain(">Jul</span");
+  });
+});
+
+describe("issuesWeekChart", () => {
+  it("draws a two-tone bar per week with week tooltips and month ticks", () => {
+    // Oct 1 sits in the Sep 27 week; the three weeks span Oct.
+    const weeks = [
+      { start: "2026-09-27", found: 5, responded: 2, monthLabel: "Oct" },
+      { start: "2026-10-04", found: 8, responded: 8 },
+      { start: "2026-10-11", found: 0, responded: 0 },
+    ];
+    const markup = issuesWeekChart(weeks);
+    // Two rects per week, zero weeks included so gaps stay aligned.
+    expect(markup.match(/<rect/g)).toHaveLength(6);
+    expect(markup).toContain(
+      'class="reports-chart__bar reports-chart__bar--found"',
+    );
+    expect(markup).toContain(
+      'class="reports-chart__bar reports-chart__bar--responded"',
+    );
+    // Every bar carries its week as a hover tooltip; the single labelled
+    // month spans all three bars.
+    const titles = markup.match(/<title[\s\S]*?<\/title/g) ?? [];
+    expect(titles).toHaveLength(3);
+    expect(titles[0]).toContain(
+      escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
+    );
+    expect(markup).toContain('style="flex-grow: 3"');
+    expect(markup).toContain(">Oct</span");
+    // The hidden table only rows the weeks that had issues.
+    expect(markup).toContain(escapeHtml(t("reports.issues.weekChartTable")));
+    expect(markup).toContain("<td>5</td>");
+    expect(markup).toContain("<td>8</td>");
+    expect(markup.match(/<tr>/g) ?? []).toHaveLength(3); // header + 2 found weeks
+  });
 });
 
 describe("calendarGrid", () => {
@@ -350,6 +421,88 @@ describe("dayDetail", () => {
 });
 
 describe("issuesTab", () => {
+  it("shows only the empty status when the period has no issues", () => {
+    const markup = issuesTab({
+      report: {
+        period,
+        today: "2026-09-30",
+        tasks: [],
+        previous: { ...period, count: 0 },
+      },
+      filters: "",
+      shown: 10,
+    });
+    expect(markup).toContain(escapeHtml(t("reports.issues.none")));
+    expect(markup).not.toContain('class="reports-chart"');
+    expect(markup).not.toContain(escapeHtml(t("reports.issues.byType.title")));
+    expect(markup).not.toContain(
+      escapeHtml(t("reports.issues.responses.title")),
+    );
+    // No recent-issues section either: it only renders when issues exist.
+    expect(markup).not.toContain(escapeHtml(t("reports.issues.recent.title")));
+    expect(markup).not.toContain('id="reports-issues-title"');
+  });
+
+  it("aggregates quarter bars by week instead of hairline day bars", () => {
+    // A quarter (Oct 1 – Dec 31) spans 14 Sunday-start weeks; two of them
+    // hold issues here.
+    const quarterPeriod =
+      /** @type {import("../domain/reports-periods.js").Period} */ ({
+        kind: "quarter",
+        start: "2026-10-01",
+        endExclusive: "2027-01-01",
+      });
+    const quarterTasks = [
+      {
+        taskId: "t1",
+        category: "Litter",
+        kind: "action",
+        status: "open",
+        createdAt: "2026-10-02T16:00:00.000Z",
+      },
+      {
+        taskId: "t2",
+        category: "Litter",
+        kind: "action",
+        status: "open",
+        createdAt: "2026-10-03T16:00:00.000Z",
+      },
+      {
+        taskId: "t3",
+        category: "Graffiti",
+        kind: "action",
+        status: "open",
+        createdAt: "2026-10-13T16:00:00.000Z",
+      },
+      {
+        taskId: "old",
+        category: "Graffiti",
+        status: "superseded",
+        createdAt: "2026-10-30T16:00:00.000Z",
+      },
+    ];
+    const markup = issuesTab({
+      report: {
+        period: quarterPeriod,
+        today: "2026-10-14",
+        tasks: quarterTasks,
+        previous: { ...quarterPeriod, count: 0 },
+      },
+      filters: "",
+      shown: 10,
+    });
+    expect(markup).toContain(escapeHtml(t("reports.issues.weekChartTitle")));
+    expect(markup).not.toContain(escapeHtml(t("reports.issues.chartTitle")));
+    // Oct 2-3 fold into the Sep 27 week; Oct 13 into the Oct 11 week.
+    expect(markup).toContain(
+      escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
+    );
+    expect(markup).toContain(
+      escapeHtml(t("reports.checks.week", { date: "Oct 11" })),
+    );
+    expect(markup.match(/<rect/g)).toHaveLength(28); // 2 rects per week
+  });
+
   const tasks = [
     {
       taskId: "t1",

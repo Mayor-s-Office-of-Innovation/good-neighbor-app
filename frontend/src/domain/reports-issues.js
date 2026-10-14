@@ -15,7 +15,8 @@
 */
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
-import { pacificDateKey } from "../i18n/dates.js";
+import { formatDateTime, pacificDateKey } from "../i18n/dates.js";
+import { addDays, dayInstant, weekdayIndex } from "./reports-periods.js";
 
 /** @typedef {"onSite" | "sr311" | "emergencyCall" | "call" | "cannotDo" | "open"} ResponseKind */
 
@@ -161,6 +162,35 @@ export function issuesByDay(tasks, dayKeys) {
     if (responseFor(task).kind !== "open") bucket.responded += 1;
   }
   return [...byDay.values()];
+}
+
+/**
+ * Fold a period's daily issue counts into Sunday-start weeks, the same
+ * buckets the checks quarter chart uses — a quarter's ~92 day bars would
+ * collapse to hairlines, while ~13 weekly bars stay readable. The label
+ * rides on the week that contains the month's 1st, same as weekBuckets.
+ * @param {Array<{ date: string, found: number, responded: number }>} days
+ *   as returned by issuesByDay, ascending, no gaps
+ * @returns {Array<{ start: string, found: number, responded: number, monthLabel?: string }>}
+ */
+export function issuesByWeek(days) {
+  const weeks = new Map();
+  for (const day of days) {
+    const start = addDays(day.date, -weekdayIndex(day.date));
+    let week = weeks.get(start);
+    if (!week) {
+      week = { start, found: 0, responded: 0 };
+      weeks.set(start, week);
+    }
+    week.found += day.found;
+    week.responded += day.responded;
+    if (day.date.endsWith("-01")) {
+      week.monthLabel = formatDateTime(dayInstant(day.date), {
+        month: "short",
+      });
+    }
+  }
+  return [...weeks.values()];
 }
 
 /**

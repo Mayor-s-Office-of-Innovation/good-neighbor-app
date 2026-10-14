@@ -10,6 +10,23 @@
     pending / upcoming / exempt → neutral.
 */
 
+/* Every list on this screen is markerless and flush, but Web Awesome's
+   native.css gives each li a marker gutter (margin-inline-start: 1.125em).
+   The list boxes below reset padding on the <ol>/<ul>; the item rules don't,
+   so the items themselves reset that gutter here (same idiom as
+   .sheet__opts li in base.css). New lists should join this group. */
+.reports__record,
+.reports-calendar__weekday,
+.reports-calendar__day,
+.reports-legend__item,
+.reports-timeline__item,
+.reports-timeline__photos li,
+.reports-task,
+.reports-types__item,
+.reports-responses__item {
+  margin: 0;
+}
+
 .reports__head {
   display: flex;
   flex-direction: column;
@@ -240,8 +257,10 @@
 }
 
 /* Axis labels live outside the SVG so they scale with the user's text size,
-   not with the chart. One flex cell per bar mirrors the SVG's even spacing;
-   only the labelled cells carry text, and a label may overhang its cell. */
+   not with the chart. One flex cell per labelled month, with flex-grow set
+   inline to the bar count it covers, mirrors the SVG's even spacing; the
+   text centers over those bars, only the labelled cells carry text, and a
+   label may overhang its cell. */
 .reports-chart__labels {
   display: flex;
   margin-top: 0.25rem;
@@ -254,6 +273,7 @@
   flex: 1 1 0;
   min-width: 0;
   white-space: nowrap;
+  text-align: center;
 }
 
 /* ---- Calendar (month) and week strip ---- */

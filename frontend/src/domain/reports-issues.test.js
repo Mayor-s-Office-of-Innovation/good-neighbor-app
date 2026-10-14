@@ -4,6 +4,7 @@ import { t } from "../i18n/i18n.js";
 import {
   issueRows,
   issuesByDay,
+  issuesByWeek,
   issuesToCsv,
   responseFor,
   summarizeIssues,
@@ -114,6 +115,21 @@ describe("summarizeIssues and issuesByDay", () => {
       { date: "2026-09-27", found: 2, responded: 1 },
       { date: "2026-09-28", found: 0, responded: 0 },
       { date: "2026-09-29", found: 1, responded: 1 },
+    ]);
+  });
+
+  it("folds daily counts into Sunday-start weeks; the month's first week carries the label", () => {
+    // Sep 27 (Sun) – Oct 7 (Wed): two weeks; Oct 1 (Thu) lands in week one.
+    const days = [
+      { date: "2026-09-27", found: 2, responded: 1 },
+      { date: "2026-09-28", found: 0, responded: 0 },
+      { date: "2026-10-01", found: 1, responded: 0 },
+      { date: "2026-10-05", found: 3, responded: 2 },
+      { date: "2026-10-07", found: 0, responded: 0 },
+    ];
+    expect(issuesByWeek(days)).toEqual([
+      { start: "2026-09-27", found: 3, responded: 1, monthLabel: "Oct" },
+      { start: "2026-10-04", found: 3, responded: 2 },
     ]);
   });
 

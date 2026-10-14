@@ -23,6 +23,7 @@ import {
   RESPONSE_KINDS,
   issueRows,
   issuesByDay,
+  issuesByWeek,
   summarizeIssues,
 } from "../domain/reports-issues.js";
 import {
@@ -182,7 +183,7 @@ export function periodFilters({ kind, options, selectedStart }) {
         aria-label="${escapeAttr(t("reports.filters.export"))}"
         title="${escapeAttr(t("reports.filters.export"))}"
       >
-        <wa-icon name="arrow-down" aria-hidden="true"></wa-icon>
+        <wa-icon name="download" aria-hidden="true"></wa-icon>
       </button>
     </div>
   `;
@@ -348,7 +349,19 @@ export function weekChart(days) {
           ></rect>`;
         })
         .join("");
-      return rects;
+      // Native SVG tooltip: grouping the week's segments under one <g>
+      // <title> (first child) pairs the whole bar with its week on hover;
+      // keyboard/touch users read the same data in the hidden table below.
+      return html`<g>
+        <title>
+          ${escapeHtml(
+            t("reports.checks.week", {
+              date: formatMonthDay(dayInstant(week.start)),
+            }),
+          )}
+        </title>
+        ${rects}
+      </g>`;
     })
     .join("");
   return html`
@@ -365,7 +378,7 @@ export function weekChart(days) {
     >
       ${bars}
     </svg>
-    ${chartLabelRow(weeks.map((week) => week.monthLabel || ""))}
+    ${chartLabelRow(monthTicks(weeks))}
     <table class="visually-hidden">
       <caption>
         ${escapeHtml(t("reports.checks.chartTable"))}
@@ -407,19 +420,47 @@ export function weekChart(days) {
 
 /**
  * Axis labels under a bar chart, outside the SVG so they scale with the
- * user's text size: one cell per bar, text only where a label belongs. The
- * hidden table is the chart's text equivalent, so the row is decorative.
- * @param {string[]} labels one entry per bar, "" for no label
+ * user's text size: one span per labelled month whose flex-grow matches the
+ * bar count it covers, so the month name centers over its own bars instead
+ * of hugging one bar's edge. The hidden table is the chart's text
+ * equivalent, so the row is decorative.
+ * @param {{ text: string, grow: number }[]} ticks one per labelled run
  */
-function chartLabelRow(labels) {
+function chartLabelRow(ticks) {
   return html`<div class="reports-chart__labels" aria-hidden="true">
-    ${labels
+    ${ticks
       .map(
-        (label) =>
-          html`<span class="reports-chart__tick">${escapeHtml(label)}</span>`,
+        (tick) =>
+          html`<span class="reports-chart__tick" style="flex-grow: ${tick.grow}"
+            >${escapeHtml(tick.text)}</span
+          >`,
       )
       .join("")}
   </div>`;
+}
+
+/**
+ * Month ticks for the week chart: the label of a week containing the 1st
+ * spans from that week through the week before the next label (or the end
+ * of the chart), so each month's name sits over its bars. A leading blank
+ * span covers any unlabeled run before the first label.
+ * @param {{ monthLabel?: string }[]} weeks as returned by weekBuckets
+ * @returns {{ text: string, grow: number }[]}
+ */
+function monthTicks(weeks) {
+  const labeled = weeks
+    .map((week, i) => ({ label: week.monthLabel || "", i }))
+    .filter((entry) => entry.label);
+  const head = labeled[0]?.i ? [{ text: "", grow: labeled[0].i }] : [];
+  return labeled.length
+    ? [
+        ...head,
+        ...labeled.map(({ label, i }, k) => ({
+          text: label,
+          grow: (labeled[k + 1]?.i ?? weeks.length) - i,
+        })),
+      ]
+    : [{ text: "", grow: weeks.length }];
 }
 
 /**
@@ -829,92 +870,93 @@ export function issuesTab({ report, filters, shown }) {
       : html`<p class="reports__status" role="status">
           ${escapeHtml(t("reports.issues.none"))}
         </p>`}
-    <div class="reports__card">
-      ${issuesChart(
-        issuesByDay(
-          tasks || [],
-          dayKeysBetween(period.start, period.endExclusive),
-        ),
-      )}
-    </div>
-    <div class="reports__card">
-      <h3 class="reports__card-title">
-        ${escapeHtml(t("reports.issues.byType.title"))}
-      </h3>
-      ${summary.byCategory.length
-        ? html`<ul class="reports-types">
-            ${summary.byCategory
-              .map(
-                (entry) =>
-                  html`<li class="reports-types__item">
-                    <span class="reports-types__name">
-                      ${escapeHtml(entry.category)}
-                      <span class="reports-types__count"
-                        >${escapeHtml(
-                          t("reports.issues.byType.count", {
-                            count: entry.count,
-                          }),
-                        )}</span
-                      >
-                    </span>
-                    ${entry.lastReportedAt
-                      ? html`<span class="reports-types__meta"
+    ${summary.total
+      ? html`<div class="reports__card">
+            ${dailyIssuesChart(tasks || [], period)}
+          </div>
+          <div class="reports__card">
+            <h3 class="reports__card-title">
+              ${escapeHtml(t("reports.issues.byType.title"))}
+            </h3>
+            <ul class="reports-types">
+              ${summary.byCategory
+                .map(
+                  (entry) =>
+                    html`<li class="reports-types__item">
+                      <span class="reports-types__name">
+                        ${escapeHtml(entry.category)}
+                        <span class="reports-types__count"
                           >${escapeHtml(
-                            t("reports.issues.byType.last", {
-                              date: formatMonthDay(entry.lastReportedAt),
+                            t("reports.issues.byType.count", {
+                              count: entry.count,
                             }),
                           )}</span
-                        >`
-                      : ""}
+                        >
+                      </span>
+                      ${entry.lastReportedAt
+                        ? html`<span class="reports-types__meta"
+                            >${escapeHtml(
+                              t("reports.issues.byType.last", {
+                                date: formatMonthDay(entry.lastReportedAt),
+                              }),
+                            )}</span
+                          >`
+                        : ""}
+                    </li>`,
+                )
+                .join("")}
+            </ul>
+          </div>
+          <div class="reports__card">
+            <h3 class="reports__card-title">
+              ${escapeHtml(t("reports.issues.responses.title"))}
+            </h3>
+            <ul class="reports-responses">
+              ${RESPONSE_KINDS.map(
+                (kind) =>
+                  html`<li
+                    class="reports-responses__item reports-responses__item--${kind}"
+                  >
+                    <span
+                      class="reports-responses__dot"
+                      aria-hidden="true"
+                    ></span>
+                    ${escapeHtml(
+                      t(`reports.issues.responses.${kind}`, {
+                        count: summary.responses[kind],
+                      }),
+                    )}
                   </li>`,
-              )
-              .join("")}
-          </ul>`
-        : html`<p class="reports__headline-sub">
-            ${escapeHtml(t("reports.issues.none"))}
-          </p>`}
-    </div>
-    <div class="reports__card">
-      <h3 class="reports__card-title">
-        ${escapeHtml(t("reports.issues.responses.title"))}
-      </h3>
-      <ul class="reports-responses">
-        ${RESPONSE_KINDS.map(
-          (kind) =>
-            html`<li
-              class="reports-responses__item reports-responses__item--${kind}"
-            >
-              <span class="reports-responses__dot" aria-hidden="true"></span>
-              ${escapeHtml(
-                t(`reports.issues.responses.${kind}`, {
-                  count: summary.responses[kind],
-                }),
-              )}
-            </li>`,
-        ).join("")}
-      </ul>
-    </div>
-    <section class="reports__records" aria-labelledby="reports-issues-title">
-      <h2 class="reports__records-title" id="reports-issues-title">
-        ${escapeHtml(t("reports.issues.recent.title"))}
-      </h2>
-      <p class="reports__records-sub">${escapeHtml(periodLabel(period))}</p>
-      ${rows.length
-        ? html`<ol class="reports__record-list">
-            ${visible.map(issueRow).join("")}
-          </ol>`
-        : ""}
-      ${rows.length > visible.length
-        ? html`<button
-            class="btn-outline btn-outline--sm reports__more"
-            id="reports-show-more"
-            type="button"
-            data-next="${visible.length + RECORD_PAGE}"
-          >
-            ${escapeHtml(t("reports.records.showMore"))}
-          </button>`
-        : ""}
-    </section>
+              ).join("")}
+            </ul>
+          </div>`
+      : ""}
+    ${summary.total
+      ? html`<section
+          class="reports__records"
+          aria-labelledby="reports-issues-title"
+        >
+          <h2 class="reports__records-title" id="reports-issues-title">
+            ${escapeHtml(t("reports.issues.recent.title"))}
+          </h2>
+          <p class="reports__records-sub">${escapeHtml(periodLabel(period))}</p>
+          ${rows.length
+            ? html`<ol class="reports__record-list">
+                ${visible.map(issueRow).join("")}
+              </ol>`
+            : ""}
+          ${rows.length > visible.length
+            ? html`<button
+                class="btn-outline btn-outline--sm reports__more"
+                id="reports-show-more"
+                type="button"
+                data-next="${visible.length + RECORD_PAGE}"
+              >
+                ${escapeHtml(t("reports.records.showMore"))}
+              </button>`
+            : ""}
+        </section>`
+      : ""}
   `;
 }
 
@@ -941,6 +983,134 @@ function issueRow(row) {
       )}
     </p>
   </li>`;
+}
+
+/**
+ * The issues tab's bar chart: daily bars for week and month periods, weekly
+ * bars for quarter, where ~92 day bars would collapse to hairlines.
+ * @param {any[]} tasks
+ * @param {Period} period
+ */
+function dailyIssuesChart(tasks, period) {
+  const days = issuesByDay(
+    tasks,
+    dayKeysBetween(period.start, period.endExclusive),
+  );
+  return period.kind === "quarter"
+    ? issuesWeekChart(issuesByWeek(days))
+    : issuesChart(days);
+}
+
+/**
+ * Weekly bars for the quarter issues view: one two-tone bar per Sunday-start
+ * week (the same buckets as the checks quarter chart), with the responded
+ * share drawn over the found bar in green. Week tooltips ride in a
+ * <g><title>, the month ticks span the weeks they start (monthTicks), and a
+ * visually hidden per-week table is the text equivalent.
+ * @param {Array<{ start: string, found: number, responded: number, monthLabel?: string }>} weeks
+ *   from issuesByWeek, ascending
+ */
+export function issuesWeekChart(weeks) {
+  const barWidth = 10;
+  const gap = 3;
+  const height = 60;
+  const max = Math.max(1, ...weeks.map((week) => week.found));
+  const width = Math.max(barWidth, weeks.length * (barWidth + gap) - gap);
+  const bars = weeks
+    .map((week, i) => {
+      const x = i * (barWidth + gap);
+      const foundH = (height * week.found) / max;
+      const respondedH = (height * week.responded) / max;
+      return html`<g>
+        <title>
+          ${escapeHtml(
+            t("reports.checks.week", {
+              date: formatMonthDay(dayInstant(week.start)),
+            }),
+          )}
+        </title>
+        <rect
+          class="reports-chart__bar reports-chart__bar--found"
+          x="${x}"
+          y="${(height - foundH).toFixed(2)}"
+          width="${barWidth}"
+          height="${foundH.toFixed(2)}"
+        ></rect>
+        <rect
+          class="reports-chart__bar reports-chart__bar--responded"
+          x="${x}"
+          y="${(height - respondedH).toFixed(2)}"
+          width="${barWidth}"
+          height="${respondedH.toFixed(2)}"
+        ></rect>
+      </g>`;
+    })
+    .join("");
+  return html`
+    <h3 class="reports__card-title">
+      ${escapeHtml(t("reports.issues.weekChartTitle"))}
+    </h3>
+    <svg
+      class="reports-chart"
+      viewBox="0 0 ${width} ${height}"
+      role="img"
+      aria-label="${escapeAttr(
+        t("reports.issues.weekChartAria", { weeks: weeks.length }),
+      )}"
+    >
+      ${bars}
+    </svg>
+    ${chartLabelRow(monthTicks(weeks))}
+    <ul class="reports-legend">
+      <li class="reports-legend__item">
+        <span
+          class="reports-legend__dot reports-legend__dot--found"
+          aria-hidden="true"
+        ></span>
+        ${escapeHtml(t("reports.issues.chart.found"))}
+      </li>
+      <li class="reports-legend__item">
+        <span
+          class="reports-legend__dot reports-legend__dot--responded"
+          aria-hidden="true"
+        ></span>
+        ${escapeHtml(t("reports.issues.chart.responded"))}
+      </li>
+    </ul>
+    <table class="visually-hidden">
+      <caption>
+        ${escapeHtml(t("reports.issues.weekChartTable"))}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
+          <th scope="col">${escapeHtml(t("reports.issues.chart.found"))}</th>
+          <th scope="col">
+            ${escapeHtml(t("reports.issues.chart.responded"))}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        ${weeks
+          .filter((week) => week.found)
+          .map(
+            (week) =>
+              html`<tr>
+                <th scope="row">
+                  ${escapeHtml(
+                    t("reports.checks.week", {
+                      date: formatMonthDay(dayInstant(week.start)),
+                    }),
+                  )}
+                </th>
+                <td>${week.found}</td>
+                <td>${week.responded}</td>
+              </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 /**
@@ -993,7 +1163,7 @@ export function issuesChart(days) {
     >
       ${bars}
     </svg>
-    ${chartLabelRow(labels)}
+    ${chartLabelRow(labels.map((text) => ({ text, grow: 1 })))}
     <ul class="reports-legend">
       <li class="reports-legend__item">
         <span
