@@ -6,6 +6,7 @@ import {
   calendarGrid,
   checksTab,
   dayDetail,
+  issuesChart,
   issuesTab,
   issuesWeekChart,
   periodFilters,
@@ -246,6 +247,21 @@ describe("weekChart", () => {
     expect(markup).toContain(">Aug</span");
     expect(markup).toContain(">Sep</span");
     expect(markup).not.toContain(">Jul</span");
+  });
+});
+
+describe("issuesChart", () => {
+  it("names each day's bars in a hover tooltip", () => {
+    const markup = issuesChart([
+      { date: "2026-09-27", found: 2, responded: 1 },
+      { date: "2026-09-30", found: 0, responded: 0 },
+    ]);
+    const titles = markup.match(/<title[\s\S]*?<\/title/g) ?? [];
+    expect(titles).toHaveLength(2);
+    expect(titles[0]).toContain(escapeHtml("Sep 27"));
+    expect(titles[1]).toContain(escapeHtml("Sep 30"));
+    // Zero days still draw their (empty) pair of bars under their date.
+    expect(markup.match(/<rect/g)).toHaveLength(4);
   });
 });
 

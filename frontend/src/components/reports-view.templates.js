@@ -1133,20 +1133,25 @@ export function issuesChart(days) {
       const x = i * (barWidth + gap);
       const foundH = (height * day.found) / max;
       const respondedH = (height * day.responded) / max;
-      return html`<rect
+      // Same hover contract as the other charts: each day's bars share one
+      // <g><title> naming the date; the hidden table is the text equivalent.
+      return html`<g>
+        <title>${escapeHtml(formatMonthDay(dayInstant(day.date)))}</title>
+        <rect
           class="reports-chart__bar reports-chart__bar--found"
           x="${x}"
           y="${(height - foundH).toFixed(2)}"
           width="${barWidth}"
           height="${foundH.toFixed(2)}"
-        ></rect
-        ><rect
+        ></rect>
+        <rect
           class="reports-chart__bar reports-chart__bar--responded"
           x="${x}"
           y="${(height - respondedH).toFixed(2)}"
           width="${barWidth}"
           height="${respondedH.toFixed(2)}"
-        ></rect>`;
+        ></rect>
+      </g>`;
     })
     .join("");
   return html`
