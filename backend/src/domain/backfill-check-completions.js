@@ -1,4 +1,5 @@
 import {
+  GetCommand,
   ScanCommand,
   TransactWriteCommand,
   PutCommand,
@@ -23,6 +24,21 @@ export async function backfillCheckCompletions(
   tableName,
   apply = false,
 ) {
+  if (apply) {
+    const readiness = await client.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: COMPLETION_MIGRATION_KEY,
+        ConsistentRead: true,
+        ProjectionExpression: "#status",
+        ExpressionAttributeNames: { "#status": "status" },
+      }),
+    );
+    if (readiness.Item?.status === "ready") {
+      return { eligible: 0, written: 0, skipped: 0 };
+    }
+  }
+
   let eligible = 0;
   let written = 0;
   let skipped = 0;

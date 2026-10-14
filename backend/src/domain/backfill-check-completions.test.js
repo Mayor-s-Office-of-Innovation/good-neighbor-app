@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  GetCommand,
   ScanCommand,
   TransactWriteCommand,
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { backfillCheckCompletions } from "./backfill-check-completions.js";
+import { COMPLETION_MIGRATION_KEY } from "./check-completions.js";
 const header = {
   pk: "SITE#site",
   sk: "CHECK#old",
@@ -41,6 +43,7 @@ describe("completion backfill", () => {
   it("checks the immutable header and writes readiness only after successful migration", async () => {
     const send = vi
       .fn()
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [header] })
       .mockResolvedValue({});
     expect(await backfillCheckCompletions({ send }, "table", true)).toEqual({
@@ -48,7 +51,12 @@ describe("completion backfill", () => {
       written: 1,
       skipped: 0,
     });
-    const transaction = send.mock.calls[1][0];
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[0][0].input).toMatchObject({
+      Key: { pk: "SYSTEM#MIGRATIONS", sk: "CHECK_COMPLETIONS_V1" },
+      ConsistentRead: true,
+    });
+    const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems[0].ConditionCheck).toMatchObject({
       Key: { pk: "SITE#site", sk: "CHECK#old" },
@@ -65,8 +73,8 @@ describe("completion backfill", () => {
         completedAt: header.completedAt,
       },
     });
-    expect(send.mock.calls[2][0]).toBeInstanceOf(PutCommand);
-    expect(send.mock.calls[2][0].input.Item).toMatchObject({
+    expect(send.mock.calls[3][0]).toBeInstanceOf(PutCommand);
+    expect(send.mock.calls[3][0].input.Item).toMatchObject({
       pk: "SYSTEM#MIGRATIONS",
       sk: "CHECK_COMPLETIONS_V1",
       status: "ready",
@@ -75,6 +83,7 @@ describe("completion backfill", () => {
   it("skips existing markers on rerun without overwriting them", async () => {
     const send = vi
       .fn()
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [header] })
       .mockRejectedValueOnce({
         name: "TransactionCanceledException",
@@ -93,6 +102,7 @@ describe("completion backfill", () => {
   it("does not enable incomplete history after a failed page or transaction", async () => {
     const send = vi
       .fn()
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [header] })
       .mockRejectedValueOnce(new Error("unavailable"));
     await expect(
@@ -101,5 +111,19 @@ describe("completion backfill", () => {
     expect(
       send.mock.calls.some(([command]) => command instanceof PutCommand),
     ).toBe(false);
+  });
+  it("returns before scanning when an applied migration is already ready", async () => {
+    const send = vi.fn().mockResolvedValueOnce({
+      Item: { ...COMPLETION_MIGRATION_KEY, status: "ready" },
+    });
+
+    expect(await backfillCheckCompletions({ send }, "table", true)).toEqual({
+      eligible: 0,
+      written: 0,
+      skipped: 0,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
   });
 });

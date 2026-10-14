@@ -44,6 +44,8 @@ still completed with the same timestamp and creates its marker conditionally.
 Existing markers or concurrently removed headers are skipped. Reruns are safe;
 errors stop the run and do not mark an uninitialized migration ready. On success,
 the script writes `SYSTEM#MIGRATIONS / CHECK_COMPLETIONS_V1` with `status: "ready"`.
+Apply-mode reruns read this marker consistently and exit before scanning when the
+migration is already ready.
 No credentials are stored in the repository. This workflow makes data writes;
 Terraform plan/apply remains in CI.
 
