@@ -66,6 +66,14 @@ const TASK_PROJECTION = [
   "agency",
   "primaryInProgressAgency",
   "buttons",
+  // The day detail renders the home task card and opens the 311 sheet from
+  // it: appActionResults carries the filed ticket, appActions the route
+  // inference, guidance/description/placeName the card copy.
+  "appActions",
+  "appActionResults",
+  "guidance",
+  "description",
+  "placeName",
   "sourceArtifactIds",
   "source",
   "createdAt",

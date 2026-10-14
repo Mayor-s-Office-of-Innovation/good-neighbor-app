@@ -11,7 +11,6 @@ import {
   formatMonthDayTime,
   formatTime,
 } from "../i18n/dates.js";
-import { rulebookText } from "../i18n/rulebook.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import {
   attributionDialog,
@@ -19,6 +18,8 @@ import {
   logoutDialog,
   settingsMenu,
 } from "./today-view.templates.js";
+import { taskAnalysisCard } from "./analysis-results.templates.js";
+import { submitted311Ticket } from "../domain/home-tasks.js";
 import {
   RESPONSE_KINDS,
   issueRows,
@@ -641,9 +642,9 @@ function dayCard(day, today) {
  */
 
 /**
- * @param {{ day: DaySummary, today: string, checks: CheckDetail[] }} vm
+ * @param {{ day: DaySummary, today: string, checks: CheckDetail[], siteName?: string }} vm
  */
-export function dayDetail({ day, today, checks }) {
+export function dayDetail({ day, today, checks, siteName = "" }) {
   const missing = Math.max(0, day.required - day.completed);
   const dayIsToday = day.date === today;
   return html`
@@ -685,7 +686,7 @@ export function dayDetail({ day, today, checks }) {
         class="reports-timeline"
         aria-label="${escapeAttr(t("reports.day.timelineAria"))}"
       >
-        ${checks.map(checkTimelineItem).join("")}
+        ${checks.map((detail) => checkTimelineItem(detail, siteName)).join("")}
         ${Array.from({ length: missing }, () =>
           missingCheckItem(dayIsToday),
         ).join("")}
@@ -694,8 +695,8 @@ export function dayDetail({ day, today, checks }) {
   `;
 }
 
-/** @param {CheckDetail} detail */
-function checkTimelineItem({ check, evidence, tasks }) {
+/** @param {CheckDetail} detail @param {string} siteName */
+function checkTimelineItem({ check, evidence, tasks }, siteName) {
   const when = check.completedAt || check.startedAt || "";
   const photos = evidence.filter((e) => e.kind === "photo");
   const meta = [
@@ -748,43 +749,39 @@ function checkTimelineItem({ check, evidence, tasks }) {
         </ul>`
       : ""}
     ${tasks.length
-      ? html`<ul class="reports-timeline__tasks">
-          ${tasks.map(taskRow).join("")}
-        </ul>`
+      ? html`<h3 class="reports-timeline__issues">
+            ${escapeHtml(t("reports.day.issues", { count: tasks.length }))}
+          </h3>
+          <ul class="reports-timeline__tasks">
+            ${tasks
+              .map((task) => html`<li>${reportTaskCard(task, siteName)}</li>`)
+              .join("")}
+          </ul>`
       : ""}
   </li>`;
 }
 
-/** @param {any} task */
-function taskRow(task) {
-  const status = String(task.status || "open");
-  const statusKey = {
-    open: "open",
-    in_progress: "inProgress",
-    completing: "completing",
-    resolving: "resolving",
-    completed: "completed",
-    cannot_do: "cannotDo",
-    superseded: "superseded",
-  }[status];
-  return html`<li
-    class="reports-task"
-    data-task-id="${escapeAttr(task.taskId || "")}"
-  >
-    <span class="reports-task__title"
-      >${escapeHtml(
-        rulebookText(task.category) ||
-          task.userFriendlyLabel ||
-          t("card.title.fallback"),
-      )}</span
-    >
-    <span class="reports-task__meta">
-      ${statusKey
-        ? escapeHtml(t(`reports.task.status.${statusKey}`))
-        : escapeHtml(status)}
-      ${task.shortId ? html` · ${escapeHtml(String(task.shortId))}` : ""}
-    </span>
-  </li>`;
+/**
+ * The home hub's task card (design frame 04), read-only but for its
+ * "View or add updates" row: a manager's record neither deletes nor
+ * completes field tasks. The row opens the 311 request sheet when a ticket
+ * was filed and the updates timeline otherwise.
+ * @param {any} task hydrated by the day view (evidence, media, 311 status)
+ * @param {string} siteName
+ */
+export function reportTaskCard(task, siteName) {
+  return taskAnalysisCard({
+    task,
+    siteName,
+    isNew: false,
+    includeControls: false,
+    statusLabel: "",
+    action: {
+      kind: submitted311Ticket(task) ? "view311" : "update",
+      label: t("card.viewUpdates"),
+      variant: "outline",
+    },
+  });
 }
 
 /** @param {boolean} dayIsToday */

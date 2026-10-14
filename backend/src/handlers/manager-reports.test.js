@@ -395,6 +395,9 @@ describe("getTasksReport", () => {
       "SITE#site-1#TASK",
     );
     expect(current.input.ProjectionExpression).toContain("#shortId");
+    // The day detail's task cards and 311 sheet need the filed ticket.
+    expect(current.input.ProjectionExpression).toContain("#appActionResults");
+    expect(current.input.ProjectionExpression).toContain("#guidance");
     expect(current.input.ExpressionAttributeNames["#status"]).toBe("status");
     expect(previous.input.ProjectionExpression).toBe("#taskId, #status");
   });

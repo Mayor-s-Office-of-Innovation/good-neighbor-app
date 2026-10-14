@@ -390,9 +390,23 @@ describe("dayDetail", () => {
           tasks: [
             {
               taskId: "t1",
+              checkId: "a",
               category: "Litter",
               status: "completed",
               shortId: "GUB-STJ-001",
+              appActionResults: [
+                {
+                  code: "create_311_ticket",
+                  payload: { tickets: [{ srNum: "SR-1" }] },
+                },
+              ],
+            },
+            {
+              taskId: "t2",
+              checkId: "a",
+              category: "Graffiti",
+              status: "completed",
+              shortId: "GUB-STJ-002",
             },
           ],
         },
@@ -420,8 +434,20 @@ describe("dayDetail", () => {
     expect(markup).toContain('data-full-src="https://media/p1"');
     expect(markup).toContain("reports-timeline__photo--placeholder");
     expect(markup).toContain(escapeHtml(t("reports.check.description")));
-    expect(markup).toContain(escapeHtml(t("reports.task.status.completed")));
+    // Tasks render as the home hub's card, read-only but for the updates
+    // row: a 311 request opens the request sheet, anything else the
+    // updates timeline. No delete, edit, or Done control.
+    expect(markup).toContain(escapeHtml(t("reports.day.issues", { count: 2 })));
+    expect(markup.match(/class="analysis-card /g)).toHaveLength(2);
+    expect(markup).toContain('data-task-id="t1"');
+    expect(markup).toContain('data-action="view311"');
+    expect(markup).toContain('data-action="update"');
+    expect(markup).toContain(escapeHtml(t("card.viewUpdates")));
     expect(markup).toContain("GUB-STJ-001");
+    expect(markup).toContain("GUB-STJ-002");
+    expect(markup).not.toContain("analysis-card__dismiss");
+    expect(markup).not.toContain('data-analysis-action="edit"');
+    expect(markup).not.toContain('data-action="done"');
   });
 
   it("calls a missing check on today 'still due' rather than missed", () => {

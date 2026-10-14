@@ -99,7 +99,31 @@ test.describe("site manager reports", () => {
     await expect(page.locator(".reports-timeline__item--missed")).toHaveCount(
       1,
     );
-    await expect(page.locator(".reports-task")).toContainText("GUB-STJ-041");
+    // Each issue is the home hub's card, read-only but for its updates row,
+    // with the street and thumbnail hydrated from the check.
+    const card311 = page.locator('.analysis-card[data-task-id="t1"]');
+    await expect(card311).toContainText("GUB-STJ-041");
+    await expect(card311).toContainText("15th St");
+    await expect(card311.locator("img")).toHaveCount(1);
+    await expect(card311.locator("[data-analysis-action]")).toHaveCount(0);
+
+    // A 311 request opens the request sheet; closing it returns focus.
+    const view311 = card311.locator('[data-action="view311"]');
+    await view311.click();
+    const sheet = page.locator("#ticket-detail-dialog[open]");
+    await expect(sheet.locator("#ticket-detail-title")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    await expect(view311).toBeFocused();
+
+    // Any other issue opens the updates timeline.
+    const cardPlain = page.locator('.analysis-card[data-task-id="t2"]');
+    await cardPlain.locator('[data-action="update"]').click();
+    const updates = page.locator("dialog.task-update[open]");
+    await expect(updates).toBeVisible();
+    await updates.locator("[data-close]").click();
+    await expect(updates).toHaveCount(0);
+    await expect(cardPlain.locator('[data-action="update"]')).toBeFocused();
 
     await page.getByRole("link", { name: t("reports.day.back") }).click();
     await expect(page).toHaveURL(/\/reports(\?|$)/);
@@ -137,13 +161,22 @@ test.describe("site manager reports", () => {
     await expect(page).toHaveURL(/tab=issues/);
     await expect(
       page.getByRole("heading", {
-        name: t("reports.issues.headline", { count: 1 }),
+        name: t("reports.issues.headline", { count: 2 }),
       }),
     ).toBeVisible();
     const row = page.locator('.reports__record[data-task-id="t1"]');
     await expect(row).toContainText("GUB-STJ-041");
     await expect(row).toContainText(
-      t("reports.issues.response.label", { response: "Resolved" }),
+      t("reports.issues.response.label", {
+        response: t("reports.issues.response.sr311"),
+      }),
+    );
+    await expect(
+      page.locator('.reports__record[data-task-id="t2"]'),
+    ).toContainText(
+      t("reports.issues.response.label", {
+        response: t("reports.issues.response.onSite"),
+      }),
     );
     await expect(
       page.getByRole("button", { name: t("reports.tab.issues") }),

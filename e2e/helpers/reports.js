@@ -61,16 +61,37 @@ export const TASKS_REPORT = {
   period,
   today: REPORT_TODAY,
   tasks: [
+    // A 311 request: its card opens the request sheet.
     {
       taskId: "t1",
       shortId: "GUB-STJ-041",
       checkId: "c5",
       category: "Litter",
+      guidance: "Bag it and place it in the bin.",
+      kind: "escalation",
+      status: "completed",
+      completionMethod: "311_filed",
+      latestUpdateLabel: "Resolved",
+      sourceArtifactIds: ["c5-photo"],
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: { tickets: [{ srNum: "SR-100" }] },
+        },
+      ],
+      createdAt: "2026-09-29T16:10:00.000Z",
+    },
+    // An on-site action: its card opens the updates timeline.
+    {
+      taskId: "t2",
+      shortId: "GUB-STJ-042",
+      checkId: "c5",
+      category: "Graffiti",
       kind: "action",
       status: "completed",
       completionMethod: "site_team_resolved",
-      latestUpdateLabel: "Resolved",
-      createdAt: "2026-09-29T16:10:00.000Z",
+      sourceArtifactIds: ["c5-photo"],
+      createdAt: "2026-09-29T16:12:00.000Z",
     },
   ],
   previous: {
@@ -81,8 +102,15 @@ export const TASKS_REPORT = {
   },
 };
 
-/** @param {string} checkId @param {string} completedAt @param {number} issueCount */
-const check = (checkId, completedAt, issueCount) => ({
+/** A 1x1 GIF, so card thumbnails never hit the network. */
+const PHOTO_DATA_URL =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/**
+ * @param {string} checkId @param {string} completedAt @param {number} issueCount
+ * @param {{ photo?: boolean }} [extra] add a georeferenced photo artifact
+ */
+const check = (checkId, completedAt, issueCount, { photo = false } = {}) => ({
   check: {
     checkId,
     status: "completed",
@@ -92,12 +120,28 @@ const check = (checkId, completedAt, issueCount) => ({
     issueCount,
   },
   artifacts: [
+    ...(photo
+      ? [
+          {
+            artifactId: `${checkId}-photo`,
+            s3Key: `checks/${checkId}/photo.jpg`,
+            contentType: "image/jpeg",
+          },
+        ]
+      : []),
     {
       artifactId: `${checkId}-text`,
       text: "Sidewalk clear, one bag of litter.",
     },
   ],
-  analyses: [],
+  analyses: photo
+    ? [
+        {
+          artifactId: `${checkId}-photo`,
+          georeferencedAddress: "15th St, San Francisco, CA",
+        },
+      ]
+    : [],
 });
 
 /**
@@ -112,11 +156,42 @@ export async function stubReports(page) {
     route.fulfill({ json: TASKS_REPORT }),
   );
   await page.route("**/v1/checks/c5", (route) =>
-    route.fulfill({ json: check("c5", "2026-09-29T16:04:00.000Z", 1) }),
+    route.fulfill({
+      json: check("c5", "2026-09-29T16:04:00.000Z", 1, { photo: true }),
+    }),
   );
   await page.route("**/v1/checks/c6", (route) =>
     route.fulfill({ json: check("c6", "2026-09-29T21:07:00.000Z", 0) }),
   );
+  await page.route("**/v1/checks/c5/artifacts/c5-photo/media", (route) =>
+    route.fulfill({ json: { downloadUrl: PHOTO_DATA_URL } }),
+  );
+  // The day's task cards: live 311 status, the request sheet, and the
+  // updates timeline.
+  await page.route("**/v1/311-requests:batch", (route) =>
+    route.fulfill({
+      json: { requests: [{ taskId: "t1", request: { status: "Open" } }] },
+    }),
+  );
+  await page.route("**/v1/tasks/t1/311-requests/SR-100", (route) =>
+    route.fulfill({
+      json: {
+        request: {
+          srNum: "SR-100",
+          requestNumber: "SF-GUB-222",
+          status: "Open",
+          agency: "Department of Public Works",
+          submittedAt: "2026-09-29T16:15:00.000Z",
+          updates: [],
+        },
+      },
+    }),
+  );
+  for (const task of TASKS_REPORT.tasks) {
+    await page.route(`**/v1/tasks/${task.taskId}/updates*`, (route) =>
+      route.fulfill({ json: { task, updates: [], nextToken: null } }),
+    );
+  }
 }
 
 /**

@@ -27,13 +27,23 @@ import { discardInMemorySession } from "../state/check-session.js";
 import { currentRoute, navigate } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
+  get311RequestDetails,
   getCheck,
   getChecksReport,
-  getMediaUrl,
   getTasksReport,
 } from "../services/api.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
+import {
+  cachedMediaUrl,
+  hydrateTaskEvidenceFromCheck,
+} from "../services/task-evidence.js";
+import {
+  map311StatusResponse,
+  submitted311Requests,
+  taskWith311Status,
+} from "../domain/task-311-status.js";
+import { TaskSheets } from "./task-sheets.js";
 import {
   showLanguageErrorToast,
   showSiteCatalogErrorToast,
@@ -528,6 +538,16 @@ class ReportsView extends ReportsScreen {
 }
 
 class ReportsDayView extends ReportsScreen {
+  constructor() {
+    super();
+    /** @type {TaskSheets | null} the 311 and updates sheets, created on first use */
+    this._sheets = null;
+    /** @type {Map<string, any>} the day's tasks as rendered, by id */
+    this._tasksById = new Map();
+    this._loadGeneration = 0;
+    this._rendered = false;
+  }
+
   async connectedCallback() {
     if (!(await this._requireManager())) return;
     const date = currentRoute().split("/").pop() || "";
@@ -537,12 +557,26 @@ class ReportsDayView extends ReportsScreen {
       return;
     }
     this.innerHTML = loadingBlock();
+    this._rendered = false;
+    await this._load(date);
+  }
+
+  /**
+   * Fetch the day and render it. A refresh (after a sheet recorded an
+   * update) keeps the current markup until the new one is ready, so an open
+   * sheet is detached and re-mounted within one render.
+   * @param {string} date
+   */
+  async _load(date) {
+    const generation = ++this._loadGeneration;
+    const isCurrent = () =>
+      this.isConnected && generation === this._loadGeneration;
     try {
       const [report, tasksReport] = await Promise.all([
         getChecksReport({ period: "week", start: date }),
         getTasksReport({ period: "week", start: date }),
       ]);
-      if (!this.isConnected) return;
+      if (!isCurrent()) return;
       const day = report.days.find((d) => d.date === date);
       if (
         !day ||
@@ -553,19 +587,39 @@ class ReportsDayView extends ReportsScreen {
         announceScreenHeading(this, "[data-screen-focus]");
         return;
       }
-      const checks = await Promise.all(
-        day.checkIds.map((checkId) =>
-          this._loadCheck(checkId, tasksReport.tasks || []),
-        ),
+      const checks = (
+        await Promise.all(
+          day.checkIds.map((checkId) =>
+            this._loadCheck(checkId, tasksReport.tasks || []),
+          ),
+        )
+      ).filter(Boolean);
+      const statuses = await this._load311Statuses(
+        checks.flatMap((detail) => detail.tasks),
       );
-      if (!this.isConnected) return;
+      if (!isCurrent()) return;
+      for (const detail of checks) {
+        detail.tasks = detail.tasks.map((task) =>
+          taskWith311Status(task, statuses),
+        );
+      }
+      this._tasksById = new Map(
+        checks.flatMap((detail) => detail.tasks.map((t) => [t.taskId, t])),
+      );
       this.innerHTML = dayDetail({
         day,
         today: report.today,
-        checks: checks.filter(Boolean),
+        checks,
+        siteName: this._site?.name || "",
       });
-      announceScreenHeading(this, "[data-screen-focus]");
+      // A refresh keeps focus where the sheet left it; only the first
+      // render of the screen announces its heading.
+      if (!this._rendered) announceScreenHeading(this, "[data-screen-focus]");
+      this._rendered = true;
+      this._mountSheets();
+      this._wireCards();
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("day detail failed", error);
       this.innerHTML = errorBlock();
       this.querySelector("#reports-retry")?.addEventListener("click", () => {
@@ -574,9 +628,67 @@ class ReportsDayView extends ReportsScreen {
     }
   }
 
+  _refresh() {
+    const date = currentRoute().split("/").pop() || "";
+    return isDayKey(date) ? this._load(date) : Promise.resolve();
+  }
+
+  /**
+   * Live SF311 status for the day's filed tickets, one batch. Silent on
+   * failure: the card then shows the task's own latest update label.
+   * @param {any[]} tasks
+   */
+  async _load311Statuses(tasks) {
+    const requests = submitted311Requests(tasks);
+    if (!requests.length) return new Map();
+    try {
+      return map311StatusResponse(await get311RequestDetails(requests));
+    } catch {
+      return new Map();
+    }
+  }
+
+  _mountSheets() {
+    if (!this._sheets) {
+      this._sheets = new TaskSheets({
+        host: this,
+        container: () => this.querySelector(":scope > .reports-day"),
+        resolveTask: (task) => this._tasksById.get(task.taskId) || task,
+        reload: () => this._refresh(),
+        fallbackFocus: () => this.querySelector("[data-screen-focus]"),
+      });
+    }
+    this._sheets.site = this._site;
+    this._sheets.mount();
+  }
+
+  /** One delegated listener per render: the timeline is rebuilt each time. */
+  _wireCards() {
+    this.querySelector(".reports-timeline")?.addEventListener(
+      "click",
+      (event) => {
+        const button = /** @type {HTMLElement | null} */ (
+          /** @type {HTMLElement} */ (event.target).closest?.("[data-action]")
+        );
+        const card = button?.closest("[data-task-id]");
+        const task = card
+          ? this._tasksById.get(card.getAttribute("data-task-id") || "")
+          : null;
+        if (!button || !task) return;
+        const action = button.getAttribute("data-action");
+        if (action === "view311") this._sheets?.open311(task, button);
+        else if (action === "update")
+          void this._sheets?.openUpdates(task, button);
+      },
+    );
+  }
+
   /**
    * One check's header, its evidence (signed photo URLs, bounded), and the
-   * tasks it produced. A check that fails to load is dropped, not fatal.
+   * tasks it produced, hydrated with their place, street, and thumbnail
+   * from the same check detail. A check that fails to load is dropped, not
+   * fatal. Superseded tasks were replaced by an amendment and are not
+   * issues in their own right (same rule as the Issues tab).
    * @param {string} checkId
    * @param {any[]} tasks
    */
@@ -596,13 +708,22 @@ class ReportsDayView extends ReportsScreen {
         (a) => a.s3Key && String(a.contentType || "").startsWith("image/"),
       )
       .slice(0, MAX_PHOTOS_PER_CHECK);
-    const urls = await Promise.all(
-      photos.map((a) =>
-        getMediaUrl(checkId, a.artifactId)
-          .then((r) => r.downloadUrl)
-          .catch(() => ""),
+    const checkTasks = tasks
+      .filter(
+        (task) => task.checkId === checkId && task.status !== "superseded",
+      )
+      .map((task) => ({
+        ...task,
+        siteAddress: task.siteAddress || this._site?.address || "",
+      }));
+    const [urls, hydratedTasks] = await Promise.all([
+      Promise.all(
+        photos.map((a) =>
+          cachedMediaUrl(checkId, a.artifactId).catch(() => ""),
+        ),
       ),
-    );
+      hydrateTaskEvidenceFromCheck(checkTasks, detail),
+    ]);
     const evidence = [
       ...photos.map((a, i) => ({
         artifactId: a.artifactId,
@@ -613,11 +734,7 @@ class ReportsDayView extends ReportsScreen {
         .filter((a) => a.text)
         .map((a) => ({ artifactId: a.artifactId, kind: "text" })),
     ];
-    return {
-      check: detail.check,
-      evidence,
-      tasks: tasks.filter((task) => task.checkId === checkId),
-    };
+    return { check: detail.check, evidence, tasks: hydratedTasks };
   }
 }
 

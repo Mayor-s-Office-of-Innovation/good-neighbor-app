@@ -21,7 +21,7 @@
 .reports-legend__item,
 .reports-timeline__item,
 .reports-timeline__photos li,
-.reports-task,
+.reports-timeline__tasks li,
 .reports-types__item,
 .reports-responses__item {
   margin: 0;
@@ -166,8 +166,7 @@
 .reports__records-sub,
 .reports__record-sub,
 .reports__total span,
-.reports-timeline__meta,
-.reports-task__meta {
+.reports-timeline__meta {
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--wa-font-size-s, 0.875rem);
@@ -538,6 +537,11 @@
   outline-offset: 0.125rem;
 }
 
+/* The design draws no rule under the day header. */
+.reports-day .topbar {
+  border-bottom: 0;
+}
+
 .reports-day__title {
   display: flex;
   flex-wrap: wrap;
@@ -611,8 +615,8 @@
 
 .reports-timeline__photo {
   display: block;
-  width: 5.5rem;
-  height: 5.5rem;
+  width: min(9rem, 38vw);
+  height: min(9rem, 38vw);
   min-height: 0;
   padding: 0;
   border: 0;
@@ -641,27 +645,21 @@
   outline-offset: 0.125rem;
 }
 
+/* "N issues found" over the day's task cards; the cards themselves are the
+   home hub's (.analysis-card, analysis-results.css). */
+.reports-timeline__issues {
+  margin: 1.25rem 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
 .reports-timeline__tasks {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  margin: 0.75rem 0 0;
+  gap: 0.75rem;
+  margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.reports-task {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.reports-task__title {
-  font-weight: 600;
 }
 
 /* ---- Issues tab ---- */
