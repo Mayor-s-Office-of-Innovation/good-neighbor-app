@@ -318,9 +318,11 @@ export function homeActions({ checkLabel }) {
         </button>
         <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
           <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("today.actions.complaints"))}
           </button>
           <button type="button" role="menuitem" id="report-problem">
+            <wa-icon name="flag" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("today.actions.report"))}
           </button>
         </div>

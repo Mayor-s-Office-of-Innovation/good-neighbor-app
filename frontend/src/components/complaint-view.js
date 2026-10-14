@@ -46,6 +46,7 @@ const freshDraft = () => ({
   description: "",
   files: [],
   uploading: 0,
+  describing: false,
 });
 
 class ComplaintView extends HTMLElement {
@@ -58,10 +59,7 @@ class ComplaintView extends HTMLElement {
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", this._beforeUnload);
-    if (
-      this._route === "/complaints/new" ||
-      this._route === "/complaints/new/describe"
-    ) {
+    if (this._route === "/complaints/new") {
       draft ||= freshDraft();
       this._renderDraft();
       return;
@@ -85,7 +83,7 @@ class ComplaintView extends HTMLElement {
         data-back
         aria-label="${escapeAttr(t("common.back"))}"
       >
-        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+        <span class="complaints__back-icon" aria-hidden="true"></span>
       </button>
       <div class="topbar__titles">
         <h1 class="topbar__title" tabindex="-1">${escapeHtml(title)}</h1>
@@ -219,7 +217,6 @@ class ComplaintView extends HTMLElement {
   }
 
   _renderDraft() {
-    if (this._route.endsWith("/describe")) return this._renderDescription();
     const ready =
       draft.files.length > 0 &&
       draft.files.every((file) => file.status === "registered") &&
@@ -229,22 +226,45 @@ class ComplaintView extends HTMLElement {
       draft.uploading === 0 &&
       !draft.files.some((file) => file.status === "error");
     this.innerHTML = html`<div class="flow complaint-compose">
-      ${this._topbar(t("complaints.compose.title"))}
-      <p class="flow-hero__body">
-        ${escapeHtml(t("complaints.compose.subtitle"))}
-      </p>
-      <label class="complaint-upload"
-        ><span aria-hidden="true">+</span
-        ><strong>${escapeHtml(t("complaints.upload.title"))}</strong
-        ><small>${escapeHtml(t("complaints.upload.help"))}</small
-        ><input id="complaint-files" type="file" multiple accept="${ACCEPT}"
-      /></label>
+      <button
+        class="complaint-compose__close"
+        id="close-complaint"
+        type="button"
+        aria-label="${escapeAttr(t("common.close"))}"
+      >
+        <span aria-hidden="true"></span>
+      </button>
+      <div class="complaint-compose__intro">
+        <h1 tabindex="-1">${escapeHtml(t("complaints.compose.title"))}</h1>
+        <p>${escapeHtml(t("complaints.compose.subtitle"))}</p>
+      </div>
+      <div class="complaint-upload-section">
+        <label class="complaint-upload-button" for="complaint-files">
+          <span aria-hidden="true">+</span>
+          <span class="visually-hidden"
+            >${escapeHtml(t("complaints.upload.title"))}</span
+          >
+        </label>
+        <div class="complaint-upload-copy">
+          <strong>${escapeHtml(t("complaints.upload.title"))}</strong>
+          <p>${escapeHtml(t("complaints.upload.help"))}</p>
+        </div>
+        <input id="complaint-files" type="file" multiple accept="${ACCEPT}" />
+      </div>
       <div class="complaint-files">
         ${draft.files.map((file) => this._fileRow(file)).join("")}
       </div>
-      <button class="btn-outline" id="describe-complaint" type="button">
-        ${escapeHtml(t("complaints.describe"))}</button
-      ><button
+      ${draft.describing
+        ? this._descriptionField()
+        : html`<button
+            class="complaint-describe-link"
+            id="describe-complaint"
+            type="button"
+          >
+            <wa-icon name="pen" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("complaints.describe"))}
+          </button>`}
+      <button
         class="btn-ink"
         id="submit-complaint"
         type="button"
@@ -253,10 +273,16 @@ class ComplaintView extends HTMLElement {
         ${escapeHtml(t("complaints.submit"))}
       </button>
     </div>`;
-    this._bindBack("/complaints");
-    this.querySelector("#describe-complaint").addEventListener("click", () =>
-      navigate("/complaints/new/describe"),
+    this.querySelector("#close-complaint").addEventListener("click", () =>
+      this._closeComposer(),
     );
+    this.querySelector("#describe-complaint")?.addEventListener("click", () => {
+      draft.describing = true;
+      this._renderDraft();
+      const textarea = this.querySelector("#complaint-description");
+      textarea?.focus();
+      textarea?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
     );
@@ -268,6 +294,45 @@ class ComplaintView extends HTMLElement {
     this.querySelector("#submit-complaint").addEventListener("click", () =>
       this._submit(),
     );
+    const textarea = this.querySelector("#complaint-description");
+    textarea?.addEventListener("input", () => {
+      draft.description = textarea.value.slice(0, DESCRIPTION_MAX);
+      const submit = this.querySelector("#submit-complaint");
+      const filesReady =
+        draft.files.length > 0 &&
+        draft.files.every((file) => file.status === "registered");
+      if (submit) {
+        submit.disabled =
+          draft.uploading !== 0 ||
+          draft.files.some((file) => file.status === "error") ||
+          (!filesReady && draft.description.trim().length < 5);
+      }
+    });
+    this.querySelector("h1")?.focus();
+  }
+
+  _descriptionField() {
+    return html`<label
+      class="complaint-description"
+      for="complaint-description"
+    >
+      <strong>${escapeHtml(t("complaints.describe.label"))}</strong>
+      <textarea
+        id="complaint-description"
+        maxlength="${DESCRIPTION_MAX}"
+        rows="3"
+        placeholder="${escapeAttr(t("complaints.describe.placeholder"))}"
+      >
+${escapeHtml(draft.description)}</textarea
+      >
+    </label>`;
+  }
+
+  _closeComposer() {
+    if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
+      return;
+    draft = null;
+    navigate("/complaints");
   }
 
   _fileRow(file) {
@@ -363,32 +428,6 @@ class ComplaintView extends HTMLElement {
       await deleteComplaintArtifact(draft.complaintId, entry.artifactId);
     draft.files = draft.files.filter((file) => file.id !== id);
     this._renderDraft();
-  }
-
-  _renderDescription() {
-    this.innerHTML = html`<div class="flow complaint-compose">
-      ${this._topbar(t("complaints.describe.title"))}<label
-        for="complaint-description"
-        >${escapeHtml(t("complaints.describe.label"))}</label
-      ><textarea
-        id="complaint-description"
-        maxlength="${DESCRIPTION_MAX}"
-        rows="10"
-        placeholder="${escapeAttr(t("complaints.describe.placeholder"))}"
-      >
-${escapeHtml(draft.description)}</textarea
-      ><button class="btn-ink" id="save-description" type="button">
-        ${escapeHtml(t("common.continue"))}
-      </button>
-    </div>`;
-    this._bindBack("/complaints/new");
-    this.querySelector("#save-description").addEventListener("click", () => {
-      draft.description = this.querySelector(
-        "#complaint-description",
-      ).value.slice(0, DESCRIPTION_MAX);
-      navigate("/complaints/new");
-    });
-    this.querySelector("#complaint-description").focus();
   }
 
   async _submit() {

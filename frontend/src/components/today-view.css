@@ -126,7 +126,10 @@
   display: none;
 }
 .home-action-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
   width: 100%;
   min-height: 44px;
   padding: 0.75rem;
@@ -136,6 +139,13 @@
   color: var(--text);
   font: inherit;
   text-align: start;
+}
+.home-action-menu wa-icon {
+  flex: 0 0 var(--wa-font-size-s, 0.875rem);
+  width: var(--wa-font-size-s, 0.875rem);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1;
+  text-align: center;
 }
 .home-action-menu button:hover,
 .home-action-menu button:focus-visible {
@@ -334,8 +344,16 @@
 }
 
 .home-region--results {
+  position: relative;
+  z-index: 1;
   transform: translateY(0);
   opacity: 1;
+}
+
+.home-region--header {
+  position: relative;
+  z-index: 10;
+  overflow: visible;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -426,6 +444,20 @@
 .home-actions .btn-ink,
 .home-actions .btn-outline {
   min-width: 12.25rem;
+}
+
+.home-actions .home-action-menu-trigger {
+  flex: 0 0 54px;
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.home-action-menu {
+  z-index: 100;
 }
 
 /* "Start over" — a faint secondary link under the Resume button (draft present). */
