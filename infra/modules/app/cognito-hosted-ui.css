@@ -2,7 +2,9 @@
  * Cognito Hosted UI (classic) only accepts its documented selectors and a
  * restricted set of properties. Keep this deliberately small: it gives every
  * password, recovery, and TOTP screen the Good Neighbor neutral palette
- * without replacing Cognito's accessible form structure.
+ * without replacing Cognito's accessible form structure. Its Bootstrap base
+ * sets the root to 10px, so 1.6rem preserves the intended 16px default text.
+ * Root sizing is Cognito-owned and cannot be overridden here.
  */
 .background-customizable {
   background-color: #171717;
@@ -21,7 +23,7 @@
 .textDescription-customizable {
   padding-top: 8px;
   padding-bottom: 8px;
-  font-size: 16px;
+  font-size: 1.6rem;
   color: #171717;
 }
 
@@ -35,7 +37,7 @@
 
 .inputField-customizable:focus {
   border-color: #155fce;
-  outline: 2px;
+  outline: 2px solid #155fce;
 }
 
 .submitButton-customizable {
@@ -44,7 +46,7 @@
   height: 48px;
   color: #ffffff;
   background-color: #262626;
-  font-size: 16px;
+  font-size: 1.6rem;
   font-weight: bold;
 }
 
