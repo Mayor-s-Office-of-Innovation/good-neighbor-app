@@ -122,7 +122,9 @@ export function getConfig(env = process.env) {
  */
 export function getComplaintBucket(env = process.env) {
   if (!env.S3_COMPLAINT_BUCKET) {
-    throw new Error("Missing required environment variable for complaintBucket");
+    throw new Error(
+      "Missing required environment variable for complaintBucket",
+    );
   }
   return env.S3_COMPLAINT_BUCKET;
 }

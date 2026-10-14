@@ -324,6 +324,16 @@ export class AppRoot extends HTMLElement {
       });
       return;
     }
+    if (
+      route.startsWith("/complaints") &&
+      !customElements.get("complaint-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./complaint-view.js").then(() => {
+        if (currentRoute().startsWith("/complaints")) this._renderView();
+      });
+      return;
+    }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
     // Every screen owns its own header now (design port): the home hub has its
