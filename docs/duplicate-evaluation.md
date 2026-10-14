@@ -174,6 +174,26 @@ evidence also receives this context. A duplicate requires an explicit valid
 source-condition to candidate-condition mapping with strong evidence; matching
 scenery or photos alone cannot set a duplicate flag. No issues means no duplicate
 suggestion. A strong issue suggestion is not proof of uninterrupted existence.
+Visual evidence takes precedence over fallible analyzer descriptions and labels:
+viewpoint differences or a misidentified object must not become a strong negative
+solely because wording differs. Explicit issue references remain mandatory. If
+the images cannot resolve a description conflict, the assessment stays uncertain.
+The contextual pass receives the earlier image-only correspondence to verify
+against the images. A contextual rejection that contradicts a strong image-only
+match stays uncertain in app logic; it cannot silently become a confident negative
+or an automatic issue mapping. Comparison caches include the matcher version.
+
+`issue-evidence-v5` returns structured evidence for each comparison and each
+explicit issue link. The app assigns high/medium/low confidence bands, not
+probabilities. High positive confidence requires clear visual identity, grounded
+issue mapping, distinctive matching features, no unresolved contradiction, and
+no continuity concern. Partial visibility or unknown continuity caps confidence
+at medium; stage disagreement or unresolved description conflict makes it low.
+High negative confidence requires concrete visible differences. Resolved
+description errors do not reduce confidence. Only high explicit links set
+advisory flags; medium links remain review suggestions. The local report displays
+evidence and confidence reasons for positives, negatives and uncertainties.
+
 Condition outcomes include a versioned observation/condition reference; there is
 no automatic mapping to a displayed issue number yet.
 

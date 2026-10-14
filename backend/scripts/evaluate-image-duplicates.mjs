@@ -399,6 +399,15 @@ const summary = {
   visualSuggestions: results.flatMap((r) =>
     r.suggestions.map((s) => ({ sourceId: r.sourceId, ...s })),
   ),
+  confidenceBands: Object.fromEntries(
+    ["high", "medium", "low"].map((band) => [
+      band,
+      results.reduce(
+        (n, r) => n + r.comparisons.filter((c) => c.confidence === band).length,
+        0,
+      ),
+    ]),
+  ),
 };
 await save(join(output, "summary.json"), summary);
 const escape = (value) =>
@@ -409,10 +418,19 @@ const escape = (value) =>
         c
       ],
   );
+const evidenceHtml = (evidence) =>
+  `<dl>${Object.entries(evidence)
+    .map(
+      ([key, value]) =>
+        `<dt><strong>${escape(key.replaceAll("_", " "))}</strong></dt><dd>${Array.isArray(value) ? (value.length ? value.map(escape).join("; ") : "None recorded") : escape(value)}</dd>`,
+    )
+    .join("")}</dl>`;
+const confidenceHtml = (item) =>
+  `<p><strong>Confidence: ${escape(item.confidence)}</strong> — ${item.confidenceReasons.map(escape).join("; ")}</p>${evidenceHtml(item.evidence)}`;
 const cards = summary.visualSuggestions
   .map(
     (r) =>
-      `<section><h2>${escape(r.sourceId)} ↔ ${escape(r.candidate_id)}</h2><img src="images/${escape(r.sourceId)}.jpg"><img src="images/${escape(r.candidate_id)}.jpg"><p>${escape(r.reason)}</p><ul>${r.condition_matches.map((m) => `<li>${escape(m.source_condition_id)} → ${escape(m.candidate_condition_id)}</li>`).join("")}</ul><p>Stage: ${escape(r.stage)}; visual evidence: ${escape(r.evidence_strength)}</p></section>`,
+      `<section><h2>${escape(r.sourceId)} ↔ ${escape(r.candidate_id)}</h2><img src="images/${escape(r.sourceId)}.jpg"><img src="images/${escape(r.candidate_id)}.jpg"><p>${escape(r.reason)}</p>${confidenceHtml(r)}<ul>${r.condition_matches.map((m) => `<li>${escape(m.source_condition_id)} → ${escape(m.candidate_condition_id)}${confidenceHtml(m)}</li>`).join("")}</ul><p>Stage: ${escape(r.stage)}; visual evidence: ${escape(r.evidence_strength)}</p></section>`,
   )
   .join("");
 const pending = results
@@ -427,7 +445,7 @@ const pending = results
       ),
   )
   .join("");
-const testedCandidates = `<details><summary>Inspect tested candidates, failures, and unassessed counts</summary><table><tr><th>Source</th><th>Tested candidates and verdicts</th><th>Failed candidates</th><th>Unassessed candidates</th></tr>${results.map((result) => `<tr><td><a href="#${escape(result.sourceId)}">${escape(result.sourceId)}</a></td><td>${result.comparisons.map((row) => `<a href="#${escape(row.candidate_id)}">${escape(row.candidate_id)}</a>: ${escape(row.verdict)} / ${escape(row.evidence_strength)} (${escape(row.stage)})`).join("<br>")}</td><td>${result.failedCandidateIds.map((id) => escape(id)).join(", ") || "—"}</td><td>${result.unassessedCandidateIds.length}</td></tr>`).join("")}</table></details>`;
+const testedCandidates = `<details open><summary>Inspect tested candidates, failures, and unassessed counts</summary><table><tr><th>Source</th><th>Tested candidates and verdicts</th><th>Failed candidates</th><th>Unassessed candidates</th></tr>${results.map((result) => `<tr><td><a href="#${escape(result.sourceId)}">${escape(result.sourceId)}</a></td><td>${result.comparisons.map((row) => `<a href="#${escape(row.candidate_id)}">${escape(row.candidate_id)}</a>: ${escape(row.verdict)} / ${escape(row.evidence_strength)} (${escape(row.stage)})<details><summary>Confidence: ${escape(row.confidence)} — supporting evidence</summary><p>${escape(row.reason)}</p>${confidenceHtml(row)}${row.condition_matches.map((m) => `<p>${escape(m.source_condition_id)} → ${escape(m.candidate_condition_id)}</p>${confidenceHtml(m)}`).join("")}</details>`).join("<br>")}</td><td>${result.failedCandidateIds.map((id) => escape(id)).join(", ") || "—"}</td><td>${result.unassessedCandidateIds.length}</td></tr>`).join("")}</table></details>`;
 const gallery = observations
   .map(
     (o) =>
@@ -436,6 +454,6 @@ const gallery = observations
   .join("");
 await save(
   join(output, "review.html"),
-  `<!doctype html><html><meta charset="utf-8"><title>Duplicate experiment review</title><style>body{font:16px system-ui;margin:32px;background:#f7f8fa;color:#182230}section{background:white;padding:16px;margin:20px 0}img{max-width:46%;max-height:420px;object-fit:contain}figure{display:inline-block;width:260px;vertical-align:top}figure img{max-width:100%;height:220px}figcaption{overflow-wrap:anywhere}pre{white-space:pre-wrap}td,th{padding:8px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}</style><h1>Backend image matcher review</h1><p>Image-first assessment. Known duplicates were withheld. No site/date eligibility is inferred from filenames.</p><p>${summary.images} images; ${summary.evaluatedPairs}/${summary.unorderedPairs} pairs assessed by the comparison backend; ${summary.remoteCalls} remote comparison calls; ${summary.assessmentCalls} assessment calls.</p>${compare ? "" : "<p><strong>Visual comparison has not run: comparison endpoint/key unavailable. Fingerprints are not duplicate verdicts.</strong></p>"}${initialCandidates ? `<p><strong>Initial pass: at most ${initialCandidates} top-ranked visual candidates per image. Unassessed candidates remain unknown; this is not a recall estimate or the production retrieval policy.</strong></p>` : ""}${sourceNames ? `<p>Selected sources: ${selectedSources.map((o) => escape(o.id)).join(", ")}; ${candidatePool.length} selected candidates. Every source/candidate pair is assessed.</p>` : ""}<h2>Strong issue suggestions</h2>${cards || "<p>No recorded suggestions. Check completion and failures before interpreting this as a negative result.</p>"}<h2>Uncertain comparisons</h2><ul>${pending}</ul>${testedCandidates}<h2>All images (review missed matches)</h2>${gallery}<h2>Run details</h2><pre>${escape(JSON.stringify(summary, null, 2))}</pre></html>`,
+  `<!doctype html><html><meta charset="utf-8"><title>Duplicate experiment review</title><style>body{font:16px system-ui;margin:32px;background:#f7f8fa;color:#182230}section{background:white;padding:16px;margin:20px 0}img{max-width:46%;max-height:420px;object-fit:contain}figure{display:inline-block;width:260px;vertical-align:top}figure img{max-width:100%;height:220px}figcaption{overflow-wrap:anywhere}pre{white-space:pre-wrap}td,th{padding:8px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}</style><h1>Backend image matcher review</h1><p>Image-first assessment. Known duplicates were withheld. No site/date eligibility is inferred from filenames.</p><p>${summary.images} images; ${summary.evaluatedPairs}/${summary.unorderedPairs} pairs assessed by the comparison backend; ${summary.remoteCalls} remote comparison calls; ${summary.assessmentCalls} assessment calls.</p>${compare ? "" : "<p><strong>Visual comparison has not run: comparison endpoint/key unavailable. Fingerprints are not duplicate verdicts.</strong></p>"}${initialCandidates ? `<p><strong>Initial pass: at most ${initialCandidates} top-ranked visual candidates per image. Unassessed candidates remain unknown; this is not a recall estimate or the production retrieval policy.</strong></p>` : ""}${sourceNames ? `<p>Selected sources: ${selectedSources.map((o) => escape(o.id)).join(", ")}; ${candidatePool.length} selected candidates. Every source/candidate pair is assessed.</p>` : ""}<p>Confidence bands are app policy, not calibrated probabilities. Medium suggestions require review and do not set duplicate flags. Missing capture/lifecycle history limits continuity confidence.</p><h2>Issue suggestions for review</h2>${cards || "<p>No recorded suggestions. Check completion and failures before interpreting this as a negative result.</p>"}<h2>Uncertain comparisons</h2><ul>${pending}</ul>${testedCandidates}<h2>All images (review missed matches)</h2>${gallery}<h2>Run details</h2><pre>${escape(JSON.stringify(summary, null, 2))}</pre></html>`,
 );
 console.info(`Review saved to ${join(output, "review.html")}`);

@@ -10,6 +10,10 @@ Approach revised October 14, 2026: images are primary evidence, but duplicates
 require explicit identity between analyzer-generated issues. Every possible
 positive requires issue descriptions/metadata and an explicit condition mapping,
 including single-issue photos. Uncertain images also receive contextual review.
+Structured evidence is returned per comparison and per issue link. The app assigns
+high/medium/low evidence bands; only high explicit links set advisory duplicate
+flags. Medium links are review suggestions, and unknown capture/lifecycle history
+limits continuity confidence. These bands are not calibrated probabilities.
 The app now has an image matcher, private-folder runner, and isolated shadow
 worker/dispatcher; the analyzer repository has a separate comparison handler and
 CDK deployment. These changes are local and not deployed. Live local comparisons

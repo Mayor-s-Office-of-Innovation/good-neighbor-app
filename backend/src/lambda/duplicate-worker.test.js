@@ -145,10 +145,28 @@ function setup() {
       reason: "Matching distinctive pile",
       source_region: "pile",
       candidate_region: "pile",
+      evidence: {
+        visual_identity: "clear",
+        issue_mapping: request.mode === "context" ? "clear" : "none",
+        matching_features: ["Distinctive object"],
+        visible_differences: ["Different object"],
+        contradictions: [],
+        description_conflict: "none",
+        continuity_concern: "none",
+      },
       condition_matches:
         request.mode === "context"
           ? [
               {
+                evidence: {
+                  visual_identity: "clear",
+                  issue_mapping: "clear",
+                  matching_features: ["Distinctive object"],
+                  visible_differences: [],
+                  contradictions: [],
+                  description_conflict: "none",
+                  continuity_concern: "none",
+                },
                 source_condition_id:
                   request.source.context?.conditions[0]?.id ?? "missing-source",
                 candidate_condition_id:

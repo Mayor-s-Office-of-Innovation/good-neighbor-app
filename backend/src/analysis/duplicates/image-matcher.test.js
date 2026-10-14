@@ -4,6 +4,7 @@ import {
   matchImages,
   createComparisonClient,
   markUnassessedCandidates,
+  assessConfidence,
 } from "./image-matcher.js";
 /**
  * @param {string} id
@@ -35,10 +36,28 @@ const response = (request, verdict = "same_issue", strength = "strong") => ({
     reason: "Matching objects",
     source_region: "pile",
     candidate_region: "pile",
+    evidence: {
+      visual_identity: "clear",
+      issue_mapping: request.mode === "context" ? "clear" : "none",
+      matching_features: ["Distinctive object"],
+      visible_differences: ["Different object"],
+      contradictions: [],
+      description_conflict: "none",
+      continuity_concern: "none",
+    },
     condition_matches:
-      request.mode === "context"
+      request.mode === "context" && verdict === "same_issue"
         ? [
             {
+              evidence: {
+                visual_identity: "clear",
+                issue_mapping: "clear",
+                matching_features: ["Distinctive object"],
+                visible_differences: [],
+                contradictions: [],
+                description_conflict: "none",
+                continuity_concern: "none",
+              },
               source_condition_id:
                 request.source.context?.conditions[0]?.id ?? "missing-source",
               candidate_condition_id:
@@ -49,6 +68,91 @@ const response = (request, verdict = "same_issue", strength = "strong") => ({
   })),
 });
 describe("image-first backend matcher", () => {
+  it("derives evidence bands for positives and negatives, without rewarding wording conflicts", () => {
+    const evidence = {
+      visual_identity: "clear",
+      issue_mapping: "clear",
+      matching_features: ["Matching cabinet geometry"],
+      visible_differences: [],
+      contradictions: [],
+      description_conflict: "resolved",
+      continuity_concern: "none",
+    };
+    expect(assessConfidence("same_issue", evidence).confidence).toBe("high");
+    expect(
+      assessConfidence("same_issue", {
+        ...evidence,
+        continuity_concern: "unknown",
+      }).confidence,
+    ).toBe("medium");
+    expect(
+      assessConfidence("same_issue", {
+        ...evidence,
+        issue_mapping: "ambiguous",
+      }).confidence,
+    ).toBe("low");
+    expect(assessConfidence("same_issue", evidence, true).confidence).toBe(
+      "low",
+    );
+    expect(assessConfidence("different_issue", evidence).confidence).toBe(
+      "medium",
+    );
+    expect(
+      assessConfidence("different_issue", {
+        ...evidence,
+        visible_differences: ["Different object geometry"],
+      }).confidence,
+    ).toBe("high");
+    expect(
+      assessConfidence("different_issue", {
+        ...evidence,
+        description_conflict: "unresolved",
+      }).confidence,
+    ).toBe("low");
+  });
+  it("keeps mapped medium matches as review suggestions without setting duplicate flags", async () => {
+    const source = observation("s", {
+      observedAt: undefined,
+      conditions: [{ id: "s1", description: "box" }],
+    });
+    const candidate = observation("c", {
+      conditions: [{ id: "c1", description: "cabinet" }],
+    });
+    const result = await matchImages({
+      source,
+      candidates: [candidate],
+      compare: async (request) => response(request),
+    });
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0].confidence).toBe("medium");
+    expect(result.conditionResults[0].possibleDuplicate).toBeNull();
+    expect(result.possibleDuplicate).toBeNull();
+  });
+  it("carries visual correspondence into context and keeps contradictory negatives uncertain", async () => {
+    const source = observation("s", {
+      conditions: [{ id: "s1", description: "box" }],
+    });
+    const candidate = observation("c", {
+      conditions: [{ id: "c1", description: "cabinet" }],
+    });
+    const result = await matchImages({
+      source,
+      candidates: [candidate],
+      compare: async (request) => {
+        if (request.mode === "context") {
+          expect(request.candidates[0].context?.visualAssessment?.verdict).toBe(
+            "same_issue",
+          );
+          return response(request, "different_issue");
+        }
+        return response(request);
+      },
+    });
+    expect(result.possibleDuplicate).toBeNull();
+    expect(result.conditionResults[0].possibleDuplicate).toBeNull();
+    expect(result.comparisons[0].verdict).toBe("uncertain");
+    expect(result.suggestions).toEqual([]);
+  });
   it("never infers single-issue identity from a strong image match without explicit mapping", async () => {
     const source = observation("s", {
       conditions: [{ id: "s1", description: "litter" }],
@@ -201,7 +305,11 @@ describe("image-first backend matcher", () => {
         const value = response(request);
         if (request.mode === "context")
           value.comparisons[0].condition_matches = [
-            { source_condition_id: "invented", candidate_condition_id: "c1" },
+            {
+              source_condition_id: "invented",
+              candidate_condition_id: "c1",
+              evidence: value.comparisons[0].evidence,
+            },
           ];
         return value;
       },
