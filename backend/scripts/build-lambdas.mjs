@@ -66,6 +66,10 @@ const entries = [
     entry: resolve(backendRoot, "src/lambda/authorizer.js"),
   },
   {
+    name: "cognito-email-sender",
+    entry: resolve(backendRoot, "src/lambda/cognito-email-sender.js"),
+  },
+  {
     // Best-effort public intakes (client errors/events, feedback) — their own
     // function so PostHog latency is isolated from the app api's concurrency.
     name: "intake",

@@ -64,6 +64,51 @@ resource "aws_kms_alias" "smtp_secrets" {
   target_key_id = aws_kms_key.smtp_secrets[0].key_id
 }
 
+# Cognito encrypts temporary passwords and verification codes before invoking
+# the custom sender. Keep that message-secret boundary separate from both the
+# SMTP credential key and the general application-data key.
+resource "aws_kms_key" "cognito_email" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  description             = "KMS key for ${var.application} ${var.environment} Cognito email secrets"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Standard KMS account-administration statement. The account principal
+        # enables IAM delegation and key recovery; it does not grant arbitrary
+        # principals runtime access. Resource "*" is required inside a KMS key
+        # policy and refers only to the key to which this policy is attached.
+        Sid       = "EnableIamUserPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowDeployRoleCreateCognitoGrant"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.application}-deploy-${var.environment}" }
+        Action    = "kms:CreateGrant"
+        Resource  = "*"
+        Condition = {
+          Bool = { "kms:GrantIsForAWSResource" = "true" }
+        }
+      }
+    ]
+  })
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "cognito_email" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  name          = "alias/${local.name_prefix}-cognito-email"
+  target_key_id = aws_kms_key.cognito_email[0].key_id
+}
+
 resource "aws_kms_key" "app" {
   description             = "KMS key for ${var.application} ${var.environment} application data"
   deletion_window_in_days = 30
@@ -813,6 +858,18 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  dynamic "lambda_config" {
+    for_each = var.enable_cognito_custom_email_sender ? [1] : []
+    content {
+      kms_key_id = aws_kms_key.cognito_email[0].arn
+
+      custom_email_sender {
+        lambda_arn     = aws_lambda_function.cognito_email_sender[0].arn
+        lambda_version = "V1_0"
+      }
+    }
+  }
+
   email_configuration {
     email_sending_account = "DEVELOPER"
     source_arn            = var.setup_code_email_identity_arn
@@ -825,8 +882,8 @@ resource "aws_cognito_user_pool" "users" {
     # AWS provider 5.x sends omitted invitation fields as empty strings on
     # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
     invite_message_template {
-      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor admin invitation"
-      email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."
+      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor compliance app invitation"
+      email_message = "You have been invited to the Good Neighbor compliance app (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at ${var.cognito_admin_app_url} and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days.<br><br>Any questions? Contact the Good Neighbor app team at ${var.city_smtp_from_address != "" ? var.city_smtp_from_address : var.setup_code_email_from}.<br><br>Thanks!<br><br>The Good Neighbor app team"
       sms_message   = "Your Good Neighbor username is {username} and temporary password is {####}."
     }
   }
@@ -871,7 +928,8 @@ resource "aws_cognito_user_pool" "users" {
     temporary_password_validity_days = 7
   }
 
-  tags = var.tags
+  depends_on = [aws_lambda_permission.cognito_email_sender]
+  tags       = var.tags
 }
 
 resource "aws_cognito_user_pool_client" "web" {

@@ -50,6 +50,7 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
+  cognito_admin_app_url         = "https://goodneighbor-compliance.sf.gov/"
 
   providers = {
     aws           = aws

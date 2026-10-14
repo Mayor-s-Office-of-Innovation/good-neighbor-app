@@ -16,6 +16,20 @@ locals {
     SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
     SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
   }
+
+  email_lambda_environment = var.enable_city_smtp_relay ? {
+    EMAIL_TRANSPORT              = "smtp"
+    MAIL_MANAGER_SMTP_HOST       = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+    MAIL_MANAGER_SMTP_USERNAME   = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+    MAIL_MANAGER_SMTP_SECRET_ARN = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+    SETUP_CODE_EMAIL_FROM        = var.city_smtp_from_address
+    } : {
+    EMAIL_TRANSPORT              = "ses"
+    MAIL_MANAGER_SMTP_HOST       = ""
+    MAIL_MANAGER_SMTP_USERNAME   = ""
+    MAIL_MANAGER_SMTP_SECRET_ARN = ""
+    SETUP_CODE_EMAIL_FROM        = var.setup_code_email_from
+  }
 }
 
 data "archive_file" "api" {
@@ -28,6 +42,12 @@ data "archive_file" "authorizer" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/authorizer"
   output_path = "${path.module}/dist/authorizer.zip"
+}
+
+data "archive_file" "cognito_email_sender" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/cognito-email-sender"
+  output_path = "${path.module}/dist/cognito-email-sender.zip"
 }
 
 data "archive_file" "intake" {
@@ -80,6 +100,64 @@ resource "aws_cloudwatch_log_group" "worker" {
   tags              = var.tags
 }
 
+resource "aws_cloudwatch_log_group" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name              = "/aws/lambda/${local.name_prefix}-cognito-email-sender"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  #checkov:skip=CKV_AWS_116:Synchronous Cognito trigger; an invocation failure must fail the originating Cognito delivery rather than enter a DLQ.
+  #checkov:skip=CKV_AWS_117:Public egress is required for the authenticated Mail Manager SMTP endpoint.
+  #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application.
+  function_name                  = "${local.name_prefix}-cognito-email-sender"
+  role                           = aws_iam_role.cognito_email_sender[0].arn
+  runtime                        = "nodejs22.x"
+  handler                        = "index.handler"
+  filename                       = data.archive_file.cognito_email_sender.output_path
+  source_code_hash               = data.archive_file.cognito_email_sender.output_base64sha256
+  memory_size                    = 256
+  timeout                        = 20
+  kms_key_arn                    = aws_kms_key.app.arn
+  reserved_concurrent_executions = 2
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ADMIN_APP_URL                   = var.cognito_admin_app_url
+      COGNITO_EMAIL_KMS_KEY_ARN       = aws_kms_key.cognito_email[0].arn
+      EMAIL_TRANSPORT                 = "smtp"
+      ENVIRONMENT                     = var.environment
+      MAIL_MANAGER_SMTP_HOST          = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+      MAIL_MANAGER_SMTP_USERNAME      = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+      MAIL_MANAGER_SMTP_SECRET_ARN    = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+      SETUP_CODE_EMAIL_FROM           = var.city_smtp_from_address
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.cognito_email_sender]
+  tags       = var.tags
+}
+
+resource "aws_lambda_permission" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement_id   = "AllowCognitoInvoke"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.cognito_email_sender[0].function_name
+  principal      = "cognito-idp.amazonaws.com"
+  source_account = data.aws_caller_identity.current.account_id
+}
+
 resource "aws_lambda_function" "api" {
   #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A (the worker keeps a real DLQ).
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
@@ -113,13 +191,12 @@ resource "aws_lambda_function" "api" {
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn
-      SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
       # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
       METRICS_NAMESPACE = local.metrics_namespace
-    }, local.sf311_lambda_environment)
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]

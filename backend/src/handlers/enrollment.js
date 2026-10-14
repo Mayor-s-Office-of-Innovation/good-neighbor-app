@@ -793,7 +793,7 @@ async function redeemProviderEnrollment(context) {
  */
 async function notifyManagerEnrollment(input) {
   let status = "accepted";
-  let provider = "ses";
+  let provider = process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
   let messageId = "";
   try {
     const delivery = await sendManagerSecurityNotification({
@@ -890,7 +890,7 @@ async function queryProviderItems(tableName, providerId, prefix) {
  */
 async function notifyProviderManagerEnrollment(input) {
   let status = "accepted";
-  let provider = "ses";
+  let provider = process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
   let messageId = "";
   try {
     const delivery = await sendProviderManagerSecurityNotification({
