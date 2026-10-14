@@ -10,9 +10,10 @@ no source-IP allowlist or application-side DNS changes are required.
 When `enable_city_smtp_relay` is true, the API Lambda sends setup codes,
 Manager enrollment and recovery links, and device-enrollment notifications
 through the Mail Manager ingress. Its execution role can read only the ingress
-credential; it cannot read the Proofpoint relay credential. Cognito-generated
-login email continues to use direct SES until a separate custom-email-sender
-cutover is designed and tested.
+credential; it cannot read the Proofpoint relay credential. When
+`enable_cognito_custom_email_sender` is also true, a separate least-privilege
+Lambda routes Cognito invitations and recovery messages through the same
+authenticated ingress.
 
 ## Bootstrap dev
 

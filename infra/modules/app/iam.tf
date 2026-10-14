@@ -34,6 +34,56 @@ locals {
   ]
 }
 
+# ---- Cognito custom email sender role ---------------------------------------
+
+resource "aws_iam_role" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name               = "${local.name_prefix}-cognito-email-sender"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement {
+    sid       = "DecryptCognitoMessageSecrets"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.cognito_email[0].arn]
+  }
+
+  statement {
+    sid       = "ReadMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+  }
+
+  statement {
+    sid       = "DecryptMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.smtp_secrets[0].arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.cognito_email_sender[0].arn}:*"]
+  }
+}
+
+resource "aws_iam_role_policy" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name   = "${local.name_prefix}-cognito-email-sender"
+  role   = aws_iam_role.cognito_email_sender[0].id
+  policy = data.aws_iam_policy_document.cognito_email_sender[0].json
+}
+
 # ---- api Lambda role ----------------------------------------------------------
 
 resource "aws_iam_role" "api" {

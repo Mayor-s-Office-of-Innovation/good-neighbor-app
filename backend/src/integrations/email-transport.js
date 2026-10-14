@@ -67,6 +67,7 @@ export function configuredEmailProvider() {
   return process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
 }
 
+/** @returns {Promise<import("nodemailer").Transporter>} */
 async function getSmtpTransport() {
   if (smtpTransport) return smtpTransport;
 
@@ -102,7 +103,10 @@ async function getSmtpTransport() {
   return smtpTransport;
 }
 
-/** @param {string} name */
+/**
+ * @param {string} name
+ * @returns {string}
+ */
 function requiredEnvironment(name) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);

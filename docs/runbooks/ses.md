@@ -52,9 +52,10 @@ relay is disabled. In that mode, IAM limits `ses:SendEmail` to the
 environment's domain identity and the exact `codes@goodneighborsf.org` From
 address. When the relay is enabled, Terraform removes that permission and
 routes API-generated email through SES Mail Manager instead; see
-[city-smtp.md](./city-smtp.md). Cognito-generated login email continues to use
-this direct SES identity. Terraform sets the sender and provider app URL; dev
-subjects receive a `[dev]` prefix. Setup-code messages include plain text and
+[city-smtp.md](./city-smtp.md). Cognito also uses the gateway when its custom
+sender switch is enabled; this direct SES identity remains its rollback path.
+Terraform sets the sender and provider app URL; dev subjects receive a `[dev]`
+prefix. Setup-code messages include plain text and
 escaped HTML, the code, the setup link, expiration in Pacific time, and a
 trusted-device reminder.
 
