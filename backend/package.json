@@ -30,7 +30,8 @@
     "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",
     "db:gui": "DYNAMO_ENDPOINT=http://localhost:8000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local dynamodb-admin",
     "analyze:smoke": "node --env-file=.env scripts/analyze-smoke.mjs",
-    "dev": "concurrently -k -n svc,sf311,api,worker \"npm:local:services\" \"npm:local:sf311\" \"npm:local:api\" \"npm:local:worker\""
+    "dev": "concurrently -k -n svc,sf311,api,worker \"npm:local:services\" \"npm:local:sf311\" \"npm:local:api\" \"npm:local:worker\"",
+    "duplicates:images": "node --env-file=.env.duplicates scripts/evaluate-image-duplicates.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "3.1106.0",

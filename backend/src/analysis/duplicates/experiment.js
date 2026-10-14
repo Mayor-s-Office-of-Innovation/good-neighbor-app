@@ -48,7 +48,7 @@ const STOP_WORDS = new Set(
     " ",
   ),
 );
-export const BASELINE_VERSION = "text-metadata-baseline-v1";
+export const BASELINE_VERSION = "text-metadata-baseline-v2-five-day";
 export const PROMPT_VERSION = "incident-comparison-v1";
 
 /**
@@ -207,7 +207,7 @@ export function retrieveCandidates(source, observations) {
         candidate.siteId === source.siteId &&
         !(source.sourceId && source.sourceId === candidate.sourceId) &&
         age >= 0 &&
-        age <= 7 * DAY_MS &&
+        age <= 5 * DAY_MS &&
         Date.parse(candidate.availableAt) <= available &&
         !(
           candidate.resolvedAt && Date.parse(candidate.resolvedAt) <= observed
@@ -264,7 +264,7 @@ function compare(source, candidate) {
   const recency =
     1 -
     (Date.parse(source.observedAt) - Date.parse(candidate.observedAt)) /
-      (7 * DAY_MS);
+      (5 * DAY_MS);
   let locationBonus = 0;
   const reasons = [
     `Text token overlap: ${similarity.toFixed(3)}`,

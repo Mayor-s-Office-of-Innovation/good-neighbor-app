@@ -6,10 +6,23 @@ the usual rule that implementation plans live in GitHub issues. Keep the operati
 reference in [duplicate-evaluation.md](duplicate-evaluation.md); update or retire
 this handoff when the experiment advances.
 
+Approach revised October 14, 2026: images are primary evidence, but duplicates
+require explicit identity between analyzer-generated issues. Every possible
+positive requires issue descriptions/metadata and an explicit condition mapping,
+including single-issue photos. Uncertain images also receive contextual review.
+The app now has an image matcher, private-folder runner, and isolated shadow
+worker/dispatcher; the analyzer repository has a separate comparison handler and
+CDK deployment. These changes are local and not deployed. Live local comparisons
+use the actual analyzer handler with an authenticated Bedrock profile; deployment
+is not needed for this experiment. Source and Match candidates folders select
+the evaluation corpus. Human review is still required; the existing text harness
+remains a comparison tool.
+
 ## Start here
 
-**Only a local evaluation harness exists. Duplicate detection is not integrated
-into the app.** The next step is selecting real or deliberately captured reports,
+**Duplicate detection is not deployed.** Local code now includes the matcher,
+runner, and isolated background infrastructure, disabled by default. Normal
+analysis and guidance handlers are unchanged. The next step is selecting real or deliberately captured reports,
 preparing human-reviewed labels, and comparing the baseline against an AI model.
 Do not interpret passing tests or synthetic fixture results as evidence that the
 feature works in the field.
@@ -32,19 +45,24 @@ work. Do not assume anything in a temporary directory exists on the next machine
 - **Coverage takes priority over precision.** This supersedes the initial proposal
   to prioritize precision. No numerical acceptance threshold has been agreed.
   Still measure false suggestions and wrong targets so the tradeoff is visible.
-- Search the preceding **seven days**. Expected upper volume is about ten issues
-  per site per day: approximately seventy candidate observations, subject to how
+- Search the preceding **five days**. Expected upper volume is about ten issues
+  per site per day: approximately fifty candidate observations, subject to how
   issues and repeated observations are counted. Avoid premature retrieval cutoffs.
-- Begin with analyzer text and metadata; introduce images only if measured failures
-  justify them. Photos may help reviewers establish ground truth from the outset.
+- Begin with images alone for the matching assessment. Use additional metadata
+  (such as description and time) only when that assessment has low confidence.
+  Same-site and five-day candidate eligibility still apply before matching; do
+  not expose those metadata to the first-pass assessor. Define and evaluate the
+  confidence gate on development data rather than treating model confidence as
+  a calibrated probability. Similar images do not establish continuing identity
+  after physical resolution.
 - Passive metadata improvements are permitted if they require no additional user
   input. GPS accuracy and location measurement time are useful; neither has been
   added by the harness work.
 - Assume **thirty-day image retention** for the design. This does not mean the
-  deployed lifecycle has changed: the existing runbook described seven days, and
+  deployed lifecycle has changed: the existing runbook described five days, and
   [issue #450](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/450)
   requests thirty-day deletion including backups. Verify actual configuration before
-  planning an image evaluation. Matching still uses a seven-day window.
+  planning an image evaluation. Matching still uses a five-day window.
 - Ground truth is evaluated during testing, not assumed. If it remains unreliable
   after algorithm/prompt refinement, keep suggestions explicitly advisory or discard
   the feature. Never force ambiguous observations into definite labels.
@@ -66,7 +84,7 @@ ID in the evaluation dataset**, not a resolved application issue number. Product
 integration still needs a durable condition reference and a mapping to the number
 the UI will eventually display. Scores are not calibrated probabilities.
 
-Retrieval includes same-site observations within seven days that were available at
+Retrieval includes same-site observations within five days that were available at
 the replay time. It excludes self/revisions of the same source, superseded records,
 and issues resolved before the new observation. It does not filter on exact category
 or proximity. The model prompt receives all eligible candidates and no truth labels.
@@ -77,16 +95,19 @@ and `git diff --check`. The full repository suite was not run.
 
 The synthetic development run at threshold 0.35 found two correct targets among
 five labeled repeats. Only three repeat targets were retrievable: one was older than
-seven days, one became available later. It also suggested one duplicate among three
+five days, one became available later. It also suggested one duplicate among three
 distinct incidents. These deliberately difficult authored examples expose lexical
 paraphrase misses and confusion between nearby locations; the small counts are
 **not field-performance estimates**. No model comparison has run yet.
 
 ## What the user needs to do next
 
-1. Tell the next agent whether to use **dev reports, production reports, or newly
-   captured test reports**, and identify a few sites and a useful date range. This
-   selection is still unanswered; access to any particular environment is not assumed.
+1. The user selected a local folder of 83 JPEG images, including known duplicates
+   and individual images. All 83 have been assessed through the existing dev
+   analyzer; 115 concerns were cached privately, with no failed calls. The user
+   will assess matcher results without supplying the known groups in advance.
+   Site identity, observation times, and cleanup history are not established by
+   this folder. Do not invent them from filenames or file modification times.
 2. Identify someone who knows the sites, or review the examples yourself, to judge
    "same ongoing issue," "different issue," or "cannot tell." Confirmed cleanup or
    resolution followed by recurrence must be labeled different.
@@ -104,7 +125,7 @@ distinct nearby issues, and resolved-then-recurring incidents.
 1. Read `AGENTS.md`, this handoff, and the evaluation guide. Confirm the harness files
    are present on the new checkout. Use the repository's Node 22+ setup and install
    dependencies if needed. Run the synthetic smoke command and focused tests below.
-2. Resolve the user's data-source choice. Inspect actual schema and access paths
+2. Use the selected image folder for the first visual experiment. Inspect actual schema and access paths
    before writing an exporter. Preserve observation time separately from analysis
    availability, and establish which events explicitly record physical resolution.
    Do not interpret the unresolved-condition index as ongoing real-world issues:
@@ -116,10 +137,14 @@ distinct nearby issues, and resolved-then-recurring incidents.
 4. Keep each incident's related observations together in development or held-out
    testing; hold out sites or later periods when possible. The harness catches some
    direct split leakage, but cannot certify independence or ground truth.
-5. Run the baseline. Export prompts and add/use an approved model runner with fixed
-   model ID/settings. There is **no automatic Bedrock or analyzer invocation** in the
-   harness today. Validate every response, preserve explicit failures, and compare
-   against the same labels. Tune prompts/thresholds on development data only.
+5. Check image retention and access, then deploy/use the implemented analyzer comparison endpoint and app runner
+   with fixed model ID/settings. Assess images without descriptions or timestamps
+   first, recording the prediction and confidence separately. Only low-confidence
+   assessments receive a second pass with metadata. Define the confidence gate on
+   development data and freeze it before held-out testing. Compare image-only and
+   gated metadata results against the same independent labels; retain the existing
+   text baseline as a useful comparator. There is **no automatic Bedrock or analyzer
+   invocation** in the harness today. Validate every response and preserve failures.
 6. Report correct-target recall, candidate recall, wrong targets, false suggestions,
    uncertainty, and reviewer disagreement, with counts and representative errors.
    Distinguish matcher failures from unavailable/out-of-window candidates. Measure
@@ -130,12 +155,21 @@ distinct nearby issues, and resolved-then-recurring incidents.
    rerunning analysis, concurrent-report reconciliation, amendment invalidation, and
    current resolution revalidation. Keep pending, failed, insufficient-evidence, and
    evaluated-negative states distinct. Preserve existing guidance behavior.
-8. Only after the text experiment identifies a need, compare image-assisted matching
-   on the same held-out cases. Check retention, media access, and derived-feature
-   treatment. Similar photos alone do not prove the same ongoing incident.
+8. Review confident image errors as well as low-confidence cases: metadata fallback
+   cannot correct confident mistakes it never sees. Check derived-feature treatment
+   and report fallback frequency, improvements, and regressions. Similar photos
+   alone do not prove the same ongoing incident. Keep text-only submissions separate
+   until their matching behavior is explicitly decided.
 
-Production integration, automatic reconciliation, persistent flags, passive GPS
-improvements, model execution, and UI behavior are **not implemented**. Avoid growing
+The isolated comparison and app shadow paths are implemented locally, with
+revision checks, response caching, lifecycle invalidation, peer reconciliation,
+and condition-level advisory references. Live comparison is **not run**: deploy
+analyzer CompareFn and provision its dedicated key first. Shadow evaluation is
+feature-gated off; bootstrap each site's five-day projection before enabling it.
+Physical resolution is never inferred from task state: the explicit resolvedAt
+projection field must be maintained by a future resolution integration. There is
+no UI, merging, guidance suppression, image-embedding stage, or GPS enhancement.
+See the execution and rollout details in [duplicate-evaluation.md](duplicate-evaluation.md). Avoid growing
 this into automatic merging or launching a new datastore before evidence warrants it.
 
 ## Commands for resuming
@@ -153,13 +187,15 @@ response imports. Dataset paths in its examples are placeholders, not saved arti
 Real reports, media, labels containing sensitive details, and model prompts/responses
 belong in an approved private storage location accessible on the next machine, not
 Git or ordinary logs. Record only sanitized summaries and reproducible configuration
-in committed artifacts. No such private storage location has been selected yet.
+in committed artifacts. Private local caches and review artifacts are in an owner-only temporary directory;
+they are not a durable cross-machine storage arrangement.
 
 Suggested opening message to the next agent:
 
 > Read `docs/duplicate-detection-handoff.md` and continue the duplicate-detection
 > experiment. The local harness is built; the next step is preparing a real or
-> deliberately captured evaluation dataset and comparing text/metadata approaches.
+> deliberately captured evaluation dataset and comparing image-first assessments
+> with metadata fallback only for low-confidence cases.
 > Help me choose the source data and review example pairs. Do the extraction,
 > formatting, and evaluation work for me. Coverage is the priority; production
 > integration and UI work are not yet validated.

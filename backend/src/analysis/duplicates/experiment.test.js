@@ -18,8 +18,8 @@ function observation(overrides = {}) {
     siteId: "site-a",
     category: "Litter",
     description: "Red bags by the blue gate",
-    observedAt: "2026-10-02T10:00:00Z",
-    availableAt: "2026-10-02T10:01:00Z",
+    observedAt: "2026-10-04T10:00:00Z",
+    availableAt: "2026-10-04T10:01:00Z",
     ...overrides,
   };
 }
@@ -41,12 +41,12 @@ describe("duplicate candidate replay", () => {
       JSON.parse(comparisonPrompt(source, candidates).user).candidates,
     ).toHaveLength(70);
   });
-  it("includes the seven-day boundary without category or GPS filters", () => {
+  it("includes the five-day boundary without category or GPS filters", () => {
     const prior = observation({ category: "Other category" });
     expect(retrieveCandidates(source, [prior])).toEqual([prior]);
     expect(
       retrieveCandidates(source, [
-        observation({ observedAt: "2026-10-02T09:59:59Z" }),
+        observation({ observedAt: "2026-10-04T09:59:59Z" }),
       ]),
     ).toEqual([]);
   });
