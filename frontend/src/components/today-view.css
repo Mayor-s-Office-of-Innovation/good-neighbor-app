@@ -95,6 +95,53 @@
   position: relative;
 }
 
+.home-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.home-actions > .btn-ink {
+  flex: 1;
+}
+.home-action-menu-wrap {
+  position: relative;
+}
+.home-action-menu-trigger {
+  width: 54px;
+  min-width: 54px;
+  padding-inline: 0;
+}
+.home-action-menu {
+  position: absolute;
+  z-index: 8;
+  inset-block-start: calc(100% + 0.5rem);
+  inset-inline-end: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lift);
+}
+.home-action-menu[hidden] {
+  display: none;
+}
+.home-action-menu button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+}
+.home-action-menu button:hover,
+.home-action-menu button:focus-visible {
+  background: var(--surface-3);
+}
+
 .home-top-actions {
   width: min(100%, var(--app-content-max-width));
   min-height: 2.75rem;

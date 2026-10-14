@@ -3,7 +3,7 @@
 *Data-model reference · [index](../README.md) · ← [decision](./adr/0002-datastore-dynamodb.md)*
 
 **Status:** Live model. This is what the app writes and reads today.
-**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status
+**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-14 for public complaints
 
 ## What this document is
 
@@ -57,9 +57,9 @@ For a worked example of one check's records as JSON, see
 2. **Staff are anonymous.** A check is attributed to the site and the device, never to a
    person. See [Identity model](#identity-model).
 3. **Photos live in S3, not DynamoDB.** Items store the S3 key. See R4.
-4. **Retention is not enforced yet.** Media is designed to expire after about 7 days
-   through an S3 lifecycle rule, but that rule is not in place. It is a pre-launch TODO.
-   Retention for checks and analysis is post-MVP. DynamoDB TTL is enabled on
+4. **Media retention is enforced by tag-scoped S3 lifecycle rules.** Registered
+   check/task media expires after 30 days, abandoned/rejected uploads after one day,
+   and complaint evidence after one year. DynamoDB TTL is enabled on
    `expiresAt` for numeric operational expiries such as upload reservations, daily
    quota counters, rate limits, and import staging. Legacy/domain rows that store an
    ISO date string in the same attribute are ignored by DynamoDB TTL and continue to
@@ -161,6 +161,8 @@ as task update events and every GSI sort key.
 | **Check header** | `SITE#<siteId>` | `CHECK#<checkId>` | status (`in_progress` → `completed`), startedAt, `flowType` (`perimeter` or `single-problem`), running `issueCount` / `maxSeverity` counters that the worker bumps. **At `complete` the header also gets:** `grade`, `summary`, `categories`, `rubricVersion`, `photoCount` / `textCount` / `evidenceKind`, `synthesizedAt`, `completedAt`. See [Scorecard on the header](#scorecard-on-the-header). |
 | **Artifact** (one photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, latitude/longitude, contentType. See [Old artifact rows](#old-artifact-rows). |
 | **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results. It is the one case a retry may overwrite, and the only item the translate worker updates in place. |
+| **Complaint header** | `SITE#<siteId>` | `COMPLAINT#<complaintId>` | `status` (`analyzing`, `ready`, or `analysis_failed`), list `label`, generated `detail`/`what`/`where`/`when`/`notes`, optional submitted description, artifact count, timestamps, and numeric one-year `expiresAt`. GSI1 uses `SITE#<siteId>#COMPLAINTS` plus `createdAt#complaintId` for newest-first listing. |
+| **Complaint artifact** | `SITE#<siteId>` | `COMPLAINT#<complaintId>#ART#<artifactId>` | Private S3 key, original name, verified content type/length, and numeric `expiresAt`. Draft rows expire after one day; submission advances them to one year and retags the object `state=complaint`. |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |
 | **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `cannotDo`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
 | Guidance current pointer | `SITE#<siteId>` | `GUIDANCE_CURRENT#<JSON [checkId, lineageId]>` | points to the current assessment for one artifact. Moved atomically on refresh. See [Guidance refresh lineage](#guidance-refresh-lineage). |

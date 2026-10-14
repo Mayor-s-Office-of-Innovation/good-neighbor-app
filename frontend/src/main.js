@@ -74,6 +74,7 @@ import "./components/location-dialog.js";
 import "./components/feedback-dialog.js";
 import "./components/perimeter-check.js";
 import "./components/problem-report.js";
+import "./components/complaint-view.js";
 import "./components/describe-instead.js";
 import "./components/site-setup.js";
 import "./components/app-toasts.js";

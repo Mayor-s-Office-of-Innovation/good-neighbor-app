@@ -13,7 +13,7 @@ flowchart LR
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
-  sqs --> worker["Lambda: worker (analyze-artifact + process-submission)"]
+  sqs --> worker["Lambda: worker (checks, complaints, and submissions)"]
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
@@ -23,6 +23,13 @@ The media bytes reach the analyzer only from the worker (base64, `store_input:fa
 they never travel through the SQS queue and are never logged. The perimeter-check
 handlers never see the bytes either — the device PUTs straight to S3 against a
 presigned URL, and the handler stores only the S3 key.
+
+Public complaints use the same private upload boundary. The app owns complaint
+authorization, lifecycle, persistence, retry, and deletion. The analyzer owns only
+structured multimodal extraction through `POST /v1/complaints:extract`. Normalized
+images are sent inline; documents are fetched by the analyzer through five-minute,
+read-only S3 URLs with strict host and byte checks, avoiding API Gateway's request-size
+ceiling. The analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
@@ -117,6 +124,18 @@ still surfaces. The client's per-item poll (`photo-analysis.js`) bounds a stuck
 analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
+
+## Public complaint flow
+
+The browser uploads up to five validated complaint files directly to S3, registers
+their metadata, and creates a Site-scoped `COMPLAINT#` header. The API immediately
+returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
+loads the evidence, calls the analyzer's complaint-extraction contract, validates the
+six required string fields, and updates the row to `ready`. After the fifth failed SQS
+delivery it records `analysis_failed`; the UI exposes an explicit retry. Confirmed
+deletion removes every S3 object before deleting DynamoDB metadata. Complaint objects
+and records carry a one-year lifecycle/TTL; unsubmitted draft uploads retain the
+existing one-day pending lifecycle.
 
 ## Site address lookup and validation
 

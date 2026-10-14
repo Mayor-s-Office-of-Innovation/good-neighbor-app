@@ -49,6 +49,7 @@ const TYPE_BY_FORMAT = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
+  heif: "image/heic",
 };
 
 /**
@@ -70,7 +71,10 @@ export async function downscaleImage(bytes, contentType) {
     });
     const metadata = await input.metadata();
     const detectedType = TYPE_BY_FORMAT[metadata.format];
-    if (!detectedType || detectedType !== contentType) {
+    const declaredMatches =
+      detectedType === contentType ||
+      (detectedType === "image/heic" && contentType === "image/heif");
+    if (!detectedType || !declaredMatches) {
       throw new Error(
         `declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
       );

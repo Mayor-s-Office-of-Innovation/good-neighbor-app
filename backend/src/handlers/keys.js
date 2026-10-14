@@ -16,6 +16,28 @@
  */
 export const sitePk = (siteId) => `SITE#${siteId}`;
 
+/** @param {string} siteId @param {string} complaintId */
+export const complaintKey = (siteId, complaintId) => ({
+  pk: sitePk(siteId),
+  sk: `COMPLAINT#${complaintId}`,
+});
+
+/** @param {string} siteId @param {string} complaintId @param {string} artifactId */
+export const complaintArtifactKey = (siteId, complaintId, artifactId) => ({
+  pk: sitePk(siteId),
+  sk: `COMPLAINT#${complaintId}#ART#${artifactId}`,
+});
+
+/** @param {string} complaintId */
+export const complaintArtifactPrefix = (complaintId) =>
+  `COMPLAINT#${complaintId}#ART#`;
+
+/** @param {string} siteId @param {string} createdAt @param {string} complaintId */
+export const complaintTimelineGsi = (siteId, createdAt, complaintId) => ({
+  gsi1pk: `${sitePk(siteId)}#COMPLAINTS`,
+  gsi1sk: `${createdAt}#${complaintId}`,
+});
+
 /**
  * Device identity item — one per registered tablet (AP4 / identity model).
  * @param {string} siteId

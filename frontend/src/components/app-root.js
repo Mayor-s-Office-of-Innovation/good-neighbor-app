@@ -55,6 +55,7 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/complaints", "complaint-view"],
   ["/site-admin/edit", "site-admin-edit"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],

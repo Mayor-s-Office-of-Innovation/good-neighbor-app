@@ -406,17 +406,17 @@ resource "aws_s3_bucket_logging" "uploads" {
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
-  # Retention policy: every photo expires 30 days after upload. The two tag
-  # rules below only shorten that for uploads the app never registered
-  # (`state=pending`) or rejected during registration/analysis
-  # (`state=rejected`). S3 applies the shortest matching expiration, so this
-  # rule never extends either of those windows.
+  # Registered check/task media expires after 30 days. This is tag-scoped so
+  # complaint evidence can retain its separate one-year lifecycle below.
   rule {
-    id     = "expire-incomplete-uploads"
+    id     = "expire-registered-media"
     status = "Enabled"
 
     filter {
-      prefix = ""
+      tag {
+        key   = "state"
+        value = "registered"
+      }
     }
 
     expiration {
@@ -429,6 +429,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     # Versioning is suspended, so this only drains versions created before the
     # suspension. It can be removed once none remain.
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  rule {
+    id     = "expire-active-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "active"
+      }
+    }
+
+    expiration {
+      days = 30
+    }
+
     noncurrent_version_expiration {
       noncurrent_days = 7
     }
@@ -486,6 +506,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
+  rule {
+    id     = "expire-complaint-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "complaint"
+      }
+    }
+
+    expiration {
+      days = 365
     }
 
     noncurrent_version_expiration {

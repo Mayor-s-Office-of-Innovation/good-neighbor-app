@@ -19,6 +19,7 @@ import { handler as reconcileSiteRevocation } from "../src/workers/reconcile-sit
 import { handler as dispatchOutbox } from "../src/workers/dispatch-revocation-outbox.js";
 import { handler as generateComplianceLetter } from "../src/workers/generate-compliance-letter.js";
 import { handler as translateArtifact } from "../src/workers/translate-artifact.js";
+import { handler as analyzeComplaint } from "../src/workers/analyze-complaint.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../src/analysis/translate-enqueue.js";
 
 const sqs = new SQSClient({});
@@ -68,6 +69,7 @@ function pickHandler(body) {
     if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
       return translateArtifact;
     }
+    if (msg?.type === "analyze_complaint") return analyzeComplaint;
     // Analyze messages carry an artifactId plus either an S3 key (photo) or text
     // (description). The demo /submissions flow carries neither.
     if (

@@ -24,6 +24,17 @@ import {
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../src/handlers/complaints.js";
+import {
   get311RequestDetail,
   get311RequestDetails,
   listTasks,
@@ -263,6 +274,31 @@ const routes = [
     presignMedia,
   ),
   route("GET", "/v1/checks/{checkId}", getCheck),
+  route("GET", "/v1/complaints", listComplaints),
+  route("POST", "/v1/complaints", createComplaint),
+  route("GET", "/v1/complaints/{complaintId}", getComplaint),
+  route("DELETE", "/v1/complaints/{complaintId}", deleteComplaint),
+  route("POST", "/v1/complaints/{complaintId}/analysis:retry", retryComplaint),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts:presign",
+    presignComplaintArtifact,
+  ),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts",
+    registerComplaintArtifact,
+  ),
+  route(
+    "DELETE",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}",
+    deleteComplaintArtifact,
+  ),
+  route(
+    "GET",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}/media",
+    presignComplaintMedia,
+  ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
