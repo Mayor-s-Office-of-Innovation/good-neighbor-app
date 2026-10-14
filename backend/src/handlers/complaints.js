@@ -4,11 +4,12 @@ import { TextDecoder } from "node:util";
 import {
   DeleteCommand,
   GetCommand,
-  PutCommand,
   QueryCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
+import { PDFDocument } from "pdf-lib";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -29,6 +30,15 @@ import {
   GSI1_NAME,
   sitePk,
 } from "./keys.js";
+import {
+  MAX_DEVICE_DAILY_ARTIFACTS,
+  MAX_DEVICE_DAILY_BYTES,
+  MAX_GLOBAL_DAILY_ARTIFACTS,
+  MAX_GLOBAL_DAILY_BYTES,
+  MAX_SITE_DAILY_ARTIFACTS,
+  MAX_SITE_DAILY_BYTES,
+  quotaUpdate,
+} from "./artifacts.js";
 
 const sqs = new SQSClient({});
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -44,8 +54,9 @@ const TYPES = new Set([
   "application/pdf",
   "text/plain",
   "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const mediaKey = (siteId, complaintId, artifactId) =>
   `complaints/${siteId}/${complaintId}/${artifactId}`;
@@ -60,17 +71,7 @@ const withoutFields = (value, omitted) =>
     Object.entries(value).filter(([key]) => !omitted.includes(key)),
   );
 
-const safeDocx = (bytes) => {
-  const directory = bytes.toString("latin1");
-  if (
-    !directory.includes("[Content_Types].xml") ||
-    !directory.includes("word/document.xml")
-  )
-    return false;
-  return !/(vbaProject\.bin|externalLinks\/|embeddings\/)/i.test(directory);
-};
-
-const validSignature = (bytes, type) => {
+const validSignature = async (bytes, type) => {
   const hex = bytes.subarray(0, 12).toString("hex");
   if (type === "image/jpeg") return hex.startsWith("ffd8ff");
   if (type === "image/png") return hex.startsWith("89504e470d0a1a0a");
@@ -84,14 +85,13 @@ const validSignature = (bytes, type) => {
     return /ftyp(?:heic|heix|hevc|hevx|mif1|msf1)/.test(brands);
   }
   if (type === "application/pdf") {
-    const source = bytes.toString("latin1");
-    const pages = source.match(/\/Type\s*\/Page\b/g)?.length || 0;
-    return (
-      source.startsWith("%PDF-") &&
-      pages > 0 &&
-      pages <= 10 &&
-      !/\/Encrypt\b/.test(source)
-    );
+    if (!bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) return false;
+    const document = await PDFDocument.load(bytes, {
+      ignoreEncryption: false,
+      updateMetadata: false,
+    });
+    const pages = document.getPageCount();
+    return pages > 0 && pages <= 10;
   }
   if (type === "text/plain")
     return (
@@ -99,8 +99,6 @@ const validSignature = (bytes, type) => {
       new TextDecoder("utf-8", { fatal: true }).decode(bytes).length > 0
     );
   if (type === "application/msword") return hex.startsWith("d0cf11e0a1b11ae1");
-  if (type.includes("officedocument"))
-    return hex.startsWith("504b0304") && safeDocx(bytes);
   return false;
 };
 
@@ -114,7 +112,7 @@ export async function presignComplaintArtifact(event) {
     return jsonResponse(400, { error: "invalid_json" });
   }
   if (
-    !complaintId ||
+    !UUID.test(complaintId || "") ||
     typeof body?.contentType !== "string" ||
     !TYPES.has(body.contentType)
   )
@@ -127,6 +125,90 @@ export async function presignComplaintArtifact(event) {
     return jsonResponse(400, { error: "invalid_content_length" });
   const artifactId = randomUUID();
   const s3Key = mediaKey(siteId, complaintId, artifactId);
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const expiresAt = Math.floor(now.getTime() / 1000) + 86400;
+  const bytes = Number(body.contentLength);
+  const tableName = getConfig().dynamoTable;
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: complaintKey(siteId, complaintId),
+              UpdateExpression:
+                "SET #type = if_not_exists(#type, :type), complaintId = if_not_exists(complaintId, :complaintId), #status = if_not_exists(#status, :draft), createdAt = if_not_exists(createdAt, :now), createdBy = if_not_exists(createdBy, :actor), expiresAt = :expiresAt",
+              ConditionExpression:
+                "attribute_not_exists(pk) OR #status = :draft",
+              ExpressionAttributeNames: {
+                "#type": "type",
+                "#status": "status",
+              },
+              ExpressionAttributeValues: {
+                ":type": "complaint",
+                ":complaintId": complaintId,
+                ":draft": "draft",
+                ":now": now.toISOString(),
+                ":actor": deriveActorId(event),
+                ":expiresAt": expiresAt,
+              },
+            },
+          },
+          quotaUpdate({
+            tableName,
+            key: {
+              pk: sitePk(siteId),
+              sk: `MEDIA_QUOTA#${day}#COMPLAINT#${complaintId}`,
+            },
+            bytes,
+            maxBytes: MAX_TOTAL_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_FILES,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: {
+              pk: sitePk(siteId),
+              sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
+            },
+            bytes,
+            maxBytes: MAX_DEVICE_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: { pk: sitePk(siteId), sk: `MEDIA_QUOTA#${day}#SITE` },
+            bytes,
+            maxBytes: MAX_SITE_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_SITE_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+          quotaUpdate({
+            tableName,
+            key: { pk: `MEDIA_QUOTA#${day}`, sk: "#GLOBAL" },
+            bytes,
+            maxBytes: MAX_GLOBAL_DAILY_BYTES,
+            countField: "reservedCount",
+            maxCount: MAX_GLOBAL_DAILY_ARTIFACTS,
+            expiresAt,
+          }),
+        ],
+      }),
+    );
+  } catch (error) {
+    if (
+      error?.name === "TransactionCanceledException" ||
+      error?.name === "ConditionalCheckFailedException"
+    )
+      return jsonResponse(429, { error: "media_quota_exceeded" });
+    throw error;
+  }
   const uploadUrl = await presignPut({
     bucket: getConfig().uploadBucket,
     key: s3Key,
@@ -155,7 +237,8 @@ export async function registerComplaintArtifact(event) {
   }
   const expected = mediaKey(siteId, complaintId, body?.artifactId);
   if (
-    !complaintId ||
+    !UUID.test(complaintId || "") ||
+    !UUID.test(body?.artifactId || "") ||
     body?.s3Key !== expected ||
     !TYPES.has(body?.contentType) ||
     typeof body?.name !== "string"
@@ -177,7 +260,7 @@ export async function registerComplaintArtifact(event) {
   });
   let signatureValid = false;
   try {
-    signatureValid = validSignature(object.bytes, body.contentType);
+    signatureValid = await validSignature(object.bytes, body.contentType);
   } catch {
     signatureValid = false;
   }
@@ -194,13 +277,37 @@ export async function registerComplaintArtifact(event) {
     createdAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 86400,
   };
-  await ddb.send(
-    new PutCommand({
-      TableName: getConfig().dynamoTable,
-      Item: item,
-      ConditionExpression: "attribute_not_exists(sk)",
-    }),
-  );
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: getConfig().dynamoTable,
+              Key: complaintKey(siteId, complaintId),
+              ConditionExpression: "#status = :draft",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: { ":draft": "draft" },
+            },
+          },
+          {
+            Put: {
+              TableName: getConfig().dynamoTable,
+              Item: item,
+              ConditionExpression: "attribute_not_exists(sk)",
+            },
+          },
+        ],
+      }),
+    );
+  } catch (error) {
+    if (
+      error?.name === "TransactionCanceledException" ||
+      error?.name === "ConditionalCheckFailedException"
+    )
+      return jsonResponse(409, { error: "complaint_not_mutable" });
+    throw error;
+  }
   return jsonResponse(201, {
     artifactId: body.artifactId,
     status: "registered",
@@ -232,7 +339,7 @@ export async function createComplaint(event) {
   const complaintId = body?.complaintId;
   const description =
     typeof body?.description === "string" ? body.description.trim() : "";
-  if (!complaintId || description.length > MAX_TEXT)
+  if (!UUID.test(complaintId || "") || description.length > MAX_TEXT)
     return jsonResponse(400, { error: "invalid_complaint" });
   const artifacts = await readArtifacts(siteId, complaintId);
   if (!description && !artifacts.length)
@@ -243,6 +350,7 @@ export async function createComplaint(event) {
   )
     return jsonResponse(400, { error: "complaint_media_limit" });
   const createdAt = new Date().toISOString();
+  const analysisAttemptId = randomUUID();
   const item = {
     ...complaintKey(siteId, complaintId),
     ...complaintTimelineGsi(siteId, createdAt, complaintId),
@@ -254,18 +362,48 @@ export async function createComplaint(event) {
     label: "New complaint - analyzing",
     description,
     artifactCount: artifacts.length,
+    analysisAttemptId,
     expiresAt: Math.floor(Date.now() / 1000) + 365 * 86400,
   };
   try {
-    await ddb.send(
-      new PutCommand({
+    const result = await ddb.send(
+      new UpdateCommand({
         TableName: getConfig().dynamoTable,
-        Item: item,
-        ConditionExpression: "attribute_not_exists(sk)",
+        Key: complaintKey(siteId, complaintId),
+        UpdateExpression:
+          "SET gsi1pk = :gsi1pk, gsi1sk = :gsi1sk, #type = :type, complaintId = :complaintId, createdAt = if_not_exists(createdAt, :createdAt), createdBy = if_not_exists(createdBy, :createdBy), #status = :analyzing, label = :label, description = :description, artifactCount = :artifactCount, analysisAttemptId = :attempt, expiresAt = :expiresAt",
+        ConditionExpression: "attribute_not_exists(pk) OR #status = :draft",
+        ExpressionAttributeNames: { "#type": "type", "#status": "status" },
+        ExpressionAttributeValues: {
+          ":gsi1pk": item.gsi1pk,
+          ":gsi1sk": item.gsi1sk,
+          ":type": item.type,
+          ":complaintId": complaintId,
+          ":createdAt": createdAt,
+          ":createdBy": item.createdBy,
+          ":draft": "draft",
+          ":analyzing": "analyzing",
+          ":label": item.label,
+          ":description": description,
+          ":artifactCount": artifacts.length,
+          ":attempt": analysisAttemptId,
+          ":expiresAt": item.expiresAt,
+        },
+        ReturnValues: "ALL_NEW",
       }),
     );
+    Object.assign(item, result.Attributes || {});
   } catch (error) {
     if (error?.name !== "ConditionalCheckFailedException") throw error;
+    const existing = await ddb.send(
+      new GetCommand({
+        TableName: getConfig().dynamoTable,
+        Key: complaintKey(siteId, complaintId),
+        ConsistentRead: true,
+      }),
+    );
+    if (!existing.Item) throw error;
+    return jsonResponse(202, { complaint: existing.Item });
   }
   const retentionExpiresAt = Math.floor(Date.now() / 1000) + 365 * 86400;
   await Promise.all(
@@ -293,6 +431,7 @@ export async function createComplaint(event) {
           type: "analyze_complaint",
           siteId,
           complaintId,
+          analysisAttemptId,
         }),
       }),
     );
@@ -302,10 +441,14 @@ export async function createComplaint(event) {
         TableName: getConfig().dynamoTable,
         Key: complaintKey(siteId, complaintId),
         UpdateExpression: "SET #status = :failed, label = :label",
+        ConditionExpression:
+          "#status = :analyzing AND analysisAttemptId = :attempt",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":failed": "analysis_failed",
+          ":analyzing": "analyzing",
           ":label": "Complaint log failed",
+          ":attempt": analysisAttemptId,
         },
       }),
     );
@@ -335,6 +478,8 @@ export async function listComplaints(event) {
 export async function getComplaint(event) {
   const siteId = deriveSiteId(event);
   const { complaintId } = params(event);
+  if (!UUID.test(complaintId || ""))
+    return jsonResponse(400, { error: "invalid_complaint" });
   const [header, artifacts] = await Promise.all([
     ddb.send(
       new GetCommand({
@@ -356,18 +501,23 @@ export async function getComplaint(event) {
 export async function retryComplaint(event) {
   const siteId = deriveSiteId(event);
   const { complaintId } = params(event);
+  if (!UUID.test(complaintId || ""))
+    return jsonResponse(400, { error: "invalid_complaint" });
+  const analysisAttemptId = randomUUID();
   try {
     await ddb.send(
       new UpdateCommand({
         TableName: getConfig().dynamoTable,
         Key: complaintKey(siteId, complaintId),
-        UpdateExpression: "SET #status = :analyzing, label = :label",
+        UpdateExpression:
+          "SET #status = :analyzing, label = :label, analysisAttemptId = :attempt",
         ConditionExpression: "#status = :failed",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":analyzing": "analyzing",
           ":failed": "analysis_failed",
           ":label": "New complaint - analyzing",
+          ":attempt": analysisAttemptId,
         },
       }),
     );
@@ -376,22 +526,50 @@ export async function retryComplaint(event) {
       return jsonResponse(409, { error: "complaint_not_retryable" });
     throw error;
   }
-  await sqs.send(
-    new SendMessageCommand({
-      QueueUrl: getConfig().queueUrl,
-      MessageBody: JSON.stringify({
-        type: "analyze_complaint",
-        siteId,
-        complaintId,
+  try {
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: getConfig().queueUrl,
+        MessageBody: JSON.stringify({
+          type: "analyze_complaint",
+          siteId,
+          complaintId,
+          analysisAttemptId,
+        }),
       }),
-    }),
-  );
+    );
+  } catch (error) {
+    try {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: getConfig().dynamoTable,
+          Key: complaintKey(siteId, complaintId),
+          UpdateExpression: "SET #status = :failed, label = :label",
+          ConditionExpression:
+            "#status = :analyzing AND analysisAttemptId = :attempt",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":failed": "analysis_failed",
+            ":analyzing": "analyzing",
+            ":label": "Complaint log failed",
+            ":attempt": analysisAttemptId,
+          },
+        }),
+      );
+    } catch (rollbackError) {
+      if (rollbackError?.name !== "ConditionalCheckFailedException")
+        throw rollbackError;
+    }
+    throw error;
+  }
   return jsonResponse(202, { status: "analyzing" });
 }
 
 export async function deleteComplaint(event) {
   const siteId = deriveSiteId(event);
   const { complaintId } = params(event);
+  if (!UUID.test(complaintId || ""))
+    return jsonResponse(400, { error: "invalid_complaint" });
   const header = await ddb.send(
     new GetCommand({
       TableName: getConfig().dynamoTable,
@@ -401,6 +579,28 @@ export async function deleteComplaint(event) {
   if (!header.Item) return jsonResponse(404, { error: "complaint_not_found" });
   if (header.Item.status === "analyzing")
     return jsonResponse(409, { error: "complaint_analyzing" });
+  if (header.Item.status !== "deleting") {
+    try {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: getConfig().dynamoTable,
+          Key: complaintKey(siteId, complaintId),
+          UpdateExpression: "SET #status = :deleting",
+          ConditionExpression: "#status IN (:ready, :failed)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":deleting": "deleting",
+            ":ready": "ready",
+            ":failed": "analysis_failed",
+          },
+        }),
+      );
+    } catch (error) {
+      if (error?.name === "ConditionalCheckFailedException")
+        return jsonResponse(409, { error: "complaint_not_deletable" });
+      throw error;
+    }
+  }
   const artifacts = await readArtifacts(siteId, complaintId);
   await Promise.all(
     artifacts.map((a) =>
@@ -420,6 +620,9 @@ export async function deleteComplaint(event) {
       new DeleteCommand({
         TableName: getConfig().dynamoTable,
         Key: complaintKey(siteId, complaintId),
+        ConditionExpression: "#status = :deleting",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":deleting": "deleting" },
       }),
     ),
   ]);
@@ -429,30 +632,72 @@ export async function deleteComplaint(event) {
 export async function deleteComplaintArtifact(event) {
   const siteId = deriveSiteId(event);
   const { complaintId, artifactId } = params(event);
+  if (!UUID.test(complaintId || "") || !UUID.test(artifactId || ""))
+    return jsonResponse(400, { error: "invalid_artifact" });
   const key = complaintArtifactKey(siteId, complaintId, artifactId);
   const item = await ddb.send(
     new GetCommand({ TableName: getConfig().dynamoTable, Key: key }),
   );
   if (!item.Item) return jsonResponse(404, { error: "artifact_not_found" });
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            ConditionCheck: {
+              TableName: getConfig().dynamoTable,
+              Key: complaintKey(siteId, complaintId),
+              ConditionExpression: "#status = :draft",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: { ":draft": "draft" },
+            },
+          },
+          {
+            Delete: {
+              TableName: getConfig().dynamoTable,
+              Key: key,
+              ConditionExpression: "attribute_exists(sk)",
+            },
+          },
+        ],
+      }),
+    );
+  } catch (error) {
+    if (
+      error?.name === "TransactionCanceledException" ||
+      error?.name === "ConditionalCheckFailedException"
+    )
+      return jsonResponse(409, { error: "complaint_not_mutable" });
+    throw error;
+  }
   await deleteObject({
     bucket: getConfig().uploadBucket,
     key: item.Item.s3Key,
   });
-  await ddb.send(
-    new DeleteCommand({ TableName: getConfig().dynamoTable, Key: key }),
-  );
   return jsonResponse(200, { status: "deleted" });
 }
 
 export async function presignComplaintMedia(event) {
   const siteId = deriveSiteId(event);
   const { complaintId, artifactId } = params(event);
-  const item = await ddb.send(
-    new GetCommand({
-      TableName: getConfig().dynamoTable,
-      Key: complaintArtifactKey(siteId, complaintId, artifactId),
-    }),
-  );
+  if (!UUID.test(complaintId || "") || !UUID.test(artifactId || ""))
+    return jsonResponse(400, { error: "invalid_artifact" });
+  const [header, item] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: getConfig().dynamoTable,
+        Key: complaintKey(siteId, complaintId),
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: getConfig().dynamoTable,
+        Key: complaintArtifactKey(siteId, complaintId, artifactId),
+      }),
+    ),
+  ]);
+  if (!header.Item || header.Item.status === "deleting")
+    return jsonResponse(404, { error: "complaint_not_found" });
   if (!item.Item) return jsonResponse(404, { error: "artifact_not_found" });
   return jsonResponse(200, {
     downloadUrl: await presignGet({

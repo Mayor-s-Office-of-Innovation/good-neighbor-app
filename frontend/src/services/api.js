@@ -553,19 +553,19 @@ export function deleteComplaint(complaintId) {
   return request("DELETE", `/v1/complaints/${encodeURIComponent(complaintId)}`);
 }
 
-export function presignComplaintArtifact(complaintId, body) {
+export function presignComplaintArtifact(complaintId, body, signal) {
   return request(
     "POST",
     `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts:presign`,
-    { body },
+    { body, signal },
   );
 }
 
-export function registerComplaintArtifact(complaintId, body) {
+export function registerComplaintArtifact(complaintId, body, signal) {
   return request(
     "POST",
     `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts`,
-    { body },
+    { body, signal },
   );
 }
 
@@ -592,6 +592,10 @@ export function putMediaWithProgress(
   signal,
 ) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl);
     Object.entries(uploadHeaders).forEach(([name, value]) =>

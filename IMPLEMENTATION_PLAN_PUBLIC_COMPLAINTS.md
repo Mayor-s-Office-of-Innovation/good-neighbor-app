@@ -25,7 +25,7 @@ This plan does **not** add issue linking, complaint editing, maintenance logging
 - The overflow item uses **View or log public complaints** (plural).
 - **Log a maintenance action** is not shown.
 - A complaint may contain both a typed description and uploaded files; all supplied material is analyzed together.
-- The v1 upload set is JPEG, PNG, WebP, HEIC, PDF, TXT, DOC, and DOCX. The app verifies signatures/structure before registration, normalizes images, rejects encrypted or over-ten-page PDFs and active-content DOCX packages, and sends document bytes only through Bedrock's managed document input boundary.
+- The v1 upload set is JPEG, PNG, WebP, HEIC, PDF, TXT, and DOC. DOCX is explicitly deferred. The app verifies signatures/structure before registration, normalizes images, rejects encrypted or over-ten-page PDFs, and sends document bytes only through Bedrock's managed document input boundary.
 - Upload limits are 10 MiB per file, 25 MiB total, five files per complaint, and ten pages per PDF.
 - **Log complaint** enables only after every selected file is server-registered and validated. This guarantees the analysis job references complete, trusted evidence.
 - Users may remove completed uploads before submission. Navigating away during an active upload requires confirmation.
@@ -33,7 +33,7 @@ This plan does **not** add issue linking, complaint editing, maintenance logging
 - Delete uses a confirmation modal, has no undo period, and physically deletes uploaded source files after confirmation.
 - Ready and failed complaints may be deleted; analyzing complaints remain non-deletable.
 - Complaint detail displays the generated `detail` field and uploaded files, but not separate `what`, `where`, `when`, or `notes` sections.
-- Images preview in-app. PDF, TXT, DOC, and DOCX source files open/download through short-lived signed links.
+- Images preview in-app. PDF, TXT, and DOC source files open/download through short-lived signed links.
 - Complaint source files and records that are not manually deleted are retained for one year, then physically expired/deleted under a complaint-specific lifecycle and record-retention process.
 - Complaints are visible to every device authorized for the Site, including Provider Managers operating in that Site context.
 - The `street-conditions-analysis` service will be updated to own the new complaint-extraction operation.
@@ -149,14 +149,14 @@ Implementation spans two repositories. Keep their changes independently reviewab
 - Device-authenticated complaint APIs, Site-scoped DynamoDB model, presigned S3 upload/read/delete behavior, physical file deletion, pagination, idempotency, and validation.
 - Complaint SQS message/outbox, worker orchestration, retries, terminal failure persistence, polling contract, metrics, alarms, Terraform, and operational documentation.
 - Analyzer client call and strict validation of the response. This repository owns the app-facing canonical complaint record and never delegates authorization or persistence decisions to the analyzer.
-- Image normalization may reuse the existing worker path. Add safe type-specific validation before analyzer submission as defense in depth: HEIC decode validation; PDF structure, encryption, and page limits; UTF-8/plain-text validation; DOCX ZIP/package and decompression limits; and a proven legacy DOC parser/converter boundary. The analyzer repeats the relevant checks.
+- Image normalization may reuse the existing worker path. Add safe type-specific validation before analyzer submission as defense in depth: HEIC decode validation; PDF structure, encryption, and page limits; UTF-8/plain-text validation; and a proven legacy DOC parser/converter boundary. The analyzer repeats the relevant checks.
 - Add complaint-specific one-year retention behavior for both S3 evidence and DynamoDB records. Manual confirmed deletion remains immediate and does not wait for lifecycle expiry.
 
 ### Changes in `street-conditions-analysis`
 
 - Add a new authenticated, versioned complaint-extraction operation/analysis kind; do not overload the existing street-condition assessment schema.
-- Accept optional description text plus multiple supported media parts in one request: JPEG, PNG, WebP, HEIC, PDF, TXT, DOC, and DOCX.
-- Safely validate and preprocess documents: verify signatures/structures, reject encrypted or malformed inputs, enforce byte/page/decompression limits, extract bounded text and/or render bounded pages, and strip or ignore active content, macros, embedded objects, and external references. HEIC must be decoded to a supported normalized image. DOCX must be treated as an untrusted ZIP/package. Legacy DOC requires a sandboxed, maintained conversion/parser path; if the feasibility spike cannot establish one, return a documented `unsupported_media_type` rather than processing it unsafely.
+- Accept optional description text plus multiple supported media parts in one request: JPEG, PNG, WebP, HEIC, PDF, TXT, and DOC.
+- Safely validate and preprocess documents: verify signatures/structures, reject encrypted or malformed inputs, enforce byte/page limits, extract bounded text and/or render bounded pages, and strip or ignore active content, macros, embedded objects, and external references. HEIC must be decoded to a supported normalized image. Legacy DOC requires a sandboxed, maintained conversion/parser path; if the feasibility spike cannot establish one, return a documented `unsupported_media_type` rather than processing it unsafely. DOCX remains out of scope.
 - Combine the description and every accepted file into one constrained Bedrock request so the result reflects all supplied material.
 - Own model selection, prompt construction, multimodal formatting, and first-pass JSON-schema enforcement. Enforce `store_input:false` and content-free logging.
 - Return exactly the versioned `label`, `detail`, `what`, `where`, `when`, and `notes` contract, using empty strings for facts not established by the evidence.
@@ -166,14 +166,14 @@ Implementation spans two repositories. Keep their changes independently reviewab
 
 1. Agree and fixture the request/response schema, authentication, approved format matrix, 10 MiB/file + 25 MiB/complaint + five-file + ten-PDF-page limits, error taxonomy, timeout budget, and retryability before either side implements against assumptions.
 2. Land/deploy the analyzer capability first or behind a backward-compatible versioned endpoint.
-3. Point the app dev environment at that deployed capability and run mixed text + image + HEIC + PDF + TXT + DOC/DOCX integration tests for every format proven safe in Phase 0.
+3. Point the app dev environment at that deployed capability and run mixed text + image + HEIC + PDF + TXT + DOC integration tests for every format proven safe in Phase 0.
 4. Keep the public complaint entry point feature-flagged/off until both repositories and their operational alerts are deployed.
 
 ## 5. Phased implementation
 
 ### Phase 0 — decisions, contracts, and design acceptance
 
-1. Run a focused feasibility spike for HEIC, DOC, and DOCX preprocessing in `street-conditions-analysis`, with special attention to a sandboxed and maintained legacy DOC conversion path. Confirm the exact libraries/runtime packaging and resource limits before enabling those MIME types.
+1. Run a focused feasibility spike for HEIC and DOC preprocessing in `street-conditions-analysis`, with special attention to a sandboxed and maintained legacy DOC conversion path. Confirm the exact libraries/runtime packaging and resource limits before enabling those MIME types. DOCX is deferred.
 2. Finalize the cross-repository analyzer contract and all format-specific constraints.
 3. Capture the referenced Figma frames as implementation acceptance references. The Figma canvas did not render reliably in the current browser session, so exact measurements must be rechecked before coding; repository tokens and `docs/frontend-design-system.md` remain the implementation source of truth.
 4. Add an ADR only if the analyzer ownership decision or complaint retention policy is considered a durable architectural decision. Track the execution plan in the issue tracker; remove this working file after the work is complete, per `docs/README.md`.
@@ -208,7 +208,7 @@ Implementation spans two repositories. Keep their changes independently reviewab
 2. Render label, localized timestamp, explicit status text, and an icon-only trash button with a translated accessible label. The whole ready row navigates to detail without nesting interactive controls; the delete button is a separate sibling action.
 3. Hide deletion while analyzing. For `analysis_failed`, render **Complaint log failed** with both a **Retry** CTA and the confirmed delete action.
 4. Add empty, loading, paginating, error, and retry states.
-5. Build detail with title, timestamp, the generated `detail` field, and evidence links/previews. Show supported images in-app; open/download PDF, TXT, DOC, and DOCX through short-lived signed links. Store the other structured fields but do not display them. Reserve the future linked-issue area without rendering empty chrome.
+5. Build detail with title, timestamp, the generated `detail` field, and evidence links/previews. Show supported images in-app; open/download PDF, TXT, and DOC through short-lived signed links. Store the other structured fields but do not display them. Reserve the future linked-issue area without rendering empty chrome.
 
 **Verification:** component/service tests, timestamps only through `i18n/dates.js`, screen-reader names, delete focus behavior, signed-media expiry recovery, empty/long/localized content, and mobile layouts.
 
@@ -218,7 +218,7 @@ Implementation spans two repositories. Keep their changes independently reviewab
 2. Use a visually styled `<label>`/native `<input type="file" multiple>` for the plus action so browser/OS file selection remains standard.
 3. Add per-file rows with type icon, filename, human-readable size/status, progress bar, and an accessible cancel/remove button.
 4. Use `XMLHttpRequest.upload` (or another platform API that exposes upload progress) for real byte progress; `fetch` cannot currently provide portable request-upload progress. Abort the request when cancel is selected and clean up an unregistered reservation through expiration or an explicit cancel endpoint if quotas require immediate release.
-5. Extend backend validation and media normalization for JPEG, PNG, WebP, HEIC, PDF, TXT, DOC, and DOCX, gated by the Phase 0 feasibility results. Do not infer support from file extensions; validate declared type, byte signature, decoded structure/page count, archive expansion, size, encryption status, and safe downstream conversion. Merely widening the input `accept` attribute or MIME allowlist is insufficient.
+5. Extend backend validation and media normalization for JPEG, PNG, WebP, HEIC, PDF, TXT, and DOC, gated by the Phase 0 feasibility results. Do not infer support from file extensions; validate declared type, byte signature, decoded structure/page count, size, encryption status, and safe downstream conversion. Merely widening the input `accept` attribute or MIME allowlist is insufficient. DOCX remains deferred.
 6. Add **Describe instead** as a routed text view using `wa-textarea`, a product-approved maximum (proposal: 4,000 characters to match existing analyzer text bounds), remaining-count/help text, and the existing keyboard-viewport utilities so the control and submit action remain visible above mobile keyboards.
 7. Enable **Log complaint** only after every selected file is fully uploaded, server-registered, and validated, or a trimmed description meets the minimum with no pending/failed selected files. Disable it during submission and prevent double submit.
 8. Allow removal of registered uploads before submission, including backend cleanup of their reserved objects/metadata. Confirm before leaving while an upload is active.
@@ -254,15 +254,15 @@ Implementation spans two repositories. Keep their changes independently reviewab
 - **Home:** primary label is correct; overflow works by pointer, keyboard, and screen reader; single issue still launches; maintenance is absent.
 - **List:** empty/populated/loading/error/pagination; newest first; analyzing row has no delete control; ready title updates without duplication; terminal failure reads **Complaint log failed** and exposes **Retry**.
 - **Entry:** upload-only, text-only, and mixed text/files; disabled/enabled submit rules; double-click and reload safety; all evidence reaches one analysis request.
-- **Files:** JPEG, PNG, WebP, HEIC, PDF, TXT, DOC, and DOCX; invalid/spoofed signatures, malformed/encrypted/over-page-limit PDF, invalid text encoding, HEIC decode failure, DOCX archive bombs/active content, malformed legacy DOC, oversize, excess count, cancellation, retry, expired presign, and partial batch failure.
+- **Files:** JPEG, PNG, WebP, HEIC, PDF, TXT, and DOC; invalid/spoofed signatures, malformed/encrypted/over-page-limit PDF, invalid text encoding, HEIC decode failure, malformed legacy DOC, oversize, excess count, cancellation, retry, expired presign, and partial batch failure.
 - **Analysis:** success, transient retry, permanent failure, invalid JSON/schema, empty extracted fields, slow response, duplicate SQS delivery, and DLQ recovery.
-- **Detail/media:** Site isolation across every authorized Site device, expired signed URL refresh, in-app image previews, signed PDF/TXT/DOC/DOCX open/download behavior, only `detail` displayed from the structured result, long translated labels/details, and missing evidence.
+- **Detail/media:** Site isolation across every authorized Site device, expired signed URL refresh, in-app image previews, signed PDF/TXT/DOC open/download behavior, only `detail` displayed from the structured result, long translated labels/details, and missing evidence.
 - **Delete:** mandatory confirmation, no undo, analyzing/ready/failed availability policy, repeat request, concurrent detail read, verified physical S3 deletion, cleanup failure, and post-delete back navigation.
 - **Quality gates:** all user-visible strings localized, no fixed locale outside date helpers, no raw colors, 44px targets, WCAG 2.2 AA, reduced motion, no new dependency without justification, and no media/content in logs.
 
 ## 7. Known risks and mitigations
 
-- **HEIC, PDF, TXT, DOC, and DOCX are not supported by the current check uploader.** Each requires an explicit validation and preprocessing path. Legacy DOC is the highest-risk format because it needs a maintained sandboxed binary parser/converter; if Phase 0 cannot establish a safe path, DOC alone must remain disabled and the constraint must be reported rather than weakening the boundary.
+- **HEIC, PDF, TXT, and DOC are not supported by the current check uploader.** Each requires an explicit validation and preprocessing path. Legacy DOC is the highest-risk format because it needs a maintained sandboxed binary parser/converter; if Phase 0 cannot establish a safe path, DOC alone must remain disabled and the constraint must be reported rather than weakening the boundary. DOCX is deferred.
 - **A list row can remain analyzing after terminal failure.** Persist a terminal failure state and provide bounded retry/operations visibility.
 - **SQS enqueue after DynamoDB write can fail.** Prefer a durable outbox pattern or equivalent reconciliation so persistence and work scheduling cannot drift.
 - **Deletion spans DynamoDB and S3.** After confirmation, use an idempotent deletion state/lease, physically delete every S3 object, verify the API result, and only then remove final metadata. If cleanup fails, keep enough protected metadata to retry and report failure; do not show a false success.
@@ -272,7 +272,13 @@ Implementation spans two repositories. Keep their changes independently reviewab
 
 ## 8. Open implementation gate
 
-There are no remaining product questions. Phase 0 must verify a safe, deployable preprocessing path for HEIC, DOC, and DOCX—especially legacy DOC—and confirm the approved limits against the analyzer/Bedrock payload budget. This is a technical feasibility gate, not permission to silently drop formats: if a format cannot be supported safely, stop and return the evidence and options for product direction.
+There are no remaining product questions. Phase 0 must verify a safe, deployable preprocessing path for HEIC and DOC—especially legacy DOC—and confirm the approved limits against the analyzer/Bedrock payload budget. DOCX is deferred. This is a technical feasibility gate, not permission to silently drop other formats: if a format cannot be supported safely, stop and return the evidence and options for product direction.
+
+### Explicit post-MVP follow-ups
+
+- [good-neighbor-app #487](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/487): add opaque cursor pagination to the complaints API and a corresponding load-more/infinite-list interaction before any site approaches DynamoDB's 1 MiB query-page limit.
+- [good-neighbor-app #486](https://github.com/Mayor-s-Office-of-Innovation/good-neighbor-app/issues/486): before the first production rollout of tag-scoped upload retention, inventory existing untagged upload objects and tag or migrate them into an explicit retention class. Do not add a bucket-wide day-based fallback that would shorten the one-year complaint retention period.
+- [street-conditions-analysis #34](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/issues/34): reassess DOCX only after bounded ZIP/package validation, external-relationship rejection, and analyzer-side resource limits have a tested implementation.
 
 ## 9. Suggested delivery slices
 
@@ -282,7 +288,7 @@ For reviewable changes, split implementation into these independently testable s
 2. Complaint data model plus list/detail/delete APIs.
 3. Complaint list/detail frontend.
 4. Image/document upload and combined text-entry draft flow in `good-neighbor-app`.
-5. Complaint extraction endpoint, HEIC/PDF/TXT/DOC/DOCX preprocessing, schema, and tests in `street-conditions-analysis`.
+5. Complaint extraction endpoint, HEIC/PDF/TXT/DOC preprocessing, schema, and tests in `street-conditions-analysis`.
 6. App worker integration, polling, success/failure/retry states, and cross-repository contract tests.
 7. Infrastructure, physical-delete workflow, end-to-end tests, documentation, and dev rollout hardening.
 

@@ -38,12 +38,12 @@ const MIN_ARTIFACT_TEXT_LENGTH = 5;
 const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 const MAX_CHECK_ARTIFACTS = 20;
 const MAX_CHECK_BYTES = 50 * 1024 * 1024;
-const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
-const MAX_SITE_DAILY_BYTES = 1024 * 1024 * 1024;
-const MAX_GLOBAL_DAILY_BYTES = 10 * 1024 * 1024 * 1024;
-const MAX_DEVICE_DAILY_ARTIFACTS = 50;
-const MAX_SITE_DAILY_ARTIFACTS = 1000;
-const MAX_GLOBAL_DAILY_ARTIFACTS = 10000;
+export const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
+export const MAX_SITE_DAILY_BYTES = 1024 * 1024 * 1024;
+export const MAX_GLOBAL_DAILY_BYTES = 10 * 1024 * 1024 * 1024;
+export const MAX_DEVICE_DAILY_ARTIFACTS = 50;
+export const MAX_SITE_DAILY_ARTIFACTS = 1000;
+export const MAX_GLOBAL_DAILY_ARTIFACTS = 10000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -626,7 +626,7 @@ export const presignMedia = async (event) => {
  * @param {number} [input.expiresAt]
  * @returns {Record<string, any>}
  */
-function quotaUpdate({
+export function quotaUpdate({
   tableName,
   key,
   bytes,

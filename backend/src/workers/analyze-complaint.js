@@ -45,7 +45,12 @@ async function processComplaint(msg) {
       }),
     ),
   ]);
-  if (!header.Item || header.Item.status !== "analyzing") return;
+  if (
+    !header.Item ||
+    header.Item.status !== "analyzing" ||
+    header.Item.analysisAttemptId !== msg.analysisAttemptId
+  )
+    return;
   const files = [];
   for (const artifact of artifactResult.Items || []) {
     const isImage = [
@@ -99,7 +104,8 @@ async function processComplaint(msg) {
       Key: headerKey,
       UpdateExpression:
         "SET #status = :ready, label = :label, detail = :detail, #what = :what, #where = :where, #when = :when, notes = :notes, analyzedAt = :now, updatedAt = :now, analysisVersion = :version",
-      ConditionExpression: "#status = :analyzing",
+      ConditionExpression:
+        "#status = :analyzing AND analysisAttemptId = :attempt",
       ExpressionAttributeNames: {
         "#status": "status",
         "#what": "what",
@@ -109,6 +115,7 @@ async function processComplaint(msg) {
       ExpressionAttributeValues: {
         ":ready": "ready",
         ":analyzing": "analyzing",
+        ":attempt": msg.analysisAttemptId,
         ":label": complaint.label,
         ":detail": complaint.detail,
         ":what": complaint.what,
@@ -127,24 +134,34 @@ export async function handler(event) {
   try {
     await processComplaint(msg);
   } catch (error) {
+    if (error?.name === "ConditionalCheckFailedException") return;
     const receiveCount = Number(
       event.Records[0].attributes?.ApproximateReceiveCount || 1,
     );
     if (receiveCount >= 5) {
-      await ddb.send(
-        new UpdateCommand({
-          TableName: getConfig().dynamoTable,
-          Key: complaintKey(msg.siteId, msg.complaintId),
-          UpdateExpression:
-            "SET #status = :failed, label = :label, updatedAt = :now",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":failed": "analysis_failed",
-            ":label": "Complaint log failed",
-            ":now": new Date().toISOString(),
-          },
-        }),
-      );
+      try {
+        await ddb.send(
+          new UpdateCommand({
+            TableName: getConfig().dynamoTable,
+            Key: complaintKey(msg.siteId, msg.complaintId),
+            UpdateExpression:
+              "SET #status = :failed, label = :label, updatedAt = :now",
+            ConditionExpression:
+              "#status = :analyzing AND analysisAttemptId = :attempt",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":failed": "analysis_failed",
+              ":analyzing": "analyzing",
+              ":attempt": msg.analysisAttemptId,
+              ":label": "Complaint log failed",
+              ":now": new Date().toISOString(),
+            },
+          }),
+        );
+      } catch (updateError) {
+        if (updateError?.name !== "ConditionalCheckFailedException")
+          throw updateError;
+      }
       return;
     }
     throw error;

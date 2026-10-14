@@ -4,9 +4,10 @@ import { t } from "../helpers/i18n.js";
 
 /** @param {import("@playwright/test").Page} page */
 async function stubEmptyComplaints(page) {
-  await page.route("**/v1/complaints", (route) =>
-    route.fulfill({ json: { complaints: [] } }),
-  );
+  await page.route("**/v1/complaints", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({ json: { complaints: [] } });
+  });
 }
 
 /** @param {import("@playwright/test").Locator} icon */
@@ -89,7 +90,9 @@ test.describe("public complaints", () => {
     await page.locator("#view-complaints").click();
 
     await expect(page).toHaveURL(/\/complaints$/);
-    await expect(page.getByRole("heading", { name: t("complaints.title") })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: t("complaints.title") }),
+    ).toBeVisible();
 
     const back = page.locator(".complaints .topbar__back");
     await expect(back).toHaveAccessibleName(t("common.back"));
@@ -106,25 +109,39 @@ test.describe("public complaints", () => {
     const emptyBox = await empty.boundingBox();
     expect(logBox).not.toBeNull();
     expect(emptyBox).not.toBeNull();
-    expect(Math.round((emptyBox?.y ?? 0) - ((logBox?.y ?? 0) + (logBox?.height ?? 0)))).toBe(
-      18,
-    );
+    expect(
+      Math.round(
+        (emptyBox?.y ?? 0) - ((logBox?.y ?? 0) + (logBox?.height ?? 0)),
+      ),
+    ).toBe(18);
 
     await logButton.click();
     await expect(page).toHaveURL(/\/complaints\/new$/);
-    await expect(page.getByRole("heading", { name: t("complaints.compose.title") })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: t("complaints.compose.title") }),
+    ).toBeVisible();
     await expect(page.locator(".complaint-compose [data-back]")).toHaveCount(0);
-    await expect(page.locator("#close-complaint")).toHaveAccessibleName(t("common.close"));
+    await expect(page.locator("#close-complaint")).toHaveAccessibleName(
+      t("common.close"),
+    );
     await expect(page.locator(".complaint-upload-copy")).toContainText(
       t("complaints.upload.title"),
     );
     await expect(page.locator("#complaint-files")).toHaveAttribute(
       "accept",
-      ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc,.docx",
+      ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc",
     );
 
     const submit = page.locator("#submit-complaint");
     await expect(submit).toBeDisabled();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.evaluate(() => {
+      document.documentElement.dataset.complaintScrollBehavior = "";
+      window.HTMLElement.prototype.scrollIntoView = function (options) {
+        document.documentElement.dataset.complaintScrollBehavior =
+          options?.behavior || "";
+      };
+    });
     await page.locator("#describe-complaint").click();
     await expect(page).toHaveURL(/\/complaints\/new$/);
     await expect(page.locator("#describe-complaint")).toHaveCount(0);
@@ -137,14 +154,75 @@ test.describe("public complaints", () => {
       "placeholder",
       t("complaints.describe.placeholder"),
     );
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-complaint-scroll-behavior",
+      "auto",
+    );
 
     await description.fill("Four");
     await expect(submit).toBeDisabled();
     await description.fill("Five!");
     await expect(submit).toBeEnabled();
 
+    await page.route("**/v1/complaints", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      return route.fulfill({
+        status: 503,
+        json: { error: "unavailable" },
+      });
+    });
+    await submit.click();
+    await expect(page.getByRole("alert")).toHaveText(
+      t("complaints.submitError"),
+    );
+    await expect(submit).toBeEnabled();
+    await expect(description).toHaveValue("Five!");
+
     await page.locator("#close-complaint").click();
     await expect(page).toHaveURL(/\/complaints$/);
     await expect(empty).toBeVisible();
+  });
+
+  test("uses native detail links and renders a recoverable missing-detail state", async ({
+    page,
+  }) => {
+    await page.route("**/v1/complaints**", (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/v1/complaints") {
+        return route.fulfill({
+          json: {
+            complaints: [
+              {
+                complaintId: "11111111-1111-4111-8111-111111111111",
+                label: "Noise near the entrance",
+                status: "ready",
+                createdAt: "2026-10-14T12:00:00.000Z",
+              },
+            ],
+          },
+        });
+      }
+      return route.fulfill({
+        status: 404,
+        json: { error: "complaint_not_found" },
+      });
+    });
+    await page.locator("#home-action-menu-trigger").click();
+    await page.locator("#view-complaints").click();
+
+    const link = page.locator(
+      '[data-complaint-link="11111111-1111-4111-8111-111111111111"]',
+    );
+    await expect(link).toHaveAttribute(
+      "href",
+      "/complaints/11111111-1111-4111-8111-111111111111",
+    );
+    expect(await link.evaluate((element) => element.tagName)).toBe("A");
+
+    await link.click();
+    await expect(page.getByRole("alert")).toHaveText(
+      t("complaints.detailError"),
+    );
+    await expect(page.locator(".complaints .topbar__back")).toBeVisible();
   });
 });

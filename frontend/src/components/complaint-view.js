@@ -18,7 +18,7 @@ import {
 } from "../services/api.js";
 import { showComplaintLoggedToast } from "../state/toasts.js";
 
-const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc,.docx";
+const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt,.doc";
 const MAX_FILE = 10 * 1024 * 1024;
 const MAX_TOTAL = 25 * 1024 * 1024;
 const MAX_FILES = 5;
@@ -33,7 +33,6 @@ const contentTypeFor = (file) =>
     pdf: "application/pdf",
     txt: "text/plain",
     doc: "application/msword",
-    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     png: "image/png",
@@ -47,6 +46,7 @@ const freshDraft = () => ({
   files: [],
   uploading: 0,
   describing: false,
+  submitError: "",
 });
 
 class ComplaintView extends HTMLElement {
@@ -99,7 +99,7 @@ class ComplaintView extends HTMLElement {
     });
   }
 
-  async _renderList() {
+  async _renderList({ focusHeading = true, restoreFocus = "" } = {}) {
     this.innerHTML = `<div class="flow complaints"><p class="hint">${escapeHtml(t("common.loading"))}</p></div>`;
     try {
       const { complaints = [] } = await listComplaints();
@@ -123,20 +123,10 @@ class ComplaintView extends HTMLElement {
         draft = freshDraft();
         navigate("/complaints/new");
       });
-      this.querySelectorAll("[data-complaint-row]").forEach((row) =>
-        row.addEventListener("click", () =>
-          navigate(
-            `/complaints/${encodeURIComponent(row.dataset.complaintRow)}`,
-          ),
-        ),
-      );
-      this.querySelectorAll("[data-complaint-row]").forEach((row) =>
-        row.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
+      this.querySelectorAll("[data-complaint-link]").forEach((link) =>
+        link.addEventListener("click", (event) => {
           event.preventDefault();
-          navigate(
-            `/complaints/${encodeURIComponent(row.dataset.complaintRow)}`,
-          );
+          navigate(link.getAttribute("href"));
         }),
       );
       this.querySelectorAll("[data-retry]").forEach((button) =>
@@ -154,8 +144,9 @@ class ComplaintView extends HTMLElement {
         }),
       );
       if (complaints.some((item) => item.status === "analyzing"))
-        this._pollTimer = setTimeout(() => this._renderList(), 2500);
-      this.querySelector("h1")?.focus();
+        this._schedulePoll();
+      if (restoreFocus) this.querySelector(restoreFocus)?.focus();
+      else if (focusHeading) this.querySelector("h1")?.focus();
     } catch {
       this.innerHTML = html`<div class="flow complaints">
         ${this._topbar(t("complaints.title"))}
@@ -172,12 +163,15 @@ class ComplaintView extends HTMLElement {
       class="complaint-row"
       role="listitem"
       data-complaint-row="${escapeAttr(item.complaintId)}"
-      tabindex="0"
     >
-      <div>
+      <a
+        class="complaint-row__link"
+        data-complaint-link="${escapeAttr(item.complaintId)}"
+        href="/complaints/${encodeURIComponent(item.complaintId)}"
+      >
         <h2>${escapeHtml(failed ? t("complaints.failed") : item.label)}</h2>
         <p>${escapeHtml(formatMonthDayTime(item.createdAt))}</p>
-      </div>
+      </a>
       <div class="complaint-row__actions">
         ${failed
           ? `<button class="btn-outline btn-outline--sm" type="button" data-retry="${escapeAttr(item.complaintId)}">${escapeHtml(t("complaints.retry"))}</button>`
@@ -186,6 +180,32 @@ class ComplaintView extends HTMLElement {
           : ""}
       </div>
     </article>`;
+  }
+
+  _schedulePoll() {
+    clearTimeout(this._pollTimer);
+    this._pollTimer = setTimeout(() => {
+      if (this.querySelector("#complaint-delete")?.open) {
+        this._schedulePoll();
+        return;
+      }
+      const active = document.activeElement;
+      let restoreFocus = "";
+      if (active instanceof HTMLElement && this.contains(active)) {
+        for (const attribute of [
+          "data-complaint-link",
+          "data-retry",
+          "data-delete",
+        ]) {
+          const value = active.getAttribute(attribute);
+          if (value) {
+            restoreFocus = `[${attribute}="${CSS.escape(value)}"]`;
+            break;
+          }
+        }
+      }
+      void this._renderList({ focusHeading: false, restoreFocus });
+    }, 2500);
   }
 
   _deleteDialog() {
@@ -264,6 +284,9 @@ class ComplaintView extends HTMLElement {
             <wa-icon name="pen" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("complaints.describe"))}
           </button>`}
+      ${draft.submitError
+        ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(draft.submitError))}</p>`
+        : ""}
       <button
         class="btn-ink"
         id="submit-complaint"
@@ -281,7 +304,13 @@ class ComplaintView extends HTMLElement {
       this._renderDraft();
       const textarea = this.querySelector("#complaint-description");
       textarea?.focus();
-      textarea?.scrollIntoView({ behavior: "smooth", block: "center" });
+      textarea?.scrollIntoView({
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")
+          .matches
+          ? "auto"
+          : "smooth",
+        block: "center",
+      });
     });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
@@ -383,10 +412,16 @@ ${escapeHtml(draft.description)}</textarea
       this._aborters.set(entry.id, controller);
       try {
         const contentType = contentTypeFor(file);
-        const signed = await presignComplaintArtifact(draft.complaintId, {
-          contentType,
-          contentLength: file.size,
-        });
+        const signed = await presignComplaintArtifact(
+          draft.complaintId,
+          {
+            contentType,
+            contentLength: file.size,
+          },
+          controller.signal,
+        );
+        if (controller.signal.aborted)
+          throw new DOMException("Upload cancelled", "AbortError");
         entry.artifactId = signed.artifactId;
         entry.s3Key = signed.s3Key;
         await putMediaWithProgress(
@@ -402,13 +437,17 @@ ${escapeHtml(draft.description)}</textarea
           },
           controller.signal,
         );
-        await registerComplaintArtifact(draft.complaintId, {
-          artifactId: entry.artifactId,
-          s3Key: entry.s3Key,
-          name: file.name,
-          contentType,
-          contentLength: file.size,
-        });
+        await registerComplaintArtifact(
+          draft.complaintId,
+          {
+            artifactId: entry.artifactId,
+            s3Key: entry.s3Key,
+            name: file.name,
+            contentType,
+            contentLength: file.size,
+          },
+          controller.signal,
+        );
         entry.status = "registered";
         entry.progress = 100;
       } catch (error) {
@@ -433,18 +472,36 @@ ${escapeHtml(draft.description)}</textarea
   async _submit() {
     const button = this.querySelector("#submit-complaint");
     button.disabled = true;
-    await createComplaint({
-      complaintId: draft.complaintId,
-      description: draft.description.trim(),
-    });
-    draft = null;
-    showComplaintLoggedToast();
-    navigate("/complaints");
+    draft.submitError = "";
+    try {
+      await createComplaint({
+        complaintId: draft.complaintId,
+        description: draft.description.trim(),
+      });
+      draft = null;
+      showComplaintLoggedToast();
+      navigate("/complaints");
+    } catch {
+      draft.submitError = "complaints.submitError";
+      this._renderDraft();
+    }
   }
 
   async _renderDetail(id) {
     this.innerHTML = `<div class="flow complaints"><p>${escapeHtml(t("common.loading"))}</p></div>`;
-    const { complaint, artifacts } = await getComplaint(id);
+    let response;
+    try {
+      response = await getComplaint(id);
+    } catch {
+      this.innerHTML = html`<div class="flow complaints">
+        ${this._topbar(t("complaints.title"))}
+        <p role="alert">${escapeHtml(t("complaints.detailError"))}</p>
+      </div>`;
+      this._bindBack("/complaints");
+      this.querySelector("h1")?.focus();
+      return;
+    }
+    const { complaint, artifacts } = response;
     this.innerHTML = html`<div class="flow complaints">
       ${this._topbar(complaint.label)}
       <p class="complaint-detail__time">
