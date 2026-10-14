@@ -40,11 +40,9 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         </header>
         ${state === "loading"
           ? html`<p role="status">${escapeHtml(t("taskUpdate.loading"))}</p>`
-          : ""}
-        ${state === "error"
+          : ""}${state === "error"
           ? html`<p role="alert">${escapeHtml(t("taskUpdate.loadError"))}</p>`
-          : ""}
-        ${state === "ready" ? content : ""}
+          : ""}${state === "ready" ? content : ""}
       </div>
     </dialog>
     <dialog

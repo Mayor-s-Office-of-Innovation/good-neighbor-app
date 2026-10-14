@@ -137,7 +137,9 @@ test.describe("public complaints", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate(() => {
       document.documentElement.dataset.complaintScrollBehavior = "";
-      window.HTMLElement.prototype.scrollIntoView = function (options) {
+      window.HTMLElement.prototype.scrollIntoView = function (
+        /** @type {ScrollIntoViewOptions | undefined} */ options,
+      ) {
         document.documentElement.dataset.complaintScrollBehavior =
           options?.behavior || "";
       };
