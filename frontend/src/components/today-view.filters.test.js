@@ -11,6 +11,7 @@ import {
 import { lastLogSummary } from "../domain/home-tasks.js";
 import { formatTime } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
+import { setDuplicateUiSite } from "../services/feature-flags.js";
 import { escapeHtml } from "../lib/html.js";
 
 /*
@@ -52,9 +53,11 @@ const logout = vi.hoisted(() => ({
 }));
 const navigateMock = vi.hoisted(() => vi.fn());
 const awaitOverlayUnwindMock = vi.hoisted(() => vi.fn(async () => {}));
+const siteRead = vi.hoisted(() => vi.fn(async () => ({ siteId: "site-1" })));
+const windowListeners = new Map();
 const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
 vi.mock("../db.js", () => ({
-  getSite: async () => ({ siteId: "site-1" }),
+  getSite: siteRead,
   hasAdminAccess: () => false,
   listBoundSites: async () => [],
   setSite: vi.fn(async (_name, meta) => ({ ...meta, id: "current" })),
@@ -89,6 +92,9 @@ vi.mock("../dialog-history.js", () => ({
 
 let TodayView;
 beforeEach(() => {
+  windowListeners.get("authsignout")?.();
+  setDuplicateUiSite(null);
+  siteRead.mockResolvedValue({ siteId: "site-1" });
   awaitOverlayUnwindMock.mockClear();
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
@@ -107,7 +113,9 @@ beforeAll(async () => {
     },
   );
   vi.stubGlobal("window", {
-    addEventListener() {},
+    addEventListener(type, listener) {
+      windowListeners.set(type, listener);
+    },
     removeEventListener() {},
     clearTimeout() {},
     location: {},
@@ -725,4 +733,64 @@ describe("worklist refresh focus", () => {
     expect(scrollTop).toBe(850);
     view.disconnectedCallback();
   });
+});
+
+describe("restored duplicate links", () => {
+  function stash() {
+    const view = new TodayView();
+    view._homeFilter = "todo";
+    view._siteId = "site-1";
+    view._site = { siteId: "site-1" };
+    view._homeModel = { tasks: [], checks: [] };
+    view._duplicateLinks.set("duplicate", { originalTaskId: "original" });
+    view.disconnectedCallback();
+    view._duplicateLinks.clear();
+  }
+
+  it.each([true, false])(
+    "restores copied links before async reads with flag %s",
+    async (enabled) => {
+      setDuplicateUiSite({ featureFlags: { duplicateDetection: enabled } });
+      stash();
+      window.location.search = "?filter=todo";
+      let release = (_site) => {};
+      siteRead.mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      );
+      const view = new TodayView();
+      view._renderHome = vi.fn(() => {
+        expect(view._duplicateLinks.has("duplicate")).toBe(enabled);
+      });
+      view._hydrateVisibleHomeTasks = vi.fn();
+      view._hydrate311CardStatuses = vi.fn();
+      const pending = view.connectedCallback();
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      release({ siteId: "site-1" });
+      await pending;
+      view.disconnectedCallback();
+    },
+  );
+
+  it("clears restored links when the refreshed site differs", async () => {
+    setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
+    stash();
+    siteRead.mockResolvedValueOnce({ siteId: "site-2" });
+    const view = await mount("?filter=todo");
+    expect(view._duplicateLinks.size).toBe(0);
+    view.disconnectedCallback();
+  });
+
+  it.each(["authsignout", "sitebound"])(
+    "invalidates the snapshot on %s",
+    async (event) => {
+      stash();
+      windowListeners.get(event)();
+      const view = await mount("?filter=todo");
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view._duplicateLinks.size).toBe(0);
+      view.disconnectedCallback();
+    },
+  );
 });

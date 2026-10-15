@@ -161,6 +161,57 @@ import {
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
 
+/**
+ * The outgoing home element's last rendered state, captured on unmount and
+ * painted synchronously by the next element to mount. app-root mounts a
+ * fresh element for every navigation and this screen paints only after its
+ * data chain resolves, so a route transition arriving here otherwise
+ * snapshots a blank work list and pops the content in after the slides.
+ * One snapshot; cleared when an element unmounts with nothing rendered.
+ * Keys mirror the adopting instance fields: model, homeFilter,
+ * historyGrouping, taskOverrides, hasPerimeterDraft, site, siteId,
+ * providerName, providerSites, providerSitesStatus, boundSites,
+ * task311Statuses, duplicateLinks.
+ * @type {Record<string, any> | null}
+ */
+let lastHomeState = null;
+
+/** @param {TodayView} view */
+function stashHomeState(view) {
+  lastHomeState = view._homeModel
+    ? {
+        model: view._homeModel,
+        homeFilter: view._homeFilter,
+        historyGrouping: view._historyGrouping,
+        taskOverrides: view._taskOverrides,
+        hasPerimeterDraft: view._hasPerimeterDraft,
+        site: view._site,
+        siteId: view._siteId,
+        providerName: view._providerName,
+        providerSites: view._providerSites,
+        providerSitesStatus: view._providerSitesStatus,
+        boundSites: view._boundSites,
+        task311Statuses: view._311StatusByTaskId,
+        duplicateLinks: new Map(view._duplicateLinks),
+      }
+    : null;
+}
+
+// The stash belongs to one site session and must never paint for the next
+// one: sign-out and re-binding replace the device's binding in the same
+// document (app-root re-renders setup, then `sitebound` navigates back to
+// /today). A bound-site switch is a full `location.assign` reload, so the
+// module state is already fresh there. Both events bubble to window
+// (site-setup dispatches `sitebound` with bubbles: true).
+if (typeof window !== "undefined") {
+  window.addEventListener("authsignout", () => {
+    lastHomeState = null;
+  });
+  window.addEventListener("sitebound", () => {
+    lastHomeState = null;
+  });
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -233,6 +284,9 @@ class TodayView extends HTMLElement {
     this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
+    // Hand the freshly rendered state to the next element to mount, so route
+    // transitions never snapshot a blank screen (see lastHomeState).
+    stashHomeState(this);
   }
 
   async connectedCallback() {
@@ -285,7 +339,21 @@ class TodayView extends HTMLElement {
 
     // Refreshing a completed card is not a new screen arrival. Re-focusing
     // the heading after that refresh would scroll the worklist to the top.
-    const announceArrival = !this._homeModel;
+    // A restored snapshot IS an arrival (the outgoing element stashed its
+    // state on unmount), and it must paint synchronously: the route
+    // transition snapshots this screen the moment the swap callback returns,
+    // before the data chain's first await lands. The chain below still
+    // refetches everything and re-renders.
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
+    const restoring = !this._homeModel && lastHomeState != null;
+    const announceArrival = !this._homeModel || restoring;
+    if (restoring)
+      this._restoreHomeState(
+        /** @type {any} */ (lastHomeState),
+        requestedFilter,
+      );
     const previousSiteId = this._siteId;
     this._site = await getSite();
     this._siteId =
@@ -309,9 +377,6 @@ class TodayView extends HTMLElement {
     this._boundSites = bindings;
 
     const active = getCurrentCheck();
-    const requestedFilter = new URLSearchParams(window.location.search).get(
-      "filter",
-    );
     // An in-progress draft no longer re-enters capture from home: capture
     // lives on its own route (/check, /problem) and home stays the worklist.
     let pendingSession =
@@ -434,6 +499,46 @@ class TodayView extends HTMLElement {
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
     this._311StatusByTaskId = map311StatusResponse(response);
     if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  /**
+   * Adopt the state the outgoing home element stashed on unmount (see
+   * lastHomeState) and paint its model immediately, before the data chain
+   * resolves. Everything it adopts is re-derived or refetched below; this
+   * exists so the route-transition snapshot shows a fully rendered screen.
+   * @param {any} snapshot
+   * @param {string | null} requestedFilter a `?filter=` that the arriving
+   *   URL carries explicitly — deep links and direct navigations must show
+   *   the tab they name, so it wins over the restored tab
+   * @returns {void}
+   */
+  _restoreHomeState(snapshot, requestedFilter) {
+    this._homeModel = snapshot.model;
+    this._homeFilter = snapshot.homeFilter;
+    // An explicit URL filter request wins over the restored tab; a plain
+    // back-navigation carries none and keeps the tab that was on screen —
+    // the URL is rewritten to match so a refresh stays on the same tab.
+    if (requestedFilter) {
+      this._homeFilter = normalizedHomeTab(requestedFilter);
+    } else if (this._homeFilter) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("filter", this._homeFilter);
+      window.history.replaceState(window.history.state, "", url);
+    }
+    this._historyGrouping = snapshot.historyGrouping;
+    this._taskOverrides = snapshot.taskOverrides;
+    this._hasPerimeterDraft = snapshot.hasPerimeterDraft;
+    this._site = snapshot.site;
+    this._siteId = snapshot.siteId;
+    this._providerName = snapshot.providerName;
+    this._providerSites = snapshot.providerSites;
+    this._providerSitesStatus = snapshot.providerSitesStatus;
+    this._boundSites = snapshot.boundSites;
+    this._311StatusByTaskId = snapshot.task311Statuses;
+    this._duplicateLinks = duplicateUiEnabled()
+      ? new Map(snapshot.duplicateLinks ?? [])
+      : new Map();
+    this._renderHome(this._homeModel);
   }
 
   _renderHome(model) {
@@ -616,14 +721,26 @@ class TodayView extends HTMLElement {
           actionMenu.querySelector('[role="menuitem"]')
         )?.focus();
     });
-    this._actionMenuDocumentClick = (event) => {
-      if (actionMenu.hidden || event.composedPath().includes(actionMenuTrigger))
-        return;
-      if (event.composedPath().includes(actionMenu)) return;
-      actionMenu.hidden = true;
-      actionMenuTrigger.setAttribute("aria-expanded", "false");
-    };
-    document.addEventListener("click", this._actionMenuDocumentClick);
+    // One document-level click closer per element, added once: a re-render
+    // replaces the menu's nodes, so the stable handler resolves the live
+    // menu + trigger at click time (the old render-scoped closure would
+    // keep firing against the detached nodes after every re-render).
+    if (!this._actionMenuDocumentClick) {
+      this._actionMenuDocumentClick = /** @param {Event} event */ (event) => {
+        const menu = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu")
+        );
+        const trigger = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu-trigger")
+        );
+        if (!menu?.isConnected || menu.hidden) return;
+        const path = event.composedPath?.() || [];
+        if (path.includes(trigger) || path.includes(menu)) return;
+        menu.hidden = true;
+        trigger?.setAttribute("aria-expanded", "false");
+      };
+      document.addEventListener("click", this._actionMenuDocumentClick);
+    }
     actionMenu?.addEventListener("keydown", (event) => {
       const keyEvent = /** @type {KeyboardEvent} */ (event);
       const items = /** @type {HTMLElement[]} */ ([
