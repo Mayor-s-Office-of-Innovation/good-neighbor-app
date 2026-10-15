@@ -54,9 +54,11 @@ function pickHandler(body) {
 /**
  * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent} event
  * @param {import("aws-lambda").Context} context
- * @param {import("aws-lambda").Callback} callback
  */
-export const handler = async (event, context, callback) => {
+export const handler = async (event, context) => {
+  // Node.js 24 rejects entrypoints with a third (callback) parameter. The
+  // workers return promises; this shim only satisfies their legacy AWS types.
+  const callback = () => {};
   // Fan out: each record is an independent unit of work whose latency is almost
   // entirely the remote analyzer call, so process the whole batch CONCURRENTLY and
   // await it together — batch wall-clock ≈ the slowest record, not the sum.
