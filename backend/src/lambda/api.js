@@ -1,3 +1,10 @@
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../handlers/care-work.js";
 // API Gateway (HTTP API v2) entrypoint for the whole check/artifact API. One
 // Lambda backs every route; API Gateway sets `event.routeKey` to the matched
 // route (e.g. "POST /v1/checks/{checkId}"), so we dispatch on it directly — no
@@ -217,6 +224,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}": getCheck,
+  "GET /v1/care-work": listCareWork,
+  "POST /v1/care-work": createCareWork,
+  "GET /v1/care-work/{workId}": getCareWork,
+  "POST /v1/care-work/{workId}/photos:presign": presignCarePhoto,
+  "GET /v1/care-work/{workId}/photos/{photoId}/media": getCarePhoto,
   "GET /v1/complaints": listComplaints,
   "POST /v1/complaints": createComplaint,
   "GET /v1/complaints/{complaintId}": getComplaint,

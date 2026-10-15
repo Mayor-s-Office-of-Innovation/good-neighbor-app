@@ -296,3 +296,34 @@ replayed request can never create a duplicate. For the MVP there is **no active 
 worker** — full offline queue-and-replay is deferred (tracked on the issue
 tracker) —
 but the idempotency contract is already in place for when it lands.
+
+## Proactive care work logs
+
+All devices bound to a Site can create and read that Site's proactive care logs
+at `/care-work`. These are independent records, with no check, assessment, task,
+analysis job, location capture, or reporting/compliance side effect. Seven stable
+work kinds and a custom `other` kind are supported. Custom work requires a
+nonblank description; fixed kinds permit an empty note and no photos. Submitted
+records are immutable and have no edit/delete routes.
+
+The client retains one submission UUID and payload across network retries. The
+API conditionally creates the header and compares a payload/actor fingerprint on
+replay, returning the original result for an identical retry and rejecting an
+attempt to change a saved record. Reads derive the Site from the authenticated
+principal. Listing uses a dedicated GSI1 partition, bounded pages, and Site-bound
+cursors; the UI combines pages before computing Pacific-date groups and counts.
+
+Photos use a distinct `care-work/<siteId>/<workId>/<photoId>` prefix in the existing
+30-day uploads bucket. Upload reservations share device/Site/global media quotas,
+with five images, 10 MiB per image, and 25 MiB per log. Submission checks the
+reservation owner, signed byte metadata, actual size and decoded image format,
+then uses the existing image normalizer to strip EXIF and produce a JPEG under a
+server-only `.jpg` key. Source uploads remain `state=pending` and expire after one
+day; submitted JPEGs use `state=active`. The existing bucket lifecycle and all
+check/task/complaint workflows are unchanged. Failed submission attempts can leave
+normalized orphan JPEGs, bounded by the same 30-day bucket backstop.
+
+Logs retain their text and photo-expiry metadata for one year. Photo access ends
+30 days after reservation even if S3 lifecycle deletion is delayed; signed URL
+lifetimes are capped at that boundary. The detail view explains expired photos
+while continuing to display the log. No offline submission queue is introduced.

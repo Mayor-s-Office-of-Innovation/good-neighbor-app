@@ -1,3 +1,10 @@
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../src/handlers/care-work.js";
 // In-process HTTP router — the local stand-in for API Gateway (HTTP API v2). It
 // maps method+path to the SAME exported Lambda handlers we deploy, builds a
 // realistic APIGatewayProxyEventV2, injects a stub Cognito `sub`, and writes the
@@ -283,6 +290,11 @@ const routes = [
     presignMedia,
   ),
   route("GET", "/v1/checks/{checkId}", getCheck),
+  route("GET", "/v1/care-work", listCareWork),
+  route("POST", "/v1/care-work", createCareWork),
+  route("GET", "/v1/care-work/{workId}", getCareWork),
+  route("POST", "/v1/care-work/{workId}/photos:presign", presignCarePhoto),
+  route("GET", "/v1/care-work/{workId}/photos/{photoId}/media", getCarePhoto),
   route("GET", "/v1/complaints", listComplaints),
   route("POST", "/v1/complaints", createComplaint),
   route("GET", "/v1/complaints/{complaintId}", getComplaint),

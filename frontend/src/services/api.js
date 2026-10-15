@@ -1087,3 +1087,33 @@ export async function waitForAnalyses(
     last = await getCheck(checkId);
   }
 }
+
+// Proactive care logs are Site-scoped, independent of checks and tasks.
+export function listCareWork(nextToken = "") {
+  return request(
+    "GET",
+    `/v1/care-work${qs({ nextToken: nextToken || undefined })}`,
+  );
+}
+export function getCareWork(workId) {
+  return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
+}
+export function createCareWork(body) {
+  return request("POST", "/v1/care-work", {
+    body,
+    headers: { "idempotency-key": body.workId },
+  });
+}
+export function presignCarePhoto(workId, body) {
+  return request(
+    "POST",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos:presign`,
+    { body },
+  );
+}
+export function getCarePhoto(workId, photoId) {
+  return request(
+    "GET",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos/${encodeURIComponent(photoId)}/media`,
+  );
+}
