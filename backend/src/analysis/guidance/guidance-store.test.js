@@ -1380,6 +1380,8 @@ describe("supersedeOpenTasksForCondition", () => {
           conditionId: "cond-litter",
           checkId: "chk-1",
           assessmentId: "chk-1-art-1",
+          // A legacy task with no report-timeline stamp yet.
+          createdAt: "2026-08-18T11:00:00.000Z",
         },
         {
           pk: "SITE#site-1",
@@ -1432,6 +1434,10 @@ describe("supersedeOpenTasksForCondition", () => {
       supersededByAnalysisId: "ana-1",
       supersessionReason: "analysis_condition_edited",
       gsi2pk: "SITE#site-1#TASK#superseded",
+      // Every full re-put re-derives the report timeline stamp, so a
+      // legacy task is stamped here and a backfilled stamp is never lost.
+      gsi1pk: "SITE#site-1#TASK",
+      gsi1sk: "2026-08-18T11:00:00.000Z#task-1",
     });
   });
 

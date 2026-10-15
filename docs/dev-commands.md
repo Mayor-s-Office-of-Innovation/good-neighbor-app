@@ -1,6 +1,6 @@
 # Developer command reference
 
-**Prereqs:** Node 22 LTS+, npm 10+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+**Prereqs:** Node 24 LTS+, npm 11+. Terraform 1.9+ and pre-commit for infra work; AWS access is
 for approved operators only — developers work through Git and CI. The backend local harness also
 needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
 `brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The

@@ -20,6 +20,7 @@ test.describe("site admin access", () => {
     await expect(menu.getByRole("menuitem")).toHaveText([
       t("today.settings.feedback"),
       t("today.settings.siteAdmin"),
+      t("today.settings.reports"),
       t("today.settings.language"),
       t("today.settings.attributions"),
       t("today.settings.logout"),

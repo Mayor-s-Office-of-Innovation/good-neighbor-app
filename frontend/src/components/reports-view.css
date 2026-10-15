@@ -1,0 +1,834 @@
+/*
+  Styles for <reports-view> and <reports-day-view> (reports-view.js). The
+  screen reuses the home hub's shell (.home, .home-region, .home-tabs) and
+  the flow column (.flow, .topbar) from base.css; everything below is the
+  report-specific vocabulary: filters, headline, chart, calendar, legend,
+  status pills, record cards, and the day timeline.
+
+  Status colors reinforce a word or count that is always present:
+    complete → --c-ok, partial → --c-flag, missed → --c-hazard,
+    pending / upcoming / exempt → neutral.
+*/
+
+/* Every list on this screen is markerless and flush, but Web Awesome's
+   native.css gives each li a marker gutter (margin-inline-start: 1.125em).
+   The list boxes below reset padding on the <ol>/<ul>; the item rules don't,
+   so the items themselves reset that gutter here (same idiom as
+   .sheet__opts li in base.css). New lists should join this group. */
+.reports__record,
+.reports-calendar__weekday,
+.reports-calendar__day,
+.reports-legend__item,
+.reports-timeline__item,
+.reports-timeline__photos li,
+.reports-timeline__tasks li,
+.reports-types__item,
+.reports-responses__item {
+  margin: 0;
+}
+
+.reports__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 1.25rem;
+}
+
+.reports__title {
+  margin: 0;
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
+  text-wrap: balance;
+  outline: none; /* programmatic focus target (route announcement) */
+}
+
+.reports__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0 1rem 2rem;
+}
+
+/* ---- Filters ---- */
+
+/* Compact pill selects, as in the design: the current value is the label,
+   so the text label stays for assistive tech but is not drawn. */
+.reports__filters {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Below ~360px the two pills and the export button no longer fit on one
+   line; let the row wrap instead of pushing the button off screen (1.4.10). */
+@media (max-width: 22.5rem) {
+  .reports__filters {
+    flex-wrap: wrap;
+  }
+}
+
+.reports__filters wa-select {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: auto;
+}
+
+.reports__filters wa-select::part(form-control),
+.reports__filters wa-select::part(form-control-input) {
+  display: inline-block;
+  width: auto;
+}
+
+.reports__filters wa-select::part(form-control-label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.reports__filters wa-select::part(combobox) {
+  display: inline-flex;
+  width: auto;
+  min-height: 2.75rem;
+  padding-inline: 0.75rem 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  border-color: transparent;
+}
+
+/* An <input> is as wide as its default size attribute, not its value, so
+   size the two pickers for their longest option. */
+.reports__filters wa-select::part(display-input) {
+  font-weight: 500;
+}
+
+#reports-kind::part(display-input) {
+  width: 3.6rem;
+}
+
+#reports-period::part(display-input) {
+  width: 6rem;
+}
+
+.reports__export {
+  appearance: none;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.reports__export wa-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.reports__export:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+/* ---- Headline, cards, totals ---- */
+
+.reports__headline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.reports__headline-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.reports__headline-sub,
+.reports__records-sub,
+.reports__record-sub,
+.reports__total span,
+.reports-timeline__meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+}
+
+.reports__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.reports__card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.reports__total {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+}
+
+.reports__total strong {
+  font-size: 1.05rem;
+}
+
+.reports__status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+  color: var(--text-secondary);
+}
+
+.reports__status p {
+  margin: 0;
+}
+
+/* ---- Week chart (quarter) ---- */
+
+.reports-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 11rem;
+  overflow: visible;
+}
+
+.reports-chart__bar--complete {
+  fill: var(--c-ok);
+}
+
+.reports-chart__bar--partial {
+  fill: var(--c-flag);
+}
+
+.reports-chart__bar--missed {
+  fill: var(--c-hazard);
+}
+
+/* Days not yet decided (or not owed): a hairline-colored bar, visible on
+   the card surface in both themes. */
+.reports-chart__bar--open {
+  fill: var(--c-line);
+}
+
+/* Checks done on days that owed none: the ring color of the calendar's
+   neutral cell, so it reads as "recorded" without claiming compliance. */
+.reports-chart__bar--recorded {
+  fill: var(--text-faint);
+}
+
+.reports-legend__dot--recorded {
+  background: var(--text-faint);
+  border-color: var(--text-faint);
+}
+
+.reports__headline-note {
+  font-style: italic;
+}
+
+/* Axis labels live outside the SVG so they scale with the user's text size,
+   not with the chart. One flex cell per labelled month, with flex-grow set
+   inline to the bar count it covers, mirrors the SVG's even spacing; the
+   text centers over those bars, only the labelled cells carry text, and a
+   label may overhang its cell. */
+.reports-chart__labels {
+  display: flex;
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  line-height: 1.2;
+}
+
+.reports-chart__tick {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* ---- Calendar (month) and week strip ---- */
+
+.reports-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.35rem 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-calendar__weekday {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  font-weight: 600;
+}
+
+.reports-calendar__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  aspect-ratio: 1;
+  min-height: 2.75rem;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.1;
+}
+
+.reports-calendar__number {
+  font-weight: 600;
+}
+
+.reports-calendar__count {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+.reports-calendar__day--complete {
+  background: var(--c-ok-bg);
+  border-color: var(--c-ok);
+}
+
+.reports-calendar__day--partial {
+  background: var(--c-flag-bg);
+  border-color: var(--c-flag);
+}
+
+.reports-calendar__day--missed {
+  background: var(--c-hazard-bg);
+  border-color: var(--c-hazard);
+}
+
+.reports-calendar__day--pending {
+  background: var(--surface-3);
+  border-color: var(--c-line);
+  border-style: dashed;
+}
+
+/* Days that owe nothing yet (future) or at all (exempt) still draw a ring,
+   so every day on the grid is a circle; only owed days carry a color. */
+.reports-calendar__day--upcoming,
+.reports-calendar__day--exempt {
+  border-color: var(--c-line);
+  color: var(--text-faint);
+}
+
+/* Checks recorded on a day with no requirement: a neutral ring with the
+   count, so the work shows even before the site's cadence is configured. */
+.reports-calendar__day--exempt:has(.reports-calendar__count) {
+  background: var(--surface-2);
+  border-color: var(--text-faint);
+  color: var(--text);
+}
+
+/* ---- Legend and pills ---- */
+
+.reports-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+}
+
+.reports-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reports-legend__dot {
+  flex: 0 0 auto;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 1px solid var(--c-line);
+}
+
+.reports-legend__dot--complete {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-legend__dot--partial {
+  background: var(--c-flag);
+  border-color: var(--c-flag);
+}
+
+.reports-legend__dot--missed {
+  background: var(--c-hazard);
+  border-color: var(--c-hazard);
+}
+
+.reports-legend__dot--open {
+  background: var(--c-line);
+}
+
+.reports-pill {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.reports-pill--complete {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-pill--partial {
+  background: var(--c-flag-bg);
+  color: var(--c-flag);
+}
+
+.reports-pill--missed {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}
+
+/* ---- Records ---- */
+
+.reports__records {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reports__records-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.reports__record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports__record {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.reports__record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.reports__record-title {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.reports__record-title:hover,
+.reports__record-issues:hover {
+  text-decoration: underline;
+}
+
+.reports__record-issues {
+  align-self: flex-start;
+  min-height: 2rem;
+  padding-top: 0.25rem;
+  color: var(--brand-blue);
+  font-size: var(--wa-font-size-s, 0.875rem);
+}
+
+.reports__more {
+  align-self: center;
+  margin-top: 0.75rem;
+}
+
+/* ---- Day detail ---- */
+
+/* The gear menu is taller than the header; lift the header region above the
+   results so the open menu is never under the period selects. */
+.reports .home-region--header {
+  position: relative;
+  z-index: 2;
+}
+
+.reports__top {
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
+/* Back link left, gear right; the feedback sheet element in between takes
+   no space, so it must not be a third flex item splitting the row. */
+.reports__top .home-settings-wrap {
+  margin-left: auto;
+}
+
+.reports__top feedback-dialog {
+  display: contents;
+}
+
+/* The design draws no rule under the tab row. */
+.reports .home-tabs {
+  border-bottom: 0;
+}
+
+.reports-back,
+.reports-day__back {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.reports-back:focus-visible,
+.reports-day__back:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+/* The design draws no rule under the day header, and its round back button
+   sits at the top of the title block, not centred on it. */
+.reports-day .topbar {
+  align-items: flex-start;
+  border-bottom: 0;
+}
+
+.reports-day__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.4rem;
+  line-height: 1.2;
+  outline: none;
+}
+
+.reports-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-timeline__item {
+  position: relative;
+  padding: 0 0 1.5rem 2.75rem;
+}
+
+.reports-timeline__item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 0.95rem;
+  top: 2.1rem;
+  bottom: 0.25rem;
+  width: 2px;
+  background: var(--c-line);
+}
+
+.reports-timeline__mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.reports-timeline__item--done .reports-timeline__mark {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-timeline__item--missed .reports-timeline__mark {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}
+
+.reports-timeline__time {
+  margin: 0.25rem 0 0.1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.reports-timeline__photos {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0 0 0.25rem;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.reports-timeline__photo {
+  display: block;
+  width: min(9rem, 38vw);
+  height: min(9rem, 38vw);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  box-shadow: none;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.reports-timeline__photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reports-timeline__photo--placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.reports-timeline__photo:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+}
+
+/* "N issues found" over the day's task cards; the cards themselves are the
+   home hub's (.analysis-card, analysis-results.css). */
+.reports-timeline__issues {
+  margin: 1.25rem 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.reports-timeline__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- Issues tab ---- */
+
+/* Issues found is the data series, so it gets a solid neutral, not the
+   hairline color (which vanishes on a white card); the responded share is
+   drawn over it in green. */
+.reports-chart__bar--found {
+  fill: var(--text-faint);
+}
+
+.reports-chart__bar--responded {
+  fill: var(--c-ok);
+}
+
+.reports-legend__dot--found {
+  background: var(--text-faint);
+  border-color: var(--text-faint);
+}
+
+.reports-legend__dot--responded {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-types,
+.reports-responses {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-types__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+/* The whole row is the link to the type's screen (design: chevron right). */
+.reports-types__link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: inherit;
+  text-decoration: none;
+  min-height: 44px;
+}
+
+.reports-types__link wa-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.reports-types__link:hover .reports-types__name,
+.reports-types__link:focus-visible .reports-types__name {
+  text-decoration: underline;
+}
+
+.reports-types__link:focus-visible {
+  outline: 0.1875rem solid var(--wa-color-focus, #0064d8);
+  outline-offset: 0.125rem;
+  border-radius: var(--radius-sm);
+}
+
+.reports-types__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.reports-types__all {
+  margin-top: 0.75rem;
+}
+
+.reports-types__name {
+  display: flex;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+/* ---- Type screen ---- */
+
+.reports-type__headline {
+  margin: 0.15rem 0 0.25rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.reports-type__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-type__cards li {
+  margin: 0;
+}
+
+.reports-types__count,
+.reports-types__meta {
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: 400;
+}
+
+.reports-responses__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reports-responses__dot {
+  flex: 0 0 auto;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 1px solid var(--c-line);
+  background: var(--surface-3);
+}
+
+.reports-responses__item--onSite .reports-responses__dot {
+  background: var(--c-ok);
+  border-color: var(--c-ok);
+}
+
+.reports-responses__item--sr311 .reports-responses__dot {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+}
+
+.reports-responses__item--call .reports-responses__dot,
+.reports-responses__item--emergencyCall .reports-responses__dot {
+  background: var(--c-flag);
+  border-color: var(--c-flag);
+}
+
+.reports-responses__item--cannotDo .reports-responses__dot {
+  background: var(--c-hazard);
+  border-color: var(--c-hazard);
+}
+
+.reports-pill--onSite {
+  background: var(--c-ok-bg);
+  color: var(--c-ok);
+}
+
+.reports-pill--sr311 {
+  background: var(--brand-blue-bg);
+  color: var(--brand-blue);
+}
+
+.reports-pill--call,
+.reports-pill--emergencyCall {
+  background: var(--c-flag-bg);
+  color: var(--c-flag);
+}
+
+.reports-pill--cannotDo {
+  background: var(--c-hazard-bg);
+  color: var(--c-hazard);
+}

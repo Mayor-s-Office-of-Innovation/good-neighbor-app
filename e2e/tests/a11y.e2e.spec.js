@@ -4,6 +4,7 @@ import { t } from "../helpers/i18n.js";
 import { expect, boundPage } from "../helpers/harness.js";
 import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
+import { REPORT_DAY, openReports, stubReports } from "../helpers/reports.js";
 
 /*
   Automated accessibility scans via ramp-check inside the existing e2e suite.
@@ -23,8 +24,9 @@ import { PHOTO_CLEAR } from "../helpers/fixtures.js";
   obscured, no trap) and a text-spacing check (warns by default), and records
   warnings as annotations with the full result attached as JSON.
 
-  States (six — five from the pre-ramp-check spec plus the photo lightbox
-  the Playwright-coverage work added):
+  States (nine — five from the pre-ramp-check spec, the photo lightbox
+  the Playwright-coverage work added, and the three site manager report
+  screens):
     - code entry (unbound): the app's public front door, reached without a
       site binding. Plain page; no bindSite.
     - bound home (/today) + capture view + photo lightbox + site admin +
@@ -140,6 +142,72 @@ matrix(
         // after the site data and its edit controls have rendered.
         await expect(page.locator('[data-edit-section="site"]')).toBeVisible();
         await a11y.check("site admin");
+      },
+    );
+
+    // Site manager reports: the Checks report (selects, calendar strip,
+    // legend, status pills, record cards) and a day's timeline. Data comes
+    // from route stubs so the scan is the same whatever the table holds.
+    boundA11y(
+      "a11y: reports",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await openReports(page);
+        await expect(
+          page.getByRole("heading", { name: t("reports.title") }),
+        ).toBeVisible();
+        await a11y.check("reports");
+      },
+    );
+
+    boundA11y(
+      "a11y: report issues",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await page.goto("/reports?tab=issues");
+        await expect(
+          page.locator('.reports__record[data-task-id="t1"]'),
+        ).toBeVisible();
+        await a11y.check("report issues");
+      },
+    );
+
+    boundA11y(
+      "a11y: report day",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await page.goto(`/reports/checks/${REPORT_DAY}`);
+        await expect(page.locator(".reports-timeline__item--done")).toHaveCount(
+          2,
+        );
+        await a11y.check("report day");
+      },
+    );
+
+    boundA11y(
+      "a11y: report day 311 sheet",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await page.goto(`/reports/checks/${REPORT_DAY}`);
+        await page
+          .locator('.analysis-card[data-task-id="t1"] [data-action="view311"]')
+          .click();
+        await expect(
+          page.locator("#ticket-detail-dialog[open] #ticket-detail-title"),
+        ).toBeVisible();
+        await a11y.check("report day 311 sheet");
+      },
+    );
+
+    boundA11y(
+      "a11y: report type",
+      async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        await stubReports(page);
+        await page.goto("/reports/issues/Litter?period=week&start=2026-09-27");
+        await expect(
+          page.locator('.analysis-card[data-task-id="t1"]'),
+        ).toContainText("15th St");
+        await a11y.check("report type");
       },
     );
 

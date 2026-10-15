@@ -41,6 +41,11 @@ Dev-only, like `design-system.html`: `vite build` ships only the app's `index.ht
 - `/check/describe` — the description alternative to photos (one per check; reopening
   edits it)
 - `/problem` — single-issue capture (with a `/problem/describe` variant)
+- `/site-admin` — site manager screens (manager access level only; lazy chunk)
+- `/reports` — site manager reports: Checks and a draft combined Issues tab
+  (`?tab=checks|issues&period=week|month|quarter&start=YYYY-MM-DD`);
+  `/reports/checks/<date>` is one day's detail. Manager access level only; lazy chunk
+  (`reports-view.js`, served by the manager report endpoints)
 
 First-run site setup is enforced by `app-root`, not by a route. There is no per-site
 places setup: a bound device lands straight on `/today`

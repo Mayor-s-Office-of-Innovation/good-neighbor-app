@@ -252,6 +252,7 @@ class TicketDetailDialog extends HTMLElement {
     });
     dialog.addEventListener("close", () => {
       this._open = false;
+      this.removeAttribute?.("data-settled");
       this._generation += 1;
       this.dispatchEvent(
         new CustomEvent("ticketdetailclosed", {
@@ -260,7 +261,22 @@ class TicketDetailDialog extends HTMLElement {
         }),
       );
     });
-    if (this._open) openOverlayDialog(dialog, "ticket-detail");
+    if (this._open) {
+      openOverlayDialog(dialog, "ticket-detail");
+      this._settle();
+    }
+  }
+
+  /**
+   * The open transition is keyed off the host's `data-settled` attribute:
+   * every render rebuilds the <dialog>, so without it the entrance would
+   * replay on each state change while the sheet is up.
+   */
+  _settle() {
+    // Optional chaining: the node unit tests stub HTMLElement bare.
+    globalThis.requestAnimationFrame?.(() => {
+      if (this._open) this.setAttribute?.("data-settled", "");
+    });
   }
 }
 

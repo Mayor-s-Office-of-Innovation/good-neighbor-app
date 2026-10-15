@@ -10,6 +10,7 @@
 .task-update::backdrop {
   background: rgb(0 0 0 / 0.5);
 }
+
 .task-update__discard-dialog {
   width: min(100% - 2rem, 32rem);
   border: 0;

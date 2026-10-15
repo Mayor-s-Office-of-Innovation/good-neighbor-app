@@ -17,8 +17,11 @@ import {
   siteMetaKey,
   taskDisplayCounterKey,
   taskKey,
+  taskTimelineGsi,
+  taskTimelineGsiFor,
   taskUpdateKey,
   taskUpdatePointerKey,
+  taskUpdateTimelineGsi,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -499,6 +502,7 @@ function buildTaskItem({
       now,
       taskId,
     ),
+    ...taskTimelineGsi(siteId, now, taskId),
     createdAt: now,
     updatedAt: now,
   };
@@ -882,6 +886,7 @@ export async function storeEvaluatedAssessment(input, options) {
         TableName: options.tableName,
         Item: {
           ...task,
+          ...taskTimelineGsiFor(input.siteId, task),
           status: "superseded",
           supersededAt: now,
           supersessionReason: "assessment_refreshed",
@@ -1741,6 +1746,7 @@ export async function completeTaskWithAppActions(opts) {
                       now,
                       actionUpdateId,
                     ),
+                    ...taskUpdateTimelineGsi(opts.siteId, now, actionUpdateId),
                     entityType: "task_update",
                     taskId: opts.taskId,
                     updateId: actionUpdateId,
@@ -1878,6 +1884,7 @@ function supersedeTaskWrites(tasks, opts, now) {
     const taskId = String(task.taskId);
     const updated = {
       ...task,
+      ...taskTimelineGsiFor(opts.siteId, task),
       status: "superseded",
       supersededAt: now,
       supersessionReason: opts.reason ?? "analysis_condition_amended",
