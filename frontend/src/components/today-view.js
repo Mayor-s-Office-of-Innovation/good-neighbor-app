@@ -200,6 +200,7 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
     this._sessionUnsub?.();
@@ -212,6 +213,11 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
+    if (!this._phoneSaved)
+      this._phoneSaved = () => {
+        void this.connectedCallback();
+      };
+    window.addEventListener("phonecompletionsaved", this._phoneSaved);
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;

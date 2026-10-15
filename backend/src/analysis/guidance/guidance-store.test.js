@@ -470,6 +470,27 @@ describe("answerCondition", () => {
 });
 
 describe("completeTaskWithAppActions", () => {
+  it("replays a saved phone handoff without another write or app action", async () => {
+    send.mockReset();
+    const existing = {
+      taskId: "phone",
+      kind: "non_actionable_escalation",
+      status: "in_progress",
+      completionMethod: "manual",
+    };
+    send.mockResolvedValueOnce({ Item: existing });
+    const result = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "phone",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: {},
+    });
+    expect(result).toEqual(existing);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     send.mockReset();
   });

@@ -742,10 +742,12 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}) {
+export function completeTask(taskId, body = {}, options = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
+    ...options,
     body,
   });
 }

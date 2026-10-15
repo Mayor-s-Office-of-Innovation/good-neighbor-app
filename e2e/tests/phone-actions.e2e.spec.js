@@ -160,7 +160,7 @@ test("phone controls switch at 520px without reload; desktop checkbox never dial
   expect(calls).toEqual([]);
 });
 
-test("failed mobile save keeps the call card retryable", async ({ page }) => {
+test("failed mobile save offers a save-only retry", async ({ page }) => {
   const calls = await capturePhoneHandoffs(page);
   await page.setViewportSize({ width: 390, height: 850 });
   const { card, state } = await issueFixture(page, "THREAT-1");
@@ -174,10 +174,12 @@ test("failed mobile save keeps the call card retryable", async ({ page }) => {
   await expect(card).toBeVisible();
   expect(calls).toEqual(["tel:4155530123"]);
   state.fail = false;
-  await button.click();
+  await page
+    .getByRole("button", { name: t("common.retry"), exact: true })
+    .click();
   await expect(card).toHaveCount(0);
   expect(state.completions).toHaveLength(2);
-  expect(calls).toEqual(["tel:4155530123", "tel:4155530123"]);
+  expect(calls).toEqual(["tel:4155530123"]);
 });
 
 test("mobile Sidewalk action stays a checkbox and 311 ticket stays a manual filing CTA", async ({
@@ -194,4 +196,47 @@ test("mobile Sidewalk action stays a checkbox and 311 ticket stays a manual fili
   await expect(ticket.card.locator("[data-phone-number]")).toHaveCount(0);
   expect(ticket.state.completions).toEqual([]);
   expect(calls).toEqual([]);
+});
+
+test("phone save survives reload during preparation without redialing", async ({
+  page,
+}) => {
+  const calls = await capturePhoneHandoffs(page);
+  await page.setViewportSize({ width: 520, height: 900 });
+  // Suspend request preparation, before fetch, on the first page only.
+  await page.route("**/src/services/phone-completion.js", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      body: (await response.text()).replace(
+        "const result = await completeTask(",
+        "await new Promise(() => {}); const result = await completeTask(",
+      ),
+    });
+  });
+  const { card, state } = await issueFixture(page, "THREAT-1");
+  await card.locator("[data-phone-number]").click();
+  await expect.poll(() => calls).toEqual(["tel:4155530123"]);
+  expect(state.completions).toHaveLength(0);
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("gnp:phone-completion:"),
+      ),
+    ),
+  ).toHaveLength(1);
+  await page.unroute("**/src/services/phone-completion.js");
+  await page.reload();
+  await expect.poll(() => state.completions.length).toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Object.keys(sessionStorage).filter((key) =>
+            key.startsWith("gnp:phone-completion:"),
+          ).length,
+      ),
+    )
+    .toBe(0);
+  expect(calls).toEqual(["tel:4155530123"]);
 });

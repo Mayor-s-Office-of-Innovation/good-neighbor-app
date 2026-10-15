@@ -1,3 +1,4 @@
+import { savePhoneCompletion } from "../services/phone-completion.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
 
@@ -51,9 +52,9 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
       card.setAttribute("aria-busy", "true");
       const taskId = card.getAttribute("data-task-id");
       if (!taskId) throw new Error("Task is not ready to complete");
-      const result = await completeCardAction(taskId, {
-        completionMethod: "manual",
-      });
+      const result = await (isPhone
+        ? savePhoneCompletion(taskId, host._site?.siteId)
+        : completeCardAction(taskId, { completionMethod: "manual" }));
       if (
         !["completed", "in_progress", "cannot_do"].includes(
           result?.task?.status,
@@ -67,7 +68,7 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
       console.error("checklist completion failed", error);
       if (!saved) {
         if (!isPhone) button.setAttribute("aria-checked", "false");
-        showActionSaveErrorToast();
+        if (!isPhone) showActionSaveErrorToast();
       }
     } finally {
       pending.delete(card);
@@ -87,7 +88,8 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
     }
   };
   if (isPhone) {
-    // Begin saving before handing off: mobile browsers may suspend timers.
+    // Persist the receipt synchronously before handing off. A suspended request
+    // is recovered on return/reload without delaying the call.
     void save();
     window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
   } else state.timer = setTimeout(save, 1500);

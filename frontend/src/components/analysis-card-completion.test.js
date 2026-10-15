@@ -6,6 +6,13 @@ import {
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
+vi.mock("../services/phone-completion.js", () => ({
+  savePhoneCompletion: (taskId) =>
+    completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
+      showActionSaveErrorToast();
+      throw error;
+    }),
+}));
 vi.mock("./task-update-dialog.js", () => ({}));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({ showActionSaveErrorToast: vi.fn() }));

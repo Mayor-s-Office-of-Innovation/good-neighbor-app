@@ -196,7 +196,7 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
-  `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
+  `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used
   by the client. Card hydration batches visible requests so one handler invocation loads the

@@ -1409,7 +1409,11 @@ export async function completeTaskWithAppActions(opts) {
   if (!existing.Item) {
     throw namedError("NotFound", "Task not found");
   }
-  if (existing.Item.status === "completed") {
+  if (
+    existing.Item.status === "completed" ||
+    (existing.Item.status === "in_progress" &&
+      existing.Item.kind === "non_actionable_escalation")
+  ) {
     const method = opts.completionMethod ?? "user_confirmed";
     if (existing.Item.completionMethod === method) {
       return existing.Item;
