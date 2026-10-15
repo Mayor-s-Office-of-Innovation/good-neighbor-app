@@ -41,7 +41,6 @@ import {
   registerTaskUpdateMedia,
 } from "../handlers/task-updates.js";
 import {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -235,7 +234,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
-  "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
   "GET /v1/tasks/{taskId}/updates": getTaskUpdates,
   "POST /v1/tasks/{taskId}/updates": createTaskUpdate,
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,

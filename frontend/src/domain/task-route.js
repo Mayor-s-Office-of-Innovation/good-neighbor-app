@@ -36,6 +36,7 @@ export function taskRoute(task) {
   if (task?.kind === "non_actionable_escalation") {
     const emergency =
       task.inProgressActionKind === "called_911" ||
+      task.phoneNumber === "911" ||
       (task.appActions || []).some(
         (action) =>
           action?.code === "open_phone" &&

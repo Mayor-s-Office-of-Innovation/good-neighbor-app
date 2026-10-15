@@ -12,7 +12,7 @@ import { pacificDateKey } from "../i18n/dates.js";
   One always-on screen (no due/up-to-date fork), driven by real data. When we have
   the data, it shows a timestamp for the last check, the current issue count,
   and the site's real TASK# worklist. Cards carry the task's own action buttons,
-  wired to the real complete / cannot-do endpoints.
+  wired to the completion endpoint.
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
@@ -55,7 +55,6 @@ import {
 import {
   listChecks,
   listTasks,
-  cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
 } from "../services/api.js";
@@ -128,12 +127,10 @@ import {
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import {
-  actionButton,
   errorView,
   heroBlock,
   homeResults,
   homeShell,
-  reasonPicker,
   summaryBlock,
 } from "./today-view.templates.js";
 import { TaskSheets } from "./task-sheets.js";
@@ -203,6 +200,7 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
     this._sessionUnsub?.();
@@ -217,6 +215,11 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
+    if (!this._phoneSaved)
+      this._phoneSaved = () => {
+        void this.connectedCallback();
+      };
+    window.addEventListener("phonecompletionsaved", this._phoneSaved);
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
@@ -400,7 +403,7 @@ class TodayView extends HTMLElement {
       return;
     }
     // Index tasks by id so card action handlers can read the task (e.g. its
-    // allowlisted cannot-do reasons) at click time.
+    // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
     this.innerHTML = this._render(model);
 
@@ -1337,13 +1340,6 @@ class TodayView extends HTMLElement {
         variant: "ink",
       });
     }
-    if ((task.cannotDoReasons || []).length) {
-      actions.push({
-        kind: "cant",
-        label: t("today.action.cant"),
-        variant: "outline",
-      });
-    }
     return actions;
   }
 
@@ -1437,7 +1433,10 @@ class TodayView extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      if (btn.getAttribute("role") === "checkbox") {
+      if (
+        btn.getAttribute("role") === "checkbox" ||
+        btn.hasAttribute("data-phone-number")
+      ) {
         toggleCardCompletion(this, card, btn, {
           onSaved: (task) =>
             this._markAnalysisProblemResolved(problem, {
@@ -1808,20 +1807,6 @@ class TodayView extends HTMLElement {
           this.connectedCallback();
         }
       });
-    } else if (action === "cant") {
-      this._renderReasonPicker(card, task);
-    } else if (action === "cant-reason") {
-      const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason }), {
-        animateOnSuccess: true,
-      }).then((ok) => {
-        if (ok) {
-          this._setTaskOverride(task.taskId, "resolved");
-          this.connectedCallback();
-        }
-      });
-    } else if (action === "cant-cancel") {
-      this._restoreActions(card, task);
     }
   }
 
@@ -1832,37 +1817,6 @@ class TodayView extends HTMLElement {
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;
-  }
-
-  // A "failed" app action holds the task open but still returns 200, so the
-  // caller must read the stored results to know the filing didn't happen.
-  // Map the recorded reason to one actionable line (mirrors SUBMIT_MESSAGES).
-  // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
-  // rejects arbitrary ones), plus a cancel.
-  _renderReasonPicker(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    // The backend validates the reason against the task's English list, so
-    // each option submits the stored string and displays its translation.
-    const reasons = (task.cannotDoReasons || []).map((value) => ({
-      value: String(value),
-      label: rulebookText(value),
-    }));
-    actions.innerHTML = reasonPicker({ reasons });
-    this._wireCardButtons(card, task);
-  }
-
-  _restoreActions(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    actions.innerHTML = this._cardActions(task)
-      .map((a) => actionButton(a))
-      .join("");
-    this._wireCardButtons(card, task);
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the

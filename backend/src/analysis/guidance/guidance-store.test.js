@@ -6,6 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { activeCatalog } from "./catalog-registry.js";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
@@ -14,7 +15,6 @@ const {
   answerCondition,
   completeTaskWithAppActions,
   getAssessmentGuidance,
-  markTaskCannotDo,
   storeEvaluatedAssessment,
   supersedeOpenTasksForCondition,
 } = await import("./guidance-store.js");
@@ -120,7 +120,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v6",
+      policyVersion: activeCatalog().policyVersion,
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -140,7 +140,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v6",
+      policyVersion: activeCatalog().policyVersion,
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
@@ -160,7 +160,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v6",
+      policyVersion: activeCatalog().policyVersion,
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
@@ -471,6 +471,27 @@ describe("answerCondition", () => {
 });
 
 describe("completeTaskWithAppActions", () => {
+  it("replays a saved phone handoff without another write or app action", async () => {
+    send.mockReset();
+    const existing = {
+      taskId: "phone",
+      kind: "non_actionable_escalation",
+      status: "in_progress",
+      completionMethod: "manual",
+    };
+    send.mockResolvedValueOnce({ Item: existing });
+    const result = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "phone",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: {},
+    });
+    expect(result).toEqual(existing);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     send.mockReset();
   });
@@ -1329,36 +1350,6 @@ describe("completeTaskWithAppActions", () => {
       gsi2pk: "SITE#site-1#TASK#completed",
     });
     expect(task).toMatchObject({ status: "completed" });
-  });
-});
-
-describe("markTaskCannotDo", () => {
-  beforeEach(() => {
-    send.mockReset();
-  });
-
-  it("returns a stored cannot-do task for an identical replay", async () => {
-    send.mockResolvedValueOnce({
-      Item: {
-        pk: "SITE#site-1",
-        sk: "TASK#task-1",
-        taskId: "task-1",
-        status: "cannot_do",
-        cannotDo: { reason: "It doesn't feel safe", note: "dark outside" },
-      },
-    });
-
-    const task = await markTaskCannotDo({
-      tableName: "table",
-      siteId: "site-1",
-      taskId: "task-1",
-      reason: "It doesn't feel safe",
-      note: "dark outside",
-      now: new Date("2026-08-18T12:02:00.000Z"),
-    });
-
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(task).toMatchObject({ status: "cannot_do" });
   });
 });
 

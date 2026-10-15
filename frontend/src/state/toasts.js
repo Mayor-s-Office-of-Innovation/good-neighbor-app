@@ -127,8 +127,12 @@ export function showEditSavedToast() {
   });
 }
 
-export function showActionSaveErrorToast() {
+/** @param {() => void} [retry] */
+export function showActionSaveErrorToast(retry) {
   return showToast({
+    ...(retry
+      ? { duration: 0, action: { label: t("common.retry"), run: retry } }
+      : {}),
     title: t("toast.actionSaveError.title"),
     message: t("toast.actionSaveError.message"),
     icon: "triangle-exclamation",

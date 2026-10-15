@@ -1189,3 +1189,33 @@ describe("card redesign", () => {
     expect(card).not.toContain("Guidance omitted");
   });
 });
+
+it("renders responsive phone controls only for a phone action with an explicit number", () => {
+  const task = {
+    taskId: "phone",
+    kind: "non_actionable_escalation",
+    phoneNumber: "415-553-0123",
+    policyVersion: "actions-escalations-v7",
+    buttons: ["Call SFPD: 415-553-0123"],
+    status: "open",
+  };
+  const render = (value) =>
+    taskAnalysisCard({
+      task: value,
+      statusLabel: "",
+      action: { kind: "done", label: t("common.done") },
+    });
+  const markup = render(task);
+  expect(markup).toContain('data-phone-number="415-553-0123"');
+  expect(markup).toContain("analysis-card__check--phone");
+  expect(markup).toContain('role="checkbox"');
+  expect(render({ ...task, phoneNumber: "" })).not.toContain(
+    "data-phone-number",
+  );
+  expect(render({ ...task, kind: "action" })).not.toContain(
+    "data-phone-number",
+  );
+  expect(render({ ...task, phoneNumber: '911" onclick="bad' })).not.toContain(
+    "data-phone-number",
+  );
+});

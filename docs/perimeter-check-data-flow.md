@@ -99,8 +99,8 @@ sequenceDiagram
   API->>DB: Update CHECK# header (scorecard + photoCount/textCount/evidenceKind,<br/>status="completed", once-only)
   Note over UI: response is the scorecard + evidence counts — no assessment envelope exists
   Note over UI: home re-renders from listTasks → task buckets<br/>session cards hand off to backend cards as they arrive
-  Staff->>UI: works task cards (Done / File 311 / Can't / answers)
-  UI->>API: POST /v1/tasks/{id}/complete · /cannot-do · .../answers
+  Staff->>UI: works task cards (Done / Call / File 311 / answers)
+  UI->>API: POST /v1/tasks/{id}/complete · .../answers
   API->>DB: guarded task/condition writes
 ```
 
@@ -457,10 +457,18 @@ in-flight set + button disabling client-side; `status = needs_answer` guard serv
 **d. Home worklist buckets** (today-view.js `homeTaskStatus`): straight from `TASK#`
 status — `open` → needs-action; `completing` → in-progress; `completed` with
 `completionMethod:"311_filed"` → **stays in-progress** (the City owns the work now);
-`completed`/`cannot_do` → resolved, then archived after a 72h age window; tasks created
+`completed` (and historical `cannot_do`) → resolved, then archived after a 72h age window; tasks created
 within a 3h window also surface as "new" cards. Tasks staged for deletion are excluded
 from the worklist while their toast is pending (`isTaskPendingDeletion`). Task
 overrides are client-side only (read-model smoothing), never a second source of truth.
+
+Phone CTAs record a site-bound task-completion receipt in tab session storage before
+opening `tel:`. Returning online, restoring the page, or reloading retries an interrupted
+save without dialing again; failures offer a persistent save-only retry. Calls never
+wait for the backend. If browser storage is unavailable, recovery is limited to the
+current page lifetime. Replaying a saved phone completion returns the existing task
+without adding another update or ticket. This is limited phone-handoff recovery, not
+general offline support.
 
 **e. Condition status state machine** (what gates a condition between card types):
 
@@ -476,9 +484,10 @@ stateDiagram-v2
   needs_answer --> manual_review: answer → unresolved category
 ```
 
-Task status (`open → completing → completed | cannot_do | superseded`) is guarded by
+Task status (`open → completing → in_progress | completed`, with `superseded` for retired tasks) is guarded by
 conditional writes end-to-end — a replay can never double-complete or double-mint, and
 the lineage publication never retires a mid-`completing` task (§ 3).
+`cannot_do` is read-only legacy history; there is no current UI action or API route to create it.
 
 ---
 

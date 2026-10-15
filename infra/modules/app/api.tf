@@ -54,7 +54,6 @@ locals {
     "GET /v1/tasks",
     "POST /v1/311-requests:batch",
     "POST /v1/tasks/{taskId}/complete",
-    "POST /v1/tasks/{taskId}/cannot-do",
     "GET /v1/tasks/{taskId}/updates",
     "POST /v1/tasks/{taskId}/updates",
     "POST /v1/tasks/{taskId}/updates/{updateId}/document",

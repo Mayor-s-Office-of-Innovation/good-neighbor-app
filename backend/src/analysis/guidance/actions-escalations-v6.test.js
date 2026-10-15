@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { evaluateCondition } from "./evaluator.js";
 import { validateCatalog } from "./rule-catalog.js";
 
@@ -19,10 +19,18 @@ it("activates all 39 supplied rules without changing their fields", () => {
       { encoding: "utf8" },
     ),
   );
-  expect(activeCatalog().policyVersion).toBe("actions-escalations-v6");
-  expect(activeCatalog().rules).toHaveLength(39);
-  expect(activeCatalog().rules).toEqual(imported.catalog.rules);
-  expect(validateCatalog(activeCatalog())).toEqual([]);
+  expect(catalogForPolicyVersion("actions-escalations-v6").policyVersion).toBe(
+    "actions-escalations-v6",
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v6").rules).toHaveLength(
+    39,
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v6").rules).toEqual(
+    imported.catalog.rules,
+  );
+  expect(
+    validateCatalog(catalogForPolicyVersion("actions-escalations-v6")),
+  ).toEqual([]);
   expect(catalogForPolicyVersion("actions-escalations-v5").rules).toHaveLength(
     36,
   );
@@ -45,7 +53,7 @@ it.each([
       evaluateCondition({
         condition: { category: "Fire hazard", severity },
         reportedAt,
-        catalog: activeCatalog(),
+        catalog: catalogForPolicyVersion("actions-escalations-v6"),
       }),
     ).toMatchObject({ kind: "outcome", rule: { ruleId } });
   },
@@ -73,7 +81,7 @@ it.each([
   expect(
     evaluateCondition({
       condition: { category: input, severity: 5 },
-      catalog: activeCatalog(),
+      catalog: catalogForPolicyVersion("actions-escalations-v6"),
     }),
   ).toMatchObject({ kind: "outcome", category, rule: { ruleId } });
 });

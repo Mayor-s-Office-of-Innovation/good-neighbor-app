@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
   the main view based on the route. Everything is scoped to the bound site.
@@ -119,6 +120,8 @@ export class AppRoot extends HTMLElement {
     }
     requestLocationPermissionEarly();
     this._site = await getSite();
+    this._stopPhoneRecovery?.();
+    this._stopPhoneRecovery = startPhoneCompletionRecovery();
     this._onAuthSignout = () => {
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
@@ -165,6 +168,7 @@ export class AppRoot extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._stopPhoneRecovery?.();
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);

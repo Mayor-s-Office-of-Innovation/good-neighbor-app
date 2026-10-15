@@ -843,23 +843,12 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}) {
+export function completeTask(taskId, body = {}, options = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
-    body,
-  });
-}
-
-/**
- * POST /v1/tasks/{taskId}/cannot-do — audit-only reason capture when the user
- * cannot complete an action or escalation.
- * @param {string} taskId
- * @param {{ reason: string, note?: string }} body
- * @returns {Promise<{ task: any }>}
- */
-export function cannotDoTask(taskId, body) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cannot-do`, {
+    ...options,
     body,
   });
 }
