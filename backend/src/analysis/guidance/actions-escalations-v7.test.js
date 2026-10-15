@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { evaluateCondition } from "./evaluator.js";
 import { validateCatalog } from "./rule-catalog.js";
 
 it("activates all 39 supplied rules without changing their fields", () => {
-  expect(activeCatalog().policyVersion).toBe("actions-escalations-v7");
   const imported = JSON.parse(
     execFileSync(
       process.execPath,

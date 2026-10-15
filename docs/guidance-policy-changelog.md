@@ -2,6 +2,13 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v8 - 2026-10-15
+
+- Imports `GNP - rubrics-3.csv` (39 rules). Removes full phone numbers from nine
+  button labels; Call 911 and Call 311 remain unchanged.
+- Explicit phone-number fields, routing, filing behavior, and all other rule
+  fields are unchanged. Prior catalogs and saved task snapshots remain available.
+
 ## actions-escalations-v7 - 2026-10-15
 
 - Imports `GNP - rubrics-2.csv` (39 rules) with Sidewalk action, Phone call,
