@@ -154,3 +154,34 @@ separate site for tests when needed. Logs are in the running process console,
 including allowlisted duplicate outcomes and timings; local runs do not publish
 CloudWatch log events. Real AWS IAM, event delivery, CloudWatch ingestion and S3
 lifecycle deletion must still be verified after deployment.
+
+## Independent frontend rollout flag
+
+The public, authenticated site response includes
+`site.featureFlags.duplicateDetection`. It defaults to false and controls display
+only. It does not change the worker, persisted links, shared action routing or
+human separation overrides. The UI fails closed when fresh settings cannot be
+loaded; reload after changing the flag. Browser reloads fetch current settings,
+so changing it requires no frontend build.
+
+Configure these **GitHub Environment variables**, then rerun the app's Deploy
+workflow for that environment to update API configuration through Terraform:
+
+- `DUPLICATE_UI_ENABLED`: `true` to expose the UI; missing/`false` keeps it hidden.
+- `DUPLICATE_UI_SITE_IDS`: a JSON array such as
+  `["st-john-the-evangelist"]` for a pilot. Missing/`[]` enables every site when
+  the master UI flag is true. The backend derives the site from authentication.
+
+The workflow maps these to `duplicate_ui_enabled` and `duplicate_ui_site_ids`.
+Keep the existing backend `enable_duplicate_detection` flag independent: backend
+on/UI off permits operational observation before exposing the experience.
+
+Locally, use `DUPLICATE_UI_ENABLED=true` and optional comma-separated
+`DUPLICATE_UI_SITE_IDS=st-john-the-evangelist` in the ignored `.env.local`, then
+restart the local API. The example defaults off. No analyzer changes are needed.
+
+With the UI off, duplicate polling stops, ordinary cards and actions remain,
+and duplicate notes/cards, counts, check status, details/separation controls and
+duplicate-specific timeline entries are hidden. Cached duplicate presentation
+cannot override the flag. This is a presentation rollback, not an unlink operation;
+backend actions on already-linked issues still use their confirmed original.

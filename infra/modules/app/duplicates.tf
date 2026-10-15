@@ -158,3 +158,14 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   alarm_actions       = [aws_sns_topic.alarms.arn]
   tags                = var.tags
 }
+
+variable "duplicate_ui_enabled" {
+  type        = bool
+  default     = false
+  description = "Expose duplicate UI independently of backend assessment. Defaults off."
+}
+variable "duplicate_ui_site_ids" {
+  type        = list(string)
+  default     = []
+  description = "Optional frontend duplicate pilot allowlist; empty means all sites when UI is enabled."
+}

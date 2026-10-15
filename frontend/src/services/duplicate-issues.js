@@ -1,16 +1,31 @@
+import { duplicateUiEnabled, onDuplicateUiChange } from "./feature-flags.js";
 import { getDuplicateLinks } from "./api.js";
 /** Independent, cancellable polling; no await on the analysis or guidance path.
  * @param {string[]} taskIds @param {(links: Map<string, Record<string, any>>) => void} onChange
  */
 export function watchDuplicateIssues(taskIds, onChange) {
+  if (!duplicateUiEnabled()) {
+    return () => {};
+  }
   let stopped = false,
     timer,
     previous = "",
     polls = 0;
   const started = Date.now();
   const ids = [...new Set(taskIds)].filter(Boolean);
+  const unsubscribe = onDuplicateUiChange(() => {
+    if (!duplicateUiEnabled()) {
+      stopped = true;
+      clearTimeout(timer);
+      onChange(new Map());
+      unsubscribe();
+    }
+  });
   const run = async () => {
-    if (stopped || Date.now() - started > 15 * 60 * 1000 || !ids.length) return;
+    if (stopped || Date.now() - started > 15 * 60 * 1000 || !ids.length) {
+      unsubscribe();
+      return;
+    }
     let delay = polls++ < 15 ? 2000 : 5000;
     try {
       if (!document.hidden) {
@@ -19,11 +34,13 @@ export function watchDuplicateIssues(taskIds, onChange) {
           const result = await getDuplicateLinks(ids.slice(i, i + 50));
           if (!result.enabled) {
             if (!stopped) onChange(new Map());
+            stopped = true;
+            unsubscribe();
             return;
           }
           rows.push(...result.issues);
         }
-        if (stopped) return;
+        if (stopped || !duplicateUiEnabled()) return;
         const key = JSON.stringify(rows);
         if (key !== previous) {
           previous = key;
@@ -39,6 +56,7 @@ export function watchDuplicateIssues(taskIds, onChange) {
   void run();
   return () => {
     stopped = true;
+    unsubscribe();
     clearTimeout(timer);
   };
 }

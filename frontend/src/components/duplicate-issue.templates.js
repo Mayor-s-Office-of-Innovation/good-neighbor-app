@@ -1,3 +1,4 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import {
@@ -173,6 +174,7 @@ export function duplicateDetail(task, image, busy, error) {
 
 /** @param {{newCount:number,duplicateCount:number}} counts */
 export function duplicateCountLabel(counts) {
+  if (!duplicateUiEnabled()) return "";
   return html`<p class="analysis-tray__counts">
     ${escapeHtml(
       counts.duplicateCount

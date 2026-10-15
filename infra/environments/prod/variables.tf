@@ -122,3 +122,14 @@ variable "alarm_emails" {
   type        = list(string)
   default     = ["aaron.hans@sf.gov"]
 }
+
+variable "duplicate_ui_enabled" {
+  type        = bool
+  default     = false
+  description = "Expose duplicate UI independently of backend assessment. Defaults off."
+}
+variable "duplicate_ui_site_ids" {
+  type        = list(string)
+  default     = []
+  description = "Optional frontend duplicate pilot allowlist; empty means all sites when UI is enabled."
+}

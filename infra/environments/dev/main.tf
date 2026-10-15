@@ -73,6 +73,8 @@ module "app" {
   data_classification        = var.data_classification
   bedrock_model_id           = var.bedrock_model_id
   enable_duplicate_detection = var.enable_duplicate_detection
+  duplicate_ui_enabled       = var.duplicate_ui_enabled
+  duplicate_ui_site_ids      = var.duplicate_ui_site_ids
   analyzer_base_url          = "https://ipipaqh985.execute-api.us-east-1.amazonaws.com/dev"
   enable_311_submission      = true
   # PostHog feedback survey (see docs/runbooks/feedback-ops.md §3): plain

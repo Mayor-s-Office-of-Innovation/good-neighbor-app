@@ -180,6 +180,8 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = merge({
       DUPLICATE_DETECTION_ENABLED = tostring(var.enable_duplicate_detection)
+      DUPLICATE_UI_ENABLED        = tostring(var.duplicate_ui_enabled)
+      DUPLICATE_UI_SITE_IDS       = join(",", var.duplicate_ui_site_ids)
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url

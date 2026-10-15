@@ -28,6 +28,8 @@ const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
   await import("./site.js");
 
 beforeEach(() => {
+  vi.stubEnv("DUPLICATE_UI_ENABLED", "false");
+  vi.stubEnv("DUPLICATE_UI_SITE_IDS", "");
   send.mockReset();
   geocodeAddress.mockReset();
   presignGet.mockReset();
@@ -268,7 +270,11 @@ describe("site admin", () => {
       },
     });
     const response = await /** @type {any} */ (getSite)(event("site-1"));
-    expect(body(response).site).toEqual({ siteId: "site-1", name: "Mission" });
+    expect(body(response).site).toEqual({
+      siteId: "site-1",
+      name: "Mission",
+      featureFlags: { duplicateDetection: false },
+    });
   });
 
   it("denies general-access devices without reading site data", async () => {
@@ -440,5 +446,36 @@ describe("site admin", () => {
       siteName: "New Name",
       searchText: "new name provider one",
     });
+  });
+});
+
+describe("duplicate UI display policy", () => {
+  it("defaults off independently of enabled backend matching", async () => {
+    vi.stubEnv("DUPLICATE_DETECTION_ENABLED", "true");
+    send.mockResolvedValue({
+      Item: { siteId: "site-1", featureFlags: { duplicateDetection: true } },
+    });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+  });
+  it("allows only opted-in pilot sites and supports all sites explicitly", async () => {
+    vi.stubEnv("DUPLICATE_UI_ENABLED", "true");
+    vi.stubEnv("DUPLICATE_UI_SITE_IDS", "site-1, site-2");
+    send.mockResolvedValue({ Item: {} });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(true);
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-other"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+    vi.stubEnv("DUPLICATE_UI_SITE_IDS", "");
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-other"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(true);
   });
 });

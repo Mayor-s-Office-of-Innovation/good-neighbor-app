@@ -1,3 +1,4 @@
+import { setDuplicateUiSite } from "./feature-flags.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ getDuplicateLinks: vi.fn() }));
 vi.mock("./api.js", () => api);
@@ -64,4 +65,32 @@ it("a disabled detector clears transient UI results without repeated requests", 
   await vi.advanceTimersByTimeAsync(10000);
   expect(changed.mock.calls[0][0].size).toBe(0);
   expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+});
+
+beforeEach(() =>
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
+);
+
+it("does not poll when display is disabled and cancels in-flight publication when disabled", async () => {
+  setDuplicateUiSite(null);
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(api.getDuplicateLinks).not.toHaveBeenCalled();
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
+  /** @type {(value:any)=>void} */ let resolve = () => {};
+  api.getDuplicateLinks.mockImplementation(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const stop = watchDuplicateIssues(["one"], changed);
+  setDuplicateUiSite(null);
+  resolve({ enabled: true, issues: [{ taskId: "one", state: "matched" }] });
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(1);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(changed.mock.calls[0][0].size).toBe(0);
+  stop();
 });

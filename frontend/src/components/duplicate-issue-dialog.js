@@ -1,3 +1,7 @@
+import {
+  duplicateUiEnabled,
+  onDuplicateUiChange,
+} from "../services/feature-flags.js";
 import { restartDuplicateChecks } from "../services/photo-analysis.js";
 import { getCurrentCheck, updateItemAnalysis } from "../state/check-session.js";
 import { TaskSheets } from "./task-sheets.js";
@@ -9,7 +13,9 @@ import { openOverlayDialog } from "../dialog-history.js";
 import { t } from "../i18n/i18n.js";
 /** @param {Record<string,any>} task @param {HTMLElement} trigger @param {{onSeparated:(task?:Record<string,any>)=>void,onOriginal:(task:Record<string,any>,trigger:HTMLElement)=>void}} handlers */
 export function openDuplicateIssue(task, trigger, { onSeparated, onOriginal }) {
+  if (!duplicateUiEnabled()) return;
   const host = document.createElement("div");
+  let stopFlags = () => {};
   let busy = false;
   const render = (error = "") => {
     const previous = host.querySelector("dialog");
@@ -18,6 +24,7 @@ export function openDuplicateIssue(task, trigger, { onSeparated, onOriginal }) {
     const dialog = host.querySelector("dialog");
     if (!dialog) return;
     dialog.addEventListener("close", () => {
+      stopFlags();
       host.remove();
       const fallback = [...document.querySelectorAll("[data-task-id]")]
         .find((card) => card.getAttribute("data-task-id") === task.taskId)
@@ -68,6 +75,9 @@ export function openDuplicateIssue(task, trigger, { onSeparated, onOriginal }) {
   };
   document.body.append(host);
   render();
+  stopFlags = onDuplicateUiChange(() => {
+    if (!duplicateUiEnabled()) host.querySelector("dialog")?.close();
+  });
 }
 
 /** @param {Element} button @param {HTMLElement} host */

@@ -57,6 +57,8 @@ module "app" {
     aws.us_east_1 = aws.us_east_1
   }
 
+  duplicate_ui_enabled     = var.duplicate_ui_enabled
+  duplicate_ui_site_ids    = var.duplicate_ui_site_ids
   application              = var.application
   environment              = var.environment
   s3_bucket_name_prefix    = "gnp-prod"

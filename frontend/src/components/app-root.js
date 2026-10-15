@@ -10,6 +10,7 @@
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
 */
+import { setDuplicateUiSite } from "../services/feature-flags.js";
 import { requestLocationPermissionEarly } from "../services/device-location.js";
 import { refreshSessionTranslationsOnLocaleChange } from "../services/session-translations.js";
 import {
@@ -429,6 +430,7 @@ export class AppRoot extends HTMLElement {
    * @returns {Promise<boolean>} whether the app shell may be rendered
    */
   async _refreshSiteSettings() {
+    setDuplicateUiSite(null);
     try {
       const { site } = await getSiteSettings();
       if (site) {
@@ -436,6 +438,9 @@ export class AppRoot extends HTMLElement {
           ...site,
           providerSiteId: this._site.providerSiteId || site.providerSiteId,
         });
+        setDuplicateUiSite(
+          site.siteId && site.siteId !== this._site.siteId ? null : site,
+        );
       }
       return true;
     } catch (err) {

@@ -1,3 +1,4 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
 import {
   duplicateCard,
   duplicateCountLabel,
@@ -412,9 +413,9 @@ function analysisCardEntries(
       (condition) => !taskConditionIds.has(condition.conditionId),
     );
     const taskCards = visibleTasks
-      .filter((task) => !task.duplicateHidden)
+      .filter((task) => !duplicateUiEnabled() || !task.duplicateHidden)
       .map((task) => {
-        if (task.duplicate?.compact)
+        if (duplicateUiEnabled() && task.duplicate?.compact)
           return {
             markup: duplicateCard(task),
             createdAt: task.createdAt,
@@ -451,12 +452,14 @@ function analysisCardEntries(
             metaLabel: newTaskMetaLabel(task),
             createdAt,
             shortId: taskDisplayReference(task),
-            duplicateNote: Boolean(task.duplicate),
+            duplicateNote: duplicateUiEnabled() && Boolean(task.duplicate),
             duplicateOriginalTaskId: task.duplicate?.original?.taskId,
-            duplicateCheckState: task.duplicateCheckState,
+            duplicateCheckState: duplicateUiEnabled()
+              ? task.duplicateCheckState
+              : undefined,
           }),
           createdAt,
-          isDuplicate: Boolean(task.duplicate),
+          isDuplicate: duplicateUiEnabled() && Boolean(task.duplicate),
           needsAnswer: Boolean(condition.needsAnswer),
           actionPriority: analysisActionPriority(task),
         };
@@ -547,7 +550,8 @@ export function taskAnalysisCard({
   siteName = "",
   history = false,
 }) {
-  if (task.duplicate?.compact) return duplicateCard(task);
+  if (duplicateUiEnabled() && task.duplicate?.compact)
+    return duplicateCard(task);
   if (history) return historyCard(task);
   includeControls =
     includeControls &&
@@ -584,9 +588,11 @@ export function taskAnalysisCard({
     },
   };
   return completedEvidenceCard(pseudoItem, task.checkId || "", {
-    duplicateNote: Boolean(task.duplicate),
+    duplicateNote: duplicateUiEnabled() && Boolean(task.duplicate),
     duplicateOriginalTaskId: task.duplicate?.original?.taskId,
-    duplicateCheckState: task.duplicateCheckState,
+    duplicateCheckState: duplicateUiEnabled()
+      ? task.duplicateCheckState
+      : undefined,
     title:
       displayCategory(task) ||
       rulebookText(task.label) ||

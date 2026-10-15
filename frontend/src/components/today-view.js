@@ -1,3 +1,4 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
 import {
   projectDuplicateTasks,
   duplicateCounts,
@@ -380,6 +381,7 @@ class TodayView extends HTMLElement {
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
+    if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
     this._renderHome({
       last,
       checks: submitted,

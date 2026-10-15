@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { setDuplicateUiSite } from "../services/feature-flags.js";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
@@ -1234,4 +1235,27 @@ it("links the earlier-issue phrase to the original worklist card", () => {
   expect(card).toContain('data-original-task-id="original-id"');
   expect(card).toContain(t("duplicate.earlierIssue"));
   expect(card).not.toContain("{issue}");
+});
+
+beforeEach(() =>
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
+);
+
+it("hides persisted duplicate presentation and status when display is off", () => {
+  setDuplicateUiSite(null);
+  const card = taskAnalysisCard({
+    task: {
+      taskId: "repeat",
+      status: "open",
+      category: "Graffiti",
+      duplicateCheckState: "pending",
+      duplicate: { compact: true, original: { taskId: "original" } },
+    },
+    action: null,
+    statusLabel: "",
+  });
+  expect(card).not.toContain("duplicate-card__body");
+  expect(card).not.toContain("duplicate-earlier-link");
+  expect(card).not.toContain(t("duplicate.checking"));
+  expect(card).toContain(t("card.editDetails"));
 });

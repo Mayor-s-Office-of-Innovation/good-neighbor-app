@@ -682,7 +682,7 @@ it("does not expose source issues with no same-category target in the batch", as
       }),
     ],
     compare: async (request) => {
-      expect(request.source.context.conditions.map((c) => c.id)).toEqual([
+      expect(request.source.context?.conditions?.map((c) => c.id)).toEqual([
         "s1",
       ]);
       return response(request);

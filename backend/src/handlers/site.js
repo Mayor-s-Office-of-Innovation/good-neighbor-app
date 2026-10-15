@@ -75,6 +75,15 @@ export const getSite = async (event) => {
   ]) {
     delete publicSite[field];
   }
+  const pilotSites = (process.env.DUPLICATE_UI_SITE_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  publicSite.featureFlags = {
+    duplicateDetection:
+      process.env.DUPLICATE_UI_ENABLED === "true" &&
+      (!pilotSites.length || pilotSites.includes(siteId)),
+  };
   return jsonResponse(200, { site: publicSite });
 };
 

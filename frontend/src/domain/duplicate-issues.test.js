@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { setDuplicateUiSite } from "../services/feature-flags.js";
+import { beforeEach, expect, it } from "vitest";
 import { projectDuplicateTasks, duplicateCounts } from "./duplicate-issues.js";
 const now = Date.parse("2026-10-15T12:00:00Z");
 const original = {
@@ -88,4 +89,27 @@ it("never injects originals from a prior site's or prior screen's link cache", (
       now,
     ).map((task) => task.taskId),
   ).toEqual(["other-site-task"]);
+});
+
+beforeEach(() =>
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
+);
+
+it("restores ordinary cards from persisted duplicate UI state when display is off", () => {
+  setDuplicateUiSite(null);
+  const result = projectDuplicateTasks(
+    [
+      {
+        ...repeat,
+        duplicateHidden: true,
+        duplicate: { compact: true },
+        duplicateCheckState: "pending",
+      },
+    ],
+    new Map([["repeat", { state: "matched", original }]]),
+  );
+  expect(result).toHaveLength(1);
+  expect(result[0].duplicate).toBeUndefined();
+  expect(result[0].duplicateHidden).toBe(false);
+  expect(result[0].duplicateCheckState).toBeUndefined();
 });
