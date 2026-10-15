@@ -4,8 +4,10 @@
   always follow the shared base in the bundle. Unlayered, like base.css.
 */
 
+/* Phone-width sheet on every screen (design frame 05); the content sets
+   the height and scrolls inside past 94vh. */
 .ticket-detail {
-  width: min(100% - 2rem, 52rem);
+  width: min(100% - 2rem, var(--app-content-max-width, 34rem));
   max-height: 94vh;
   border: 0;
   border-radius: var(--radius, 1rem);
@@ -16,10 +18,18 @@
   background: rgb(0 0 0 / 0.5);
 }
 
+/* The dialog is a flex container (shared dialog styling), so the sheet must
+   claim the full width or it shrinks to its longest line. */
 .ticket-detail__sheet {
-  min-height: min(70rem, 88vh);
-  padding: 3.5rem clamp(1.5rem, 9vw, 11rem) 4rem;
+  width: 100%;
+  min-width: 0;
+  padding: 1.25rem 1.5rem 2.5rem;
   overflow: auto;
+}
+@media (min-width: 32rem) {
+  .ticket-detail__sheet {
+    padding: 1.5rem 2rem 2.5rem;
+  }
 }
 .ticket-detail__header {
   display: flex;
@@ -29,11 +39,18 @@
 .ticket-detail__updates h3 {
   margin: 0;
 }
+/* The close X: a 44px grey disc with a clearly legible glyph. */
 .ticket-detail__close {
-  color: var(--wa-color-neutral-fill-loud, #2f323f);
+  width: 2.75rem;
+  height: 2.75rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  flex-basis: 2.75rem;
+  background: var(--surface-3);
+  color: var(--text);
 }
 .ticket-detail__close wa-icon {
-  font-size: var(--wa-font-size-m, 1rem);
+  font-size: 1.25rem;
 }
 .ticket-detail__summary {
   margin-top: 1.75rem;
@@ -81,9 +98,24 @@
   object-fit: cover;
 }
 
+/* The photo's button must size to the photo: the native button chrome
+   (fixed control height, padding) otherwise lets the image overflow under
+   the metadata that follows. */
 .ticket-detail__photo-trigger {
+  display: block;
   width: fit-content;
-  border-radius: var(--radius-sm);
+  height: auto;
+  min-height: 0;
+  margin: 1.25rem 0 1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  box-shadow: none;
+  cursor: zoom-in;
+}
+.ticket-detail__photo-trigger .ticket-detail__photo {
+  margin: 0;
 }
 .ticket-detail__photo.photo-placeholder {
   display: flex;
@@ -154,11 +186,6 @@
   font-size: 0.875rem;
 }
 @media (max-width: 32rem) {
-  .ticket-detail__sheet {
-    min-height: 88vh;
-    padding: 1.5rem;
-  }
-
   .ticket-detail__type {
     display: grid;
     grid-template-columns: 1rem minmax(0, 1fr);
