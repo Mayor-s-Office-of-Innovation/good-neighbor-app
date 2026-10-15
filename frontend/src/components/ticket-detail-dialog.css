@@ -16,42 +16,6 @@
   background: rgb(0 0 0 / 0.5);
 }
 
-/* Open/close: a very short fade, pure CSS (no JS timing).
-   @starting-style is the pre-open state; allow-discrete keeps the element
-   painted while it fades out after close(). Same pattern as .sheet in
-   base.css, at a fraction of the duration. The element re-renders its
-   <dialog> on every state change, so the entrance and exit states apply
-   only while the host is not yet settled (set a frame after opening,
-   cleared on close); later renders keep the sheet still. */
-.ticket-detail {
-  opacity: 1;
-  transition:
-    opacity 80ms ease-out,
-    overlay 80ms ease-out allow-discrete,
-    display 80ms ease-out allow-discrete;
-}
-ticket-detail-dialog:not([data-settled]) .ticket-detail:not([open]) {
-  opacity: 0;
-}
-@starting-style {
-  ticket-detail-dialog:not([data-settled]) .ticket-detail[open] {
-    opacity: 0;
-  }
-}
-.ticket-detail::backdrop {
-  transition:
-    opacity 80ms ease-out,
-    overlay 80ms ease-out allow-discrete,
-    display 80ms ease-out allow-discrete;
-}
-ticket-detail-dialog:not([data-settled]) .ticket-detail:not([open])::backdrop {
-  opacity: 0;
-}
-@starting-style {
-  ticket-detail-dialog:not([data-settled]) .ticket-detail[open]::backdrop {
-    opacity: 0;
-  }
-}
 .ticket-detail__sheet {
   min-height: min(70rem, 88vh);
   padding: 3.5rem clamp(1.5rem, 9vw, 11rem) 4rem;

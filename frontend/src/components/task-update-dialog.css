@@ -11,42 +11,6 @@
   background: rgb(0 0 0 / 0.5);
 }
 
-/* Open/close: a very short fade, pure CSS (no JS timing).
-   @starting-style is the pre-open state; allow-discrete keeps the element
-   painted while it fades out after close(). Same pattern as .sheet in
-   base.css, at a fraction of the duration. The element re-renders its
-   <dialog> on every state change, so the entrance and exit states apply
-   only while the host is not yet settled (set a frame after opening,
-   cleared on close); later renders keep the sheet still. */
-.task-update {
-  opacity: 1;
-  transition:
-    opacity 80ms ease-out,
-    overlay 80ms ease-out allow-discrete,
-    display 80ms ease-out allow-discrete;
-}
-task-update-dialog:not([data-settled]) .task-update:not([open]) {
-  opacity: 0;
-}
-@starting-style {
-  task-update-dialog:not([data-settled]) .task-update[open] {
-    opacity: 0;
-  }
-}
-.task-update::backdrop {
-  transition:
-    opacity 80ms ease-out,
-    overlay 80ms ease-out allow-discrete,
-    display 80ms ease-out allow-discrete;
-}
-task-update-dialog:not([data-settled]) .task-update:not([open])::backdrop {
-  opacity: 0;
-}
-@starting-style {
-  task-update-dialog:not([data-settled]) .task-update[open]::backdrop {
-    opacity: 0;
-  }
-}
 .task-update__discard-dialog {
   width: min(100% - 2rem, 32rem);
   border: 0;

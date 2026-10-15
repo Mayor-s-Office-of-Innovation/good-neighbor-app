@@ -181,6 +181,21 @@ a screen matched to the design without a mockup.
 
 ## Motion
 
+Two rules decide how a surface arrives, and they follow its close control:
+
+- **A screen with a back arrow slides.** Routed screens one level below the
+  one on screen (reports, site admin, a day or issue-type detail, describe-
+  instead) slide in from the right and slide back out on the way up; sibling
+  routes and the X-closed capture flows cross-fade. `router.js`
+  `routeTransitionDirection` picks push/pop/fade from path level, `app-root.js`
+  stamps it on `<html data-route-transition>` for the View Transition, and
+  base.css holds the keyframes.
+- **An overlay with an X fades.** Every modal `<dialog>` (action sheets, modals,
+  the photo lightbox, the 311 and updates sheets) fades in and out over 80 ms
+  through one rule in base.css; nothing scales or moves. A host that rebuilds
+  its open dialog on every state change marks itself `data-settled` a frame
+  after opening so the entrance plays once (see `ticket-detail-dialog.js`).
+
 Everything animated must be instant when the OS asks for reduced motion
 (`prefers-reduced-motion: reduce`). axe-core has no rule for this, so the e2e
 accessibility scan will not catch a regression — the rules below are the guard.
@@ -192,7 +207,7 @@ accessibility scan will not catch a regression — the rules below are the guard
    blocks for ordinary light-DOM transitions; the global rule already handles them.
 2. **Shadow roots and view-transition pseudo-elements need their own guard.** The `*`
    selector stops at shadow boundaries and never matches `::view-transition-*`. Known
-   sites: the route cross-fade in `app-root.js` (guarded in base.css and skipped in JS
+   sites: the route swap in `app-root.js` (guarded in base.css and skipped in JS
    when the media query matches), `theme-toggle.js`'s own shadow stylesheet, and
    `wa-spinner` (see below). Anything new that animates inside a shadow root, or uses
    `document.startViewTransition`, must add its own `prefers-reduced-motion` rule.

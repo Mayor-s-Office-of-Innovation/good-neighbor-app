@@ -697,14 +697,52 @@ button[data-loading] [data-loading-label] {
 }
 
 /* ---- Dispute modal: a centered action-sheet over a dimmed backdrop ---- */
-/* Native <dialog>: showModal() gives focus trap + Escape for free. The element
-   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss).
+/* Every modal overlay fades in and out over 80 ms, and nothing moves: the
+   action sheets (.sheet), the modals (.places-modal and friends), the photo
+   lightbox, and the task sheets. Pure CSS: @starting-style is the pre-open
+   state, `transition-behavior: allow-discrete` keeps the element painted
+   while it fades out after close(). Browsers without @starting-style show
+   and hide instantly. A host that rebuilds its open <dialog> on every state
+   change (ticket-detail-dialog, task-update-dialog) marks itself
+   [data-settled] a frame after opening so the entrance plays once, not on
+   each re-render; reduced motion zeroes the durations below. */
+dialog {
+  opacity: 1;
+  transition:
+    opacity 80ms ease-out,
+    overlay 80ms ease-out allow-discrete,
+    display 80ms ease-out allow-discrete;
+}
 
-   Show/hide animation is pure CSS (no JS timing): @starting-style defines the
-   pre-open state, `transition-behavior: allow-discrete` keeps the element
-   rendered while it transitions out after close(). Mirrors wa-dialog's fade +
-   scale (`--wa-transition-normal`, its dialog.styles.ts show-dialog keyframes).
-   Browsers without @starting-style skip the animation and show/hide instantly. */
+dialog:not([open]):not([data-settled] > dialog) {
+  opacity: 0;
+}
+
+@starting-style {
+  dialog[open]:not([data-settled] > dialog) {
+    opacity: 0;
+  }
+}
+
+dialog::backdrop {
+  transition:
+    opacity 80ms ease-out,
+    overlay 80ms ease-out allow-discrete,
+    display 80ms ease-out allow-discrete;
+}
+
+dialog:not([open]):not([data-settled] > dialog)::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  dialog[open]:not([data-settled] > dialog)::backdrop {
+    opacity: 0;
+  }
+}
+
+/* Native <dialog>: showModal() gives focus trap + Escape for free. The element
+   shrink-wraps its panel so backdrop clicks land on the dialog itself (dismiss). */
 .sheet {
   padding: 0;
   border: 0;
@@ -713,65 +751,10 @@ button[data-loading] [data-loading-label] {
   max-width: none;
   margin: auto;
   color: var(--text);
-  opacity: 1;
-  translate: 0 0;
-  scale: 1;
-  transition:
-    opacity var(--wa-transition-normal, 150ms) ease,
-    translate var(--wa-transition-normal, 150ms) ease,
-    scale var(--wa-transition-normal, 150ms) ease,
-    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
-    display var(--wa-transition-normal, 150ms) ease allow-discrete;
-}
-
-/* Closed state: the dialog element when not open (modal + closed = display:none
-   via the UA sheet; allow-discrete keeps it painted during the exit run). */
-.sheet:not([open]) {
-  opacity: 0;
-  translate: 0 0.6rem;
-  scale: 0.96;
-}
-
-/* Pre-open state: the styles the dialog animates FROM on showModal(). */
-@starting-style {
-  .sheet[open] {
-    opacity: 0;
-    translate: 0 0.6rem;
-    scale: 0.96;
-  }
 }
 
 .sheet::backdrop {
   background: rgba(0, 0, 0, 0.4);
-  transition:
-    opacity var(--wa-transition-normal, 150ms) ease,
-    overlay var(--wa-transition-normal, 150ms) ease allow-discrete,
-    display var(--wa-transition-normal, 150ms) ease allow-discrete;
-}
-
-/* Backdrop closed state + pre-open, same pattern as the panel. */
-.sheet:not([open])::backdrop {
-  opacity: 0;
-}
-
-@starting-style {
-  .sheet[open]::backdrop {
-    opacity: 0;
-  }
-}
-
-/* Reduced motion: fade only — no slide/scale (matches the other reduced-motion guards). */
-@media (prefers-reduced-motion: reduce) {
-  .sheet:not([open]) {
-    translate: 0 0;
-    scale: 1;
-  }
-  @starting-style {
-    .sheet[open] {
-      translate: 0 0;
-      scale: 1;
-    }
-  }
 }
 
 .sheet__panel {
