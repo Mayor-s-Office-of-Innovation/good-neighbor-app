@@ -56,6 +56,38 @@ describe("worker dispatch (pickHandler)", () => {
     translateArtifact.mockClear();
   });
 
+  it("exposes a promise handler accepted by the Node.js 24 runtime", async () => {
+    expect(handler.length).toBeLessThan(3);
+    await expect(
+      handler({ Records: [] }, /** @type {any} */ ({})),
+    ).resolves.toEqual({
+      batchItemFailures: [],
+    });
+  });
+
+  it("reports only failed records for SQS retry", async () => {
+    analyzeArtifact.mockRejectedValueOnce(new Error("analyzer unavailable"));
+    const result = await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            messageId: "failed",
+            body: JSON.stringify({ artifactId: "a1", text: "trash" }),
+          },
+          {
+            messageId: "ok",
+            body: JSON.stringify({ requestId: "r1", body: "{}" }),
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+    );
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: "failed" }],
+    });
+    expect(processSubmission).toHaveBeenCalledTimes(1);
+  });
+
   it("routes a translate_artifact message to the translate worker", async () => {
     await handler(
       event({
@@ -66,7 +98,6 @@ describe("worker dispatch (pickHandler)", () => {
         items: [{ user_friendly_label: "Trash", description: "Bags" }],
       }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(translateArtifact).toHaveBeenCalledTimes(1);
     expect(generateComplianceLetter).not.toHaveBeenCalled();
@@ -78,7 +109,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ checkId: "c1", artifactId: "a1", s3Key: "k" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(analyzeArtifact).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
@@ -91,7 +121,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ checkId: "c1", artifactId: "a1", text: "trash" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(analyzeArtifact).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
@@ -101,7 +130,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ requestId: "r1", subject: "s", body: "{}" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(processSubmission).toHaveBeenCalledTimes(1);
     expect(analyzeArtifact).not.toHaveBeenCalled();
@@ -111,7 +139,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ type: "reconcile_site_revocation", operationId: "operation-1" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
@@ -122,7 +149,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ type: "generate_compliance_letter", siteId: "site-1" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(generateComplianceLetter).toHaveBeenCalledTimes(1);
     expect(translateArtifact).not.toHaveBeenCalled();
@@ -142,7 +168,6 @@ describe("worker dispatch (pickHandler)", () => {
         ],
       }),
       /** @type {any} */ ({}),
-      () => {},
     );
 
     expect(dispatchRevocationOutbox).toHaveBeenCalledTimes(1);
