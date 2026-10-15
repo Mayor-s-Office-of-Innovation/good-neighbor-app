@@ -154,6 +154,41 @@ import {
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
 
+/**
+ * The outgoing home element's last rendered state, captured on unmount and
+ * painted synchronously by the next element to mount. app-root mounts a
+ * fresh element for every navigation and this screen paints only after its
+ * data chain resolves, so a route transition arriving here otherwise
+ * snapshots a blank work list and pops the content in after the slides.
+ * One snapshot; cleared when an element unmounts with nothing rendered.
+ * Keys mirror the adopting instance fields: model, homeFilter,
+ * historyGrouping, taskOverrides, hasPerimeterDraft, site, siteId,
+ * providerName, providerSites, providerSitesStatus, boundSites,
+ * task311Statuses.
+ * @type {Record<string, any> | null}
+ */
+let lastHomeState = null;
+
+/** @param {TodayView} view */
+function stashHomeState(view) {
+  lastHomeState = view._homeModel
+    ? {
+        model: view._homeModel,
+        homeFilter: view._homeFilter,
+        historyGrouping: view._historyGrouping,
+        taskOverrides: view._taskOverrides,
+        hasPerimeterDraft: view._hasPerimeterDraft,
+        site: view._site,
+        siteId: view._siteId,
+        providerName: view._providerName,
+        providerSites: view._providerSites,
+        providerSitesStatus: view._providerSitesStatus,
+        boundSites: view._boundSites,
+        task311Statuses: view._311StatusByTaskId,
+      }
+    : null;
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -212,6 +247,9 @@ class TodayView extends HTMLElement {
     this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
+    // Hand the freshly rendered state to the next element to mount, so route
+    // transitions never snapshot a blank screen (see lastHomeState).
+    stashHomeState(this);
   }
 
   async connectedCallback() {
@@ -263,7 +301,14 @@ class TodayView extends HTMLElement {
 
     // Refreshing a completed card is not a new screen arrival. Re-focusing
     // the heading after that refresh would scroll the worklist to the top.
-    const announceArrival = !this._homeModel;
+    // A restored snapshot IS an arrival (the outgoing element stashed its
+    // state on unmount), and it must paint synchronously: the route
+    // transition snapshots this screen the moment the swap callback returns,
+    // before the data chain's first await lands. The chain below still
+    // refetches everything and re-renders.
+    const restoring = !this._homeModel && lastHomeState != null;
+    const announceArrival = !this._homeModel || restoring;
+    if (restoring) this._restoreHomeState(/** @type {any} */ (lastHomeState));
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -387,6 +432,30 @@ class TodayView extends HTMLElement {
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
     this._311StatusByTaskId = map311StatusResponse(response);
     if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  /**
+   * Adopt the state the outgoing home element stashed on unmount (see
+   * lastHomeState) and paint its model immediately, before the data chain
+   * resolves. Everything it adopts is re-derived or refetched below; this
+   * exists so the route-transition snapshot shows a fully rendered screen.
+   * @param {any} snapshot
+   * @returns {void}
+   */
+  _restoreHomeState(snapshot) {
+    this._homeModel = snapshot.model;
+    this._homeFilter = snapshot.homeFilter;
+    this._historyGrouping = snapshot.historyGrouping;
+    this._taskOverrides = snapshot.taskOverrides;
+    this._hasPerimeterDraft = snapshot.hasPerimeterDraft;
+    this._site = snapshot.site;
+    this._siteId = snapshot.siteId;
+    this._providerName = snapshot.providerName;
+    this._providerSites = snapshot.providerSites;
+    this._providerSitesStatus = snapshot.providerSitesStatus;
+    this._boundSites = snapshot.boundSites;
+    this._311StatusByTaskId = snapshot.task311Statuses;
+    this._renderHome(this._homeModel);
   }
 
   _renderHome(model) {
