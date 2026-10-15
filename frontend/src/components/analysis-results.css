@@ -174,6 +174,15 @@ html.wa-dark .analysis-tray--history {
   background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
 }
 
+/* Bare done cards (no tray ancestor — the reports day and issue-type views)
+   share the tray fill: the action area's rounded bottom then blends into the
+   same neutral as the footer in both themes. On surface-lowered (the base
+   card fill) dark theme resolves to a darker step than the footer, so the
+   rounded corners read as holes showing the page through. */
+.analysis-card--done.analysis-card--standard {
+  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+}
+
 .analysis-card__layout {
   display: flex;
   align-items: flex-start;
