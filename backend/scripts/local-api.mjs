@@ -69,6 +69,11 @@ import {
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../src/handlers/manager-access.js";
+import {
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../src/handlers/manager-reports.js";
 import { requestManagerAccess } from "../src/handlers/manager-access-requests.js";
 import { searchSites } from "../src/handlers/setup-code-requests.js";
 import {
@@ -251,6 +256,9 @@ const routes = [
     "/app/v1/manager/device-bindings/{bindingId}/revoke",
     revokeGeneralBinding,
   ),
+  route("GET", "/app/v1/manager/reports/checks", getChecksReport),
+  route("GET", "/app/v1/manager/reports/tasks", getTasksReport),
+  route("GET", "/app/v1/manager/reports/task-updates", getTaskUpdatesReport),
   route("GET", "/v1/sites:search", searchSites),
   // Site config
   route("GET", "/v1/site", getSite),

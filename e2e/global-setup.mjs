@@ -3,8 +3,8 @@
   Playwright globalSetup: runs after the webServers are healthy (backend /health
   gates on DDB Local being reachable), before any test.
 
-  Why: DynamoDB Local persists between runs (-sharedDb in backend/.local), and
-  two pieces of leftover state poison reruns:
+  Why: the suite's own table (gnp-local-e2e, declared in playwright.config.js)
+  may carry leftovers, and two pieces poison reruns:
 
   1. Seeded setup codes carry maxUses: 3. Every test registers a fresh device
      through the real flow, consuming a use — three reruns and the seed code
@@ -20,21 +20,24 @@
      Fix: delete TASK# items (their GSI2 projection lives on the same item,
      so one delete suffices) each run.
 
-  Both fixes are harmless in CI (fresh table) and self-healing locally.
+  Both are no-ops after globalTeardown wiped the table (the healthy state);
+  they self-heal a run that died before teardown.
 
-  ── Production safeguard ────────────────────────────────────────────────
+  ── Safeguard ────────────────────────────────────────────────────────────
   This script MUTATES setup codes and DELETES tasks, and the suite binds
-  devices + seeds test data. It must never touch a deployed table. Two
-  independent guards, both required:
+  devices + seeds test data. It must never touch a deployed table, and it
+  must never touch the developer's own `npm run dev` table (which shares the
+  same DynamoDB Local instance). Two independent guards, both required:
 
   1. AWS_ENDPOINT_URL_DYNAMODB must be SET and resolve to localhost /
      127.0.0.1 — the SDK-only mechanism that redirects at the local
      emulator (.env.example). Deployed environments never set it
      (Terraform). The value the harness's own client uses is hardcoded in
      DDB_ENDPOINT below, so this check guards THAT client's target.
-  2. DYNAMO_TABLE must equal the harness's local table name — and when
-     missing (CI with no .env.local), fall back to LOCAL_TABLE_NAME, never
-     an inherited ambient value.
+  2. DYNAMO_TABLE must equal the suite's dedicated table (gnp-local-e2e,
+     the same value playwright.config.js pins for the spawned backend) — and
+     when missing (CI with no config-provided value…), fall back to the suite
+     table, never an inherited ambient value like the dev table.
 
   If either check fails, the setup aborts BEFORE any AWS call, failing the
   e2e job loudly instead of silently mutating shared data.
@@ -54,8 +57,9 @@ import {
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(E2E_DIR, "..");
 const DDB_ENDPOINT = "http://127.0.0.1:8000";
-/** The harness's own table name — the ONLY table this script may touch. */
-const LOCAL_TABLE_NAME = "gnp-local-app";
+/** The suite's own table — the ONLY table this script may touch. Must match
+ * the value playwright.config.js pins for the spawned backend. */
+const E2E_TABLE_NAME = "gnp-local-e2e";
 const RETRIES = 30;
 const RETRY_DELAY_MS = 1000;
 
@@ -85,10 +89,10 @@ function loadEnvLocal() {
  */
 function assertLocalOnly() {
   const endpoint = process.env.AWS_ENDPOINT_URL_DYNAMODB;
-  // No ambient fallback: an unset DYNAMO_TABLE always means the harness's own
-  // table, never "inherit whatever the shell has" (a deployed env var leaking
-  // in would otherwise be used).
-  const tableName = process.env.DYNAMO_TABLE || LOCAL_TABLE_NAME;
+  // No ambient fallback: an unset DYNAMO_TABLE always means the suite's own
+  // table, never "inherit whatever the shell has" (the dev table leaking in
+  // would otherwise be used).
+  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
 
   // Guard 1: the .env.local-loaded (or CI-provided) endpoint must exist and
   // point at the loopback emulator. This is the same var the harness's own
@@ -114,12 +118,14 @@ function assertLocalOnly() {
         "This script mutates/deletes data and must never target a deployed table.",
     );
   }
-  // Guard 2: table name must be the harness's own (belt to guard 1's braces —
-  // protects against a non-local endpoint that proxy-resolves localhost, e.g.
-  // a corporate DNS wildcard, from being trusted on the name check alone).
-  if (tableName !== LOCAL_TABLE_NAME) {
+  // Guard 2: table name must be the suite's OWN table, never the developer's
+  // gnp-local-app (same DynamoDB Local instance hosts both) and never a
+  // deployed namespace. Belt against guard 1's braces: a loopback endpoint
+  // does not imply the right table.
+  if (tableName !== E2E_TABLE_NAME) {
     throw new Error(
-      `[e2e-global] refusing to run: DYNAMO_TABLE "${tableName}" is not the local harness table "${LOCAL_TABLE_NAME}".`,
+      `[e2e-global] refusing to run: DYNAMO_TABLE "${tableName}" is not the suite table "${E2E_TABLE_NAME}". ` +
+        "The e2e suite must never mutate the dev table or any deployed table.",
     );
   }
 }
@@ -168,7 +174,7 @@ async function waitAndReset() {
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
   });
   const doc = DynamoDBDocumentClient.from(client);
-  const tableName = process.env.DYNAMO_TABLE || LOCAL_TABLE_NAME;
+  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
 
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {

@@ -164,7 +164,7 @@ resource "aws_lambda_function" "api" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name                  = "${local.name_prefix}-api"
   role                           = aws_iam_role.api.arn
-  runtime                        = "nodejs22.x"
+  runtime                        = "nodejs24.x"
   handler                        = "index.handler"
   filename                       = data.archive_file.api.output_path
   source_code_hash               = data.archive_file.api.output_base64sha256
@@ -223,7 +223,7 @@ resource "aws_lambda_function" "intake" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-intake"
   role             = aws_iam_role.intake.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.intake.output_path
   source_code_hash = data.archive_file.intake.output_base64sha256
@@ -279,7 +279,7 @@ resource "aws_lambda_function" "authorizer" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-authorizer"
   role             = aws_iam_role.authorizer.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.authorizer.output_path
   source_code_hash = data.archive_file.authorizer.output_base64sha256
@@ -313,7 +313,7 @@ resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
   function_name    = "${local.name_prefix}-worker"
   role             = aws_iam_role.worker.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.worker.output_path
   source_code_hash = data.archive_file.worker.output_base64sha256

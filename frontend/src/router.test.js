@@ -337,3 +337,33 @@ describe("router overlays", () => {
     removeRoute();
   });
 });
+
+describe("routeTransitionDirection", () => {
+  it("pushes into deeper routes, pops back out, fades between siblings", async () => {
+    const { routeTransitionDirection } = await import("./router.js");
+    expect(routeTransitionDirection(null, "/today")).toBe("fade");
+    // Reports and site admin carry a back arrow to the hub: they push.
+    expect(routeTransitionDirection("/today", "/reports")).toBe("push");
+    expect(routeTransitionDirection("/reports", "/today")).toBe("pop");
+    expect(routeTransitionDirection("/today", "/site-admin")).toBe("push");
+    // The capture flows close with an X: they fade in and out.
+    expect(routeTransitionDirection("/today", "/check")).toBe("fade");
+    expect(routeTransitionDirection("/problem", "/today")).toBe("fade");
+    // Describe-instead has a back arrow to its flow.
+    expect(routeTransitionDirection("/check", "/check/describe")).toBe("push");
+    expect(routeTransitionDirection("/check/describe", "/check")).toBe("pop");
+    expect(
+      routeTransitionDirection("/reports", "/reports/checks/2026-09-29"),
+    ).toBe("push");
+    expect(routeTransitionDirection("/reports/issues/Litter", "/reports")).toBe(
+      "pop",
+    );
+    expect(routeTransitionDirection("/site-admin", "/site-admin/edit")).toBe(
+      "push",
+    );
+    // Query strings do not count as depth.
+    expect(
+      routeTransitionDirection("/reports?tab=issues", "/reports?tab=checks"),
+    ).toBe("fade");
+  });
+});

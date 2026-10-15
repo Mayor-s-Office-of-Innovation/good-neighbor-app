@@ -16,6 +16,7 @@ import { jsonResponse, readJsonBody } from "../http.js";
 import { presignGet } from "../s3.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
+import { pacificToday } from "../lib/pacific-dates.js";
 import { siteMetaKey } from "./keys.js";
 
 const PROVIDER_SITES_PAGE_SIZE = 25;
@@ -281,7 +282,7 @@ async function loadSite(siteId) {
 async function siteAdminView(site) {
   const compliance = site.compliance || {};
   const activeCompliance =
-    compliance.periodEnd && compliance.periodEnd < pacificIsoDate()
+    compliance.periodEnd && compliance.periodEnd < pacificToday()
       ? { perimeterChecksRequired: false }
       : compliance;
   return {
@@ -308,20 +309,6 @@ async function siteAdminView(site) {
       site.complianceLetters || { current: null, past: [] },
     ),
   };
-}
-
-function pacificIsoDate() {
-  const values = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Los_Angeles",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-      .formatToParts(new Date())
-      .map(({ type, value }) => [type, value]),
-  );
-  return `${values.year}-${values.month}-${values.day}`;
 }
 
 /** @param {Record<string, any>} letters */

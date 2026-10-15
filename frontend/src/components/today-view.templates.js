@@ -101,13 +101,17 @@ export function settingsMenu({ open, adminAccess = false }) {
             </button>
             ${adminAccess
               ? html`<button
-                  id="settings-site-admin"
-                  type="button"
-                  role="menuitem"
-                >
-                  <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
-                  ${escapeHtml(t("today.settings.siteAdmin"))}
-                </button>`
+                    id="settings-site-admin"
+                    type="button"
+                    role="menuitem"
+                  >
+                    <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("today.settings.siteAdmin"))}
+                  </button>
+                  <button id="settings-reports" type="button" role="menuitem">
+                    <wa-icon name="list-check" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("today.settings.reports"))}
+                  </button>`
               : ""}
             <button id="settings-language" type="button" role="menuitem">
               <wa-icon name="language" aria-hidden="true"></wa-icon>

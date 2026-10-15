@@ -925,7 +925,11 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI1 — checks timeline: SITE#<siteId> / <startedAt ISO>. (AP6, AP12)
+  # GSI1 — per-site timelines, one partition per entity type: checks
+  # SITE#<siteId> / <startedAt ISO> (AP6, AP12); assessments
+  # SITE#<siteId>#ASSESSMENT (AP14); tasks SITE#<siteId>#TASK /
+  # <createdAt>#<taskId> and task updates SITE#<siteId>#UPDATE /
+  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports).
   global_secondary_index {
     name            = "GSI1"
     hash_key        = "gsi1pk"

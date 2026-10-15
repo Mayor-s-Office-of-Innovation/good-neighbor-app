@@ -33,14 +33,15 @@ describe("settingsMenu", () => {
     expect(open).toContain('aria-expanded="true"');
     expect(open).toContain('id="settings-feedback"');
     expect(open).toContain('id="settings-site-admin"');
+    expect(open).toContain('id="settings-reports"');
     expect(open).toContain('id="settings-attributions"');
     expect(open).toContain('id="settings-logout"');
   });
 
-  it("hides Site admin without admin access", () => {
-    expect(settingsMenu({ open: true, adminAccess: false })).not.toContain(
-      'id="settings-site-admin"',
-    );
+  it("hides Site admin and Reports without admin access", () => {
+    const markup = settingsMenu({ open: true, adminAccess: false });
+    expect(markup).not.toContain('id="settings-site-admin"');
+    expect(markup).not.toContain('id="settings-reports"');
   });
 });
 

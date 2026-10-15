@@ -132,7 +132,7 @@ resource "aws_lambda_function" "analytics_export" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-export"
   role             = aws_iam_role.analytics_export.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_export.output_path
   source_code_hash = data.archive_file.analytics_export.output_base64sha256
@@ -267,7 +267,7 @@ resource "aws_lambda_function" "analytics_convert" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-convert"
   role             = aws_iam_role.analytics_convert.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_convert.output_path
   source_code_hash = data.archive_file.analytics_convert.output_base64sha256
@@ -401,7 +401,7 @@ resource "aws_lambda_function" "analytics_report" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-report"
   role             = aws_iam_role.analytics_report.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_report.output_path
   source_code_hash = data.archive_file.analytics_report.output_base64sha256
@@ -585,7 +585,7 @@ resource "aws_lambda_function" "analytics_query" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-query"
   role             = aws_iam_role.analytics_query.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_query.output_path
   source_code_hash = data.archive_file.analytics_query.output_base64sha256

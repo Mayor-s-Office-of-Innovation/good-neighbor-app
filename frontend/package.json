@@ -33,7 +33,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "5 kB"
+      "limit": "5.5 kB"
     },
     {
       "name": "task update css",
@@ -44,6 +44,16 @@
       "name": "site admin css",
       "path": "dist/assets/site-admin-*.css",
       "limit": "2 kB"
+    },
+    {
+      "name": "reports js",
+      "path": "dist/assets/reports-view-*.js",
+      "limit": "13 kB"
+    },
+    {
+      "name": "reports css",
+      "path": "dist/assets/reports-view-*.css",
+      "limit": "3 kB"
     }
   ],
   "dependencies": {

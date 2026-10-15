@@ -34,7 +34,7 @@ const distDir = resolve(backendRoot, "dist");
 const shared = {
   bundle: true,
   platform: "node",
-  target: "node22",
+  target: "node24",
   format: "esm",
   minify: true,
   sourcemap: false,
@@ -229,7 +229,7 @@ const duckTargets = [
   "analytics-report",
   "analytics-query",
 ];
-// Lambda nodejs22.x runs on x86_64 glibc (AL2023) unless explicitly configured
+// Lambda nodejs24.x runs on x86_64 glibc (AL2023) unless explicitly configured
 // for arm64 — keep this in sync with the Terraform Lambda architectures.
 const LAMBDA_TARGET = process.env.ANALYTICS_LAMBDA_ARCH ?? "linux-x64";
 const duckApiSrc = findPkg("@duckdb/node-api");

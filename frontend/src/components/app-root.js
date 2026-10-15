@@ -4,7 +4,8 @@
   the main view based on the route. Everything is scoped to the bound site.
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
-  problem-report, /check/describe + /problem/describe → describe-instead.
+  problem-report, /check/describe + /problem/describe → describe-instead,
+  /site-admin* and /reports* → lazily loaded manager-only screens.
   Setup (device→site binding) is retained and gates everything. There is no
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
@@ -26,9 +27,10 @@ import {
 } from "../services/backend-health.js";
 import {
   currentRoute,
-  onRouteChange,
   navigate,
+  onRouteChange,
   replaceRoute,
+  routeTransitionDirection,
 } from "../router.js";
 import { hasDraft } from "../state/check-session.js";
 import {
@@ -56,6 +58,9 @@ import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
   ["/complaints", "complaint-view"],
+  ["/reports/checks/", "reports-day-view"],
+  ["/reports/issues/", "reports-type-view"],
+  ["/reports", "reports-view"],
   ["/site-admin/edit", "site-admin-edit"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
@@ -67,6 +72,10 @@ const ROUTE_VIEW = [
 ];
 
 export class AppRoot extends HTMLElement {
+  /** @type {string | null} the route the view last swapped to */
+  _swappedRoute = null;
+  _routeTransitionId = 0;
+
   async connectedCallback() {
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
@@ -310,7 +319,11 @@ export class AppRoot extends HTMLElement {
       void this._resetFirstLaunch();
       return;
     }
-    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
+    // Manager-only screens: site admin and the reports. The access level is
+    // a navigation hint from the stored token; the backend enforces it.
+    const managerOnly =
+      route.startsWith("/site-admin") || route.startsWith("/reports");
+    if (managerOnly && !hasAdminAccess(this._site)) {
       navigate("/today");
       return;
     }
@@ -334,6 +347,13 @@ export class AppRoot extends HTMLElement {
       });
       return;
     }
+    if (route.startsWith("/reports") && !customElements.get("reports-view")) {
+      this._view.replaceChildren();
+      void import("./reports-view.js").then(() => {
+        if (currentRoute().startsWith("/reports")) this._renderView();
+      });
+      return;
+    }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
     // Every screen owns its own header now (design port): the home hub has its
@@ -342,22 +362,39 @@ export class AppRoot extends HTMLElement {
     if (this._shell) {
       this._shell.classList.add("app--chromeless");
     }
+    const direction = routeTransitionDirection(this._swappedRoute, route);
     const swap = () => {
       // Always mount a fresh element (each screen reads current state on
       // connect).
+      this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
       this._restateScreenFocus();
     };
-    // Same-document View Transition: cross-fades the route swap (full-blown
-    // zoom animations could re-use this hook later). No-op where unsupported.
-    // The API does NOT honor prefers-reduced-motion on its own: base.css
-    // zeroes the ::view-transition-* animations as the safety net, and we skip
-    // the call entirely here so those users also avoid the snapshot pause.
+    // Same-document View Transition: a cross-fade between sibling screens,
+    // a slide from the right when the new screen is a level deeper (its
+    // back arrow returns here) and back out when it is a level shallower;
+    // base.css keys the animations off <html data-route-transition>. No-op
+    // where unsupported. The API does NOT honor prefers-reduced-motion on
+    // its own: base.css zeroes the ::view-transition-* animations as the
+    // safety net, and we skip the call entirely here so those users also
+    // avoid the snapshot pause.
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduceMotion && typeof document.startViewTransition === "function") {
-      document.startViewTransition(swap);
+      const id = ++this._routeTransitionId;
+      document.documentElement.dataset.routeTransition = direction;
+      const transition = document.startViewTransition(swap);
+      // A navigation that lands mid-swap skips this transition; those
+      // rejections are expected, not errors.
+      transition.ready.catch(() => {});
+      transition.updateCallbackDone.catch(() => {});
+      transition.finished
+        .catch(() => {})
+        .then(() => {
+          if (id === this._routeTransitionId)
+            delete document.documentElement.dataset.routeTransition;
+        });
     } else {
       swap();
     }

@@ -16,9 +16,20 @@ const CI = !!process.env.CI;
   though playwright spawns these from the e2e directory (npm resolves -w from
   the workspace root it finds upward). ANALYZER_* overrides are appended as
   explicit env below so they win regardless of file order.
+
+  Table isolation (ADR 0006 addendum): the suite runs against its OWN DynamoDB
+  table, gnp-local-e2e — never the developer's gnp-local-app. Setting DYNAMO_TABLE
+  here, before .env.local matters, is the single declaration point: the spawned
+  backend bootstraps (creates + seeds) it at startup via ensureLocalInfra(), and
+  globalSetup/globalTeardown inherit the same value for their guards. globalSetup
+  REFUSES to run against any other table, and globalTeardown deletes this one, so
+  a suite run can neither read nor destroy `npm run dev` data.
 */
+process.env.DYNAMO_TABLE = "gnp-local-e2e";
+
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
+  globalTeardown: "./global-teardown.mjs",
   testDir: "./tests",
   timeout: 120_000,
   expect: { timeout: 15_000 },
@@ -48,7 +59,10 @@ export default defineConfig({
       command: "npm run dev -w backend",
       cwd: "..",
       url: "http://127.0.0.1:3001/health",
-      reuseExistingServer: !CI,
+      // Maximum safety: never attach to a server a developer started (it would
+      // carry the dev table's env). If ports are occupied, Playwright fails
+      // fast with "port in use" — stop the dev stack, then run the suite.
+      reuseExistingServer: false,
       timeout: 120_000,
       env: {
         ...process.env,
@@ -59,14 +73,16 @@ export default defineConfig({
     {
       command: "node helpers/analyzer-stub.mjs",
       url: "http://127.0.0.1:3101/healthz",
-      reuseExistingServer: !CI,
+      reuseExistingServer: false,
       timeout: 30_000,
     },
     {
       command: "npm run dev -w frontend",
       cwd: "..",
       url: "http://127.0.0.1:5173",
-      reuseExistingServer: !CI,
+      // The frontend proxies whatever listens on :3001 — reusing a dev-started
+      // frontend could route the suite at the dev table's API.
+      reuseExistingServer: false,
       timeout: 60_000,
     },
   ],

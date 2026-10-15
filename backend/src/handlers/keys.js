@@ -205,8 +205,10 @@ export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 // GSI names — must match the index names the table is created with: Terraform
 // (infra/modules/app/main.tf) and the local harness (scripts/lib/ensure-infra.mjs)
 // both create them uppercase, and DynamoDB index names are case-sensitive, so
-// these constants must be uppercase too. GSI1 backs timelines, GSI2 backs the
-// per-status staff worklist, and GSI4/GSI5 back condition review queues.
+// these constants must be uppercase too. GSI1 backs timelines (checks,
+// assessments, tasks, and task updates, each in its own partition per site),
+// GSI2 backs the per-status staff worklist, and GSI4/GSI5 back condition
+// review queues that nothing reads yet.
 export const GSI1_NAME = "GSI1";
 
 /** The per-status worklist index (AP10); see taskWorklistDateGsi. */
@@ -228,6 +230,62 @@ export const GSI5_NAME = "GSI5";
 export const checkTimelineGsi = (siteId, startedAt) => ({
   gsi1pk: sitePk(siteId),
   gsi1sk: startedAt,
+});
+
+/**
+ * GSI1 partition for a site's tasks in creation order, regardless of status
+ * (the per-status GSI2 key is rewritten on every transition, so it cannot
+ * answer "every task created in September"). Stamped once at creation and
+ * carried through every re-put. Serves the manager reports (AP27).
+ * @param {string} siteId
+ * @returns {string}
+ */
+export const taskTimelinePk = (siteId) => `SITE#${siteId}#TASK`;
+
+/**
+ * @param {string} siteId
+ * @param {string} createdAt ISO-8601 timestamp
+ * @param {string} taskId
+ * @returns {{ gsi1pk: string, gsi1sk: string }}
+ */
+export const taskTimelineGsi = (siteId, createdAt, taskId) => ({
+  gsi1pk: taskTimelinePk(siteId),
+  gsi1sk: `${createdAt}#${taskId}`,
+});
+
+/**
+ * The timeline stamp for an existing task item, for every full-item re-put
+ * (status transitions, supersession). Deriving it on each write means a task
+ * written before the stamp existed is stamped on its next transition, and a
+ * stamp the backfill applied is never dropped by a re-put from an older
+ * snapshot of the item.
+ * @param {string} siteId
+ * @param {Record<string, any>} task
+ * @returns {{ gsi1pk: string, gsi1sk: string } | {}}
+ */
+export const taskTimelineGsiFor = (siteId, task) =>
+  task?.createdAt && task?.taskId
+    ? taskTimelineGsi(siteId, String(task.createdAt), String(task.taskId))
+    : {};
+
+/**
+ * GSI1 partition for a site's task update events (the responses to issues)
+ * in the order they happened, across every task. Serves the manager reports
+ * (AP28); the per-task timeline (AP18) stays a base-table prefix query.
+ * @param {string} siteId
+ * @returns {string}
+ */
+export const taskUpdateTimelinePk = (siteId) => `SITE#${siteId}#UPDATE`;
+
+/**
+ * @param {string} siteId
+ * @param {string} occurredAt ISO-8601 timestamp
+ * @param {string} updateId
+ * @returns {{ gsi1pk: string, gsi1sk: string }}
+ */
+export const taskUpdateTimelineGsi = (siteId, occurredAt, updateId) => ({
+  gsi1pk: taskUpdateTimelinePk(siteId),
+  gsi1sk: `${occurredAt}#${updateId}`,
 });
 
 /**

@@ -231,7 +231,20 @@ export class TaskUpdateDialog extends HTMLElement {
           () => void this._close(),
         );
       else if (!dialog.open) dialog.showModal();
+      this._settle();
     }
+  }
+
+  /**
+   * The open transition is keyed off the host's `data-settled` attribute:
+   * every render rebuilds the <dialog>, so without it the entrance would
+   * replay on each state change while the sheet is up.
+   */
+  _settle() {
+    // Optional chaining: the node unit tests stub HTMLElement bare.
+    globalThis.requestAnimationFrame?.(() => {
+      if (this._open) this.setAttribute?.("data-settled", "");
+    });
   }
 
   /** @param {HTMLDialogElement} root */
@@ -623,6 +636,7 @@ export class TaskUpdateDialog extends HTMLElement {
     this._results = false;
     this._editorOnly = false;
     this._open = false;
+    this.removeAttribute?.("data-settled");
     /** @type {HTMLDialogElement | null} */ (
       this.querySelector("dialog.task-update")
     )?.close();

@@ -341,3 +341,33 @@ if (typeof document !== "undefined") {
     navigate(href);
   });
 }
+
+/**
+ * Screens that sit at the home level: the hub itself and the two capture
+ * flows, which close with an X rather than a back arrow. Every other route
+ * is a level below its parent path and carries a back arrow to it.
+ */
+const ROOT_LEVEL_ROUTES = new Set(["/today", "/check", "/problem"]);
+
+/** @param {string} route */
+function routeLevel(route) {
+  const path = route.split("?")[0].replace(/\/+$/, "") || "/";
+  if (ROOT_LEVEL_ROUTES.has(path)) return 0;
+  return path.split("/").filter(Boolean).length;
+}
+
+/**
+ * Which way a route swap moves: a screen with a back arrow slides in from
+ * the right over its parent ("push") and slides back out on the way up
+ * ("pop"); screens at the same level, and the X-closed capture flows, cross-
+ * fade. The level is the path depth, with the home hub and the capture
+ * flows pinned to the root level so /today → /reports pushes.
+ * @param {string | null} from the route on screen, null on first paint
+ * @param {string} to
+ * @returns {"push" | "pop" | "fade"}
+ */
+export function routeTransitionDirection(from, to) {
+  if (from == null) return "fade";
+  const delta = routeLevel(to) - routeLevel(from);
+  return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
+}

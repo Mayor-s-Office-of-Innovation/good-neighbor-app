@@ -738,6 +738,50 @@ export function getMediaUrl(checkId, artifactId) {
   );
 }
 
+// ── Site manager reports (AP27, AP28; manager access level only) ─────────────
+
+/**
+ * @typedef {{ kind: "week" | "month" | "quarter", start: string, endExclusive: string }} ReportPeriod
+ * @typedef {{ period?: "week" | "month" | "quarter", start?: string }} ReportQuery
+ *   `start` is any Pacific day key (YYYY-MM-DD) inside the wanted period.
+ */
+
+/**
+ * GET /app/v1/manager/reports/checks — per-day check compliance for one period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, requirement: any, days: any[], totals: any, previous: ReportPeriod & { totals: any } }>}
+ */
+export function getChecksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/checks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/tasks — every task created in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, tasks: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTasksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/tasks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/task-updates — every task update event in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, updates: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTaskUpdatesReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/task-updates${qs({ period, start })}`,
+  );
+}
+
 // ── Tasks (staff worklist, AP10) ─────────────────────────────────────────────
 
 /**
