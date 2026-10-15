@@ -44,7 +44,7 @@ class PhotoLightbox extends HTMLElement {
     return this.querySelector("dialog");
   }
 
-  /** @param {{ src: string, alt?: string, address?: string, capturedAt?: string, trigger?: HTMLElement }} photo */
+  /** @param {{ src: string, alt?: string, address?: string, capturedAt?: string, trigger?: HTMLElement, hideLocation?: boolean }} photo */
   open(photo) {
     if (!photo.src || !this._dialog) return;
     const image = this.querySelector(".photo-lightbox__image");
@@ -56,10 +56,12 @@ class PhotoLightbox extends HTMLElement {
     this._source = photo.src;
     image.src = photo.src;
     image.alt = photo.alt || t("lightbox.image.alt");
-    const address = photoLocation(
-      photo.address || "",
-      this.getAttribute("site-address") || "",
-    );
+    const address = photo.hideLocation
+      ? ""
+      : photoLocation(
+          photo.address || "",
+          this.getAttribute("site-address") || "",
+        );
     const timestamp = photo.capturedAt
       ? formatPhotoDateTime(photo.capturedAt)
       : "";
@@ -125,6 +127,7 @@ export function openPhotoLightbox(host, trigger, screen = trigger) {
     alt: image.alt,
     address: trigger.dataset.photoAddress || "",
     capturedAt: trigger.dataset.photoTime || "",
+    hideLocation: trigger.hasAttribute("data-photo-no-location"),
     trigger,
   });
 }

@@ -58,6 +58,7 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/care-work", "care-work-view"],
   ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
   ["/reports/issues/", "reports-type-view"],
@@ -338,6 +339,16 @@ export class AppRoot extends HTMLElement {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
         if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/care-work") &&
+      !customElements.get("care-work-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./care-work-view.js").then(() => {
+        if (currentRoute().startsWith("/care-work")) this._renderView();
       });
       return;
     }

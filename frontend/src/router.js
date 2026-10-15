@@ -371,3 +371,16 @@ export function routeTransitionDirection(from, to) {
   const delta = routeLevel(to) - routeLevel(from);
   return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
 }
+
+/** Capture the list's history entry so finishing a nested flow unwinds its
+ * chooser and editor together. Direct links fall back to replacing the route.
+ * @param {string} fallbackRoute @returns {() => void}
+ */
+export function captureRouteReturn(fallbackRoute) {
+  const depth = stateDepth(history.state);
+  return () => {
+    const steps = stateDepth(history.state) - depth;
+    if (steps > 0) history.go(-steps);
+    else replaceRoute(fallbackRoute);
+  };
+}

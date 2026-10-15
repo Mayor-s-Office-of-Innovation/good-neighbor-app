@@ -329,6 +329,10 @@ export function homeActions({ checkLabel }) {
             <wa-icon name="flag" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("today.actions.report"))}
           </button>
+          <button type="button" role="menuitem" id="view-care-work">
+            <wa-icon name="broom" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("care.menu"))}
+          </button>
         </div>
       </div>
     </div>

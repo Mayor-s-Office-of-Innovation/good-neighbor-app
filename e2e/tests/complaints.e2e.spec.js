@@ -51,7 +51,7 @@ test.describe("public complaints", () => {
     const issueAction = page.locator("#report-problem");
     await expect(complaintAction).toHaveText(t("today.actions.complaints"));
     await expect(issueAction).toHaveText(t("today.actions.report"));
-    await expect(menu.getByRole("menuitem")).toHaveCount(2);
+    await expect(menu.getByRole("menuitem")).toHaveCount(3);
 
     const complaintIcon = complaintAction.locator('wa-icon[name="bullhorn"]');
     const issueIcon = issueAction.locator('wa-icon[name="flag"]');

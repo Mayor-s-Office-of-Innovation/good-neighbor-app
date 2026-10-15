@@ -24,8 +24,13 @@ vi.stubGlobal("window", {
 });
 vi.stubGlobal("document", { addEventListener: vi.fn() });
 
-const { backOrNavigate, currentRoute, navigate, setPopstateGuard } =
-  await import("./router.js");
+const {
+  backOrNavigate,
+  currentRoute,
+  navigate,
+  setPopstateGuard,
+  captureRouteReturn,
+} = await import("./router.js");
 
 /**
  * Fire a synthetic popstate after applying the history mutation the browser
@@ -36,6 +41,14 @@ async function pop() {
 }
 
 describe("router history", () => {
+  it("finishing a nested flow returns to its list without revisiting the chooser", () => {
+    browser.history.state = { goodNeighborAppNavigation: 1 };
+    const finish = captureRouteReturn("/care-work");
+    browser.history.state = { goodNeighborAppNavigation: 3 };
+    finish();
+    expect(browser.history.go).toHaveBeenCalledWith(-2);
+  });
+
   beforeEach(() => {
     browser.location.pathname = "/today";
     browser.history.state = null;

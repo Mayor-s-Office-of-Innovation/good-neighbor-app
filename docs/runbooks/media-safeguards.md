@@ -35,8 +35,14 @@ record the diagnosis without codes, tokens, email addresses, or media content.
 
 ## Retention and recovery
 
-Lifecycle tags expire pending and rejected objects after one day, registered objects after two
-days, and accepted objects after seven days. Noncurrent media versions expire after one day.
-Lifecycle deletion is asynchronous and is not an immediate-delete mechanism. If worker processing
-is delayed near two days, restore the queue before registered objects age out; do not retag objects
-unless incident command explicitly approves extending sensitive-data retention.
+The uploads bucket has an unconditional 30-day expiry for current objects. Pending and
+rejected tags shorten this to one day; active photos retain the 30-day window. Legacy
+noncurrent versions expire after seven days (one day for pending/rejected objects).
+Lifecycle deletion is asynchronous and is not an immediate-delete mechanism.
+
+Proactive care photos share this bucket under the isolated `care-work/` prefix. Their
+source uploads retain the one-day pending tag; validated, EXIF-stripped JPEGs use the
+active tag. The API refuses photo access after 30 days even if lifecycle deletion has
+not yet run. Their underlying work logs retain text and photo-expiry metadata for one
+year. Care-work processing never enqueues analyzer jobs or retags check/task images.
+Complaint evidence remains in its separate one-year bucket.

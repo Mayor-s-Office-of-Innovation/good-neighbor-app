@@ -622,3 +622,35 @@ both revisions have an explicit condition ID (`explicitConditionId`), the same l
 and the same policy, category, severity, and description. Empty evidence lists alone do
 not prove two conditions are the same. Tasks are retired only after the guidance publish
 succeeds. An analyzer amendment on its own no longer retires tasks.
+
+## Proactive care work records
+
+These records do not reference a Check, Assessment, Condition, or Task. All keys
+are derived from the authenticated Site, and general and manager devices share
+the same create/read access. There are no mutation routes after submission.
+
+| Item | PK | SK | Attributes / lifetime |
+|---|---|---|---|
+| Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
+| Upload reservation | `SITE#<siteId>` | `CARE_UPLOAD#<workId>#<photoId>` | `type: careUpload`, creator, declared type/bytes, creation time and one-day TTL. Used only to authorize submission. |
+| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device/Site/global daily media budgets remain charged and are shared with existing uploads. |
+
+Work logs project `gsi1pk = SITE#<siteId>#CARE_WORK` and
+`gsi1sk = <createdAt>#<workId>` onto GSI1. `GET /v1/care-work` returns newest-first
+pages of at most 50 evaluated rows, filtering expired headers. Cursor validation
+prevents crossing Site partitions. `GET /v1/care-work/{workId}` consistently reads
+the header and rejects expired records before DynamoDB's asynchronous TTL cleanup.
+
+`POST /v1/care-work` conditionally puts one immutable header, with transaction
+conditions on each supplied upload reservation. Replays with the same UUID and
+payload/actor fingerprint return the saved result; different payloads conflict.
+The seven fixed kinds are `power_washed`, `called_hauler`, `cleaned_graffiti`,
+`offered_help`, `referred_non_client`, `called_shelter`, and
+`addressed_client_issue`; `other` requires a nonblank `note`. Display labels are
+localized in the frontend. Notes are limited to 4,000 characters.
+
+Photo metadata remains with the log for a year, but photo bytes use the uploads
+bucket's existing 30-day retention. The photo signing route verifies both the
+Site-specific key and photo expiry, never signs arbitrary stored pointers, and
+caps the URL lifetime at the expiry boundary. These records do not affect manager
+reports or check-compliance counts.

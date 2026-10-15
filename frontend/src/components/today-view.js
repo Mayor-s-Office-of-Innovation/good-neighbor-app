@@ -596,6 +596,9 @@ class TodayView extends HTMLElement {
         items[(index + delta + items.length) % items.length]?.focus();
       }
     });
+    this.querySelector("#view-care-work")?.addEventListener("click", () =>
+      navigate("/care-work"),
+    );
     this.querySelector("#view-complaints")?.addEventListener("click", () =>
       navigate("/complaints"),
     );
