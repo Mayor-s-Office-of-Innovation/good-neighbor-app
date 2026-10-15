@@ -11,6 +11,7 @@ import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-re
 import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
 import { handler as generateComplianceLetter } from "../workers/generate-compliance-letter.js";
 import { handler as translateArtifact } from "../workers/translate-artifact.js";
+import { handler as analyzeComplaint } from "../workers/analyze-complaint.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
 
@@ -34,6 +35,9 @@ function pickHandler(body) {
     }
     if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
       return translateArtifact;
+    }
+    if (msg?.type === "analyze_complaint") {
+      return analyzeComplaint;
     }
     if (
       typeof msg?.artifactId === "string" &&

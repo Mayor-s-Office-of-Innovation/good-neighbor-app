@@ -183,6 +183,7 @@ resource "aws_lambda_function" "api" {
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
       S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       DEMO_SITE_ID                = "demo-site"
       BEDROCK_MODEL_ID            = var.bedrock_model_id
@@ -341,6 +342,7 @@ resource "aws_lambda_function" "worker" {
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
       S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn

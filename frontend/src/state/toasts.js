@@ -100,6 +100,15 @@ export function show311SuccessToast(serviceRequestNumber = "") {
   });
 }
 
+export function showComplaintLoggedToast() {
+  return showToast({
+    title: t("complaints.toast.logged"),
+    message: "",
+    icon: "circle-check",
+    tone: "success",
+  });
+}
+
 export function show311ErrorToast() {
   return showToast({
     title: t("toast.ticketFailed.title"),

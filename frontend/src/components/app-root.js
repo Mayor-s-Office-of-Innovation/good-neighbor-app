@@ -57,6 +57,7 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
   ["/reports/issues/", "reports-type-view"],
   ["/reports", "reports-view"],
@@ -333,6 +334,16 @@ export class AppRoot extends HTMLElement {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
         if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/complaints") &&
+      !customElements.get("complaint-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./complaint-view.js").then(() => {
+        if (currentRoute().startsWith("/complaints")) this._renderView();
       });
       return;
     }

@@ -451,18 +451,13 @@ resource "aws_s3_bucket_logging" "uploads" {
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
-  # Retention policy: every photo expires 30 days after upload. The two tag
-  # rules below only shorten that for uploads the app never registered
-  # (`state=pending`) or rejected during registration/analysis
-  # (`state=rejected`). S3 applies the shortest matching expiration, so this
-  # rule never extends either of those windows.
+  # Every check/task photo expires after 30 days. Upload-state rules below can
+  # shorten that window, but no missing/legacy tag can extend it.
   rule {
-    id     = "expire-incomplete-uploads"
+    id     = "expire-registered-media"
     status = "Enabled"
 
-    filter {
-      prefix = ""
-    }
+    filter { prefix = "" }
 
     expiration {
       days = 30
@@ -474,6 +469,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     # Versioning is suspended, so this only drains versions created before the
     # suspension. It can be removed once none remain.
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  rule {
+    id     = "expire-active-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "active"
+      }
+    }
+
+    expiration {
+      days = 30
+    }
+
     noncurrent_version_expiration {
       noncurrent_days = 7
     }
@@ -537,6 +552,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
       noncurrent_days = 1
     }
   }
+
+  # Apply incomplete-multipart cleanup across the whole bucket. Checkov's
+  # CKV_AWS_300 requires an unfiltered abort rule; tag-scoped retention rules
+  # do not cover uploads that have not yet become objects and received tags.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 resource "aws_s3_bucket_cors_configuration" "uploads" {
@@ -545,6 +576,140 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   # Media is uploaded directly from the browser via presigned PUT URLs, so the
   # bucket must answer CORS preflight for the frontend origin(s). Reads stay
   # server-side (worker), but GET/HEAD are allowed for presigned preview URLs.
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
+      [for name in var.admin_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
+# Complaint evidence has a distinct one-year retention boundary. Keeping it in
+# a separate bucket lets the uploads bucket retain its fail-closed, bucket-wide
+# 30-day deletion rule for check and task photos.
+resource "aws_s3_bucket" "complaints" {
+  # checkov:skip=CKV_AWS_21:Complaint evidence is write-once and lifecycle-deleted; versioning would retain expired sensitive media beyond its approved window.
+  bucket_prefix = "${local.bucket_name_prefix}-complaints-"
+  force_destroy = false
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "complaints" {
+  bucket                  = aws_s3_bucket.complaints.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "complaints_tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.complaints.arn,
+      "${aws_s3_bucket.complaints.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "complaints_tls_only" {
+  bucket     = aws_s3_bucket.complaints.id
+  policy     = data.aws_iam_policy_document.complaints_tls_only.json
+  depends_on = [aws_s3_bucket_public_access_block.complaints]
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+  versioning_configuration { status = "Suspended" }
+}
+
+resource "aws_s3_bucket_logging" "complaints" {
+  bucket        = aws_s3_bucket.complaints.id
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "complaints/"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+
+  rule {
+    id     = "expire-all-complaint-media"
+    status = "Enabled"
+    filter { prefix = "" }
+    expiration { days = 365 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-pending-complaint-media"
+    status = "Enabled"
+    filter {
+      tag {
+        key   = "state"
+        value = "pending"
+      }
+    }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-rejected-complaint-media"
+    status = "Enabled"
+    filter {
+      tag {
+        key   = "state"
+        value = "rejected"
+      }
+    }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+    filter { prefix = "" }
+    expiration { expired_object_delete_marker = true }
+  }
+
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter { prefix = "" }
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
   cors_rule {
     allowed_methods = ["PUT", "GET", "HEAD"]
     allowed_origins = distinct(concat(
@@ -1024,7 +1189,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
       # script, so it MUST be regenerated and deployed with the frontend on any
       # edit to it. Regenerate from a fresh build with:
       #   cd frontend && npm run build && node -e 'const fs=require("fs"),c=require("crypto");const h=fs.readFileSync("dist/index.html","utf8");const m=/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i.exec(h);console.log("sha256-"+c.createHash("sha256").update(m[1],"utf8").digest("base64"))'
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 
@@ -1073,7 +1238,7 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
       # Only the admin app needs cross-origin access to Cognito's token endpoint.
       # Derive the domain string without a pool dependency (the pool invite
       # template references this distribution).
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.compliance_letters.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name} https://${aws_s3_bucket.compliance_letters.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 

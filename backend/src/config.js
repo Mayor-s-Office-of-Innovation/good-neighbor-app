@@ -1,6 +1,7 @@
 /**
  * @typedef {object} AppConfig
  * @property {string} uploadBucket
+ * @property {string} [complaintBucket]
  * @property {string} [complianceLetterBucket]
  * @property {string} queueUrl
  * @property {string} dynamoTable
@@ -42,6 +43,9 @@ export function getConfig(env = process.env) {
   }
 
   const config = /** @type {AppConfig} */ (required);
+  if (env.S3_COMPLAINT_BUCKET) {
+    config.complaintBucket = env.S3_COMPLAINT_BUCKET;
+  }
   if (env.S3_COMPLIANCE_LETTER_BUCKET) {
     config.complianceLetterBucket = env.S3_COMPLIANCE_LETTER_BUCKET;
   }
@@ -108,6 +112,21 @@ export function getConfig(env = process.env) {
   }
 
   return config;
+}
+
+/**
+ * Complaint evidence has a one-year retention boundary and must never fall
+ * back to the 30-day check-photo bucket.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function getComplaintBucket(env = process.env) {
+  if (!env.S3_COMPLAINT_BUCKET) {
+    throw new Error(
+      "Missing required environment variable for complaintBucket",
+    );
+  }
+  return env.S3_COMPLAINT_BUCKET;
 }
 
 /**

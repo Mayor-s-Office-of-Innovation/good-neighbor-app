@@ -13,7 +13,7 @@ flowchart LR
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
-  sqs --> worker["Lambda: worker (analyze-artifact + process-submission)"]
+  sqs --> worker["Lambda: worker (checks, complaints, and submissions)"]
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
@@ -23,6 +23,16 @@ The media bytes reach the analyzer only from the worker (base64, `store_input:fa
 they never travel through the SQS queue and are never logged. The perimeter-check
 handlers never see the bytes either — the device PUTs straight to S3 against a
 presigned URL, and the handler stores only the S3 key.
+
+Public complaints use the same private upload boundary. The app owns complaint
+authorization, lifecycle, persistence, retry, and deletion. The analyzer owns only
+structured multimodal extraction through `POST /v1/complaints:extract`. JPEG, PNG,
+WebP, HEIC, and HEIF images may be uploaded up to 10 MiB and are normalized before
+being sent inline. PDF and UTF-8 text documents are limited to 4.5 MiB, matching the
+Bedrock document ceiling, and are fetched by the analyzer through five-minute,
+read-only S3 URLs with strict host and byte checks. Legacy Word `.doc` uploads are not
+accepted because an OLE signature alone cannot safely validate their structure. The
+analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
@@ -117,6 +127,21 @@ still surfaces. The client's per-item poll (`photo-analysis.js`) bounds a stuck
 analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
+
+## Public complaint flow
+
+The browser uploads up to five validated complaint files directly to the dedicated
+complaint-evidence S3 bucket and registers their metadata. Submission retags every
+object while the header remains a draft, then transactionally publishes the Site-scoped
+`COMPLAINT#` header and extends every artifact row's retention. The API immediately
+returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
+loads the evidence, calls the analyzer's complaint-extraction contract, validates the
+six required string fields, and updates the row to `ready`. After the fifth failed SQS
+delivery it records `analysis_failed`; the UI exposes an explicit retry. Confirmed
+deletion removes every S3 object before deleting DynamoDB metadata. Complaint objects
+and records carry a one-year lifecycle/TTL; unsubmitted draft uploads retain the
+one-day pending lifecycle. The separate bucket preserves the check/task photo
+bucket's unconditional 30-day retention backstop.
 
 ## Site address lookup and validation
 
@@ -243,7 +268,7 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   Supervisors; Compliance Managers cannot exercise this cross-Site authority.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Every photo expires 30 days after upload via a bucket-wide rule; uploads that were never registered or were rejected during registration/analysis are tagged and expire after one day. Bucket versioning is suspended so expired photos leave no noncurrent copy.
+- Lambda roles are scoped per function and avoid wildcard resource access. The check/task media bucket and the separate complaint-evidence bucket both block public access and require SSE-KMS + TLS. Every check/task photo expires 30 days after upload via a bucket-wide rule. Complaint evidence expires after one year via its own bucket-wide rule. In either bucket, uploads that were never registered or were rejected expire after one day. Bucket versioning is suspended so expired media leaves no noncurrent copy.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)

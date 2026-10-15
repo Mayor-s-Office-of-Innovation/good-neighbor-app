@@ -210,6 +210,8 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
+    document.removeEventListener("click", this._actionMenuDocumentClick);
+    this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
   }
@@ -549,6 +551,51 @@ class TodayView extends HTMLElement {
         this._startCapture("single-problem", event.currentTarget),
       );
     }
+    const actionMenuTrigger = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("#home-action-menu-trigger")
+    );
+    const actionMenu = /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-action-menu")
+    );
+    actionMenuTrigger?.addEventListener("click", () => {
+      const opening = actionMenu.hidden;
+      actionMenu.hidden = !opening;
+      actionMenuTrigger.setAttribute("aria-expanded", String(opening));
+      if (opening)
+        /** @type {HTMLElement | null} */ (
+          actionMenu.querySelector('[role="menuitem"]')
+        )?.focus();
+    });
+    this._actionMenuDocumentClick = (event) => {
+      if (actionMenu.hidden || event.composedPath().includes(actionMenuTrigger))
+        return;
+      if (event.composedPath().includes(actionMenu)) return;
+      actionMenu.hidden = true;
+      actionMenuTrigger.setAttribute("aria-expanded", "false");
+    };
+    document.addEventListener("click", this._actionMenuDocumentClick);
+    actionMenu?.addEventListener("keydown", (event) => {
+      const keyEvent = /** @type {KeyboardEvent} */ (event);
+      const items = /** @type {HTMLElement[]} */ ([
+        ...actionMenu.querySelectorAll('[role="menuitem"]'),
+      ]);
+      const index = items.indexOf(
+        /** @type {HTMLElement} */ (document.activeElement),
+      );
+      if (keyEvent.key === "Escape") {
+        actionMenu.hidden = true;
+        actionMenuTrigger.setAttribute("aria-expanded", "false");
+        actionMenuTrigger.focus();
+      }
+      if (keyEvent.key === "ArrowDown" || keyEvent.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = keyEvent.key === "ArrowDown" ? 1 : -1;
+        items[(index + delta + items.length) % items.length]?.focus();
+      }
+    });
+    this.querySelector("#view-complaints")?.addEventListener("click", () =>
+      navigate("/complaints"),
+    );
     this.querySelectorAll("[data-start-capture='single-problem']").forEach(
       (control) => {
         control.addEventListener("click", (event) => {
@@ -1020,7 +1067,6 @@ class TodayView extends HTMLElement {
       siteName: identity.site,
       summary: this._summaryBlock(last, homeTasks),
       checkLabel: this._checkActionLabel(),
-      reportLabel: t("today.actions.report"),
     });
   }
 

@@ -285,9 +285,9 @@ export function logoutDialog({ error, pending }) {
 /**
  * The <site-switcher> placeholder is replaced by the host's persistent
  * element after render (see today-view._mountSiteSwitcher).
- * @param {{ siteName: string, summary: string, checkLabel: string, reportLabel: string }} vm
+ * @param {{ siteName: string, summary: string, checkLabel: string }} vm
  */
-export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
+export function heroBlock({ siteName, summary, checkLabel }) {
   return html`
     <div class="screen__sec home-lead">
       <site-switcher></site-switcher>
@@ -297,21 +297,40 @@ export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
         </h1>
         ${summary}
       </div>
-      ${homeActions({ checkLabel, reportLabel })}
+      ${homeActions({ checkLabel })}
     </div>
   `;
 }
 
-/** @param {{ checkLabel: string, reportLabel: string }} labels */
-export function homeActions({ checkLabel, reportLabel }) {
+/** @param {{ checkLabel: string }} labels */
+export function homeActions({ checkLabel }) {
   return html`
     <div class="home-actions">
       <button id="start-check" class="btn-ink" type="button">
         ${escapeHtml(checkLabel)}
       </button>
-      <button id="report-problem" class="btn-outline" type="button">
-        ${escapeHtml(reportLabel)}
-      </button>
+      <div class="home-action-menu-wrap">
+        <button
+          id="home-action-menu-trigger"
+          class="btn-outline home-action-menu-trigger"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="${escapeAttr(t("today.actions.more"))}"
+        >
+          <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
+        </button>
+        <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.complaints"))}
+          </button>
+          <button type="button" role="menuitem" id="report-problem">
+            <wa-icon name="flag" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.report"))}
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }

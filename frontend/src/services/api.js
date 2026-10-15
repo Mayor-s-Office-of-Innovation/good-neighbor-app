@@ -537,6 +537,107 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
+// ── Public complaints ──────────────────────────────────────────────────────
+
+export function listComplaints() {
+  return request("GET", "/v1/complaints");
+}
+
+export function getComplaint(complaintId) {
+  return request("GET", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function createComplaint(body) {
+  return request("POST", "/v1/complaints", {
+    body,
+    headers: { "idempotency-key": body.complaintId },
+  });
+}
+
+export function retryComplaint(complaintId) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/analysis:retry`,
+    { body: {} },
+  );
+}
+
+export function deleteComplaint(complaintId) {
+  return request("DELETE", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function presignComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts:presign`,
+    { body, signal },
+  );
+}
+
+export function registerComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts`,
+    { body, signal },
+  );
+}
+
+export function deleteComplaintArtifact(complaintId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+}
+
+export function getComplaintMediaUrl(complaintId, artifactId) {
+  return request(
+    "GET",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+  );
+}
+
+/** @param {string} uploadUrl @param {Blob} file @param {Record<string,string>} uploadHeaders @param {(progress:number) => void} onProgress @param {AbortSignal} [signal] */
+export function putMediaWithProgress(
+  uploadUrl,
+  file,
+  uploadHeaders = {},
+  onProgress = () => {},
+  signal,
+) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    Object.entries(uploadHeaders).forEach(([name, value]) =>
+      xhr.setRequestHeader(name, value),
+    );
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable)
+        onProgress(Math.round((event.loaded / event.total) * 100));
+    });
+    xhr.addEventListener("load", () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(
+            new ApiError(`Media upload → ${xhr.status}`, {
+              status: xhr.status,
+            }),
+          ),
+    );
+    xhr.addEventListener("error", () =>
+      reject(new ApiError("Network error uploading media", { status: 0 })),
+    );
+    xhr.addEventListener("abort", () =>
+      reject(new DOMException("Upload cancelled", "AbortError")),
+    );
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
+}
+
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**

@@ -19,6 +19,17 @@ import {
   presignMedia,
 } from "../handlers/artifacts.js";
 import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../handlers/complaints.js";
+import {
   get311RequestDetail,
   get311RequestDetails,
   listTasks,
@@ -207,6 +218,18 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}": getCheck,
+  "GET /v1/complaints": listComplaints,
+  "POST /v1/complaints": createComplaint,
+  "GET /v1/complaints/{complaintId}": getComplaint,
+  "DELETE /v1/complaints/{complaintId}": deleteComplaint,
+  "POST /v1/complaints/{complaintId}/analysis:retry": retryComplaint,
+  "POST /v1/complaints/{complaintId}/artifacts:presign":
+    presignComplaintArtifact,
+  "POST /v1/complaints/{complaintId}/artifacts": registerComplaintArtifact,
+  "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}":
+    deleteComplaintArtifact,
+  "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media":
+    presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
   "POST /v1/311-requests:batch": get311RequestDetails,

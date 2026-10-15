@@ -8,6 +8,7 @@ import {
   emptyResults,
   errorView,
   homeAllDonePanel,
+  homeActions,
   homeResults,
   logoutDialog,
   reasonPicker,
@@ -15,6 +16,15 @@ import {
   summaryBlock,
   taskTabs,
 } from "./today-view.templates.js";
+
+describe("homeActions", () => {
+  it("renders an icon for each overflow-menu action", () => {
+    const markup = homeActions({ checkLabel: "Start a full check" });
+
+    expect(markup).toContain('<wa-icon name="bullhorn"');
+    expect(markup).toContain('<wa-icon name="flag"');
+  });
+});
 
 describe("settingsMenu", () => {
   it("renders the menu only while open", () => {
