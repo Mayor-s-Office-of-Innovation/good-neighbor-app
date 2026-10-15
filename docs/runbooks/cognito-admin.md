@@ -4,8 +4,11 @@ Good Neighbor's admin console uses Cognito authorization code flow with PKCE.
 Account creation is administrator-only. The pool requires authenticator-app
 (TOTP) MFA and passwords of at least 14 characters with uppercase, lowercase,
 numbers, and symbols. Temporary invitation passwords expire after seven days.
-Cognito sends invitations and recovery messages through the environment's SES
-identity as `Good Neighbor <codes@goodneighborsf.org>`.
+When `enable_cognito_custom_email_sender` is true, Cognito invokes a dedicated
+Lambda that decrypts its temporary password or verification code and sends the
+message through the City SMTP gateway. DEV uses `goodneighbor-dev@sf.gov`; PROD
+uses `goodneighbor@sf.gov`. The existing SES configuration remains declared as
+the rollback path when the custom sender is disabled.
 
 ## Environment configuration
 
@@ -14,7 +17,12 @@ The dev pool is `us-west-2_8d60iAcSL`, in the DEV account, region
 client secret. Its login domain is
 `https://good-neighbor-app-dev.auth.us-west-2.amazoncognito.com`.
 The domain uses Cognito's classic hosted UI (version 1), which supports the
-configured password and TOTP flow.
+configured password and TOTP flow. The admin app client applies the small,
+repository-managed customization in
+`infra/modules/app/cognito-hosted-ui.css`. Cognito carries that palette across
+sign-in, temporary-password, recovery, and TOTP screens. Classic Hosted UI text
+and layout remain Cognito-owned; the customization intentionally has no logo
+until an approved Good Neighbor asset exists.
 
 Dev admin console: <https://ds7mtnddz2r23.cloudfront.net/>.
 The registered callback is `/auth/callback` on that origin; logout returns to
@@ -40,9 +48,24 @@ Administrators screen. Assign exactly one of `compliance-manager` or
 Terraform state. `central-admin` is a temporary migration alias for
 `compliance-manager`; do not add new users to it.
 
+The admin app's Settings menu exposes User management only to Compliance
+supervisors. The directory distinguishes active, invited, and suspended users.
+Supervisors can resend a still-pending invitation, send password-reset
+instructions to an active user, suspend either administrator role, and
+reinstate a suspended user. Cognito sends both invitation and password-reset
+messages; the application never generates or displays a password.
+
 Creating a user alone does not grant admin API access: backend handlers require
 one of the two Compliance groups. Public self-sign-up is disabled. Do not mark an
 email verified until control of that address has been established.
+The session endpoint records `email_verified=true` only after an invited
+administrator has successfully authenticated with an email-address username;
+password reset remains unavailable without a verified email or phone number.
+
+The invitation identifies the Good Neighbor compliance app, includes the
+environment-specific admin URL and support mailbox, and retains the seven-day
+expiry. Other Cognito events use minimal code-based wording equivalent to the
+current Cognito defaults.
 
 The invited user opens the admin console, chooses Sign in, enters the exact
 username and emailed temporary password, chooses a permanent password, and
@@ -63,6 +86,13 @@ fields in update requests can reset to AWS defaults. Keep the matching
 Terraform configuration in sync.
 
 ## Troubleshooting
+
+For local user-management testing, set
+`LOCAL_COGNITO_ADMIN_DIRECTORY=true` in `.env.local`. The local API then uses a
+seeded, in-memory Cognito-compatible directory with active, invited, and
+suspended users. Mutations reset on backend restart, and invite, re-invite, and
+password-reset operations do not send email. Deployed Lambda environments must
+leave this variable unset and continue to use the configured Cognito user pool.
 
 - Missing admin assets / 403 from CloudFront: check the admin S3 publication and
   the required root Terraform outputs in the deployment job.
@@ -85,5 +115,6 @@ with `npm run migrate:cognito-admin-groups --workspace backend`, providing
 membership for rollback; users must sign out and back in to refresh claims.
 - The app rejects self-suspension, self-demotion, and any attempt to suspend or
   demote the last enabled Compliance supervisor.
-- Invitation expired: use `admin-create-user --message-action RESEND` for that
-  existing username after authorization to resend the invitation.
+- Invitation expired: a Compliance supervisor can use Re-invite in User
+  management. The backend uses Cognito's `AdminCreateUser` operation with
+  `MessageAction: RESEND`; it rejects accounts that are no longer pending.

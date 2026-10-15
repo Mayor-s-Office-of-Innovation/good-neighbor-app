@@ -1,5 +1,7 @@
+import { duplicateEvent } from "../analysis/duplicates/monitoring.js";
 // Separate stream dispatcher. Existing analysis handlers have no dependency here.
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { pendingConditions } from "../analysis/duplicates/result-state.js";
 import { ddb } from "../db.js";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
@@ -26,6 +28,77 @@ export const handler = async (event) => {
             ),
           )
         : undefined;
+      if (!previous && current.sk?.startsWith("DUP_OVERRIDE#")) {
+        duplicateEvent(
+          "separated",
+          {
+            siteId: current.pk.slice(5),
+            taskId: current.taskId,
+            originalTaskId: current.originalTaskId,
+          },
+          [{ name: "DuplicateSeparated", value: 1 }],
+        );
+      }
+      if (
+        current.sk?.startsWith("DUP_LINK#") &&
+        (!previous || previous.updateId !== current.updateId)
+      ) {
+        duplicateEvent(
+          "linked",
+          {
+            siteId: current.pk.slice(5),
+            taskId: current.taskId,
+            originalTaskId: current.originalTaskId,
+          },
+          [{ name: "DuplicateLinksCreated", value: 1 }],
+        );
+      }
+      // Guidance publication may finish after the isolated comparison. Reconcile
+      // links without rerunning analysis or asking the model again.
+      if (
+        current.entityType === "TASK" &&
+        current.checkId &&
+        current.sourceArtifactIds?.length &&
+        (!previous ||
+          current.assessmentId !== previous.assessmentId ||
+          (current.status !== previous.status &&
+            ["in_progress", "completed", "cannot_do"].includes(
+              current.status,
+            )) ||
+          current.resolvedAt !== previous.resolvedAt)
+      ) {
+        for (const artifactId of current.sourceArtifactIds)
+          await sqs.send(
+            new SendMessageCommand({
+              QueueUrl: process.env.DUPLICATE_QUEUE_URL,
+              MessageBody: JSON.stringify({
+                siteId: current.pk.slice(5),
+                checkId: current.checkId,
+                artifactId,
+                reconcileOnly: true,
+              }),
+            }),
+          );
+      }
+      // Artifact registration follows validated S3 upload. Warm the isolated
+      // preparation cache while normal analysis runs on its own queue/capacity.
+      if (
+        /^CHECK#[^#]+#ART#[^#]+$/.test(current.sk ?? "") &&
+        current.s3Key &&
+        current.s3Key !== previous?.s3Key
+      ) {
+        await sqs.send(
+          new SendMessageCommand({
+            QueueUrl: process.env.DUPLICATE_QUEUE_URL,
+            MessageBody: JSON.stringify({
+              siteId: current.pk.slice(5),
+              checkId: current.checkId,
+              artifactId: current.artifactId,
+              prepareOnly: true,
+            }),
+          }),
+        );
+      }
       const lifecycleChange =
         current.sk?.startsWith("DUP_OBSERVATION#") &&
         previous &&
@@ -44,8 +117,24 @@ export const handler = async (event) => {
                 pk: current.pk,
                 sk: `DUP_RESULT#${current.checkId}:${current.artifactId}#${revision}`,
                 status: "pending",
+                processingState: "pending",
+                conditionResults: pendingConditions(
+                  (current.concerns ?? [])
+                    .filter(
+                      (
+                        /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
+                      ) => c.rating > 0 && c.conditionId,
+                    )
+                    .map(
+                      (
+                        /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
+                      ) => ({ id: c.conditionId }),
+                    ),
+                ),
+                queuedAt: new Date().toISOString(),
+                analysisReadyAt: current.analyzedAt,
                 possibleDuplicate: null,
-                shadow: true,
+                shadow: false,
                 sourceRevision: revision,
               },
               ConditionExpression: "attribute_not_exists(sk)",
@@ -67,6 +156,7 @@ export const handler = async (event) => {
             checkId: current.checkId,
             artifactId: current.artifactId,
             revision,
+            enqueuedAt: new Date().toISOString(),
             ...(lifecycleChange
               ? {
                   lifecycleChange: true,

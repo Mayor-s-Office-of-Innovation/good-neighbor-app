@@ -44,9 +44,9 @@ do {
 const byKey = new Map(rows.map((row) => [row.sk, row]));
 const jobs = [];
 for (const artifact of rows) {
-  if (!artifact.sk.includes("#ART#") || !artifact.s3Key || !artifact.capturedAt)
-    continue;
-  const observed = Date.parse(artifact.capturedAt);
+  if (!artifact.sk.includes("#ART#")) continue;
+  const a = byKey.get(artifact.sk.replace("#ART#", "#ANALYSIS#"));
+  const observed = Date.parse(a?.generatedAt ?? a?.analyzedAt ?? "");
   if (
     !Number.isFinite(observed) ||
     observed < startedAt.getTime() - LOOKBACK_MS ||
@@ -66,7 +66,11 @@ for (const artifact of rows) {
     continue;
   const revision = analysisRevision(analysis);
   const id = observationId(checkId, artifactId);
-  const key = projectionKey(siteId, artifact.capturedAt, id);
+  const key = projectionKey(
+    siteId,
+    analysis.generatedAt ?? analysis.analyzedAt,
+    id,
+  );
   const existing = (
     await ddb.send(
       new GetCommand({ TableName: table, Key: key, ConsistentRead: true }),
@@ -83,11 +87,16 @@ for (const artifact of rows) {
       revision,
       observedAt: new Date(observed).toISOString(),
       availableAt: analysis.analyzedAt,
-      s3Key: artifact.s3Key,
-      contentType: artifact.contentType,
+      ...(artifact.s3Key
+        ? { s3Key: artifact.s3Key, contentType: artifact.contentType }
+        : {}),
       conditions: (analysis.concerns ?? [])
         .filter((c) => c.rating > 0 && c.conditionId)
-        .map((c) => ({ id: c.conditionId, description: c.explanation })),
+        .map((c) => ({
+          id: c.conditionId,
+          category: c.category,
+          description: c.explanation,
+        })),
     };
     await ddb.send(
       new TransactWriteCommand({
@@ -137,5 +146,5 @@ for (const job of jobs)
     }),
   );
 console.info(
-  `Bootstrapped ${jobs.length} observations; queued isolated shadow evaluation. No media or descriptions logged.`,
+  `Bootstrapped ${jobs.length} observations; queued isolated duplicate evaluation. No media or descriptions logged.`,
 );

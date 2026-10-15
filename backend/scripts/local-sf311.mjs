@@ -142,7 +142,8 @@ const server = createServer(async (req, res) => {
             .filter(
               (update) =>
                 update?.kind === "updatesr" &&
-                update.payload?.SRnum === entry.response?.SRNum,
+                (update.payload?.SRnum ?? update.payload?.SRNum) ===
+                  entry.response?.SRNum,
             )
             .map((update) => update.payload),
         }));

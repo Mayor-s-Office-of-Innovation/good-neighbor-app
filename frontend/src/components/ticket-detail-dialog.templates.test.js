@@ -127,3 +127,50 @@ describe("ticketDetailDialog 311 timeline events", () => {
     expect(markup).toMatch(/Closed: resolved/);
   });
 });
+
+it.each(["in_progress", "completed"])(
+  "shows saved content in the %s 311 timeline",
+  (status) => {
+    const markup = ticketDetailDialog({
+      state: "ready",
+      detail: {
+        status: status === "completed" ? "Closed" : "Open",
+        task: { status },
+        title: "Litter",
+        mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
+        events: [
+          { title: "Agency update", occurredAt: "2026-10-08T10:00:00Z" },
+        ],
+        updates: [
+          {
+            type: "note_photo_update",
+            label: "Updated with photos and notes",
+            notes: ["Still <there>"],
+            photoKeys: ["photo-1"],
+            occurredAt: "2026-10-08T12:00:00Z",
+          },
+          {
+            type: "additional_action",
+            label: "Additional action taken",
+            text: "Called agency",
+            occurredAt: "2026-10-08T11:00:00Z",
+          },
+        ],
+        nextToken: "older",
+      },
+    });
+    expect(markup).toContain("Still &lt;there&gt;");
+    expect(markup).toContain('src="https://example.test/photo.jpg"');
+    expect(markup.indexOf("Still &lt;there&gt;")).toBeLessThan(
+      markup.indexOf("Called agency"),
+    );
+    expect(markup.indexOf("Called agency")).toBeLessThan(
+      markup.indexOf("Agency update"),
+    );
+    expect(markup).toContain("data-load-older");
+    expect(markup.includes('data-mode="notes"')).toBe(status === "in_progress");
+    expect(markup.includes('data-mode="action"')).toBe(
+      status === "in_progress",
+    );
+  },
+);

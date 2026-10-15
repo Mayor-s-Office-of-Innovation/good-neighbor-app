@@ -3,6 +3,7 @@ import {
   findServiceRequest,
   normalizeSf311Detail,
   serviceRequestClosureState,
+  serviceRequestClosureReason,
 } from "./sf311-status.js";
 
 describe("SF311 status normalization", () => {
@@ -20,6 +21,43 @@ describe("SF311 status normalization", () => {
       ),
     ).toBe("open");
     expect(serviceRequestClosureState({ requests: [] }, "123")).toBe("unknown");
+  });
+
+  it("reads the latest closure reason without inventing missing reasons", () => {
+    const body = {
+      requests: [
+        {
+          SRNum: "123",
+          ClosedReasonCode: "1",
+          Updates: [
+            {
+              UpdateType: "11",
+              NumericSubType: "8",
+              EffectiveDate: "2026-09-20T14:00:00Z",
+            },
+            {
+              UpdateType: "11",
+              NumericSubType: "2",
+              EffectiveDate: "2026-09-20T12:00:00Z",
+            },
+          ],
+        },
+      ],
+    };
+    expect(serviceRequestClosureReason(body, "123")).toBe("8");
+    expect(
+      serviceRequestClosureReason(
+        { requests: [{ SRNum: "123", ClosedReasonCode: 2 }] },
+        "123",
+      ),
+    ).toBe("2");
+    expect(
+      serviceRequestClosureReason(
+        { requests: [{ SRNum: "123", Status: "4" }] },
+        "123",
+      ),
+    ).toBe("");
+    expect(serviceRequestClosureReason(body, "missing")).toBe("");
   });
 
   it("returns human-readable updates newest first and omits attachment events", () => {

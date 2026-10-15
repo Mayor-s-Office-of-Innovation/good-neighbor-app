@@ -9,7 +9,7 @@ import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
   buildCreateSrPayload,
-  CLOSE_REASON_FIELD_WORK_COMPLETED,
+  SILENT_TICKET_CLOSED_REASON,
   createSf311Client,
   GOOD_NEIGHBOR_AGENCY,
   Sf311Error,
@@ -19,7 +19,10 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import { serviceRequestClosureState } from "../../integrations/sf311-status.js";
+import {
+  serviceRequestClosureReason,
+  serviceRequestClosureState,
+} from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -758,7 +761,7 @@ export function eligibleTicketsForClosure(priorResults) {
       }
       eligible.set(serviceCode, {
         ticket,
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
       });
     }
   }
@@ -852,7 +855,7 @@ async function execute311ClosureAction({
         closures: [...eligible].map(([serviceCode, { ticket }]) => ({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_reconciliation_failed",
         })),
@@ -902,10 +905,14 @@ async function execute311ClosureAction({
         String(ticket.srNum),
       );
       if (closureState === "closed") {
+        const closedReasonCode = serviceRequestClosureReason(
+          latestUpdates,
+          String(ticket.srNum),
+        );
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          ...(closedReasonCode ? { closedReasonCode } : {}),
           status: "closed",
           reconciled: true,
         });
@@ -916,7 +923,7 @@ async function execute311ClosureAction({
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_state_unknown",
         });
@@ -932,7 +939,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
@@ -947,7 +954,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "failed",
         reason: appActionErrorReason(error),
         ...(appActionErrorDiagnostics(error)

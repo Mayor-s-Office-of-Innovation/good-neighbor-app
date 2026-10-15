@@ -3,6 +3,11 @@ output "frontend_bucket_name" {
   value       = module.app.frontend_bucket_name
 }
 
+output "compliance_letter_bucket_name" {
+  description = "S3 bucket for durable compliance-letter PDFs and previews."
+  value       = module.app.compliance_letter_bucket_name
+}
+
 output "submission_queue_url" {
   description = "SQS queue URL for offline submissions."
   value       = module.app.submission_queue_url

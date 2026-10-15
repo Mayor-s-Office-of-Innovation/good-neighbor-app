@@ -71,6 +71,28 @@ describe("evidence items", () => {
     vi.clearAllMocks();
   });
 
+  it("persists starting guidance and ignores a stale session response", async () => {
+    const { startCheck, setCaptureGuidanceContext, getCurrentCheck } =
+      await import("./check-session.js");
+    const { saveDraft } = await import("../db.js");
+    const check = startCheck("site-1");
+    setCaptureGuidanceContext(check.id, { titleKey: "check.title.third" });
+    expect(getCurrentCheck().captureGuidanceContext).toEqual({
+      titleKey: "check.title.third",
+    });
+    expect(saveDraft).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        captureGuidanceContext: { titleKey: "check.title.third" },
+      }),
+    );
+    setCaptureGuidanceContext("old-check", {
+      titleKey: "check.title.fourDays",
+    });
+    expect(getCurrentCheck().captureGuidanceContext.titleKey).toBe(
+      "check.title.third",
+    );
+  });
+
   it("adds, updates, and removes items by id alone", async () => {
     const { startCheck, addItem, updateItem, updateItemAnalysis, removeItem } =
       await import("./check-session.js");

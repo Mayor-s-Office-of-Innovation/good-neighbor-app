@@ -1,17 +1,24 @@
 import {
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, sendManagerSecurityNotification } = vi.hoisted(() => ({
+const {
+  send,
+  sendManagerSecurityNotification,
+  sendProviderManagerSecurityNotification,
+} = vi.hoisted(() => ({
   send: vi.fn(),
   sendManagerSecurityNotification: vi.fn(),
+  sendProviderManagerSecurityNotification: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../integrations/email.js", () => ({
   sendManagerSecurityNotification,
+  sendProviderManagerSecurityNotification,
 }));
 
 const { redeemEnrollmentGrant } = await import("./enrollment.js");
@@ -21,6 +28,10 @@ beforeEach(() => {
   sendManagerSecurityNotification.mockReset().mockResolvedValue({
     provider: "ses",
     messageId: "security-message-1",
+  });
+  sendProviderManagerSecurityNotification.mockReset().mockResolvedValue({
+    provider: "ses",
+    messageId: "provider-security-message-1",
   });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("DEVICE_TOKEN_SECRET", "test-device-secret-at-least-32-bytes");
@@ -35,6 +46,131 @@ afterEach(() => {
 });
 
 describe("Manager enrollment redemption", () => {
+  it("atomically enrolls a Provider Manager at every active Site", async () => {
+    const token = "provider-wide-secret-token";
+    const tokenHash = await sha256(token);
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: `ENROLLMENT_TOKEN#${tokenHash}`,
+          sk: "#META",
+          grantId: "provider-grant-1",
+          grantPk: "PROVIDER#provider-1",
+          grantSk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "PROVIDER#provider-1",
+          sk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
+          scope: "provider",
+          grantId: "provider-grant-1",
+          providerId: "provider-1",
+          membershipId: "membership-1",
+          membershipGeneration: 3,
+          accessLevel: "manager",
+          status: "pending",
+          tokenHash,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "PROVIDER#provider-1",
+          sk: "#META",
+          providerId: "provider-1",
+          name: "Provider One",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "PROVIDER#provider-1",
+            sk: "PROVIDER_MANAGER#manager-1",
+            membershipId: "membership-1",
+            status: "active",
+            generation: 3,
+            name: "Alex Rivera",
+            email: "alex@example.org",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-1",
+            siteName: "Site One",
+            status: "active",
+            siteCredentialGeneration: 2,
+          },
+        ],
+        LastEvaluatedKey: { pk: "PROVIDER#provider-1", sk: "SITE#site-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            siteId: "site-2",
+            siteName: "Site Two",
+            status: "active",
+            siteCredentialGeneration: 4,
+          },
+          { siteId: "site-old", status: "inactive" },
+        ],
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      event({ grantId: "provider-grant-1", token, label: "Alex's tablet" }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    const body = JSON.parse(String(response.body));
+    expect(body).toMatchObject({
+      siteCount: 2,
+      provider: { providerId: "provider-1", name: "Provider One" },
+    });
+    expect(
+      body.bindings.map((/** @type {any} */ binding) => binding.siteId),
+    ).toEqual(["site-1", "site-2"]);
+    expect(send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
+    const transaction = send.mock.calls[6][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(16);
+    const siteConditions = transaction.input.TransactItems.filter(
+      (/** @type {any} */ item) =>
+        item.ConditionCheck?.Key?.pk?.startsWith("SITE#"),
+    );
+    expect(siteConditions).toHaveLength(2);
+    expect(siteConditions[0].ConditionCheck.ConditionExpression).toContain(
+      "siteCredentialGeneration = :siteGeneration",
+    );
+    expect(
+      siteConditions.map(
+        (/** @type {any} */ item) =>
+          item.ConditionCheck.ExpressionAttributeValues[":siteGeneration"],
+      ),
+    ).toEqual([2, 4]);
+    expect(
+      transaction.input.TransactItems.filter(
+        (/** @type {any} */ item) =>
+          item.Put?.Item?.authorityScope === "provider",
+      ),
+    ).toHaveLength(4);
+    expect(sendProviderManagerSecurityNotification).toHaveBeenCalledWith({
+      to: "alex@example.org",
+      managerName: "Alex Rivera",
+      providerName: "Provider One",
+      siteCount: 2,
+      deviceLabel: "Alex's tablet",
+      clientDescription: "unknown browser on unknown device",
+      enrolledAt: expect.any(String),
+      revocationContact: "support@example.org",
+    });
+  });
+
   it("atomically consumes one grant and creates a fresh binding on an existing physical identity", async () => {
     const token = "one-time-secret-token";
     const tokenHash = await sha256(token);

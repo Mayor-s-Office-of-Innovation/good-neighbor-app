@@ -1,3 +1,8 @@
+import {
+  duplicateCard,
+  duplicateCountLabel,
+} from "./duplicate-issue.templates.js";
+import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { taskRoute } from "../domain/task-route.js";
 import { taskActionLabel } from "../domain/task-action-labels.js";
 import { historyDuration, historyEnteredAt } from "../domain/task-history.js";
@@ -7,7 +12,6 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import { t } from "../i18n/i18n.js";
-import { analyzerTranslation } from "../i18n/analyzer-text.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
   formatMonthDay,
@@ -35,6 +39,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 
 /**
  * @typedef {object} AnalysisTask
+ * @property {boolean} [duplicateHidden]
+ * @property {any} [duplicate]
+ * @property {string} [duplicateCheckState]
  * @property {string} [taskId]
  * @property {string} [status]
  * @property {string} [shortId]
@@ -118,6 +125,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
 
 /**
  * @typedef {object} HomeTask
+ * @property {boolean} [duplicateHidden]
+ * @property {any} [duplicate]
+ * @property {string} [duplicateCheckState]
  * @property {string} [taskId]
  * @property {string} [shortId]
  * @property {string} [displayId]
@@ -181,7 +191,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  */
 
 /**
- * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isClear?: boolean, actionPriority?: number }} AnalysisCardEntry
+ * @typedef {{ markup: string, createdAt?: string, needsAnswer?: boolean, isDuplicate?: boolean, isClear?: boolean, actionPriority?: number }} AnalysisCardEntry
  */
 
 /**
@@ -290,8 +300,13 @@ export function analysisResultsTray(
         ? html`<div class="analysis-tray__cards">
             ${checkTime
               ? html`<h2 class="analysis-tray__check-title">
-                  ${escapeHtml(recentCheckTitle(checkTime))}
-                </h2>`
+                    ${escapeHtml(recentCheckTitle(checkTime))}
+                  </h2>
+                  ${duplicateCountLabel({
+                    newCount: cards.filter((c) => !c.isDuplicate && !c.isClear)
+                      .length,
+                    duplicateCount: cards.filter((c) => c.isDuplicate).length,
+                  })}`
               : ""}
             ${cards.map((card) => card.markup).join("")}${footer}
           </div>`
@@ -396,44 +411,56 @@ function analysisCardEntries(
     const unpairedConditions = visibleConditions.filter(
       (condition) => !taskConditionIds.has(condition.conditionId),
     );
-    const taskCards = visibleTasks.map((task) => {
-      const condition =
-        visibleConditions.find(
-          (candidate) =>
-            task.conditionId && candidate.conditionId === task.conditionId,
-        ) || {};
-      const createdAt = task.createdAt || task.created_at || itemTime;
-      return {
-        markup: completedEvidenceCard(item, sessionCheckId, {
-          title:
-            displayCategory(task) ||
-            displayCategory(condition) ||
-            t("card.title.fallback"),
-          description:
-            rulebookText(task.guidance) ||
-            displayDescription(condition) ||
-            t("card.description.fallback"),
-          action: taskButtonLabel(task) || actionLabel(task.kind),
-          includeEditDelete: ![
-            "in_progress",
-            "completing",
-            "resolving",
-            "completed",
-            "cannot_do",
-          ].includes(task.status),
-          actionKind: task.kind || "",
-          routeType: taskRoute(task),
-          taskId: task.taskId || "",
-          conditionId: task.conditionId || condition.conditionId || "",
-          metaLabel: newTaskMetaLabel(task),
+    const taskCards = visibleTasks
+      .filter((task) => !task.duplicateHidden)
+      .map((task) => {
+        if (task.duplicate?.compact)
+          return {
+            markup: duplicateCard(task),
+            createdAt: task.createdAt,
+            isDuplicate: true,
+          };
+        const condition =
+          visibleConditions.find(
+            (candidate) =>
+              task.conditionId && candidate.conditionId === task.conditionId,
+          ) || {};
+        const createdAt = task.createdAt || task.created_at || itemTime;
+        return {
+          markup: completedEvidenceCard(item, sessionCheckId, {
+            title:
+              displayCategory(task) ||
+              displayCategory(condition) ||
+              t("card.title.fallback"),
+            description:
+              rulebookText(task.guidance) ||
+              displayDescription(condition) ||
+              t("card.description.fallback"),
+            action: taskButtonLabel(task) || actionLabel(task.kind),
+            includeEditDelete: ![
+              "in_progress",
+              "completing",
+              "resolving",
+              "completed",
+              "cannot_do",
+            ].includes(task.status),
+            actionKind: task.kind || "",
+            routeType: taskRoute(task),
+            taskId: task.taskId || "",
+            conditionId: task.conditionId || condition.conditionId || "",
+            metaLabel: newTaskMetaLabel(task),
+            createdAt,
+            shortId: taskDisplayReference(task),
+            duplicateNote: Boolean(task.duplicate),
+            duplicateOriginalTaskId: task.duplicate?.original?.taskId,
+            duplicateCheckState: task.duplicateCheckState,
+          }),
           createdAt,
-          shortId: taskDisplayReference(task),
-        }),
-        createdAt,
-        needsAnswer: Boolean(condition.needsAnswer),
-        actionPriority: analysisActionPriority(task),
-      };
-    });
+          isDuplicate: Boolean(task.duplicate),
+          needsAnswer: Boolean(condition.needsAnswer),
+          actionPriority: analysisActionPriority(task),
+        };
+      });
     return [
       ...taskCards,
       ...unpairedConditions.map((condition) => ({
@@ -520,6 +547,7 @@ export function taskAnalysisCard({
   siteName = "",
   history = false,
 }) {
+  if (task.duplicate?.compact) return duplicateCard(task);
   if (history) return historyCard(task);
   includeControls =
     includeControls &&
@@ -556,6 +584,9 @@ export function taskAnalysisCard({
     },
   };
   return completedEvidenceCard(pseudoItem, task.checkId || "", {
+    duplicateNote: Boolean(task.duplicate),
+    duplicateOriginalTaskId: task.duplicate?.original?.taskId,
+    duplicateCheckState: task.duplicateCheckState,
     title:
       displayCategory(task) ||
       rulebookText(task.label) ||
@@ -834,6 +865,9 @@ function completedEvidenceCard(
   sessionCheckId,
   {
     title,
+    duplicateNote = false,
+    duplicateOriginalTaskId = "",
+    duplicateCheckState = undefined,
     description,
     editableDescription = description,
     action,
@@ -874,6 +908,7 @@ function completedEvidenceCard(
       data-item-id="${escapeAttr(item.id || "")}"
       data-check-id="${escapeAttr(checkId)}"
       data-artifact-id="${escapeAttr(artifactId)}"
+      tabindex="-1"
       data-task-id="${escapeAttr(taskId)}"
       data-analysis-id="${escapeAttr(analysisId)}"
       data-condition-id="${escapeAttr(conditionId)}"
@@ -923,6 +958,35 @@ function completedEvidenceCard(
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
             <h3>${escapeHtml(title)}</h3>
+            ${duplicateNote
+              ? html`<p class="analysis-card__duplicate-note">
+                    ${t("duplicate.note", { issue: "\uFFFC" })
+                      .split("\uFFFC")
+                      .map(escapeHtml)
+                      .join(
+                        duplicateOriginalTaskId
+                          ? html`<a
+                              class="duplicate-earlier-link"
+                              href="/today?issue=${escapeAttr(
+                                encodeURIComponent(duplicateOriginalTaskId),
+                              )}"
+                              data-original-task-id="${escapeAttr(
+                                duplicateOriginalTaskId,
+                              )}"
+                              >${escapeHtml(t("duplicate.earlierIssue"))}</a
+                            >`
+                          : escapeHtml(t("duplicate.earlierIssue")),
+                      )}
+                  </p>
+                  <button
+                    type="button"
+                    class="btn-card"
+                    data-action="duplicate"
+                    data-analysis-action="duplicate"
+                  >
+                    ${escapeHtml(t("duplicate.view"))}
+                  </button>`
+              : ""}
             <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
             <p>${escapeHtml(description)}</p>
             ${question ? clarifyingQuestion(question, conditionId) : ""}
@@ -935,6 +999,24 @@ function completedEvidenceCard(
                   <wa-icon name="pen" aria-hidden="true"></wa-icon
                   ><span>${escapeHtml(t("card.editDetails"))}</span>
                 </button>`
+              : ""}
+            ${includeEditDelete &&
+            !duplicateNote &&
+            ["pending", "complete"].includes(duplicateCheckState)
+              ? html`<p class="analysis-card__duplicate-status" role="status">
+                  ${duplicateCheckState === "pending"
+                    ? html`<wa-spinner aria-hidden="true"></wa-spinner>`
+                    : ""}
+                  <span
+                    >${escapeHtml(
+                      t(
+                        duplicateCheckState === "pending"
+                          ? "duplicate.checking"
+                          : "duplicate.noMatches",
+                      ),
+                    )}</span
+                  >
+                </p>`
               : ""}
             <p class="actioncard__error" role="alert" hidden></p>
           </div>
@@ -1003,9 +1085,6 @@ export function statusLine(status, detail = "", scope = "server.sf311") {
 
 // Prefer the active-locale analyzer translation when present; fall back to the
 // canonical English wire fields, then rulebook text.
-function localizedAnalyzerText(record, flat, translationsKey) {
-  return analyzerTranslation(record, translationsKey) ?? flat;
-}
 
 function displayCategory(record) {
   return (

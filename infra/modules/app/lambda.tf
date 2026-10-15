@@ -16,6 +16,20 @@ locals {
     SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
     SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
   }
+
+  email_lambda_environment = var.enable_city_smtp_relay ? {
+    EMAIL_TRANSPORT              = "smtp"
+    MAIL_MANAGER_SMTP_HOST       = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+    MAIL_MANAGER_SMTP_USERNAME   = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+    MAIL_MANAGER_SMTP_SECRET_ARN = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+    SETUP_CODE_EMAIL_FROM        = var.city_smtp_from_address
+    } : {
+    EMAIL_TRANSPORT              = "ses"
+    MAIL_MANAGER_SMTP_HOST       = ""
+    MAIL_MANAGER_SMTP_USERNAME   = ""
+    MAIL_MANAGER_SMTP_SECRET_ARN = ""
+    SETUP_CODE_EMAIL_FROM        = var.setup_code_email_from
+  }
 }
 
 data "archive_file" "api" {
@@ -28,6 +42,12 @@ data "archive_file" "authorizer" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/authorizer"
   output_path = "${path.module}/dist/authorizer.zip"
+}
+
+data "archive_file" "cognito_email_sender" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/cognito-email-sender"
+  output_path = "${path.module}/dist/cognito-email-sender.zip"
 }
 
 data "archive_file" "intake" {
@@ -80,13 +100,71 @@ resource "aws_cloudwatch_log_group" "worker" {
   tags              = var.tags
 }
 
+resource "aws_cloudwatch_log_group" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name              = "/aws/lambda/${local.name_prefix}-cognito-email-sender"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  #checkov:skip=CKV_AWS_116:Synchronous Cognito trigger; an invocation failure must fail the originating Cognito delivery rather than enter a DLQ.
+  #checkov:skip=CKV_AWS_117:Public egress is required for the authenticated Mail Manager SMTP endpoint.
+  #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application.
+  function_name                  = "${local.name_prefix}-cognito-email-sender"
+  role                           = aws_iam_role.cognito_email_sender[0].arn
+  runtime                        = "nodejs22.x"
+  handler                        = "index.handler"
+  filename                       = data.archive_file.cognito_email_sender.output_path
+  source_code_hash               = data.archive_file.cognito_email_sender.output_base64sha256
+  memory_size                    = 256
+  timeout                        = 20
+  kms_key_arn                    = aws_kms_key.app.arn
+  reserved_concurrent_executions = 2
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ADMIN_APP_URL                   = var.cognito_admin_app_url
+      COGNITO_EMAIL_KMS_KEY_ARN       = aws_kms_key.cognito_email[0].arn
+      EMAIL_TRANSPORT                 = "smtp"
+      ENVIRONMENT                     = var.environment
+      MAIL_MANAGER_SMTP_HOST          = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+      MAIL_MANAGER_SMTP_USERNAME      = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+      MAIL_MANAGER_SMTP_SECRET_ARN    = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+      SETUP_CODE_EMAIL_FROM           = var.city_smtp_from_address
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.cognito_email_sender]
+  tags       = var.tags
+}
+
+resource "aws_lambda_permission" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement_id   = "AllowCognitoInvoke"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.cognito_email_sender[0].function_name
+  principal      = "cognito-idp.amazonaws.com"
+  source_account = data.aws_caller_identity.current.account_id
+}
+
 resource "aws_lambda_function" "api" {
   #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A (the worker keeps a real DLQ).
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name                  = "${local.name_prefix}-api"
   role                           = aws_iam_role.api.arn
-  runtime                        = "nodejs22.x"
+  runtime                        = "nodejs24.x"
   handler                        = "index.handler"
   filename                       = data.archive_file.api.output_path
   source_code_hash               = data.archive_file.api.output_base64sha256
@@ -101,10 +179,12 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = merge({
+      DUPLICATE_DETECTION_ENABLED = tostring(var.enable_duplicate_detection)
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       DEMO_SITE_ID                = "demo-site"
       BEDROCK_MODEL_ID            = var.bedrock_model_id
       ANALYZER_BASE_URL           = var.analyzer_base_url
@@ -112,11 +192,12 @@ resource "aws_lambda_function" "api" {
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn
-      SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
-    }, local.sf311_lambda_environment)
+      # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
+      METRICS_NAMESPACE = local.metrics_namespace
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
@@ -142,7 +223,7 @@ resource "aws_lambda_function" "intake" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-intake"
   role             = aws_iam_role.intake.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.intake.output_path
   source_code_hash = data.archive_file.intake.output_base64sha256
@@ -198,7 +279,7 @@ resource "aws_lambda_function" "authorizer" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-authorizer"
   role             = aws_iam_role.authorizer.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.authorizer.output_path
   source_code_hash = data.archive_file.authorizer.output_base64sha256
@@ -232,7 +313,7 @@ resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
   function_name    = "${local.name_prefix}-worker"
   role             = aws_iam_role.worker.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.worker.output_path
   source_code_hash = data.archive_file.worker.output_base64sha256
@@ -261,9 +342,12 @@ resource "aws_lambda_function" "worker" {
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
+      # Business metrics (lib/metrics.js, EMF): Analysis* + AnalyzerLatencyMs.
+      METRICS_NAMESPACE = local.metrics_namespace
     }, local.sf311_lambda_environment)
   }
 
@@ -326,10 +410,8 @@ resource "aws_lambda_event_source_mapping" "worker" {
   }
 }
 
-# Revocation requests and their outbox entries are committed atomically. This
-# filtered stream mapping forwards only new pending outbox entries to the worker,
-# which publishes the site reconciliation message to SQS and marks the entry as
-# dispatched. Stream retries close the former commit-then-send failure window.
+# Revocation and compliance-letter requests are committed with durable outbox
+# entries. This filtered stream mapping forwards them to the worker queue.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
   event_source_arn = aws_dynamodb_table.app.stream_arn
   function_name    = aws_lambda_function.worker.arn
@@ -346,7 +428,7 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
         eventName = ["INSERT"]
         dynamodb = {
           NewImage = {
-            entityType = { S = ["REVOCATION_OUTBOX"] }
+            entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] }
           }
         }
       })

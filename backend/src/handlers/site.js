@@ -5,7 +5,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { getConfig } from "../config.js";
+import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
   geocodeSiteAddress,
   locationFromSite,
@@ -16,6 +16,7 @@ import { jsonResponse, readJsonBody } from "../http.js";
 import { presignGet } from "../s3.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
+import { pacificToday } from "../lib/pacific-dates.js";
 import { siteMetaKey } from "./keys.js";
 
 const PROVIDER_SITES_PAGE_SIZE = 25;
@@ -279,6 +280,11 @@ async function loadSite(siteId) {
  * @returns {Promise<Record<string, any>>}
  */
 async function siteAdminView(site) {
+  const compliance = site.compliance || {};
+  const activeCompliance =
+    compliance.periodEnd && compliance.periodEnd < pacificToday()
+      ? { perimeterChecksRequired: false }
+      : compliance;
   return {
     siteId: site.siteId,
     name: String(site.name || "Your site"),
@@ -297,7 +303,7 @@ async function siteAdminView(site) {
       phone: "",
     },
     oversight: site.oversight || {},
-    compliance: site.compliance || {},
+    compliance: activeCompliance,
     perimeter: String(site.perimeter || ""),
     complianceLetters: await complianceLetterLinks(
       site.complianceLetters || { current: null, past: [] },
@@ -313,7 +319,7 @@ async function complianceLetterLinks(letters) {
     return {
       ...letter,
       url: await presignGet({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: letter.s3Key,
         expiresIn: 300,
       }),

@@ -1,3 +1,8 @@
+import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../src/handlers/duplicate-links.js";
+import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
 // In-process HTTP router — the local stand-in for API Gateway (HTTP API v2). It
 // maps method+path to the SAME exported Lambda handlers we deploy, builds a
 // realistic APIGatewayProxyEventV2, injects a stub Cognito `sub`, and writes the
@@ -15,6 +20,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../src/handlers/checks.js";
 import {
@@ -57,6 +63,11 @@ import {
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../src/handlers/manager-access.js";
+import {
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../src/handlers/manager-reports.js";
 import { requestManagerAccess } from "../src/handlers/manager-access-requests.js";
 import { searchSites } from "../src/handlers/setup-code-requests.js";
 import {
@@ -88,13 +99,16 @@ import {
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../src/handlers/admin.js";
 import {
   getAdminSession,
   inviteAdminUser,
   listAdminUsers,
+  reinviteAdminUser,
   reinstateAdminUser,
+  resetAdminUserPassword,
   suspendAdminUser,
   updateAdminUserRole,
 } from "../src/handlers/admin-users.js";
@@ -129,9 +143,11 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
 import {
@@ -145,6 +161,17 @@ import {
   createManagerGrant,
   listManagerGrants,
 } from "../src/handlers/admin-manager-grants.js";
+import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+} from "../src/handlers/admin-provider-managers.js";
 import {
   applySiteImport,
   getSiteImport,
@@ -223,6 +250,9 @@ const routes = [
     "/app/v1/manager/device-bindings/{bindingId}/revoke",
     revokeGeneralBinding,
   ),
+  route("GET", "/app/v1/manager/reports/checks", getChecksReport),
+  route("GET", "/app/v1/manager/reports/tasks", getTasksReport),
+  route("GET", "/app/v1/manager/reports/task-updates", getTaskUpdatesReport),
   route("GET", "/v1/sites:search", searchSites),
   // Site config
   route("GET", "/v1/site", getSite),
@@ -232,6 +262,7 @@ const routes = [
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
+  route("GET", "/v1/checks:capture-guidance", getCaptureGuidance),
   route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
   route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
   route(
@@ -246,9 +277,16 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}/media",
     presignMedia,
   ),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
+    getDuplicateResult,
+  ),
   route("GET", "/v1/checks/{checkId}", getCheck),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/duplicates:batch", getDuplicateLinks),
+  route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
@@ -298,6 +336,12 @@ const routes = [
     "/admin/v1/admin-users/{username}/reinstate",
     reinstateAdminUser,
   ),
+  route("POST", "/admin/v1/admin-users/{username}/reinvite", reinviteAdminUser),
+  route(
+    "POST",
+    "/admin/v1/admin-users/{username}/reset-password",
+    resetAdminUserPassword,
+  ),
   route("POST", "/admin/v1/providers", createProvider),
   route("GET", "/admin/v1/providers/{providerId}", getProvider),
   route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
@@ -305,6 +349,11 @@ const routes = [
   route("GET", "/admin/v1/programs", listPrograms),
   route("GET", "/admin/v1/program-managers", listCityProgramManagers),
   route("POST", "/admin/v1/program-managers", createCityProgramManager),
+  route(
+    "PATCH",
+    "/admin/v1/program-managers/{userId}",
+    updateCityProgramManager,
+  ),
   route("GET", "/admin/v1/oversight-options", listOversightOptions),
   route("POST", "/admin/v1/oversight-options", createOversightOption),
   route("POST", "/admin/v1/address-suggestions", suggestAddresses),
@@ -333,8 +382,14 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
   route("POST", "/admin/v1/sites/{siteId}/users", assignSiteUser),
   route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
+  route(
+    "PUT",
+    "/admin/v1/sites/{siteId}/compliance-managers",
+    replaceSiteComplianceManagers,
+  ),
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/terms:close", endSiteTerms),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
   route(
@@ -363,6 +418,51 @@ const routes = [
     "DELETE",
     "/admin/v1/sites/{siteId}/grants/{grantId}",
     cancelManagerGrant,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    listProviderManagers,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    createProviderManager,
+  ),
+  route(
+    "PATCH",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    updateProviderManager,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    deactivateProviderManager,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate",
+    reinstateProviderManager,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/grants",
+    listProviderManagerGrants,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-grants",
+    createProviderManagerGrant,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/grants/{grantId}",
+    cancelProviderManagerGrant,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke",
+    revokeProviderManagerEnrollment,
   ),
   route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
   route("GET", "/admin/v1/site-imports", listSiteImports),

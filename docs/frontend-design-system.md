@@ -113,8 +113,16 @@ Buttons are inline pills by default. Full-width is a per-screen choice (e.g. set
 - **`.card`** — a generic surface (lighter than `.screen`); **`.stack`** / **`.stack--tight`**
   for vertical rhythm (flex column, 1rem / 0.5rem gap).
 - **`.hint`** — muted helper text; **`.eyebrow`** — small label above a heading.
-- **`.pill` + `.pill--route|pending|confirm`** — status chips; **`.legend` / `.legend__dot--*`**
-  — chart legends. Every status pill/dot is **paired with its word** — color never stands alone.
+- **Status pills, legends, and charts** live with the screen that renders them rather than
+  in base.css. The first implementation is the site manager reports
+  ([reports-view.css](../frontend/src/components/reports-view.css)): `.reports-pill--*`
+  (complete / partial / missed / pending, and the Issues response kinds), `.reports-legend`
+  with `__dot--*`, inline-SVG bar charts filled from tokens via class (`.reports-chart__bar--*`)
+  with a visually hidden `<table>` as the text equivalent, and a 7-column CSS-grid calendar
+  whose cells carry their count and status in text. Compliance colors are `--c-ok`,
+  `--c-flag`, `--c-hazard` with their `-bg` pairs. Every pill/dot/bar is **paired with its
+  word or count** — color never stands alone. Compact `wa-select` pills use `::part()`
+  overrides there too (label kept for assistive tech, hidden visually).
 
 ## Forms
 
@@ -173,6 +181,21 @@ a screen matched to the design without a mockup.
 
 ## Motion
 
+Two rules decide how a surface arrives, and they follow its close control:
+
+- **A screen with a back arrow slides.** Routed screens one level below the
+  one on screen (reports, site admin, a day or issue-type detail, describe-
+  instead) slide in from the right and slide back out on the way up; sibling
+  routes and the X-closed capture flows cross-fade. `router.js`
+  `routeTransitionDirection` picks push/pop/fade from path level, `app-root.js`
+  stamps it on `<html data-route-transition>` for the View Transition, and
+  base.css holds the keyframes.
+- **An overlay with an X fades.** Every modal `<dialog>` (action sheets, modals,
+  the photo lightbox, the 311 and updates sheets) fades in and out over 80 ms
+  through one rule in base.css; nothing scales or moves. A host that rebuilds
+  its open dialog on every state change marks itself `data-settled` a frame
+  after opening so the entrance plays once (see `ticket-detail-dialog.js`).
+
 Everything animated must be instant when the OS asks for reduced motion
 (`prefers-reduced-motion: reduce`). axe-core has no rule for this, so the e2e
 accessibility scan will not catch a regression — the rules below are the guard.
@@ -184,7 +207,7 @@ accessibility scan will not catch a regression — the rules below are the guard
    blocks for ordinary light-DOM transitions; the global rule already handles them.
 2. **Shadow roots and view-transition pseudo-elements need their own guard.** The `*`
    selector stops at shadow boundaries and never matches `::view-transition-*`. Known
-   sites: the route cross-fade in `app-root.js` (guarded in base.css and skipped in JS
+   sites: the route swap in `app-root.js` (guarded in base.css and skipped in JS
    when the media query matches), `theme-toggle.js`'s own shadow stylesheet, and
    `wa-spinner` (see below). Anything new that animates inside a shadow root, or uses
    `document.startViewTransition`, must add its own `prefers-reduced-motion` rule.

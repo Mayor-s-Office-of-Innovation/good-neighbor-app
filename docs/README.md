@@ -39,9 +39,13 @@
 - **[ADR 0015](./adr/0015-compliance-admin-roles.md)** — Compliance manager and
   Compliance supervisor authorization, Cognito lifecycle safeguards, and the
   retirement of legacy setup-code contacts.
+- **[ADR 0016](./adr/0016-provider-manager-enrollment.md)** — supervisor-only
+  Provider Manager lifecycle and all-or-nothing enrollment across the Provider's
+  active Sites.
 
 ## Operations
 
+- **[Completion guidance migration](./runbooks/check-completion-guidance.md)** — atomic completion records, bounded capture-title counts, and historical backfill.
 - **[dev-commands.md](./dev-commands.md)** — developer command reference (setup, CI checks,
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
@@ -61,6 +65,8 @@
   Site-wide credential invalidation, partial reconciliation, and recovery checks.
 - **[Media safeguards](./runbooks/media-safeguards.md)** — upload validation, quota and
   rejection alarms, retention, and incident triage without inspecting private media.
+
+- **[Duplicate detection](./runbooks/duplicate-detection.md)** — isolated matching, deployment order, reversible links, CloudWatch metrics, and media retention.
 
 ## Domain & policy reference
 

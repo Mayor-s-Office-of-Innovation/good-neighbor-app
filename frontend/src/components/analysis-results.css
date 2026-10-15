@@ -1162,3 +1162,17 @@ html.wa-dark .analysis-card__clear-copy a {
     animation-duration: 1s !important;
   }
 }
+
+.analysis-card .analysis-card__duplicate-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.analysis-card__duplicate-status wa-spinner {
+  flex: 0 0 1em;
+  font-size: 1rem;
+}

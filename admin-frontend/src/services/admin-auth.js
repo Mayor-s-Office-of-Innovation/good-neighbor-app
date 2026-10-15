@@ -42,6 +42,11 @@ export function clearAdminSession() {
  */
 export async function startAdminLogin() {
   const config = requireAuthConfig();
+  // An expired token must not survive into the callback. connectedCallback()
+  // checks the existing session before completing the code exchange; if an old
+  // expiry remains, that check clears the newly-created PKCE transaction and
+  // forces the user through a second login attempt.
+  clearAdminSession();
   const verifier = randomUrlSafe(64);
   const state = randomUrlSafe(24);
   const challenge = await sha256Base64Url(verifier);

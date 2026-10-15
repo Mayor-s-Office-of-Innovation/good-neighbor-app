@@ -1,6 +1,8 @@
+import { openSessionDuplicate } from "./duplicate-issue-dialog.js";
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 /*
@@ -45,7 +47,7 @@ import {
   refreshEvidenceAnalysis,
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
-import { completeTask, editAnalysisCondition } from "../services/api.js";
+import { editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -460,6 +462,10 @@ class ProblemReport extends HTMLElement {
         if (!card) return;
         const action = target.getAttribute("data-analysis-action");
         const problem = this._problemFromCard(card);
+        if (action === "duplicate") {
+          openSessionDuplicate(target, this);
+          return;
+        }
         if (action === "delete") {
           this._openDeleteProblem(problem);
         } else if (action === "edit") {
@@ -645,7 +651,7 @@ class ProblemReport extends HTMLElement {
         "analysis-progress",
       );
       try {
-        const result = await completeTask(problem.taskId, {
+        const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
         });
         this._analysisProgressDialog?.close();
@@ -664,7 +670,7 @@ class ProblemReport extends HTMLElement {
     }
 
     try {
-      await completeTask(problem.taskId, { completionMethod: "manual" });
+      await completeCardAction(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.64"
+      version = "~> 6.21"
     }
     archive = {
       source  = "hashicorp/archive"
@@ -56,11 +56,12 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
-  # Bootstrap in two applies: leave false until the secret containers created
-  # by the first apply have been populated per docs/runbooks/city-smtp.md.
+  # The authenticated relay was verified directly against Proofpoint before enablement.
   provision_city_smtp_relay_foundation = true
   enable_city_smtp_relay               = true
   city_smtp_from_address               = "goodneighbor-dev@sf.gov"
+  enable_cognito_custom_email_sender   = true
+  cognito_admin_app_url                = "https://ds7mtnddz2r23.cloudfront.net/"
 
   providers = {
     aws           = aws
@@ -79,6 +80,7 @@ module "app" {
   # via put-secret-value on gnp-dev-posthog-project-api-key.
   feedback_survey_id       = "01a0633b-35d7-0000-9917-4ad2f1a7aa60"
   feedback_question_id     = "256e7e9d-9579-489a-ad5f-bcdd1b8e6baf"
+  alarm_emails             = var.alarm_emails
   tags                     = local.common_tags
   frontend_domain_names    = [local.frontend_domain_name]
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn

@@ -1,8 +1,9 @@
 // Executes the app matcher. Never derives capture time/site identity from filenames.
 import { readdir, readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { reusableImage } from "../src/analysis/duplicates/prepared-cache.js";
+import { pendingConditions } from "../src/analysis/duplicates/result-state.js";
 import { createHash } from "node:crypto";
-import { prepareImage } from "../src/analysis/duplicates/image-features.js";
 import {
   createComparisonClient,
   rankImageCandidates,
@@ -14,6 +15,7 @@ import {
 import { createAnalyzerClient } from "../src/analysis/analyzer-client.js";
 import { adaptAssessment } from "../src/analysis/adapt-scorecard.js";
 
+const evaluationStarted = performance.now();
 const args = process.argv.slice(2);
 const option = (key) => args[args.indexOf(key) + 1];
 const folder = args.includes("--folder")
@@ -38,6 +40,8 @@ if (
 )
   throw new Error("--initial-candidates must be 1–4");
 const featuresOnly = args.includes("--features-only");
+const fastOnly = args.includes("--fast-only");
+const productionSearch = args.includes("--production-search") || fastOnly;
 const assess = args.includes("--assess");
 const maxCalls = args.includes("--max-calls")
   ? Number(option("--max-calls"))
@@ -45,17 +49,22 @@ const maxCalls = args.includes("--max-calls")
 if (!Number.isInteger(maxCalls) || maxCalls < 0)
   throw new Error("Invalid --max-calls");
 await mkdir(output, { recursive: true, mode: 0o700 });
-for (const dir of ["images", "assessments", "comparisons"])
+for (const dir of ["images", "assessments", "comparisons", "prepared"])
   await mkdir(join(output, dir), { recursive: true, mode: 0o700 });
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+const writeQueues = new Map();
 async function save(path, value) {
-  const temp = `${path}.tmp`;
-  await writeFile(
-    temp,
-    typeof value === "string" ? value : JSON.stringify(value, null, 2),
-    { mode: 0o600 },
+  const serialized =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  const pending = (writeQueues.get(path) ?? Promise.resolve()).then(
+    async () => {
+      const temp = `${path}.tmp`;
+      await writeFile(temp, serialized, { mode: 0o600 });
+      await rename(temp, path);
+    },
   );
-  await rename(temp, path);
+  writeQueues.set(path, pending);
+  await pending;
 }
 const files = (await readdir(folder))
   .filter((name) => /\.(jpg|jpeg|png|webp)$/i.test(name))
@@ -144,7 +153,24 @@ for (const [index, name] of files.entries()) {
       : /\.webp$/i.test(name)
         ? "image/webp"
         : "image/jpeg";
-    const prepared = await prepareImage(bytes, contentType);
+    const prepared = await reusableImage({
+      identity: digest(bytes),
+      contentType,
+      read: async (key) => {
+        try {
+          return JSON.parse(
+            await readFile(join(output, "prepared", `${key}.json`), "utf8"),
+          );
+        } catch (error) {
+          if (error.code === "ENOENT" || error instanceof SyntaxError)
+            return undefined;
+          throw error;
+        }
+      },
+      write: async (key, value) =>
+        save(join(output, "prepared", `${key}.json`), value),
+      load: async () => bytes,
+    });
     const id = `I${String(index + 1).padStart(2, "0")}`;
     const observation = {
       id,
@@ -201,6 +227,7 @@ for (const [index, name] of files.entries()) {
         .filter((c) => c.rating > 0)
         .map((c, i) => ({
           id: c.conditionId || `condition-${i}`,
+          category: c.category,
           description: c.explanation,
           label: c.userFriendlyLabel || c.category,
         }));
@@ -287,6 +314,19 @@ await save(join(output, "image-fingerprints.json"), {
   pairs: localPairs,
 });
 const results = previousResults;
+const progressEvents = resume
+  ? JSON.parse(await readFile(join(output, "progress.json"), "utf8"))
+  : [];
+const sourceConcurrency = args.includes("--source-concurrency")
+  ? Number(option("--source-concurrency"))
+  : 1;
+if (
+  !Number.isInteger(sourceConcurrency) ||
+  sourceConcurrency < 1 ||
+  sourceConcurrency > 2
+)
+  throw new Error("Source concurrency must be 1 or 2");
+const runStarted = performance.now();
 const compare =
   !featuresOnly &&
   process.env.DUPLICATE_ANALYZER_BASE_URL &&
@@ -320,49 +360,150 @@ if (compare) {
     return response;
   };
   // Unordered folder experiment: compare each pair once. File order is NOT chronology.
-  for (let index = 0; index < observations.length; index++) {
-    if (!selectedSources.includes(observations[index])) continue;
-    if (
-      resume &&
-      results.some(
-        (row) =>
-          row.sourceId === observations[index].id &&
-          row.sourceRevision === observations[index].revision,
-      )
-    )
-      continue;
-    const allCandidates = sourceNames
-      ? candidatePool.filter((o) => o.id !== observations[index].id)
-      : observations.slice(0, index);
-    const selectedCandidates = initialCandidates
-      ? rankImageCandidates(observations[index], allCandidates).slice(
-          0,
-          initialCandidates,
+  let nextSource = 0;
+  await Promise.all(
+    Array.from({ length: sourceConcurrency }, async () => {
+      while (nextSource < observations.length) {
+        const index = nextSource++;
+        if (!selectedSources.includes(observations[index])) continue;
+        if (
+          resume &&
+          results.some(
+            (row) =>
+              row.sourceId === observations[index].id &&
+              row.sourceRevision === observations[index].revision,
+          )
         )
-      : allCandidates;
-    let result = await matchImages({
-      source: observations[index],
-      candidates: selectedCandidates,
-      compare: cachedCompare,
-      exhaustive: !initialCandidates,
-    });
-    if (initialCandidates)
-      result = markUnassessedCandidates(result, allCandidates);
-    results.push(result);
-    await save(join(output, "results.json"), results);
-    console.info(
-      `Assessed ${result.sourceId}: ${result.status}; ${result.suggestions.length} issue suggestions`,
-    );
-    if (remoteCalls >= maxCalls) {
-      console.info(
-        "Stopping live run at comparison call budget; remaining pairs are unassessed.",
-      );
-      break;
-    }
-  }
+          continue;
+        const allCandidates = sourceNames
+          ? candidatePool.filter((o) => o.id !== observations[index].id)
+          : observations.slice(0, index);
+        const selectedCandidates = initialCandidates
+          ? rankImageCandidates(observations[index], allCandidates).slice(
+              0,
+              initialCandidates,
+            )
+          : allCandidates;
+        progressEvents.push({
+          sourceId: observations[index].id,
+          processingState: "pending",
+          conditionResults: pendingConditions(observations[index].conditions),
+          elapsedMs: Math.round(performance.now() - runStarted),
+        });
+        await save(join(output, "progress.json"), progressEvents);
+        const sourceStartedMs = Math.round(performance.now() - runStarted);
+        let firstReviewSuggestionMs = null;
+        const firstIssueSuggestions = {};
+        const firstIssueFlags = {};
+
+        let result = await matchImages({
+          source: observations[index],
+          candidates: selectedCandidates,
+          compare: cachedCompare,
+          onProgress: async (progress) => {
+            if (
+              firstReviewSuggestionMs === null &&
+              progress.comparisons.some(
+                (row) =>
+                  row.verdict === "same_issue" &&
+                  row.confidence !== "low" &&
+                  row.condition_matches.length,
+              )
+            )
+              firstReviewSuggestionMs = progress.elapsedMs;
+            for (const row of progress.comparisons) {
+              if (row.verdict !== "same_issue" || row.confidence === "low")
+                continue;
+              for (const match of row.condition_matches) {
+                if (
+                  match.confidence === "low" ||
+                  firstIssueSuggestions[match.source_condition_id]
+                )
+                  continue;
+                firstIssueSuggestions[match.source_condition_id] = {
+                  elapsedMs: progress.elapsedMs,
+                  candidateId: row.candidate_id,
+                  candidateConditionId: match.candidate_condition_id,
+                  confidence: match.confidence,
+                };
+              }
+            }
+            for (const issue of progress.conditionResults)
+              if (
+                issue.possibleDuplicate === true &&
+                firstIssueFlags[issue.conditionId] === undefined
+              )
+                firstIssueFlags[issue.conditionId] = progress.elapsedMs;
+            progressEvents.push({
+              sourceId: observations[index].id,
+              processingState: progress.conditionResults.some(
+                (c) => c.possibleDuplicate === true,
+              )
+                ? "partial"
+                : "pending",
+              conditionResults: structuredClone(progress.conditionResults),
+              elapsedMs: progress.elapsedMs,
+            });
+            await save(join(output, "progress.json"), progressEvents);
+          },
+          exhaustive: !productionSearch && !initialCandidates,
+          fastOnly,
+          strategy: args.includes("--legacy-search") ? "legacy" : "combined",
+        });
+        result.latency.firstReviewSuggestionMs = firstReviewSuggestionMs;
+        result.runTiming = {
+          sourceStartedMs,
+          sourceCompletedMs: Math.round(performance.now() - runStarted),
+        };
+        result.issueTimings = observations[index].conditions.map(
+          (condition) => ({
+            conditionId: condition.id,
+            category: condition.category,
+            firstReviewSuggestion: firstIssueSuggestions[condition.id] ?? null,
+            firstHighConfidencePositiveMs:
+              firstIssueFlags[condition.id] ?? null,
+            searchCompleteMs:
+              result.status === "pending" ? null : result.latency.totalMs,
+          }),
+        );
+        if (initialCandidates)
+          result = markUnassessedCandidates(result, allCandidates);
+        results.push(result);
+        progressEvents.push({
+          sourceId: result.sourceId,
+          processingState:
+            result.status === "pending"
+              ? "pending"
+              : result.status === "failed"
+                ? "retrying"
+                : "complete",
+          conditionResults: result.conditionResults,
+          latency: result.latency,
+        });
+        await save(join(output, "progress.json"), progressEvents);
+        await save(join(output, "results.json"), results);
+        console.info(
+          `Assessed ${result.sourceId}: ${result.status}; ${result.suggestions.length} issue suggestions`,
+        );
+        if (remoteCalls >= maxCalls) {
+          console.info(
+            "Stopping live run at comparison call budget; remaining pairs are unassessed.",
+          );
+          return;
+        }
+      }
+    }),
+  );
 }
+results.sort((a, b) => a.sourceId.localeCompare(b.sourceId));
+await save(join(output, "results.json"), results);
 const summary = {
   matcherVersion: IMAGE_MATCHER_VERSION,
+  evaluationWallMs: Math.round(performance.now() - evaluationStarted),
+  searchWallMs: Math.round(performance.now() - runStarted),
+  productionSearch,
+  fastOnly,
+  sourceConcurrency,
   candidatePolicy,
   sourceImages: sourceNames ? selectedSources.map((o) => o.id) : undefined,
   candidateImages: candidateNames ? candidatePool.map((o) => o.id) : undefined,
@@ -387,6 +528,9 @@ const summary = {
   cacheHits,
   failures,
   completedSources: results.length,
+  eligibleCategoryPairs: results.reduce((n, r) => n + r.candidateCount, 0),
+  preparedCacheHits: observations.filter((o) => o.preparationCacheHit).length,
+  sourceLatencies: results.map((r) => ({ sourceId: r.sourceId, ...r.latency })),
   evaluatedPairs: results.reduce((n, r) => n + r.comparisons.length, 0),
   knownDuplicateLabelsUsed: false,
   failedSources: results
@@ -430,7 +574,7 @@ const confidenceHtml = (item) =>
 const cards = summary.visualSuggestions
   .map(
     (r) =>
-      `<section><h2>${escape(r.sourceId)} ↔ ${escape(r.candidate_id)}</h2><img src="images/${escape(r.sourceId)}.jpg"><img src="images/${escape(r.candidate_id)}.jpg"><p>${escape(r.reason)}</p>${confidenceHtml(r)}<ul>${r.condition_matches.map((m) => `<li>${escape(m.source_condition_id)} → ${escape(m.candidate_condition_id)}${confidenceHtml(m)}</li>`).join("")}</ul><p>Stage: ${escape(r.stage)}; visual evidence: ${escape(r.evidence_strength)}</p></section>`,
+      `<section><h2>${escape(r.sourceId)} → ${escape(r.candidate_id)}</h2><img src="images/${escape(r.sourceId)}.jpg"><img src="images/${escape(r.candidate_id)}.jpg"><p>${escape(r.reason)}</p>${confidenceHtml(r)}<ul>${r.condition_matches.map((m) => `<li>${escape(m.source_condition_id)} → ${escape(m.candidate_condition_id)}${confidenceHtml(m)}</li>`).join("")}</ul><p>Stage: ${escape(r.stage)}; visual evidence: ${escape(r.evidence_strength)}</p></section>`,
   )
   .join("");
 const pending = results
@@ -449,11 +593,11 @@ const testedCandidates = `<details open><summary>Inspect tested candidates, fail
 const gallery = observations
   .map(
     (o) =>
-      `<figure id="${escape(o.id)}"><img src="images/${escape(o.id)}.jpg"><figcaption>${escape(o.id)} — ${escape(o.filename)}<ul>${o.conditions.map((c) => `<li><strong>${escape(c.label || c.id)}</strong>: ${escape(c.description)}</li>`).join("")}</ul></figcaption></figure>`,
+      `<figure id="${escape(o.id)}"><img src="images/${escape(o.id)}.jpg"><figcaption>${escape(o.id)} — ${escape(o.filename)}<ul>${o.conditions.map((c) => `<li><strong>${escape(c.category || "Unknown category")}</strong> — ${escape(c.label || c.id)}: ${escape(c.description)}</li>`).join("")}</ul></figcaption></figure>`,
   )
   .join("");
 await save(
   join(output, "review.html"),
-  `<!doctype html><html><meta charset="utf-8"><title>Duplicate experiment review</title><style>body{font:16px system-ui;margin:32px;background:#f7f8fa;color:#182230}section{background:white;padding:16px;margin:20px 0}img{max-width:46%;max-height:420px;object-fit:contain}figure{display:inline-block;width:260px;vertical-align:top}figure img{max-width:100%;height:220px}figcaption{overflow-wrap:anywhere}pre{white-space:pre-wrap}td,th{padding:8px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}</style><h1>Backend image matcher review</h1><p>Image-first assessment. Known duplicates were withheld. No site/date eligibility is inferred from filenames.</p><p>${summary.images} images; ${summary.evaluatedPairs}/${summary.unorderedPairs} pairs assessed by the comparison backend; ${summary.remoteCalls} remote comparison calls; ${summary.assessmentCalls} assessment calls.</p>${compare ? "" : "<p><strong>Visual comparison has not run: comparison endpoint/key unavailable. Fingerprints are not duplicate verdicts.</strong></p>"}${initialCandidates ? `<p><strong>Initial pass: at most ${initialCandidates} top-ranked visual candidates per image. Unassessed candidates remain unknown; this is not a recall estimate or the production retrieval policy.</strong></p>` : ""}${sourceNames ? `<p>Selected sources: ${selectedSources.map((o) => escape(o.id)).join(", ")}; ${candidatePool.length} selected candidates. Every source/candidate pair is assessed.</p>` : ""}<p>Confidence bands are app policy, not calibrated probabilities. Medium suggestions require review and do not set duplicate flags. Missing capture/lifecycle history limits continuity confidence.</p><h2>Issue suggestions for review</h2>${cards || "<p>No recorded suggestions. Check completion and failures before interpreting this as a negative result.</p>"}<h2>Uncertain comparisons</h2><ul>${pending}</ul>${testedCandidates}<h2>All images (review missed matches)</h2>${gallery}<h2>Run details</h2><pre>${escape(JSON.stringify(summary, null, 2))}</pre></html>`,
+  `<!doctype html><html><meta charset="utf-8"><title>Duplicate experiment review</title><style>body{font:16px system-ui;margin:32px;background:#f7f8fa;color:#182230}section{background:white;padding:16px;margin:20px 0}img{max-width:46%;max-height:420px;object-fit:contain}figure{display:inline-block;width:260px;vertical-align:top}figure img{max-width:100%;height:220px}figcaption{overflow-wrap:anywhere}pre{white-space:pre-wrap}td,th{padding:8px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}</style><h1>Backend image matcher review</h1><p>Image-first assessment. Known duplicates were withheld. No site/date eligibility is inferred from filenames.</p><p>${summary.images} images; ${summary.evaluatedPairs}/${summary.eligibleCategoryPairs} category-eligible directed pairs assessed by the comparison backend (${summary.unorderedPairs} total selected pairs); ${summary.remoteCalls} remote comparison calls; ${summary.assessmentCalls} assessment calls in this invocation; ${summary.cachedAssessments} actual assessments reused.</p>${compare ? "" : "<p><strong>Visual comparison has not run: comparison endpoint/key unavailable. Fingerprints are not duplicate verdicts.</strong></p>"}${initialCandidates ? `<p><strong>Initial pass: at most ${initialCandidates} top-ranked visual candidates per image. Unassessed candidates remain unknown; this is not a recall estimate or the production retrieval policy.</strong></p>` : ""}${sourceNames ? `<p>Selected sources: ${selectedSources.map((o) => escape(o.id)).join(", ")}; ${candidatePool.length} selected candidates. ${productionSearch ? "Combined verification: at most three shortlisted candidates in one call; each issue stops at its first high-confidence match." : "Every source/candidate pair is assessed."}</p>` : ""}${fastOnly ? "<p><strong>Fast-path benchmark only:</strong> deferred candidates were not assessed. Unmatched issues remain pending; the production worker continues them in the background.</p>" : ""}<p>Confidence bands are app policy, not calibrated probabilities. Medium suggestions require review and do not set duplicate flags. Missing capture/lifecycle history limits continuity confidence.</p><h2>Issue suggestions for review</h2>${cards || "<p>No recorded suggestions. Check completion and failures before interpreting this as a negative result.</p>"}<h2>Uncertain comparisons</h2><ul>${pending}</ul>${testedCandidates}<h2>All images (review missed matches)</h2>${gallery}<h2>Per-source latency and result state</h2><p>Times measure this local matcher run, not deployed queue or UI latency. Source age/site eligibility is not validated because capture times are unknown.</p><table><tr><th>Source</th><th>State</th><th>Total ms</th><th>Comparison ms</th><th>First review suggestion ms</th><th>First high-confidence positive ms</th></tr>${results.map((r) => `<tr><td>${escape(r.sourceId)}</td><td>${escape(r.status === "pending" ? "pending" : r.status === "failed" ? "retrying" : "complete")}</td><td>${r.latency.totalMs}</td><td>${r.latency.comparisonMs}</td><td>${r.latency.firstReviewSuggestionMs ?? "No suggestion"}</td><td>${r.latency.firstPositiveMs ?? "No qualifying positive"}</td></tr>`).join("")}</table><details><summary>Pending and incremental result timeline</summary><pre>${escape(JSON.stringify(progressEvents, null, 2))}</pre></details><h2>Run details</h2><pre>${escape(JSON.stringify(summary, null, 2))}</pre></html>`,
 );
 console.info(`Review saved to ${join(output, "review.html")}`);

@@ -1,0 +1,74 @@
+/*
+ * Cognito Hosted UI (classic) only accepts its documented selectors and a
+ * restricted set of properties. Keep this deliberately small: it gives every
+ * password, recovery, and TOTP screen the Good Neighbor neutral palette
+ * without replacing Cognito's accessible form structure. Its Bootstrap base
+ * sets the root to 10px, so 1.6rem preserves the intended 16px default text.
+ * Root sizing is Cognito-owned and cannot be overridden here.
+ */
+.background-customizable {
+  background-color: #171717;
+}
+
+.banner-customizable {
+  padding: 16px 0 16px 0;
+  background-color: #ffffff;
+}
+
+.label-customizable {
+  color: #171717;
+  font-weight: 600;
+}
+
+.textDescription-customizable {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: 1.6rem;
+  color: #171717;
+}
+
+.inputField-customizable {
+  width: 100%;
+  height: 48px;
+  color: #171717;
+  background-color: #ffffff;
+  border: 1px solid #767676;
+}
+
+.inputField-customizable:focus {
+  border-color: #155fce;
+  outline: 2px solid #155fce;
+}
+
+.submitButton-customizable {
+  margin: 24px 0 0 0;
+  width: 100%;
+  height: 48px;
+  color: #ffffff;
+  background-color: #262626;
+  font-size: 1.6rem;
+  font-weight: bold;
+}
+
+.submitButton-customizable:hover {
+  color: #ffffff;
+  background-color: #171717;
+}
+
+.errorMessage-customizable {
+  margin: 16px 0 16px 0;
+  padding: 12px;
+  width: 100%;
+  color: #b42318;
+  background: #fdecea;
+  border: 1px solid #b42318;
+  box-sizing: border-box;
+}
+
+.passwordCheck-valid-customizable {
+  color: #171717;
+}
+
+.passwordCheck-notValid-customizable {
+  color: #b42318;
+}

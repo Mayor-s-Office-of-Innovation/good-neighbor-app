@@ -1,8 +1,12 @@
 # Duplicate detection evaluation harness
 
+Current product integration supersedes the historical shadow-only scope below;
+see [ADR 0017](adr/0017-duplicate-issue-links.md) and the
+[operations runbook](runbooks/duplicate-detection.md). It remains undeployed.
+
 As of October 14, 2026, the agreed next experiment is image-first: assess images
 alone, then use additional metadata only for low-confidence assessments. The
-same-site, five-day eligibility rules still apply before assessment. The image matcher and runner are now implemented; their live comparison endpoint
+same-site, strict under-72-hour eligibility and exact canonical category equality apply before image assessment. The image matcher and runner are now implemented; their live comparison endpoint
 must be deployed separately in the analyzer repository. The initial gate uses
 strong/tentative/none visual evidence, not calibrated probabilities. Field accuracy
 and thresholds remain unvalidated. The text commands below remain a comparator. See [the handoff](duplicate-detection-handoff.md)
@@ -158,6 +162,17 @@ reconciliation, none of which are established by synthetic success.
 
 ## Executable image-first experiment
 
+Current image-matcher policy: compare only issues with exactly equal nonempty
+analyzer `category` values. Generated display labels do not define category
+identity. Candidate age uses capture/observation time and must satisfy
+`0 <= source.observedAt - candidate.observedAt < 72 hours`; exactly 72 hours is
+excluded. Unknown categories remain insufficient evidence. Candidate projections
+carry categories, and current analyses refresh older projection categories before
+filtering. Category eligibility precedes image downloads, and returned issue
+links are revalidated for category equality. The earlier text baseline below/above
+retains its historical five-day configuration for comparison.
+
+
 `src/analysis/duplicates/image-matcher.js` is shared by the local runner and the
 isolated SQS worker. The app owns candidate eligibility, hashes, escalation and
 advisory decisions. Every Bedrock call stays in the analyzer's comparison handler.
@@ -187,7 +202,7 @@ or an automatic issue mapping. Comparison caches include the matcher version.
 explicit issue link. The app assigns high/medium/low confidence bands, not
 probabilities. High positive confidence requires clear visual identity, grounded
 issue mapping, distinctive matching features, no unresolved contradiction, and
-no continuity concern. Partial visibility or unknown continuity caps confidence
+no continuity concern. Partial visibility or concrete evidence of cleanup/recurrence caps confidence
 at medium; stage disagreement or unresolved description conflict makes it low.
 High negative confidence requires concrete visible differences. Resolved
 description errors do not reduce confidence. Only high explicit links set
@@ -218,7 +233,7 @@ response caches, images, and `review.html` are written to DUPLICATE_OUTPUT_DIR.
 Restarting reuses successful cached calls. Change cache version or output directory
 when changing the remote model/prompt configuration. `--max-calls N` bounds remote
 comparison calls; exhausted/unavailable work is failed or unassessed, never a
-negative. A folder run compares unordered pairs; it does not test five-day/site
+negative. A folder run compares unordered pairs; it does not test 72-hour/site
 eligibility or resolution without an independently supplied observation manifest.
 Known duplicate groups are withheld until the machine results are recorded.
 
@@ -238,7 +253,7 @@ Known duplicate groups are withheld until the machine results are recorded.
    DUPLICATE_QUEUE_URL configured:
    `node backend/scripts/bootstrap-duplicate-observations.mjs --site SITE_ID`.
    It paginates that site's CHECK partition, seeds analyzed images captured in
-   the preceding five days, and publishes a coverage marker only after successful
+   the preceding 72 hours, and publishes a coverage marker only after successful
    writes. It makes no model calls. Older source windows outside the marker remain
    insufficient evidence. Use a controlled maintenance job for large site histories.
 4. Enable the dev mappings via CI only after provisioning and evidence review.
@@ -274,7 +289,7 @@ sets. Successful cached comparisons are reused only for the same request.
 
 `--initial-candidates 4` restricts the private-folder experiment to the four
 highest-ranked prior image candidates per source. This is an evaluation-only
-shortlist; the production matcher still examines its full same-site, five-day
+shortlist; the production matcher still examines its full same-site, 72-hour
 candidate set unless all identified conditions have strong targets. Skipped
 candidates are listed explicitly. Negative condition outcomes become insufficient
 evidence while candidates remain unassessed; strong positive suggestions remain
@@ -289,3 +304,157 @@ must already have Bedrock invoke access. Run the analyzer's loopback adapter wit
 AWS_PROFILE set to that profile, then point the app runner at its loopback URL and
 fresh private key via process environment overrides. Keep deployed API credentials
 in the private env file; do not replace them with the temporary loopback key.
+
+## Low-latency isolated result delivery
+
+The duplicate stream consumer and SQS worker remain separate from normal analysis
+and guidance. Analysis creation never awaits this work. The dispatcher records
+pending condition outcomes. A dedicated read route,
+`GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates`, derives the site from
+the authenticated principal and reads only that site's current analysis revision.
+It reports `disabled`, `awaiting_analysis`, `pending`, `partial`, `retrying`, or
+`complete`; unknown flags are `null`, never `false`. The route is disabled with the
+same deployment feature flag as duplicate processing. No product UI is wired yet.
+
+After each validated comparison batch, high-confidence explicit issue positives
+can be published individually as `DUP_ISSUE#<observation>#<revision>#<condition>`.
+A DynamoDB transaction checks the current source and target analysis revisions and
+both physical-resolution projections and source/target artifact presence before
+each publication. Other conditions
+stay pending. Qualified positives survive unrelated comparison failures; unproven
+conditions remain unknown and the job retries. Reads recheck source/target
+revisions and resolution before returning a positive. Negatives require complete
+eligible candidate coverage. Whole-source results remain `DUP_RESULT` records.
+
+Immutable uploaded media is normalized once into the separate
+`duplicate-prepared/` prefix of the upload bucket, keyed by source-object identity,
+content type and preparation version. Only the duplicate worker has write access
+to that prefix. Cached fingerprint and normalized bytes are verified before reuse.
+The local runner uses the same preparation helper with private on-disk storage.
+This relies on the existing immutable media-key contract: if overwrites are ever
+introduced, source object version must become part of cache identity. Prepared
+objects expire under a dedicated three-day prefix rule; original upload retention
+rules are unchanged.
+
+Evidence-free `duplicate_latency` log events record queue age, analysis-to-worker
+lag, retrieval/preparation/comparison completion offsets, first-positive publication
+and total worker time. Matcher results include comparison time, total time and
+first qualifying positive time. These are measurements, not latency guarantees.
+The local report shows per-source timings and pending/progress events; it does not
+measure deployed queue delay, database publication or UI refresh latency.
+
+The analyzer comparison prompt requests concise reasons/regions and short feature
+lists while retaining explicit issue mapping and confidence evidence. Its output
+ceiling is bounded; malformed/truncated output remains a failure. Normal analyzer
+prompts and token budgets are unchanged.
+
+For selected-folder evaluations, `--source-concurrency 2` runs at most two source
+jobs concurrently, matching the dedicated production worker cap. Successful
+comparison/preparation caches are reused; result and progress file writes are
+serialized. `--resume` preserves already completed sources, including their failures,
+rather than silently reclassifying failed pairs. Assessment metadata and normalized
+images stay outside Git.
+
+### Recent-first matching and original issue references
+
+Production matching checks candidates in descending capture/observation time order
+(still the same category, same site, and strictly less than 72 hours older).
+Each production request assesses one candidate photo, so a high-confidence explicit
+issue mapping can immediately stop that issue's search. Other issues in the source
+photo continue; already matched issue IDs are omitted from subsequent contextual
+requests. Candidate images are prepared only when reached. The evaluation harness's
+explicit exhaustive mode retains full coverage and batched comparisons.
+
+A completed search with no qualifying high-confidence mapping returns
+`possibleDuplicate: false`, including failed, malformed, uncertain, and medium-confidence
+attempts. This means **no qualifying match found**, not proven physical difference.
+Failed candidate IDs and review suggestions remain available as diagnostics. Pending
+work continues to return null. Infrastructure/publication failures still retry; a
+comparison failure alone does not retry the completed search.
+
+The independent duplicate-results endpoint preserves `duplicateOf` as the direct
+image-confirmed match. It also returns per-issue `originalIssue` and
+`originalLookupState`. It follows existing strong duplicate references using database
+reads only, beyond the image comparison window. Every hop must have a current analysis
+revision, extant artifact, unresolved projection, the same canonical category and site,
+and an observation time no newer than the preceding hop. Cycles, broken references,
+and chains exceeding 64 issues return `invalid_chain` with a null original. A pending
+ancestor returns `pending`; a completed ancestor without a qualifying match is the
+original. This lookup does not delay normal analysis or trigger image comparisons.
+The direct positive remains available while original lookup is pending or invalid;
+clients must only collapse to `originalIssue` when its lookup state is `complete`.
+
+Use `--production-search` with the image evaluation runner to exercise sequential
+candidate requests and per-issue early stopping. The default remains an exhaustive
+comparison audit. Reports distinguish time to the first review suggestion from time
+to the first qualifying high-confidence flag and total source search duration.
+Use a fresh output directory containing only copied assessment/preparation caches
+when measuring uncached comparison latency. Unknown capture times remain unknown;
+these samples cannot demonstrate chronological ordering or continuity-dependent
+high-confidence early stopping.
+
+### Metadata triage and combined verification
+
+The default matcher now uses one contextual image verification call instead of an
+image-only call followed by a contextual call. Images remain authoritative; every
+positive still requires grounded source/candidate condition IDs, distinctive visual
+identity, continuity evidence, and no unresolved material contradiction. The old
+workflow remains available to the local runner with `--legacy-search` for comparisons.
+
+The app selects up to three fast-path candidates using cached fingerprints/dHash
+and narrow object-description hints. A clear mismatch between known object families
+moves a candidate out of the initial shortlist; vague, negated, mixed, and unknown
+text abstains. Text never creates a duplicate flag or a final negative. The app
+checks the selected shortlist youngest first, then expands to all remaining eligible
+candidates youngest first, including metadata-deferred candidates. Combined calls
+contain at most three candidates, with confirmed source issue IDs removed from later
+calls. Any missed shortlist match remains pending until background expansion finishes.
+
+`--fast-only` benchmarks only the first request and deliberately returns pending for
+unmatched issues with remaining eligible candidates. It must not be interpreted as
+an exhaustive search or a final no-match. `fastCandidateIds`,
+`metadataDeferredCandidateIds`, and `latency.fastPhaseMs` record retrieval decisions
+and fast-phase latency. The dedicated worker publishes high-confidence issue results
+incrementally while continuing background expansion within its isolated invocation.
+
+Artifact-registration stream events now queue preparation-only jobs on the duplicate
+queue. They warm the immutable image cache independently while normal analysis runs.
+Source projections retain fingerprint/dHash features for later candidate selection;
+older projections without those features fall back to metadata/age ordering.
+
+Comparison-only compact output omits display regions but retains structured evidence
+for every issue mapping and candidate. Bedrock prompt caching and latency-optimized
+inference are opt-in analyzer settings, subject to model/region support. They do not
+change the normal analyzer's model or invocation settings. The default duplicate model
+remains Sonnet pending a wider, labelled speed/accuracy evaluation. Visual embeddings
+are a subsequent retrieval enhancement after this simpler fast-path benchmark; they
+are not implemented or required for correctness of background expansion.
+
+Faster comparison models now use schema-directed result output: Nova uses a forced
+Converse result tool, and Haiku 4.5 also uses strict tool schemas. This fixes omitted
+candidate/mapping evidence without synthesizing missing continuity or contradictions.
+The analyzer still rejects malformed evidence, invented/repeated IDs, mappings on
+negative verdicts, incomplete candidate coverage and truncation. Schema validation
+is separate from app match confidence. Cache version `issue-structured-v10` prevents
+reusing responses from the earlier prompt/transport during model evaluation.
+
+Full-search evaluation reports also record per-issue first review suggestions,
+per-source admission/completion offsets, and whole-run search wall time. Per-source
+matcher times exclude time waiting for one of the configured source-concurrency
+slots; the report exposes those local scheduling delays separately. These local
+batch timings are not measurements of deployed SQS delay or frontend publication.
+
+## Product integration
+
+The current deployed-code design (not yet deployed) is documented in
+[ADR 0017](adr/0017-duplicate-issue-links.md) and the
+[operations runbook](runbooks/duplicate-detection.md). It uses issue-generation
+time for eligibility, supports reports without images, preserves reversible
+condition-level links and shares group actions. Local image-only replay artifacts
+remain experiments and are not evidence of live field accuracy.
+
+
+Current continuity amendment (October 15): unknown cleanup history alone does
+not cap an otherwise distinctive, explicitly mapped same-issue assessment.
+Concrete cleanup/recurrence evidence, unresolved contradictions and ambiguous
+mapping still prevent automatic linking. See ADR 0017 for the product policy.

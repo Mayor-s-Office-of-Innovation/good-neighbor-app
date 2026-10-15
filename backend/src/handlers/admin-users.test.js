@@ -6,9 +6,15 @@ import {
   AdminGetUserCommand,
   AdminListGroupsForUserCommand,
   AdminRemoveUserFromGroupCommand,
+  AdminResetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
   ListUsersInGroupCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { DeleteCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { cognitoSend, ddbSend } = vi.hoisted(() => ({
@@ -30,13 +36,19 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", async (importOriginal) => {
 });
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 
-const { inviteAdminUser, suspendAdminUser, updateAdminUserRole } = await import(
-  "./admin-users.js"
-);
+const {
+  getAdminSession,
+  inviteAdminUser,
+  reinviteAdminUser,
+  resetAdminUserPassword,
+  suspendAdminUser,
+  updateAdminUserRole,
+} = await import("./admin-users.js");
 
 beforeEach(() => {
   cognitoSend.mockReset();
   ddbSend.mockReset();
+  ddbSend.mockResolvedValue({});
   vi.stubEnv("COGNITO_USER_POOL_ID", "pool-1");
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
@@ -44,6 +56,43 @@ beforeEach(() => {
 });
 
 describe("Compliance administrator lifecycle", () => {
+  it("records email verification after an invited administrator authenticates", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("caller@example.org", "caller-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({});
+
+    const response = await call(getAdminSession, event());
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[1][0]).toBeInstanceOf(
+      AdminUpdateUserAttributesCommand,
+    );
+    expect(cognitoSend.mock.calls[1][0].input).toMatchObject({
+      Username: "caller@example.org",
+      UserAttributes: [{ Name: "email_verified", Value: "true" }],
+    });
+  });
+
+  it("rejects an invalid invitation email before calling Cognito", async () => {
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "not-an-email",
+        firstName: "New",
+        lastName: "Admin",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "valid_email_required",
+    });
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
   it("deletes a newly created account when group assignment fails", async () => {
     const assignmentError = new Error("group unavailable");
     cognitoSend
@@ -57,6 +106,7 @@ describe("Compliance administrator lifecycle", () => {
         email: "new@example.org",
         firstName: "New",
         lastName: "Admin",
+        phone: "415-555-0100",
         role: "compliance-manager",
       }),
     );
@@ -88,6 +138,7 @@ describe("Compliance administrator lifecycle", () => {
         email: "new@example.org",
         firstName: "New",
         lastName: "Admin",
+        phone: "415-555-0100",
         role: "compliance-manager",
       }),
     );
@@ -100,6 +151,103 @@ describe("Compliance administrator lifecycle", () => {
     expect(cognitoSend.mock.calls[3][0]).toBeInstanceOf(
       AdminAddUserToGroupCommand,
     );
+  });
+
+  it("reuses an active Supervisor account for a matching program manager", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#supervisor@example.org",
+          userId: "manager-1",
+          firstName: "Existing",
+          lastName: "Supervisor",
+          email: "supervisor@example.org",
+          phone: "415-555-0100",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const exists = new Error("exists");
+    exists.name = "UsernameExistsException";
+    cognitoSend
+      .mockRejectedValueOnce(exists)
+      .mockResolvedValueOnce(user("supervisor@example.org", "supervisor-sub"))
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-supervisor" }],
+      });
+
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "supervisor@example.org",
+        firstName: "Existing",
+        lastName: "Supervisor",
+        phone: "415-555-0100",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      user: { role: "compliance-supervisor" },
+      invitationStatus: "active",
+    });
+    expect(
+      cognitoSend.mock.calls.some(
+        ([command]) => command instanceof AdminAddUserToGroupCommand,
+      ),
+    ).toBe(false);
+    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(
+      ddbSend.mock.calls[1][0].input.ExpressionAttributeValues,
+    ).toMatchObject({ ":role": "compliance-supervisor" });
+  });
+
+  it("links a matching imported Compliance manager when Cognito is created later", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#imported@example.org",
+          userId: "manager-1",
+          firstName: "Imported",
+          lastName: "Manager",
+          email: "imported@example.org",
+          phone: "415-555-0100",
+          departmentId: "dph",
+        },
+      })
+      .mockResolvedValueOnce({});
+    cognitoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce(user("imported@example.org", "imported-sub"));
+
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "imported@example.org",
+        firstName: "Imported",
+        lastName: "Manager",
+        phone: "415-555-0100",
+        departmentId: "dph",
+        role: "compliance-manager",
+      }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    const createUser = cognitoSend.mock.calls[0][0];
+    expect(createUser).toBeInstanceOf(AdminCreateUserCommand);
+    expect(createUser.input.UserAttributes).toContainEqual({
+      Name: "phone_number",
+      Value: "+14155550100",
+    });
+    const update = ddbSend.mock.calls[1][0];
+    expect(update).toBeInstanceOf(UpdateCommand);
+    expect(update.input.ExpressionAttributeValues).toMatchObject({
+      ":subject": "imported-sub",
+      ":role": "compliance-manager",
+    });
   });
 
   it("adds the destination role before removing old memberships", async () => {
@@ -140,6 +288,10 @@ describe("Compliance administrator lifecycle", () => {
     });
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
     expect(ddbSend.mock.calls.at(-1)?.[0]).toBeInstanceOf(DeleteCommand);
+    expect(ddbSend.mock.calls.at(-1)?.[0].input).toMatchObject({
+      ConditionExpression: "#token = :token",
+      ExpressionAttributeNames: { "#token": "token" },
+    });
   });
 
   it("serializes concurrent suspensions so both cannot pass the invariant check", async () => {
@@ -192,6 +344,9 @@ describe("Compliance administrator lifecycle", () => {
     const firstResponse = await first;
 
     expect(firstResponse.statusCode).toBe(200);
+    expect(JSON.parse(String(firstResponse.body))).toMatchObject({
+      user: { enabled: false, lifecycleStatus: "suspended" },
+    });
     expect(second.statusCode).toBe(409);
     expect(JSON.parse(String(second.body))).toEqual({
       error: "admin_user_change_in_progress",
@@ -202,16 +357,97 @@ describe("Compliance administrator lifecycle", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("resends a pending invitation for an administrator", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("invited@example.org", "invited-sub", "FORCE_CHANGE_PASSWORD"),
+      )
+      .mockResolvedValueOnce({ Groups: [{ GroupName: "compliance-manager" }] })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      reinviteAdminUser,
+      event(undefined, { username: "invited@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[2][0]).toBeInstanceOf(AdminCreateUserCommand);
+    expect(cognitoSend.mock.calls[2][0].input).toMatchObject({
+      MessageAction: "RESEND",
+      Username: "invited@example.org",
+    });
+  });
+
+  it("sends password-reset instructions only for an active administrator", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("active@example.org", "active-sub", "CONFIRMED"),
+      )
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-supervisor" }],
+      })
+      .mockResolvedValueOnce({});
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "active@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[2][0]).toBeInstanceOf(
+      AdminResetUserPasswordCommand,
+    );
+  });
+
+  it("does not reset a password without a verified delivery method", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("active@example.org", "active-sub", "CONFIRMED", false),
+      )
+      .mockResolvedValueOnce({
+        Groups: [{ GroupName: "compliance-manager" }],
+      });
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "active@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "verified_contact_required",
+    });
+    expect(cognitoSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not expose lifecycle actions for a non-administrator Cognito user", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(
+        user("other@example.org", "other-sub", "CONFIRMED"),
+      )
+      .mockResolvedValueOnce({ Groups: [] });
+
+    const response = await call(
+      resetAdminUserPassword,
+      event(undefined, { username: "other@example.org" }),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(cognitoSend).toHaveBeenCalledTimes(2);
+  });
 });
 
-/** @param {string} username @param {string} sub */
-function user(username, sub) {
+/** @param {string} username @param {string} sub @param {string} [status] @param {boolean} [verified] */
+function user(username, sub, status = "CONFIRMED", verified = true) {
   return {
     Username: username,
     Enabled: true,
+    UserStatus: status,
     UserAttributes: [
       { Name: "sub", Value: sub },
       { Name: "email", Value: username },
+      ...(verified ? [{ Name: "email_verified", Value: "true" }] : []),
     ],
   };
 }

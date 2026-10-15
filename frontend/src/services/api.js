@@ -197,6 +197,7 @@ async function request(
       signal,
     });
   } catch (err) {
+    if (signal?.aborted) throw err;
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
     classifyApiFailure(
       new ApiError(`Network error calling ${method} ${path}: ${err}`, {
@@ -515,6 +516,18 @@ export function listChecks({ limit, nextToken } = {}) {
 }
 
 /**
+ * @param {{startedAt: string, checkId: string, signal?: AbortSignal, siteId?: string}} opts
+ * @returns {Promise<{counts: number[]}>}
+ */
+export function getCaptureGuidance({ startedAt, checkId, signal, siteId }) {
+  return request(
+    "GET",
+    `/v1/checks:capture-guidance${qs({ startedAt, checkId })}`,
+    { signal, originSiteId: siteId },
+  );
+}
+
+/**
  * GET /v1/checks/{checkId} — one check with its artifacts + analyses, in a single
  * base-table query. 404 → ApiError(status 404).
  * @param {string} checkId
@@ -624,6 +637,50 @@ export function getMediaUrl(checkId, artifactId) {
   );
 }
 
+// ── Site manager reports (AP27, AP28; manager access level only) ─────────────
+
+/**
+ * @typedef {{ kind: "week" | "month" | "quarter", start: string, endExclusive: string }} ReportPeriod
+ * @typedef {{ period?: "week" | "month" | "quarter", start?: string }} ReportQuery
+ *   `start` is any Pacific day key (YYYY-MM-DD) inside the wanted period.
+ */
+
+/**
+ * GET /app/v1/manager/reports/checks — per-day check compliance for one period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, requirement: any, days: any[], totals: any, previous: ReportPeriod & { totals: any } }>}
+ */
+export function getChecksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/checks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/tasks — every task created in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, tasks: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTasksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/tasks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/task-updates — every task update event in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, updates: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTaskUpdatesReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/task-updates${qs({ period, start })}`,
+  );
+}
+
 // ── Tasks (staff worklist, AP10) ─────────────────────────────────────────────
 
 /**
@@ -642,10 +699,14 @@ export function getTaskUpdates(taskId, nextToken) {
   );
 }
 
-export function createTaskUpdate(taskId, body) {
+export function createTaskUpdate(
+  taskId,
+  body,
+  requestId = crypto.randomUUID(),
+) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,
-    headers: { "idempotency-key": crypto.randomUUID() },
+    headers: { "idempotency-key": requestId },
   });
 }
 
@@ -681,7 +742,7 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
- * @returns {Promise<{ task: any }>}
+ * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
 export function completeTask(taskId, body = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
@@ -807,11 +868,11 @@ export async function uploadArtifact(
  * Upload documentation for a task update without registering it for analysis.
  * @param {string} taskId
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string }} item
+ * @param {{ file: File, capturedAt?: string }} item
  */
 export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
-  const contentType = contentTypeFromDataUrl(item.dataUrl);
-  const blob = await dataUrlToBlob(item.dataUrl);
+  const blob = item.file;
+  const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {
@@ -935,4 +996,17 @@ export async function waitForAnalyses(
     await new Promise((r) => setTimeout(r, intervalMs));
     last = await getCheck(checkId);
   }
+}
+
+/** @param {string[]} taskIds */
+export function getDuplicateLinks(taskIds) {
+  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+}
+/** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
+export function separateDuplicate(taskId, expected) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
+    { body: expected },
+  );
 }

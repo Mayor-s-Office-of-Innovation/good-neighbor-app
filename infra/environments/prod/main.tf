@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.64"
+      version = "~> 6.21"
     }
     archive = {
       source  = "hashicorp/archive"
@@ -50,6 +50,7 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
+  cognito_admin_app_url         = "https://goodneighbor-compliance.sf.gov/"
 
   providers = {
     aws           = aws
@@ -61,6 +62,7 @@ module "app" {
   s3_bucket_name_prefix    = "gnp-prod"
   data_classification      = var.data_classification
   bedrock_model_id         = var.bedrock_model_id
+  alarm_emails             = var.alarm_emails
   tags                     = local.common_tags
   frontend_domain_names    = local.frontend_domain_names
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn

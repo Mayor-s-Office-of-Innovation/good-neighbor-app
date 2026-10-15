@@ -61,6 +61,16 @@ export const adminApi = {
         method: "POST",
       },
     ),
+  reinviteAdminUser: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/reinvite`,
+      { method: "POST" },
+    ),
+  resetAdminUserPassword: (username) =>
+    adminFetch(
+      `/admin/v1/admin-users/${encodeURIComponent(username)}/reset-password`,
+      { method: "POST" },
+    ),
   suggestAddresses: (query, signal) =>
     adminFetch("/admin/v1/address-suggestions", {
       method: "POST",
@@ -73,6 +83,11 @@ export const adminApi = {
   createCityProgramManager: (values) =>
     adminFetch("/admin/v1/program-managers", {
       method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updateCityProgramManager: (userId, values) =>
+    adminFetch(`/admin/v1/program-managers/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
       body: JSON.stringify(values),
     }),
   listOversightOptions: () => adminFetch("/admin/v1/oversight-options"),
@@ -131,6 +146,47 @@ export const adminApi = {
     }),
   getProvider: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`),
+  listProviderManagers: (providerId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships`,
+    ),
+  createProviderManager: (providerId, values) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships`,
+      { method: "POST", body: JSON.stringify(values) },
+    ),
+  updateProviderManager: (providerId, membershipId, values) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "PATCH", body: JSON.stringify(values) },
+    ),
+  deactivateProviderManager: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
+  reinstateProviderManager: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}/reinstate`,
+      { method: "POST" },
+    ),
+  listProviderManagerGrants: (providerId) =>
+    adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/grants`),
+  createProviderManagerGrant: (providerId, membershipId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-grants`,
+      { method: "POST", body: JSON.stringify({ membershipId }) },
+    ),
+  cancelProviderManagerGrant: (providerId, grantId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/grants/${encodeURIComponent(grantId)}`,
+      { method: "DELETE" },
+    ),
+  revokeProviderManagerEnrollment: (providerId, enrollmentId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-enrollments/${encodeURIComponent(enrollmentId)}/revoke`,
+      { method: "POST" },
+    ),
   updateProvider: (providerId, values) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}`, {
       method: "PATCH",
@@ -178,6 +234,18 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
+  endSiteTerms: (siteId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms:close`, {
+      method: "POST",
+    }),
+  replaceSiteComplianceManagers: (siteId, managerIds) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/compliance-managers`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ managerIds }),
+      },
+    ),
   getSitePerimeter: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/perimeter`),
   updateSitePerimeter: (siteId, perimeter, expectedUpdatedAt) =>

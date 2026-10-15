@@ -1,3 +1,4 @@
+import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -15,6 +16,11 @@ import {
   enqueueTranslateArtifact,
   translateItemsFor,
 } from "../analysis/translate-enqueue.js";
+
+import {
+  readCheckHeader,
+  readUpdateById,
+} from "../task-updates/task-update-store.js";
 
 const MAX_ASSESSMENT_CONDITIONS = 49;
 
@@ -487,10 +493,11 @@ export const cannotDoTask = async (event) => {
   }
 
   try {
+    const shared = await sharedActionTarget(dynamoTable, siteId, taskId);
     const task = await markTaskCannotDo({
       tableName: dynamoTable,
       siteId,
-      taskId,
+      ...shared,
       reason,
       note: typeof note === "string" ? note : undefined,
     });
@@ -537,14 +544,37 @@ export const completeTask = async (event) => {
   );
 
   try {
+    const shared = await sharedActionTarget(dynamoTable, siteId, taskId);
     const task = await completeTaskWithAppActions({
       tableName: dynamoTable,
       siteId,
-      taskId,
+      ...shared,
       completionMethod:
         typeof completionMethod === "string" ? completionMethod : undefined,
       actorId: deriveActorId(event),
     });
+    if (task.status === "completed" && task.canBeInProgress === false) {
+      const [update, check] = await Promise.all([
+        task.latestUpdateId
+          ? readUpdateById(
+              dynamoTable,
+              siteId,
+              String(task.taskId),
+              String(task.latestUpdateId),
+            )
+          : null,
+        readCheckHeader(dynamoTable, siteId, String(task.checkId || "")),
+      ]);
+      return jsonResponse(200, {
+        task: {
+          ...task,
+          canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
+        },
+        resultsPending:
+          update?.documentationState === "open_for_documentation" &&
+          update.actorId === deriveActorId(event),
+      });
+    }
     return jsonResponse(200, { task });
   } catch (err) {
     if (err instanceof Error && err.name === "NotFound") {

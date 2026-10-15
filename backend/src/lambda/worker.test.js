@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock both underlying workers so we assert only which one the dispatcher routes
+// Mock the underlying workers so we assert only which one the dispatcher routes
 // a message to, by its shape — not what the worker itself does.
 const {
   processSubmission,
   analyzeArtifact,
   reconcileSiteRevocation,
   dispatchRevocationOutbox,
+  generateComplianceLetter,
   translateArtifact,
 } = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
   dispatchRevocationOutbox: vi.fn(async () => {}),
+  generateComplianceLetter: vi.fn(async () => {}),
   translateArtifact: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
@@ -24,6 +26,9 @@ vi.mock("../workers/reconcile-site-revocation.js", () => ({
 }));
 vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
   handler: dispatchRevocationOutbox,
+}));
+vi.mock("../workers/generate-compliance-letter.js", () => ({
+  handler: generateComplianceLetter,
 }));
 vi.mock("../workers/translate-artifact.js", () => ({
   handler: translateArtifact,
@@ -47,6 +52,7 @@ describe("worker dispatch (pickHandler)", () => {
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
     dispatchRevocationOutbox.mockClear();
+    generateComplianceLetter.mockClear();
     translateArtifact.mockClear();
   });
 
@@ -63,6 +69,7 @@ describe("worker dispatch (pickHandler)", () => {
       () => {},
     );
     expect(translateArtifact).toHaveBeenCalledTimes(1);
+    expect(generateComplianceLetter).not.toHaveBeenCalled();
     expect(analyzeArtifact).not.toHaveBeenCalled();
     expect(processSubmission).not.toHaveBeenCalled();
   });
@@ -109,6 +116,18 @@ describe("worker dispatch (pickHandler)", () => {
     expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
     expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes compliance-letter jobs to the letter worker", async () => {
+    await handler(
+      event({ type: "generate_compliance_letter", siteId: "site-1" }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(generateComplianceLetter).toHaveBeenCalledTimes(1);
+    expect(translateArtifact).not.toHaveBeenCalled();
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes DynamoDB stream records to the revocation outbox dispatcher", async () => {

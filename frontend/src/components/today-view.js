@@ -1,5 +1,12 @@
 import {
+  projectDuplicateTasks,
+  duplicateCounts,
+} from "../domain/duplicate-issues.js";
+import { watchDuplicateIssues } from "../services/duplicate-issues.js";
+import { openDuplicateIssue } from "./duplicate-issue-dialog.js";
+import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
   slideCompletedCard,
 } from "./analysis-card-completion.js";
@@ -32,9 +39,7 @@ import {
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showSiteSwitchSuccessToast,
   showLanguageErrorToast,
-  queueSiteSwitchSuccessToast,
 } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -48,21 +53,17 @@ import { navigate } from "../router.js";
 import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
-  activateSiteBinding,
   clearSiteSession,
   getSite,
   hasAdminAccess,
   listBoundSites,
-  setSite,
 } from "../db.js";
 import {
   listChecks,
   listTasks,
-  completeTask,
   cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
-  selectDeviceBinding,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -87,7 +88,6 @@ import {
   relativeDay,
   sessionProblemItemHasBackendCards,
   splitSiteIdentity,
-  submitted311Ticket,
   taskArtifactIdSet,
   taskArtifactIds,
   taskCheckGroupId,
@@ -142,10 +142,16 @@ import {
   reasonPicker,
   summaryBlock,
 } from "./today-view.templates.js";
-import "./ticket-detail-dialog.js";
+import { TaskSheets } from "./task-sheets.js";
+import {
+  map311StatusResponse,
+  submitted311Requests,
+  taskWith311Status,
+} from "../domain/task-311-status.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
+import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
@@ -195,17 +201,28 @@ class TodayView extends HTMLElement {
     this._locationPrompt = null;
     this._pendingLocationRender = false;
     this._startingCapture = false;
-    /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
-    this._ticketDetailDialog = null;
-    /** @type {any} */
-    this._taskUpdateDialog = null;
-    /** @type {{ taskId: string, trigger: HTMLElement } | null} */
-    this._taskUpdateReturnFocus = null;
+    /** @type {TaskSheets | null} the 311 and updates sheets, created on first use */
+    this._sheets = null;
+    /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
+    this._duplicateLinks = new Map();
+    this._duplicateCloseHandler = () => {
+      if (
+        this._duplicatesNeedRender &&
+        this.isConnected &&
+        this._homeModel &&
+        !document.querySelector("dialog[open]")
+      ) {
+        this._duplicatesNeedRender = false;
+        this._renderHome(this._homeModel);
+      }
+    };
   }
 
   disconnectedCallback() {
+    this._stopDuplicates?.();
+    document.removeEventListener("close", this._duplicateCloseHandler, true);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
     this._sessionUnsub?.();
@@ -218,6 +235,7 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
+    document.addEventListener("close", this._duplicateCloseHandler, true);
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
@@ -262,9 +280,14 @@ class TodayView extends HTMLElement {
     // Refreshing a completed card is not a new screen arrival. Re-focusing
     // the heading after that refresh would scroll the worklist to the top.
     const announceArrival = !this._homeModel;
+    const previousSiteId = this._siteId;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+    if (previousSiteId && previousSiteId !== this._siteId) {
+      this._stopDuplicates?.();
+      this._duplicateLinks = new Map();
+    }
     this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
       fetchProviderSites().catch((error) => {
@@ -363,58 +386,46 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
+    this._stopDuplicates?.();
+    const siteId = this._siteId;
+    this._stopDuplicates = watchDuplicateIssues(
+      tasks.map((t) => t.taskId),
+      (links) => {
+        if (!this.isConnected || this._siteId !== siteId) return;
+        this._duplicateLinks = links;
+        if (document.querySelector("dialog[open]")) {
+          this._duplicatesNeedRender = true;
+          return;
+        }
+        if (
+          this._homeModel &&
+          !isCompletingAnalysisCard(this) &&
+          !isDeletingAnalysisCard(this)
+        )
+          this._renderHome(this._homeModel);
+      },
+    );
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
   _taskWith311CardStatus(task) {
-    if (!submitted311Ticket(task)) return task;
-    const cardState = this._311StatusByTaskId.get(task.taskId);
-    return {
-      ...task,
-      ticketStatus: cardState?.status || "",
-      ticketStatusDetail: cardState?.statusDetail || "",
-      ticketResponseOverdue: Boolean(cardState?.responseOverdue),
-      ticketUpdatedAt: cardState?.updatedAt || task.createdAt || "",
-    };
+    return taskWith311Status(task, this._311StatusByTaskId);
   }
 
   async _hydrate311CardStatuses(tasks) {
     const generation = ++this._311StatusGeneration;
-    const submittedTasks = tasks
-      .map((task) => ({ task, ticket: submitted311Ticket(task) }))
-      .filter(({ task, ticket }) => task.taskId && ticket?.srNum);
-    if (!submittedTasks.length) return;
+    const requests = submitted311Requests(tasks);
+    if (!requests.length) return;
     let response;
     try {
-      response = await get311RequestDetails(
-        submittedTasks.map(({ task, ticket }) => ({
-          taskId: task.taskId,
-          srNum: ticket.srNum,
-        })),
-      );
+      response = await get311RequestDetails(requests);
     } catch {
       return;
     }
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
-    this._311StatusByTaskId = new Map(
-      (response.requests || []).flatMap(({ taskId, request }) =>
-        taskId && request?.status
-          ? [
-              [
-                taskId,
-                {
-                  status: request.status,
-                  statusDetail: request.statusDetail || "",
-                  responseOverdue: Boolean(request.responseOverdue),
-                  updatedAt: request.relevantDate || request.submittedAt || "",
-                },
-              ],
-            ]
-          : [],
-      ),
-    );
+    this._311StatusByTaskId = map311StatusResponse(response);
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
@@ -521,6 +532,9 @@ class TodayView extends HTMLElement {
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       navigate("/site-admin"),
     );
+    this.querySelector("#settings-reports")?.addEventListener("click", () =>
+      navigate("/reports"),
+    );
     this._languageDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #language-dialog")
     );
@@ -569,8 +583,7 @@ class TodayView extends HTMLElement {
     this._restoreLogoutDialog();
     this._restoreAttributionsDialog();
     this._restoreLanguageDialog();
-    this._mountTicketDetailDialog();
-    this._mountTaskUpdateDialog();
+    this._taskSheets().mount();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -655,6 +668,15 @@ class TodayView extends HTMLElement {
     );
     this._wireCards();
     this._restoreFocusAfterRender();
+    const requestedIssue = new URLSearchParams(window.location.search).get(
+      "issue",
+    );
+    if (
+      requestedIssue &&
+      requestedIssue !== this._focusedIssueId &&
+      this._focusIssueCard(requestedIssue)
+    )
+      this._focusedIssueId = requestedIssue;
   }
 
   async _hydrateVisibleHomeTasks() {
@@ -678,8 +700,8 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
-    this._ticketDetailDialog?.updateTask(
-      tasks.find((task) => task.taskId === this._ticketDetailDialog.taskId),
+    this._sheets?.updateTask(
+      tasks.find((task) => task.taskId === this._sheets?.ticketTaskId),
     );
     this._renderHome({ ...model, tasks });
   }
@@ -792,70 +814,26 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _mountTicketDetailDialog() {
-    if (!this._ticketDetailDialog) {
-      const dialog = document.createElement("ticket-detail-dialog");
-      dialog.addEventListener("ticketdetailclosed", (event) => {
-        const { taskId, trigger } = /** @type {CustomEvent} */ (event).detail;
-        // The card that opened the sheet was re-rendered since; find its
-        // current button and fall back to the original trigger.
-        const current = taskId
-          ? this.querySelector(
-              `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
-            )
-          : null;
-        (current || trigger)?.focus?.();
+  _taskSheets() {
+    if (!this._sheets) {
+      this._sheets = new TaskSheets({
+        host: this,
+        container: () => this.querySelector(":scope > .home"),
+        resolveTask: (task) => this._tasksById.get(task.taskId) || task,
+        reload: () => this.connectedCallback(),
+        fallbackFocus: () => this.querySelector(".home-tabs__tab--active"),
       });
-      this._ticketDetailDialog = dialog;
     }
-    this._ticketDetailDialog.site = this._site;
-    // Re-appending the same element keeps its state across innerHTML
-    // replacement; it restores its open state on reconnect.
-    this.querySelector(":scope > .home")?.append(this._ticketDetailDialog);
+    this._sheets.site = this._site;
+    return this._sheets;
   }
 
   _open311Detail(task, trigger) {
-    this._mountTicketDetailDialog();
-    void this._ticketDetailDialog.open(
-      this._tasksById.get(task.taskId) || task,
-      trigger,
-    );
-  }
-
-  async _mountTaskUpdateDialog() {
-    await import("./task-update-dialog.js");
-    if (!this._taskUpdateDialog) {
-      const dialog = document.createElement("task-update-dialog");
-      dialog.addEventListener("taskupdated", () => {
-        void this.connectedCallback();
-      });
-      dialog.addEventListener("taskupdateclosed", () => {
-        const returnFocus = this._taskUpdateReturnFocus;
-        this._taskUpdateReturnFocus = null;
-        void this.connectedCallback().then(() => {
-          const current = returnFocus?.taskId
-            ? this.querySelector(
-                `[data-task-id="${CSS.escape(returnFocus.taskId)}"] [data-action="update"]`,
-              )
-            : null;
-          const fallback = returnFocus?.trigger?.isConnected
-            ? returnFocus.trigger
-            : this.querySelector(".home-tabs__tab--active");
-          const target = /** @type {HTMLElement | null | undefined} */ (
-            current || fallback
-          );
-          target?.focus();
-        });
-      });
-      this._taskUpdateDialog = dialog;
-    }
-    this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
+    this._taskSheets().open311(task, trigger);
   }
 
   async _openTaskUpdate(task, trigger) {
-    this._taskUpdateReturnFocus = { taskId: task.taskId, trigger };
-    await this._mountTaskUpdateDialog();
-    await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
+    await this._taskSheets().openUpdates(task, trigger);
   }
 
   _closeSettingsMenu() {
@@ -931,6 +909,7 @@ class TodayView extends HTMLElement {
         .map((card) => card.markup)
         .join(""),
       newTaskCount: newTaskEntries.length,
+      counts: duplicateCounts(newTaskEntries.map((e) => e.task)),
       activeClearCheck,
       hasPendingClearResult,
       historyGroups: this._historyGroups(
@@ -972,6 +951,7 @@ class TodayView extends HTMLElement {
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
+      isDuplicate: Boolean(entry.task.duplicate),
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
     };
@@ -1032,6 +1012,7 @@ class TodayView extends HTMLElement {
       })
       .map(([checkId, group]) => ({
         checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        counts: duplicateCounts(group.map((e) => e.task)),
         cards: sortAnalysisCards(
           group.map((entry) => this._taskCardEntry(entry, false)),
         )
@@ -1243,53 +1224,19 @@ class TodayView extends HTMLElement {
   }
 
   async _switchToSite(siteId) {
-    if (!siteId || siteId === this._siteId) {
+    const outcome = await switchToBoundSite({
+      siteId,
+      currentSiteId: this._siteId,
+      boundSites: this._boundSites,
+      destination: "/today",
+    });
+    if (outcome === "same") {
       this._siteSwitcher?.close();
       return;
     }
-    const target = this._providerSites.find((site) => site.siteId === siteId);
-    const bound = this._boundSites.find(
-      (site) => site.siteId === siteId && site.token && site.refreshToken,
-    );
-    if (!bound) {
+    if (outcome === "needs-binding") {
+      const target = this._providerSites.find((site) => site.siteId === siteId);
       await this._requestAnotherSite("code", siteId, target?.name || "");
-      return;
-    }
-    const active = getCurrentCheck();
-    if (active?.status === "capture-complete") {
-      showSiteSwitchBlockedToast();
-      return;
-    }
-    try {
-      if (active) await pauseCheck();
-      let selected;
-      if (bound.bindingId && bound.physicalDeviceId) {
-        const session = await selectDeviceBinding(bound.bindingId);
-        selected = await setSite(session.site.name, {
-          siteId: session.site.siteId,
-          deviceId: session.deviceId,
-          bindingId: session.bindingId,
-          physicalDeviceId: session.physicalDeviceId,
-          token: session.token,
-          refreshToken: session.refreshToken,
-          tokenExpiresAt: Date.now() + session.expiresIn * 1000,
-          tokenGeneration: session.tokenGeneration,
-          accessLevel: session.accessLevel,
-          absoluteExpiresAt: session.absoluteExpiresAt,
-        });
-      } else {
-        selected = await activateSiteBinding(siteId);
-      }
-      if (!selected) {
-        await this._requestAnotherSite("code", siteId, target?.name || "");
-        return;
-      }
-      discardInMemorySession();
-      if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
-      window.location.assign("/today");
-    } catch (error) {
-      console.error("site switch failed", error);
-      showSiteSwitchErrorToast();
     }
   }
 
@@ -1309,7 +1256,7 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks
+    return projectDuplicateTasks(tasks, this._duplicateLinks)
       .filter((task) => !isTaskPendingDeletion(task))
       .map((task) => ({
         task,
@@ -1456,7 +1403,34 @@ class TodayView extends HTMLElement {
     return null;
   }
 
+  _focusIssueCard(taskId) {
+    const card = [
+      ...this.querySelectorAll(
+        ":scope > .home > .home-region--results article[data-task-id]",
+      ),
+    ].find((candidate) => candidate.getAttribute("data-task-id") === taskId);
+    if (!(card instanceof HTMLElement)) return false;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView({ block: "center", behavior: "instant" });
+    return true;
+  }
+
   _wireCards() {
+    this.querySelectorAll(".duplicate-earlier-link").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (!(event instanceof MouseEvent)) return;
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        if (this._focusIssueCard(link.getAttribute("data-original-task-id")))
+          event.preventDefault();
+      });
+    });
     this.querySelectorAll(
       ":scope > .home > .home-region--results [data-task-id]",
     ).forEach((card) => {
@@ -1733,7 +1707,7 @@ class TodayView extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "311_filed",
       }).catch((err) => {
         console.error("escalation failed", err);
@@ -1751,7 +1725,7 @@ class TodayView extends HTMLElement {
     }
 
     try {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "manual",
       });
       if (card.isConnected) await slideCompletedCard(card);
@@ -1845,7 +1819,21 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "update") {
+    if (action === "duplicate") {
+      const decorated = projectDuplicateTasks(
+        [task],
+        this._duplicateLinks,
+      ).find((t) => t.taskId === task.taskId);
+      if (!decorated?.duplicate) return;
+      openDuplicateIssue(decorated, btn, {
+        onSeparated: () => {
+          this._duplicateLinks.delete(task.taskId);
+          if (this.isConnected) void this.connectedCallback();
+        },
+        onOriginal: (original, trigger) =>
+          void this._openTaskUpdate(original, trigger),
+      });
+    } else if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
@@ -1862,7 +1850,7 @@ class TodayView extends HTMLElement {
       this._run(
         card,
         () =>
-          completeTask(task.taskId, {
+          completeCardAction(task.taskId, {
             completionMethod: "311_filed",
           }),
         { requireSubmitted311: true, animateOnSuccess: true },

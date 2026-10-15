@@ -1,5 +1,13 @@
 # Duplicate detection: continuation handoff
 
+**Current implementation (October 15):** The experiment has progressed to locally
+implemented product integration, still undeployed and feature-gated. See
+[ADR 0017](adr/0017-duplicate-issue-links.md) and the
+[operations runbook](runbooks/duplicate-detection.md) for the current behavior.
+They supersede the historical advisory-only, images-required and capture-time
+choices below. The current 72-hour window uses **issue generation time**.
+
+
 Recorded October 9, 2026, for continuation on another machine with another agent.
 This repository handoff was explicitly requested by the user as an exception to
 the usual rule that implementation plans live in GitHub issues. Keep the operating
@@ -21,6 +29,11 @@ use the actual analyzer handler with an authenticated Bedrock profile; deploymen
 is not needed for this experiment. Source and Match candidates folders select
 the evaluation corpus. Human review is still required; the existing text harness
 remains a comparison tool.
+
+Current policy amendment (October 15, 2026): the image matcher now requires the
+same canonical analyzer category and a strictly under-72-hour capture/observation
+age relative to the source. This supersedes five-day and cross-category retrieval
+discussed in the historical notes below. Missing categories remain unknown.
 
 ## Start here
 
@@ -203,3 +216,21 @@ Suggested opening message to the next agent:
 > Help me choose the source data and review example pairs. Do the extraction,
 > formatting, and evaluation work for me. Coverage is the priority; production
 > integration and UI work are not yet validated.
+
+Latest agreed matching policy (October 15): process candidate observations youngest
+first; stop independently per source issue on the first high-confidence explicit
+mapping. Continue past failed comparisons and return no qualifying match (`false`)
+when the search completes without one. Retain failure diagnostics; persistence failures
+still retry. Prepare candidate images only as reached. The result endpoint separately
+walks valid same-site/category duplicate references beyond 72 hours and returns
+`originalIssue` with an explicit lookup state; it preserves the directly matched
+`duplicateOf`. See duplicate-evaluation.md for chain validation and pending semantics.
+
+Latest optimization: metadata mismatches are fast-path deferrals, not permanent
+exclusions. The default is combined image+issue-context verification of up to three
+candidates, followed by background expansion for unmatched issues. Fast shortlist
+selection uses cached image fingerprints/dHash and conservative object-family hints;
+recentness orders the selected shortlist and the later expansion. Preparation-only
+jobs warm the isolated image cache after artifact registration. Confidence/ID/revision/
+lifecycle safeguards remain. The evaluation runner supports `--fast-only` and the
+old audit via `--legacy-search`; see duplicate-evaluation.md for precise semantics.

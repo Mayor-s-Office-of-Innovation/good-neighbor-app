@@ -36,6 +36,13 @@
      red (hazard). Used for the dispute status line, always paired with the "You
      marked this as ..." text so color isn't the sole carrier. ~5:1 on white. */
   --c-flag: #b45309;
+  --c-flag-bg: #fdf3e2;
+
+  /* Compliance status reinforcement (site manager reports): met / partly met /
+     missed / not yet. Each is always paired with its word or count; the fills
+     are pale so the dark text on them stays AA. */
+  --c-ok: #0b6b2f; /* 6.8:1 on white */
+  --c-ok-bg: #e4f4e8;
 
   /* Neutral surfaces */
   --bg: #fafafa;
@@ -86,6 +93,10 @@ html.wa-dark {
   --c-hazard-bg: #2a1614;
 
   --c-flag: #e8a54d; /* brightened amber for dark surfaces */
+  --c-flag-bg: #2e2110;
+
+  --c-ok: #7ad69a;
+  --c-ok-bg: #12301c;
 
   --bg: #0f0f0f;
   --surface: #1a1a1a;

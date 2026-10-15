@@ -14,6 +14,7 @@ const {
   geocodeAddress,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -21,6 +22,7 @@ const {
   geocodeAddress: vi.fn(),
   headObject: vi.fn(),
   presignPut: vi.fn(),
+  presignGet: vi.fn(),
   setObjectTags: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
@@ -38,6 +40,7 @@ vi.mock("../s3.js", () => ({
   deleteObject,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 }));
 
@@ -76,6 +79,7 @@ beforeEach(() => {
   deleteObject.mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "gnp-test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/queue");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
@@ -133,6 +137,7 @@ describe("City program manager administration", () => {
         firstName: "Jamie",
         lastName: "Lee",
         email: "jamie.lee@sfgov.org",
+        phone: "415-555-0123",
       }),
     );
     expect(res.statusCode).toBe(201);
@@ -1038,6 +1043,64 @@ describe("provider and site management", () => {
     ).not.toHaveProperty(":compliance");
   });
 
+  it("updates oversight and the shared program-manager phone atomically", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          status: "active",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+            sk: "MANAGER#rob@sfgov.org",
+            userId: "manager-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "Site One",
+          oversight: {
+            managingCityDepartment: "DPH",
+            managingSystemOfCare: "BHS-PBH",
+            cityProgramManagerId: "manager-1",
+            cityProgramManager: "Rob Hoffman",
+          },
+          programManagerPhone: "415-555-0199",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[2][0]
+    );
+    expect(transaction.input.TransactItems?.length).toBeGreaterThanOrEqual(2);
+    expect(transaction.input.TransactItems?.[1]).toMatchObject({
+      Update: {
+        Key: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#rob@sfgov.org",
+        },
+        ExpressionAttributeValues: expect.objectContaining({
+          ":phone": "415-555-0199",
+        }),
+      },
+    });
+  });
+
   it("updates all site information fields and supersedes the current letter", async () => {
     send
       .mockResolvedValueOnce({
@@ -1103,11 +1166,11 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(200);
     expect(headObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
     });
     expect(setObjectTags).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
       tags: { state: "active" },
     });
@@ -1185,7 +1248,7 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toBe("invalid_compliance_letter");
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/too-large.pdf",
     });
     expect(send).toHaveBeenCalledTimes(1);
@@ -1231,7 +1294,7 @@ describe("provider and site management", () => {
       "updatedAt = :expectedUpdatedAt",
     );
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/concurrent.pdf",
     });
   });
@@ -1259,7 +1322,7 @@ describe("provider and site management", () => {
     const body = JSON.parse(res.body);
     expect(body.s3Key).toMatch(/^compliance-letters\/site-1\/[0-9a-f-]+\.pdf$/);
     expect(presignPut).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: body.s3Key,
       contentType: "application/pdf",
       tagging: "state=pending",

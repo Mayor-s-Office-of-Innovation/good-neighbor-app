@@ -167,3 +167,152 @@ describe("task update dialog templates", () => {
     expect(taskUpdateTimelineTone("note_photo_update")).toBe("general");
   });
 });
+
+it.each([null, true, false])(
+  "requires the 311 help choice (%s) in both editors",
+  (cityHelpNeeded) => {
+    const action = taskUpdateActionEditor({
+      text: "Followed up",
+      allowResolution: false,
+      cityHelpNeeded,
+    });
+    const notes = taskUpdateCapture({
+      pendingEvent: null,
+      files: [],
+      notes: ["Still here"],
+      previews: [],
+      cityHelpNeeded,
+    });
+    for (const markup of [action, notes]) {
+      expect(markup).toContain(t("taskUpdate.cityHelp.title"));
+      expect(markup).not.toContain("data-action-outcome");
+      expect(markup).toMatch(/class="btn-ink"\s+data-city-help="yes"/);
+      expect(markup).toMatch(/class="btn-outline"\s+data-city-help="no"/);
+      expect(/data-save-(?:action|notes)\s+disabled/.test(markup)).toBe(
+        cityHelpNeeded === null,
+      );
+      expect(/class="task-update__city-help-note"\s+hidden/.test(markup)).toBe(
+        cityHelpNeeded !== false,
+      );
+    }
+  },
+);
+
+it.each([
+  { notes: [], files: [], disabled: true },
+  { notes: ["  "], files: [], disabled: true },
+  { notes: ["Still here"], files: [], disabled: false },
+  { notes: [], files: [new File(["photo"], "photo.jpg")], disabled: false },
+])(
+  "gates City help choices on capture content: %j",
+  ({ notes, files, disabled }) => {
+    const markup = taskUpdateCapture({
+      pendingEvent: null,
+      files,
+      notes,
+      previews: [],
+      cityHelpNeeded: null,
+    });
+    for (const choice of ["yes", "no"]) {
+      const button = markup.match(
+        new RegExp(`<button[^>]*data-city-help="${choice}"[^>]*>`),
+      )?.[0];
+      expect(button).toBeDefined();
+      expect(button.includes("disabled")).toBe(disabled);
+    }
+  },
+);
+
+it.each(["", " ", "a"])(
+  "gates follow-up choices and Done for text %j",
+  (text) => {
+    for (const cityHelpNeeded of [null, true, false]) {
+      const markup = taskUpdateActionEditor({
+        text,
+        allowResolution: false,
+        cityHelpNeeded,
+      });
+      for (const choice of ["yes", "no"]) {
+        const button = markup.match(
+          new RegExp(`<button[^>]*data-city-help="${choice}"[^>]*>`),
+        )?.[0];
+        expect(button).toBeDefined();
+        expect(button.includes("disabled")).toBe(!text.trim());
+      }
+      expect(/data-save-action\s+disabled/.test(markup)).toBe(
+        !text.trim() || cityHelpNeeded === null,
+      );
+    }
+  },
+);
+
+it("does not add the City question to non-311 editors", () => {
+  expect(taskUpdateActionEditor({ text: "Followed up" })).not.toContain(
+    "data-city-help",
+  );
+  expect(
+    taskUpdateCapture({
+      pendingEvent: null,
+      files: [],
+      notes: [],
+      previews: [],
+    }),
+  ).not.toContain("data-city-help");
+});
+
+it("reuses capture with the results title and skip, then renders saved content in history", () => {
+  const capture = taskUpdateCapture({
+    pendingEvent: { type: "task_completed" },
+    results: true,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  expect(capture).toContain(t("taskUpdate.capture.resultsTitle"));
+  expect(capture).toContain("data-skip");
+  const timeline = taskUpdateTimeline({
+    task: { status: "completed" },
+    updates: [
+      {
+        type: "task_completed",
+        label: "Marked as complete",
+        occurredAt: "2026-10-08T12:00:00Z",
+        notes: ["Area cleaned"],
+        photoKeys: ["photo-1"],
+      },
+    ],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
+  });
+  expect(timeline).toContain("Area cleaned");
+  expect(timeline).toContain('src="https://example.test/photo.jpg"');
+});
+
+it("keeps notes and skip available without an uploadable check", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: { updateId: "update-1" },
+    results: true,
+    photosAllowed: false,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  expect(markup).not.toContain("data-photos");
+  expect(markup).toContain(t("taskUpdate.photo.unavailable"));
+  expect(markup).toContain("data-add-note");
+  expect(markup).toContain("data-skip");
+});
+it("preserves a conflicted draft with an explanation and disabled save", () => {
+  const markup = taskUpdateCapture({
+    pendingEvent: null,
+    results: true,
+    files: [],
+    notes: ["Unsaved note"],
+    previews: [],
+  });
+  expect(markup).toContain("Unsaved note");
+  expect(markup).toContain(t("taskUpdate.capture.conflict"));
+  expect(markup).toMatch(/data-save-notes\s+disabled/);
+  expect(markup).toContain("data-skip");
+});

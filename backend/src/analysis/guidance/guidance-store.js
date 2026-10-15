@@ -17,8 +17,11 @@ import {
   siteMetaKey,
   taskDisplayCounterKey,
   taskKey,
+  taskTimelineGsi,
+  taskTimelineGsiFor,
   taskUpdateKey,
   taskUpdatePointerKey,
+  taskUpdateTimelineGsi,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -499,6 +502,7 @@ function buildTaskItem({
       now,
       taskId,
     ),
+    ...taskTimelineGsi(siteId, now, taskId),
     createdAt: now,
     updatedAt: now,
   };
@@ -882,6 +886,7 @@ export async function storeEvaluatedAssessment(input, options) {
         TableName: options.tableName,
         Item: {
           ...task,
+          ...taskTimelineGsiFor(input.siteId, task),
           status: "superseded",
           supersededAt: now,
           supersessionReason: "assessment_refreshed",
@@ -1384,6 +1389,7 @@ export async function answerCondition(opts) {
  * @param {string} opts.taskId
  * @param {string} opts.reason
  * @param {string} [opts.note]
+ * @param {any[]} [opts.duplicateChecks]
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>>}
  */
@@ -1434,6 +1440,7 @@ export async function markTaskCannotDo(opts) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(opts.duplicateChecks ?? []),
         {
           Put: {
             TableName: opts.tableName,
@@ -1457,6 +1464,7 @@ export async function markTaskCannotDo(opts) {
  * @param {string} [opts.completionMethod]
  * @param {string} [opts.actorId]
  * @param {Record<string, string | undefined>} [opts.env]
+ * @param {any[]} [opts.duplicateChecks]
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>>}
  */
@@ -1544,6 +1552,7 @@ export async function completeTaskWithAppActions(opts) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(opts.duplicateChecks ?? []),
         {
           Put: {
             TableName: opts.tableName,
@@ -1685,6 +1694,9 @@ export async function completeTaskWithAppActions(opts) {
           lastAnsweredPresencePeriod: 0,
         }
       : {}),
+    ...(!appActionFailed && existing.Item.canBeInProgress === false
+      ? { latestUpdateId: actionUpdateId }
+      : {}),
     appActionStatus,
     appActionResults,
     ...(filed311
@@ -1738,6 +1750,7 @@ export async function completeTaskWithAppActions(opts) {
                       now,
                       actionUpdateId,
                     ),
+                    ...taskUpdateTimelineGsi(opts.siteId, now, actionUpdateId),
                     entityType: "task_update",
                     taskId: opts.taskId,
                     updateId: actionUpdateId,
@@ -1749,7 +1762,10 @@ export async function completeTaskWithAppActions(opts) {
                     label: actionLabel,
                     occurredAt: now,
                     actorId: opts.actorId ?? "site-team",
-                    documentationState: "closed",
+                    documentationState:
+                      existing.Item.canBeInProgress === false
+                        ? "open_for_documentation"
+                        : "closed",
                   },
                   ConditionExpression: "attribute_not_exists(pk)",
                 },
@@ -1872,6 +1888,7 @@ function supersedeTaskWrites(tasks, opts, now) {
     const taskId = String(task.taskId);
     const updated = {
       ...task,
+      ...taskTimelineGsiFor(opts.siteId, task),
       status: "superseded",
       supersededAt: now,
       supersessionReason: opts.reason ?? "analysis_condition_amended",

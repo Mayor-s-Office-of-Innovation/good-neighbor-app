@@ -1,6 +1,7 @@
 /**
  * @typedef {object} AppConfig
  * @property {string} uploadBucket
+ * @property {string} [complianceLetterBucket]
  * @property {string} queueUrl
  * @property {string} dynamoTable
  * @property {string} [cognitoUserPoolId]
@@ -41,6 +42,9 @@ export function getConfig(env = process.env) {
   }
 
   const config = /** @type {AppConfig} */ (required);
+  if (env.S3_COMPLIANCE_LETTER_BUCKET) {
+    config.complianceLetterBucket = env.S3_COMPLIANCE_LETTER_BUCKET;
+  }
   if (env.COGNITO_USER_POOL_ID)
     config.cognitoUserPoolId = env.COGNITO_USER_POOL_ID;
   if (env.REVERSE_GEOCODING_ENABLED === "true") {
@@ -104,6 +108,22 @@ export function getConfig(env = process.env) {
   }
 
   return config;
+}
+
+/**
+ * Compliance letters must never silently fall back to the expiring media
+ * bucket. This validation stays scoped to letter operations so unrelated
+ * commands do not need letter storage configured.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function getComplianceLetterBucket(env = process.env) {
+  if (!env.S3_COMPLIANCE_LETTER_BUCKET) {
+    throw new Error(
+      "Missing required environment variable for complianceLetterBucket",
+    );
+  }
+  return env.S3_COMPLIANCE_LETTER_BUCKET;
 }
 
 /**

@@ -18,7 +18,8 @@ resource "aws_s3_bucket" "analytics_lake" {
   # raw/ itself is an ephemeral 30-day buffer for a write-once export feed (the
   # export service overwrites by export ID; stale versions would double-count in
   # reads since globs match every object). Versioning adds cost/ops with no
-  # recovery benefit here; the app-data buckets (frontend/uploads) keep it on.
+  # recovery benefit here (the uploads bucket suspends it for the same reason);
+  # the frontend and compliance-letter buckets keep it on.
   bucket_prefix = "${local.bucket_name_prefix}-analytics-lake-"
   force_destroy = false
 }
@@ -131,7 +132,7 @@ resource "aws_lambda_function" "analytics_export" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-export"
   role             = aws_iam_role.analytics_export.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_export.output_path
   source_code_hash = data.archive_file.analytics_export.output_base64sha256
@@ -266,7 +267,7 @@ resource "aws_lambda_function" "analytics_convert" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-convert"
   role             = aws_iam_role.analytics_convert.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_convert.output_path
   source_code_hash = data.archive_file.analytics_convert.output_base64sha256
@@ -400,7 +401,7 @@ resource "aws_lambda_function" "analytics_report" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-report"
   role             = aws_iam_role.analytics_report.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_report.output_path
   source_code_hash = data.archive_file.analytics_report.output_base64sha256
@@ -584,7 +585,7 @@ resource "aws_lambda_function" "analytics_query" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-analytics-query"
   role             = aws_iam_role.analytics_query.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.analytics_query.output_path
   source_code_hash = data.archive_file.analytics_query.output_base64sha256

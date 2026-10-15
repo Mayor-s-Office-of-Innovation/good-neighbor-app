@@ -1189,3 +1189,49 @@ describe("card redesign", () => {
     expect(card).not.toContain("Guidance omitted");
   });
 });
+
+it("shows duplicate progress below Edit details and removes the ring on completion", () => {
+  const task = {
+    taskId: "duplicate-status-task",
+    status: "open",
+    category: "Litter",
+    createdAt: "2026-10-15T12:00:00Z",
+  };
+  const checking = taskAnalysisCard({
+    task: { ...task, duplicateCheckState: "pending" },
+    action: null,
+    statusLabel: "",
+  });
+  expect(checking).toContain(t("duplicate.checking"));
+  expect(checking).toContain('<wa-spinner aria-hidden="true">');
+  expect(checking.indexOf(t("duplicate.checking"))).toBeGreaterThan(
+    checking.indexOf(t("card.editDetails")),
+  );
+  const completed = taskAnalysisCard({
+    task: { ...task, duplicateCheckState: "complete" },
+    action: null,
+    statusLabel: "",
+  });
+  expect(completed).toContain(t("duplicate.noMatches"));
+  expect(completed).not.toContain("<wa-spinner");
+  const disabled = taskAnalysisCard({ task, action: null, statusLabel: "" });
+  expect(disabled).not.toContain(t("duplicate.checking"));
+  expect(disabled).not.toContain(t("duplicate.noMatches"));
+});
+
+it("links the earlier-issue phrase to the original worklist card", () => {
+  const card = taskAnalysisCard({
+    task: {
+      taskId: "repeat",
+      status: "open",
+      category: "Graffiti",
+      duplicate: { original: { taskId: "original-id" } },
+    },
+    action: null,
+    statusLabel: "",
+  });
+  expect(card).toContain('href="/today?issue=original-id"');
+  expect(card).toContain('data-original-task-id="original-id"');
+  expect(card).toContain(t("duplicate.earlierIssue"));
+  expect(card).not.toContain("{issue}");
+});

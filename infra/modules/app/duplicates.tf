@@ -1,8 +1,8 @@
-# Shadow-only duplicate evaluation. No existing analysis handler or queue changes.
+# Isolated duplicate evaluation and reversible product links. No existing analysis handler or queue changes.
 variable "enable_duplicate_detection" {
   type        = bool
   default     = false
-  description = "Enable isolated shadow evaluation only after analyzer comparison deployment and key provisioning."
+  description = "Enable isolated duplicate evaluation only after analyzer comparison deployment and key provisioning."
 }
 variable "duplicate_analyzer_base_url" {
   type        = string
@@ -42,7 +42,7 @@ data "archive_file" "duplicate_worker" {
 resource "aws_cloudwatch_log_group" "duplicates" {
   for_each          = toset(["duplicate-dispatch", "duplicate-worker"])
   name              = "/aws/lambda/${local.name_prefix}-${each.key}"
-  retention_in_days = 365
+  retention_in_days = 30
   kms_key_id        = aws_kms_key.app.arn
   tags              = var.tags
 }
@@ -71,6 +71,7 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.uploads.arn}/*" },
+    { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.uploads.arn}/duplicate-prepared/*" },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.duplicate_analyzer_key.arn },
     { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:SendMessage"], Resource = aws_sqs_queue.duplicates.arn },
     { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.app.arn },
@@ -80,26 +81,27 @@ resource "aws_iam_role_policy" "duplicate_worker" {
 resource "aws_lambda_function" "duplicate_dispatch" {
   function_name    = "${local.name_prefix}-duplicate-dispatch"
   role             = aws_iam_role.duplicate_dispatch.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.duplicate_dispatch.output_path
   source_code_hash = data.archive_file.duplicate_dispatch.output_base64sha256
   memory_size      = 256
   timeout          = 30
-  environment { variables = { DUPLICATE_QUEUE_URL = aws_sqs_queue.duplicates.url, DYNAMO_TABLE = aws_dynamodb_table.app.name } }
+  environment { variables = { DUPLICATE_QUEUE_URL = aws_sqs_queue.duplicates.url, DYNAMO_TABLE = aws_dynamodb_table.app.name, METRICS_NAMESPACE = "${local.name_prefix}-duplicates" } }
   depends_on = [aws_iam_role_policy.duplicate_dispatch, aws_cloudwatch_log_group.duplicates]
   tags       = var.tags
 }
 resource "aws_lambda_function" "duplicate_worker" {
   function_name    = "${local.name_prefix}-duplicate-worker"
   role             = aws_iam_role.duplicate_worker.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.duplicate_worker.output_path
   source_code_hash = data.archive_file.duplicate_worker.output_base64sha256
   memory_size      = 1024
   timeout          = 900
   environment { variables = {
+    METRICS_NAMESPACE                     = "${local.name_prefix}-duplicates"
     DYNAMO_TABLE                          = aws_dynamodb_table.app.name
     S3_UPLOAD_BUCKET                      = aws_s3_bucket.uploads.bucket
     DUPLICATE_QUEUE_URL                   = aws_sqs_queue.duplicates.url
@@ -129,7 +131,7 @@ resource "aws_lambda_event_source_mapping" "duplicate_analysis_stream" {
     filter {
       pattern = jsonencode({
         eventName = ["INSERT", "MODIFY"]
-        dynamodb  = { NewImage = { sk = { S = [{ prefix = "CHECK#" }, { prefix = "DUP_OBSERVATION#" }] } } }
+        dynamodb  = { NewImage = { sk = { S = [{ prefix = "CHECK#" }, { prefix = "DUP_OBSERVATION#" }, { prefix = "TASK#" }, { prefix = "DUP_OVERRIDE#" }, { prefix = "DUP_LINK#" }] } } }
       })
     }
   }
@@ -153,5 +155,6 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   dimensions          = { QueueName = aws_sqs_queue.duplicates_dlq.name }
+  alarm_actions       = [aws_sns_topic.alarms.arn]
   tags                = var.tags
 }

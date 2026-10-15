@@ -1,13 +1,20 @@
 import {
   PutCommand,
+  GetCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
+import {
+  checkCompletionRecord,
+  recentCompletionCounts,
+  COMPLETION_MIGRATION_KEY,
+} from "../domain/check-completions.js";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
+import { emitMetrics } from "../lib/metrics.js";
 import {
   checkAnalysisPrefix,
   checkArtifactPrefix,
@@ -143,6 +150,12 @@ export const createCheck = async (event) => {
         ConditionExpression: "attribute_not_exists(sk)",
       }),
     );
+    emitMetrics({
+      marker: "CheckStarted",
+      dimensions: { FlowType: flowType },
+      metrics: [{ name: "CheckStarted", value: 1 }],
+      props: { siteId, checkId },
+    });
     return jsonResponse(201, { checkId, status: "in_progress", startedAt });
   } catch (err) {
     if (
@@ -279,9 +292,46 @@ export const completeCheck = async (event) => {
   try {
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [headerUpdate],
+        TransactItems: [
+          headerUpdate,
+          ...(header.flowType === "single-problem"
+            ? []
+            : [
+                {
+                  Put: {
+                    TableName: dynamoTable,
+                    Item: checkCompletionRecord(siteId, checkId, now),
+                    ConditionExpression: "attribute_not_exists(sk)",
+                  },
+                },
+              ]),
+        ],
       }),
     );
+    // Counted once, on the write that actually closed the check (the
+    // idempotent re-complete below is not a second completion). Two roll-ups
+    // from one line: by flow type, and by flow type + evidence mix.
+    emitMetrics({
+      marker: "CheckCompleted",
+      dimensions: {
+        FlowType:
+          header.flowType === "single-problem" ? "single-problem" : "perimeter",
+        EvidenceKind: evidence.evidenceKind,
+      },
+      dimensionSets: [["FlowType"], ["FlowType", "EvidenceKind"]],
+      metrics: [
+        { name: "CheckCompleted", value: 1 },
+        { name: "CheckPhotoCount", value: evidence.photoCount },
+        { name: "CheckTextCount", value: evidence.textCount },
+      ],
+      props: {
+        siteId,
+        checkId,
+        grade: scorecard.grade,
+        issueCount: scorecard.issueCount,
+        maxSeverity: scorecard.maxSeverity,
+      },
+    });
   } catch (err) {
     if (err instanceof Error && err.name === "TransactionCanceledException") {
       return jsonResponse(200, {
@@ -331,6 +381,52 @@ const decodeCursor = (token) => {
   } catch {
     return undefined;
   }
+};
+
+/**
+ * GET /v1/checks:capture-guidance — site-wide counts at capture start, read
+ * consistently by completion date. Withhold incomplete pre-migration history.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const getCaptureGuidance = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+  const rawStartedAt = event.queryStringParameters?.startedAt;
+  const checkId = event.queryStringParameters?.checkId;
+  const date = rawStartedAt ? new Date(rawStartedAt) : null;
+  if (
+    !rawStartedAt ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      rawStartedAt,
+    ) ||
+    !date ||
+    !Number.isFinite(date.getTime()) ||
+    !checkId ||
+    date.getTime() > Date.now() + 300000
+  ) {
+    return jsonResponse(400, { error: "Valid startedAt and checkId required" });
+  }
+  const readiness = await ddb.send(
+    new GetCommand({
+      TableName: dynamoTable,
+      Key: COMPLETION_MIGRATION_KEY,
+      ConsistentRead: true,
+    }),
+  );
+  if (readiness.Item?.status !== "ready") {
+    return jsonResponse(503, {
+      error: "Completion history migration pending",
+      code: "capture_guidance_not_ready",
+    });
+  }
+  const counts = await recentCompletionCounts(
+    ddb,
+    dynamoTable,
+    siteId,
+    date.toISOString(),
+    checkId,
+  );
+  return jsonResponse(200, { counts });
 };
 
 /**

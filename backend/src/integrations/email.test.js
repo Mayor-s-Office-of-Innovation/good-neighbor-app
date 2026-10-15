@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   sendManagerEnrollmentEmail,
   sendManagerSecurityNotification,
+  sendProviderManagerEnrollmentEmail,
   sendSetupCodeEmail,
 } from "./email.js";
 
@@ -157,14 +158,51 @@ describe("sendManagerEnrollmentEmail", () => {
     });
     const input = send.mock.calls[0][0].input;
     expect(input.Content.Simple.Subject.Data).toBe(
-      "[dev] Enroll as a Good Neighbor Site Manager",
+      "[dev] Activate your device for use with the Good Neighbor app",
     );
-    expect(input.Content.Simple.Body.Text.Data).toContain(enrollmentUrl);
-    expect(input.Content.Simple.Body.Text.Data).toContain("this Site only");
+    const text = input.Content.Simple.Body.Text.Data;
+    expect(text).toContain(enrollmentUrl);
+    expect(text).toContain(
+      "You've been assigned as a site manager for City Hall under the Good Neighbor policy.",
+    );
+    expect(text).toContain(
+      "runs in any smartphone, tablet, or desktop PC/Mac browser",
+    );
+    expect(text).toContain("enrolls one device for City Hall only");
+    expect(text).toContain("- The Good Neighbor app team -");
     expect(JSON.stringify(info.mock.calls)).not.toContain("secret-token");
     expect(JSON.stringify(info.mock.calls)).not.toContain(
       "manager@example.org",
     );
+  });
+});
+
+describe("sendProviderManagerEnrollmentEmail", () => {
+  it("describes provider-wide access and device activation", async () => {
+    const enrollmentUrl =
+      "https://goodneighborsf.org/#enrollment_grant=grant-1&enrollment_token=provider-token";
+    await sendProviderManagerEnrollmentEmail({
+      to: "manager@example.org",
+      managerName: "Alex Rivera",
+      providerName: "Community Partners",
+      siteCount: 2,
+      enrollmentUrl,
+      expiresAt: "2026-09-13T00:00:00.000Z",
+    });
+    const input = send.mock.calls[0][0].input;
+    expect(input.Content.Simple.Subject.Data).toBe(
+      "[dev] Activate your device for use with the Good Neighbor app",
+    );
+    const text = input.Content.Simple.Body.Text.Data;
+    expect(text).toContain(
+      "You've been assigned as a manager for Community Partners under the Good Neighbor policy.",
+    );
+    expect(text).toContain("the Provider had 2 active Sites");
+    expect(text).toContain(
+      "enrolls one device as a manager for Community Partners only",
+    );
+    expect(text).toContain("- The Good Neighbor app team -");
+    expect(JSON.stringify(info.mock.calls)).not.toContain("provider-token");
   });
 });
 
@@ -193,6 +231,22 @@ describe("sendManagerSecurityNotification", () => {
     expect(JSON.stringify(info.mock.calls)).not.toContain(
       "manager@example.org",
     );
+  });
+
+  it("directs unrecognized enrollments to the funding department by default", async () => {
+    await sendManagerSecurityNotification({
+      to: "manager@example.org",
+      managerName: "Alex Rivera",
+      siteName: "City Hall",
+      deviceLabel: "Manager tablet",
+      clientDescription: "Safari on iOS/iPadOS",
+      enrolledAt: "2026-09-13T00:00:00.000Z",
+    });
+    const text = send.mock.calls[0][0].input.Content.Simple.Body.Text.Data;
+    expect(text).toContain(
+      "Contact your funding department's program manager immediately to revoke this device.",
+    );
+    expect(text).not.toContain("City administrator");
   });
 
   it("sanitizes delivery failures without logging recipient or device context", async () => {

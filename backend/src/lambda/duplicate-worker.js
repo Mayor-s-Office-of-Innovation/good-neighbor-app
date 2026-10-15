@@ -1,3 +1,11 @@
+import { preparedRetention } from "../analysis/duplicates/prepared-retention.js";
+import { duplicateEvent } from "../analysis/duplicates/monitoring.js";
+import { ensureDuplicateHistory } from "../analysis/duplicates/history.js";
+import {
+  reconcileObservation,
+  taskForIssue,
+  siteReader,
+} from "../analysis/duplicates/links.js";
 // Dedicated SQS function: no normal analysis, guidance, or Bedrock imports.
 import {
   GetCommand,
@@ -6,14 +14,19 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
-import { getObjectBytes } from "../s3.js";
+import { getObjectBytes, headObject } from "../s3.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
   analysisRevision,
   observationId,
   projectionKey,
 } from "../analysis/duplicates/jobs.js";
-import { prepareImage } from "../analysis/duplicates/image-features.js";
+import { reusableImage } from "../analysis/duplicates/prepared-cache.js";
+import { latencyTracker } from "../analysis/duplicates/latency.js";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+const preparedStore = new S3Client(
+  process.env.AWS_ENDPOINT_URL_S3 ? { forcePathStyle: true } : {},
+);
 import {
   createComparisonClient,
   IMAGE_MATCHER_VERSION,
@@ -58,6 +71,7 @@ async function query(table, siteId, start, end) {
           ":end": `DUP_OBSERVATION#${end}#\uffff`,
         },
         ExclusiveStartKey: cursor,
+        ScanIndexForward: false,
       }),
     );
     items.push(...(page.Items ?? []));
@@ -70,15 +84,64 @@ async function query(table, siteId, start, end) {
  * @returns {Promise<Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue> & import("../analysis/duplicates/image-matcher.js").ImageObservation>}
  */
 async function loadImage(item) {
-  const object = await getObjectBytes({
-    bucket: process.env.S3_UPLOAD_BUCKET ?? "",
-    key: item.s3Key,
+  if (!item.s3Key) return /** @type {any} */ ({ ...item, image: undefined });
+  const bucket = process.env.S3_UPLOAD_BUCKET ?? "";
+  const metadata = await headObject({ bucket, key: item.s3Key });
+  const policy = preparedRetention(metadata.lastModified);
+  if (policy.expired) throw new Error("Comparison media retention expired");
+  const prepared = await reusableImage({
+    identity: `${bucket}:${item.s3Key}`,
+    contentType: item.contentType,
+    read: async (key) => {
+      if (!policy.cacheable) return undefined;
+      try {
+        const cached = JSON.parse(
+          (
+            await getObjectBytes({
+              bucket,
+              key: `duplicate-prepared/${key}.json`,
+            })
+          ).bytes.toString("utf8"),
+        );
+        return cached.sourceExpiresAt === policy.sourceExpiresAt &&
+          cached.expiresAt > Date.now()
+          ? cached
+          : undefined;
+      } catch (error) {
+        if (
+          error instanceof SyntaxError ||
+          (error instanceof Error &&
+            ["NoSuchKey", "NotFound"].includes(error.name))
+        )
+          return undefined;
+        throw error;
+      }
+    },
+    write: async (key, value) => {
+      if (!policy.cacheable) return;
+      await preparedStore.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: `duplicate-prepared/${key}.json`,
+          Body: JSON.stringify({
+            ...value,
+            sourceExpiresAt: policy.sourceExpiresAt,
+            expiresAt: Math.min(
+              Date.now() + 3 * 86400000,
+              policy.sourceExpiresAt,
+            ),
+          }),
+          ContentType: "application/json",
+        }),
+      );
+    },
+    load: async () => (await getObjectBytes({ bucket, key: item.s3Key })).bytes,
   });
-  if (object.bytes.length > 10 * 1024 * 1024)
-    throw new Error("Comparison image exceeds input limit");
   return /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue> & import("../analysis/duplicates/image-matcher.js").ImageObservation} */ ({
     ...item,
-    ...(await prepareImage(object.bytes, item.contentType)),
+    id: item.id,
+    revision: item.revision,
+    ...prepared,
   });
 }
 /** @type {import("aws-lambda").SQSHandler} */
@@ -87,19 +150,57 @@ export const handler = async (event) => {
   const table = process.env.DYNAMO_TABLE;
   if (!table || !process.env.DUPLICATE_ANALYZER_BASE_URL)
     throw new Error("Missing duplicate worker configuration");
-  const key = await getAnalyzerApiKey({
-    dynamoTable: table,
-    uploadBucket: process.env.S3_UPLOAD_BUCKET ?? "",
-    queueUrl: "unused",
-    analyzerApiKeySecretArn: process.env.DUPLICATE_ANALYZER_API_KEY_SECRET_ARN,
-  });
-  const compare = createComparisonClient({
-    baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL,
-    apiKey: key,
-  });
+  /** @type {import("../analysis/duplicates/image-matcher.js").Compare|undefined} */
+  let comparisonClient;
   for (const record of event.Records) {
+    const timing = latencyTracker();
+    const sent = Number(record.attributes?.SentTimestamp);
+    if (Number.isFinite(sent)) timing.add("queueMs", Date.now() - sent);
     try {
       const job = JSON.parse(record.body);
+      if (job.reconcileOnly) {
+        await reconcileObservation(
+          table,
+          job.siteId,
+          job.checkId,
+          job.artifactId,
+        );
+        const current = await get(table, {
+          pk: `SITE#${job.siteId}`,
+          sk: `CHECK#${job.checkId}#ANALYSIS#${job.artifactId}`,
+        });
+        const time = Date.parse(
+          current?.generatedAt ?? current?.analyzedAt ?? "",
+        );
+        if (Number.isFinite(time))
+          for (const peer of await query(
+            table,
+            job.siteId,
+            new Date(time).toISOString(),
+            new Date(time + LOOKBACK_MS).toISOString(),
+          )) {
+            if (
+              peer.checkId !== job.checkId ||
+              peer.artifactId !== job.artifactId
+            )
+              await reconcileObservation(
+                table,
+                job.siteId,
+                peer.checkId,
+                peer.artifactId,
+              );
+          }
+        continue;
+      }
+      if (job.prepareOnly && job.siteId && job.checkId && job.artifactId) {
+        const artifact = await get(table, {
+          pk: `SITE#${job.siteId}`,
+          sk: `CHECK#${job.checkId}#ART#${job.artifactId}`,
+        });
+        if (artifact?.s3Key) await loadImage(artifact);
+        timing.mark("preparationCompletedMs");
+        continue;
+      }
       if (!job.siteId || !job.checkId || !job.artifactId || !job.revision)
         throw new Error("Invalid duplicate job");
       if (job.lifecycleChange) {
@@ -138,7 +239,7 @@ export const handler = async (event) => {
                 ...resultKey,
                 status: "pending",
                 possibleDuplicate: null,
-                shadow: true,
+                shadow: false,
                 sourceRevision: peer.revision,
                 invalidatedAt: new Date().toISOString(),
               },
@@ -176,10 +277,14 @@ export const handler = async (event) => {
         analysisRevision(analysis) !== job.revision
       )
         continue;
-      if (!artifact.s3Key) continue; // Text-only behavior is outside this experiment.
-      const observed = Date.parse(artifact.capturedAt ?? "");
+      const analyzedAt = Date.parse(analysis.analyzedAt ?? "");
+      if (Number.isFinite(analyzedAt))
+        timing.add("analysisToWorkerMs", Date.now() - analyzedAt);
+      const observed = Date.parse(
+        analysis.generatedAt ?? analysis.analyzedAt ?? "",
+      );
       if (!Number.isFinite(observed))
-        throw new Error("Capture time unavailable");
+        throw new Error("Issue generation time unavailable");
       const coverage = await get(table, {
         pk: analysisKey.pk,
         sk: "DUP_COVERAGE",
@@ -189,26 +294,19 @@ export const handler = async (event) => {
         !Number.isFinite(Date.parse(coverage.coverageFrom)) ||
         observed - LOOKBACK_MS < Date.parse(coverage.coverageFrom)
       ) {
-        await ddb.send(
-          new PutCommand({
-            TableName: table,
-            Item: {
-              pk: analysisKey.pk,
-              sk: `DUP_RESULT#${observationId(job.checkId, job.artifactId)}#${job.revision}`,
-              status: "insufficient_evidence",
-              possibleDuplicate: null,
-              shadow: true,
-              sourceRevision: job.revision,
-              reason: "Five-day candidate history is incomplete",
-              evaluatedAt: new Date().toISOString(),
-            },
-          }),
+        await ensureDuplicateHistory(
+          table,
+          job.siteId,
+          new Date(observed - LOOKBACK_MS).toISOString(),
         );
-        continue;
       }
       const id = observationId(job.checkId, job.artifactId);
       const projection = {
-        ...projectionKey(job.siteId, artifact.capturedAt, id),
+        ...projectionKey(
+          job.siteId,
+          analysis.generatedAt ?? analysis.analyzedAt,
+          id,
+        ),
         id,
         siteId: job.siteId,
         sourceId: id,
@@ -217,8 +315,10 @@ export const handler = async (event) => {
         revision: job.revision,
         observedAt: new Date(observed).toISOString(),
         availableAt: analysis.analyzedAt,
-        contentType: artifact.contentType,
-        s3Key: artifact.s3Key,
+        ...(artifact.capturedAt ? { capturedAt: artifact.capturedAt } : {}),
+        ...(artifact.s3Key
+          ? { contentType: artifact.contentType, s3Key: artifact.s3Key }
+          : {}),
         conditions: (analysis.concerns ?? [])
           .filter(
             (
@@ -230,6 +330,7 @@ export const handler = async (event) => {
               /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
             ) => ({
               id: c.conditionId,
+              category: c.category,
               description: c.explanation,
             }),
           ),
@@ -245,7 +346,7 @@ export const handler = async (event) => {
               sk: `DUP_RESULT#${id}#${job.revision}`,
               status: "insufficient_evidence",
               possibleDuplicate: null,
-              shadow: true,
+              shadow: false,
               sourceRevision: job.revision,
               reason: "Source is physically resolved",
               evaluatedAt: new Date().toISOString(),
@@ -254,6 +355,26 @@ export const handler = async (event) => {
         );
         continue;
       }
+      const removeResolved = async (/** @type {any} */ observation) => {
+        const kept = [];
+        for (const condition of observation.conditions ?? []) {
+          const task = await taskForIssue(
+            job.siteId,
+            { observationId: observation.id, conditionId: condition.id },
+            siteReader(table, job.siteId),
+          );
+          if (!task?.resolvedAt || Date.parse(task.resolvedAt) > observed)
+            kept.push(condition);
+        }
+        return { ...observation, conditions: kept };
+      };
+      const source = await loadImage(await removeResolved(projection));
+      if (source.fingerprint)
+        Object.assign(projection, {
+          fingerprint: source.fingerprint,
+          perceptualHash: source.perceptualHash,
+        });
+      timing.mark("sourcePreparationCompletedMs");
       const projectionCondition = prior
         ? "revision = :revision"
         : "attribute_not_exists(sk)";
@@ -317,24 +438,81 @@ export const handler = async (event) => {
           actual.status === "analyzed" &&
           analysisRevision(actual) === candidate.revision
         )
-          candidates.push(candidate);
+          candidates.push({
+            ...candidate,
+            observedAt: actual.generatedAt ?? actual.analyzedAt,
+            availableAt: actual.analyzedAt,
+            conditions: (actual.concerns ?? [])
+              .filter(
+                (
+                  /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
+                ) => c.rating > 0 && c.conditionId,
+              )
+              .map(
+                (
+                  /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
+                ) => ({
+                  id: c.conditionId,
+                  category: c.category,
+                  description: c.explanation,
+                }),
+              ),
+          });
       }
-      const eligible = eligibleImages(
-        { ...projection, availableAt: new Date().toISOString() },
+      const preliminary = eligibleImages(
+        {
+          ...projection,
+          conditions: source.conditions,
+          availableAt: new Date().toISOString(),
+        },
         /** @type {Omit<import("../analysis/duplicates/image-matcher.js").ImageObservation,"image">[]} */ (
           candidates
         ),
       );
-      const source = await loadImage(projection);
+      const eligible = (
+        await Promise.all(preliminary.map(removeResolved))
+      ).filter((c) => c.conditions.length);
+      timing.mark("retrievalCompletedMs");
+      /** @type {Awaited<ReturnType<typeof loadImage>>[]} */
       const loaded = [];
-      for (const candidate of eligible) loaded.push(await loadImage(candidate));
+      // Prepare candidates only when reached; early matches avoid remaining S3/image work.
+      for (const candidate of eligible)
+        loaded.push(
+          /** @type {Awaited<ReturnType<typeof loadImage>>} */ ({
+            ...candidate,
+            ...(candidate.s3Key
+              ? { image: { content_type: "image/jpeg", base64: "" } }
+              : {}),
+          }),
+        );
       const resultKey = {
         pk: projection.pk,
         sk: `DUP_RESULT#${id}#${job.revision}`,
       };
+      let comparisonCacheHits = 0;
+      let modelId = "";
+      let comparisonVersion = "";
       const cachedCompare = async (
         /** @type {import("../analysis/duplicates/image-matcher.js").ComparisonRequest} */ request,
       ) => {
+        await Promise.all(
+          request.candidates.map(async (item) => {
+            const candidate = loaded.find((c) => c.id === item.id);
+            if (!candidate) throw new Error("Unknown preparation target");
+            if (candidate.s3Key && !candidate.image?.base64) {
+              const preparationStarted = Date.now();
+              try {
+                Object.assign(candidate, await loadImage(candidate));
+              } finally {
+                timing.add(
+                  "candidatePreparationMs",
+                  Date.now() - preparationStarted,
+                );
+              }
+            }
+            item.image = candidate.image;
+          }),
+        );
         const { createHash } = await import("node:crypto");
         const digest = createHash("sha256")
           .update(
@@ -347,8 +525,29 @@ export const handler = async (event) => {
           .digest("hex");
         const cacheKey = { pk: projection.pk, sk: `DUP_COMPARISON#${digest}` };
         const cached = await get(table, cacheKey);
-        if (cached?.response) return cached.response;
-        const response = await compare(request);
+        if (cached?.response) {
+          comparisonCacheHits++;
+          modelId = cached.response.model?.model_id;
+          comparisonVersion = cached.response.comparison_version;
+          return cached.response;
+        }
+        if (!comparisonClient) {
+          const key = await getAnalyzerApiKey({
+            dynamoTable: table,
+            uploadBucket: process.env.S3_UPLOAD_BUCKET ?? "",
+            queueUrl: "unused",
+            analyzerApiKey: process.env.DUPLICATE_ANALYZER_API_KEY,
+            analyzerApiKeySecretArn:
+              process.env.DUPLICATE_ANALYZER_API_KEY_SECRET_ARN,
+          });
+          comparisonClient = createComparisonClient({
+            baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL ?? "",
+            apiKey: key,
+          });
+        }
+        const response = await comparisonClient(request);
+        modelId = response.model.model_id;
+        comparisonVersion = response.comparison_version;
         await ddb.send(
           new PutCommand({
             TableName: table,
@@ -361,6 +560,8 @@ export const handler = async (event) => {
         );
         return response;
       };
+      const published = new Set();
+      const monitoredComparisons = new Set();
       const result = await matchImages({
         source:
           /** @type {import("../analysis/duplicates/image-matcher.js").ImageObservation} */ (
@@ -371,31 +572,187 @@ export const handler = async (event) => {
             loaded
           ),
         compare: cachedCompare,
+        onProgress: async (progress) => {
+          for (const row of progress.comparisons) {
+            if (monitoredComparisons.has(row.candidate_id)) continue;
+            monitoredComparisons.add(row.candidate_id);
+            const target = loaded.find((c) => c.id === row.candidate_id);
+            duplicateEvent("comparison", {
+              siteId: job.siteId,
+              observationId: id,
+              candidateId: row.candidate_id,
+              modelId,
+              comparisonVersion,
+              matcherVersion: IMAGE_MATCHER_VERSION,
+              outcome:
+                row.verdict === "same_issue"
+                  ? "matched"
+                  : row.verdict === "different_issue"
+                    ? "no_match"
+                    : "uncertain",
+              confidence: row.confidence,
+              evidenceKind:
+                source.image && target?.image
+                  ? "image"
+                  : source.image || target?.image
+                    ? "mixed"
+                    : "text",
+              phase: progress.phase,
+              elapsedMs: progress.elapsedMs,
+            });
+          }
+          if (progress.phase === "fast") timing.mark("fastPhaseCompletedMs");
+          for (const issue of progress.conditionResults) {
+            if (
+              issue.possibleDuplicate !== true ||
+              !issue.duplicateOf ||
+              published.has(issue.conditionId)
+            )
+              continue;
+            const target = loaded.find(
+              (c) => c.id === issue.duplicateOf?.observationId,
+            );
+            const fresh = await get(table, analysisKey);
+            if (!(await get(table, artifactKey)))
+              throw new Error("Source artifact removed");
+            if (!target || !fresh || analysisRevision(fresh) !== job.revision)
+              throw new Error("Stale source progress");
+            const targetKey = {
+              pk: projection.pk,
+              sk: `CHECK#${target.checkId}#ANALYSIS#${target.artifactId}`,
+            };
+            const targetArtifactKey = {
+              pk: projection.pk,
+              sk: `CHECK#${target.checkId}#ART#${target.artifactId}`,
+            };
+            const actual = await get(table, targetKey);
+            if (!(await get(table, targetArtifactKey)))
+              throw new Error("Target artifact removed");
+            if (!actual || analysisRevision(actual) !== target.revision)
+              throw new Error("Stale target progress");
+            await ddb.send(
+              new TransactWriteCommand({
+                TransactItems: [
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: artifactKey,
+                      ConditionExpression: "attribute_exists(sk)",
+                    },
+                  },
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: targetArtifactKey,
+                      ConditionExpression: "attribute_exists(sk)",
+                    },
+                  },
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: analysisKey,
+                      ConditionExpression:
+                        "analysisId = :id AND concerns = :concerns",
+                      ExpressionAttributeValues: {
+                        ":id": fresh.analysisId,
+                        ":concerns": fresh.concerns,
+                      },
+                    },
+                  },
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: { pk: projection.pk, sk: projection.sk },
+                      ConditionExpression:
+                        "revision = :revision AND attribute_not_exists(resolvedAt)",
+                      ExpressionAttributeValues: { ":revision": job.revision },
+                    },
+                  },
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: targetKey,
+                      ConditionExpression:
+                        "analysisId = :id AND concerns = :concerns",
+                      ExpressionAttributeValues: {
+                        ":id": actual.analysisId,
+                        ":concerns": actual.concerns,
+                      },
+                    },
+                  },
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: { pk: target.pk, sk: target.sk },
+                      ConditionExpression:
+                        "revision = :revision AND attribute_not_exists(resolvedAt)",
+                      ExpressionAttributeValues: {
+                        ":revision": target.revision,
+                      },
+                    },
+                  },
+                  {
+                    Put: {
+                      TableName: table,
+                      Item: {
+                        pk: projection.pk,
+                        sk: `DUP_ISSUE#${id}#${job.revision}#${issue.conditionId}`,
+                        sourceRevision: job.revision,
+                        ...issue,
+                        targetProjectionKey: { pk: target.pk, sk: target.sk },
+                        targetAnalysisKey: targetKey,
+                        targetArtifactKey,
+                        updatedAt: new Date().toISOString(),
+                        latency: timing.snapshot(),
+                        shadow: false,
+                      },
+                    },
+                  },
+                ],
+              }),
+            );
+            await reconcileObservation(
+              table,
+              job.siteId,
+              job.checkId,
+              job.artifactId,
+            );
+            published.add(issue.conditionId);
+            if (published.size === 1) {
+              timing.mark("firstPositivePublishedMs");
+              if (Number.isFinite(analyzedAt))
+                timing.add(
+                  "analysisToFirstPositiveMs",
+                  Date.now() - analyzedAt,
+                );
+            }
+          }
+        },
       });
-      if (result.status === "failed") {
-        await ddb.send(
-          new PutCommand({
-            TableName: table,
-            Item: {
-              ...resultKey,
-              ...result,
-              evaluatedAt: new Date().toISOString(),
-              shadow: true,
-            },
-          }),
-        );
-        throw new Error("Duplicate comparison failed");
-      }
+      timing.mark("comparisonCompletedMs");
       // Re-read revisions and physical-resolution state immediately before publishing.
       const freshSource = await get(table, analysisKey);
-      if (!freshSource || analysisRevision(freshSource) !== job.revision)
+      if (
+        !freshSource ||
+        analysisRevision(freshSource) !== job.revision ||
+        !(await get(table, artifactKey))
+      )
         continue;
       const sourceProjection = await get(table, {
         pk: projection.pk,
         sk: projection.sk,
       });
       if (sourceProjection?.resolvedAt) continue;
-      for (const candidate of loaded) {
+      for (const candidate of loaded.filter((c) =>
+        result.comparisons.some((r) => r.candidate_id === c.id),
+      )) {
+        if (
+          !(await get(table, {
+            pk: projection.pk,
+            sk: `CHECK#${candidate.checkId}#ART#${candidate.artifactId}`,
+          }))
+        )
+          throw new Error("Candidate artifact removed");
         const fresh = await get(table, {
           pk: projection.pk,
           sk: `CHECK#${candidate.checkId}#ANALYSIS#${candidate.artifactId}`,
@@ -416,7 +773,7 @@ export const handler = async (event) => {
       const targets = loaded.filter((candidate) =>
         result.suggestions.some((row) => row.candidate_id === candidate.id),
       );
-      if (targets.length > 48)
+      if (targets.length > 30)
         throw new Error(
           "Too many atomic target checks; leave evaluation pending",
         );
@@ -428,6 +785,16 @@ export const handler = async (event) => {
         if (!actual || analysisRevision(actual) !== target.revision)
           throw new Error("Target revision changed");
         targetChecks.push(
+          {
+            ConditionCheck: {
+              TableName: table,
+              Key: {
+                pk: projection.pk,
+                sk: `CHECK#${target.checkId}#ART#${target.artifactId}`,
+              },
+              ConditionExpression: "attribute_exists(sk)",
+            },
+          },
           {
             ConditionCheck: {
               TableName: table,
@@ -460,6 +827,13 @@ export const handler = async (event) => {
             {
               ConditionCheck: {
                 TableName: table,
+                Key: artifactKey,
+                ConditionExpression: "attribute_exists(sk)",
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: table,
                 Key: { pk: projection.pk, sk: projection.sk },
                 ConditionExpression:
                   "revision = :revision AND attribute_not_exists(resolvedAt)",
@@ -484,18 +858,111 @@ export const handler = async (event) => {
                 Item: {
                   ...resultKey,
                   ...result,
-                  candidateRevisions: loaded.map((c) => ({
-                    id: c.id,
-                    revision: c.revision,
-                  })),
+                  processingState:
+                    result.status === "failed" ? "retrying" : "complete",
+                  latency: timing.snapshot(),
+                  candidateRevisions: loaded.map(
+                    (
+                      /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
+                    ) => ({
+                      id: c.id,
+                      revision: c.revision,
+                    }),
+                  ),
                   evaluatedAt: new Date().toISOString(),
-                  shadow: true,
+                  shadow: false,
                 },
               },
             },
           ],
         }),
       );
+      await reconcileObservation(
+        table,
+        job.siteId,
+        job.checkId,
+        job.artifactId,
+      );
+      timing.mark("resultPublishedMs");
+      for (const issue of result.conditionResults)
+        duplicateEvent(
+          "issue_result",
+          {
+            siteId: job.siteId,
+            observationId: id,
+            conditionId: issue.conditionId,
+            candidateId: issue.duplicateOf?.observationId,
+            candidateConditionId: issue.duplicateOf?.conditionId,
+            matcherVersion: IMAGE_MATCHER_VERSION,
+            modelId,
+            outcome:
+              issue.possibleDuplicate === true
+                ? "matched"
+                : issue.possibleDuplicate === false
+                  ? "no_match"
+                  : "pending",
+            confidence: issue.possibleDuplicate === true ? "high" : undefined,
+          },
+          [
+            {
+              name:
+                issue.possibleDuplicate === true
+                  ? "DuplicateMatchedIssues"
+                  : issue.possibleDuplicate === false
+                    ? "DuplicateNoMatchIssues"
+                    : "DuplicatePendingIssues",
+              value: 1,
+            },
+          ],
+        );
+      const snapshot = timing.snapshot();
+      duplicateEvent(
+        "search_complete",
+        {
+          siteId: job.siteId,
+          observationId: id,
+          matcherVersion: IMAGE_MATCHER_VERSION,
+          modelId,
+          outcome: "complete",
+          totalMs: snapshot.totalMs,
+          failedCandidates: result.failedCandidateIds.length,
+          candidateCount: loaded.length,
+          cacheHits: comparisonCacheHits,
+          firstMatchMs: snapshot.firstPositivePublishedMs,
+        },
+        [
+          { name: "DuplicateSearchCompleted", value: 1 },
+          {
+            name: "DuplicateSearchMs",
+            value: snapshot.totalMs,
+            unit: "Milliseconds",
+          },
+          { name: "DuplicateComparisons", value: result.comparisons.length },
+          {
+            name: "DuplicateFailedCandidates",
+            value: result.failedCandidateIds.length,
+          },
+          { name: "DuplicateComparisonCacheHits", value: comparisonCacheHits },
+          {
+            name: "DuplicatePreparationCacheHits",
+            value: [source, ...loaded].filter((c) => c.preparationCacheHit)
+              .length,
+          },
+          ...(Number.isFinite(snapshot.firstPositivePublishedMs)
+            ? [
+                {
+                  name: "DuplicateFirstMatchMs",
+                  value: snapshot.firstPositivePublishedMs,
+                  unit: /** @type {const} */ ("Milliseconds"),
+                },
+              ]
+            : []),
+        ],
+      );
+      if (Number.isFinite(analyzedAt))
+        timing.add("analysisToResultPublishedMs", Date.now() - analyzedAt);
+      if (result.status === "failed")
+        throw new Error("Duplicate comparison failed");
       // Reconcile peers arriving concurrently or late. Each peer is revisited only
       // when its evaluation did not include this revision; no circular requeue loop.
       const peers = await query(
@@ -520,8 +987,15 @@ export const handler = async (event) => {
               /** @type {Record<string, import("@aws-sdk/util-dynamodb").NativeAttributeValue>} */ c,
             ) => c.id === id && c.revision === job.revision,
           )
-        )
+        ) {
+          await reconcileObservation(
+            table,
+            job.siteId,
+            peer.checkId,
+            peer.artifactId,
+          );
           continue;
+        }
         await sqs.send(
           new SendMessageCommand({
             QueueUrl: process.env.DUPLICATE_QUEUE_URL,
@@ -536,6 +1010,36 @@ export const handler = async (event) => {
       }
     } catch {
       failures.push({ itemIdentifier: record.messageId });
+    } finally {
+      const snapshot = timing.snapshot();
+      duplicateEvent(
+        "worker_complete",
+        {
+          outcome: failures.some((f) => f.itemIdentifier === record.messageId)
+            ? "retrying"
+            : "complete",
+          queueMs: snapshot.queueMs,
+          totalMs: snapshot.totalMs,
+        },
+        [
+          { name: "DuplicateWorkerAttempts", value: 1 },
+          {
+            name: "DuplicateWorkerFailures",
+            value: failures.some((f) => f.itemIdentifier === record.messageId)
+              ? 1
+              : 0,
+          },
+          ...(Number.isFinite(snapshot.queueMs)
+            ? [
+                {
+                  name: "DuplicateQueueMs",
+                  value: snapshot.queueMs,
+                  unit: /** @type {const} */ ("Milliseconds"),
+                },
+              ]
+            : []),
+        ],
+      );
     }
   }
   return { batchItemFailures: failures };

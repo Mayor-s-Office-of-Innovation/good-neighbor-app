@@ -82,6 +82,23 @@ describe("buildProxyEvent", () => {
     );
   });
 
+  it("supplies a complete local administrator profile for letter generation", () => {
+    const event = buildProxyEvent({
+      method: "POST",
+      path: "/admin/v1/sites/site-1/terms",
+      headers: { "x-debug-groups": "compliance-supervisor" },
+      body: "{}",
+      defaultSub: "local-admin",
+    });
+    expect(event.requestContext.authorizer.jwt.claims).toMatchObject({
+      email: "local.supervisor@example.org",
+      given_name: "Local",
+      family_name: "Supervisor",
+      phone_number: "+14155550199",
+      "custom:department": "Department of Public Health (DPH)",
+    });
+  });
+
   it("carries method/path and a v2 shape the handlers can read", () => {
     const event = buildProxyEvent({
       method: "POST",

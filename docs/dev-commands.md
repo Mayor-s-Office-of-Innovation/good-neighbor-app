@@ -1,6 +1,6 @@
 # Developer command reference
 
-**Prereqs:** Node 22 LTS+, npm 10+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+**Prereqs:** Node 24 LTS+, npm 11+. Terraform 1.9+ and pre-commit for infra work; AWS access is
 for approved operators only — developers work through Git and CI. The backend local harness also
 needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
 `brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
@@ -135,7 +135,7 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 MinIO is the local stand-in for S3, so the presigned-PUT upload leg and the analyze worker's
 read-back work without real AWS. On **first run** `local:minio` downloads the official MinIO
 binary into `backend/.local/` (git-ignored, ~100 MB) — allow a moment. `ensureLocalInfra()` then
-creates the `S3_UPLOAD_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
+creates the `S3_UPLOAD_BUCKET` and durable `S3_COMPLIANCE_LETTER_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
 is set **globally** by the launcher via `MINIO_API_CORS_ALLOW_ORIGIN` (MinIO returns 501 for the
 per-bucket `PutBucketCors` API, so bucket-level CORS is not used). Browse uploaded objects at the
 console: **http://localhost:9001** (log in with the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`

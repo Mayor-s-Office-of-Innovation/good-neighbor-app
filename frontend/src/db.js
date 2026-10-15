@@ -175,6 +175,35 @@ export async function setSite(name, meta = {}) {
   });
   return record;
 }
+
+/**
+ * Persist server-created Site binding metadata without inventing local token
+ * state. Selecting one later exchanges the current physical-device session
+ * for that binding through `/device-bindings/select`.
+ * @param {Array<{siteId:string,siteName:string,bindingId:string,accessLevel?:"general"|"manager"}>} bindings
+ * @param {string} physicalDeviceId
+ */
+export async function saveDiscoveredBindings(bindings, physicalDeviceId) {
+  if (!physicalDeviceId || !Array.isArray(bindings)) return;
+  await tx("site", "readwrite", async (os) => {
+    for (const binding of bindings) {
+      if (!binding?.siteId || !binding.bindingId) continue;
+      const id = bindingKey(binding.siteId);
+      const existing = await reqToPromise(os.get(id));
+      os.put({
+        ...(existing || {}),
+        id,
+        siteId: binding.siteId,
+        name: binding.siteName || existing?.name || binding.siteId,
+        bindingId: binding.bindingId,
+        deviceId: binding.bindingId,
+        physicalDeviceId,
+        accessLevel: binding.accessLevel || "manager",
+        boundAt: existing?.boundAt || new Date().toISOString(),
+      });
+    }
+  });
+}
 /**
  * Fields owned by the device binding (setSite at registration) and the session
  * (updateSiteSession). Site *settings* — the GET /v1/site response callers

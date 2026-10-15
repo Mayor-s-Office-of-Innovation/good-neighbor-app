@@ -232,21 +232,48 @@ async function resolveBinding(pointer, physicalDeviceId) {
     return null;
   }
   if (binding.accessLevel === "manager") {
-    const membershipResult = await ddb.send(
-      new GetCommand({
-        TableName: tableName,
-        Key: {
-          pk: `SITE#${binding.siteId}`,
-          sk: `MANAGER_MEMBERSHIP#${binding.membershipId}`,
-        },
-      }),
-    );
-    if (
-      membershipResult.Item?.status !== "active" ||
-      Number(membershipResult.Item?.generation ?? 0) !==
-        Number(binding.membershipGeneration ?? -1)
-    ) {
-      return null;
+    if (binding.authorityScope === "provider") {
+      if (!binding.providerId || site.providerId !== binding.providerId) {
+        return null;
+      }
+      const memberships = await ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `PROVIDER#${binding.providerId}`,
+            ":prefix": "PROVIDER_MANAGER#",
+          },
+        }),
+      );
+      const membership = (memberships.Items ?? []).find(
+        (item) =>
+          String(item.membershipId) === String(binding.providerMembershipId),
+      );
+      if (
+        membership?.status !== "active" ||
+        Number(membership.generation ?? 0) !==
+          Number(binding.providerMembershipGeneration ?? -1)
+      ) {
+        return null;
+      }
+    } else {
+      const membershipResult = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `SITE#${binding.siteId}`,
+            sk: `MANAGER_MEMBERSHIP#${binding.membershipId}`,
+          },
+        }),
+      );
+      if (
+        membershipResult.Item?.status !== "active" ||
+        Number(membershipResult.Item?.generation ?? 0) !==
+          Number(binding.membershipGeneration ?? -1)
+      ) {
+        return null;
+      }
     }
   }
   return {

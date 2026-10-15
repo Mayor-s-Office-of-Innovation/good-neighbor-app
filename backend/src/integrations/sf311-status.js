@@ -328,6 +328,27 @@ export function serviceRequestClosureState(body, srNum) {
   return summaryStatus && STATUS_NAMES[summaryStatus] ? "open" : "unknown";
 }
 
+/**
+ * Read the observed HUB closure reason, preferring the latest closure update
+ * over a potentially stale summary. An absent reason stays unspecified.
+ * @param {unknown} body
+ * @param {string} srNum
+ * @returns {string}
+ */
+export function serviceRequestClosureReason(body, srNum) {
+  const record = findServiceRequest(body, srNum);
+  if (!record) return "";
+  const updates = requestUpdates(record)
+    .filter((item) => item && typeof item === "object")
+    .map((item) => /** @type {Record<string, unknown>} */ (item))
+    .filter((update) => first(update, "UpdateType", "update_type") === "11")
+    .sort((a, b) => updateDate(b).localeCompare(updateDate(a)));
+  if (updates.length) {
+    return first(updates[0], "NumericSubType", "numeric_sub_type");
+  }
+  return first(record, "ClosedReason", "ClosedReasonCode", "closed_reason");
+}
+
 /** Normalize a HUB record into the app's stable, PII-free ticket-detail contract. */
 /** @param {{record: Record<string, unknown>, task: Record<string, any>, srNum: string, now?: Date}} params */
 export function normalizeSf311Detail({

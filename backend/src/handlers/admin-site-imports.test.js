@@ -1,10 +1,8 @@
 import {
   BatchWriteCommand,
   GetCommand,
-  PutCommand,
   QueryCommand,
   TransactWriteCommand,
-  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,8 +13,7 @@ const { send, geocodeAddress } = vi.hoisted(() => ({
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../integrations/census-geocoder.js", () => ({
   GeocodingError: class GeocodingError extends Error {
-    /** @param {string} code */
-    constructor(code) {
+    /** @param {string} code */ constructor(code) {
       super(code);
       this.code = code;
     }
@@ -24,712 +21,403 @@ vi.mock("../integrations/census-geocoder.js", () => ({
   geocodeAddress,
 }));
 
-const {
-  applySiteImport,
-  getSiteImport,
-  getSiteImportConflicts,
-  listSiteImports,
-  previewSiteImport,
-} = await import("./admin-site-imports.js");
+const { applySiteImport, getSiteImportConflicts, previewSiteImport } =
+  await import("./admin-site-imports.js");
 
-const csv = [
-  "Provider,Program,Site name,Site address,Contact first name,Contact last name,Contact phone,Contact extension,Contact email",
-  "Provider One,Program One,Main Site,1 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,123,sam@example.org",
-].join("\n");
+const headers = [
+  "Provider",
+  "Program",
+  "Site name",
+  "Site address",
+  "Site type",
+  "Department",
+  "Site manager first name",
+  "Site manager last name",
+  "Site manager phone",
+  "Site manager extension",
+  "Site manager email",
+  "Program manager first name",
+  "Program manager last name",
+  "Program manager phone",
+  "Program manager extension",
+  "Program manager department",
+  "Program manager email",
+  "Provider manager first name",
+  "Provider manager last name",
+  "Provider manager phone",
+  "Provider manager extension",
+  "Provider manager email",
+];
+const baseValues = [
+  "Provider One",
+  "Program One",
+  "Main Site",
+  "1 Main St San Francisco CA 94102",
+  "Shelter",
+  "Department of Public Health (DPH)",
+  "Sam",
+  "Lee",
+  "415-555-0100",
+  "123",
+  "sam@example.org",
+  "Pat",
+  "Manager",
+  "415-555-0110",
+  "",
+  "Department of Public Health (DPH)",
+  "pat.manager@sfgov.org",
+  "Priya",
+  "Provider",
+  "415-555-0120",
+  "",
+  "priya@provider.org",
+];
 
 beforeEach(() => {
   send.mockReset();
+  send.mockResolvedValue({ Items: [] });
   geocodeAddress.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-verifier-secret");
 });
 
 describe("Site CSV import", () => {
-  it("previews valid rows without applying master-data writes", async () => {
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
+  it("requires the revised headers and previews all relationships", async () => {
     const response = await call(
       previewSiteImport,
-      event({ fileName: "sites.csv", csv }),
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
     );
     expect(response.statusCode).toBe(201);
-    expect(JSON.parse(String(response.body)).counts).toEqual({
-      create: 1,
+    const body = JSON.parse(String(response.body));
+    expect(body.counts).toEqual({
+      create: 0,
       reuse: 0,
-      acceptable: 0,
+      acceptable: 1,
       conflict: 0,
       invalid: 0,
     });
-    expect(send.mock.calls[3][0]).toBeInstanceOf(BatchWriteCommand);
-    expect(
-      send.mock.calls.some(
-        ([command]) => command instanceof TransactWriteCommand,
-      ),
-    ).toBe(false);
+    expect(body.rows[0].source).toMatchObject({
+      "Site type": "Shelter",
+      "Program manager email": "pat.manager@sfgov.org",
+      "Provider manager email": "priya@provider.org",
+    });
+    expect(send.mock.calls.at(-1)?.[0]).toBeInstanceOf(BatchWriteCommand);
   });
 
-  it("blocks structurally contradictory duplicate Site rows", async () => {
-    const duplicate = `${csv}\nProvider Two,Program One,Main Site,1 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,123,sam@example.org`;
+  it("rejects the old Contact headers", async () => {
+    const oldCsv = [
+      "Provider,Program,Site name,Site address,Contact first name,Contact last name,Contact phone,Contact extension,Contact email",
+      "Provider One,Program One,Main Site,1 Main St,Sam,Lee,,,sam@example.org",
+    ].join("\n");
     const response = await call(
       previewSiteImport,
-      event({ fileName: "sites.csv", csv: duplicate }),
+      event({ fileName: "sites.csv", csv: oldCsv }),
     );
     expect(response.statusCode).toBe(400);
-    expect(JSON.parse(String(response.body)).error).toBe(
-      "contradictory_duplicate_rows",
-    );
+    expect(JSON.parse(String(response.body)).error).toBe("invalid_headers");
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("allows the same Site name at different addresses", async () => {
-    const twoAddresses = `${csv}\nProvider One,Program One,Main Site,2 Main St San Francisco CA 94102,Sam,Lee,415-555-0100,123,sam@example.org`;
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
+  it("accepts repeated Site rows and accumulates different managers", async () => {
+    const second = [...baseValues];
+    second[6] = "Taylor";
+    second[7] = "Jones";
+    second[10] = "taylor@example.org";
+    second[11] = "Alex";
+    second[16] = "alex.manager@sfgov.org";
+    second[17] = "Quinn";
+    second[21] = "quinn@provider.org";
     const response = await call(
       previewSiteImport,
-      event({ fileName: "sites.csv", csv: twoAddresses }),
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues, second]) }),
     );
-
-    expect(response.statusCode).toBe(201);
-    expect(JSON.parse(String(response.body)).counts.create).toBe(2);
-  });
-
-  it("reads every catalog query page before planning", async () => {
-    send
-      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { pk: "next" } })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv }),
-    );
-
-    expect(response.statusCode).toBe(201);
-    expect(send.mock.calls[3][0].input.ExclusiveStartKey).toEqual({
-      pk: "next",
-    });
-  });
-
-  it("allows a blank Contact extension value", async () => {
-    const withoutExtension = csv.replace(
-      "415-555-0100,123,sam@example.org",
-      "415-555-0100,,sam@example.org",
-    );
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv: withoutExtension }),
-    );
-
-    expect(response.statusCode).toBe(201);
     const body = JSON.parse(String(response.body));
-    expect(body.counts.acceptable).toBe(1);
-    expect(body.rows[0]).toMatchObject({
-      classification: "acceptable",
-      reasonCode: "missing_optional_value",
-      existingValue: "Contact extension",
-    });
-  });
-
-  it("allows a blank Contact phone value", async () => {
-    const withoutPhone = csv.replace(
-      "415-555-0100,123,sam@example.org",
-      ",123,sam@example.org",
-    );
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv: withoutPhone }),
-    );
-
     expect(response.statusCode).toBe(201);
-    const body = JSON.parse(String(response.body));
-    expect(body.counts.acceptable).toBe(1);
-    expect(body.rows[0]).toMatchObject({
-      classification: "acceptable",
-      reasonCode: "missing_optional_value",
-      existingValue: "Contact phone",
-    });
-  });
-
-  it("marks a row missing both optional phone fields as acceptable", async () => {
-    const withoutPhoneFields = csv.replace(
-      "415-555-0100,123,sam@example.org",
-      ",,sam@example.org",
-    );
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv: withoutPhoneFields }),
-    );
-
-    const body = JSON.parse(String(response.body));
-    expect(body.counts.acceptable).toBe(1);
-    expect(body.rows[0]).toMatchObject({
-      classification: "acceptable",
-      existingValue: "Contact phone, Contact extension",
-    });
-  });
-
-  it("does not conflict when optional phone values are blank for an existing contact", async () => {
-    const withoutPhoneFields = csv.replace(
-      "415-555-0100,123,sam@example.org",
-      ",,sam@example.org",
-    );
-    send
-      .mockResolvedValueOnce({
-        Items: [{ providerId: "provider-one", name: "Provider One" }],
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            programId: "program-one",
-            providerId: "provider-one",
-            name: "Program One",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            programId: "program-one",
-            userId: "contact-1",
-            firstName: "Sam",
-            lastName: "Lee",
-            phone: "415-555-0100",
-            phoneExtension: "123",
-            email: "sam@example.org",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv: withoutPhoneFields }),
-    );
-
-    const body = JSON.parse(String(response.body));
-    expect(body.counts.acceptable).toBe(1);
+    expect(body.rows).toHaveLength(2);
     expect(body.counts.conflict).toBe(0);
   });
 
-  it("marks a row missing a required field as invalid", async () => {
-    const withoutEmail = csv.replace("sam@example.org", "");
-    send
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
+  it("marks unknown departments for manual resolution", async () => {
+    const row = [...baseValues];
+    row[5] = "DHP";
     const response = await call(
       previewSiteImport,
-      event({ fileName: "sites.csv", csv: withoutEmail }),
+      event({ fileName: "sites.csv", csv: makeCsv([row]) }),
     );
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "unknown_department",
+      existingValue: "DHP",
+    });
+  });
 
+  it("requires Program manager phone while allowing other phone and extension blanks", async () => {
+    const optionalBlank = [...baseValues];
+    for (const index of [8, 9, 14, 19, 20]) optionalBlank[index] = "";
+    const invalid = [...optionalBlank];
+    invalid[16] = "";
+    const missingProgramManagerPhone = [...optionalBlank];
+    missingProgramManagerPhone[13] = "";
+    const response = await call(
+      previewSiteImport,
+      event({
+        fileName: "sites.csv",
+        csv: makeCsv([optionalBlank, invalid, missingProgramManagerPhone]),
+      }),
+    );
     const body = JSON.parse(String(response.body));
-    expect(body.counts.invalid).toBe(1);
     expect(body.rows[0]).toMatchObject({
+      classification: "acceptable",
+      reasonCode: "missing_optional_value",
+    });
+    expect(body.rows[1]).toMatchObject({
       classification: "invalid",
       reasonCode: "missing_required_value",
-      existingValue: "Contact email",
+      existingValue: "Program manager email",
+    });
+    expect(body.rows[2]).toMatchObject({
+      classification: "invalid",
+      existingValue: "Program manager phone",
     });
   });
 
-  it("reads every Program-contact page and conflicts on a different extension", async () => {
-    send
-      .mockResolvedValueOnce({
-        Items: [{ providerId: "provider-one", name: "Provider One" }],
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            programId: "program-one",
-            providerId: "provider-one",
-            name: "Program One",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({
-        Items: [],
-        LastEvaluatedKey: { pk: "PROGRAM#program-one", sk: "USER#page-2" },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            programId: "program-one",
-            userId: "contact-1",
-            firstName: "Sam",
-            lastName: "Lee",
-            phone: "415-555-0100",
-            phoneExtension: "999",
-            email: "sam@example.org",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      previewSiteImport,
-      event({ fileName: "sites.csv", csv }),
-    );
-
-    const body = JSON.parse(String(response.body));
-    expect(body.counts.conflict).toBe(1);
-    expect(body.rows[0].reasonCode).toBe("contact_exact_match_conflict");
-    expect(send.mock.calls[4][0].input.ExclusiveStartKey).toEqual({
-      pk: "PROGRAM#program-one",
-      sk: "USER#page-2",
-    });
-  });
-
-  it("reads every stored row page when reopening an import", async () => {
-    send
-      .mockResolvedValueOnce({ Item: { importId: "import-1" } })
-      .mockResolvedValueOnce({
-        Items: [{ ...importRow(), rowNumber: 2 }],
-        LastEvaluatedKey: { pk: "SITE_IMPORT#import-1", sk: "ROW#000002" },
-      })
-      .mockResolvedValueOnce({ Items: [{ ...importRow(), rowNumber: 3 }] });
-
-    const response = await call(
-      getSiteImport,
-      event(undefined, { importId: "import-1" }),
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(String(response.body)).rows).toHaveLength(2);
-    expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual({
-      pk: "SITE_IMPORT#import-1",
-      sk: "ROW#000002",
-    });
-  });
-
-  it("conflicts when the same name-address Site belongs to another Provider", async () => {
-    send
-      .mockResolvedValueOnce({
-        Items: [
-          { providerId: "provider-one", name: "Provider One" },
-          { providerId: "provider-two", name: "Provider Two" },
-        ],
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            programId: "program-one",
-            providerId: "provider-one",
-            name: "Program One",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ Items: [{ siteId: "existing-site" }] })
-      .mockResolvedValueOnce({
-        Responses: {
-          "gnp-test-app": [
+  it("requires manual resolution when an imported manager conflicts by email", async () => {
+    send.mockImplementation(async (command) => {
+      if (
+        command instanceof QueryCommand &&
+        command.input.ExpressionAttributeValues?.[":pk"] ===
+          "ADMIN_DIRECTORY#PROGRAM_MANAGERS"
+      ) {
+        return {
+          Items: [
             {
-              siteId: "existing-site",
-              providerId: "provider-two",
-              leadProgramId: "other-program",
-              name: "Main Site",
-              address: "1 Main St San Francisco CA 94102",
+              userId: "manager-1",
+              email: "pat.manager@sfgov.org",
+              firstName: "Different",
+              lastName: "Person",
             },
           ],
-        },
-      })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({ Items: [] })
-      .mockResolvedValueOnce({});
-
+        };
+      }
+      return { Items: [] };
+    });
     const response = await call(
       previewSiteImport,
-      event({ fileName: "sites.csv", csv }),
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
     );
-
-    const body = JSON.parse(String(response.body));
-    expect(body.counts.conflict).toBe(1);
-    expect(body.rows[0].reasonCode).toBe("site_exact_match_conflict");
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "program_manager_exact_match_conflict",
+    });
   });
 
-  it("applies one valid row as one master-data transaction", async () => {
-    const row = importRow();
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: { create: 1, reuse: 0, conflict: 0, invalid: 0 },
-          fileName: "sites.csv",
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Items: [{ ...row, outcome: "applied" }] })
-      .mockResolvedValueOnce({});
-    geocodeAddress.mockResolvedValueOnce({
-      latitude: 37.78,
-      longitude: -122.42,
-      matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
-    });
-    const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
-        { importId: "import-1" },
-      ),
-    );
-    expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    expect(send.mock.calls[2][0]).toBeInstanceOf(UpdateCommand);
-    const transaction = send.mock.calls[3][0];
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(15);
-    const transactionItems = /** @type {any[]} */ (
-      transaction.input.TransactItems
-    );
-    expect(transactionTargetKeys(transactionItems)).toHaveLength(
-      new Set(transactionTargetKeys(transactionItems)).size,
-    );
-    const programUser = transactionItems.find(
-      (item) => item.Put?.Item?.type === "programUser",
-    ).Put.Item;
-    expect(programUser.phoneExtension).toBe("123");
-    expect(programUser.siteManager).toBe(true);
-    expect(
-      transactionItems.find(
-        (item) => item.Put?.Item?.type === "managerMembership",
-      )?.Put.Item,
-    ).toMatchObject({
-      siteId: "provider-one-main-site",
-      programId: "provider-one-program-one",
-      userId: "contact-1",
-      name: "Sam Lee",
-      email: "sam@example.org",
-      status: "active",
-    });
-    const site = transactionItems.find(
-      (item) => item.Put?.Item?.type === "site",
-    ).Put.Item;
-    expect(site.primaryContactUserId).toBe("contact-1");
-    expect(site.primaryContact.phoneExtension).toBe("123");
-    expect(
-      transactionItems.some((item) =>
-        item.Update?.UpdateExpression?.includes("primaryContact"),
-      ),
-    ).toBe(false);
-    const historyWrite = send.mock.calls
-      .map(([command]) => command)
-      .find((command) => command instanceof PutCommand);
-    if (!(historyWrite instanceof PutCommand)) {
-      throw new Error("Expected a completed-import history write");
-    }
-    expect(historyWrite.input.Item).toMatchObject({
-      pk: "SITE_IMPORT_HISTORY#admin-1",
-      fileName: "sites.csv",
-      recordsAdded: 1,
-      recordsUpdated: 0,
-      recordsFailed: 0,
-      resultStatus: "succeeded",
-    });
-    expect(JSON.parse(String(response.body)).resultStatus).toBe("succeeded");
-  });
-
-  it("lists the current administrator's recent completed imports", async () => {
-    send.mockResolvedValueOnce({
-      Items: [
+  it("requires manual resolution for inactive imported managers", async () => {
+    mockCatalog({
+      complianceManagers: [
         {
-          importId: "import-1",
-          fileName: "sites.csv",
-          completedAt: "2026-10-05T20:00:00.000Z",
-          recordsAdded: 3,
-          recordsUpdated: 2,
+          userId: "manager-1",
+          email: "pat.manager@sfgov.org",
+          firstName: "Pat",
+          lastName: "Manager",
+          phone: "415-555-0110",
+          departmentId: "dph",
+          departmentName: "Department of Public Health (DPH)",
+          status: "inactive",
         },
       ],
     });
-
-    const response = await call(listSiteImports, event());
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(String(response.body)).imports).toHaveLength(1);
-    const query = send.mock.calls[0][0];
-    expect(query).toBeInstanceOf(QueryCommand);
-    expect(query.input).toMatchObject({
-      KeyConditionExpression: "pk = :pk",
-      ExpressionAttributeValues: {
-        ":pk": "SITE_IMPORT_HISTORY#admin-1",
-      },
-      ScanIndexForward: false,
-      Limit: 25,
+    const response = await call(
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
+    );
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "inactive_program_manager",
     });
   });
 
-  it("combines reuse checks with updates when adding an assignment", async () => {
-    const baseRow = importRow();
-    const row = {
-      ...baseRow,
-      plan: {
-        provider: { ...baseRow.plan.provider, action: "reuse" },
-        program: { ...baseRow.plan.program, action: "reuse" },
-        site: { ...baseRow.plan.site, action: "reuse" },
-        contact: {
-          ...baseRow.plan.contact,
-          action: "reuse",
-          email: "sam@example.org",
+  it("requires manual resolution for inactive Provider-manager memberships", async () => {
+    mockCatalog({
+      providers: [
+        { providerId: "provider-one", name: "Provider One", status: "active" },
+      ],
+      providerManagers: [
+        {
+          sk: "PROVIDER_MANAGER#provider-manager-1",
+          providerId: "provider-one",
+          managerId: "provider-manager-1",
+          email: "priya@provider.org",
+          firstName: "Priya",
+          lastName: "Provider",
+          phone: "415-555-0120",
+          status: "inactive",
         },
-        assignment: { action: "create" },
-      },
-    };
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: { create: 1 },
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Items: [{ ...row, outcome: "applied" }] })
-      .mockResolvedValueOnce({});
-
+      ],
+    });
     const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
-        { importId: "import-1" },
-      ),
+      previewSiteImport,
+      event({ fileName: "sites.csv", csv: makeCsv([baseValues]) }),
     );
-
-    expect(response.statusCode).toBe(200);
-    const transactionItems = /** @type {any[]} */ (
-      send.mock.calls[3][0].input.TransactItems
-    );
-    expect(transactionTargetKeys(transactionItems)).toHaveLength(
-      new Set(transactionTargetKeys(transactionItems)).size,
-    );
-    const contactUpdate = transactionItems.find(
-      (item) => item.Update?.Key?.sk === "USER#contact-1",
-    );
-    expect(contactUpdate.Update.ConditionExpression).toContain(
-      "email = :email",
-    );
-    const siteUpdate = transactionItems.find(
-      (item) => item.Update?.Key?.sk === "#META",
-    );
-    expect(siteUpdate.Update.ConditionExpression).toContain(
-      "leadProgramId = :programId",
-    );
+    expect(JSON.parse(String(response.body)).rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "inactive_provider_manager",
+    });
   });
 
-  it("repairs a prior imported contact into a Site manager on re-import", async () => {
-    const baseRow = importRow();
-    const row = {
-      ...baseRow,
-      plan: {
-        provider: { ...baseRow.plan.provider, action: "reuse" },
-        program: { ...baseRow.plan.program, action: "reuse" },
-        site: { ...baseRow.plan.site, action: "reuse" },
-        contact: {
-          ...baseRow.plan.contact,
-          action: "reuse",
-          email: "sam@example.org",
-          promote: true,
+  it("does not let a conflicted row contaminate later rows for the same Site", async () => {
+    mockCatalog({
+      providers: [
+        { providerId: "provider-one", name: "Provider One", status: "active" },
+      ],
+      providerManagers: [
+        {
+          sk: "PROVIDER_MANAGER#provider-manager-1",
+          providerId: "provider-one",
+          managerId: "provider-manager-1",
+          email: "priya@provider.org",
+          firstName: "Different",
+          lastName: "Person",
+          phone: "415-555-0120",
+          status: "active",
         },
-        assignment: { action: "reuse" },
-        manager: { id: "membership-1", action: "create" },
-      },
-    };
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: { create: 1 },
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Items: [{ ...row, outcome: "applied" }] })
-      .mockResolvedValueOnce({});
+      ],
+    });
+    const second = [...baseValues];
+    second[6] = "Taylor";
+    second[7] = "Jones";
+    second[10] = "taylor@example.org";
+    second[11] = "Alex";
+    second[16] = "alex.manager@sfgov.org";
+    second[17] = "Quinn";
+    second[21] = "quinn@provider.org";
+    const third = [...baseValues];
+    third[6] = "Morgan";
+    third[7] = "Diaz";
+    third[10] = "morgan@example.org";
+    third[11] = "Riley";
+    third[16] = "riley.manager@sfgov.org";
+    third[17] = "Casey";
+    third[21] = "casey@provider.org";
 
     const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-repair" },
-        { importId: "import-1" },
-      ),
-    );
-
-    expect(response.statusCode).toBe(200);
-    const transactionItems = /** @type {any[]} */ (
-      send.mock.calls[3][0].input.TransactItems
-    );
-    const contactUpdate = transactionItems.find(
-      (item) => item.Update?.Key?.sk === "USER#contact-1",
-    );
-    expect(contactUpdate.Update.UpdateExpression).toContain(
-      "siteManager = :true",
-    );
-    expect(contactUpdate.Update.UpdateExpression).not.toContain(
-      "siteAssignmentCount",
-    );
-    expect(
-      transactionItems.find(
-        (item) => item.Put?.Item?.type === "managerMembership",
-      )?.Put.Item,
-    ).toMatchObject({
-      membershipId: "membership-1",
-      programId: "provider-one-program-one",
-      userId: "contact-1",
-      siteId: "provider-one-main-site",
-    });
-    expect(transactionTargetKeys(transactionItems)).toHaveLength(
-      new Set(transactionTargetKeys(transactionItems)).size,
-    );
-  });
-
-  it("reports invalid database transactions as permanent apply failures", async () => {
-    const row = importRow();
-    const validationError = new Error(
-      "Transaction request cannot include multiple operations on one item",
-    );
-    validationError.name = "ValidationException";
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: { create: 1 },
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockRejectedValueOnce(validationError)
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            ...row,
-            outcome: "failed",
-            reasonCode: "invalid_apply_transaction",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-    geocodeAddress.mockResolvedValueOnce({
-      latitude: 37.78,
-      longitude: -122.42,
-      matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
-    });
-
-    const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
-        { importId: "import-1" },
-      ),
-    );
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(String(response.body))).toMatchObject({
-      status: "complete",
-      resultStatus: "failed",
-    });
-    const outcomeWrite = send.mock.calls[4][0];
-    expect(outcomeWrite).toBeInstanceOf(UpdateCommand);
-    expect(outcomeWrite.input.ExpressionAttributeValues).toMatchObject({
-      ":outcome": "failed",
-      ":reason": "invalid_apply_transaction",
-    });
-    expect(consoleError).toHaveBeenCalledWith(
-      "Site import row apply failed",
-      expect.objectContaining({
-        importId: "import-1",
-        rowNumber: 2,
-        errorName: "ValidationException",
-        retryable: false,
+      previewSiteImport,
+      event({
+        fileName: "sites.csv",
+        csv: makeCsv([baseValues, second, third]),
       }),
     );
-    const historyWrite = send.mock.calls
-      .map(([command]) => command)
-      .find((command) => command instanceof PutCommand);
-    expect(historyWrite?.input.Item).toMatchObject({
-      recordsAdded: 0,
-      recordsUpdated: 0,
-      recordsFailed: 1,
-      resultStatus: "failed",
+    const body = JSON.parse(String(response.body));
+    expect(body.rows[0]).toMatchObject({
+      classification: "conflict",
+      reasonCode: "provider_manager_exact_match_conflict",
     });
-    consoleError.mockRestore();
+    expect(body.rows[1].classification).not.toBe("conflict");
+    expect(body.rows[2].classification).not.toBe("conflict");
+    const ledgerWrite = send.mock.calls
+      .map(([command]) => command)
+      .find((command) => command instanceof BatchWriteCommand);
+    const ledgerRows =
+      ledgerWrite?.input.RequestItems?.["gnp-test-app"]?.map(
+        (request) => request.PutRequest?.Item,
+      ) || [];
+    expect(
+      ledgerRows.find((row) => row?.rowNumber === 3)?.plan.site.action,
+    ).toBe("create");
   });
 
-  it("keeps service failures retryable and reports a specific reason", async () => {
-    const row = importRow();
-    const serviceError = new Error("Service unavailable");
-    serviceError.name = "ServiceUnavailable";
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: { create: 1 },
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockRejectedValueOnce(serviceError)
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            ...row,
-            outcome: "retryable_failed",
-            reasonCode: "retryable_apply_error",
+  it("applies Site, Compliance-manager, and Provider-manager relationships atomically", async () => {
+    const row = /** @type {any} */ (importRow());
+    let rowQueryCount = 0;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: {
+            previewVersion: "preview-1",
+            previewExpiresAt: "2099-01-01T00:00:00.000Z",
+            counts: { create: 1 },
+            fileName: "sites.csv",
           },
-        ],
-      })
-      .mockResolvedValueOnce({});
+        };
+      if (command instanceof QueryCommand) {
+        rowQueryCount += 1;
+        return {
+          Items: rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
+        };
+      }
+      return {};
+    });
     geocodeAddress.mockResolvedValueOnce({
       latitude: 37.78,
       longitude: -122.42,
       matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
+    });
+    const response = await call(
+      applySiteImport,
+      event(
+        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+        { importId: "import-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls
+      .map(([command]) => command)
+      .find((command) => command instanceof TransactWriteCommand);
+    if (!(transaction instanceof TransactWriteCommand)) {
+      throw new Error("Expected an import transaction");
+    }
+    const items = transaction.input.TransactItems;
+    if (!items) throw new Error("Expected transaction items");
+    expect(
+      items.some(
+        (item) => item.Put?.Item?.type === "siteComplianceManagerAssignment",
+      ),
+    ).toBe(true);
+    expect(
+      items.some(
+        (item) => item.Put?.Item?.type === "providerManagerMembership",
+      ),
+    ).toBe(true);
+    const site = items.find((item) => item.Put?.Item?.type === "site")?.Put
+      ?.Item;
+    if (!site) throw new Error("Expected a Site item");
+    expect(site).toMatchObject({
+      siteType: "shelter",
+      oversight: {
+        managingCityDepartment: "Department of Public Health (DPH)",
+      },
+    });
+    expect(site.primaryContactUserId).toBeUndefined();
+  });
+
+  it("backfills missing Site type and department on legacy Site reuse", async () => {
+    const row = /** @type {any} */ (importRow());
+    row.plan.site = {
+      ...row.plan.site,
+      action: "reuse",
+      expectedOversight: null,
+      oversight: {
+        managingCityDepartment: "Department of Public Health (DPH)",
+      },
+    };
+    row.plan.assignment = { action: "reuse" };
+    let rowQueryCount = 0;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: {
+            previewVersion: "preview-1",
+            previewExpiresAt: "2099-01-01T00:00:00.000Z",
+            counts: { reuse: 1 },
+            fileName: "sites.csv",
+          },
+        };
+      if (command instanceof QueryCommand) {
+        rowQueryCount += 1;
+        return {
+          Items: rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
+        };
+      }
+      return {};
     });
 
     const response = await call(
@@ -739,63 +427,23 @@ describe("Site CSV import", () => {
         { importId: "import-1" },
       ),
     );
-
-    expect(response.statusCode).toBe(202);
-    expect(send.mock.calls[4][0].input.ExpressionAttributeValues).toMatchObject(
-      {
-        ":outcome": "retryable_failed",
-        ":reason": "retryable_apply_error",
-      },
-    );
-    consoleError.mockRestore();
-  });
-
-  it("applies an acceptable row with a blank optional phone", async () => {
-    const baseRow = importRow();
-    const row = {
-      ...baseRow,
-      classification: "acceptable",
-      reasonCode: "missing_optional_value",
-      existingValue: "Contact phone",
-      source: { ...baseRow.source, "Contact phone": "" },
-    };
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          previewVersion: "preview-1",
-          previewExpiresAt: "2099-01-01T00:00:00.000Z",
-          counts: {
-            create: 0,
-            reuse: 0,
-            acceptable: 1,
-            conflict: 0,
-            invalid: 0,
-          },
-        },
-      })
-      .mockResolvedValueOnce({ Items: [row] })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Items: [{ ...row, outcome: "applied" }] })
-      .mockResolvedValueOnce({});
-    geocodeAddress.mockResolvedValueOnce({
-      latitude: 37.78,
-      longitude: -122.42,
-      matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
-    });
-
-    const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-acceptable" },
-        { importId: "import-1" },
-      ),
-    );
-
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[3][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(JSON.parse(String(response.body)).outcomes.applied).toBe(1);
+    const transaction = send.mock.calls
+      .map(([command]) => command)
+      .find((command) => command instanceof TransactWriteCommand);
+    const siteUpdates = (transaction?.input.TransactItems || []).filter(
+      (item) => item.Update?.Key?.sk === "#META",
+    );
+    expect(siteUpdates).toHaveLength(1);
+    expect(siteUpdates[0].Update).toMatchObject({
+      ExpressionAttributeValues: expect.objectContaining({
+        ":siteType": "shelter",
+        ":expectedOversight": null,
+        ":oversight": {
+          managingCityDepartment: "Department of Public Health (DPH)",
+        },
+      }),
+    });
   });
 
   it("escapes spreadsheet formula prefixes in conflict downloads", async () => {
@@ -805,17 +453,12 @@ describe("Site CSV import", () => {
           rowNumber: 2,
           classification: "conflict",
           reasonCode: "site_exact_match_conflict",
-          source: {
-            Provider: "=CMD()",
-            Program: "Program",
-            "Site name": "Site",
-            "Site address": "Address",
-            "Contact first name": "Sam",
-            "Contact last name": "Lee",
-            "Contact phone": "415-555-0100",
-            "Contact extension": "123",
-            "Contact email": "sam@example.org",
-          },
+          source: Object.fromEntries(
+            headers.map((header, index) => [
+              header,
+              index === 0 ? "=CMD()" : baseValues[index],
+            ]),
+          ),
         },
       ],
     });
@@ -824,51 +467,87 @@ describe("Site CSV import", () => {
       event(undefined, { importId: "import-1" }),
     );
     expect(response.statusCode).toBe(200);
-    expect(response.headers?.["content-type"]).toContain("text/csv");
     expect(String(response.body)).toContain("'=CMD()");
   });
 });
 
+/** @param {string[][]} rows */
+function makeCsv(rows) {
+  return [headers, ...rows].map((row) => row.join(",")).join("\n");
+}
+
 function importRow() {
+  const department = {
+    id: "dph",
+    name: "Department of Public Health (DPH)",
+    action: "create",
+  };
   return {
     pk: "SITE_IMPORT#import-1",
     sk: "ROW#000002",
     rowNumber: 2,
     classification: "create",
-    source: {
-      Provider: "Provider One",
-      Program: "Program One",
-      "Site name": "Main Site",
-      "Site address": "1 Main St San Francisco CA 94102",
-      "Contact first name": "Sam",
-      "Contact last name": "Lee",
-      "Contact phone": "415-555-0100",
-      "Contact extension": "123",
-      "Contact email": "sam@example.org",
-    },
+    source: Object.fromEntries(
+      headers.map((header, index) => [header, baseValues[index]]),
+    ),
     plan: {
-      provider: { id: "provider-one", action: "create" },
-      program: { id: "provider-one-program-one", action: "create" },
-      site: { id: "provider-one-main-site", action: "create" },
-      contact: { id: "contact-1", action: "create" },
+      provider: { id: "provider-one", action: "create", name: "Provider One" },
+      program: {
+        id: "provider-one-program-one",
+        action: "create",
+        name: "Program One",
+      },
+      site: {
+        id: "main-site",
+        action: "create",
+        name: "Main Site",
+        address: "1 Main St San Francisco CA 94102",
+        siteType: "shelter",
+        department,
+      },
+      contact: { id: "contact-1", action: "create", email: "sam@example.org" },
       assignment: { action: "create" },
+      manager: { id: "membership-1", action: "create" },
+      complianceManager: {
+        id: "manager-1",
+        action: "create",
+        email: "pat.manager@sfgov.org",
+        department,
+      },
+      complianceAssignment: { action: "create" },
+      providerManager: {
+        id: "provider-manager-1",
+        action: "create",
+        email: "priya@provider.org",
+      },
+      departments: [department],
     },
   };
 }
 
-/** @param {any[]} transactionItems */
-function transactionTargetKeys(transactionItems) {
-  return transactionItems.map((item) => {
-    const operation = item.Put || item.Update || item.ConditionCheck;
-    const target = operation.Item || operation.Key;
-    return `${target.pk}|${target.sk}`;
+/**
+ * @param {{ providers?: any[], complianceManagers?: any[], providerManagers?: any[] }} [catalog]
+ */
+function mockCatalog({
+  providers = [],
+  complianceManagers = [],
+  providerManagers = [],
+} = {}) {
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) {
+      const pk = command.input.ExpressionAttributeValues?.[":pk"];
+      if (pk === "PROVIDER_SEARCH#ACTIVE") return { Items: providers };
+      if (pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS")
+        return { Items: complianceManagers };
+      if (String(pk).startsWith("PROVIDER#"))
+        return { Items: providerManagers };
+      return { Items: [] };
+    }
+    return {};
   });
 }
 
-/**
- * @param {unknown} body
- * @param {Record<string, string>} pathParameters
- */
+/** @param {unknown} body @param {Record<string, string>} pathParameters */
 function event(body = undefined, pathParameters = {}) {
   return {
     body: body === undefined ? undefined : JSON.stringify(body),

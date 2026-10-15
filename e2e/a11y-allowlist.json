@@ -10,5 +10,17 @@
     "target": "wa-otp-input#code-input*",
     "reason": "Web Awesome's OTP caret blink animation lives inside the component's shadow root, which the app's global prefers-reduced-motion * rule cannot reach and no --wa-* token zeroes. A blinking caret is conventional input feedback (native text fields behave the same), so it is tolerated until a component-level motion fix or Web Awesome token exists.",
     "expires": "2026-12-31"
+  },
+  {
+    "rule": "label-title-only",
+    "target": "#reports-kind*",
+    "reason": "Design decision (site manager reports, 2026-10-13): the period pickers are compact pills whose current value (\"Month\", \"Sep 2026\") is the visible label. The text label \"Period type\" stays in the DOM, visually hidden, and the inner combobox is named from it via aria-labelledby, so the control keeps its accessible name; axe's best-practice rule only objects to the label being hidden. Revisit if the design adds a visible caption.",
+    "expires": "2027-03-31"
+  },
+  {
+    "rule": "label-title-only",
+    "target": "#reports-period*",
+    "reason": "Same as #reports-kind: the pill's value is the visible label and the hidden \"Period\" text label names the combobox for assistive tech.",
+    "expires": "2027-03-31"
   }
 ]

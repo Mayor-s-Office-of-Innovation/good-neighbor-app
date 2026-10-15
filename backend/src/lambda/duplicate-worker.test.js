@@ -48,10 +48,23 @@ vi.mock("../db.js", () => ({
   },
 }));
 vi.mock("../s3.js", () => ({
+  headObject: async () => ({ lastModified: new Date() }),
   getObjectBytes: async () => ({
     bytes: Buffer.from("image"),
     contentLength: 5,
   }),
+}));
+vi.mock("@aws-sdk/client-s3", () => ({
+  S3Client: class {
+    async send() {
+      return {};
+    }
+  },
+  PutObjectCommand: class {
+    constructor(/** @type {object} */ input) {
+      this.input = input;
+    }
+  },
 }));
 vi.mock("../analysis/api-key.js", () => ({
   getAnalyzerApiKey: async () => "private-test-key",
@@ -102,15 +115,29 @@ function setup() {
     checkId: "source",
     artifactId: "photo",
     analyzedAt: "2026-10-14T10:01:00Z",
-    concerns: [{ conditionId: "s1", rating: 2, explanation: "pile" }],
+    concerns: [
+      {
+        conditionId: "s1",
+        category: "test-category",
+        rating: 2,
+        explanation: "pile",
+      },
+    ],
   };
   const target = {
     ...current,
     sk: "CHECK#target#ANALYSIS#photo",
     analysisId: "target-analysis",
     checkId: "target",
-    analyzedAt: "2026-10-14T10:02:00Z",
-    concerns: [{ conditionId: "t1", rating: 2, explanation: "pile" }],
+    analyzedAt: "2026-10-14T09:00:00Z",
+    concerns: [
+      {
+        conditionId: "t1",
+        category: "test-category",
+        rating: 2,
+        explanation: "pile",
+      },
+    ],
   };
   const projection = {
     ...projectionKey("site", "2026-10-14T09:00:00Z", "target:photo"),
@@ -129,6 +156,10 @@ function setup() {
   state.records.set("DUP_COVERAGE", { coverageFrom: "2026-10-01T00:00:00Z" });
   state.records.set(current.sk, current);
   state.records.set(target.sk, target);
+  state.records.set("CHECK#target#ART#photo", {
+    s3Key: "site/target",
+    capturedAt: "2026-10-14T09:00:00Z",
+  });
   state.records.set(projection.sk, projection);
   state.records.set("CHECK#source#ART#photo", {
     capturedAt: "2026-10-14T10:00:00Z",
@@ -203,11 +234,22 @@ it("matches late-available prior captures without waiting for client guidance; w
     () => {},
   );
   expect(result).toEqual({ batchItemFailures: [] });
-  expect(state.compare).toHaveBeenCalledTimes(2);
+  expect(state.compare).toHaveBeenCalledTimes(1);
   const saved = state.records.get(
     `DUP_RESULT#source:photo#${analysisRevision(current)}`,
   );
-  expect(saved.shadow).toBe(true);
+  const issueKey = `DUP_ISSUE#source:photo#${analysisRevision(current)}#s1`;
+  expect(state.records.get(issueKey).possibleDuplicate).toBe(true);
+  const puts = state.writes.flatMap((w) =>
+    "TransactItems" in w
+      ? (w.TransactItems ?? []).map((e) => e.Put?.Item?.sk)
+      : [w.Item?.sk],
+  );
+  expect(puts.indexOf(issueKey)).toBeLessThan(
+    puts.indexOf(`DUP_RESULT#source:photo#${analysisRevision(current)}`),
+  );
+  expect(saved.latency.totalMs).toBeGreaterThanOrEqual(0);
+  expect(saved.shadow).toBe(false);
   expect(saved.conditionResults[0].duplicateOf.conditionId).toBe("t1");
   expect(
     state.writes.some(
@@ -259,7 +301,32 @@ it("an old source revision does no model work", async () => {
   expect(state.compare).not.toHaveBeenCalled();
 });
 
-it("an uninitialized five-day history is uncertainty, never an evaluated negative", async () => {
+it("does not publish incremental positives for an artifact removed during comparison", async () => {
+  const { event } = setup();
+  const compare = state.compare.getMockImplementation();
+  if (!compare) throw new Error("Missing comparison stub");
+  state.compare.mockImplementation(async (request) => {
+    const response = await compare(request);
+    state.records.delete("CHECK#target#ART#photo");
+    return response;
+  });
+  await handler(
+    /** @type {import('aws-lambda').SQSEvent} */ (event),
+    /** @type {import('aws-lambda').Context} */ ({}),
+    () => {},
+  );
+  expect(
+    [...state.records.keys()].some((key) => key.startsWith("DUP_ISSUE#")),
+  ).toBe(false);
+  expect(
+    [...state.records.values()].some(
+      (row) =>
+        row.sk?.startsWith("DUP_RESULT#") && row.possibleDuplicate === true,
+    ),
+  ).toBe(false);
+});
+
+it("bootstraps missing candidate history without calling normal analysis", async () => {
   const { event, current } = setup();
   state.records.delete("DUP_COVERAGE");
   await handler(
@@ -270,7 +337,35 @@ it("an uninitialized five-day history is uncertainty, never an evaluated negativ
   const saved = state.records.get(
     `DUP_RESULT#source:photo#${analysisRevision(current)}`,
   );
-  expect(saved.status).toBe("insufficient_evidence");
-  expect(saved.possibleDuplicate).toBeNull();
+  expect(state.records.get("DUP_COVERAGE")?.coverageFrom).toBeDefined();
+  expect(saved.status).toBe("evaluated");
+});
+
+it("prepares newly registered uploads independently before any analysis exists", async () => {
+  state.records.set("CHECK#source#ART#photo", {
+    s3Key: "checks/site/source/photo",
+    contentType: "image/jpeg",
+  });
+  const result = await handler(
+    /** @type {import('aws-lambda').SQSEvent} */ (
+      /** @type {unknown} */ ({
+        Records: [
+          {
+            messageId: "prepare",
+            body: JSON.stringify({
+              siteId: "site",
+              checkId: "source",
+              artifactId: "photo",
+              prepareOnly: true,
+            }),
+          },
+        ],
+      })
+    ),
+    /** @type {import('aws-lambda').Context} */ (/** @type {unknown} */ ({})),
+    () => {},
+  );
+  expect(result).toEqual({ batchItemFailures: [] });
   expect(state.compare).not.toHaveBeenCalled();
+  expect(state.writes).toHaveLength(0);
 });

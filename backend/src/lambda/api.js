@@ -1,3 +1,8 @@
+import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../handlers/duplicate-links.js";
+import { getDuplicateResult } from "../handlers/duplicate-results.js";
 // API Gateway (HTTP API v2) entrypoint for the whole check/artifact API. One
 // Lambda backs every route; API Gateway sets `event.routeKey` to the matched
 // route (e.g. "POST /v1/checks/{checkId}"), so we dispatch on it directly — no
@@ -9,6 +14,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../handlers/checks.js";
 import {
@@ -51,6 +57,11 @@ import {
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
+import {
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../handlers/manager-reports.js";
 import { requestManagerAccess } from "../handlers/manager-access-requests.js";
 import { searchSites } from "../handlers/setup-code-requests.js";
 import {
@@ -79,13 +90,16 @@ import {
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../handlers/admin.js";
 import {
   getAdminSession,
   inviteAdminUser,
   listAdminUsers,
+  reinviteAdminUser,
   reinstateAdminUser,
+  resetAdminUserPassword,
   suspendAdminUser,
   updateAdminUserRole,
 } from "../handlers/admin-users.js";
@@ -121,9 +135,11 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
 import {
@@ -137,6 +153,17 @@ import {
   createManagerGrant,
   listManagerGrants,
 } from "../handlers/admin-manager-grants.js";
+import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+} from "../handlers/admin-provider-managers.js";
 import {
   applySiteImport,
   getSiteImport,
@@ -165,6 +192,10 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /app/v1/manager/device-bindings": listGeneralBindings,
   "POST /app/v1/manager/device-bindings/{bindingId}/revoke":
     revokeGeneralBinding,
+  // Site manager reports (AP27, AP28): manager-only, site from the token.
+  "GET /app/v1/manager/reports/checks": getChecksReport,
+  "GET /app/v1/manager/reports/tasks": getTasksReport,
+  "GET /app/v1/manager/reports/task-updates": getTaskUpdatesReport,
   "GET /v1/sites:search": searchSites,
   // Site config
   "GET /v1/site": getSite,
@@ -174,14 +205,19 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,
+  "GET /v1/checks:capture-guidance": getCaptureGuidance,
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
+    getDuplicateResult,
   "GET /v1/checks/{checkId}": getCheck,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  "POST /v1/duplicates:batch": getDuplicateLinks,
+  "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
@@ -212,6 +248,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,
   "POST /admin/v1/admin-users/{username}/suspend": suspendAdminUser,
   "POST /admin/v1/admin-users/{username}/reinstate": reinstateAdminUser,
+  "POST /admin/v1/admin-users/{username}/reinvite": reinviteAdminUser,
+  "POST /admin/v1/admin-users/{username}/reset-password":
+    resetAdminUserPassword,
   "POST /admin/v1/providers": createProvider,
   "GET /admin/v1/providers/{providerId}": getProvider,
   "PATCH /admin/v1/providers/{providerId}": updateProvider,
@@ -219,6 +258,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/programs": listPrograms,
   "GET /admin/v1/program-managers": listCityProgramManagers,
   "POST /admin/v1/program-managers": createCityProgramManager,
+  "PATCH /admin/v1/program-managers/{userId}": updateCityProgramManager,
   "GET /admin/v1/oversight-options": listOversightOptions,
   "POST /admin/v1/oversight-options": createOversightOption,
   "POST /admin/v1/address-suggestions": suggestAddresses,
@@ -235,8 +275,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
   "POST /admin/v1/sites/{siteId}/users": assignSiteUser,
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
+  "PUT /admin/v1/sites/{siteId}/compliance-managers":
+    replaceSiteComplianceManagers,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
+  "POST /admin/v1/sites/{siteId}/terms:close": endSiteTerms,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
@@ -248,6 +291,23 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/sites/{siteId}/grants": listManagerGrants,
   "POST /admin/v1/sites/{siteId}/manager-grants": createManagerGrant,
   "DELETE /admin/v1/sites/{siteId}/grants/{grantId}": cancelManagerGrant,
+  "GET /admin/v1/providers/{providerId}/manager-memberships":
+    listProviderManagers,
+  "POST /admin/v1/providers/{providerId}/manager-memberships":
+    createProviderManager,
+  "PATCH /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    updateProviderManager,
+  "DELETE /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    deactivateProviderManager,
+  "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate":
+    reinstateProviderManager,
+  "GET /admin/v1/providers/{providerId}/grants": listProviderManagerGrants,
+  "POST /admin/v1/providers/{providerId}/manager-grants":
+    createProviderManagerGrant,
+  "DELETE /admin/v1/providers/{providerId}/grants/{grantId}":
+    cancelProviderManagerGrant,
+  "POST /admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke":
+    revokeProviderManagerEnrollment,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "GET /admin/v1/site-imports": listSiteImports,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,

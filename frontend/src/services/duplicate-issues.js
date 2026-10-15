@@ -1,0 +1,44 @@
+import { getDuplicateLinks } from "./api.js";
+/** Independent, cancellable polling; no await on the analysis or guidance path.
+ * @param {string[]} taskIds @param {(links: Map<string, Record<string, any>>) => void} onChange
+ */
+export function watchDuplicateIssues(taskIds, onChange) {
+  let stopped = false,
+    timer,
+    previous = "",
+    polls = 0;
+  const started = Date.now();
+  const ids = [...new Set(taskIds)].filter(Boolean);
+  const run = async () => {
+    if (stopped || Date.now() - started > 15 * 60 * 1000 || !ids.length) return;
+    let delay = polls++ < 15 ? 2000 : 5000;
+    try {
+      if (!document.hidden) {
+        const rows = [];
+        for (let i = 0; i < ids.length && !stopped; i += 50) {
+          const result = await getDuplicateLinks(ids.slice(i, i + 50));
+          if (!result.enabled) {
+            if (!stopped) onChange(new Map());
+            return;
+          }
+          rows.push(...result.issues);
+        }
+        if (stopped) return;
+        const key = JSON.stringify(rows);
+        if (key !== previous) {
+          previous = key;
+          onChange(new Map(rows.map((row) => [row.taskId, row])));
+        }
+        if (rows.every((row) => row.state !== "pending")) delay = 30000;
+      }
+    } catch {
+      delay = 15000;
+    } // Retry separately; keep ordinary issue cards usable.
+    if (!stopped) timer = setTimeout(run, delay);
+  };
+  void run();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}

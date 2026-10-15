@@ -36,3 +36,45 @@
   display: grid;
   gap: 0.2rem;
 }
+
+.task-update__photo {
+  display: block;
+  width: 7.5rem;
+  height: 7.5rem;
+  object-fit: cover;
+  border-radius: var(--wa-border-radius-l);
+}
+
+.task-update__photo-trigger {
+  width: fit-content;
+  /* Photo buttons must reserve the image height, not the form-control height. */
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.task-update__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-block: 1rem 1.5rem;
+}
+
+.task-update__timeline-item--general::before {
+  background: var(--wa-color-neutral-60);
+}
+
+.task-update__timeline-item--escalation::before {
+  background: var(--wa-color-warning-70);
+}
+
+.task-update__timeline-item--still-there::before {
+  background: var(--wa-color-danger-60);
+}
+
+.task-update__timeline-item--resolved::before {
+  background: var(--wa-color-success-60);
+}
+
+.task-update__timeline-item p {
+  white-space: pre-wrap;
+}

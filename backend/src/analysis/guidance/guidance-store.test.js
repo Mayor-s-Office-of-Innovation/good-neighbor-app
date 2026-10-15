@@ -475,6 +475,40 @@ describe("completeTaskWithAppActions", () => {
     send.mockReset();
   });
 
+  it("opens completion documentation for tasks that cannot be in progress", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "onsite",
+          severity: 1,
+          canBeInProgress: false,
+          appActions: [],
+        },
+      })
+      .mockResolvedValue({});
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
+    });
+    const transaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+    expect(task.status).toBe("completed");
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      updateId: task.latestUpdateId,
+      type: "task_completed",
+      actorId: "device-1",
+      documentationState: "open_for_documentation",
+    });
+    expect(task.latestUpdateId).toBeTruthy();
+  });
+
   it("marks a task completed and records app action results", async () => {
     send.mockResolvedValueOnce({
       Item: {
@@ -906,7 +940,7 @@ describe("completeTaskWithAppActions", () => {
       expect(JSON.parse(closeCall[1].body)).toMatchObject({
         SRnum: "2000008106",
         UpdateType: "11",
-        NumericSubType: "8",
+        NumericSubType: "1",
       });
     } finally {
       vi.unstubAllGlobals();
@@ -1346,6 +1380,8 @@ describe("supersedeOpenTasksForCondition", () => {
           conditionId: "cond-litter",
           checkId: "chk-1",
           assessmentId: "chk-1-art-1",
+          // A legacy task with no report-timeline stamp yet.
+          createdAt: "2026-08-18T11:00:00.000Z",
         },
         {
           pk: "SITE#site-1",
@@ -1398,6 +1434,10 @@ describe("supersedeOpenTasksForCondition", () => {
       supersededByAnalysisId: "ana-1",
       supersessionReason: "analysis_condition_edited",
       gsi2pk: "SITE#site-1#TASK#superseded",
+      // Every full re-put re-derives the report timeline stamp, so a
+      // legacy task is stamped here and a backfilled stamp is never lost.
+      gsi1pk: "SITE#site-1#TASK",
+      gsi1sk: "2026-08-18T11:00:00.000Z#task-1",
     });
   });
 
