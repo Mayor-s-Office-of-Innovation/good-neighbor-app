@@ -9,6 +9,14 @@ locals {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# Resolve the IAM role behind CI's STS session. Its name/path is configured by
+# AWS_DEPLOY_ROLE_ARN, not derived from the application/environment names.
+data "aws_iam_session_context" "deploy" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  arn = data.aws_caller_identity.current.arn
+}
+
 # SMTP credentials use a purpose-specific key because SES Mail Manager, rather
 # than an application role, must decrypt them through Secrets Manager.
 resource "aws_kms_key" "smtp_secrets" {
@@ -90,7 +98,7 @@ resource "aws_kms_key" "cognito_email" {
       {
         Sid       = "AllowDeployRoleCreateCognitoGrant"
         Effect    = "Allow"
-        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.application}-deploy-${var.environment}" }
+        Principal = { AWS = data.aws_iam_session_context.deploy[0].issuer_arn }
         Action    = "kms:CreateGrant"
         Resource  = "*"
         Condition = {
