@@ -6,6 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { activeCatalog } from "./catalog-registry.js";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
@@ -119,7 +120,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v7",
+      policyVersion: activeCatalog().policyVersion,
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -139,7 +140,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v7",
+      policyVersion: activeCatalog().policyVersion,
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
@@ -159,7 +160,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v7",
+      policyVersion: activeCatalog().policyVersion,
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
