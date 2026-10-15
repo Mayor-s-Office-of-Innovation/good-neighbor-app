@@ -147,22 +147,53 @@ export async function presignCarePhoto(event) {
   const s3Key = objectKey(siteId, workId, photoId);
   const expiresAt = now + DAY;
   const bytes = body.contentLength;
-  if (body.photoId) {
+  let reservationExpiry = expiresAt;
+  // Optimistic per-work accounting counts only live reservations, independently
+  // of DynamoDB's asynchronous TTL deletion. Daily abuse quotas remain charged.
+  for (let attempt = 0; attempt < 4; attempt++) {
     const [reservation, submitted] = await Promise.all([
       read(photoKey(siteId, workId, photoId)),
       read(logKey(siteId, workId)),
     ]);
-    if (
-      submitted ||
-      !reservation ||
-      reservation.createdBy !== actor ||
-      reservation.expiresAt <= now ||
-      reservation.contentType !== body.contentType ||
-      reservation.contentLength !== bytes
-    ) {
-      return jsonResponse(409, { error: "upload_unavailable" });
+    if (submitted) return jsonResponse(409, { error: "work_already_logged" });
+    if (reservation) {
+      if (
+        reservation.createdBy !== actor ||
+        reservation.contentType !== body.contentType ||
+        reservation.contentLength !== bytes
+      )
+        return jsonResponse(409, { error: "upload_unavailable" });
+      if (reservation.expiresAt <= now)
+        return jsonResponse(410, { error: "upload_expired", photoId });
+      reservationExpiry = reservation.expiresAt;
+      break;
     }
-  } else {
+    const budgetKey = { pk: sitePk(siteId), sk: `CARE_QUOTA#${workId}` };
+    const budget = await read(budgetKey);
+    const reservations = Object.fromEntries(
+      Object.entries(budget?.reservations || {}).filter(
+        ([, value]) => value.expiresAt > now,
+      ),
+    );
+    // Preserve any pre-upgrade accounting until its own reservation window ends.
+    const legacy =
+      budget?.legacy ||
+      (budget && !budget.revision
+        ? {
+            count: budget.reservedCount || 0,
+            bytes: budget.reservedBytes || 0,
+            expiresAt: budget.expiresAt,
+          }
+        : null);
+    const legacyActive = legacy?.expiresAt > now;
+    const count =
+      Object.keys(reservations).length + (legacyActive ? legacy.count : 0);
+    const total =
+      Object.values(reservations).reduce((sum, value) => sum + value.bytes, 0) +
+      (legacyActive ? legacy.bytes : 0);
+    if (count >= 5 || total + bytes > MAX_TOTAL)
+      return jsonResponse(409, { error: "photo_limit" });
+    reservations[photoId] = { bytes, expiresAt };
     try {
       await ddb.send(
         new TransactWriteCommand({
@@ -189,12 +220,35 @@ export async function presignCarePhoto(event) {
                 ConditionExpression: "attribute_not_exists(pk)",
               },
             },
-            ...[
-              {
-                key: { pk: sitePk(siteId), sk: `CARE_QUOTA#${workId}` },
-                maxBytes: MAX_TOTAL,
-                maxCount: 5,
+            {
+              Put: {
+                TableName: tableName,
+                Item: {
+                  ...budgetKey,
+                  reservations,
+                  ...(legacyActive ? { legacy } : {}),
+                  revision: randomUUID(),
+                  expiresAt,
+                },
+                ConditionExpression: budget
+                  ? budget.revision
+                    ? "revision = :revision"
+                    : "expiresAt = :expiry AND reservedCount = :count AND reservedBytes = :bytes AND attribute_not_exists(revision)"
+                  : "attribute_not_exists(pk)",
+                ...(budget
+                  ? {
+                      ExpressionAttributeValues: budget.revision
+                        ? { ":revision": budget.revision }
+                        : {
+                            ":expiry": budget.expiresAt,
+                            ":count": budget.reservedCount,
+                            ":bytes": budget.reservedBytes,
+                          },
+                    }
+                  : {}),
               },
+            },
+            ...[
               {
                 key: {
                   pk: sitePk(siteId),
@@ -225,14 +279,18 @@ export async function presignCarePhoto(event) {
           ],
         }),
       );
+      break;
     } catch (error) {
-      if (conditionalFailure(error))
+      if (!conditionalFailure(error)) throw error;
+      // Re-read after a racing reservation: an identical retry reuses the
+      // winner without charging any quota twice.
+      if (attempt === 3)
         return jsonResponse(409, { error: "upload_unavailable" });
-      throw error;
     }
   }
   return jsonResponse(200, {
     photoId,
+    expiresAt: reservationExpiry,
     uploadUrl: await presignPut({
       bucket: uploadBucket,
       key: s3Key,
@@ -287,12 +345,10 @@ export async function createCareWork(event) {
   // Sequential reads/decodes bound API memory to one camera image at a time.
   for (const photoId of photoIds) {
     const reservation = await read(photoKey(siteId, workId, photoId));
-    if (
-      !reservation ||
-      reservation.createdBy !== actor ||
-      reservation.expiresAt <= now
-    )
-      return jsonResponse(400, { error: "photo_expired" });
+    if (reservation && reservation.createdBy !== actor)
+      return jsonResponse(400, { error: "invalid_photo" });
+    if (!reservation || reservation.expiresAt <= now)
+      return jsonResponse(400, { error: "photo_expired", photoId });
     total += reservation.contentLength;
     if (total > MAX_TOTAL) return jsonResponse(400, { error: "photo_limit" });
     const rawKey = objectKey(siteId, workId, photoId);

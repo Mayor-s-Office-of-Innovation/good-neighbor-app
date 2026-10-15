@@ -211,6 +211,7 @@ export class CareWorkView extends HTMLElement {
       draft.files.push(
         ...files.map((file) => ({
           file,
+          photoId: crypto.randomUUID(),
           url: URL.createObjectURL(file),
           reservation: null,
           uploaded: false,
@@ -219,7 +220,7 @@ export class CareWorkView extends HTMLElement {
     }
     this._renderCompose();
   }
-  async _save() {
+  async _save(recoveries = 0) {
     if (this._busy || (draft.kind === "other" && !draft.note.trim())) return;
     this._busy = true;
     draft.error = "";
@@ -230,7 +231,7 @@ export class CareWorkView extends HTMLElement {
       for (const entry of saving.files) {
         if (entry.uploaded) continue;
         entry.reservation = await presignCarePhoto(saving.workId, {
-          ...(entry.reservation ? { photoId: entry.reservation.photoId } : {}),
+          photoId: entry.photoId,
           contentType: entry.file.type,
           contentLength: entry.file.size,
         });
@@ -272,6 +273,27 @@ export class CareWorkView extends HTMLElement {
       else replaceRoute("/care-work");
     } catch (error) {
       if (!this.isConnected) return;
+      const code = error?.body?.error;
+      if (
+        ["upload_expired", "photo_expired"].includes(code) &&
+        recoveries < MAX_CARE_PHOTOS
+      ) {
+        // Only explicit server rejections release a frozen submission. A lost
+        // response must first replay the original payload to learn its outcome.
+        const expired = saving.files.filter(
+          (entry) => entry.photoId === error.body.photoId,
+        );
+        if (expired.length) {
+          saving.payload = null;
+          for (const entry of expired) {
+            entry.photoId = crypto.randomUUID();
+            entry.reservation = null;
+            entry.uploaded = false;
+          }
+          this._busy = false;
+          return this._save(recoveries + 1);
+        }
+      }
       // A validation rejection definitively did not create a log. Let the
       // user remove a corrupt photo or correct the input; only uncertain
       // network/server failures must keep the exact submission frozen.

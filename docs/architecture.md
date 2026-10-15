@@ -327,3 +327,11 @@ Logs retain their text and photo-expiry metadata for one year. Photo access ends
 30 days after reservation even if S3 lifecycle deletion is delayed; signed URL
 lifetimes are capped at that boundary. The detail view explains expired photos
 while continuing to display the log. No offline submission queue is introduced.
+
+Care photo UUIDs are allocated by the client before the first presign request.
+Matching retries reuse the reservation without charging quota again, including
+concurrent retries. Explicit reservation-expiry responses identify the affected
+photo so the client can re-reserve and upload its retained file; uncertain log
+submissions replay their original payload before any recovery. Per-log quotas
+count live reservations using conditional revision updates, independent of
+DynamoDB TTL cleanup. Daily device/Site/global quotas are not refunded.

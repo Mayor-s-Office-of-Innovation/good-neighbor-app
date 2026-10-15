@@ -336,3 +336,171 @@ test("proactive care preserves read-only notes when photos expire and recovers a
   ).toHaveCount(0);
   expect(mediaRequests).toBe(0);
 });
+
+/** Expire only this test's unique work ID in the dedicated local test table.
+ * @param {string} workId
+ */
+async function expireCareReservations(workId) {
+  const { DynamoDBClient } = await import("@aws-sdk/client-dynamodb");
+  const { DynamoDBDocumentClient, ScanCommand, PutCommand } = await import(
+    "@aws-sdk/lib-dynamodb"
+  );
+  const client = DynamoDBDocumentClient.from(
+    new DynamoDBClient({
+      endpoint: "http://127.0.0.1:8000",
+      region: "us-east-1",
+      credentials: { accessKeyId: "local", secretAccessKey: "local" },
+    }),
+  );
+  try {
+    /** @type {Record<string, any> | undefined} */
+    let cursor;
+    let expired = 0;
+    do {
+      const result = await client.send(
+        new ScanCommand({
+          TableName: "gnp-local-e2e",
+          ConsistentRead: true,
+          ExclusiveStartKey: cursor,
+          FilterExpression: "begins_with(sk, :uploads) OR sk = :budget",
+          ExpressionAttributeValues: {
+            ":uploads": `CARE_UPLOAD#${workId}#`,
+            ":budget": `CARE_QUOTA#${workId}`,
+          },
+        }),
+      );
+      for (const item of result.Items || []) {
+        item.expiresAt = Math.floor(Date.now() / 1000) - 60;
+        if (item.reservations) {
+          for (const reservation of Object.values(item.reservations))
+            reservation.expiresAt = item.expiresAt;
+        } else expired++;
+        await client.send(
+          new PutCommand({ TableName: "gnp-local-e2e", Item: item }),
+        );
+      }
+      cursor = result.LastEvaluatedKey;
+    } while (cursor);
+    return expired;
+  } finally {
+    client.destroy();
+  }
+}
+
+test("proactive care reuses a photo UUID after six lost presign responses", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "offered_help");
+  await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
+  const ids = new Set();
+  let dropped = 0;
+  await page.route("**/photos:presign", async (route) => {
+    ids.add(route.request().postDataJSON().photoId);
+    if (dropped++ < 6) {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      return route.abort("failed");
+    }
+    return route.fallback();
+  });
+  for (let i = 0; i < 6; i++) {
+    await page.locator("[data-save]").click();
+    await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+  }
+  const work = await save(page);
+  expect(work.photoCount).toBe(1);
+  expect(ids.size).toBe(1);
+  expect([...ids][0]).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test("proactive care replaces five expired uploads without waiting for quota TTL deletion", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "power_washed");
+  await page
+    .locator("#care-photo-input")
+    .setInputFiles(Array(5).fill(PHOTO_CLEAR));
+  let expired = false;
+  /** @type {Record<string, any>[]} */
+  const submissions = [];
+  await page.route("**/v1/care-work", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+    submissions.push(body);
+    if (!expired) {
+      expired = true;
+      expect(await expireCareReservations(body.workId)).toBe(5);
+    }
+    return route.fallback();
+  });
+  await page.locator("[data-save]").click();
+  await expect(page).toHaveURL(/\/care-work$/, { timeout: 30000 });
+  const last = submissions[submissions.length - 1];
+  expect(last.photoIds).toHaveLength(5);
+  expect(last.workId).toBe(submissions[0].workId);
+  expect(
+    last.photoIds.every(
+      (/** @type {string} */ id) => !submissions[0].photoIds.includes(id),
+    ),
+  ).toBe(true);
+  await page.locator(`[data-work="${last.workId}"]`).click();
+  await expect(page.locator(".care-detail-photos img")).toHaveCount(5);
+});
+
+test("proactive care replays an uncertain saved payload even after its reservation expires", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "called_hauler");
+  await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
+  /** @type {Record<string, any>[]} */
+  const submissions = [];
+  await page.route("**/v1/care-work", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+    submissions.push(body);
+    if (submissions.length === 1) {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      expect(await expireCareReservations(body.workId)).toBe(1);
+      return route.abort("failed");
+    }
+    return route.fallback();
+  });
+  await page.locator("[data-save]").click();
+  await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+  await expect(page.locator("[data-remove]")).toBeDisabled();
+  await save(page);
+  expect(submissions).toHaveLength(2);
+  expect(submissions[1]).toEqual(submissions[0]);
+});
+
+test("proactive care renews an expired reservation after an interrupted PUT", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "offered_help");
+  await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
+  let workId = "";
+  const ids = new Set();
+  await page.route("**/photos:presign", (route) => {
+    workId = route.request().url().split("/").at(-2) || "";
+    ids.add(route.request().postDataJSON().photoId);
+    return route.fallback();
+  });
+  let interrupt = true;
+  await page.route("**/care-work/**", (route) => {
+    if (route.request().method() === "PUT" && interrupt)
+      return route.abort("failed");
+    return route.fallback();
+  });
+  await page.locator("[data-save]").click();
+  await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+  expect(await expireCareReservations(workId)).toBe(1);
+  interrupt = false;
+  const work = await save(page);
+  expect(work.photoCount).toBe(1);
+  expect(ids.size).toBe(2);
+});

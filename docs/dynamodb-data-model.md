@@ -633,7 +633,7 @@ the same create/read access. There are no mutation routes after submission.
 |---|---|---|---|
 | Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
 | Upload reservation | `SITE#<siteId>` | `CARE_UPLOAD#<workId>#<photoId>` | `type: careUpload`, creator, declared type/bytes, creation time and one-day TTL. Used only to authorize submission. |
-| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Conservative reserved byte/count limits, one-day TTL. Device/Site/global daily media budgets are shared with existing uploads. |
+| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device/Site/global daily media budgets remain charged and are shared with existing uploads. |
 
 Work logs project `gsi1pk = SITE#<siteId>#CARE_WORK` and
 `gsi1sk = <createdAt>#<workId>` onto GSI1. `GET /v1/care-work` returns newest-first

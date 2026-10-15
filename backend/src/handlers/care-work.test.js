@@ -169,7 +169,11 @@ describe("Site-scoped proactive care", () => {
         )
       ).statusCode,
     ).toBe(200);
-    expect(mocks.send.mock.calls[0][0].input.TransactItems).toHaveLength(6);
+    expect(
+      mocks.send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0].input.TransactItems,
+    ).toHaveLength(6);
     expect(mocks.presignPut).toHaveBeenCalledWith(
       expect.objectContaining({
         bucket: "uploads",
@@ -218,10 +222,152 @@ describe("Site-scoped proactive care", () => {
     ).toBe(409);
     expect(mocks.presignPut).toHaveBeenCalledTimes(1);
   });
-  it("does not sign when reservation quotas fail", async () => {
-    mocks.send.mockRejectedValue(
-      Object.assign(new Error(), { name: "TransactionCanceledException" }),
+  it("creates a supplied UUID once and reuses it after a lost response", async () => {
+    const body = {
+      photoId: PHOTO,
+      contentType: "image/jpeg",
+      contentLength: 3,
+    };
+    const first = await presignCarePhoto(event(body));
+    for (let i = 0; i < 6; i++) {
+      const retry = await presignCarePhoto(event(body));
+      expect(retry.statusCode).toBe(200);
+      expect(JSON.parse(retry.body).expiresAt).toBe(
+        JSON.parse(first.body).expiresAt,
+      );
+    }
+    expect(
+      mocks.send.mock.calls.filter(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toHaveLength(1);
+  });
+  it("re-reads a concurrent winner instead of charging twice", async () => {
+    const original = mocks.send.getMockImplementation();
+    if (!original) throw new Error("Missing test database implementation");
+    let raced = false;
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand && !raced) {
+        raced = true;
+        await original(command);
+        throw Object.assign(new Error(), {
+          name: "TransactionCanceledException",
+        });
+      }
+      return original(command);
+    });
+    expect(
+      (
+        await presignCarePhoto(
+          event({
+            photoId: PHOTO,
+            contentType: "image/jpeg",
+            contentLength: 3,
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      mocks.send.mock.calls.filter(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toHaveLength(1);
+  });
+  it("reclaims five expired slots before TTL deletion while preserving daily quota charges", async () => {
+    const reservations = Object.fromEntries(
+      Array.from({ length: 5 }, (_, i) => [
+        `old-${i}`,
+        { bytes: 5 * 1024 * 1024, expiresAt: NOW - 1 },
+      ]),
     );
+    records.set(`SITE#site-a/CARE_QUOTA#${ID}`, {
+      revision: "old",
+      reservations,
+      expiresAt: NOW - 1,
+    });
+    expect(
+      (
+        await presignCarePhoto(
+          event({
+            photoId: PHOTO,
+            contentType: "image/jpeg",
+            contentLength: 3,
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
+    const budget = records.get(`SITE#site-a/CARE_QUOTA#${ID}`);
+    expect(Object.keys(budget.reservations)).toEqual([PHOTO]);
+    /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */
+    const transaction =
+      mocks.send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0].input.TransactItems || [];
+    expect(transaction.filter((op) => op.Update)).toHaveLength(3);
+    expect(
+      transaction.find((op) => op.Put?.Item?.revision)?.Put
+        ?.ExpressionAttributeValues,
+    ).toEqual({ ":revision": "old" });
+  });
+  it("does not reclaim live reservations, including pre-upgrade counters", async () => {
+    for (const budget of [
+      {
+        revision: "live",
+        reservations: Object.fromEntries(
+          Array.from({ length: 5 }, (_, i) => [
+            `live-${i}`,
+            { bytes: 3, expiresAt: NOW + 1 },
+          ]),
+        ),
+      },
+      { reservedCount: 5, reservedBytes: 15, expiresAt: NOW + 1 },
+    ]) {
+      records.set(`SITE#site-a/CARE_QUOTA#${ID}`, budget);
+      expect(
+        (
+          await presignCarePhoto(
+            event({
+              photoId: PHOTO,
+              contentType: "image/jpeg",
+              contentLength: 3,
+            }),
+          )
+        ).statusCode,
+      ).toBe(409);
+    }
+    expect(mocks.presignPut).not.toHaveBeenCalled();
+  });
+  it("returns explicit expiry with the affected photo ID but replays an already saved log first", async () => {
+    const body = {
+      photoId: PHOTO,
+      contentType: "image/jpeg",
+      contentLength: 3,
+    };
+    await presignCarePhoto(event(body));
+    vi.setSystemTime((NOW + 86401) * 1000);
+    expect(JSON.parse((await presignCarePhoto(event(body))).body)).toEqual({
+      error: "upload_expired",
+      photoId: PHOTO,
+    });
+    expect(
+      JSON.parse(
+        (await createCareWork(event({ ...payload(), photoIds: [PHOTO] }))).body,
+      ),
+    ).toEqual({ error: "photo_expired", photoId: PHOTO });
+    await createCareWork(event(payload()));
+    expect((await createCareWork(event(payload()))).statusCode).toBe(200);
+    expect(JSON.parse((await presignCarePhoto(event(body))).body).error).toBe(
+      "work_already_logged",
+    );
+  });
+  it("does not sign when reservation quotas fail", async () => {
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand)
+        throw Object.assign(new Error(), {
+          name: "TransactionCanceledException",
+        });
+      return {};
+    });
     expect(
       (
         await presignCarePhoto(
