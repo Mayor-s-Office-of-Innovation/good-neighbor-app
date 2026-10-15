@@ -100,6 +100,15 @@ export function show311SuccessToast(serviceRequestNumber = "") {
   });
 }
 
+export function showComplaintLoggedToast() {
+  return showToast({
+    title: t("complaints.toast.logged"),
+    message: "",
+    icon: "circle-check",
+    tone: "success",
+  });
+}
+
 export function show311ErrorToast() {
   return showToast({
     title: t("toast.ticketFailed.title"),
@@ -118,8 +127,12 @@ export function showEditSavedToast() {
   });
 }
 
-export function showActionSaveErrorToast() {
+/** @param {() => void} [retry] */
+export function showActionSaveErrorToast(retry) {
   return showToast({
+    ...(retry
+      ? { duration: 0, action: { label: t("common.retry"), run: retry } }
+      : {}),
     title: t("toast.actionSaveError.title"),
     message: t("toast.actionSaveError.message"),
     icon: "triangle-exclamation",

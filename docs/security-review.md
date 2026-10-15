@@ -51,7 +51,7 @@ The **only** durable copy of the media is GNP's.
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
   size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site/global budgets.
-- [x] **TLS-only** for the uploads bucket through an explicit `aws:SecureTransport = false` deny.
+- [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.
 
 **Before go-live / any real (non-test) user data:** re-review this classification against the
 as-built path — confirm the lifecycle rules are active in the target account, confirm the bucket is private + KMS-encrypted, no incidental

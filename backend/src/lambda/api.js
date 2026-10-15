@@ -3,6 +3,13 @@ import {
   separateDuplicate,
 } from "../handlers/duplicate-links.js";
 import { getDuplicateResult } from "../handlers/duplicate-results.js";
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../handlers/care-work.js";
 // API Gateway (HTTP API v2) entrypoint for the whole check/artifact API. One
 // Lambda backs every route; API Gateway sets `event.routeKey` to the matched
 // route (e.g. "POST /v1/checks/{checkId}"), so we dispatch on it directly — no
@@ -24,6 +31,17 @@ import {
   presignMedia,
 } from "../handlers/artifacts.js";
 import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../handlers/complaints.js";
+import {
   get311RequestDetail,
   get311RequestDetails,
   listTasks,
@@ -35,7 +53,6 @@ import {
   registerTaskUpdateMedia,
 } from "../handlers/task-updates.js";
 import {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -214,6 +231,23 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
     getDuplicateResult,
   "GET /v1/checks/{checkId}": getCheck,
+  "GET /v1/care-work": listCareWork,
+  "POST /v1/care-work": createCareWork,
+  "GET /v1/care-work/{workId}": getCareWork,
+  "POST /v1/care-work/{workId}/photos:presign": presignCarePhoto,
+  "GET /v1/care-work/{workId}/photos/{photoId}/media": getCarePhoto,
+  "GET /v1/complaints": listComplaints,
+  "POST /v1/complaints": createComplaint,
+  "GET /v1/complaints/{complaintId}": getComplaint,
+  "DELETE /v1/complaints/{complaintId}": deleteComplaint,
+  "POST /v1/complaints/{complaintId}/analysis:retry": retryComplaint,
+  "POST /v1/complaints/{complaintId}/artifacts:presign":
+    presignComplaintArtifact,
+  "POST /v1/complaints/{complaintId}/artifacts": registerComplaintArtifact,
+  "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}":
+    deleteComplaintArtifact,
+  "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media":
+    presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
   "POST /v1/duplicates:batch": getDuplicateLinks,
@@ -221,7 +255,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
-  "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
   "GET /v1/tasks/{taskId}/updates": getTaskUpdates,
   "POST /v1/tasks/{taskId}/updates": createTaskUpdate,
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,

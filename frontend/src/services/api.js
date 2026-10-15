@@ -537,6 +537,107 @@ export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
 }
 
+// ── Public complaints ──────────────────────────────────────────────────────
+
+export function listComplaints() {
+  return request("GET", "/v1/complaints");
+}
+
+export function getComplaint(complaintId) {
+  return request("GET", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function createComplaint(body) {
+  return request("POST", "/v1/complaints", {
+    body,
+    headers: { "idempotency-key": body.complaintId },
+  });
+}
+
+export function retryComplaint(complaintId) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/analysis:retry`,
+    { body: {} },
+  );
+}
+
+export function deleteComplaint(complaintId) {
+  return request("DELETE", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function presignComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts:presign`,
+    { body, signal },
+  );
+}
+
+export function registerComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts`,
+    { body, signal },
+  );
+}
+
+export function deleteComplaintArtifact(complaintId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+}
+
+export function getComplaintMediaUrl(complaintId, artifactId) {
+  return request(
+    "GET",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+  );
+}
+
+/** @param {string} uploadUrl @param {Blob} file @param {Record<string,string>} uploadHeaders @param {(progress:number) => void} onProgress @param {AbortSignal} [signal] */
+export function putMediaWithProgress(
+  uploadUrl,
+  file,
+  uploadHeaders = {},
+  onProgress = () => {},
+  signal,
+) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl);
+    Object.entries(uploadHeaders).forEach(([name, value]) =>
+      xhr.setRequestHeader(name, value),
+    );
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable)
+        onProgress(Math.round((event.loaded / event.total) * 100));
+    });
+    xhr.addEventListener("load", () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(
+            new ApiError(`Media upload → ${xhr.status}`, {
+              status: xhr.status,
+            }),
+          ),
+    );
+    xhr.addEventListener("error", () =>
+      reject(new ApiError("Network error uploading media", { status: 0 })),
+    );
+    xhr.addEventListener("abort", () =>
+      reject(new DOMException("Upload cancelled", "AbortError")),
+    );
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
+}
+
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
 
 /**
@@ -742,23 +843,12 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}) {
+export function completeTask(taskId, body = {}, options = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
-    body,
-  });
-}
-
-/**
- * POST /v1/tasks/{taskId}/cannot-do — audit-only reason capture when the user
- * cannot complete an action or escalation.
- * @param {string} taskId
- * @param {{ reason: string, note?: string }} body
- * @returns {Promise<{ task: any }>}
- */
-export function cannotDoTask(taskId, body) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cannot-do`, {
+    ...options,
     body,
   });
 }
@@ -1008,5 +1098,35 @@ export function separateDuplicate(taskId, expected) {
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
     { body: expected },
+  );
+}
+
+// Proactive care logs are Site-scoped, independent of checks and tasks.
+export function listCareWork(nextToken = "") {
+  return request(
+    "GET",
+    `/v1/care-work${qs({ nextToken: nextToken || undefined })}`,
+  );
+}
+export function getCareWork(workId) {
+  return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
+}
+export function createCareWork(body) {
+  return request("POST", "/v1/care-work", {
+    body,
+    headers: { "idempotency-key": body.workId },
+  });
+}
+export function presignCarePhoto(workId, body) {
+  return request(
+    "POST",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos:presign`,
+    { body },
+  );
+}
+export function getCarePhoto(workId, photoId) {
+  return request(
+    "GET",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos/${encodeURIComponent(photoId)}/media`,
   );
 }

@@ -147,6 +147,7 @@ export function buildAnalyzeRequest({
  * @property {(input: { classifierId: string, evidence: ClassifierEvidence, requestId?: string, appId?: string }) => Promise<unknown>} classifyEvidence
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
  * @property {(input: { items: import("./contract.js").TranslateRequestItem[], languages: string[], requestId?: string, appId?: string }) => Promise<import("./contract.js").TranslateResponse>} translate
+ * @property {(input: { description?: string, files?: Array<{name:string, content_type:string, base64?:string, source_url?:string}>, requestId?: string, appId?: string }) => Promise<unknown>} extractComplaint
  *   text-only background translation of model-written label/description
  *   pairs into every requested locale (`POST /v1/translations`)
  * @property {() => Promise<unknown>} listRubrics
@@ -249,6 +250,20 @@ export function createAnalyzerClient({
   };
 
   return {
+    extractComplaint({ description, files, requestId, appId }) {
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request("/v1/complaints:extract", {
+        method: "POST",
+        auth: true,
+        body: {
+          ...(description ? { description } : {}),
+          files: files || [],
+          ...(Object.keys(caller).length ? { caller } : {}),
+        },
+      });
+    },
     async analyze({ metadata, media, requestId, appId, language }) {
       const body = buildAnalyzeRequest({
         metadata,

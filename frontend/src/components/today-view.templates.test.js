@@ -8,13 +8,22 @@ import {
   emptyResults,
   errorView,
   homeAllDonePanel,
+  homeActions,
   homeResults,
   logoutDialog,
-  reasonPicker,
   settingsMenu,
   summaryBlock,
   taskTabs,
 } from "./today-view.templates.js";
+
+describe("homeActions", () => {
+  it("renders an icon for each overflow-menu action", () => {
+    const markup = homeActions({ checkLabel: "Start a full check" });
+
+    expect(markup).toContain('<wa-icon name="bullhorn"');
+    expect(markup).toContain('<wa-icon name="flag"');
+  });
+});
 
 describe("settingsMenu", () => {
   it("renders the menu only while open", () => {
@@ -201,23 +210,6 @@ describe("actionButton", () => {
       'href="mailto:a@b.c&quot; onmouseover=&quot;alert(1)"',
     );
     expect(markup).not.toContain('" onmouseover="');
-  });
-});
-
-describe("reasonPicker", () => {
-  it("lists each reason and a cancel", () => {
-    const markup = reasonPicker({
-      reasons: [
-        { value: "Locked", label: "Cerrado" },
-        { value: "No access", label: "Sin acceso" },
-      ],
-    });
-    expect(markup.match(/data-action="cant-reason"/g)).toHaveLength(2);
-    expect(markup).toContain('data-reason="No access"');
-    expect(markup).toMatch(/>\s*Sin acceso\s*</);
-    expect(markup).not.toMatch(/>\s*No access\s*</);
-    expect(markup).toContain('data-action="cant-cancel"');
-    expect(markup).toContain(escapeHtml(t("common.cancel")));
   });
 });
 

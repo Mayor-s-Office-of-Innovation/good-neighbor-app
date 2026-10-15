@@ -21,7 +21,6 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         <header class="task-update__header">
           ${showBack
             ? html`<button
-                type="button"
                 class="btn-icon wa-plain"
                 data-back
                 aria-label="${escapeAttr(t("common.back"))}"
@@ -30,7 +29,6 @@ export function taskUpdateDialogShell({ mode, state, content }) {
               </button>`
             : html`<span></span>`}
           <button
-            type="button"
             class="btn-icon wa-plain"
             data-close
             aria-label="${escapeAttr(t("common.close"))}"
@@ -40,11 +38,9 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         </header>
         ${state === "loading"
           ? html`<p role="status">${escapeHtml(t("taskUpdate.loading"))}</p>`
-          : ""}
-        ${state === "error"
-          ? html`<p role="alert">${escapeHtml(t("taskUpdate.loadError"))}</p>`
-          : ""}
-        ${state === "ready" ? content : ""}
+          : state === "error"
+            ? html`<p role="alert">${escapeHtml(t("taskUpdate.loadError"))}</p>`
+            : content}
       </div>
     </dialog>
     <dialog

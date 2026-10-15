@@ -1,4 +1,4 @@
-import { openSessionDuplicate } from "./duplicate-issue-dialog.js";
+import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
@@ -471,7 +471,10 @@ class ProblemReport extends HTMLElement {
         } else if (action === "edit") {
           this._openEditProblem(problem);
         } else if (action === "resolve") {
-          if (target.getAttribute("role") === "checkbox") {
+          if (
+            target.getAttribute("role") === "checkbox" ||
+            target.hasAttribute("data-phone-number")
+          ) {
             toggleCardCompletion(this, card, target, {
               onSaved: () => this._markProblemResolved(problem),
               render: () => this._render(),

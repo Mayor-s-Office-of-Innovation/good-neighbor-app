@@ -108,6 +108,7 @@ beforeAll(async () => {
   );
   vi.stubGlobal("window", {
     addEventListener() {},
+    removeEventListener() {},
     clearTimeout() {},
     location: {},
     dispatchEvent: vi.fn(),

@@ -6,6 +6,13 @@ import {
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
+vi.mock("../services/phone-completion.js", () => ({
+  savePhoneCompletion: (taskId) =>
+    completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
+      showActionSaveErrorToast();
+      throw error;
+    }),
+}));
 vi.mock("./task-update-dialog.js", () => ({}));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({ showActionSaveErrorToast: vi.fn() }));
@@ -162,4 +169,45 @@ it("does not reopen capture for a replay whose results are closed", async () => 
     completeCardAction("task", { completionMethod: "manual" }),
   ).resolves.toEqual(result);
   expect(create).not.toHaveBeenCalled();
+});
+
+it("starts saving a phone action immediately and opens the dialer once", async () => {
+  const location = { href: "" };
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }), location });
+  button.setAttribute("data-phone-number", "415-553-0123");
+  vi.mocked(completeTask).mockResolvedValue({
+    task: { status: "in_progress" },
+  });
+  toggleCardCompletion(host, card, button, callbacks);
+  toggleCardCompletion(host, card, button, callbacks);
+  expect(completeTask).toHaveBeenCalledExactlyOnceWith("task", {
+    completionMethod: "manual",
+  });
+  expect(location.href).toBe("tel:4155530123");
+  expect(button.getAttribute("aria-checked")).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "in_progress" });
+});
+
+it("does not launch a phone CTA outside the mobile viewport", () => {
+  const location = { href: "" };
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: false }), location });
+  button.setAttribute("data-phone-number", "911");
+  toggleCardCompletion(host, card, button, callbacks);
+  expect(completeTask).not.toHaveBeenCalled();
+  expect(location.href).toBe("");
+});
+
+it("leaves failed phone saves retryable without checkbox semantics", async () => {
+  vi.stubGlobal("window", {
+    matchMedia: () => ({ matches: true }),
+    location: { href: "" },
+  });
+  button.setAttribute("data-phone-number", "311");
+  vi.mocked(completeTask).mockRejectedValue(new Error("offline"));
+  toggleCardCompletion(host, card, button, callbacks);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute("aria-checked")).toBeUndefined();
+  expect(showActionSaveErrorToast).toHaveBeenCalledOnce();
 });

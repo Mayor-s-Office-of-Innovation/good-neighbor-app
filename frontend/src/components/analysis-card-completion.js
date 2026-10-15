@@ -1,3 +1,4 @@
+import { savePhoneCompletion } from "../services/phone-completion.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
 
@@ -12,9 +13,12 @@ export function isCompletingAnalysisCard(host) {
 
 /** Record the checklist action only after its cancellable hold, then animate a confirmed save. */
 export function toggleCardCompletion(host, card, button, { onSaved, render }) {
+  const phoneNumber = button.getAttribute("data-phone-number");
+  const isPhone = Boolean(phoneNumber);
+  if (isPhone && !window.matchMedia("(max-width: 520px)").matches) return;
   const previous = pending.get(card);
   if (previous) {
-    if (previous.saving) return;
+    if (previous.saving || isPhone) return;
     clearTimeout(previous.timer);
     pending.delete(card);
     button.setAttribute("aria-checked", "false");
@@ -36,10 +40,10 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
   controls.forEach(([control]) => {
     control.disabled = true;
   });
-  button.setAttribute("aria-checked", "true");
+  if (!isPhone) button.setAttribute("aria-checked", "true");
   const state = { host, saving: false, controls, timer: null };
   pending.set(card, state);
-  state.timer = setTimeout(async () => {
+  const save = async () => {
     let saved = false;
     try {
       if (!card.isConnected) return;
@@ -48,9 +52,9 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
       card.setAttribute("aria-busy", "true");
       const taskId = card.getAttribute("data-task-id");
       if (!taskId) throw new Error("Task is not ready to complete");
-      const result = await completeCardAction(taskId, {
-        completionMethod: "manual",
-      });
+      const result = await (isPhone
+        ? savePhoneCompletion(taskId, host._site?.siteId)
+        : completeCardAction(taskId, { completionMethod: "manual" }));
       if (
         !["completed", "in_progress", "cannot_do"].includes(
           result?.task?.status,
@@ -63,8 +67,8 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
     } catch (error) {
       console.error("checklist completion failed", error);
       if (!saved) {
-        button.setAttribute("aria-checked", "false");
-        showActionSaveErrorToast();
+        if (!isPhone) button.setAttribute("aria-checked", "false");
+        if (!isPhone) showActionSaveErrorToast();
       }
     } finally {
       pending.delete(card);
@@ -82,7 +86,13 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
           focusChecklistControl(host, card.getAttribute("data-task-id"));
       }
     }
-  }, 1500);
+  };
+  if (isPhone) {
+    // Persist the receipt synchronously before handing off. A suspended request
+    // is recovered on return/reload without delaying the call.
+    void save();
+    window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
+  } else state.timer = setTimeout(save, 1500);
 }
 
 /** CSS controls simultaneous height/gap collapse and slide, without opacity changes. */

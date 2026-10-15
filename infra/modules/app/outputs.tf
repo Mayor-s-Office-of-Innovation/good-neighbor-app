@@ -13,6 +13,11 @@ output "upload_bucket_name" {
   value       = aws_s3_bucket.uploads.bucket
 }
 
+output "complaint_bucket_name" {
+  description = "S3 bucket for complaint evidence with one-year retention."
+  value       = aws_s3_bucket.complaints.bucket
+}
+
 output "compliance_letter_bucket_name" {
   description = "S3 bucket for durable compliance-letter PDFs and previews."
   value       = aws_s3_bucket.compliance_letters.bucket

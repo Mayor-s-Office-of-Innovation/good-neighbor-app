@@ -3,6 +3,13 @@ import {
   separateDuplicate,
 } from "../src/handlers/duplicate-links.js";
 import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../src/handlers/care-work.js";
 // In-process HTTP router — the local stand-in for API Gateway (HTTP API v2). It
 // maps method+path to the SAME exported Lambda handlers we deploy, builds a
 // realistic APIGatewayProxyEventV2, injects a stub Cognito `sub`, and writes the
@@ -30,6 +37,17 @@ import {
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../src/handlers/complaints.js";
+import {
   get311RequestDetail,
   get311RequestDetails,
   listTasks,
@@ -41,7 +59,6 @@ import {
   registerTaskUpdateMedia,
 } from "../src/handlers/task-updates.js";
 import {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -283,6 +300,36 @@ const routes = [
     getDuplicateResult,
   ),
   route("GET", "/v1/checks/{checkId}", getCheck),
+  route("GET", "/v1/care-work", listCareWork),
+  route("POST", "/v1/care-work", createCareWork),
+  route("GET", "/v1/care-work/{workId}", getCareWork),
+  route("POST", "/v1/care-work/{workId}/photos:presign", presignCarePhoto),
+  route("GET", "/v1/care-work/{workId}/photos/{photoId}/media", getCarePhoto),
+  route("GET", "/v1/complaints", listComplaints),
+  route("POST", "/v1/complaints", createComplaint),
+  route("GET", "/v1/complaints/{complaintId}", getComplaint),
+  route("DELETE", "/v1/complaints/{complaintId}", deleteComplaint),
+  route("POST", "/v1/complaints/{complaintId}/analysis:retry", retryComplaint),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts:presign",
+    presignComplaintArtifact,
+  ),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts",
+    registerComplaintArtifact,
+  ),
+  route(
+    "DELETE",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}",
+    deleteComplaintArtifact,
+  ),
+  route(
+    "GET",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}/media",
+    presignComplaintMedia,
+  ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
   route("POST", "/v1/duplicates:batch", getDuplicateLinks),
@@ -290,7 +337,6 @@ const routes = [
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
-  route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
   route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
   route(

@@ -4,7 +4,7 @@ import {
   duplicateCounts,
 } from "../domain/duplicate-issues.js";
 import { watchDuplicateIssues } from "../services/duplicate-issues.js";
-import { openDuplicateIssue } from "./duplicate-issue-dialog.js";
+import { openDuplicateIssue } from "./duplicate-issue-launcher.js";
 import {
   toggleCardCompletion,
   completeCardAction,
@@ -19,7 +19,7 @@ import { pacificDateKey } from "../i18n/dates.js";
   One always-on screen (no due/up-to-date fork), driven by real data. When we have
   the data, it shows a timestamp for the last check, the current issue count,
   and the site's real TASK# worklist. Cards carry the task's own action buttons,
-  wired to the real complete / cannot-do endpoints.
+  wired to the completion endpoint.
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
@@ -62,7 +62,6 @@ import {
 import {
   listChecks,
   listTasks,
-  cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
 } from "../services/api.js";
@@ -135,12 +134,10 @@ import {
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import {
-  actionButton,
   errorView,
   heroBlock,
   homeResults,
   homeShell,
-  reasonPicker,
   summaryBlock,
 } from "./today-view.templates.js";
 import { TaskSheets } from "./task-sheets.js";
@@ -224,6 +221,7 @@ class TodayView extends HTMLElement {
   disconnectedCallback() {
     this._stopDuplicates?.();
     document.removeEventListener("close", this._duplicateCloseHandler, true);
+    window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
     this._sessionUnsub?.();
@@ -231,12 +229,19 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
+    document.removeEventListener("click", this._actionMenuDocumentClick);
+    this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
   }
 
   async connectedCallback() {
     document.addEventListener("close", this._duplicateCloseHandler, true);
+    if (!this._phoneSaved)
+      this._phoneSaved = () => {
+        void this.connectedCallback();
+      };
+    window.addEventListener("phonecompletionsaved", this._phoneSaved);
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
@@ -445,7 +450,7 @@ class TodayView extends HTMLElement {
       return;
     }
     // Index tasks by id so card action handlers can read the task (e.g. its
-    // allowlisted cannot-do reasons) at click time.
+    // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
     this.innerHTML = this._render(model);
 
@@ -596,6 +601,54 @@ class TodayView extends HTMLElement {
         this._startCapture("single-problem", event.currentTarget),
       );
     }
+    const actionMenuTrigger = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("#home-action-menu-trigger")
+    );
+    const actionMenu = /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-action-menu")
+    );
+    actionMenuTrigger?.addEventListener("click", () => {
+      const opening = actionMenu.hidden;
+      actionMenu.hidden = !opening;
+      actionMenuTrigger.setAttribute("aria-expanded", String(opening));
+      if (opening)
+        /** @type {HTMLElement | null} */ (
+          actionMenu.querySelector('[role="menuitem"]')
+        )?.focus();
+    });
+    this._actionMenuDocumentClick = (event) => {
+      if (actionMenu.hidden || event.composedPath().includes(actionMenuTrigger))
+        return;
+      if (event.composedPath().includes(actionMenu)) return;
+      actionMenu.hidden = true;
+      actionMenuTrigger.setAttribute("aria-expanded", "false");
+    };
+    document.addEventListener("click", this._actionMenuDocumentClick);
+    actionMenu?.addEventListener("keydown", (event) => {
+      const keyEvent = /** @type {KeyboardEvent} */ (event);
+      const items = /** @type {HTMLElement[]} */ ([
+        ...actionMenu.querySelectorAll('[role="menuitem"]'),
+      ]);
+      const index = items.indexOf(
+        /** @type {HTMLElement} */ (document.activeElement),
+      );
+      if (keyEvent.key === "Escape") {
+        actionMenu.hidden = true;
+        actionMenuTrigger.setAttribute("aria-expanded", "false");
+        actionMenuTrigger.focus();
+      }
+      if (keyEvent.key === "ArrowDown" || keyEvent.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = keyEvent.key === "ArrowDown" ? 1 : -1;
+        items[(index + delta + items.length) % items.length]?.focus();
+      }
+    });
+    this.querySelector("#view-care-work")?.addEventListener("click", () =>
+      navigate("/care-work"),
+    );
+    this.querySelector("#view-complaints")?.addEventListener("click", () =>
+      navigate("/complaints"),
+    );
     this.querySelectorAll("[data-start-capture='single-problem']").forEach(
       (control) => {
         control.addEventListener("click", (event) => {
@@ -1079,7 +1132,6 @@ class TodayView extends HTMLElement {
       siteName: identity.site,
       summary: this._summaryBlock(last, homeTasks),
       checkLabel: this._checkActionLabel(),
-      reportLabel: t("today.actions.report"),
     });
   }
 
@@ -1350,13 +1402,6 @@ class TodayView extends HTMLElement {
         variant: "ink",
       });
     }
-    if ((task.cannotDoReasons || []).length) {
-      actions.push({
-        kind: "cant",
-        label: t("today.action.cant"),
-        variant: "outline",
-      });
-    }
     return actions;
   }
 
@@ -1477,7 +1522,10 @@ class TodayView extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      if (btn.getAttribute("role") === "checkbox") {
+      if (
+        btn.getAttribute("role") === "checkbox" ||
+        btn.hasAttribute("data-phone-number")
+      ) {
         toggleCardCompletion(this, card, btn, {
           onSaved: (task) =>
             this._markAnalysisProblemResolved(problem, {
@@ -1862,20 +1910,6 @@ class TodayView extends HTMLElement {
           this.connectedCallback();
         }
       });
-    } else if (action === "cant") {
-      this._renderReasonPicker(card, task);
-    } else if (action === "cant-reason") {
-      const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason }), {
-        animateOnSuccess: true,
-      }).then((ok) => {
-        if (ok) {
-          this._setTaskOverride(task.taskId, "resolved");
-          this.connectedCallback();
-        }
-      });
-    } else if (action === "cant-cancel") {
-      this._restoreActions(card, task);
     }
   }
 
@@ -1886,37 +1920,6 @@ class TodayView extends HTMLElement {
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;
-  }
-
-  // A "failed" app action holds the task open but still returns 200, so the
-  // caller must read the stored results to know the filing didn't happen.
-  // Map the recorded reason to one actionable line (mirrors SUBMIT_MESSAGES).
-  // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
-  // rejects arbitrary ones), plus a cancel.
-  _renderReasonPicker(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    // The backend validates the reason against the task's English list, so
-    // each option submits the stored string and displays its translation.
-    const reasons = (task.cannotDoReasons || []).map((value) => ({
-      value: String(value),
-      label: rulebookText(value),
-    }));
-    actions.innerHTML = reasonPicker({ reasons });
-    this._wireCardButtons(card, task);
-  }
-
-  _restoreActions(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    actions.innerHTML = this._cardActions(task)
-      .map((a) => actionButton(a))
-      .join("");
-    this._wireCardButtons(card, task);
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the

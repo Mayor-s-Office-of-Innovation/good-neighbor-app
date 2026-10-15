@@ -13,7 +13,7 @@ flowchart LR
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
-  sqs --> worker["Lambda: worker (analyze-artifact + process-submission)"]
+  sqs --> worker["Lambda: worker (checks, complaints, and submissions)"]
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
@@ -23,6 +23,16 @@ The media bytes reach the analyzer only from the worker (base64, `store_input:fa
 they never travel through the SQS queue and are never logged. The perimeter-check
 handlers never see the bytes either — the device PUTs straight to S3 against a
 presigned URL, and the handler stores only the S3 key.
+
+Public complaints use the same private upload boundary. The app owns complaint
+authorization, lifecycle, persistence, retry, and deletion. The analyzer owns only
+structured multimodal extraction through `POST /v1/complaints:extract`. JPEG, PNG,
+WebP, HEIC, and HEIF images may be uploaded up to 10 MiB and are normalized before
+being sent inline. PDF and UTF-8 text documents are limited to 4.5 MiB, matching the
+Bedrock document ceiling, and are fetched by the analyzer through five-minute,
+read-only S3 URLs with strict host and byte checks. Legacy Word `.doc` uploads are not
+accepted because an OLE signature alone cannot safely validate their structure. The
+analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
@@ -118,6 +128,21 @@ analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
 
+## Public complaint flow
+
+The browser uploads up to five validated complaint files directly to the dedicated
+complaint-evidence S3 bucket and registers their metadata. Submission retags every
+object while the header remains a draft, then transactionally publishes the Site-scoped
+`COMPLAINT#` header and extends every artifact row's retention. The API immediately
+returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
+loads the evidence, calls the analyzer's complaint-extraction contract, validates the
+six required string fields, and updates the row to `ready`. After the fifth failed SQS
+delivery it records `analysis_failed`; the UI exposes an explicit retry. Confirmed
+deletion removes every S3 object before deleting DynamoDB metadata. Complaint objects
+and records carry a one-year lifecycle/TTL; unsubmitted draft uploads retain the
+one-day pending lifecycle. The separate bucket preserves the check/task photo
+bucket's unconditional 30-day retention backstop.
+
 ## Site address lookup and validation
 
 The City admin suggests Site addresses through an authenticated
@@ -196,7 +221,7 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
-  `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
+  `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used
   by the client. Card hydration batches visible requests so one handler invocation loads the
@@ -243,7 +268,7 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   Supervisors; Compliance Managers cannot exercise this cross-Site authority.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Every photo expires 30 days after upload via a bucket-wide rule; uploads that were never registered or were rejected during registration/analysis are tagged and expire after one day. Bucket versioning is suspended so expired photos leave no noncurrent copy.
+- Lambda roles are scoped per function and avoid wildcard resource access. The check/task media bucket and the separate complaint-evidence bucket both block public access and require SSE-KMS + TLS. Every check/task photo expires 30 days after upload via a bucket-wide rule. Complaint evidence expires after one year via its own bucket-wide rule. In either bucket, uploads that were never registered or were rejected expire after one day. Bucket versioning is suspended so expired media leaves no noncurrent copy.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)
@@ -287,3 +312,42 @@ incrementally. A durable human override restores an independent actionable repor
 without reversing the group's action. Details and deployment/retention controls:
 [ADR 0017](adr/0017-duplicate-issue-links.md),
 [duplicate operations](runbooks/duplicate-detection.md).
+
+## Proactive care work logs
+
+All devices bound to a Site can create and read that Site's proactive care logs
+at `/care-work`. These are independent records, with no check, assessment, task,
+analysis job, location capture, or reporting/compliance side effect. Seven stable
+work kinds and a custom `other` kind are supported. Custom work requires a
+nonblank description; fixed kinds permit an empty note and no photos. Submitted
+records are immutable and have no edit/delete routes.
+
+The client retains one submission UUID and payload across network retries. The
+API conditionally creates the header and compares a payload/actor fingerprint on
+replay, returning the original result for an identical retry and rejecting an
+attempt to change a saved record. Reads derive the Site from the authenticated
+principal. Listing uses a dedicated GSI1 partition, bounded pages, and Site-bound
+cursors; the UI combines pages before computing Pacific-date groups and counts.
+
+Photos use a distinct `care-work/<siteId>/<workId>/<photoId>` prefix in the existing
+30-day uploads bucket. Upload reservations share device/Site/global media quotas,
+with five images, 10 MiB per image, and 25 MiB per log. Submission checks the
+reservation owner, signed byte metadata, actual size and decoded image format,
+then uses the existing image normalizer to strip EXIF and produce a JPEG under a
+server-only `.jpg` key. Source uploads remain `state=pending` and expire after one
+day; submitted JPEGs use `state=active`. The existing bucket lifecycle and all
+check/task/complaint workflows are unchanged. Failed submission attempts can leave
+normalized orphan JPEGs, bounded by the same 30-day bucket backstop.
+
+Logs retain their text and photo-expiry metadata for one year. Photo access ends
+30 days after reservation even if S3 lifecycle deletion is delayed; signed URL
+lifetimes are capped at that boundary. The detail view explains expired photos
+while continuing to display the log. No offline submission queue is introduced.
+
+Care photo UUIDs are allocated by the client before the first presign request.
+Matching retries reuse the reservation without charging quota again, including
+concurrent retries. Explicit reservation-expiry responses identify the affected
+photo so the client can re-reserve and upload its retained file; uncertain log
+submissions replay their original payload before any recovery. Per-log quotas
+count live reservations using conditional revision updates, independent of
+DynamoDB TTL cleanup. Daily device/Site/global quotas are not refunded.

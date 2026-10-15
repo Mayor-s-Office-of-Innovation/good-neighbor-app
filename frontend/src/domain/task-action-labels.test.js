@@ -39,3 +39,13 @@ it("preserves labels for unknown historical rules", () => {
     taskActionLabel({ ruleId: "older-rule", buttons: ["Historical action"] }),
   ).toBe("Historical action");
 });
+
+it("uses v8 labels without the legacy phone-number suffix", () => {
+  expect(
+    taskActionLabel({
+      policyVersion: "actions-escalations-v8",
+      ruleId: "THREAT-1",
+      buttons: ["Call SFPD"],
+    }),
+  ).toBe("Call SFPD");
+});

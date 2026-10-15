@@ -11,6 +11,7 @@ import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-re
 import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
 import { handler as generateComplianceLetter } from "../workers/generate-compliance-letter.js";
 import { handler as translateArtifact } from "../workers/translate-artifact.js";
+import { handler as analyzeComplaint } from "../workers/analyze-complaint.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
 
@@ -35,6 +36,9 @@ function pickHandler(body) {
     if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
       return translateArtifact;
     }
+    if (msg?.type === "analyze_complaint") {
+      return analyzeComplaint;
+    }
     if (
       typeof msg?.artifactId === "string" &&
       (typeof msg?.s3Key === "string" || typeof msg?.text === "string")
@@ -50,9 +54,11 @@ function pickHandler(body) {
 /**
  * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent} event
  * @param {import("aws-lambda").Context} context
- * @param {import("aws-lambda").Callback} callback
  */
-export const handler = async (event, context, callback) => {
+export const handler = async (event, context) => {
+  // Node.js 24 rejects entrypoints with a third (callback) parameter. The
+  // workers return promises; this shim only satisfies their legacy AWS types.
+  const callback = () => {};
   // Fan out: each record is an independent unit of work whose latency is almost
   // entirely the remote analyzer call, so process the whole batch CONCURRENTLY and
   // await it together — batch wall-clock ≈ the slowest record, not the sum.

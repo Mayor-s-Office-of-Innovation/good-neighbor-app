@@ -113,3 +113,32 @@ it("restores ordinary cards from persisted duplicate UI state when display is of
   expect(result[0].duplicateHidden).toBe(false);
   expect(result[0].duplicateCheckState).toBeUndefined();
 });
+
+it("uses the original issue's phone action metadata for a duplicate", () => {
+  const root = {
+    ...original,
+    kind: "non_actionable_escalation",
+    phoneNumber: "415-553-0123",
+    buttons: ["Call SFPD: 415-553-0123"],
+  };
+  const child = { ...repeat, kind: "action", phoneNumber: "311" };
+  const [projected] = projectDuplicateTasks(
+    [child],
+    new Map([[child.taskId, { state: "matched", original: root }]]),
+    now,
+  );
+  expect(projected.phoneNumber).toBe(root.phoneNumber);
+  expect(projected.kind).toBe(root.kind);
+  expect(projected.buttons).toEqual(root.buttons);
+  const [legacy] = projectDuplicateTasks(
+    [child],
+    new Map([
+      [
+        child.taskId,
+        { state: "matched", original: { ...root, phoneNumber: undefined } },
+      ],
+    ]),
+    now,
+  );
+  expect(legacy.phoneNumber).toBeUndefined();
+});

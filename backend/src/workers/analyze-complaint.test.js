@@ -1,0 +1,117 @@
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { ddbSend, extractComplaint } = vi.hoisted(() => ({
+  ddbSend: vi.fn(),
+  extractComplaint: vi.fn(),
+}));
+
+vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
+vi.mock("../analysis/analyzer-client.js", () => ({
+  createAnalyzerClient: () => ({ extractComplaint }),
+}));
+vi.mock("../analysis/api-key.js", () => ({
+  getAnalyzerApiKey: vi.fn().mockResolvedValue("key"),
+}));
+vi.mock("../s3.js", () => ({
+  getObjectBytes: vi.fn(),
+  presignGet: vi.fn(),
+}));
+
+const { handler } = await import("./analyze-complaint.js");
+
+function event({ attempt = "attempt-1", receiveCount = 1 } = {}) {
+  return {
+    Records: [
+      {
+        body: JSON.stringify({
+          type: "analyze_complaint",
+          siteId: "site-1",
+          complaintId: "complaint-1",
+          analysisAttemptId: attempt,
+        }),
+        attributes: { ApproximateReceiveCount: String(receiveCount) },
+      },
+    ],
+  };
+}
+
+beforeEach(() => {
+  ddbSend.mockReset();
+  extractComplaint.mockReset();
+  process.env.DYNAMO_TABLE = "table";
+  process.env.S3_UPLOAD_BUCKET = "bucket";
+  process.env.S3_COMPLAINT_BUCKET = "complaints";
+  process.env.SQS_QUEUE_URL = "queue";
+  process.env.ANALYZER_BASE_URL = "https://analyzer.example";
+  process.env.ANALYZER_API_KEY_SECRET_ARN = "secret";
+});
+
+describe("complaint analysis attempt fencing", () => {
+  it("acknowledges a stale queued attempt without calling the analyzer", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: { status: "analyzing", analysisAttemptId: "newer-attempt" },
+      })
+      .mockResolvedValueOnce({ Items: [] });
+
+    await handler(event({ attempt: "stale-attempt" }));
+
+    expect(extractComplaint).not.toHaveBeenCalled();
+    expect(ddbSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("conditions a terminal failure on the active attempt", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          status: "analyzing",
+          analysisAttemptId: "attempt-1",
+          description: "Persistent noise",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
+    extractComplaint.mockRejectedValueOnce(new Error("analyzer unavailable"));
+
+    await handler(event({ receiveCount: 5 }));
+
+    const failure = ddbSend.mock.calls[2][0];
+    expect(failure).toBeInstanceOf(UpdateCommand);
+    expect(failure.input.ConditionExpression).toBe(
+      "#status = :analyzing AND analysisAttemptId = :attempt",
+    );
+    expect(failure.input.ExpressionAttributeValues[":attempt"]).toBe(
+      "attempt-1",
+    );
+  });
+
+  it("acknowledges a conditional failure from a late successful worker", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          status: "analyzing",
+          analysisAttemptId: "attempt-1",
+          description: "Persistent noise",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("stale"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      );
+    extractComplaint.mockResolvedValueOnce({
+      complaint: {
+        label: "Noise complaint",
+        detail: "Noise was reported.",
+        what: "Noise",
+        where: "Outside",
+        when: "Today",
+        notes: "",
+      },
+    });
+
+    await expect(handler(event())).resolves.toBeUndefined();
+  });
+});

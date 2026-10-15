@@ -59,6 +59,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {{ language?: string, user_friendly_label?: string, description?: string }} [translations]
  * @property {string} [guidance]
  * @property {string} [kind]
+ * @property {string} [phoneNumber]
  * @property {string[]} [buttons]
  * @property {Array<{ code?: string, payload?: { phoneNumber?: string } }>} [appActions]
  * @property {string} [createdAt]
@@ -154,6 +155,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @property {string} [text]
  * @property {string[]} [sourceArtifactIds]
  * @property {TaskEvidence} [evidence]
+ * @property {string} [phoneNumber]
  * @property {string[]} [buttons]
  * @property {Array<{ code?: string, payload?: { phoneNumber?: string } }>} [appActions]
  * @property {string} [createdAt]
@@ -446,6 +448,7 @@ function analysisCardEntries(
               "cannot_do",
             ].includes(task.status),
             actionKind: task.kind || "",
+            phoneNumber: task.phoneNumber || "",
             routeType: taskRoute(task),
             taskId: task.taskId || "",
             conditionId: task.conditionId || condition.conditionId || "",
@@ -612,6 +615,7 @@ export function taskAnalysisCard({
       action?.kind === "done"
         ? taskActionLabel(task) || action.label
         : action?.label || (includeControls ? t("common.done") : ""),
+    phoneNumber: task.phoneNumber || "",
     actionVariant: action?.variant || "",
     actionKind:
       task.kind || (action?.variant === "blue" ? "escalation" : "action"),
@@ -879,6 +883,7 @@ function completedEvidenceCard(
     action,
     actionVariant = "",
     actionKind = "",
+    phoneNumber = "",
     taskId = "",
     conditionId = "",
     question = null,
@@ -895,6 +900,11 @@ function completedEvidenceCard(
     mediaPlaceholder = false,
   },
 ) {
+  const callNumber =
+    actionKind === "non_actionable_escalation" &&
+    /^(?:911|311|[2-9]\d{2}-\d{3}-\d{4})$/.test(phoneNumber)
+      ? phoneNumber
+      : "";
   const actionClass =
     actionVariant === "outline"
       ? " analysis-card__primary--outline"
@@ -1045,18 +1055,31 @@ function completedEvidenceCard(
               : actionKind !== "escalation" &&
                   ["done", "resolve"].includes(actionValue)
                 ? html`<button
-                    class="btn-card analysis-card__check"
-                    type="button"
-                    role="checkbox"
-                    aria-checked="false"
-                    ${actionAttribute}="${escapeAttr(actionValue)}"
-                  >
-                    <span class="analysis-card__check-circle" aria-hidden="true"
-                      ><span class="analysis-card__check-tick"></span></span
-                    ><span class="analysis-card__check-label"
-                      >${escapeHtml(action)}</span
+                      class="btn-card analysis-card__check${callNumber
+                        ? " analysis-card__check--phone"
+                        : ""}"
+                      type="button"
+                      role="checkbox"
+                      aria-checked="false"
+                      ${actionAttribute}="${escapeAttr(actionValue)}"
                     >
-                  </button>`
+                      <span
+                        class="analysis-card__check-circle"
+                        aria-hidden="true"
+                        ><span class="analysis-card__check-tick"></span></span
+                      ><span class="analysis-card__check-label"
+                        >${escapeHtml(action)}</span
+                      ></button
+                    >${callNumber
+                      ? html`<button
+                          class="btn-blue analysis-card__primary analysis-card__primary--escalation analysis-card__phone"
+                          type="button"
+                          data-phone-number="${escapeAttr(callNumber)}"
+                          ${actionAttribute}="${escapeAttr(actionValue)}"
+                        >
+                          ${escapeHtml(action)}
+                        </button>`
+                      : ""}`
                 : html`<button
                     class="btn-blue analysis-card__primary${actionClass}"
                     type="button"

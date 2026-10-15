@@ -27,6 +27,7 @@ const ROUTING_PATHS = new Set([
 const INTEGRATION_PATHS = new Set([
   "maxAcceptableResponseHours",
   "primaryInProgressAgency",
+  "outcome.phoneNumber",
   "outcome.appActions",
   "outcome.category311",
 ]);
@@ -89,6 +90,7 @@ function comparableRule(rule) {
     primaryInProgressAgency: rule.primaryInProgressAgency,
     requiredQuestions: rule.requiredQuestions,
     predicate: rule.predicate,
+    "outcome.phoneNumber": rule.outcome.phoneNumber || "",
     "outcome.kind": rule.outcome.kind,
     "outcome.label": rule.outcome.label,
     "outcome.buttons": rule.outcome.buttons,

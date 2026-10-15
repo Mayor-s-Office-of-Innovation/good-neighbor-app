@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
   the main view based on the route. Everything is scoped to the bound site.
@@ -58,6 +59,8 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/care-work", "care-work-view"],
+  ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
   ["/reports/issues/", "reports-type-view"],
   ["/reports", "reports-view"],
@@ -119,6 +122,8 @@ export class AppRoot extends HTMLElement {
     }
     requestLocationPermissionEarly();
     this._site = await getSite();
+    this._stopPhoneRecovery?.();
+    this._stopPhoneRecovery = startPhoneCompletionRecovery();
     this._onAuthSignout = () => {
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
@@ -165,6 +170,7 @@ export class AppRoot extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._stopPhoneRecovery?.();
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
@@ -334,6 +340,26 @@ export class AppRoot extends HTMLElement {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
         if (currentRoute().startsWith("/site-admin")) this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/care-work") &&
+      !customElements.get("care-work-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./care-work-view.js").then(() => {
+        if (currentRoute().startsWith("/care-work")) this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/complaints") &&
+      !customElements.get("complaint-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./complaint-view.js").then(() => {
+        if (currentRoute().startsWith("/complaints")) this._renderView();
       });
       return;
     }

@@ -286,9 +286,9 @@ export function logoutDialog({ error, pending }) {
 /**
  * The <site-switcher> placeholder is replaced by the host's persistent
  * element after render (see today-view._mountSiteSwitcher).
- * @param {{ siteName: string, summary: string, checkLabel: string, reportLabel: string }} vm
+ * @param {{ siteName: string, summary: string, checkLabel: string }} vm
  */
-export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
+export function heroBlock({ siteName, summary, checkLabel }) {
   return html`
     <div class="screen__sec home-lead">
       <site-switcher></site-switcher>
@@ -298,21 +298,44 @@ export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
         </h1>
         ${summary}
       </div>
-      ${homeActions({ checkLabel, reportLabel })}
+      ${homeActions({ checkLabel })}
     </div>
   `;
 }
 
-/** @param {{ checkLabel: string, reportLabel: string }} labels */
-export function homeActions({ checkLabel, reportLabel }) {
+/** @param {{ checkLabel: string }} labels */
+export function homeActions({ checkLabel }) {
   return html`
     <div class="home-actions">
       <button id="start-check" class="btn-ink" type="button">
         ${escapeHtml(checkLabel)}
       </button>
-      <button id="report-problem" class="btn-outline" type="button">
-        ${escapeHtml(reportLabel)}
-      </button>
+      <div class="home-action-menu-wrap">
+        <button
+          id="home-action-menu-trigger"
+          class="btn-outline home-action-menu-trigger"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="${escapeAttr(t("today.actions.more"))}"
+        >
+          <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
+        </button>
+        <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.complaints"))}
+          </button>
+          <button type="button" role="menuitem" id="report-problem">
+            <wa-icon name="flag" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.report"))}
+          </button>
+          <button type="button" role="menuitem" id="view-care-work">
+            <wa-icon name="broom" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("care.menu"))}
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -628,38 +651,6 @@ export function actionButton(a) {
   return html`<button type="button" class="${cls}" data-action="${a.kind}">
     ${escapeHtml(a.label)}
   </button>`;
-}
-
-/**
- * "Can't" → the task's allowlisted reasons (the backend rejects arbitrary
- * ones), plus a cancel.
- * Each reason carries the stored English `value` (submitted to the API, which
- * validates it) and a display `label` in the active language.
- * @param {{ reasons: Array<{ value: string, label: string }> }} vm
- */
-export function reasonPicker({ reasons }) {
-  return html`
-    ${reasons
-      .map(
-        (r) =>
-          html`<button
-            type="button"
-            class="btn-outline btn-outline--sm"
-            data-action="cant-reason"
-            data-reason="${escapeAttr(r.value)}"
-          >
-            ${escapeHtml(r.label)}
-          </button>`,
-      )
-      .join("")}
-    <button
-      type="button"
-      class="home-cta__link actioncard__cancel"
-      data-action="cant-cancel"
-    >
-      ${escapeHtml(t("common.cancel"))}
-    </button>
-  `;
 }
 
 /* ---- Error view ---- */

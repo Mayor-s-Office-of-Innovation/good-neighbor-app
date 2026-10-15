@@ -1,5 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
-import { openSessionDuplicate } from "./duplicate-issue-dialog.js";
+import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
 import { loadStartingGuidance } from "../services/capture-guidance.js";
 import { captureLabels } from "./capture-analysis.templates.js";
@@ -342,7 +342,10 @@ class PerimeterCheck extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      if (button.getAttribute("role") === "checkbox") {
+      if (
+        button.getAttribute("role") === "checkbox" ||
+        button.hasAttribute("data-phone-number")
+      ) {
         toggleCardCompletion(this, card, button, {
           onSaved: () => this._markProblemResolved(problem),
           render: () => this._render(),

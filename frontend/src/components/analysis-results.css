@@ -1176,3 +1176,16 @@ html.wa-dark .analysis-card__clear-copy a {
   flex: 0 0 1em;
   font-size: 1rem;
 }
+
+/* Phone actions follow viewport width, including when the window resizes. */
+.analysis-card__phone {
+  display: none;
+}
+@media (max-width: 520px) {
+  .analysis-card__check--phone {
+    display: none;
+  }
+  .analysis-card__phone {
+    display: flex;
+  }
+}

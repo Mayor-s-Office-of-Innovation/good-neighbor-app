@@ -27,7 +27,6 @@ vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
 }));
 
 const {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -560,37 +559,6 @@ describe("guidance handlers", () => {
       },
       taskItem: { taskId: "task-1", conditionId: "cond-1" },
       evaluation: null,
-    });
-  });
-
-  it("records cannot-do on a task", async () => {
-    send.mockResolvedValueOnce({
-      Item: {
-        pk: "SITE#site-1",
-        sk: "TASK#task-1",
-        taskId: "task-1",
-        status: "open",
-        kind: "action",
-        severity: 2,
-        cannotDoReasons: ["It doesn't feel safe"],
-      },
-    });
-    send.mockResolvedValueOnce({});
-
-    const res = await invoke(
-      cannotDoTask,
-      event({
-        pathParameters: { taskId: "task-1" },
-        body: { reason: "It doesn't feel safe", note: "dark outside" },
-      }),
-    );
-
-    expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[1][0];
-    expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
-      status: "cannot_do",
-      cannotDo: { reason: "It doesn't feel safe", note: "dark outside" },
-      gsi2pk: "SITE#site-1#TASK#cannot_do",
     });
   });
 
