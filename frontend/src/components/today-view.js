@@ -327,7 +327,10 @@ class TodayView extends HTMLElement {
     const restoring = !this._homeModel && lastHomeState != null;
     const announceArrival = !this._homeModel || restoring;
     if (restoring)
-      this._restoreHomeState(/** @type {any} */ (lastHomeState), requestedFilter);
+      this._restoreHomeState(
+        /** @type {any} */ (lastHomeState),
+        requestedFilter,
+      );
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
