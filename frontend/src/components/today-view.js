@@ -189,6 +189,21 @@ function stashHomeState(view) {
     : null;
 }
 
+// The stash belongs to one site session and must never paint for the next
+// one: sign-out and re-binding replace the device's binding in the same
+// document (app-root re-renders setup, then `sitebound` navigates back to
+// /today). A bound-site switch is a full `location.assign` reload, so the
+// module state is already fresh there. Both events bubble to window
+// (site-setup dispatches `sitebound` with bubbles: true).
+if (typeof window !== "undefined") {
+  window.addEventListener("authsignout", () => {
+    lastHomeState = null;
+  });
+  window.addEventListener("sitebound", () => {
+    lastHomeState = null;
+  });
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -306,9 +321,13 @@ class TodayView extends HTMLElement {
     // transition snapshots this screen the moment the swap callback returns,
     // before the data chain's first await lands. The chain below still
     // refetches everything and re-renders.
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
     const restoring = !this._homeModel && lastHomeState != null;
     const announceArrival = !this._homeModel || restoring;
-    if (restoring) this._restoreHomeState(/** @type {any} */ (lastHomeState));
+    if (restoring)
+      this._restoreHomeState(/** @type {any} */ (lastHomeState), requestedFilter);
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
@@ -327,9 +346,6 @@ class TodayView extends HTMLElement {
     this._boundSites = bindings;
 
     const active = getCurrentCheck();
-    const requestedFilter = new URLSearchParams(window.location.search).get(
-      "filter",
-    );
     // An in-progress draft no longer re-enters capture from home: capture
     // lives on its own route (/check, /problem) and home stays the worklist.
     let pendingSession =
@@ -440,11 +456,24 @@ class TodayView extends HTMLElement {
    * resolves. Everything it adopts is re-derived or refetched below; this
    * exists so the route-transition snapshot shows a fully rendered screen.
    * @param {any} snapshot
+   * @param {string | null} requestedFilter a `?filter=` that the arriving
+   *   URL carries explicitly — deep links and direct navigations must show
+   *   the tab they name, so it wins over the restored tab
    * @returns {void}
    */
-  _restoreHomeState(snapshot) {
+  _restoreHomeState(snapshot, requestedFilter) {
     this._homeModel = snapshot.model;
     this._homeFilter = snapshot.homeFilter;
+    // An explicit URL filter request wins over the restored tab; a plain
+    // back-navigation carries none and keeps the tab that was on screen —
+    // the URL is rewritten to match so a refresh stays on the same tab.
+    if (requestedFilter) {
+      this._homeFilter = normalizedHomeTab(requestedFilter);
+    } else if (this._homeFilter) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("filter", this._homeFilter);
+      window.history.replaceState(window.history.state, "", url);
+    }
     this._historyGrouping = snapshot.historyGrouping;
     this._taskOverrides = snapshot.taskOverrides;
     this._hasPerimeterDraft = snapshot.hasPerimeterDraft;
@@ -638,14 +667,26 @@ class TodayView extends HTMLElement {
           actionMenu.querySelector('[role="menuitem"]')
         )?.focus();
     });
-    this._actionMenuDocumentClick = (event) => {
-      if (actionMenu.hidden || event.composedPath().includes(actionMenuTrigger))
-        return;
-      if (event.composedPath().includes(actionMenu)) return;
-      actionMenu.hidden = true;
-      actionMenuTrigger.setAttribute("aria-expanded", "false");
-    };
-    document.addEventListener("click", this._actionMenuDocumentClick);
+    // One document-level click closer per element, added once: a re-render
+    // replaces the menu's nodes, so the stable handler resolves the live
+    // menu + trigger at click time (the old render-scoped closure would
+    // keep firing against the detached nodes after every re-render).
+    if (!this._actionMenuDocumentClick) {
+      this._actionMenuDocumentClick = /** @param {Event} event */ (event) => {
+        const menu = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu")
+        );
+        const trigger = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu-trigger")
+        );
+        if (!menu?.isConnected || menu.hidden) return;
+        const path = event.composedPath?.() || [];
+        if (path.includes(trigger) || path.includes(menu)) return;
+        menu.hidden = true;
+        trigger?.setAttribute("aria-expanded", "false");
+      };
+      document.addEventListener("click", this._actionMenuDocumentClick);
+    }
     actionMenu?.addEventListener("keydown", (event) => {
       const keyEvent = /** @type {KeyboardEvent} */ (event);
       const items = /** @type {HTMLElement[]} */ ([
