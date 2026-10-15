@@ -10,7 +10,6 @@ import {
   homeAllDonePanel,
   homeResults,
   logoutDialog,
-  reasonPicker,
   settingsMenu,
   summaryBlock,
   taskTabs,
@@ -201,23 +200,6 @@ describe("actionButton", () => {
       'href="mailto:a@b.c&quot; onmouseover=&quot;alert(1)"',
     );
     expect(markup).not.toContain('" onmouseover="');
-  });
-});
-
-describe("reasonPicker", () => {
-  it("lists each reason and a cancel", () => {
-    const markup = reasonPicker({
-      reasons: [
-        { value: "Locked", label: "Cerrado" },
-        { value: "No access", label: "Sin acceso" },
-      ],
-    });
-    expect(markup.match(/data-action="cant-reason"/g)).toHaveLength(2);
-    expect(markup).toContain('data-reason="No access"');
-    expect(markup).toMatch(/>\s*Sin acceso\s*</);
-    expect(markup).not.toMatch(/>\s*No access\s*</);
-    expect(markup).toContain('data-action="cant-cancel"');
-    expect(markup).toContain(escapeHtml(t("common.cancel")));
   });
 });
 

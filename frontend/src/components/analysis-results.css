@@ -1162,3 +1162,16 @@ html.wa-dark .analysis-card__clear-copy a {
     animation-duration: 1s !important;
   }
 }
+
+/* Phone actions follow viewport width, including when the window resizes. */
+.analysis-card__phone {
+  display: none;
+}
+@media (max-width: 520px) {
+  .analysis-card__check--phone {
+    display: none;
+  }
+  .analysis-card__phone {
+    display: flex;
+  }
+}

@@ -337,7 +337,10 @@ class PerimeterCheck extends HTMLElement {
     } else if (action === "edit") {
       this._openEditProblem(problem);
     } else if (action === "resolve") {
-      if (button.getAttribute("role") === "checkbox") {
+      if (
+        button.getAttribute("role") === "checkbox" ||
+        button.hasAttribute("data-phone-number")
+      ) {
         toggleCardCompletion(this, card, button, {
           onSaved: () => this._markProblemResolved(problem),
           render: () => this._render(),

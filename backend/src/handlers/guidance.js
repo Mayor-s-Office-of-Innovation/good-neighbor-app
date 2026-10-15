@@ -7,7 +7,6 @@ import {
   completeTaskWithAppActions,
   getAssessmentGuidance,
   getPublishedAssessmentGuidance,
-  markTaskCannotDo,
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
 import { normalizeTranslations as normalizeTranslationsMap } from "../analysis/translations.js";
@@ -463,56 +462,6 @@ export const submitConditionAnswers = async (event) => {
     }
     if (err instanceof Error && err.name === "CatalogUnavailable") {
       return jsonResponse(503, { error: err.message });
-    }
-    throw err;
-  }
-};
-
-/**
- * POST /v1/tasks/{taskId}/cannot-do
- * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
- */
-export const cannotDoTask = async (event) => {
-  const { dynamoTable } = getConfig();
-  const siteId = deriveSiteId(event);
-  const taskId = event.pathParameters?.taskId;
-  if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
-
-  let body;
-  try {
-    body = readJsonBody(event);
-  } catch {
-    return jsonResponse(400, { error: "Invalid JSON body" });
-  }
-  const { reason, note } = /** @type {{ reason?: unknown, note?: unknown }} */ (
-    body ?? {}
-  );
-  if (typeof reason !== "string" || !reason) {
-    return jsonResponse(400, { error: "Expected reason" });
-  }
-
-  try {
-    const task = await markTaskCannotDo({
-      tableName: dynamoTable,
-      siteId,
-      taskId,
-      reason,
-      note: typeof note === "string" ? note : undefined,
-    });
-    return jsonResponse(200, { task });
-  } catch (err) {
-    if (err instanceof Error && err.name === "NotFound") {
-      return jsonResponse(404, { error: "Task not found" });
-    }
-    if (err instanceof Error && err.name === "InvalidReason") {
-      return jsonResponse(400, { error: "Invalid cannot-do reason" });
-    }
-    if (
-      err instanceof Error &&
-      (err.name === "TerminalConflict" ||
-        err.name === "TransactionCanceledException")
-    ) {
-      return jsonResponse(409, { error: "Task is no longer open" });
     }
     throw err;
   }

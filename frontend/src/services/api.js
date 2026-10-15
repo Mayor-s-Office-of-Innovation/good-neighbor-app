@@ -750,19 +750,6 @@ export function completeTask(taskId, body = {}) {
   });
 }
 
-/**
- * POST /v1/tasks/{taskId}/cannot-do — audit-only reason capture when the user
- * cannot complete an action or escalation.
- * @param {string} taskId
- * @param {{ reason: string, note?: string }} body
- * @returns {Promise<{ task: any }>}
- */
-export function cannotDoTask(taskId, body) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cannot-do`, {
-    body,
-  });
-}
-
 // ── Composed helpers ─────────────────────────────────────────────────────────
 
 /** The MIME types the backend will presign. */

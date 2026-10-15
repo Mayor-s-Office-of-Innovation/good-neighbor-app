@@ -612,38 +612,6 @@ export function actionButton(a) {
   </button>`;
 }
 
-/**
- * "Can't" → the task's allowlisted reasons (the backend rejects arbitrary
- * ones), plus a cancel.
- * Each reason carries the stored English `value` (submitted to the API, which
- * validates it) and a display `label` in the active language.
- * @param {{ reasons: Array<{ value: string, label: string }> }} vm
- */
-export function reasonPicker({ reasons }) {
-  return html`
-    ${reasons
-      .map(
-        (r) =>
-          html`<button
-            type="button"
-            class="btn-outline btn-outline--sm"
-            data-action="cant-reason"
-            data-reason="${escapeAttr(r.value)}"
-          >
-            ${escapeHtml(r.label)}
-          </button>`,
-      )
-      .join("")}
-    <button
-      type="button"
-      class="home-cta__link actioncard__cancel"
-      data-action="cant-cancel"
-    >
-      ${escapeHtml(t("common.cancel"))}
-    </button>
-  `;
-}
-
 /* ---- Error view ---- */
 
 /**

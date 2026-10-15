@@ -12,9 +12,12 @@ export function isCompletingAnalysisCard(host) {
 
 /** Record the checklist action only after its cancellable hold, then animate a confirmed save. */
 export function toggleCardCompletion(host, card, button, { onSaved, render }) {
+  const phoneNumber = button.getAttribute("data-phone-number");
+  const isPhone = Boolean(phoneNumber);
+  if (isPhone && !window.matchMedia("(max-width: 520px)").matches) return;
   const previous = pending.get(card);
   if (previous) {
-    if (previous.saving) return;
+    if (previous.saving || isPhone) return;
     clearTimeout(previous.timer);
     pending.delete(card);
     button.setAttribute("aria-checked", "false");
@@ -36,10 +39,10 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
   controls.forEach(([control]) => {
     control.disabled = true;
   });
-  button.setAttribute("aria-checked", "true");
+  if (!isPhone) button.setAttribute("aria-checked", "true");
   const state = { host, saving: false, controls, timer: null };
   pending.set(card, state);
-  state.timer = setTimeout(async () => {
+  const save = async () => {
     let saved = false;
     try {
       if (!card.isConnected) return;
@@ -63,7 +66,7 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
     } catch (error) {
       console.error("checklist completion failed", error);
       if (!saved) {
-        button.setAttribute("aria-checked", "false");
+        if (!isPhone) button.setAttribute("aria-checked", "false");
         showActionSaveErrorToast();
       }
     } finally {
@@ -82,7 +85,12 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
           focusChecklistControl(host, card.getAttribute("data-task-id"));
       }
     }
-  }, 1500);
+  };
+  if (isPhone) {
+    // Begin saving before handing off: mobile browsers may suspend timers.
+    void save();
+    window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
+  } else state.timer = setTimeout(save, 1500);
 }
 
 /** CSS controls simultaneous height/gap collapse and slide, without opacity changes. */

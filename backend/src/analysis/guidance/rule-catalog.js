@@ -22,6 +22,7 @@ const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 /**
  * @typedef {object} RuleOutcome
+ * @property {string} [phoneNumber]
  * @property {OutcomeKind} kind
  * @property {string} label
  * @property {string[]} buttons
@@ -265,7 +266,9 @@ export function parseAppActions(raw, options = {}) {
  */
 export function normalizeOutcomeKind(raw) {
   const value = cleanCell(raw).toLowerCase();
-  if (value === "non-actionable escalation") {
+  if (value === "sidewalk action") return "action";
+  if (value === "311 ticket") return "escalation";
+  if (value === "non-actionable escalation" || value === "phone call") {
     return "non_actionable_escalation";
   }
   return /** @type {OutcomeKind} */ (value.replaceAll(" ", "_"));
@@ -290,6 +293,28 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
+      // Adapt the current rubric to the historical column layout. Stored kinds
+      // remain stable; filing triggers now follow the explicit action type.
+      const phoneNumber = row.length === 18 ? cleanCell(row[14]) : "";
+      if (row.length === 18) {
+        if (!["Sidewalk action", "Phone call", "311 ticket"].includes(row[8]))
+          throw new Error(`Invalid action type: ${row[8]}`);
+        if (
+          row[8] === "Phone call" &&
+          !/^(?:911|311|[2-9]\d{2}-\d{3}-\d{4})$/.test(phoneNumber)
+        )
+          throw new Error(`Invalid phone number for ${row[2]}`);
+        row = [
+          ...row.slice(0, 13),
+          row[8] === "311 ticket"
+            ? "Create and file 311 ticket on confirmation"
+            : "File 311 ticket on action creation",
+          row[13],
+          ...row.slice(15),
+          "",
+          "",
+        ];
+      }
       const isAgencyAwareRulebaseShape = row.length === 20;
       const isTimeValidityRulebaseShape =
         row.length === 19 || isAgencyAwareRulebaseShape;
@@ -384,6 +409,7 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         predicate: parsePredicate(userResponse),
         outcome: {
           kind: normalizeOutcomeKind(thenKind),
+          ...(phoneNumber ? { phoneNumber } : {}),
           label: cleanCell(label),
           buttons: splitLines(buttons),
           appActions: parseAppActions(appAction, {

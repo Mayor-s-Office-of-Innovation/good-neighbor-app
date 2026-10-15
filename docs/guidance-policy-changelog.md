@@ -2,6 +2,19 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v7 - 2026-10-15
+
+- Imports `GNP - rubrics-2.csv` (39 rules) with Sidewalk action, Phone call,
+  and 311 ticket action types. Filing is derived from type: the first two
+  file silently at creation; 311 tickets require user confirmation.
+- Phone numbers are explicit task snapshots. At viewport widths of 520px or
+  less, the phone CTA opens `tel:` and records the action as In progress;
+  wider viewports retain the checkbox without dialing.
+- Corrects BLOCK-3's primary agency to SFPD and THREAT-1's number to
+  415-553-0123. ANIMAL-4 and THREAT-3 have Moderate weighting.
+- Removes the Can't do this mutation and controls. Historical records remain
+  readable. Earlier policy catalogs remain registered.
+
 ## actions-escalations-v6 - 2026-10-08
 
 - Source: `GNP - rubrics-updated-2.csv` (39 rules), checked in as

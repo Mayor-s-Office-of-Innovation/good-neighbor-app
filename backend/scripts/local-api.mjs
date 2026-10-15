@@ -36,7 +36,6 @@ import {
   registerTaskUpdateMedia,
 } from "../src/handlers/task-updates.js";
 import {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -278,7 +277,6 @@ const routes = [
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
-  route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
   route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
   route(

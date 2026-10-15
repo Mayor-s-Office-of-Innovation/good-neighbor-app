@@ -491,7 +491,7 @@ function buildTaskItem({
     appActionStatus: initialAppActionStatus(rule.outcome.appActions),
     appActionResults: [],
     category311: rule.outcome.category311,
-    cannotDoReasons: rule.outcome.cannotDoReasons,
+    phoneNumber: rule.outcome.phoneNumber || "",
     sourceArtifactIds: condition.sourceArtifactIds ?? [],
     source: condition.source ?? {},
     ...taskWorklistDateGsi(
@@ -1380,78 +1380,6 @@ export async function answerCondition(opts) {
   }
 
   throw namedError("TransactionCanceledException", "Condition answer conflict");
-}
-
-/**
- * @param {object} opts
- * @param {string} opts.tableName
- * @param {string} opts.siteId
- * @param {string} opts.taskId
- * @param {string} opts.reason
- * @param {string} [opts.note]
- * @param {Date} [opts.now]
- * @returns {Promise<Record<string, unknown>>}
- */
-export async function markTaskCannotDo(opts) {
-  const now = (opts.now ?? new Date()).toISOString();
-  const existing = await ddb.send(
-    new GetCommand({
-      TableName: opts.tableName,
-      Key: taskKey(opts.siteId, opts.taskId),
-      ConsistentRead: true,
-    }),
-  );
-  if (!existing.Item) {
-    throw namedError("NotFound", "Task not found");
-  }
-  if (existing.Item.status === "cannot_do") {
-    const cannotDo = /** @type {{ reason?: unknown, note?: unknown }} */ (
-      existing.Item.cannotDo ?? {}
-    );
-    if (cannotDo.reason === opts.reason && cannotDo.note === opts.note) {
-      return existing.Item;
-    }
-    throw namedError("TerminalConflict", "Task is already cannot_do");
-  }
-  if (existing.Item.status !== "open") {
-    throw namedError("TerminalConflict", "Task is no longer open");
-  }
-  const allowed = /** @type {string[]} */ (existing.Item.cannotDoReasons ?? []);
-  if (allowed.length > 0 && !allowed.includes(opts.reason)) {
-    throw namedError("InvalidReason", "Invalid cannot-do reason");
-  }
-
-  const updated = {
-    ...existing.Item,
-    status: "cannot_do",
-    cannotDo: { reason: opts.reason, note: opts.note, recordedAt: now },
-    updatedAt: now,
-    ...taskWorklistDateGsi(
-      opts.siteId,
-      "cannot_do",
-      String(existing.Item.kind),
-      Number(existing.Item.severity ?? 0),
-      now,
-      opts.taskId,
-    ),
-  };
-
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: opts.tableName,
-            Item: updated,
-            ConditionExpression: "#status = :open",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":open": "open" },
-          },
-        },
-      ],
-    }),
-  );
-  return updated;
 }
 
 /**
