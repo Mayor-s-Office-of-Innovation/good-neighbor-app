@@ -220,7 +220,7 @@ test("phone save survives reload during preparation without redialing", async ({
   expect(state.completions).toHaveLength(0);
   expect(
     await page.evaluate(() =>
-      Object.keys(sessionStorage).filter((key) =>
+      Object.keys(window.sessionStorage).filter((key) =>
         key.startsWith("gnp:phone-completion:"),
       ),
     ),
@@ -232,7 +232,7 @@ test("phone save survives reload during preparation without redialing", async ({
     .poll(() =>
       page.evaluate(
         () =>
-          Object.keys(sessionStorage).filter((key) =>
+          Object.keys(window.sessionStorage).filter((key) =>
             key.startsWith("gnp:phone-completion:"),
           ).length,
       ),
