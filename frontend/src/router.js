@@ -341,3 +341,19 @@ if (typeof document !== "undefined") {
     navigate(href);
   });
 }
+
+/**
+ * Which way a route swap moves: deeper paths slide in from the right (they
+ * carry a back arrow to the screen underneath), shallower ones slide back
+ * out, siblings cross-fade.
+ * @param {string | null} from the route on screen, null on first paint
+ * @param {string} to
+ * @returns {"push" | "pop" | "fade"}
+ */
+export function routeTransitionDirection(from, to) {
+  if (from == null) return "fade";
+  const depth = (/** @type {string} */ route) =>
+    route.split("?")[0].split("/").filter(Boolean).length;
+  const delta = depth(to) - depth(from);
+  return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
+}

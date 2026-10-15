@@ -337,3 +337,24 @@ describe("router overlays", () => {
     removeRoute();
   });
 });
+
+describe("routeTransitionDirection", () => {
+  it("pushes into deeper routes, pops back out, fades between siblings", async () => {
+    const { routeTransitionDirection } = await import("./router.js");
+    expect(routeTransitionDirection(null, "/today")).toBe("fade");
+    expect(routeTransitionDirection("/today", "/reports")).toBe("fade");
+    expect(
+      routeTransitionDirection("/reports", "/reports/checks/2026-09-29"),
+    ).toBe("push");
+    expect(routeTransitionDirection("/reports/issues/Litter", "/reports")).toBe(
+      "pop",
+    );
+    expect(routeTransitionDirection("/site-admin", "/site-admin/edit")).toBe(
+      "push",
+    );
+    // Query strings do not count as depth.
+    expect(
+      routeTransitionDirection("/reports?tab=issues", "/reports?tab=checks"),
+    ).toBe("fade");
+  });
+});
