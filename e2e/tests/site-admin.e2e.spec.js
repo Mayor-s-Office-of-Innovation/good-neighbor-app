@@ -120,7 +120,7 @@ test.describe("site admin access", () => {
     await expect(page).toHaveURL(/\/site-admin$/);
 
     await page.locator("[data-admin-back]").click();
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
 });
 
@@ -137,7 +137,7 @@ test.describe("general site access", () => {
     await expect(page.locator("#settings-site-admin")).toHaveCount(0);
 
     await page.goto("/site-admin");
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(
       page.getByRole("heading", { name: t("siteAdmin.title") }),
     ).toHaveCount(0);

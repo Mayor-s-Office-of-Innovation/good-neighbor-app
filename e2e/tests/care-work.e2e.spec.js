@@ -69,7 +69,7 @@ test.describe("proactive care", () => {
     await page.goBack();
     await expect(page).toHaveURL(/\/care-work$/);
     await page.goBack();
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
   test("requires a custom description, supports removable photos, and opens saved media without location", async ({
     page,

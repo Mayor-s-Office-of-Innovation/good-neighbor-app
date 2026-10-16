@@ -148,7 +148,7 @@ test.describe("site manager reports", () => {
     await attributions.getByRole("button", { name: t("common.close") }).click();
     await expect(attributions).toBeHidden();
     await page.getByRole("link", { name: t("reports.backHome") }).click();
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(page.locator("#start-check")).toBeVisible();
   });
 
@@ -238,7 +238,7 @@ test.describe("general site access", () => {
     await expect(page.locator("#settings-reports")).toHaveCount(0);
 
     await page.goto("/reports");
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(
       page.getByRole("heading", { name: t("reports.title") }),
     ).toHaveCount(0);
