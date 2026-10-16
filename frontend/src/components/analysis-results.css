@@ -950,7 +950,7 @@ html.wa-dark .analysis-card__clear-copy a {
   width: 1.75rem;
   height: 1.75rem;
   border: 2px solid var(--text-secondary);
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
 }
 .analysis-card__check-tick {
   transform: scale(0);
