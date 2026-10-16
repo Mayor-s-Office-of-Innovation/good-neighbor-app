@@ -54,6 +54,14 @@ comparison succeeds. Never record either key in logs, tickets, or Terraform.
 Automatic rotation is not configured because the analyzer and app must agree
 on the same credential.
 
+## Dashboard tags
+
+The pinned AWS Terraform provider's `aws_cloudwatch_dashboard` schema does not
+support `tags`. Adding `tags = var.tags` fails validation. Dashboard ownership is
+identified by the application/environment name prefix and this runbook; its
+alarms and log groups retain the required CCSF tags. Revisit dashboard tagging
+when the provider exposes it, rather than adding an out-of-band tagging script.
+
 ## CloudWatch
 
 Dashboard: `<app-prefix>-duplicates`. Metric namespace: `<app-prefix>-duplicates`.
@@ -63,7 +71,7 @@ analyzer comparison log group also retains 30 days. API/normal-analysis log
 retention is unchanged. User separations are emitted from the isolated stream
 consumer rather than adding detailed events to longer-lived API logs.
 
-- `DuplicateMatchedIssues`, `DuplicateNoMatchIssues`, `DuplicatePendingIssues`:
+- `DuplicateMatchedIssues`, `DuplicateNoMatchIssues`, `DuplicateIncompleteNoMatchIssues`, `DuplicatePendingIssues`:
   recorded per-issue outcomes of evaluations, potentially repeated on retries.
 - `DuplicateLinksCreated`, `DuplicateSeparated`: link/override events, not a
   precision/accuracy rate. Link-chain changes can produce new link events.
@@ -96,6 +104,15 @@ fields @timestamp, event, observationId, candidateId, conditionId,
 Metrics cannot establish precision or recall without human-labelled positives and
 negatives. A user separation is a correction signal, not necessarily a model error.
 Stream/SQS delivery is at least once, so event totals may include retries.
+
+Completed searches still return no match to the frontend when no candidate
+qualifies, including searches containing failed comparisons. Internally, each
+condition records `assessmentOutcome` and `failedCandidateCount`.
+`no_match_with_failures` emits `DuplicateIncompleteNoMatchIssues`, separately from
+`assessed_no_match` / `DuplicateNoMatchIssues`. These diagnostic distinctions do
+not create automatic retries or leave the UI pending. A high-confidence match
+remains a match even if a different candidate failed. Only candidate failures
+with the source condition's category count against that condition.
 
 ## Media retention and rollback
 

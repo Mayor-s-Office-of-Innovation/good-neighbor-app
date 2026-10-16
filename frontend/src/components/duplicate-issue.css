@@ -28,7 +28,7 @@
   place-items: center;
   background: var(--wa-color-surface-lowered);
   color: var(--wa-color-neutral-80);
-  font-size: 25px;
+  font-size: 1.5625rem;
 }
 .duplicate-card__copy {
   display: flex;
@@ -36,7 +36,7 @@
   min-inline-size: 0;
   flex-direction: column;
   gap: 8px;
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
   color: var(--wa-color-text-quiet);
   overflow-wrap: anywhere;
@@ -46,7 +46,7 @@
   line-height: 1.2;
 }
 .duplicate-card__title {
-  font-size: var(--wa-font-size-l, 20px);
+  font-size: var(--wa-font-size-l, 1.25rem);
   font-weight: 600;
   line-height: 1.2;
   color: var(--wa-color-text-normal);
@@ -57,7 +57,7 @@
   gap: 12px;
   padding: 4px 24px 0;
   color: var(--wa-color-text-quiet);
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .duplicate-detail {
   padding: 0;
@@ -94,7 +94,7 @@
 }
 .duplicate-detail__sheet h2 {
   margin: 0;
-  font-size: var(--wa-font-size-2xl, 32px);
+  font-size: var(--wa-font-size-2xl, 2rem);
   line-height: 1.2;
 }
 .duplicate-detail__close {
@@ -110,7 +110,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .duplicate-detail__image {
   inline-size: 150px;
@@ -130,7 +130,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .duplicate-detail .duplicate-detail__original {
   display: flex;
@@ -151,16 +151,16 @@
 }
 .duplicate-detail__original span span {
   color: var(--wa-color-text-quiet);
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .analysis-card__duplicate-note {
-  font-size: var(--wa-font-size-s, 14px);
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .analysis-tray__counts {
   margin: -8px 10px 4px;
   text-align: center;
   color: var(--wa-color-text-quiet);
-  font-size: var(--wa-font-size-m, 16px);
+  font-size: var(--wa-font-size-m, 1rem);
   line-height: 1.6;
 }
 
@@ -175,7 +175,7 @@
 }
 .duplicate-card__body > wa-icon {
   flex: 0 0 13px;
-  font-size: var(--wa-font-size-l, 20px);
+  font-size: var(--wa-font-size-l, 1.25rem);
   color: var(--wa-color-text-quiet);
 }
 .duplicate-detail__route > .analysis-card__route-dot {

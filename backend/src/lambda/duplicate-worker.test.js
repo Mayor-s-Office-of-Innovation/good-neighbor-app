@@ -369,3 +369,23 @@ it("prepares newly registered uploads independently before any analysis exists",
   expect(state.compare).not.toHaveBeenCalled();
   expect(state.writes).toHaveLength(0);
 });
+
+it("completes failed comparisons as frontend no-match with separate diagnostics", async () => {
+  const { event, current } = setup();
+  state.compare.mockRejectedValue(new Error("temporary outage"));
+  const result = await handler(
+    /** @type {import("aws-lambda").SQSEvent} */ (event),
+    /** @type {import("aws-lambda").Context} */ ({}),
+    () => {},
+  );
+  expect(result).toEqual({ batchItemFailures: [] });
+  const saved = state.records.get(
+    `DUP_RESULT#source:photo#${analysisRevision(current)}`,
+  );
+  expect(saved.processingState).toBe("complete");
+  expect(saved.conditionResults[0]).toMatchObject({
+    possibleDuplicate: false,
+    assessmentOutcome: "no_match_with_failures",
+    failedCandidateCount: 1,
+  });
+});

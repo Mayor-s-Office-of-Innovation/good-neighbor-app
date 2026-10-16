@@ -37,6 +37,7 @@ export function duplicateEvent(event, values, metrics = []) {
     outcome: [
       "matched",
       "no_match",
+      "no_match_with_failures",
       "uncertain",
       "failed",
       "pending",

@@ -10,7 +10,7 @@ export const LOOKBACK_MS = 72 * 60 * 60 * 1000;
 /** @typedef {{identity_basis?:string,text_identity?:string,visual_identity:string,issue_mapping:string,matching_features:string[],visible_differences:string[],contradictions:string[],description_conflict:string,continuity_concern:string}} IssueEvidence */
 /** @typedef {{source_condition_id:string,candidate_condition_id:string,evidence:IssueEvidence,confidence?:string,confidenceReasons?:string[]}} IssueMatch */
 /** @typedef {{candidate_id:string,verdict:string,evidence_strength:string,reason:string,source_region:string,candidate_region:string,condition_matches:IssueMatch[],evidence:IssueEvidence,confidence?:string,confidenceReasons?:string[],stageDisagreement?:boolean,stage?:string}} Comparison */
-/** @typedef {{conditionId:string,status:string,possibleDuplicate:boolean|null,duplicateOf:{observationId:string,conditionId:string,revision:string}|null,matchStrength:string|null,originalIssue?:{observationId:string,conditionId:string,revision:string}|null,originalLookupState?:string}} ConditionOutcome */
+/** @typedef {{conditionId:string,status:string,possibleDuplicate:boolean|null,duplicateOf:{observationId:string,conditionId:string,revision:string}|null,matchStrength:string|null,originalIssue?:{observationId:string,conditionId:string,revision:string}|null,originalLookupState?:string,assessmentOutcome?:string,failedCandidateCount?:number}} ConditionOutcome */
 /** @typedef {{comparisons:Comparison[],comparison_version:string,model:{model_id:string}}} ComparisonResponse */
 /** @typedef {{id:string,image?:{content_type:string,base64:string},context?:{conditions:Condition[],description?:string,observedAt?:string,generatedAt?:string,capturedAt?:string,location?:object,visualAssessment?:Comparison}}} Evidence */
 /** @typedef {{mode:string,output?:"compact",source:Evidence,candidates:Evidence[]}} ComparisonRequest */
@@ -262,7 +262,12 @@ export function markUnassessedCandidates(result, allCandidates) {
   if (!unassessed.length) return result;
   const conditionResults = result.conditionResults.map((row) =>
     row.possibleDuplicate === false
-      ? { ...row, status: "insufficient_evidence", possibleDuplicate: null }
+      ? {
+          ...row,
+          status: "insufficient_evidence",
+          possibleDuplicate: null,
+          assessmentOutcome: "unassessed",
+        }
       : row,
   );
   const completePositive =
@@ -662,19 +667,32 @@ export async function matchImages({
         !rows.some((row) => row.candidate_id === candidate.id) &&
         !failures.includes(candidate.id),
     );
-    const definiteNegative =
+    const failedCandidateCount = candidates.filter(
+      (candidate) =>
+        failures.includes(candidate.id) &&
+        candidate.conditions?.some((c) => c.category === condition.category),
+    ).length;
+    const completedNoMatch =
       !remaining &&
       typeof condition.category === "string" &&
       !!condition.category.trim();
     return {
       conditionId: condition.id,
+      assessmentOutcome: target
+        ? "matched"
+        : completedNoMatch
+          ? failedCandidateCount
+            ? "no_match_with_failures"
+            : "assessed_no_match"
+          : "unassessed",
+      failedCandidateCount,
       status:
-        target || definiteNegative
+        target || completedNoMatch
           ? "evaluated"
           : remaining
             ? "pending"
             : "insufficient_evidence",
-      possibleDuplicate: target ? true : definiteNegative ? false : null,
+      possibleDuplicate: target ? true : completedNoMatch ? false : null,
       duplicateOf:
         target && candidate
           ? {

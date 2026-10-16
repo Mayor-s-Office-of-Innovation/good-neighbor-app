@@ -899,8 +899,11 @@ export const handler = async (event) => {
               issue.possibleDuplicate === true
                 ? "matched"
                 : issue.possibleDuplicate === false
-                  ? "no_match"
+                  ? issue.assessmentOutcome === "no_match_with_failures"
+                    ? "no_match_with_failures"
+                    : "no_match"
                   : "pending",
+            failedCandidates: issue.failedCandidateCount ?? 0,
             confidence: issue.possibleDuplicate === true ? "high" : undefined,
           },
           [
@@ -909,7 +912,9 @@ export const handler = async (event) => {
                 issue.possibleDuplicate === true
                   ? "DuplicateMatchedIssues"
                   : issue.possibleDuplicate === false
-                    ? "DuplicateNoMatchIssues"
+                    ? issue.assessmentOutcome === "no_match_with_failures"
+                      ? "DuplicateIncompleteNoMatchIssues"
+                      : "DuplicateNoMatchIssues"
                     : "DuplicatePendingIssues",
               value: 1,
             },

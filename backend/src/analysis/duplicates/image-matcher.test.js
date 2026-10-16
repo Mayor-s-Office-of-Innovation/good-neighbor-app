@@ -103,6 +103,7 @@ describe("image-first backend matcher", () => {
     expect(progress[0].conditionResults[0].possibleDuplicate).toBe(true);
     expect(progress[0].conditionResults[1].status).toBe("pending");
     expect(result.conditionResults[0].possibleDuplicate).toBe(true);
+    expect(result.conditionResults[0].assessmentOutcome).toBe("matched");
     expect(result.conditionResults[1].possibleDuplicate).toBe(false);
     expect(result.possibleDuplicate).toBe(true);
     expect(result.status).toBe("evaluated");
@@ -370,6 +371,10 @@ describe("image-first backend matcher", () => {
     });
     expect(result.status).toBe("evaluated");
     expect(result.possibleDuplicate).toBe(false);
+    expect(result.conditionResults[0]).toMatchObject({
+      assessmentOutcome: "no_match_with_failures",
+      failedCandidateCount: 1,
+    });
     const malformed = await matchImages({
       source,
       candidates: [observation("c")],
@@ -380,6 +385,19 @@ describe("image-first backend matcher", () => {
       }),
     });
     expect(malformed.status).toBe("evaluated");
+    expect(malformed.conditionResults[0].assessmentOutcome).toBe(
+      "no_match_with_failures",
+    );
+    const negative = await matchImages({
+      source,
+      candidates: [observation("c")],
+      compare: async (request) => response(request, "different_issue"),
+    });
+    expect(negative.conditionResults[0]).toMatchObject({
+      possibleDuplicate: false,
+      assessmentOutcome: "assessed_no_match",
+      failedCandidateCount: 0,
+    });
   });
   it("requires context to bind multi-condition images and rejects invented IDs", async () => {
     const source = observation("s", {
