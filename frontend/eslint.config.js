@@ -12,8 +12,9 @@ export default [
       sourceType: "module",
       globals: {
         ...globals.browser,
-        // Build-time Vite define (vite.config.js), not a runtime global.
+        // Build-time Vite defines (vite.config.js), not runtime globals.
         __RELEASE__: "readonly",
+        __S3_UPLOAD_PROXY__: "readonly",
       },
     },
     settings: {

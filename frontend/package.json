@@ -7,6 +7,7 @@
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
+    "dev:remote": "API_PROXY_TARGET=https://dev.goodneighborsf.org vite --host 127.0.0.1",
     "lint": "eslint src",
     "perf": "node scripts/run-lighthouse.mjs && node scripts/print-lighthouse.mjs",
     "size": "size-limit",

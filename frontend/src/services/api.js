@@ -596,6 +596,61 @@ export function getComplaintMediaUrl(complaintId, artifactId) {
   );
 }
 
+// ── Dev-only: presigned uploads via the Vite dev server ─────────────────────
+//
+// In "frontend-only mode" (npm run dev:remote — the dev server proxies the API
+// to a deployed origin) the backend presigns REAL S3 URLs. A direct browser PUT
+// from http://127.0.0.1:5173 is cross-origin and the bucket's CORS lists only
+// the deployed origins, so instead the URL is rewritten onto this origin at
+// `/__s3/<bucket-host>/<key>?<presigned query>` and the dev server forwards it
+// to S3 with the Host restored (scripts/vite-remote-api.mjs). The signature
+// still validates — it covers host, path, query, and content-type, all of which
+// arrive unchanged — and S3 still authorizes on that signature alone.
+//
+// `__S3_UPLOAD_PROXY__` is a Vite `define` that is `true` only for a dev server
+// started with an https API_PROXY_TARGET and `false` in every build, so in
+// production this is a no-op and the URL goes straight to S3 as before.
+
+/** Same prefix the dev-server middleware listens on. */
+const S3_UPLOAD_PROXY_PREFIX = "/__s3/";
+/** Virtual-hosted S3 hostnames only (`bucket.s3.<region>.amazonaws.com`). */
+const S3_HOST_RE =
+  /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\.s3\.[a-z0-9-]+\.amazonaws\.com$/;
+
+/** @returns {boolean} the build-time define, guarded for non-Vite contexts (tests) */
+function s3UploadProxyEnabled() {
+  try {
+    // @ts-expect-error -- build-time define (vite.config.js `define`); not a
+    // runtime global, so it has no ambient declaration.
+    return typeof __S3_UPLOAD_PROXY__ === "boolean" && __S3_UPLOAD_PROXY__;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rewrite an absolute presigned S3 URL onto the dev server's `/__s3/` route when
+ * the upload proxy is enabled; otherwise (production, local harness, non-S3
+ * host, unparseable URL) return the URL unchanged.
+ * @param {string} url
+ * @param {boolean} [enabled]  defaults to the build-time define; tests pass it explicitly
+ * @returns {string}
+ */
+export function toDevUploadUrl(url, enabled = s3UploadProxyEnabled()) {
+  if (!enabled) return url;
+  /** @type {URL} */
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.protocol !== "https:" || !S3_HOST_RE.test(parsed.hostname)) {
+    return url;
+  }
+  return `${S3_UPLOAD_PROXY_PREFIX}${parsed.hostname}${parsed.pathname}${parsed.search}`;
+}
+
 /** @param {string} uploadUrl @param {Blob} file @param {Record<string,string>} uploadHeaders @param {(progress:number) => void} onProgress @param {AbortSignal} [signal] */
 export function putMediaWithProgress(
   uploadUrl,
@@ -610,7 +665,7 @@ export function putMediaWithProgress(
       return;
     }
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", uploadUrl);
+    xhr.open("PUT", toDevUploadUrl(uploadUrl));
     Object.entries(uploadHeaders).forEach(([name, value]) =>
       xhr.setRequestHeader(name, value),
     );
@@ -693,7 +748,8 @@ export function deleteArtifact(checkId, artifactId) {
 /**
  * Raw presigned PUT of the media bytes straight to S3. NOT joined onto BASE and
  * carries no auth — the signature is the authorization, and the content-type must
- * match what was presigned. Throws `ApiError` on a non-2xx.
+ * match what was presigned. Throws `ApiError` on a non-2xx. (Dev-only exception:
+ * `toDevUploadUrl` may route it via the dev server — see above.)
  * @param {string} uploadUrl  absolute presigned URL from `presignArtifact`
  * @param {Blob} blob
  * @param {string} contentType
@@ -709,7 +765,7 @@ export async function putMedia(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(uploadUrl, {
+    res = await fetch(toDevUploadUrl(uploadUrl), {
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,

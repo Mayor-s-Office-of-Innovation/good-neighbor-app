@@ -49,6 +49,10 @@ screens to spec.
 
 #### Local Development
 
+**Frontend or design work?** Start with the **[designer quickstart](docs/quickstart-design.md)**:
+Node, `npm install`, `npm run dev:remote`, done — the dev server runs your local frontend
+against the deployed dev API, no backend or Java on your laptop.
+
 All local setup and commands — prerequisites, install, checks, running the frontend, the
 Docker-free backend harness, and resetting local state — live in the
 **[developer command reference](docs/dev-commands.md)**. The harness design rationale is in
