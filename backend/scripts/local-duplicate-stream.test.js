@@ -33,4 +33,43 @@ describe("local duplicate stream bridge", () => {
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls[1][0].Records[0].eventName).toBe("INSERT");
   });
+  it("does not replay a record when DynamoDB returns map keys in a different order", async () => {
+    const dispatch = vi.fn().mockResolvedValue({ batchItemFailures: [] });
+    const scan = createLocalDuplicateStream(dispatch);
+    await scan([
+      {
+        pk: "SITE#one",
+        sk: "CHECK#c#ANALYSIS#a",
+        concerns: [
+          { conditionId: "litter", details: { rating: 2, text: "x" } },
+        ],
+      },
+    ]);
+    await scan([
+      {
+        concerns: [
+          { details: { text: "x", rating: 2 }, conditionId: "litter" },
+        ],
+        sk: "CHECK#c#ANALYSIS#a",
+        pk: "SITE#one",
+      },
+    ]);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+  it("can baseline existing records without replaying them", async () => {
+    const dispatch = vi.fn().mockResolvedValue({ batchItemFailures: [] });
+    const scan = createLocalDuplicateStream(dispatch, {
+      replayExisting: false,
+    });
+    const item = {
+      pk: "SITE#one",
+      sk: "CHECK#c#ANALYSIS#a",
+      status: "analyzing",
+    };
+    await scan([item]);
+    expect(dispatch).not.toHaveBeenCalled();
+    await scan([{ ...item, status: "analyzed" }]);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].Records[0].eventName).toBe("MODIFY");
+  });
 });

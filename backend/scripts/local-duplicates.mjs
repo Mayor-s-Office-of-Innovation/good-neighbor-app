@@ -40,7 +40,9 @@ if (process.env.DUPLICATE_DETECTION_ENABLED !== "true") {
     process.on(signal, () => {
       running = false;
     });
-  const bridge = createLocalDuplicateStream(dispatch);
+  const bridge = createLocalDuplicateStream(dispatch, {
+    replayExisting: process.env.DUPLICATE_REPLAY_EXISTING !== "false",
+  });
   async function scanLoop() {
     while (running) {
       try {

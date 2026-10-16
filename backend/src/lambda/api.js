@@ -191,6 +191,11 @@ import {
   previewSiteImport,
 } from "../handlers/admin-site-imports.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
+import {
+  getTaskDetails,
+  recordCustomTaskAction,
+  updateTaskAction,
+} from "../handlers/task-details.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
 // The individual handlers carry richer (event, context, callback) signatures; we
@@ -254,6 +259,9 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/tasks": listTasks,
   "POST /v1/duplicates:batch": getDuplicateLinks,
   "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
+  "GET /v1/tasks/{taskId}/details": getTaskDetails,
+  "PATCH /v1/tasks/{taskId}/action": updateTaskAction,
+  "POST /v1/tasks/{taskId}/custom-action": recordCustomTaskAction,
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,

@@ -637,6 +637,15 @@ export async function matchImages({
     } catch (error) {
       if (publishing) throw error; // Persistence failures must retry, not become no match.
       // Do not leak image/context text or remote error payloads to normal logs.
+      console.warn(
+        JSON.stringify({
+          event: "duplicate_comparison_failed",
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown comparison error",
+          candidateCount: batch.length,
+        }),
+      );
       failures.push(...batch.map((item) => item.id));
       if (strategy === "combined" && offset === fast.length)
         fastPhaseMs = Math.round(performance.now() - started);
