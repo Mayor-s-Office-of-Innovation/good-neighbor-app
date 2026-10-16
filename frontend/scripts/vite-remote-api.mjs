@@ -122,6 +122,15 @@ export function remoteApiPlugin({ target }) {
               out[name] = value;
             }
             res.writeHead(up.statusCode ?? 502, out);
+            // pipe() does not forward errors, and an unhandled "error" on the
+            // upstream response would take the whole dev server down. Contain a
+            // mid-response S3 disconnect to this one browser request.
+            up.on("error", (err) => {
+              logger.error(
+                `[remote api] S3 response stream error: ${err.message}`,
+              );
+              res.destroy(err);
+            });
             up.pipe(res);
           },
         );
@@ -130,7 +139,14 @@ export function remoteApiPlugin({ target }) {
           if (!res.headersSent) res.statusCode = 502;
           res.end(`remote api: upstream error: ${err.message}`);
         });
-        req.on("aborted", () => upstream.destroy());
+        // Browser went away (tab closed, upload cancelled): stop the upstream
+        // request too. "close" fires for both aborted requests and finished ones;
+        // destroy() is a no-op once the upstream has completed.
+        req.on("error", (err) => {
+          logger.warn(`[remote api] browser request error: ${err.message}`);
+          upstream.destroy(err);
+        });
+        res.on("close", () => upstream.destroy());
         req.pipe(upstream);
       });
     },

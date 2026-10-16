@@ -30,8 +30,10 @@ real dev data: checks, tasks, history, reports.
 
 What `dev:remote` does: the Vite dev server serves your working copy of the frontend and
 forwards every API call to `https://dev.goodneighborsf.org`. Photo uploads are forwarded the
-same way. Nothing in the deployed environment changes; your laptop is just another client of
-dev. Details in [`frontend/vite.config.js`](../frontend/vite.config.js) and
+same way. No deployed code or configuration is touched, but your laptop becomes another
+client of dev: anything you submit (checks, photos, task updates) is real shared dev data,
+visible to everyone bound to that site (see "Things to know about dev" below). Details in
+[`frontend/vite.config.js`](../frontend/vite.config.js) and
 [`frontend/scripts/vite-remote-api.mjs`](../frontend/scripts/vite-remote-api.mjs).
 
 Edits to anything under `frontend/src/` hot-reload in the browser.
