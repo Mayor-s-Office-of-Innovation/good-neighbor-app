@@ -1,3 +1,4 @@
+import { ownProfile } from "./admin-users.js";
 import {
   GetCommand,
   QueryCommand,
@@ -8,10 +9,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
+vi.mock("./admin-users.js", () => ({
+  ownProfile: vi.fn(async (event) => {
+    const claims = event.requestContext.authorizer.jwt.claims;
+    return {
+      profile: {
+        firstName: claims.given_name,
+        lastName: claims.family_name,
+        phone: claims.phone_number,
+        email: claims.email,
+      },
+    };
+  }),
+}));
+
 const {
   assignSiteUser,
   createSiteTerms,
   endSiteTerms,
+  resendSiteLetter,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
@@ -37,7 +53,17 @@ describe("effective-dated Site terms", () => {
     expect(command.input.ScanIndexForward).toBe(false);
   });
 
-  it("creates terms, closes the prior open version, and queues a letter", async () => {
+  it("creates terms using current contact details instead of stale token claims", async () => {
+    vi.mocked(ownProfile, { partial: true }).mockResolvedValueOnce({
+      profile: {
+        firstName: "Fresh",
+        lastName: "Contact",
+        phone: "+14155550123",
+        email: "fresh@example.org",
+        role: "compliance-supervisor",
+        directoryUserId: "",
+      },
+    });
     send
       .mockResolvedValueOnce({
         Item: {
@@ -72,6 +98,7 @@ describe("effective-dated Site terms", () => {
           userId: "contact-1",
           firstName: "Sam",
           lastName: "Lee",
+          email: "sam@example.org",
           status: "active",
         },
       })
@@ -92,8 +119,13 @@ describe("effective-dated Site terms", () => {
     );
     expect(response.statusCode).toBe(201);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = send.mock.calls[4][0];
+    const transaction = /** @type {any} */ (
+      send.mock.calls
+        .map(([c]) => c)
+        .find((c) => c instanceof TransactWriteCommand)
+    );
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    if (!transaction) throw new Error("Missing transaction");
     expect(transaction.input.TransactItems).toHaveLength(5);
     expect(transaction.input.TransactItems[0].Put.Item.effectiveStart).toBe(
       new Intl.DateTimeFormat("en-CA", {
@@ -109,9 +141,9 @@ describe("effective-dated Site terms", () => {
       siteManagerId: "contact-1",
       siteManagerName: "Sam Lee",
       generatedByRole: "compliance-supervisor",
-      programManagerName: "Robin Supervisor",
-      programManagerPhone: "415-555-0199",
-      programManagerEmail: "supervisor@sfgov.org",
+      programManagerName: "Fresh Contact",
+      programManagerPhone: "+14155550123",
+      programManagerEmail: "fresh@example.org",
     });
     expect(transaction.input.TransactItems[1].Update).toMatchObject({
       ConditionExpression:
@@ -161,6 +193,7 @@ describe("effective-dated Site terms", () => {
           userId: "contact-1",
           firstName: "Sam",
           lastName: "Lee",
+          email: "sam@example.org",
           status: "active",
         },
       });
@@ -242,6 +275,7 @@ describe("effective-dated Site terms", () => {
           userId: "contact-1",
           firstName: "Sam",
           lastName: "Lee",
+          email: "sam@example.org",
           status: "active",
         },
       })
@@ -264,7 +298,16 @@ describe("effective-dated Site terms", () => {
 
   it("ends the active period and clears the current compliance projection", async () => {
     send
-      .mockResolvedValueOnce({ Item: { siteId: "site-1", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          status: "active",
+          complianceLetters: {
+            current: { s3Key: "current.pdf" },
+            past: [{ s3Key: "past.pdf" }],
+          },
+        },
+      })
       .mockResolvedValueOnce({
         Items: [
           {
@@ -287,6 +330,17 @@ describe("effective-dated Site terms", () => {
     expect(query.input.ConsistentRead).toBe(true);
     const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(
+      transaction.input.TransactItems[1].Update.ExpressionAttributeValues[
+        ":letters"
+      ],
+    ).toEqual({
+      current: null,
+      past: [{ s3Key: "current.pdf" }, { s3Key: "past.pdf" }],
+    });
+    expect(
+      transaction.input.TransactItems[1].Update.UpdateExpression,
+    ).toContain("REMOVE latestComplianceTermsVersionId");
     expect(
       transaction.input.TransactItems[1].Update.ExpressionAttributeValues[
         ":compliance"
@@ -326,6 +380,55 @@ describe("effective-dated Site terms", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "terms_close_conflict",
     });
+  });
+});
+
+describe("resend current letter", () => {
+  it("queues the original email and attachment rather than caller-supplied recipients", async () => {
+    const letter = {
+      s3Key: "saved.pdf",
+      effectiveStart: "2026-10-16",
+      termsVersionId: "v1",
+    };
+    const email = {
+      to: "site@example.org",
+      cc: ["original@example.org"],
+      text: "Original text",
+    };
+    send
+      .mockResolvedValueOnce({
+        Item: { status: "active", complianceLetters: { current: letter } },
+      })
+      .mockResolvedValueOnce({ Item: { email } })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      resendSiteLetter,
+      event(
+        {
+          requestId: "00000000-0000-0000-0000-000000000001",
+          to: "other@example.org",
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(202);
+    expect(send.mock.calls[2][0].input.TransactItems[1].Put.Item).toMatchObject(
+      { resend: true, letter, email },
+    );
+  });
+  it("rejects resend when the current letter has been cleared", async () => {
+    send.mockResolvedValueOnce({
+      Item: { status: "active", complianceLetters: { current: null } },
+    });
+    const response = await call(
+      resendSiteLetter,
+      event(
+        { requestId: "00000000-0000-0000-0000-000000000001" },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
 

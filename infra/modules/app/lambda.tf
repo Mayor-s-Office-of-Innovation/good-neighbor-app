@@ -349,8 +349,10 @@ resource "aws_lambda_function" "worker" {
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
       # Business metrics (lib/metrics.js, EMF): Analysis* + AnalyzerLatencyMs.
-      METRICS_NAMESPACE = local.metrics_namespace
-    }, local.sf311_lambda_environment)
+      METRICS_NAMESPACE               = local.metrics_namespace
+      SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]

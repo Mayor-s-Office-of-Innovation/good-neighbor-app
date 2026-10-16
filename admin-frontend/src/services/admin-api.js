@@ -233,6 +233,11 @@ export const adminApi = {
       `/admin/v1/sites/${encodeURIComponent(siteId)}/users/${encodeURIComponent(userId)}`,
       { method: "DELETE" },
     ),
+  resendSiteLetter: (siteId, requestId) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/letter:resend`, {
+      method: "POST",
+      body: JSON.stringify({ requestId }),
+    }),
   listSiteTerms: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/terms`),
   createSiteTerms: (siteId, values) =>

@@ -61,7 +61,7 @@ export const getAdminSession = (event) =>
  * Read the caller's current Cognito attributes, never a client-supplied identity.
  * @param {import("aws-lambda").APIGatewayProxyEventV2} event
  */
-async function ownProfile(event) {
+export async function ownProfile(event) {
   const principal = adminPrincipal(event);
   if (localDirectory && !principal.username)
     principal.username = principal.subject;
@@ -99,6 +99,7 @@ async function ownProfile(event) {
       firstName: attrs.given_name || "",
       lastName: attrs.family_name || "",
       email,
+      phone: attrs.phone_number || directory?.phone || "",
       role: principal.role,
       directoryUserId:
         directory?.status === "active" ? directory.userId || "" : "",
@@ -119,10 +120,16 @@ export const getMyProfile = (event) =>
 export const updateMyProfile = (event) =>
   adminOnly(event, async (body) => {
     if (
-      Object.keys(body).some((key) => !["firstName", "lastName"].includes(key))
+      Object.keys(body).some(
+        (key) => !["firstName", "lastName", "phone"].includes(key),
+      )
     ) {
       return jsonResponse(400, { error: "unsupported_profile_field" });
     }
+    const phone =
+      body.phone === undefined ? undefined : toCognitoPhoneNumber(body.phone);
+    if (phone === "")
+      return jsonResponse(400, { error: "valid_phone_required" });
     const firstName = clean(body.firstName);
     const lastName = clean(body.lastName);
     if (
@@ -143,8 +150,19 @@ export const updateMyProfile = (event) =>
           await prepare({
             pool: current.pool,
             username: current.principal.username,
+            attributeNames: [
+              "given_name",
+              "family_name",
+              "name",
+              ...(phone === undefined ? [] : ["phone_number"]),
+            ],
             attributes: Object.fromEntries(
-              ["given_name", "family_name", "name"]
+              [
+                "given_name",
+                "family_name",
+                "name",
+                ...(phone === undefined ? [] : ["phone_number"]),
+              ]
                 .filter((key) => current.attributes[key] !== undefined)
                 .map((key) => [key, current.attributes[key]]),
             ),
@@ -161,6 +179,9 @@ export const updateMyProfile = (event) =>
               { Name: "given_name", Value: firstName },
               { Name: "family_name", Value: lastName },
               { Name: "name", Value: `${firstName} ${lastName}` },
+              ...(phone === undefined
+                ? []
+                : [{ Name: "phone_number", Value: phone }]),
             ],
           }),
         );
@@ -170,11 +191,13 @@ export const updateMyProfile = (event) =>
               TableName: getDynamoTableName(),
               Key: { pk: current.directory.pk, sk: current.directory.sk },
               UpdateExpression:
-                "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now",
+                "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now" +
+                (phone === undefined ? "" : ", phone = :phone"),
               ConditionExpression:
                 "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
               ExpressionAttributeNames: { "#name": "name" },
               ExpressionAttributeValues: {
+                ...(phone === undefined ? {} : { ":phone": phone }),
                 ":first": firstName,
                 ":last": lastName,
                 ":name": `${firstName} ${lastName}`,
@@ -185,7 +208,12 @@ export const updateMyProfile = (event) =>
           );
         }
         return jsonResponse(200, {
-          profile: { ...current.profile, firstName, lastName },
+          profile: {
+            ...current.profile,
+            firstName,
+            lastName,
+            ...(phone === undefined ? {} : { phone }),
+          },
         });
       },
     );

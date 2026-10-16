@@ -343,6 +343,12 @@ async function applyOneRow(importId, row) {
   const source = /** @type {Record<string, string>} */ (row.source ?? {});
   const contactEmail =
     clean(plan.contact?.email) || normalized(source["Site manager email"]);
+  const primaryContact = {
+    firstName: source["Site manager first name"],
+    lastName: source["Site manager last name"],
+    phone: source["Site manager phone"],
+    email: contactEmail,
+  };
   const tableName = getDynamoTableName();
   const now = new Date().toISOString();
   const actor = "site-import";
@@ -395,9 +401,15 @@ async function applyOneRow(importId, row) {
         TableName: tableName,
         Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
         UpdateExpression:
-          "SET updatedAt = :now, siteType = if_not_exists(siteType, :siteType), oversight = :oversight",
+          "SET updatedAt = :now, siteType = if_not_exists(siteType, :siteType), oversight = :oversight" +
+          (plan.site.assignPrimary
+            ? ", primaryContactUserId = :primaryUserId, primaryContact = :primaryContact"
+            : ""),
         ConditionExpression:
-          "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND (attribute_not_exists(siteType) OR siteType = :siteType) AND (attribute_not_exists(oversight) OR oversight = :expectedOversight)",
+          "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND (attribute_not_exists(siteType) OR siteType = :siteType) AND (attribute_not_exists(oversight) OR oversight = :expectedOversight)" +
+          (plan.site.assignPrimary
+            ? " AND attribute_not_exists(primaryContactUserId)"
+            : ""),
         ExpressionAttributeNames: {
           "#status": "status",
           "#name": "name",
@@ -412,6 +424,12 @@ async function applyOneRow(importId, row) {
           ":siteType": plan.site.siteType,
           ":oversight": plan.site.oversight,
           ":expectedOversight": plan.site.expectedOversight,
+          ...(plan.site.assignPrimary
+            ? {
+                ":primaryUserId": plan.contact.id,
+                ":primaryContact": primaryContact,
+              }
+            : {}),
         },
       },
     });
@@ -523,6 +541,8 @@ async function applyOneRow(importId, row) {
         leadProgramId: plan.program.id,
         programName: source.Program,
         siteType: plan.site.siteType,
+        primaryContactUserId: plan.contact.id,
+        primaryContact,
         oversight: {
           managingCityDepartment: plan.site.department.name,
           managingCityDepartmentId: plan.site.department.id,
@@ -1216,6 +1236,7 @@ function planRows(rows, catalog) {
         siteType,
         department,
         expectedOversight: siteExisting?.oversight || null,
+        assignPrimary: siteExisting?.primaryContactUserId === undefined,
         oversight: {
           ...(siteExisting?.oversight || {}),
           managingCityDepartment: department.name,
@@ -1440,6 +1461,14 @@ function planRows(rows, catalog) {
       }
       if (programManagerDepartment.action === "create") {
         plannedDepartmentCreates.add(programManagerDepartment.id);
+      }
+      // The first valid row supplies the default; later rows add managers
+      // without replacing a primary selected by this import or an administrator.
+      if (site.assignPrimary) {
+        sites.set(siteKey, {
+          ...sites.get(siteKey),
+          primaryContactUserId: contactId,
+        });
       }
       const actions = [
         provider,

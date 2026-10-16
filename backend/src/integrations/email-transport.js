@@ -17,6 +17,8 @@ let smtpTransportCreatedAt = 0;
  * @typedef {object} OutboundEmail
  * @property {string} from
  * @property {string} to
+ * @property {string[]} [cc]
+ * @property {{filename: string, content: Uint8Array, contentType: string}[]} [attachments]
  * @property {string} subject
  * @property {string} text
  * @property {string} html
@@ -38,10 +40,24 @@ export async function sendEmail(email) {
   const response = await ses.send(
     new SendEmailCommand({
       FromEmailAddress: email.from,
-      Destination: { ToAddresses: [email.to] },
+      Destination: {
+        ToAddresses: [email.to],
+        ...(email.cc?.length ? { CcAddresses: email.cc } : {}),
+      },
       ...(email.replyTo && { ReplyToAddresses: [email.replyTo] }),
       Content: {
         Simple: {
+          ...(email.attachments?.length
+            ? {
+                Attachments: email.attachments.map((file) => ({
+                  FileName: file.filename,
+                  RawContent: file.content,
+                  ContentType: file.contentType,
+                  ContentDisposition: "ATTACHMENT",
+                  ContentTransferEncoding: "BASE64",
+                })),
+              }
+            : {}),
           Subject: { Data: email.subject, Charset: "UTF-8" },
           Body: {
             Text: { Data: email.text, Charset: "UTF-8" },
@@ -64,12 +80,34 @@ export async function sendEmail(email) {
  * @returns {Promise<import("nodemailer").SentMessageInfo>}
  */
 async function sendSmtpEmail(email, canRetryAuthentication = true) {
-  const transport = await getSmtpTransport();
+  let transport;
+  try {
+    transport = await getSmtpTransport();
+  } catch (cause) {
+    // No SMTP submission has occurred while preparing credentials/transport.
+    throw Object.assign(
+      cause instanceof Error
+        ? cause
+        : new Error("SMTP preparation failed", { cause }),
+      {
+        emailNotSubmitted: true,
+      },
+    );
+  }
   try {
     return await transport.sendMail({
       from: email.from,
-      envelope: { from: email.from, to: [email.to] },
+      envelope: { from: email.from, to: [email.to, ...(email.cc || [])] },
       to: email.to,
+      ...(email.cc?.length ? { cc: email.cc } : {}),
+      ...(email.attachments?.length
+        ? {
+            attachments: email.attachments.map((file) => ({
+              ...file,
+              content: Buffer.from(file.content),
+            })),
+          }
+        : {}),
       ...(email.replyTo && { replyTo: email.replyTo }),
       subject: email.subject,
       text: email.text,
@@ -79,6 +117,14 @@ async function sendSmtpEmail(email, canRetryAuthentication = true) {
     if (isSmtpAuthenticationError(error)) {
       invalidateSmtpTransport();
       if (canRetryAuthentication) return sendSmtpEmail(email, false);
+      throw Object.assign(
+        error instanceof Error
+          ? error
+          : new Error("SMTP authentication rejected", { cause: error }),
+        {
+          emailNotSubmitted: true,
+        },
+      );
     }
     throw error;
   }

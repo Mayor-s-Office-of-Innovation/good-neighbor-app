@@ -65,6 +65,8 @@ export async function withProfileMutation(subject, cognito, action) {
     // The directory is the commit point. A timed-out DynamoDB write might have
     // committed, so read it consistently instead of blindly restoring old names.
     let attrs = { ...journal.attributes };
+    /** @type {string[]} */
+    const attributeNames = journal.attributeNames || NAME_ATTRIBUTES;
     if (journal.directoryKey) {
       const result = await ddb.send(
         new GetCommand({
@@ -82,6 +84,13 @@ export async function withProfileMutation(subject, cognito, action) {
           given_name: directory.firstName ?? attrs.given_name,
           family_name: directory.lastName ?? attrs.family_name,
           name: directory.name ?? attrs.name,
+          ...(attributeNames.includes("phone_number")
+            ? {
+                phone_number: directory.phone
+                  ? `+1${String(directory.phone).replace(/\D/g, "").slice(-10)}`
+                  : attrs.phone_number,
+              }
+            : {}),
         };
       }
     }
@@ -95,7 +104,7 @@ export async function withProfileMutation(subject, cognito, action) {
     ) {
       throw new Error("profile_recovery_identity_mismatch");
     }
-    const present = NAME_ATTRIBUTES.filter((key) => attrs[key] !== undefined);
+    const present = attributeNames.filter((key) => attrs[key] !== undefined);
     if (present.length)
       await cognito.send(
         new AdminUpdateUserAttributesCommand({
@@ -103,7 +112,7 @@ export async function withProfileMutation(subject, cognito, action) {
           UserAttributes: present.map((Name) => ({ Name, Value: attrs[Name] })),
         }),
       );
-    const absent = NAME_ATTRIBUTES.filter((key) => attrs[key] === undefined);
+    const absent = attributeNames.filter((key) => attrs[key] === undefined);
     if (absent.length)
       await cognito.send(
         new AdminDeleteUserAttributesCommand({

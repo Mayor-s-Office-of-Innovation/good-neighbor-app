@@ -135,6 +135,15 @@ describe("Site CSV import", () => {
     expect(response.statusCode).toBe(201);
     expect(body.rows).toHaveLength(2);
     expect(body.counts.conflict).toBe(0);
+    const storedRows = send.mock.calls
+      .filter(([command]) => command instanceof BatchWriteCommand)
+      .flatMap(([command]) => command.input.RequestItems["gnp-test-app"])
+      .map((request) => request.PutRequest.Item)
+      .filter((row) => row.plan);
+    expect(storedRows.map((row) => row.plan.site.assignPrimary)).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it("marks unknown departments for manual resolution", async () => {
@@ -386,65 +395,86 @@ describe("Site CSV import", () => {
         managingCityDepartment: "Department of Public Health (DPH)",
       },
     });
-    expect(site.primaryContactUserId).toBeUndefined();
+    expect(site.primaryContactUserId).toBe(importRow().plan.contact.id);
+    expect(site.primaryContact).toEqual({
+      firstName: "Sam",
+      lastName: "Lee",
+      phone: "415-555-0100",
+      email: "sam@example.org",
+    });
   });
 
-  it("backfills missing Site type and department on legacy Site reuse", async () => {
-    const row = /** @type {any} */ (importRow());
-    row.plan.site = {
-      ...row.plan.site,
-      action: "reuse",
-      expectedOversight: null,
-      oversight: {
-        managingCityDepartment: "Department of Public Health (DPH)",
-      },
-    };
-    row.plan.assignment = { action: "reuse" };
-    let rowQueryCount = 0;
-    send.mockImplementation(async (command) => {
-      if (command instanceof GetCommand)
-        return {
-          Item: {
-            previewVersion: "preview-1",
-            previewExpiresAt: "2099-01-01T00:00:00.000Z",
-            counts: { reuse: 1 },
-            fileName: "sites.csv",
-          },
-        };
-      if (command instanceof QueryCommand) {
-        rowQueryCount += 1;
-        return {
-          Items: rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
-        };
-      }
-      return {};
-    });
-
-    const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
-        { importId: "import-1" },
-      ),
-    );
-    expect(response.statusCode).toBe(200);
-    const transaction = send.mock.calls
-      .map(([command]) => command)
-      .find((command) => command instanceof TransactWriteCommand);
-    const siteUpdates = (transaction?.input.TransactItems || []).filter(
-      (item) => item.Update?.Key?.sk === "#META",
-    );
-    expect(siteUpdates).toHaveLength(1);
-    expect(siteUpdates[0].Update).toMatchObject({
-      ExpressionAttributeValues: expect.objectContaining({
-        ":siteType": "shelter",
-        ":expectedOversight": null,
-        ":oversight": {
+  it.each([true, false])(
+    "backfills reused Site metadata with assignPrimary=%s",
+    async (assignPrimary) => {
+      const row = /** @type {any} */ (importRow());
+      row.plan.site = {
+        ...row.plan.site,
+        action: "reuse",
+        expectedOversight: null,
+        assignPrimary,
+        oversight: {
           managingCityDepartment: "Department of Public Health (DPH)",
         },
-      }),
-    });
-  });
+      };
+      row.plan.assignment = { action: "reuse" };
+      let rowQueryCount = 0;
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return {
+            Item: {
+              previewVersion: "preview-1",
+              previewExpiresAt: "2099-01-01T00:00:00.000Z",
+              counts: { reuse: 1 },
+              fileName: "sites.csv",
+            },
+          };
+        if (command instanceof QueryCommand) {
+          rowQueryCount += 1;
+          return {
+            Items:
+              rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
+          };
+        }
+        return {};
+      });
+
+      const response = await call(
+        applySiteImport,
+        event(
+          { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+          { importId: "import-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(200);
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand);
+      const siteUpdates = (transaction?.input.TransactItems || []).filter(
+        (item) => item.Update?.Key?.sk === "#META",
+      );
+      expect(siteUpdates).toHaveLength(1);
+      expect(
+        siteUpdates[0].Update?.UpdateExpression?.includes(
+          "primaryContactUserId = :primaryUserId",
+        ),
+      ).toBe(assignPrimary);
+      expect(
+        siteUpdates[0].Update?.ConditionExpression?.includes(
+          "attribute_not_exists(primaryContactUserId)",
+        ),
+      ).toBe(assignPrimary);
+      expect(siteUpdates[0].Update).toMatchObject({
+        ExpressionAttributeValues: expect.objectContaining({
+          ":siteType": "shelter",
+          ":expectedOversight": null,
+          ":oversight": {
+            managingCityDepartment: "Department of Public Health (DPH)",
+          },
+        }),
+      });
+    },
+  );
 
   it("escapes spreadsheet formula prefixes in conflict downloads", async () => {
     send.mockResolvedValueOnce({

@@ -171,3 +171,33 @@ it("never repairs a deleted and recreated Cognito identity", async () => {
   expect(lock.recovery).toEqual(journal);
   expect(restored).toBeUndefined();
 });
+
+it("recovers the phone from the committed directory along with names", async () => {
+  await expect(
+    withProfileMutation("subject", cognito, async (prepare) => {
+      await prepare({
+        ...journal,
+        attributeNames: ["given_name", "family_name", "name", "phone_number"],
+        attributes: { ...journal.attributes, phone_number: "+14155550100" },
+      });
+      directory.phone = "415-555-0199";
+      throw new Error("ambiguous write");
+    }),
+  ).rejects.toThrow("ambiguous write");
+  expect(restored).toContainEqual({
+    Name: "phone_number",
+    Value: "+14155550199",
+  });
+});
+
+it("leaves phone untouched when recovering a legacy names-only journal", async () => {
+  lock = { leaseUntil: 0, recovery: journal };
+  await withProfileMutation("subject", cognito, async () => ({}));
+  expect(
+    restored.some(
+      (/** @type {{Name: string}} */ attribute) =>
+        attribute.Name === "phone_number",
+    ),
+  ).toBe(false);
+  expect(deleted || []).not.toContain("phone_number");
+});
