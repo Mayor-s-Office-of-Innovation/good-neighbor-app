@@ -33,9 +33,6 @@ jobs:
     # secrets, region comes from its variable, and prod's required-reviewer
     # approval applies here.
     environment: ${{ inputs.environment }}
-    env:
-      TF_VAR_duplicate_ui_enabled: ${{ vars.DUPLICATE_UI_ENABLED || 'false' }}
-      TF_VAR_duplicate_ui_site_ids: ${{ vars.DUPLICATE_UI_SITE_IDS || '[]' }}
     concurrency:
       group: deploy-${{ inputs.environment }}
       cancel-in-progress: false

@@ -75,14 +75,15 @@ export const getSite = async (event) => {
   ]) {
     delete publicSite[field];
   }
-  const pilotSites = (process.env.DUPLICATE_UI_SITE_IDS ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
+  const storedFeatureFlags =
+    site.featureFlags && typeof site.featureFlags === "object"
+      ? /** @type {Record<string, unknown>} */ (site.featureFlags)
+      : {};
   publicSite.featureFlags = {
-    duplicateDetection:
-      process.env.DUPLICATE_UI_ENABLED === "true" &&
-      (!pilotSites.length || pilotSites.includes(siteId)),
+    // Presentation rollout is site-owned runtime configuration. Backend
+    // matching remains independently controlled by the deployed
+    // `enable_duplicate_detection` infrastructure flag.
+    duplicateDetection: storedFeatureFlags.duplicateDetection === true,
   };
   return jsonResponse(200, { site: publicSite });
 };

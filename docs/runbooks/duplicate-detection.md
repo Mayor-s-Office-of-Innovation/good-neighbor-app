@@ -186,24 +186,19 @@ The public, authenticated site response includes
 `site.featureFlags.duplicateDetection`. It defaults to false and controls display
 only. It does not change the worker, persisted links, shared action routing or
 human separation overrides. The UI fails closed when fresh settings cannot be
-loaded; reload after changing the flag. Browser reloads fetch current settings,
-so changing it requires no frontend build.
+loaded; reload after changing the flag. Browser reloads fetch current settings.
 
-Configure these **GitHub Environment variables**, then rerun the app's Deploy
-workflow for that environment to update API configuration through Terraform:
+The flag is stored on the site's `SITE#<siteId>` / `#META` DynamoDB item as the
+boolean `featureFlags.duplicateDetection`. Missing, false, and non-boolean values
+all fail closed. Change the item through an authorized operational or admin path;
+the next site-settings request sees the change without a Terraform apply, Lambda
+deployment, or frontend build. Preserve any other keys already present in the
+`featureFlags` map when updating it.
 
-- `DUPLICATE_UI_ENABLED`: `true` to expose the UI; missing/`false` keeps it hidden.
-- `DUPLICATE_UI_SITE_IDS`: a JSON array such as
-  `["st-john-the-evangelist"]` for a pilot. Missing/`[]` enables every site when
-  the master UI flag is true. The backend derives the site from authentication.
-
-The workflow maps these to `duplicate_ui_enabled` and `duplicate_ui_site_ids`.
-Keep the existing backend `enable_duplicate_detection` flag independent: backend
-on/UI off permits operational observation before exposing the experience.
-
-Locally, use `DUPLICATE_UI_ENABLED=true` and optional comma-separated
-`DUPLICATE_UI_SITE_IDS=st-john-the-evangelist` in the ignored `.env.local`, then
-restart the local API. The example defaults off. No analyzer changes are needed.
+Keep the backend `enable_duplicate_detection` Terraform flag independent. Backend
+on/UI off permits operational observation before exposing the experience; disabling
+the site flag affects presentation only and does not stop matching or unlink
+persisted results.
 
 With the UI off, duplicate polling stops, ordinary cards and actions remain,
 and duplicate notes/cards, counts, check status, details/separation controls and

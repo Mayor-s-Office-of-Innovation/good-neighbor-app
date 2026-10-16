@@ -28,8 +28,6 @@ const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
   await import("./site.js");
 
 beforeEach(() => {
-  vi.stubEnv("DUPLICATE_UI_ENABLED", "false");
-  vi.stubEnv("DUPLICATE_UI_SITE_IDS", "");
   send.mockReset();
   geocodeAddress.mockReset();
   presignGet.mockReset();
@@ -450,7 +448,7 @@ describe("site admin", () => {
 });
 
 describe("duplicate UI display policy", () => {
-  it("defaults off independently of enabled backend matching", async () => {
+  it("reads the site rollout flag independently of enabled backend matching", async () => {
     vi.stubEnv("DUPLICATE_DETECTION_ENABLED", "true");
     send.mockResolvedValue({
       Item: { siteId: "site-1", featureFlags: { duplicateDetection: true } },
@@ -458,24 +456,34 @@ describe("duplicate UI display policy", () => {
     expect(
       body(await /** @type {any} */ (getSite)(event("site-1"))).site
         .featureFlags.duplicateDetection,
-    ).toBe(false);
+    ).toBe(true);
   });
-  it("allows only opted-in pilot sites and supports all sites explicitly", async () => {
-    vi.stubEnv("DUPLICATE_UI_ENABLED", "true");
-    vi.stubEnv("DUPLICATE_UI_SITE_IDS", "site-1, site-2");
-    send.mockResolvedValue({ Item: {} });
+  it("defaults off unless the stored site flag is explicitly true", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-2",
+          featureFlags: { duplicateDetection: false },
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-3",
+          featureFlags: { duplicateDetection: "true" },
+        },
+      });
     expect(
       body(await /** @type {any} */ (getSite)(event("site-1"))).site
         .featureFlags.duplicateDetection,
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      body(await /** @type {any} */ (getSite)(event("site-other"))).site
+      body(await /** @type {any} */ (getSite)(event("site-2"))).site
         .featureFlags.duplicateDetection,
     ).toBe(false);
-    vi.stubEnv("DUPLICATE_UI_SITE_IDS", "");
     expect(
-      body(await /** @type {any} */ (getSite)(event("site-other"))).site
+      body(await /** @type {any} */ (getSite)(event("site-3"))).site
         .featureFlags.duplicateDetection,
-    ).toBe(true);
+    ).toBe(false);
   });
 });

@@ -86,6 +86,7 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   ] })
 }
 resource "aws_lambda_function" "duplicate_dispatch" {
+  #checkov:skip=CKV_AWS_115:DynamoDB stream retry/record-age controls bound dispatcher failures, while the downstream SQS event-source maximum_concurrency=2 bounds expensive comparison work; reserved concurrency here would only throttle stream draining and increase iterator age.
   #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
   #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-dispatch"
@@ -99,7 +100,6 @@ resource "aws_lambda_function" "duplicate_dispatch" {
   kms_key_arn      = aws_kms_key.app.arn
   tracing_config { mode = "Active" }
   dead_letter_config { target_arn = aws_sqs_queue.duplicates_dlq.arn }
-  reserved_concurrent_executions = 2
   environment { variables = { DUPLICATE_QUEUE_URL = aws_sqs_queue.duplicates.url, DYNAMO_TABLE = aws_dynamodb_table.app.name, METRICS_NAMESPACE = "${local.name_prefix}-duplicates" } }
   depends_on = [aws_iam_role_policy.duplicate_dispatch, aws_cloudwatch_log_group.duplicates]
   tags       = var.tags
@@ -176,15 +176,4 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   dimensions          = { QueueName = aws_sqs_queue.duplicates_dlq.name }
   alarm_actions       = [aws_sns_topic.alarms.arn]
   tags                = var.tags
-}
-
-variable "duplicate_ui_enabled" {
-  type        = bool
-  default     = false
-  description = "Expose duplicate UI independently of backend assessment. Defaults off."
-}
-variable "duplicate_ui_site_ids" {
-  type        = list(string)
-  default     = []
-  description = "Optional frontend duplicate pilot allowlist; empty means all sites when UI is enabled."
 }
