@@ -7,11 +7,17 @@ Type safety is JSDoc + `tsc --checkJs`.
 ## Run it
 
 ```bash
-npm run dev -w frontend       # dev server
+npm run dev -w frontend       # dev server against the local backend harness (:3001)
+npm run dev:remote            # dev server against the DEPLOYED dev API — no local backend needed
 npm run build -w frontend     # production build → dist/
 npm run typecheck -w frontend # tsc --checkJs
-npm run dev:lan -w frontend # launches vite with external friendly config
+npm run dev:lan -w frontend   # launches vite with external friendly config
 ```
+
+`dev:remote` sets `API_PROXY_TARGET=https://dev.goodneighborsf.org`; the Vite proxy forwards
+API paths there and presigned S3 uploads ride through the dev server too (see
+`scripts/vite-remote-api.mjs`). Frontend-only contributors start at the
+[designer quickstart](../docs/quickstart-design.md).
 
 First run shows the site-setup screen. To get it back after binding a site you can logout.
 
