@@ -339,15 +339,15 @@ resource "aws_lambda_function" "worker" {
   }
 
   environment {
-    variables                       = merge({
-      DYNAMO_TABLE                    = aws_dynamodb_table.app.name
-      SQS_QUEUE_URL                   = aws_sqs_queue.submissions.url
-      S3_UPLOAD_BUCKET                = aws_s3_bucket.uploads.bucket
-      S3_COMPLAINT_BUCKET             = aws_s3_bucket.complaints.bucket
-      S3_COMPLIANCE_LETTER_BUCKET     = aws_s3_bucket.compliance_letters.bucket
-      ANALYZER_BASE_URL               = var.analyzer_base_url
-      ANALYZER_API_KEY_SECRET_ARN     = aws_secretsmanager_secret.analyzer_api_key.arn
-      REVERSE_GEOCODING_ENABLED       = "true"
+    variables = merge({
+      DYNAMO_TABLE                = aws_dynamodb_table.app.name
+      SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
+      ANALYZER_BASE_URL           = var.analyzer_base_url
+      ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
+      REVERSE_GEOCODING_ENABLED   = "true"
       # Business metrics (lib/metrics.js, EMF): Analysis* + AnalyzerLatencyMs.
       METRICS_NAMESPACE               = local.metrics_namespace
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to

@@ -51,7 +51,12 @@ export async function deliverComplianceLetter(job, email, letter) {
       );
       if (latest.Item?.status === "completed") return;
       if (latest.Item?.receipt)
-        return finalizeDelivery(latest.Item, latest.Item.receipt, letter, email);
+        return finalizeDelivery(
+          latest.Item,
+          latest.Item.receipt,
+          letter,
+          email,
+        );
       // Retain for investigation/DLQ: the transport may have accepted the email.
       throw new Error(
         "Letter email delivery is already in progress or needs reconciliation",
@@ -101,12 +106,17 @@ export async function deliverComplianceLetter(job, email, letter) {
       );
     } catch (error) {
       // Do not repeat an external side effect after a timeout or persistence failure.
-      await ddb.send(new UpdateCommand({
-        TableName, Key,
-        UpdateExpression: "SET deliveryState = :uncertain",
-        ConditionExpression: "attribute_not_exists(receipt)",
-        ExpressionAttributeValues: { ":uncertain": "uncertain" },
-      })).catch(() => {});
+      await ddb
+        .send(
+          new UpdateCommand({
+            TableName,
+            Key,
+            UpdateExpression: "SET deliveryState = :uncertain",
+            ConditionExpression: "attribute_not_exists(receipt)",
+            ExpressionAttributeValues: { ":uncertain": "uncertain" },
+          }),
+        )
+        .catch(() => {});
       throw error;
     }
   }
@@ -155,7 +165,9 @@ async function finalizeDelivery(job, receipt, letter, email) {
                   type: "complianceLetterEmail",
                   number,
                   ...receipt,
-                  recipients: [...new Set([email.to, ...(email.cc || [])].filter(Boolean))],
+                  recipients: [
+                    ...new Set([email.to, ...(email.cc || [])].filter(Boolean)),
+                  ],
                   letter,
                 },
                 ConditionExpression: "attribute_not_exists(pk)",

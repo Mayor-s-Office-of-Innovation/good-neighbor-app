@@ -6,7 +6,9 @@ const { send, putObject, deliver } = vi.hoisted(() => ({
   putObject: vi.fn(),
   deliver: vi.fn(),
 }));
-vi.mock("./deliver-compliance-letter.js", () => ({ deliverComplianceLetter: deliver }));
+vi.mock("./deliver-compliance-letter.js", () => ({
+  deliverComplianceLetter: deliver,
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../s3.js", () => ({ putObject }));
 
@@ -24,7 +26,10 @@ beforeEach(() => {
 
 describe("generate compliance letter worker", () => {
   it("does not regenerate or restore a letter after the period was closed", async () => {
-    send.mockResolvedValueOnce({ Item: { status: "dispatched", termsSk: "terms" } })
+    send
+      .mockResolvedValueOnce({
+        Item: { status: "dispatched", termsSk: "terms" },
+      })
       .mockResolvedValueOnce({ Item: term() })
       .mockResolvedValueOnce({ Item: { letterState: "archived" } })
       .mockResolvedValueOnce({});
@@ -43,7 +48,11 @@ describe("generate compliance letter worker", () => {
       })
       .mockResolvedValueOnce({
         Item: {
-          email: { to: "sam@example.org", cc: ["rob@sfgov.org"], text: "Original" },
+          email: {
+            to: "sam@example.org",
+            cc: ["rob@sfgov.org"],
+            text: "Original",
+          },
           termsVersionId: "v1",
           effectiveStart: "2026-10-08",
           requiredChecksPerDay: 3,
@@ -76,7 +85,11 @@ describe("generate compliance letter worker", () => {
 
     await handler(event(), /** @type {any} */ ({}), () => {});
 
-    expect(deliver).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({to: "sam@example.org"}), expect.objectContaining({s3Key: "compliance-letters/site-1/v1.pdf"}));
+    expect(deliver).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ to: "sam@example.org" }),
+      expect.objectContaining({ s3Key: "compliance-letters/site-1/v1.pdf" }),
+    );
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     expect(putObject).toHaveBeenCalledWith(
       expect.objectContaining({

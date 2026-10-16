@@ -528,14 +528,34 @@ export const getAdminSite = (event) =>
           };
         }
         if (item.type === "complianceLetterEmail" && item.letter?.s3Key) {
-          const originalEmail = res.Items?.find(row =>
-            String(row.sk).startsWith("COMPLIANCE_TERMS#") &&
-            row.termsVersionId === item.letter.termsVersionId
+          const originalEmail = res.Items?.find(
+            (row) =>
+              String(row.sk).startsWith("COMPLIANCE_TERMS#") &&
+              row.termsVersionId === item.letter.termsVersionId,
           )?.email;
-          const recipients = item.recipients || (originalEmail
-            ? [...new Set([originalEmail.to, ...(originalEmail.cc || [])].filter(Boolean))]
-            : []);
-          return { ...item, recipients, letter: { ...item.letter, url: await presignGet({ bucket: getComplianceLetterBucket(), key: item.letter.s3Key, expiresIn: 300 }) } };
+          const recipients =
+            item.recipients ||
+            (originalEmail
+              ? [
+                  ...new Set(
+                    [originalEmail.to, ...(originalEmail.cc || [])].filter(
+                      Boolean,
+                    ),
+                  ),
+                ]
+              : []);
+          return {
+            ...item,
+            recipients,
+            letter: {
+              ...item.letter,
+              url: await presignGet({
+                bucket: getComplianceLetterBucket(),
+                key: item.letter.s3Key,
+                expiresIn: 300,
+              }),
+            },
+          };
         }
         if (item.sk !== "#META" || !item.complianceLetters) return item;
         /** @param {Record<string, any> | null | undefined} letter */

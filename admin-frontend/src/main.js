@@ -981,11 +981,16 @@ class AdminApp extends HTMLElement {
       ...this.state.oversightOptions[key],
       result.option,
     ].sort((a, b) => a.name.localeCompare(b.name));
-    const target = form.dataset.targetSelect || (type === "department"
-      ? "managing-city-department" : "managing-system-of-care");
+    const target =
+      form.dataset.targetSelect ||
+      (type === "department"
+        ? "managing-city-department"
+        : "managing-system-of-care");
     await this.finishOversightOptionFlow(
       target,
-      target === "manager-department" ? result.option.departmentId || result.option.name : result.option.name,
+      target === "manager-department"
+        ? result.option.departmentId || result.option.name
+        : result.option.name,
       form,
       result.option.name,
     );
@@ -1301,8 +1306,12 @@ class AdminApp extends HTMLElement {
       adminApi.listDevices(siteId),
       adminApi.listSiteTerms(siteId),
     ]);
-    this.state.letterEmailUncertain = (site.items || []).some(item => item.deliveryState === "uncertain");
-    this.state.letterEmailHistory = (site.items || []).filter(item => item.type === "complianceLetterEmail");
+    this.state.letterEmailUncertain = (site.items || []).some(
+      (item) => item.deliveryState === "uncertain",
+    );
+    this.state.letterEmailHistory = (site.items || []).filter(
+      (item) => item.type === "complianceLetterEmail",
+    );
     this.state.site = site.items?.find((item) => item.sk === "#META") || null;
     if (this.state.site) {
       const current = this.state.site;
@@ -1377,8 +1386,7 @@ class AdminApp extends HTMLElement {
       `/sites/${encodeURIComponent(siteId)}?section=compliance`,
     );
     await this.openSite(siteId, false);
-    this.state.siteSaveMessage =
-      t("admin.letters.pending");
+    this.state.siteSaveMessage = t("admin.letters.pending");
     this.render();
     void this.refreshPendingComplianceLetter(siteId);
     void this.refreshLetterEmails(siteId);
@@ -1393,7 +1401,9 @@ class AdminApp extends HTMLElement {
         const result = await adminApi.getSite(siteId);
         const latest = result.items?.find((item) => item.sk === "#META");
         if (!latest || latest.letterState === "draft_pending") continue;
-        this.state.letterEmailHistory = (result.items || []).filter(item => item.type === "complianceLetterEmail");
+        this.state.letterEmailHistory = (result.items || []).filter(
+          (item) => item.type === "complianceLetterEmail",
+        );
         this.state.site = { ...this.state.site, ...latest };
         this.state.sites = this.state.sites.map((site) =>
           site.siteId === siteId ? { ...site, ...latest } : site,
@@ -1413,22 +1423,34 @@ class AdminApp extends HTMLElement {
   async refreshLetterEmails(siteId) {
     const originalCount = this.state.letterEmailHistory?.length || 0;
     for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       if (this.state.site?.siteId !== siteId) return;
       try {
         const result = await adminApi.getSite(siteId);
-        if ((result.items || []).some(item => item.deliveryState === "uncertain")) {
+        if (
+          (result.items || []).some(
+            (item) => item.deliveryState === "uncertain",
+          )
+        ) {
           this.state.letterEmailUncertain = true;
           this.render();
           return;
         }
-        const history = (result.items || []).filter(item => item.type === "complianceLetterEmail");
+        const history = (result.items || []).filter(
+          (item) => item.type === "complianceLetterEmail",
+        );
         if (history.length <= originalCount) continue;
         this.state.letterEmailHistory = history;
-        this.state.siteSaveMessage = t(history.some(item => item.provider === "local-preview") ? "admin.letters.previewSent" : "admin.letters.sent");
+        this.state.siteSaveMessage = t(
+          history.some((item) => item.provider === "local-preview")
+            ? "admin.letters.previewSent"
+            : "admin.letters.sent",
+        );
         this.render();
         return;
-      } catch { /* Retry reads without repeating the send. */ }
+      } catch {
+        /* Retry reads without repeating the send. */
+      }
     }
   }
 
@@ -2150,7 +2172,15 @@ class AdminApp extends HTMLElement {
           }
         } catch (error) {
           if (profileForm.isConnected)
-            showFormSaveError(profileForm, t(error instanceof Error && error.message === "valid_phone_required" ? "admin.profile.invalidPhone" : "admin.profile.saveError"));
+            showFormSaveError(
+              profileForm,
+              t(
+                error instanceof Error &&
+                  error.message === "valid_phone_required"
+                  ? "admin.profile.invalidPhone"
+                  : "admin.profile.saveError",
+              ),
+            );
         } finally {
           delete profileForm.dataset.saving;
           if (profileForm.isConnected) sync();
@@ -2740,54 +2770,60 @@ class AdminApp extends HTMLElement {
         }
       },
     );
-    this.querySelectorAll("#site-oversight-form wa-select, #new-city-program-manager-form wa-select[name=manager-department]").forEach(
-      (select) => {
-        select.addEventListener("change", async () => {
-          const oversightForm = select.closest("form");
-          const value =
-            oversightForm instanceof HTMLFormElement
-              ? controlValue(oversightForm, select.name)
-              : String(select.value || "");
-          if (!value.startsWith("__add_")) {
-            select.dataset.previousValue = value;
-            return;
-          }
-          const dialogId = {
-            __add_department__: "#new-oversight-option-dialog",
-            __add_system__: "#new-oversight-option-dialog",
-          }[value];
-          const dialog = this.querySelector(dialogId);
-          if (!dialog) return;
-          const form = dialog.querySelector("form");
-          const type =
-            value === "__add_department__" ? "department" : "systemOfCare";
-          const label =
-            type === "department" ? "City department" : "System of care";
-          form.dataset.targetSelect = select.name;
-          form.querySelector("[name='option-type']").value = type;
-          form.querySelector("[data-option-title]").textContent =
-            `Add a new ${label.toLowerCase()}`;
-          form
-            .querySelector("[data-option-input]")
-            ?.setAttribute("label", `${label} name`);
-          setSelectValue(select, select.dataset.previousValue || "");
-          dialog.showModal();
-          dialog.querySelector("wa-input")?.focus();
-        });
-        select.addEventListener("wa-show", () => {
-          const oversightForm = select.closest("form");
-          const current = oversightForm instanceof HTMLFormElement
-            ? controlValue(oversightForm, select.name) : String(select.value || "");
-          if (!current.startsWith("__add_")) select.dataset.previousValue = current;
-        });
-        select.addEventListener("focus", () => {
-          const oversightForm = select.closest("form");
-          const current = oversightForm instanceof HTMLFormElement
-            ? controlValue(oversightForm, select.name) : String(select.value || "");
-          if (!current.startsWith("__add_")) select.dataset.previousValue = current;
-        });
-      },
-    );
+    this.querySelectorAll(
+      "#site-oversight-form wa-select, #new-city-program-manager-form wa-select[name=manager-department]",
+    ).forEach((select) => {
+      select.addEventListener("change", async () => {
+        const oversightForm = select.closest("form");
+        const value =
+          oversightForm instanceof HTMLFormElement
+            ? controlValue(oversightForm, select.name)
+            : String(select.value || "");
+        if (!value.startsWith("__add_")) {
+          select.dataset.previousValue = value;
+          return;
+        }
+        const dialogId = {
+          __add_department__: "#new-oversight-option-dialog",
+          __add_system__: "#new-oversight-option-dialog",
+        }[value];
+        const dialog = this.querySelector(dialogId);
+        if (!dialog) return;
+        const form = dialog.querySelector("form");
+        const type =
+          value === "__add_department__" ? "department" : "systemOfCare";
+        const label =
+          type === "department" ? "City department" : "System of care";
+        form.dataset.targetSelect = select.name;
+        form.querySelector("[name='option-type']").value = type;
+        form.querySelector("[data-option-title]").textContent =
+          `Add a new ${label.toLowerCase()}`;
+        form
+          .querySelector("[data-option-input]")
+          ?.setAttribute("label", `${label} name`);
+        setSelectValue(select, select.dataset.previousValue || "");
+        dialog.showModal();
+        dialog.querySelector("wa-input")?.focus();
+      });
+      select.addEventListener("wa-show", () => {
+        const oversightForm = select.closest("form");
+        const current =
+          oversightForm instanceof HTMLFormElement
+            ? controlValue(oversightForm, select.name)
+            : String(select.value || "");
+        if (!current.startsWith("__add_"))
+          select.dataset.previousValue = current;
+      });
+      select.addEventListener("focus", () => {
+        const oversightForm = select.closest("form");
+        const current =
+          oversightForm instanceof HTMLFormElement
+            ? controlValue(oversightForm, select.name)
+            : String(select.value || "");
+        if (!current.startsWith("__add_"))
+          select.dataset.previousValue = current;
+      });
+    });
     this.querySelector("#new-city-program-manager-form")?.addEventListener(
       "submit",
       (event) => {
@@ -2907,22 +2943,28 @@ class AdminApp extends HTMLElement {
         }
       }
     });
-    this.querySelector("[data-resend-letter]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      const siteId = this.state.site.siteId;
-      const requestId = button.dataset.requestId || crypto.randomUUID();
-      button.dataset.requestId = requestId;
-      try {
-        await adminApi.resendSiteLetter(siteId, requestId);
-        this.state.siteSaveMessage = t("admin.letters.resendQueued");
-        this.render();
-        void this.refreshLetterEmails(siteId);
-      } catch {
-        button.disabled = false;
-        showFormSaveError(button.closest("section"), t("admin.letters.resendError"));
-      }
-    });
+    this.querySelector("[data-resend-letter]")?.addEventListener(
+      "click",
+      async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        const siteId = this.state.site.siteId;
+        const requestId = button.dataset.requestId || crypto.randomUUID();
+        button.dataset.requestId = requestId;
+        try {
+          await adminApi.resendSiteLetter(siteId, requestId);
+          this.state.siteSaveMessage = t("admin.letters.resendQueued");
+          this.render();
+          void this.refreshLetterEmails(siteId);
+        } catch {
+          button.disabled = false;
+          showFormSaveError(
+            button.closest("section"),
+            t("admin.letters.resendError"),
+          );
+        }
+      },
+    );
     let compliancePeriodSaved = false;
     this.querySelectorAll("#site-terms-form, #site-compliance-form").forEach(
       (form) =>
@@ -2943,9 +2985,18 @@ class AdminApp extends HTMLElement {
           try {
             compliancePeriodSaved = await this.createSiteTerms(currentForm);
           } catch (err) {
-            const errorMessage = showFormSaveError(currentForm, compliancePeriodErrorMessage(err));
-            if (err instanceof Error && err.message === "generator_contact_required") {
-              const [before, after] = t("admin.compliance.generatorContactRequired", { profile: "{profile}" }).split("{profile}");
+            const errorMessage = showFormSaveError(
+              currentForm,
+              compliancePeriodErrorMessage(err),
+            );
+            if (
+              err instanceof Error &&
+              err.message === "generator_contact_required"
+            ) {
+              const [before, after] = t(
+                "admin.compliance.generatorContactRequired",
+                { profile: "{profile}" },
+              ).split("{profile}");
               const profileLink = document.createElement("a");
               profileLink.href = "/profile";
               profileLink.textContent = t("admin.profile.title");
@@ -3186,21 +3237,31 @@ class AdminApp extends HTMLElement {
       );
     });
     const deactivateForm = this.querySelector("#deactivate-site-form");
-    const deactivateConfirmation = deactivateForm?.querySelector("[name='confirmation']");
-    const deactivateSubmit = deactivateForm?.querySelector("button[type='submit']");
-    const confirmedSiteName = () => Boolean(this.state.site?.name) &&
+    const deactivateConfirmation = deactivateForm?.querySelector(
+      "[name='confirmation']",
+    );
+    const deactivateSubmit = deactivateForm?.querySelector(
+      "button[type='submit']",
+    );
+    const confirmedSiteName = () =>
+      Boolean(this.state.site?.name) &&
       String(deactivateConfirmation?.value || "") === this.state.site.name;
     const syncDeactivateSubmit = () => {
-      if (deactivateSubmit) deactivateSubmit.disabled =
-        deactivateForm.dataset.saving === "true" || !confirmedSiteName();
+      if (deactivateSubmit)
+        deactivateSubmit.disabled =
+          deactivateForm.dataset.saving === "true" || !confirmedSiteName();
     };
     deactivateConfirmation?.addEventListener("input", syncDeactivateSubmit);
     deactivateConfirmation?.addEventListener("change", syncDeactivateSubmit);
     syncDeactivateSubmit();
     deactivateForm?.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!this.state.capabilities.createEntities || !confirmedSiteName() ||
-        deactivateForm.dataset.saving === "true") return;
+      if (
+        !this.state.capabilities.createEntities ||
+        !confirmedSiteName() ||
+        deactivateForm.dataset.saving === "true"
+      )
+        return;
       deactivateForm.dataset.saving = "true";
       syncDeactivateSubmit();
       try {
@@ -3997,7 +4058,9 @@ function siteLettersView(state) {
   const site = state.site;
   const current = site?.complianceLetters?.current;
   const past = site?.complianceLetters?.past || [];
-  const emails = [...(state.letterEmailHistory || [])].sort((a, b) => a.number - b.number);
+  const emails = [...(state.letterEmailHistory || [])].sort(
+    (a, b) => a.number - b.number,
+  );
   return `<section class="subsection" aria-labelledby="letters-title">
     <h2 id="letters-title">Perimeter check letters</h2>
     ${current ? `<div class="compliance-letter-preview">${current.previewUrl && current.url ? `<a class="compliance-letter-preview__thumbnail" href="${escapeHtml(current.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(current.fileName || "the current perimeter check letter")}"><img src="${escapeHtml(current.previewUrl)}" alt="" loading="lazy" /></a>` : ""}<p>Current letter: ${current.url ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener">${escapeHtml(current.fileName || "Open PDF")}</a>` : escapeHtml(current.fileName || current.status || "Generating")}</p>${current.termsVersionId ? `<button type="button" class="btn-secondary" data-resend-letter>${escapeHtml(t("admin.letters.resend"))}</button>` : ""}</div>` : `<p>${state.site?.letterState === "draft_pending" ? "The letter is being generated." : "No letter has been generated yet"}</p>`}
@@ -4005,7 +4068,7 @@ function siteLettersView(state) {
     ${past.length ? `<ul>${past.map((letter) => `<li>${letter.url ? `<a href="${escapeHtml(letter.url)}" target="_blank" rel="noopener">${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</a>` : escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="muted">No past letters.</p>'}
     <h3>${escapeHtml(t("admin.letters.emailHistory"))}</h3>
     ${state.letterEmailUncertain ? `<p class="error" role="alert">${escapeHtml(t("admin.letters.deliveryUncertain"))}</p>` : ""}
-    ${emails.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">${escapeHtml(t("admin.letters.letterLink"))}</th><th scope="col">${escapeHtml(t("admin.letters.sentTo"))}</th><th scope="col">${escapeHtml(t("admin.letters.dateSent"))}</th></tr></thead><tbody>${emails.map(email => `<tr><td>${email.number}</td><td><a href="${escapeHtml(email.letter.url)}" target="_blank" rel="noopener">${escapeHtml(email.letter.fileName)}</a></td><td>${(email.recipients || []).map(address => escapeHtml(address)).join("<br>") || "—"}</td><td>${escapeHtml(formatTimestamp(email.sentAt))}${email.provider === "local-preview" ? ` (${escapeHtml(t("admin.letters.localPreview"))})` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${escapeHtml(t("admin.letters.noEmails"))}</p>`}
+    ${emails.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">${escapeHtml(t("admin.letters.letterLink"))}</th><th scope="col">${escapeHtml(t("admin.letters.sentTo"))}</th><th scope="col">${escapeHtml(t("admin.letters.dateSent"))}</th></tr></thead><tbody>${emails.map((email) => `<tr><td>${email.number}</td><td><a href="${escapeHtml(email.letter.url)}" target="_blank" rel="noopener">${escapeHtml(email.letter.fileName)}</a></td><td>${(email.recipients || []).map((address) => escapeHtml(address)).join("<br>") || "—"}</td><td>${escapeHtml(formatTimestamp(email.sentAt))}${email.provider === "local-preview" ? ` (${escapeHtml(t("admin.letters.localPreview"))})` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${escapeHtml(t("admin.letters.noEmails"))}</p>`}
   </section>`;
 }
 
@@ -5984,7 +6047,9 @@ function siteSaveErrorMessage(error) {
 function compliancePeriodErrorMessage(error) {
   const code = error instanceof Error ? error.message : "";
   if (code === "generator_contact_required")
-    return t("admin.compliance.generatorContactRequired", { profile: t("admin.profile.title") });
+    return t("admin.compliance.generatorContactRequired", {
+      profile: t("admin.profile.title"),
+    });
   if (code === "generator_department_required")
     return t("admin.compliance.generatorDepartmentRequired");
   if (code === "expiry_required")

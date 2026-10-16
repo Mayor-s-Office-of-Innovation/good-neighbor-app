@@ -1451,12 +1451,20 @@ button:disabled,
 
 @media (hover: hover) {
   .btn-neutral-filled:not(:disabled):hover {
-    background: color-mix(in oklab, var(--wa-color-neutral-fill-normal), var(--wa-color-mix-hover));
+    background: color-mix(
+      in oklab,
+      var(--wa-color-neutral-fill-normal),
+      var(--wa-color-mix-hover)
+    );
   }
 }
 
 .btn-neutral-filled:not(:disabled):active {
-  background: color-mix(in oklab, var(--wa-color-neutral-fill-normal), var(--wa-color-mix-active));
+  background: color-mix(
+    in oklab,
+    var(--wa-color-neutral-fill-normal),
+    var(--wa-color-mix-active)
+  );
 }
 
 .column-list {

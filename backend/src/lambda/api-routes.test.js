@@ -8,12 +8,18 @@ describe("deployed admin API routes", () => {
       new URL("../../../infra/modules/app/api.tf", import.meta.url),
       "utf8",
     );
-    const routes = [...lambda.matchAll(/"((?:GET|POST|PUT|PATCH|DELETE) \/admin\/v1\/[^"\n]+)"\s*:/g)]
-      .map((match) => match[1]);
+    const routes = [
+      ...lambda.matchAll(
+        /"((?:GET|POST|PUT|PATCH|DELETE) \/admin\/v1\/[^"\n]+)"\s*:/g,
+      ),
+    ].map((match) => match[1]);
     expect(routes.length).toBeGreaterThan(0);
     const deployedRoutes = new Set(
-      [...terraform.matchAll(/"((?:GET|POST|PUT|PATCH|DELETE) \/admin\/v1\/[^"\n]+)"/g)]
-        .map((match) => match[1]),
+      [
+        ...terraform.matchAll(
+          /"((?:GET|POST|PUT|PATCH|DELETE) \/admin\/v1\/[^"\n]+)"/g,
+        ),
+      ].map((match) => match[1]),
     );
     expect(routes.filter((route) => !deployedRoutes.has(route))).toEqual([]);
   });
