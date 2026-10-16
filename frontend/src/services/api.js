@@ -1088,6 +1088,19 @@ export async function waitForAnalyses(
   }
 }
 
+/** @param {string[]} taskIds */
+export function getDuplicateLinks(taskIds) {
+  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+}
+/** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
+export function separateDuplicate(taskId, expected) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
+    { body: expected },
+  );
+}
+
 // Proactive care logs are Site-scoped, independent of checks and tasks.
 export function listCareWork(nextToken = "") {
   return request(

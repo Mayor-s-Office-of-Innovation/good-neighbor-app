@@ -1,4 +1,9 @@
 import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../src/handlers/duplicate-links.js";
+import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
+import {
   listCareWork,
   createCareWork,
   getCareWork,
@@ -291,6 +296,11 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}/media",
     presignMedia,
   ),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
+    getDuplicateResult,
+  ),
   route("GET", "/v1/checks/{checkId}", getCheck),
   route("GET", "/v1/care-work", listCareWork),
   route("POST", "/v1/care-work", createCareWork),
@@ -324,6 +334,8 @@ const routes = [
   ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/duplicates:batch", getDuplicateLinks),
+  route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),

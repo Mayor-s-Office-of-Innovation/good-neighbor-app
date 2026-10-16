@@ -66,7 +66,14 @@
 - **[Media safeguards](./runbooks/media-safeguards.md)** — upload validation, quota and
   rejection alarms, retention, and incident triage without inspecting private media.
 
+- **[Duplicate detection](./runbooks/duplicate-detection.md)** — isolated matching, deployment order, reversible links, CloudWatch metrics, and media retention.
+
 ## Domain & policy reference
+
+- **[duplicate-evaluation.md](duplicate-evaluation.md)** — local duplicate-detection
+  experiment: replay dataset, baseline and model comparisons, and recall-focused metrics.
+- **[duplicate-detection-handoff.md](duplicate-detection-handoff.md)** — user-requested
+  cross-machine handoff: agreed scope, completed work, next user actions, and remaining plan.
 
 - **[guidance-policy-changelog.md](./guidance-policy-changelog.md)** — policy operations log
   for the action/escalation rulebase (versions, update process). The workflow itself is

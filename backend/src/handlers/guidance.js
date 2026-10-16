@@ -1,3 +1,4 @@
+import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -491,10 +492,11 @@ export const completeTask = async (event) => {
   );
 
   try {
+    const shared = await sharedActionTarget(dynamoTable, siteId, taskId);
     const task = await completeTaskWithAppActions({
       tableName: dynamoTable,
       siteId,
-      taskId,
+      ...shared,
       completionMethod:
         typeof completionMethod === "string" ? completionMethod : undefined,
       actorId: deriveActorId(event),
@@ -505,7 +507,7 @@ export const completeTask = async (event) => {
           ? readUpdateById(
               dynamoTable,
               siteId,
-              taskId,
+              String(task.taskId),
               String(task.latestUpdateId),
             )
           : null,

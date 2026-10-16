@@ -97,7 +97,7 @@ export function presignPut({
 /**
  * Read upload metadata without downloading the object.
  * @param {{ bucket: string, key: string }} params
- * @returns {Promise<{ contentType?: string, contentLength?: number, metadata?: Record<string, string> }>}
+ * @returns {Promise<{ contentType?: string, contentLength?: number, lastModified?: Date, metadata?: Record<string, string> }>}
  */
 export async function headObject({ bucket, key }) {
   const out = await client.send(
@@ -107,6 +107,7 @@ export async function headObject({ bucket, key }) {
     contentType: out.ContentType,
     contentLength: out.ContentLength,
     metadata: out.Metadata,
+    ...(out.LastModified ? { lastModified: out.LastModified } : {}),
   };
 }
 

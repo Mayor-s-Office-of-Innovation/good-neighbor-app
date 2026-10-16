@@ -12,6 +12,15 @@ const { send, enqueueTranslateArtifact } = vi.hoisted(() => ({
   enqueueTranslateArtifact: vi.fn(async () => true),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Shared-link validation is exercised in duplicates/links.test.js; these handler
+// tests isolate request/response and existing completion behavior.
+vi.mock("../analysis/duplicates/links.js", () => ({
+  sharedActionTarget: async (
+    /** @type {string} */ table,
+    /** @type {string} */ site,
+    /** @type {string} */ taskId,
+  ) => ({ taskId, duplicateChecks: [] }),
+}));
 vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
   .../** @type {any} */ (await importOriginal()),
   enqueueTranslateArtifact,

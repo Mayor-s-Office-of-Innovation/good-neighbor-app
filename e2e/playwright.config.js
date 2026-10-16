@@ -68,6 +68,11 @@ export default defineConfig({
         ...process.env,
         ANALYZER_BASE_URL: "http://127.0.0.1:3101",
         ANALYZER_API_KEY: "e2e-stub-key",
+        // Never inherit live Bedrock comparison settings from .env.local.
+        // Dedicated duplicate UI scenarios use their own controlled fixtures.
+        DUPLICATE_DETECTION_ENABLED: "false",
+        DUPLICATE_QUEUE_URL: "",
+        SQS_QUEUE_URL: "http://localhost:9324/local/gnp-local-e2e-submissions",
       },
     },
     {

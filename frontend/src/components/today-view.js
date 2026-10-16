@@ -1,3 +1,10 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
+import {
+  projectDuplicateTasks,
+  duplicateCounts,
+} from "../domain/duplicate-issues.js";
+import { watchDuplicateIssues } from "../services/duplicate-issues.js";
+import { openDuplicateIssue } from "./duplicate-issue-launcher.js";
 import {
   toggleCardCompletion,
   completeCardAction,
@@ -164,7 +171,7 @@ import {
  * Keys mirror the adopting instance fields: model, homeFilter,
  * historyGrouping, taskOverrides, hasPerimeterDraft, site, siteId,
  * providerName, providerSites, providerSitesStatus, boundSites,
- * task311Statuses.
+ * task311Statuses, duplicateLinks.
  * @type {Record<string, any> | null}
  */
 let lastHomeState = null;
@@ -185,6 +192,7 @@ function stashHomeState(view) {
         providerSitesStatus: view._providerSitesStatus,
         boundSites: view._boundSites,
         task311Statuses: view._311StatusByTaskId,
+        duplicateLinks: new Map(view._duplicateLinks),
       }
     : null;
 }
@@ -247,9 +255,23 @@ class TodayView extends HTMLElement {
     /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
+    this._duplicateLinks = new Map();
+    this._duplicateCloseHandler = () => {
+      if (
+        this._duplicatesNeedRender &&
+        this.isConnected &&
+        this._homeModel &&
+        !document.querySelector("dialog[open]")
+      ) {
+        this._duplicatesNeedRender = false;
+        this._renderHome(this._homeModel);
+      }
+    };
   }
 
   disconnectedCallback() {
+    this._stopDuplicates?.();
+    document.removeEventListener("close", this._duplicateCloseHandler, true);
     window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
@@ -268,6 +290,7 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
+    document.addEventListener("close", this._duplicateCloseHandler, true);
     if (!this._phoneSaved)
       this._phoneSaved = () => {
         void this.connectedCallback();
@@ -331,9 +354,14 @@ class TodayView extends HTMLElement {
         /** @type {any} */ (lastHomeState),
         requestedFilter,
       );
+    const previousSiteId = this._siteId;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+    if (previousSiteId && previousSiteId !== this._siteId) {
+      this._stopDuplicates?.();
+      this._duplicateLinks = new Map();
+    }
     this._providerSitesStatus = "loading";
     const [catalog, bindings] = await Promise.all([
       fetchProviderSites().catch((error) => {
@@ -423,12 +451,32 @@ class TodayView extends HTMLElement {
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
+    if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
     this._renderHome({
       last,
       checks: submitted,
       tasks,
       pendingSession: effectivePendingSession,
     });
+    this._stopDuplicates?.();
+    const siteId = this._siteId;
+    this._stopDuplicates = watchDuplicateIssues(
+      tasks.map((t) => t.taskId),
+      (links) => {
+        if (!this.isConnected || this._siteId !== siteId) return;
+        this._duplicateLinks = links;
+        if (document.querySelector("dialog[open]")) {
+          this._duplicatesNeedRender = true;
+          return;
+        }
+        if (
+          this._homeModel &&
+          !isCompletingAnalysisCard(this) &&
+          !isDeletingAnalysisCard(this)
+        )
+          this._renderHome(this._homeModel);
+      },
+    );
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
@@ -487,6 +535,9 @@ class TodayView extends HTMLElement {
     this._providerSitesStatus = snapshot.providerSitesStatus;
     this._boundSites = snapshot.boundSites;
     this._311StatusByTaskId = snapshot.task311Statuses;
+    this._duplicateLinks = duplicateUiEnabled()
+      ? new Map(snapshot.duplicateLinks ?? [])
+      : new Map();
     this._renderHome(this._homeModel);
   }
 
@@ -789,6 +840,15 @@ class TodayView extends HTMLElement {
     );
     this._wireCards();
     this._restoreFocusAfterRender();
+    const requestedIssue = new URLSearchParams(window.location.search).get(
+      "issue",
+    );
+    if (
+      requestedIssue &&
+      requestedIssue !== this._focusedIssueId &&
+      this._focusIssueCard(requestedIssue)
+    )
+      this._focusedIssueId = requestedIssue;
   }
 
   async _hydrateVisibleHomeTasks() {
@@ -1021,6 +1081,7 @@ class TodayView extends HTMLElement {
         .map((card) => card.markup)
         .join(""),
       newTaskCount: newTaskEntries.length,
+      counts: duplicateCounts(newTaskEntries.map((e) => e.task)),
       activeClearCheck,
       hasPendingClearResult,
       historyGroups: this._historyGroups(
@@ -1062,6 +1123,7 @@ class TodayView extends HTMLElement {
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
+      isDuplicate: Boolean(entry.task.duplicate),
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
     };
@@ -1122,6 +1184,7 @@ class TodayView extends HTMLElement {
       })
       .map(([checkId, group]) => ({
         checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        counts: duplicateCounts(group.map((e) => e.task)),
         cards: sortAnalysisCards(
           group.map((entry) => this._taskCardEntry(entry, false)),
         )
@@ -1364,7 +1427,7 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks
+    return projectDuplicateTasks(tasks, this._duplicateLinks)
       .filter((task) => !isTaskPendingDeletion(task))
       .map((task) => ({
         task,
@@ -1504,7 +1567,34 @@ class TodayView extends HTMLElement {
     return null;
   }
 
+  _focusIssueCard(taskId) {
+    const card = [
+      ...this.querySelectorAll(
+        ":scope > .home > .home-region--results article[data-task-id]",
+      ),
+    ].find((candidate) => candidate.getAttribute("data-task-id") === taskId);
+    if (!(card instanceof HTMLElement)) return false;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView({ block: "center", behavior: "instant" });
+    return true;
+  }
+
   _wireCards() {
+    this.querySelectorAll(".duplicate-earlier-link").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (!(event instanceof MouseEvent)) return;
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        if (this._focusIssueCard(link.getAttribute("data-original-task-id")))
+          event.preventDefault();
+      });
+    });
     this.querySelectorAll(
       ":scope > .home > .home-region--results [data-task-id]",
     ).forEach((card) => {
@@ -1896,7 +1986,21 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "update") {
+    if (action === "duplicate") {
+      const decorated = projectDuplicateTasks(
+        [task],
+        this._duplicateLinks,
+      ).find((t) => t.taskId === task.taskId);
+      if (!decorated?.duplicate) return;
+      openDuplicateIssue(decorated, btn, {
+        onSeparated: () => {
+          this._duplicateLinks.delete(task.taskId);
+          if (this.isConnected) void this.connectedCallback();
+        },
+        onOriginal: (original, trigger) =>
+          void this._openTaskUpdate(original, trigger),
+      });
+    } else if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);

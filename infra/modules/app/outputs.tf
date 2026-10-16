@@ -107,3 +107,8 @@ output "mail_manager_ingress_username" {
   description = "Mail Manager SMTP AUTH username (the ingress point ID); null until enabled."
   value       = var.enable_city_smtp_relay ? aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"] : null
 }
+
+output "duplicate_analyzer_key_secret_arn" {
+  description = "Container for the separate comparison key, provisioned out-of-band."
+  value       = aws_secretsmanager_secret.duplicate_analyzer_key.arn
+}

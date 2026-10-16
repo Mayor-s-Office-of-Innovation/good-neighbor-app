@@ -1,4 +1,9 @@
 import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../handlers/duplicate-links.js";
+import { getDuplicateResult } from "../handlers/duplicate-results.js";
+import {
   listCareWork,
   createCareWork,
   getCareWork,
@@ -225,6 +230,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
+    getDuplicateResult,
   "GET /v1/checks/{checkId}": getCheck,
   "GET /v1/care-work": listCareWork,
   "POST /v1/care-work": createCareWork,
@@ -245,6 +252,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  "POST /v1/duplicates:batch": getDuplicateLinks,
+  "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,

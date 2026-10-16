@@ -1,0 +1,318 @@
+{
+  "name": "Synthetic incident replay mechanics v1",
+  "synthetic": true,
+  "observations": [
+    {
+      "id": "repeat-prior",
+      "siteId": "repeat",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Large waste",
+      "description": "Red mattress leaning against blue east entrance door"
+    },
+    {
+      "id": "repeat-new",
+      "siteId": "repeat",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Large waste",
+      "description": "Red mattress still leaning against blue east entrance door"
+    },
+    {
+      "id": "paraphrase-prior",
+      "siteId": "paraphrase",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Large waste",
+      "description": "A discarded couch blocks the rear gate"
+    },
+    {
+      "id": "paraphrase-new",
+      "siteId": "paraphrase",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Obstruction",
+      "description": "Sofa abandoned across back entrance"
+    },
+    {
+      "id": "resolved-prior",
+      "siteId": "resolved",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Three bags of trash at main door",
+      "resolvedAt": "2026-10-02T18:00:00Z"
+    },
+    {
+      "id": "resolved-new",
+      "siteId": "resolved",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Three bags of trash at main door"
+    },
+    {
+      "id": "nearby-prior",
+      "siteId": "nearby",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Black bags beside east entrance"
+    },
+    {
+      "id": "nearby-new",
+      "siteId": "nearby",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Black bags beside west entrance"
+    },
+    {
+      "id": "generic-prior",
+      "siteId": "generic",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Trash outside"
+    },
+    {
+      "id": "generic-new",
+      "siteId": "generic",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Trash outside"
+    },
+    {
+      "id": "missing-prior",
+      "siteId": "missing",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Broken green bottle at side gate"
+    },
+    {
+      "id": "missing-new",
+      "siteId": "missing",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Green broken bottle still at side gate"
+    },
+    {
+      "id": "new-prior",
+      "siteId": "new",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Graffiti",
+      "description": "Paint on north wall"
+    },
+    {
+      "id": "new-new",
+      "siteId": "new",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Food wrappers under bench"
+    },
+    {
+      "id": "late-prior",
+      "siteId": "late",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-04T10:00:00Z",
+      "category": "Litter",
+      "description": "Broken sign at front door"
+    },
+    {
+      "id": "late-new",
+      "siteId": "late",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Broken sign at front door"
+    },
+    {
+      "id": "old-prior",
+      "siteId": "old",
+      "observedAt": "2026-09-20T10:00:00Z",
+      "availableAt": "2026-09-20T10:01:00Z",
+      "category": "Graffiti",
+      "description": "Blue graffiti across shutter"
+    },
+    {
+      "id": "old-new",
+      "siteId": "old",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Graffiti",
+      "description": "Blue graffiti across shutter"
+    },
+    {
+      "id": "empty-prior",
+      "siteId": "empty",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Broken window above gate"
+    },
+    {
+      "id": "empty-new",
+      "siteId": "empty",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": ""
+    },
+    {
+      "id": "held-repeat-prior",
+      "siteId": "held-repeat",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Large waste",
+      "description": "Two tires beside yellow bollard"
+    },
+    {
+      "id": "held-repeat-new",
+      "siteId": "held-repeat",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Large waste",
+      "description": "Two discarded tires beside yellow bollard"
+    },
+    {
+      "id": "held-distinct-prior",
+      "siteId": "held-distinct",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Large waste",
+      "description": "Shopping cart at north gate"
+    },
+    {
+      "id": "held-distinct-new",
+      "siteId": "held-distinct",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Large waste",
+      "description": "Shopping cart at south gate"
+    },
+    {
+      "id": "held-resolved-prior",
+      "siteId": "held-resolved",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Graffiti",
+      "description": "Black graffiti on white gate",
+      "resolvedAt": "2026-10-02T15:00:00Z"
+    },
+    {
+      "id": "held-resolved-new",
+      "siteId": "held-resolved",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Graffiti",
+      "description": "Black graffiti on white gate"
+    },
+    {
+      "id": "held-generic-prior",
+      "siteId": "held-generic",
+      "observedAt": "2026-10-02T10:00:00Z",
+      "availableAt": "2026-10-02T10:01:00Z",
+      "category": "Litter",
+      "description": "Litter on sidewalk"
+    },
+    {
+      "id": "held-generic-new",
+      "siteId": "held-generic",
+      "observedAt": "2026-10-03T10:00:00Z",
+      "availableAt": "2026-10-03T10:01:00Z",
+      "category": "Litter",
+      "description": "Rubbish on pavement"
+    }
+  ],
+  "cases": [
+    {
+      "sourceId": "repeat-new",
+      "label": "duplicate",
+      "duplicateIds": ["repeat-prior"],
+      "split": "development"
+    },
+    {
+      "sourceId": "paraphrase-new",
+      "label": "duplicate",
+      "duplicateIds": ["paraphrase-prior"],
+      "split": "development"
+    },
+    {
+      "sourceId": "resolved-new",
+      "label": "distinct",
+      "duplicateIds": [],
+      "split": "development"
+    },
+    {
+      "sourceId": "nearby-new",
+      "label": "distinct",
+      "duplicateIds": [],
+      "split": "development"
+    },
+    {
+      "sourceId": "generic-new",
+      "label": "indeterminate",
+      "duplicateIds": [],
+      "split": "development"
+    },
+    {
+      "sourceId": "missing-new",
+      "label": "duplicate",
+      "duplicateIds": ["missing-prior"],
+      "split": "development"
+    },
+    {
+      "sourceId": "new-new",
+      "label": "distinct",
+      "duplicateIds": [],
+      "split": "development"
+    },
+    {
+      "sourceId": "late-new",
+      "label": "duplicate",
+      "duplicateIds": ["late-prior"],
+      "split": "development"
+    },
+    {
+      "sourceId": "old-new",
+      "label": "duplicate",
+      "duplicateIds": ["old-prior"],
+      "split": "development"
+    },
+    {
+      "sourceId": "empty-new",
+      "label": "indeterminate",
+      "duplicateIds": [],
+      "split": "development"
+    },
+    {
+      "sourceId": "held-repeat-new",
+      "label": "duplicate",
+      "duplicateIds": ["held-repeat-prior"],
+      "split": "test"
+    },
+    {
+      "sourceId": "held-distinct-new",
+      "label": "distinct",
+      "duplicateIds": [],
+      "split": "test"
+    },
+    {
+      "sourceId": "held-resolved-new",
+      "label": "distinct",
+      "duplicateIds": [],
+      "split": "test"
+    },
+    {
+      "sourceId": "held-generic-new",
+      "label": "indeterminate",
+      "duplicateIds": [],
+      "split": "test"
+    }
+  ]
+}

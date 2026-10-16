@@ -72,6 +72,12 @@ variable "bedrock_model_id" {
   default     = "anthropic.claude-sonnet-4-20250514-v1:0"
 }
 
+variable "enable_duplicate_detection" {
+  type        = bool
+  default     = false
+  description = "Enable the isolated shadow matcher after the comparison endpoint and secret are provisioned."
+}
+
 variable "alarm_emails" {
   description = "Email addresses subscribed to the CloudWatch alarm SNS topics (home region + us-east-1). Each address receives one confirmation email per topic. Empty = topics exist, nobody is notified."
   type        = list(string)

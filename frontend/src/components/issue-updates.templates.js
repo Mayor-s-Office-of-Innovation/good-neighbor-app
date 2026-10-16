@@ -1,3 +1,4 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { MAX_TASK_UPDATE_TEXT } from "../domain/task-update-draft.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -43,6 +44,11 @@ export function taskUpdateActions(outline = false) {
 
 /** @param {Record<string, any>} update @param {Record<string, any>} task @param {Map<string, string>} mediaUrls @param {string} title */
 export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
+  if (
+    !duplicateUiEnabled() &&
+    ["duplicate_detected", "duplicate_separated"].includes(update.type)
+  )
+    return "";
   return html`<li
     class="ticket-timeline__item task-update__timeline-item task-update__timeline-item--${taskUpdateTimelineTone(
       update.type,
@@ -50,7 +56,13 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
   >
     <div class="ticket-timeline__content">
       <strong
-        >${escapeHtml(rulebookText(update.label, "server.taskUpdate"))}</strong
+        >${escapeHtml(
+          update.type === "duplicate_detected"
+            ? t("duplicate.timeline")
+            : update.type === "duplicate_separated"
+              ? t("duplicate.separatedTimeline")
+              : rulebookText(update.label, "server.taskUpdate"),
+        )}</strong
       ><time datetime="${escapeAttr(update.occurredAt)}"
         >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
       >

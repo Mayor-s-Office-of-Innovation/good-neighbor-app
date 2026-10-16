@@ -14,6 +14,11 @@ New here? Get your bearings in this order:
 
 ## Current state
 
+- **Duplicate detection is an experiment, not a deployed feature:** an image-first matcher,
+  evaluation runner, and isolated shadow infrastructure exist locally; the background
+  path is disabled by default and not deployed. Before continuing, read the
+  [continuation handoff](./docs/duplicate-detection-handoff.md) for the five-day window,
+  selected sample dataset, comparison deployment prerequisite, and remaining work.
 - **Stack & datastore are settled:** JavaScript + JSDoc backend and frontend
   ([ADR 0004](./docs/adr/0004-javascript-with-jsdoc.md)), single-table DynamoDB
   ([ADR 0002](./docs/adr/0002-datastore-dynamodb.md)), 2-env deploy pipeline
