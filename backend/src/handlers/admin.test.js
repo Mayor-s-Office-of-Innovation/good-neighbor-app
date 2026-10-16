@@ -89,6 +89,8 @@ describe("admin authorization", () => {
     "central-admin",
     "[central-admin]",
     "[support, central-admin]",
+    "[support central-admin]",
+    "[central-admin compliance-supervisor]",
     '["support","central-admin"]',
     ["support", "central-admin"],
   ])(
@@ -105,7 +107,6 @@ describe("admin authorization", () => {
     "not-central-admin",
     "[not-central-admin]",
     "[central-admin-readonly]",
-    "[support central-admin]",
     "[central-admin",
     '["central-admin-readonly"]',
     { role: "central-admin" },

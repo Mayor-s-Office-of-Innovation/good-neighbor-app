@@ -107,6 +107,8 @@ import {
 } from "../handlers/admin.js";
 import {
   getAdminSession,
+  getMyProfile,
+  updateMyProfile,
   inviteAdminUser,
   listAdminUsers,
   reinviteAdminUser,
@@ -267,6 +269,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
   "GET /admin/v1/session": getAdminSession,
+  "GET /admin/v1/profile": getMyProfile,
+  "PUT /admin/v1/profile": updateMyProfile,
   "GET /admin/v1/admin-users": listAdminUsers,
   "POST /admin/v1/admin-users": inviteAdminUser,
   "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,

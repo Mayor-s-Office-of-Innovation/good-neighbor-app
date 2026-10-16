@@ -14,7 +14,7 @@ const OAUTH_TRANSACTION_TTL_MS = 30 * 60 * 1000;
 export function getAdminToken() {
   const expiresAt = Number(sessionStorage.getItem(EXPIRES_AT_KEY) || "0");
   if (expiresAt && Date.now() > expiresAt) {
-    clearAdminSession();
+    clearAdminTokens();
     return "";
   }
   return sessionStorage.getItem(ACCESS_TOKEN_KEY) || "";
@@ -29,12 +29,16 @@ export function hasAdminSession() {
 }
 
 export function clearAdminSession() {
+  clearAdminTokens();
+  removeOAuthTransaction();
+}
+
+// Session expiry can be observed while a new OAuth login is pending, including
+// in another tab. It must not delete that login's state or PKCE verifier.
+function clearAdminTokens() {
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(ID_TOKEN_KEY);
   sessionStorage.removeItem(EXPIRES_AT_KEY);
-  sessionStorage.removeItem(PKCE_VERIFIER_KEY);
-  sessionStorage.removeItem(OAUTH_STATE_KEY);
-  removeOAuthTransaction();
 }
 
 /**
@@ -42,10 +46,7 @@ export function clearAdminSession() {
  */
 export async function startAdminLogin() {
   const config = requireAuthConfig();
-  // An expired token must not survive into the callback. connectedCallback()
-  // checks the existing session before completing the code exchange; if an old
-  // expiry remains, that check clears the newly-created PKCE transaction and
-  // forces the user through a second login attempt.
+  // Start with fresh credentials and a new one-time login transaction.
   clearAdminSession();
   const verifier = randomUrlSafe(64);
   const state = randomUrlSafe(24);
@@ -78,17 +79,17 @@ export async function completeAdminLoginFromUrl() {
   if (!code) return { handled: false };
 
   const state = params.get("state") || "";
-  const transaction = readOAuthTransaction();
+  const transaction = readOAuthTransaction(state);
   const expectedState = transaction?.state || "";
   const verifier = transaction?.verifier || "";
   if (!state || state !== expectedState || !verifier) {
-    removeOAuthTransaction();
+    // A stale callback must not cancel a newer login in progress.
     clearCallbackParameters();
     return { handled: true, error: "invalid_login_state" };
   }
   // Consume the one-time state before exchanging the one-time code. This also
   // prevents a reconnecting custom element from processing the callback twice.
-  removeOAuthTransaction();
+  removeOAuthTransaction(state);
   clearCallbackParameters();
 
   const config = requireAuthConfig();
@@ -133,11 +134,14 @@ function writeOAuthTransaction(transaction) {
   }
 }
 
-/** @returns {{ state: string, verifier: string } | null} */
-function readOAuthTransaction() {
+/**
+ * @param {string} state
+ * @returns {{ state: string, verifier: string } | null}
+ */
+function readOAuthTransaction(state) {
   const sessionState = sessionStorage.getItem(OAUTH_STATE_KEY) || "";
   const sessionVerifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || "";
-  if (sessionState && sessionVerifier) {
+  if (state && sessionState === state && sessionVerifier) {
     return { state: sessionState, verifier: sessionVerifier };
   }
   try {
@@ -146,6 +150,7 @@ function readOAuthTransaction() {
     );
     if (
       typeof value?.state === "string" &&
+      value.state === state &&
       typeof value?.verifier === "string" &&
       Number.isFinite(value?.createdAt) &&
       Date.now() - value.createdAt <= OAUTH_TRANSACTION_TTL_MS
@@ -158,11 +163,20 @@ function readOAuthTransaction() {
   return null;
 }
 
-function removeOAuthTransaction() {
-  sessionStorage.removeItem(PKCE_VERIFIER_KEY);
-  sessionStorage.removeItem(OAUTH_STATE_KEY);
+/** @param {string} [state] Only consume the matching transaction on callback. */
+function removeOAuthTransaction(state) {
+  if (!state || sessionStorage.getItem(OAUTH_STATE_KEY) === state) {
+    sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+    sessionStorage.removeItem(OAUTH_STATE_KEY);
+  }
   try {
-    localStorage.removeItem(OAUTH_TRANSACTION_KEY);
+    if (
+      !state ||
+      JSON.parse(localStorage.getItem(OAUTH_TRANSACTION_KEY) || "null")
+        ?.state === state
+    ) {
+      localStorage.removeItem(OAUTH_TRANSACTION_KEY);
+    }
   } catch {
     // Ignore storage restrictions; there is no recoverable login transaction.
   }

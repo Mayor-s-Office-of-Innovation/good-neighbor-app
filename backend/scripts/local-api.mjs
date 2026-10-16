@@ -116,6 +116,8 @@ import {
 } from "../src/handlers/admin.js";
 import {
   getAdminSession,
+  getMyProfile,
+  updateMyProfile,
   inviteAdminUser,
   listAdminUsers,
   reinviteAdminUser,
@@ -361,6 +363,8 @@ const routes = [
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
   route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/profile", getMyProfile),
+  route("PUT", "/admin/v1/profile", updateMyProfile),
   route("GET", "/admin/v1/admin-users", listAdminUsers),
   route("POST", "/admin/v1/admin-users", inviteAdminUser),
   route("PUT", "/admin/v1/admin-users/{username}/role", updateAdminUserRole),

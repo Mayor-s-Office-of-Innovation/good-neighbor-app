@@ -72,6 +72,8 @@ locals {
     "POST /submissions",
     "GET /admin/v1/providers",
     "GET /admin/v1/session",
+    "GET /admin/v1/profile",
+    "PUT /admin/v1/profile",
     "GET /admin/v1/admin-users",
     "POST /admin/v1/admin-users",
     "PUT /admin/v1/admin-users/{username}/role",

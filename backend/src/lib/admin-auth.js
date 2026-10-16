@@ -75,9 +75,13 @@ function parseGroups(raw) {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed)) return parsed.map(String);
     } catch {
+      // HTTP API JWT authorizers can stringify arrays as [group1 group2].
+      // Accept that representation as well as comma-delimited lists, while
+      // keeping malformed quoted JSON from becoming recognized membership.
+      if (/["'\[\]]/.test(value.slice(1, -1))) return [];
       return value
         .slice(1, -1)
-        .split(",")
+        .split(/[,\s]+/)
         .map((group) => group.trim())
         .filter(Boolean);
     }

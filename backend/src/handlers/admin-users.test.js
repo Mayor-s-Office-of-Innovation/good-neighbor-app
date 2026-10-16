@@ -38,6 +38,8 @@ vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 
 const {
   getAdminSession,
+  getMyProfile,
+  updateMyProfile,
   inviteAdminUser,
   reinviteAdminUser,
   resetAdminUserPassword,
@@ -53,6 +55,118 @@ beforeEach(() => {
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
   vi.stubEnv("SQS_QUEUE_URL", "queue");
+});
+
+describe("My profile", () => {
+  it("reads current names from Cognito for the caller", async () => {
+    const current = user("caller@example.org", "caller-sub");
+    current.UserAttributes.push(
+      { Name: "given_name", Value: "Current" },
+      { Name: "family_name", Value: "Name" },
+    );
+    cognitoSend.mockResolvedValue(current);
+    ddbSend.mockResolvedValue({
+      Item: {
+        userId: "manager-1",
+        status: "active",
+        cognitoSubject: "caller-sub",
+      },
+    });
+    const response = await call(getMyProfile, event());
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).profile).toEqual({
+      firstName: "Current",
+      lastName: "Name",
+      email: "caller@example.org",
+      role: "compliance-supervisor",
+      directoryUserId: "manager-1",
+    });
+    expect(cognitoSend.mock.calls[0][0].input.Username).toBe(
+      "caller@example.org",
+    );
+  });
+
+  it("allows a Compliance manager to edit their own names and syncs the directory", async () => {
+    cognitoSend
+      .mockResolvedValueOnce(user("caller@example.org", "caller-sub"))
+      .mockResolvedValue({});
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#caller@example.org",
+          userId: "manager-1",
+          status: "active",
+          cognitoSubject: "caller-sub",
+        },
+      })
+      .mockResolvedValue({});
+    const request = event({ firstName: " Updated ", lastName: "Name" });
+    request.requestContext.authorizer.jwt.claims["cognito:groups"] =
+      "compliance-manager";
+    const response = await call(updateMyProfile, request);
+    expect(response.statusCode).toBe(200);
+    expect(cognitoSend.mock.calls[1][0].input).toMatchObject({
+      Username: "caller@example.org",
+      UserAttributes: [
+        { Name: "given_name", Value: "Updated" },
+        { Name: "family_name", Value: "Name" },
+        { Name: "name", Value: "Updated Name" },
+      ],
+    });
+    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(
+      ddbSend.mock.calls[1][0].input.ExpressionAttributeValues[":subject"],
+    ).toBe("caller-sub");
+  });
+
+  it.each(["email", "role", "username", "subject"])(
+    "rejects attempts to change %s",
+    async (field) => {
+      const response = await call(
+        updateMyProfile,
+        event({ firstName: "A", lastName: "B", [field]: "other" }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(cognitoSend).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects blank names", async () => {
+    const response = await call(
+      updateMyProfile,
+      event({ firstName: " ", lastName: "Name" }),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-admin before accessing identity data", async () => {
+    const request = event();
+    request.requestContext.authorizer.jwt.claims["cognito:groups"] = "";
+    expect((await call(getMyProfile, request)).statusCode).toBe(403);
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects an identity whose subject does not match the token", async () => {
+    cognitoSend.mockResolvedValue(user("caller@example.org", "other-sub"));
+    expect(
+      (await call(updateMyProfile, event({ firstName: "A", lastName: "B" })))
+        .statusCode,
+    ).toBe(403);
+    expect(cognitoSend).toHaveBeenCalledTimes(1);
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+
+  it("does not update another identity's directory record", async () => {
+    cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
+    ddbSend.mockResolvedValue({ Item: { cognitoSubject: "other-sub" } });
+    expect(
+      (await call(updateMyProfile, event({ firstName: "A", lastName: "B" })))
+        .statusCode,
+    ).toBe(409);
+    expect(cognitoSend).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("Compliance administrator lifecycle", () => {
