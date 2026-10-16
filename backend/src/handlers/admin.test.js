@@ -45,6 +45,7 @@ vi.mock("../s3.js", () => ({
 }));
 
 const {
+  getAdminSite,
   createCityProgramManager,
   createProvider,
   createSite,
@@ -1363,3 +1364,33 @@ function event(body, groups = "compliance-supervisor", pathParameters = {}) {
 function call(handler, evt) {
   return Promise.resolve(handler(evt, /** @type {any} */ ({}), () => {}));
 }
+
+it("returns the current directory name to the dashboard site directory", async () => {
+  send.mockResolvedValueOnce({
+    Items: [
+      {
+        pk: "SITE#site-1",
+        sk: "#META",
+        oversight: {
+          cityProgramManagerId: "manager-1",
+          cityProgramManager: "Old Name",
+        },
+      },
+    ],
+  });
+  send.mockResolvedValueOnce({
+    Items: [{ userId: "manager-1", firstName: "New", lastName: "Name" }],
+  });
+  const request = /** @type {any} */ ({
+    pathParameters: { siteId: "site-1" },
+    requestContext: {
+      authorizer: {
+        jwt: { claims: { "cognito:groups": "compliance-supervisor" } },
+      },
+    },
+  });
+  const response = await /** @type {any} */ (getAdminSite)(request);
+  expect(JSON.parse(response.body).items[0].oversight.cityProgramManager).toBe(
+    "New Name",
+  );
+});

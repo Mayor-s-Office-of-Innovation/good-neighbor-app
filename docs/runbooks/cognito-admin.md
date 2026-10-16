@@ -133,3 +133,27 @@ membership for rollback; users must sign out and back in to refresh claims.
 - Invitation expired: a Compliance supervisor can use Re-invite in User
   management. The backend uses Cognito's `AdminCreateUser` operation with
   `MessageAction: RESEND`; it rejects accounts that are no longer pending.
+
+### Profile name recovery
+
+Profile GET and PUT requests serialize by authenticated Cognito subject using an
+`ADMIN_PROFILE_LOCK#<subject>` / `#LOCK` record. Before changing Cognito names for
+an existing directory identity, PUT persists a recovery journal. The directory
+write is the commit point. On an error, recovery consistently reads the directory
+and restores Cognito to its current names, including removing attributes that
+were originally absent. Recovery checks the Cognito subject before writing.
+
+If compensation fails, the API returns `profile_recovery_pending` (503), retains
+the journal, and releases the lease. The next profile GET or PUT retries recovery
+before proceeding. Concurrent requests receive `profile_change_in_progress` (409).
+After an invocation crashes, the lease expires after 16 minutes (longer than
+Lambda's maximum execution duration); a subsequent profile request can recover.
+These records intentionally do not use TTL: deleting a journal could lose repair
+information. Do not delete an unresolved record as a workaround. Persistent
+failures require restoring Cognito/DynamoDB availability or investigating an
+identity mismatch before retrying the profile request.
+
+Deploy the scoped `cognito-idp:AdminDeleteUserAttributes` permission with the
+backend so recovery can remove originally absent name attributes. Site views
+resolve oversight names by directory manager ID and retain legacy snapshots when
+no directory identity can be found.

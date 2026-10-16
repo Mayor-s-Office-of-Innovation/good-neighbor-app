@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadManagerDirectory } from "./manager-directory.js";
+import {
+  createDirectoryLoader,
+  loadManagerDirectory,
+} from "./manager-directory.js";
 
 test("loads every directory record while keeping combined API concurrency at three", async () => {
   let active = 0;
@@ -67,4 +70,49 @@ test("a failed program batch does not start Site requests", async () => {
     /unavailable/,
   );
   assert.equal(siteRequests, 0);
+});
+
+test("forced refresh waits for stale load and coalesces waiting refreshes", async () => {
+  let release;
+  let calls = 0;
+  let directory;
+  const loader = createDirectoryLoader(async () => {
+    const snapshot = ++calls;
+    if (snapshot === 1)
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    directory = snapshot;
+  });
+  const old = loader.load();
+  await Promise.resolve();
+  const fresh = loader.load(true);
+  assert.equal(loader.load(true), fresh);
+  assert.equal(loader.load(), fresh);
+  assert.equal(calls, 1);
+  release();
+  await Promise.all([old, fresh]);
+  assert.equal(directory, 2);
+  assert.equal(calls, 2);
+  assert.equal(loader.pending, false);
+});
+
+test("queued forced refresh runs even when the earlier load fails", async () => {
+  let reject;
+  let calls = 0;
+  const loader = createDirectoryLoader(async () => {
+    if (++calls === 1)
+      await new Promise((_, fail) => {
+        reject = fail;
+      });
+  });
+  const old = loader.load();
+  const failure = assert.rejects(old, /network/);
+  await Promise.resolve();
+  const fresh = loader.load(true);
+  reject(new Error("network"));
+  await failure;
+  await fresh;
+  assert.equal(calls, 2);
+  assert.equal(loader.pending, false);
 });

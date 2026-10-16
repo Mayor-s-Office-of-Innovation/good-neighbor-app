@@ -78,7 +78,7 @@ function parseGroups(raw) {
       // HTTP API JWT authorizers can stringify arrays as [group1 group2].
       // Accept that representation as well as comma-delimited lists, while
       // keeping malformed quoted JSON from becoming recognized membership.
-      if (/["'\[\]]/.test(value.slice(1, -1))) return [];
+      if (/["'[\]]/.test(value.slice(1, -1))) return [];
       return value
         .slice(1, -1)
         .split(/[,\s]+/)

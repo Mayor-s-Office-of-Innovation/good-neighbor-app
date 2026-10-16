@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/client-cognito-identity-provider";
 import {
   DeleteCommand,
+  GetCommand,
   PutCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -91,6 +92,7 @@ describe("My profile", () => {
       .mockResolvedValueOnce(user("caller@example.org", "caller-sub"))
       .mockResolvedValue({});
     ddbSend
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Item: {
           pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
@@ -114,10 +116,50 @@ describe("My profile", () => {
         { Name: "name", Value: "Updated Name" },
       ],
     });
-    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(ddbSend.mock.calls[3][0]).toBeInstanceOf(UpdateCommand);
     expect(
-      ddbSend.mock.calls[1][0].input.ExpressionAttributeValues[":subject"],
+      ddbSend.mock.calls[3][0].input.ExpressionAttributeValues[":subject"],
     ).toBe("caller-sub");
+  });
+
+  it("repairs Cognito after the directory update fails and does not report success", async () => {
+    const directory = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: "MANAGER#caller@example.org",
+      cognitoSubject: "caller-sub",
+      firstName: "Before",
+      lastName: "Name",
+      name: "Before Name",
+    };
+    cognitoSend.mockImplementation(async (command) =>
+      command instanceof AdminGetUserCommand
+        ? user("caller@example.org", "caller-sub")
+        : {},
+    );
+    ddbSend.mockImplementation(async (command) => {
+      if (command instanceof GetCommand) return { Item: directory };
+      if (
+        command instanceof UpdateCommand &&
+        command.input.Key?.pk === directory.pk
+      ) {
+        throw Object.assign(new Error("directory conflict"), {
+          name: "ConditionalCheckFailedException",
+        });
+      }
+      return {};
+    });
+    await expect(
+      call(updateMyProfile, event({ firstName: "After", lastName: "Name" })),
+    ).rejects.toThrow("directory conflict");
+    const mutations = cognitoSend.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof AdminUpdateUserAttributesCommand);
+    expect(
+      mutations.map((command) => command.input.UserAttributes?.[0].Value),
+    ).toEqual(["After", "Before"]);
+    expect(
+      ddbSend.mock.calls.some(([command]) => command instanceof DeleteCommand),
+    ).toBe(true);
   });
 
   it.each(["email", "role", "username", "subject"])(
@@ -155,7 +197,9 @@ describe("My profile", () => {
         .statusCode,
     ).toBe(403);
     expect(cognitoSend).toHaveBeenCalledTimes(1);
-    expect(ddbSend).not.toHaveBeenCalled();
+    expect(
+      ddbSend.mock.calls.some(([command]) => command instanceof GetCommand),
+    ).toBe(false);
   });
 
   it("does not update another identity's directory record", async () => {

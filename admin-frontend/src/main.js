@@ -23,7 +23,10 @@ import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { debounce } from "./debounce.js";
-import { loadManagerDirectory } from "./manager-directory.js";
+import {
+  createDirectoryLoader,
+  loadManagerDirectory,
+} from "./manager-directory.js";
 import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 import { currentRoute, navigate } from "./router.js";
 import { selectedLeadProgram } from "./site-assignment.js";
@@ -420,14 +423,16 @@ class AdminApp extends HTMLElement {
   }
 
   async loadSiteManagers(force = false) {
-    if (this.managerDirectoryLoad) return this.managerDirectoryLoad;
-    if (this.state.managerDirectoryLoaded && !force) return;
-    this.managerDirectoryLoad = this.fetchSiteManagers();
-    try {
-      await this.managerDirectoryLoad;
-    } finally {
-      this.managerDirectoryLoad = null;
-    }
+    this.managerDirectoryLoader ||= createDirectoryLoader(() =>
+      this.fetchSiteManagers(),
+    );
+    if (
+      this.state.managerDirectoryLoaded &&
+      !force &&
+      !this.managerDirectoryLoader.pending
+    )
+      return;
+    return this.managerDirectoryLoader.load(force);
   }
 
   async fetchSiteManagers() {
@@ -2053,6 +2058,29 @@ class AdminApp extends HTMLElement {
             lastName: formValue(data, "lastName"),
           });
           this.state.profile = result.profile;
+          const managerId = result.profile.directoryUserId;
+          if (managerId) {
+            const name = `${result.profile.firstName} ${result.profile.lastName}`;
+            this.state.programManagers = this.state.programManagers.map(
+              (manager) =>
+                manager.userId === managerId
+                  ? {
+                      ...manager,
+                      firstName: result.profile.firstName,
+                      lastName: result.profile.lastName,
+                      name,
+                    }
+                  : manager,
+            );
+            this.state.sites = this.state.sites.map((site) =>
+              site.oversight?.cityProgramManagerId === managerId
+                ? {
+                    ...site,
+                    oversight: { ...site.oversight, cityProgramManager: name },
+                  }
+                : site,
+            );
+          }
           this.state.profileMessage = t("admin.profile.saved");
           if (profileForm.isConnected) {
             this.render();

@@ -1,3 +1,4 @@
+import { withProfileMutation } from "../lib/profile-mutation.js";
 import {
   AdminAddUserToGroupCommand,
   AdminCreateUserCommand,
@@ -93,6 +94,7 @@ async function ownProfile(event) {
     pool,
     principal,
     directory,
+    attributes: attrs,
     profile: {
       firstName: attrs.given_name || "",
       lastName: attrs.family_name || "",
@@ -106,10 +108,12 @@ async function ownProfile(event) {
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const getMyProfile = (event) =>
-  adminOnly(event, async () => {
-    const current = await ownProfile(event);
-    return current.error || jsonResponse(200, { profile: current.profile });
-  });
+  adminOnly(event, () =>
+    withProfileMutation(adminPrincipal(event).subject, cognito, async () => {
+      const current = await ownProfile(event);
+      return current.error || jsonResponse(200, { profile: current.profile });
+    }),
+  );
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateMyProfile = (event) =>
@@ -129,42 +133,62 @@ export const updateMyProfile = (event) =>
     ) {
       return jsonResponse(400, { error: "valid_name_required" });
     }
-    const current = await ownProfile(event);
-    if (current.error) return current.error;
-    await cognito.send(
-      new AdminUpdateUserAttributesCommand({
-        UserPoolId: current.pool,
-        Username: current.principal.username,
-        UserAttributes: [
-          { Name: "given_name", Value: firstName },
-          { Name: "family_name", Value: lastName },
-          { Name: "name", Value: `${firstName} ${lastName}` },
-        ],
-      }),
+    return withProfileMutation(
+      adminPrincipal(event).subject,
+      cognito,
+      async (prepare) => {
+        const current = await ownProfile(event);
+        if (current.error) return current.error;
+        if (current.directory)
+          await prepare({
+            pool: current.pool,
+            username: current.principal.username,
+            attributes: Object.fromEntries(
+              ["given_name", "family_name", "name"]
+                .filter((key) => current.attributes[key] !== undefined)
+                .map((key) => [key, current.attributes[key]]),
+            ),
+            directoryKey: {
+              pk: current.directory.pk,
+              sk: current.directory.sk,
+            },
+          });
+        await cognito.send(
+          new AdminUpdateUserAttributesCommand({
+            UserPoolId: current.pool,
+            Username: current.principal.username,
+            UserAttributes: [
+              { Name: "given_name", Value: firstName },
+              { Name: "family_name", Value: lastName },
+              { Name: "name", Value: `${firstName} ${lastName}` },
+            ],
+          }),
+        );
+        if (current.directory) {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: getDynamoTableName(),
+              Key: { pk: current.directory.pk, sk: current.directory.sk },
+              UpdateExpression:
+                "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now",
+              ConditionExpression:
+                "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
+              ExpressionAttributeNames: { "#name": "name" },
+              ExpressionAttributeValues: {
+                ":first": firstName,
+                ":last": lastName,
+                ":name": `${firstName} ${lastName}`,
+                ":now": new Date().toISOString(),
+                ":subject": current.principal.subject,
+              },
+            }),
+          );
+        }
+        return jsonResponse(200, {
+          profile: { ...current.profile, firstName, lastName },
+        });
+      },
     );
-    if (current.directory) {
-      await ddb.send(
-        new UpdateCommand({
-          TableName: getDynamoTableName(),
-          Key: { pk: current.directory.pk, sk: current.directory.sk },
-          UpdateExpression:
-            "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now",
-          ConditionExpression:
-            "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
-          ExpressionAttributeNames: { "#name": "name" },
-          ExpressionAttributeValues: {
-            ":first": firstName,
-            ":last": lastName,
-            ":name": `${firstName} ${lastName}`,
-            ":now": new Date().toISOString(),
-            ":subject": current.principal.subject,
-          },
-        }),
-      );
-    }
-    return jsonResponse(200, {
-      profile: { ...current.profile, firstName, lastName },
-    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
