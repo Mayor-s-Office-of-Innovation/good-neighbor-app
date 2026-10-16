@@ -99,6 +99,12 @@ export class LocalCognitoAdminClient {
       case "AdminResetUserPasswordCommand":
         requireUser(username).status = "RESET_REQUIRED";
         return {};
+      case "AdminDeleteUserAttributesCommand": {
+        const user = requireUser(username);
+        for (const name of input.UserAttributeNames ?? [])
+          delete user.attributes[name];
+        return {};
+      }
       case "AdminUpdateUserAttributesCommand": {
         const user = requireUser(username);
         Object.assign(

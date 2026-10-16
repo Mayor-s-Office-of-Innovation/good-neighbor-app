@@ -158,6 +158,7 @@ data "aws_iam_policy_document" "api" {
       "cognito-idp:AdminRemoveUserFromGroup",
       "cognito-idp:AdminResetUserPassword",
       "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:AdminDeleteUserAttributes",
       "cognito-idp:ListUsersInGroup",
       "cognito-idp:ListUsers",
     ]

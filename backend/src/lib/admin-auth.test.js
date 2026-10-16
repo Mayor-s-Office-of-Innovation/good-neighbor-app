@@ -107,3 +107,51 @@ function event(group, email = "") {
     },
   });
 }
+
+/** @param {unknown} groups */
+function principal(groups) {
+  return adminPrincipal(
+    /** @type {any} */ ({
+      requestContext: {
+        authorizer: { jwt: { claims: { "cognito:groups": groups } } },
+      },
+    }),
+  );
+}
+
+describe("API Gateway administrator groups", () => {
+  it.each([
+    "[central-admin compliance-supervisor]",
+    "[compliance-supervisor central-admin]",
+    "[compliance-manager compliance-supervisor]",
+    '["central-admin","compliance-supervisor"]',
+    "[central-admin, compliance-supervisor]",
+    ["central-admin", "compliance-supervisor"],
+  ])("recognizes supervisor membership in %j", (groups) => {
+    expect(principal(groups)).toMatchObject({
+      authenticated: true,
+      role: "compliance-supervisor",
+      capabilities: { manageAdminUsers: true },
+    });
+  });
+
+  it("keeps manager-only access limited", () => {
+    expect(principal("[central-admin compliance-manager]")).toMatchObject({
+      authenticated: true,
+      role: "compliance-manager",
+      capabilities: { manageAdminUsers: false },
+    });
+  });
+
+  it.each([
+    "[not-compliance-supervisor support]",
+    "[compliance-supervisor-readonly]",
+    "[compliance-supervisor",
+    '["compliance-supervisor" invalid]',
+    "support compliance-supervisor",
+    "[]",
+    null,
+  ])("rejects malformed or nonmatching groups %j", (groups) => {
+    expect(principal(groups).authenticated).toBe(false);
+  });
+});

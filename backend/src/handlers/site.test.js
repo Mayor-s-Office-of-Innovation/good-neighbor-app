@@ -300,6 +300,36 @@ describe("site admin", () => {
     });
   });
 
+  it("shows the current directory name after a manager profile edit", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        oversight: {
+          cityProgramManagerId: "manager-1",
+          cityProgramManager: "Old Name",
+        },
+      },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          userId: "manager-1",
+          firstName: "New",
+          lastName: "Name",
+          email: "private@example.org",
+        },
+      ],
+    });
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+    expect(body(response).site.oversight).toEqual({
+      cityProgramManagerId: "manager-1",
+      cityProgramManager: "New Name",
+    });
+    expect(String(response.body)).not.toContain("private@example.org");
+  });
+
   it("does not expose an expired perimeter-check period as current", async () => {
     send.mockResolvedValueOnce({
       Item: {

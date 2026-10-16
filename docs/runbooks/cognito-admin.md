@@ -36,6 +36,17 @@ publishing and generates runtime `config.js` with `localDebugAdmin: false`.
 The prod resources are provisioned through the standard production CI deploy;
 there is no production Cognito pool until that deployment.
 
+## My profile
+
+The settings menu's **My profile** page lets signed-in Compliance managers and
+supervisors edit their own first and last names. The profile API reads fresh
+Cognito attributes and synchronizes name changes to the existing administrator
+directory record. Compliance managers also see their active Site assignments.
+Email and role are read-only, and the update API accepts only the two name fields.
+Email changes need a separate verified-address flow and migration of the
+email-keyed directory lookup; changing the email attribute alone does not change
+the existing Cognito username.
+
 ## Invite an administrator
 
 Use the matching environment's CLI profile, region, and pool ID. First check
@@ -101,6 +112,10 @@ leave this variable unset and continue to use the configured Cognito user pool.
   bundle includes the expiry-bound OAuth transaction fallback. Access and ID
   tokens remain session-scoped; only the one-time PKCE state/verifier uses the
   30-minute fallback needed when hosted MFA replaces the browser session.
+  Session expiry must clear tokens only, preserving any pending login. Callback
+  validation checks for a matching state in both session and fallback storage;
+  stale tab state must not mask a valid fallback, and a mismatched callback must
+  not consume another pending login. Run `npm run test:admin` for regressions.
 - Token exchange blocked by CSP: check the admin-only response headers policy's
   `connect-src` Cognito origin.
 - Admin API 403 after login: verify `central-admin` membership and obtain fresh
@@ -118,3 +133,27 @@ membership for rollback; users must sign out and back in to refresh claims.
 - Invitation expired: a Compliance supervisor can use Re-invite in User
   management. The backend uses Cognito's `AdminCreateUser` operation with
   `MessageAction: RESEND`; it rejects accounts that are no longer pending.
+
+### Profile name recovery
+
+Profile GET and PUT requests serialize by authenticated Cognito subject using an
+`ADMIN_PROFILE_LOCK#<subject>` / `#LOCK` record. Before changing Cognito names for
+an existing directory identity, PUT persists a recovery journal. The directory
+write is the commit point. On an error, recovery consistently reads the directory
+and restores Cognito to its current names, including removing attributes that
+were originally absent. Recovery checks the Cognito subject before writing.
+
+If compensation fails, the API returns `profile_recovery_pending` (503), retains
+the journal, and releases the lease. The next profile GET or PUT retries recovery
+before proceeding. Concurrent requests receive `profile_change_in_progress` (409).
+After an invocation crashes, the lease expires after 16 minutes (longer than
+Lambda's maximum execution duration); a subsequent profile request can recover.
+These records intentionally do not use TTL: deleting a journal could lose repair
+information. Do not delete an unresolved record as a workaround. Persistent
+failures require restoring Cognito/DynamoDB availability or investigating an
+identity mismatch before retrying the profile request.
+
+Deploy the scoped `cognito-idp:AdminDeleteUserAttributes` permission with the
+backend so recovery can remove originally absent name attributes. Site views
+resolve oversight names by directory manager ID and retain legacy snapshots when
+no directory identity can be found.

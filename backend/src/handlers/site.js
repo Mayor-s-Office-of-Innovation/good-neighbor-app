@@ -1,3 +1,4 @@
+import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
   GetCommand,
   QueryCommand,
@@ -302,7 +303,7 @@ async function siteAdminView(site) {
       email: "",
       phone: "",
     },
-    oversight: site.oversight || {},
+    oversight: await currentManagerOversight(site.oversight || {}),
     compliance: activeCompliance,
     perimeter: String(site.perimeter || ""),
     complianceLetters: await complianceLetterLinks(

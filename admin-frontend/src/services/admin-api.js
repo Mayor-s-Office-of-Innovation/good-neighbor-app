@@ -35,6 +35,12 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  getMyProfile: () => adminFetch("/admin/v1/profile"),
+  updateMyProfile: (values) =>
+    adminFetch("/admin/v1/profile", {
+      method: "PUT",
+      body: JSON.stringify(values),
+    }),
   getSession: () => adminFetch("/admin/v1/session"),
   listAdminUsers: () => adminFetch("/admin/v1/admin-users"),
   inviteAdminUser: (values) =>

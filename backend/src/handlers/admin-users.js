@@ -1,3 +1,4 @@
+import { withProfileMutation } from "../lib/profile-mutation.js";
 import {
   AdminAddUserToGroupCommand,
   AdminCreateUserCommand,
@@ -54,6 +55,140 @@ export const getAdminSession = (event) =>
       role: principal.role,
       capabilities: principal.capabilities,
     });
+  });
+
+/**
+ * Read the caller's current Cognito attributes, never a client-supplied identity.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ */
+async function ownProfile(event) {
+  const principal = adminPrincipal(event);
+  if (localDirectory && !principal.username)
+    principal.username = principal.subject;
+  const pool = configuredPool();
+  if (!pool) return { error: unavailable() };
+  if (!principal.subject || !principal.username) {
+    return { error: jsonResponse(403, { error: "forbidden" }) };
+  }
+  const user = await getUser(pool, principal.username);
+  const attrs = attributes(user);
+  if (user.Enabled === false || attrs.sub !== principal.subject) {
+    return { error: jsonResponse(403, { error: "forbidden" }) };
+  }
+  const email = clean(attrs.email).toLowerCase();
+  const result = await ddb.send(
+    new GetCommand({
+      TableName: getDynamoTableName(),
+      Key: { pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS", sk: `MANAGER#${email}` },
+      ConsistentRead: true,
+    }),
+  );
+  const directory = result.Item;
+  if (
+    directory?.cognitoSubject &&
+    directory.cognitoSubject !== principal.subject
+  ) {
+    return { error: jsonResponse(409, { error: "profile_identity_mismatch" }) };
+  }
+  return {
+    pool,
+    principal,
+    directory,
+    attributes: attrs,
+    profile: {
+      firstName: attrs.given_name || "",
+      lastName: attrs.family_name || "",
+      email,
+      role: principal.role,
+      directoryUserId:
+        directory?.status === "active" ? directory.userId || "" : "",
+    },
+  };
+}
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const getMyProfile = (event) =>
+  adminOnly(event, () =>
+    withProfileMutation(adminPrincipal(event).subject, cognito, async () => {
+      const current = await ownProfile(event);
+      return current.error || jsonResponse(200, { profile: current.profile });
+    }),
+  );
+
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const updateMyProfile = (event) =>
+  adminOnly(event, async (body) => {
+    if (
+      Object.keys(body).some((key) => !["firstName", "lastName"].includes(key))
+    ) {
+      return jsonResponse(400, { error: "unsupported_profile_field" });
+    }
+    const firstName = clean(body.firstName);
+    const lastName = clean(body.lastName);
+    if (
+      !firstName ||
+      !lastName ||
+      firstName.length > 100 ||
+      lastName.length > 100
+    ) {
+      return jsonResponse(400, { error: "valid_name_required" });
+    }
+    return withProfileMutation(
+      adminPrincipal(event).subject,
+      cognito,
+      async (prepare) => {
+        const current = await ownProfile(event);
+        if (current.error) return current.error;
+        if (current.directory)
+          await prepare({
+            pool: current.pool,
+            username: current.principal.username,
+            attributes: Object.fromEntries(
+              ["given_name", "family_name", "name"]
+                .filter((key) => current.attributes[key] !== undefined)
+                .map((key) => [key, current.attributes[key]]),
+            ),
+            directoryKey: {
+              pk: current.directory.pk,
+              sk: current.directory.sk,
+            },
+          });
+        await cognito.send(
+          new AdminUpdateUserAttributesCommand({
+            UserPoolId: current.pool,
+            Username: current.principal.username,
+            UserAttributes: [
+              { Name: "given_name", Value: firstName },
+              { Name: "family_name", Value: lastName },
+              { Name: "name", Value: `${firstName} ${lastName}` },
+            ],
+          }),
+        );
+        if (current.directory) {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: getDynamoTableName(),
+              Key: { pk: current.directory.pk, sk: current.directory.sk },
+              UpdateExpression:
+                "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now",
+              ConditionExpression:
+                "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
+              ExpressionAttributeNames: { "#name": "name" },
+              ExpressionAttributeValues: {
+                ":first": firstName,
+                ":last": lastName,
+                ":name": `${firstName} ${lastName}`,
+                ":now": new Date().toISOString(),
+                ":subject": current.principal.subject,
+              },
+            }),
+          );
+        }
+        return jsonResponse(200, {
+          profile: { ...current.profile, firstName, lastName },
+        });
+      },
+    );
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */

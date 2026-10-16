@@ -1,3 +1,4 @@
+import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
   DeleteCommand,
   GetCommand,
@@ -520,6 +521,12 @@ export const getAdminSite = (event) =>
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
     const items = await Promise.all(
       res.Items.map(async (item) => {
+        if (item.sk === "#META" && item.oversight) {
+          item = {
+            ...item,
+            oversight: await currentManagerOversight(item.oversight),
+          };
+        }
         if (item.sk !== "#META" || !item.complianceLetters) return item;
         /** @param {Record<string, any> | null | undefined} letter */
         const link = async (letter) => {

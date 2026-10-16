@@ -1,3 +1,5 @@
+import "./icons.js";
+import { t } from "../../frontend/src/i18n/i18n.js";
 import "@awesome.me/webawesome/dist/styles/layers.css";
 import "@awesome.me/webawesome/dist/styles/native.css";
 import "@awesome.me/webawesome/dist/styles/utilities.css";
@@ -20,6 +22,11 @@ import {
 import { adminApi } from "./services/admin-api.js";
 import { getAdminConfig } from "./config.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { debounce } from "./debounce.js";
+import {
+  createDirectoryLoader,
+  loadManagerDirectory,
+} from "./manager-directory.js";
 import { asForm, dataAttr, escapeHtml, formatTimestamp } from "./dom.js";
 import { currentRoute, navigate } from "./router.js";
 import { selectedLeadProgram } from "./site-assignment.js";
@@ -31,7 +38,7 @@ import {
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, siteName?: string, name?: string, siteType?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, primaryContact?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number | boolean>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, letterState?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, primaryContactUserId?: string, status?: string, updatedAt?: string }} AdminSite
+ * @typedef {{ siteId: string, complianceManagerIds?: string[], siteName?: string, name?: string, siteType?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, primaryContact?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number | boolean>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, letterState?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, primaryContactUserId?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
@@ -70,6 +77,8 @@ import {
  * @property {boolean} hasToken
  * @property {AdminConfig} authConfig
  * @property {boolean} authBusy
+ * @property {any | null} profile
+ * @property {string} profileMessage
  * @property {string} role
  * @property {Record<string, boolean>} capabilities
  * @property {any | null} importPreview
@@ -130,6 +139,8 @@ class AdminApp extends HTMLElement {
       hasToken: false,
       authConfig: getAdminConfig(),
       authBusy: false,
+      profile: null,
+      profileMessage: "",
       role: "",
       capabilities: {},
       importPreview: null,
@@ -188,6 +199,8 @@ class AdminApp extends HTMLElement {
       hasToken: hasAdminSession(),
       authConfig: getAdminConfig(),
       authBusy: false,
+      profile: null,
+      profileMessage: "",
       role: "",
       capabilities: {},
       importPreview: null,
@@ -226,6 +239,7 @@ class AdminApp extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.directorySearchDebounce?.cancel();
     window.removeEventListener("popstate", this.routeChanged);
     window.removeEventListener("beforeunload", this.beforeUnload);
   }
@@ -237,6 +251,7 @@ class AdminApp extends HTMLElement {
   };
 
   routeChanged = () => {
+    this.directorySearchDebounce?.cancel();
     const destination = window.location.pathname + window.location.search;
     if (
       this.lastRenderedPath &&
@@ -334,6 +349,13 @@ class AdminApp extends HTMLElement {
           return site
             ? {
                 ...site,
+                complianceManagerIds: (result.items || [])
+                  .filter(
+                    (item) =>
+                      item.type === "siteComplianceManagerAssignment" &&
+                      item.status === "active",
+                  )
+                  .map((item) => item.managerId),
                 managerMemberships: (result.items || []).filter(
                   (item) =>
                     item.type === "managerMembership" &&
@@ -349,6 +371,18 @@ class AdminApp extends HTMLElement {
 
   async openRoute() {
     const route = currentRoute();
+    if (route.name === "profile") {
+      const result = await adminApi.getMyProfile();
+      this.state.profile = result.profile;
+      this.state.profileMessage = "";
+      this.state.provider = null;
+      this.state.program = null;
+      this.state.site = null;
+      this.state.siteManager = null;
+      this.render();
+      this.querySelector("#profile-title")?.focus();
+      return;
+    }
     if (route.name === "administrators") {
       if (!this.state.capabilities.manageAdminUsers)
         return navigate("/sites", { replace: true });
@@ -389,25 +423,31 @@ class AdminApp extends HTMLElement {
   }
 
   async loadSiteManagers(force = false) {
-    if (this.state.managerDirectoryLoaded && !force) return;
+    this.managerDirectoryLoader ||= createDirectoryLoader(() =>
+      this.fetchSiteManagers(),
+    );
+    if (
+      this.state.managerDirectoryLoaded &&
+      !force &&
+      !this.managerDirectoryLoader.pending
+    )
+      return;
+    return this.managerDirectoryLoader.load(force);
+  }
+
+  async fetchSiteManagers() {
     const activePrograms = this.state.programs.filter(
       (program) => program.status !== "inactive",
     );
     const activeSites = this.state.sites.filter(
       (site) => site.status !== "inactive",
     );
-    const [programDetails, siteMemberships] = await Promise.all([
-      Promise.all(
-        activePrograms.map((program) => adminApi.getProgram(program.programId)),
-      ),
-      Promise.all(
-        activeSites.map(async (site) => ({
-          site,
-          memberships: (await adminApi.listManagerMemberships(site.siteId))
-            .memberships,
-        })),
-      ),
-    ]);
+    const { programDetails, siteMemberships } = await loadManagerDirectory(
+      activePrograms,
+      activeSites,
+      adminApi,
+      DIRECTORY_REQUEST_CONCURRENCY,
+    );
     const memberships = siteMemberships.flatMap(({ site, memberships }) =>
       (memberships || []).map((membership) => ({
         ...membership,
@@ -611,6 +651,14 @@ class AdminApp extends HTMLElement {
       ? "Provider manager saved."
       : "Provider manager added.";
     this.render();
+    if (membershipId) {
+      [...this.querySelectorAll("[data-edit-provider-manager]")]
+        .find(
+          (button) =>
+            dataAttr(button, "data-edit-provider-manager") === membershipId,
+        )
+        ?.focus();
+    }
   }
 
   async setProviderManagerActive(membershipId, active) {
@@ -1991,37 +2039,126 @@ class AdminApp extends HTMLElement {
           });
       });
     });
-    this.bindAddressLookup();
-    this.querySelector("#directory-search")?.addEventListener(
-      "submit",
-      (event) => {
+    const profileForm = this.querySelector("#my-profile-form");
+    if (profileForm) {
+      const sync = () => syncDirtyForm(profileForm);
+      syncDirtyForm(profileForm, true);
+      profileForm.addEventListener("input", sync);
+      profileForm.addEventListener("change", sync);
+      profileForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const route = currentRoute();
-        const kind =
-          route.name === "managers"
-            ? "managers"
-            : route.name === "providers" || route.name === "programs"
-              ? "providers"
-              : "sites";
-        const query = new FormData(asForm(event.currentTarget)).get("q");
-        navigate(
-          `/${kind}${String(query || "").trim() ? `?q=${encodeURIComponent(String(query).trim())}` : ""}`,
+        if (profileForm.dataset.saving === "true") return;
+        profileForm.dataset.saving = "true";
+        const save = profileForm.querySelector("[data-save-button]");
+        save.disabled = true;
+        try {
+          const data = new FormData(asForm(profileForm));
+          const result = await adminApi.updateMyProfile({
+            firstName: formValue(data, "firstName"),
+            lastName: formValue(data, "lastName"),
+          });
+          this.state.profile = result.profile;
+          const managerId = result.profile.directoryUserId;
+          if (managerId) {
+            const name = `${result.profile.firstName} ${result.profile.lastName}`;
+            this.state.programManagers = this.state.programManagers.map(
+              (manager) =>
+                manager.userId === managerId
+                  ? {
+                      ...manager,
+                      firstName: result.profile.firstName,
+                      lastName: result.profile.lastName,
+                      name,
+                    }
+                  : manager,
+            );
+            this.state.sites = this.state.sites.map((site) =>
+              site.oversight?.cityProgramManagerId === managerId
+                ? {
+                    ...site,
+                    oversight: { ...site.oversight, cityProgramManager: name },
+                  }
+                : site,
+            );
+          }
+          this.state.profileMessage = t("admin.profile.saved");
+          if (profileForm.isConnected) {
+            this.render();
+            this.querySelector("#profile-message")?.focus();
+          }
+        } catch (error) {
+          if (profileForm.isConnected)
+            showFormSaveError(profileForm, t("admin.profile.saveError"));
+        } finally {
+          delete profileForm.dataset.saving;
+          if (profileForm.isConnected) sync();
+        }
+      });
+    }
+    this.bindAddressLookup();
+    const searchInput = this.querySelector("#directory-search-input");
+    if (searchInput) {
+      let composing = false;
+      const search = async () => {
+        this.directorySearchDebounce?.cancel();
+        if (composing || !searchInput.isConnected) return;
+        const value = String(searchInput.value || "");
+        const params = new URLSearchParams(location.search);
+        if ((params.get("q") || "") === value.trim()) return;
+        if (value.trim()) params.set("q", value.trim());
+        else params.delete("q");
+        const query = params.toString();
+        history.replaceState(
+          {},
+          "",
+          `${location.pathname}${query ? `?${query}` : ""}`,
         );
-      },
-    );
-    this.querySelector("#clear-directory-search")?.addEventListener(
-      "click",
-      () => {
-        const route = currentRoute();
-        const kind =
-          route.name === "managers"
-            ? "managers"
-            : route.name === "providers" || route.name === "programs"
-              ? "providers"
-              : "sites";
-        navigate(`/${kind}`);
-      },
-    );
+        // Filtering uses the already-loaded directory. Avoid a route change,
+        // which would move focus to the heading or reload manager data.
+        const focused = document.activeElement === searchInput;
+        const nativeInput = searchInput.shadowRoot?.querySelector("input");
+        const start = nativeInput?.selectionStart ?? value.length;
+        const end = nativeInput?.selectionEnd ?? start;
+        const direction = nativeInput?.selectionDirection || "none";
+        this.render();
+        const replacement = this.querySelector("#directory-search-input");
+        if (replacement) {
+          replacement.value = value;
+          await replacement.updateComplete;
+          if (focused && replacement.isConnected) {
+            replacement.focus({ preventScroll: true });
+            replacement.setSelectionRange(start, end, direction);
+          }
+        }
+      };
+      this.directorySearchDebounce = debounce(search, 300);
+      searchInput.addEventListener("input", () => {
+        if (!composing) this.directorySearchDebounce.schedule();
+      });
+      searchInput.addEventListener("compositionstart", () => {
+        composing = true;
+        this.directorySearchDebounce.cancel();
+      });
+      searchInput.addEventListener("compositionend", () => {
+        composing = false;
+        this.directorySearchDebounce.schedule();
+      });
+      this.querySelector("#directory-search")?.addEventListener(
+        "submit",
+        (event) => {
+          event.preventDefault();
+          search();
+        },
+      );
+      this.querySelector("#clear-directory-search")?.addEventListener(
+        "click",
+        () => {
+          searchInput.value = "";
+          searchInput.focus();
+          search();
+        },
+      );
+    }
     this.querySelector("#site-directory-filters")?.addEventListener(
       "change",
       (event) => {
@@ -2087,17 +2224,54 @@ class AdminApp extends HTMLElement {
         });
       },
     );
+    this.querySelectorAll("[data-edit-provider-manager]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const dialog = button
+          .closest("[data-provider-manager-row]")
+          ?.querySelector("dialog");
+        dialog?.showModal();
+        dialog?.querySelector("wa-input")?.focus();
+      });
+    });
+    this.querySelectorAll("[data-provider-manager-dialog]").forEach(
+      (dialog) => {
+        dialog.addEventListener("cancel", (event) => {
+          if (dialog.querySelector("form")?.dataset.saving === "true") {
+            event.preventDefault();
+          }
+        });
+        dialog.addEventListener("close", () => {
+          dialog.querySelector("form")?.reset();
+          dialog.querySelector("[data-form-save-error]")?.remove();
+        });
+      },
+    );
     this.querySelectorAll("[data-provider-manager-form]").forEach((form) => {
-      form.addEventListener("submit", (event) => {
+      form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        this.saveProviderManager(asForm(event.currentTarget)).catch((error) => {
+        const submittedForm = asForm(event.currentTarget);
+        if (submittedForm.dataset.saving === "true") return;
+        submittedForm.dataset.saving = "true";
+        const submitButton = submittedForm.querySelector(
+          "button[type='submit']",
+        );
+        const cancelButton = submittedForm.querySelector("[data-close-dialog]");
+        if (submitButton) submitButton.disabled = true;
+        if (cancelButton) cancelButton.disabled = true;
+        try {
+          await this.saveProviderManager(submittedForm);
+        } catch (error) {
           showFormSaveError(
-            asForm(event.currentTarget),
+            submittedForm,
             error instanceof Error
               ? error.message
               : "The Provider Manager could not be saved.",
           );
-        });
+        } finally {
+          delete submittedForm.dataset.saving;
+          if (submitButton) submitButton.disabled = false;
+          if (cancelButton) cancelButton.disabled = false;
+        }
       });
     });
     this.querySelectorAll("[data-provider-manager-status]").forEach(
@@ -3339,6 +3513,7 @@ class AdminApp extends HTMLElement {
    * @returns {void}
    */
   render() {
+    this.directorySearchDebounce?.cancel();
     const provider = this.state.provider;
     const program = this.state.program;
     const site = this.state.site;
@@ -3359,7 +3534,7 @@ class AdminApp extends HTMLElement {
       <main class="admin" id="main-content">
         <header class="admin__header">
           <div class="site-title">
-            <a class="brand" href="/sites" data-route>Good Neighbor Admin</a>
+            <a class="brand" href="/sites" data-route>${escapeHtml(t("admin.brand"))}</a>
           </div>
           ${
             this.state.hasToken
@@ -3393,19 +3568,21 @@ class AdminApp extends HTMLElement {
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
         ${
           this.state.hasToken && !provider && !program && !site && !siteManager
-            ? route.name === "administrators"
-              ? administratorView(this.state.adminUsers, this.state)
-              : route.name === "site-import"
-                ? siteImportView(this.state)
-                : route.name === "site-new"
-                  ? newSiteFlowView(this.state)
-                  : route.name === "provider-new"
-                    ? newProviderView()
-                    : route.name === "program-new"
-                      ? newProgramView(this.state)
-                      : route.name === "manager-new"
-                        ? siteManagerEditorView(this.state, null)
-                        : directoryView(this.state, route)
+            ? route.name === "profile"
+              ? myProfileView(this.state)
+              : route.name === "administrators"
+                ? administratorView(this.state.adminUsers, this.state)
+                : route.name === "site-import"
+                  ? siteImportView(this.state)
+                  : route.name === "site-new"
+                    ? newSiteFlowView(this.state)
+                    : route.name === "provider-new"
+                      ? newProviderView()
+                      : route.name === "program-new"
+                        ? newProgramView(this.state)
+                        : route.name === "manager-new"
+                          ? siteManagerEditorView(this.state, null)
+                          : directoryView(this.state, route)
             : ""
         }
         ${provider ? providerView(this.state) : ""}
@@ -3455,15 +3632,42 @@ class AdminApp extends HTMLElement {
 
 customElements.define("admin-app", AdminApp);
 
+/** @param {AdminState} state */
+function myProfileView(state) {
+  const profile = state.profile;
+  if (!profile) return "";
+  const sites = state.sites.filter(
+    (site) =>
+      site.status !== "inactive" &&
+      (site.complianceManagerIds || []).includes(profile.directoryUserId),
+  );
+  return `<section class="site-page" aria-labelledby="profile-title">
+    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.profile.back"))}</a>
+    <h1 id="profile-title" tabindex="-1">${escapeHtml(t("admin.profile.title"))}</h1>
+    <p>${escapeHtml(t(profile.role === "compliance-supervisor" ? "admin.profile.supervisor" : "admin.profile.manager"))}</p>
+    <form id="my-profile-form" class="site-details-form" data-dirty-form>
+      ${formInput("firstName", t("siteAdmin.field.firstName"), profile.firstName, { required: true, maxlength: 100, autocomplete: "given-name" })}
+      ${formInput("lastName", t("siteAdmin.field.lastName"), profile.lastName, { required: true, maxlength: 100, autocomplete: "family-name" })}
+      <wa-input type="email" label="${escapeHtml(t("siteAdmin.field.email"))}" value="${escapeHtml(profile.email)}" readonly></wa-input>
+      <p class="muted">${escapeHtml(t("admin.profile.emailHint"))}</p>
+      <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("common.save"))}</button>
+    </form>
+    ${state.profileMessage ? `<p id="profile-message" class="success" role="status" tabindex="-1">${escapeHtml(state.profileMessage)}</p>` : ""}
+    ${profile.role === "compliance-manager" ? `<section class="subsection"><h2>${escapeHtml(t("admin.profile.sites"))}</h2>${sites.length ? `<ul class="site-directory-list">${sites.map((site) => `<li><a class="site-directory-row" href="/sites/${encodeURIComponent(site.siteId)}" data-route>${escapeHtml(site.name || site.siteName || site.siteId)}</a></li>`).join("")}</ul>` : `<p class="muted">${escapeHtml(t("admin.profile.noSites"))}</p>`}</section>` : ""}
+    ${discardChangesDialog()}
+  </section>`;
+}
+
 function adminSettingsMenu(canManageUsers, canImportSites) {
   return `<div class="admin-settings-wrap">
     <button class="admin-settings" type="button" popovertarget="admin-settings-menu" aria-label="Settings" aria-haspopup="menu">
       <wa-icon name="gear" aria-hidden="true"></wa-icon>
     </button>
     <div class="admin-settings-menu" id="admin-settings-menu" popover role="menu" aria-label="Settings">
-      ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="users" aria-hidden="true"></wa-icon>User management</a>' : ""}
-      ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon>Import</a>' : ""}
-      <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon>Sign out</button>
+      <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
+      ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
+      ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
+      <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>
   </div>`;
 }
@@ -3934,7 +4138,6 @@ function directoryView(state, route) {
       <label class="visually-hidden" for="directory-search-input">Search providers, programs, sites, or managers</label>
       <div class="directory-search__controls">
         <wa-input id="directory-search-input" name="q" type="search" value="${escapeHtml(search)}" placeholder="Search providers, programs, sites, or managers" aria-label="Search providers, programs, sites, or managers" pill with-clear><wa-icon name="magnifying-glass" slot="start" aria-hidden="true"></wa-icon></wa-input>
-        <button class="btn-secondary" type="submit">Search</button>
         ${search ? '<button class="btn-link" id="clear-directory-search" type="button">Clear</button>' : ""}
       </div>
     </form>
@@ -4607,14 +4810,14 @@ function providerView(state) {
         <h2 id="provider-programs-title">Programs</h2>
         <a class="btn-link" href="/programs/new?providerId=${encodeURIComponent(provider.providerId)}&returnTo=provider" data-route>Create a new program</a>
       </div>
+      ${linkedPrograms.length ? `<ul class="site-directory-list">${linkedPrograms.map((program) => `<li><a class="site-directory-row" href="/programs/${encodeURIComponent(program.programId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(program.name)}</strong><span>Program</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : '<p class="muted">No programs are linked to this provider.</p>'}
       <form id="provider-program-form" class="inline-form">
-        <wa-select name="program-id" label="Add program" required placeholder="Choose a program">
+        <wa-select name="program-id" label="Add program" required placeholder="Choose a program" ${availablePrograms.length ? "" : "disabled"}>
           ${availablePrograms.map((program) => `<wa-option value="${escapeHtml(program.programId)}">${escapeHtml(program.name)}</wa-option>`).join("")}
         </wa-select>
         <button class="btn-primary" type="submit" data-add-program-button disabled>Add program</button>
       </form>
-      ${availablePrograms.length ? "" : '<p class="muted">Every active Program is already linked to this provider.</p>'}
-      ${linkedPrograms.length ? `<ul class="site-directory-list">${linkedPrograms.map((program) => `<li><a class="site-directory-row" href="/programs/${encodeURIComponent(program.programId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(program.name)}</strong><span>Program</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : '<p class="muted">No programs are linked to this provider.</p>'}
+      ${!availablePrograms.length && linkedPrograms.length ? '<p class="muted">Every active Program is already linked to this provider.</p>' : ""}
     </section>
     ${deactivateProviderDialog(provider.name)}
   </section>`;
@@ -4627,7 +4830,7 @@ function providerManagerPanel(state) {
   ).length;
   return `<section class="subsection" aria-labelledby="provider-managers-title">
     <div class="panel__head"><div><h2 id="provider-managers-title">Provider managers</h2><p class="muted">Provider Manager devices receive access to every active Site associated with this Provider when the enrollment link is redeemed.</p></div><span class="status-badge">${escapeHtml(activeSiteCount)} active ${activeSiteCount === 1 ? "Site" : "Sites"}</span></div>
-    ${state.providerManagers.map(providerManagerForm).join("")}
+    ${state.providerManagers.map(providerManagerRow).join("")}
     <details class="table-disclosure"><summary>Add Provider Manager</summary>
       <form class="site-details-form" data-provider-manager-form>
         <div class="form-grid">
@@ -4655,11 +4858,18 @@ function providerManagerPanel(state) {
 }
 
 /** @param {any} manager */
-function providerManagerForm(manager) {
+function providerManagerRow(manager) {
   const inactive = manager.status === "inactive";
-  return `<form class="site-details-form" data-provider-manager-form>
+  const titleId = `provider-manager-edit-${encodeURIComponent(manager.membershipId)}`;
+  return `<article data-provider-manager-row>
+    <div class="panel__head"><div><h3>${escapeHtml(manager.name)}</h3><p class="muted">${escapeHtml(manager.activeDeviceCount || 0)} active provider-wide device${Number(manager.activeDeviceCount || 0) === 1 ? "" : "s"} · ${escapeHtml(manager.status)}</p></div><div class="row">
+      <button class="btn-icon" type="button" data-edit-provider-manager="${escapeHtml(manager.membershipId)}" aria-label="${escapeHtml(t("common.edit"))}: ${escapeHtml(manager.name)}" aria-haspopup="dialog"><wa-icon name="pen-to-square" aria-hidden="true"></wa-icon></button>
+      <button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${inactive ? "Reinstate" : "Deactivate"}</button>
+    </div></div>
+    <dialog class="site-unsaved-dialog" data-provider-manager-dialog aria-labelledby="${titleId}">
+    <form class="site-unsaved-dialog__card site-details-form" data-provider-manager-form>
+    <h2 id="${titleId}">${escapeHtml(t("common.edit"))}: ${escapeHtml(manager.name)}</h2>
     <input type="hidden" name="provider-manager-membership-id" value="${escapeHtml(manager.membershipId)}" />
-    <div class="panel__head"><div><h3>${escapeHtml(manager.name)}</h3><p class="muted">${escapeHtml(manager.activeDeviceCount || 0)} active provider-wide device${Number(manager.activeDeviceCount || 0) === 1 ? "" : "s"} · ${escapeHtml(manager.status)}</p></div><button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${inactive ? "Reinstate" : "Deactivate"}</button></div>
     <div class="form-grid">
       ${formInput("provider-manager-first-name", "First name", manager.firstName, { required: true, autocomplete: "given-name" })}
       ${formInput("provider-manager-last-name", "Last name", manager.lastName, { required: true, autocomplete: "family-name" })}
@@ -4667,8 +4877,13 @@ function providerManagerForm(manager) {
       ${formInput("provider-manager-phone", "Phone", manager.phone, { required: true, type: "tel", autocomplete: "tel" })}
       ${formInput("provider-manager-extension", "Extension", manager.phoneExtension || "")}
     </div>
-    <button class="btn-primary" type="submit">Save Provider Manager</button>
-  </form>`;
+    <div class="site-unsaved-dialog__actions">
+      <button class="btn-secondary" type="button" data-close-dialog>${escapeHtml(t("common.cancel"))}</button>
+      <button class="btn-primary" type="submit" data-save-button>${escapeHtml(t("common.save"))}</button>
+    </div>
+    </form>
+    </dialog>
+  </article>`;
 }
 
 /** @param {any[]} grants */
@@ -4676,7 +4891,7 @@ function providerManagerGrantList(grants) {
   if (!grants.length) {
     return '<p class="empty-state">No provider-wide enrollment links issued.</p>';
   }
-  return `<details class="table-disclosure"><summary>Provider enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
+  return `<details class="table-disclosure"><summary>Provider enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table class="provider-enrollment-history"><thead><tr><th>Recipient</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
         `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
@@ -4873,11 +5088,15 @@ function siteEditor(state) {
     </fieldset>
     <fieldset>
       <legend>Site manager</legend>
-      <wa-select name="site-manager-user-id" aria-label="Site manager" placeholder="Choose program staff" data-initial-value="${escapeHtml(site.primaryContactUserId || "")}" ${siteManagerUnavailableMessage ? "disabled" : ""}><span slot="label" data-site-manager-label>${siteManagerUnavailableMessage || "Lead Program staff member"}</span>
-        ${staff.map((user) => `<wa-option value="${escapeHtml(user.userId)}" ${user.userId === site.primaryContactUserId ? "selected" : ""}>${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
-      </wa-select>
-      <div id="site-manager-contact-details">${siteManagerContactDetails(staff.find((user) => user.userId === site.primaryContactUserId))}</div>
-      <button class="btn-primary" type="button" data-save-site-manager disabled>Save site manager</button>
+      <div class="form-grid form-grid--one">
+        <div>
+          <wa-select name="site-manager-user-id" aria-label="Site manager" placeholder="Choose program staff" data-initial-value="${escapeHtml(site.primaryContactUserId || "")}" ${siteManagerUnavailableMessage ? "disabled" : ""}><span slot="label" data-site-manager-label>${siteManagerUnavailableMessage || "Lead Program staff member"}</span>
+            ${staff.map((user) => `<wa-option value="${escapeHtml(user.userId)}" ${user.userId === site.primaryContactUserId ? "selected" : ""}>${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
+          </wa-select>
+          <div id="site-manager-contact-details">${siteManagerContactDetails(staff.find((user) => user.userId === site.primaryContactUserId))}</div>
+        </div>
+        <button class="btn-primary" type="button" data-save-site-manager disabled>Save site manager</button>
+      </div>
     </fieldset>
     ${state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
   </form>
