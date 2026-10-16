@@ -753,7 +753,8 @@ describe("restored duplicate links", () => {
       setDuplicateUiSite({ featureFlags: { duplicateDetection: enabled } });
       stash();
       window.location.search = "?filter=todo";
-      let release = (_site) => {};
+      /** @type {(site: { siteId: string }) => void} */
+      let release = () => {};
       siteRead.mockReturnValueOnce(
         new Promise((resolve) => {
           release = resolve;

@@ -10,6 +10,7 @@ variable "duplicate_analyzer_base_url" {
   description = "Separate comparison service base URL; empty uses the existing analyzer base URL."
 }
 resource "aws_secretsmanager_secret" "duplicate_analyzer_key" {
+  #checkov:skip=CKV2_AWS_57:Analyzer key rotation is coordinated manually out-of-band with the comparison service, matching the existing analyzer credential policy.
   name        = "${local.name_prefix}-duplicate-analyzer-key"
   description = "Dedicated analyzer comparison key; value provisioned out-of-band, never Terraform state."
   kms_key_id  = aws_kms_key.app.arn
@@ -40,6 +41,7 @@ data "archive_file" "duplicate_worker" {
   output_path = "${path.module}/dist/duplicate-worker.zip"
 }
 resource "aws_cloudwatch_log_group" "duplicates" {
+  #checkov:skip=CKV_AWS_338:Duplicate evaluation events have an explicitly approved 30-day retention limit aligned with image deletion; retaining them for a year violates that policy.
   for_each          = toset(["duplicate-dispatch", "duplicate-worker"])
   name              = "/aws/lambda/${local.name_prefix}-${each.key}"
   retention_in_days = 30
@@ -57,8 +59,10 @@ resource "aws_iam_role" "duplicate_worker" {
   tags               = var.tags
 }
 resource "aws_iam_role_policy" "duplicate_dispatch" {
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
   role = aws_iam_role.duplicate_dispatch.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"], Resource = aws_dynamodb_table.app.stream_arn },
     { Effect = "Allow", Action = ["dynamodb:PutItem"], Resource = aws_dynamodb_table.app.arn },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = [aws_sqs_queue.duplicates.arn, aws_sqs_queue.duplicates_dlq.arn] },
@@ -67,9 +71,12 @@ resource "aws_iam_role_policy" "duplicate_dispatch" {
   ] })
 }
 resource "aws_iam_role_policy" "duplicate_worker" {
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
   role = aws_iam_role.duplicate_worker.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
+    { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.duplicates_dlq.arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.uploads.arn}/*" },
     { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.uploads.arn}/duplicate-prepared/*" },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.duplicate_analyzer_key.arn },
@@ -79,6 +86,8 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   ] })
 }
 resource "aws_lambda_function" "duplicate_dispatch" {
+  #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
+  #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-dispatch"
   role             = aws_iam_role.duplicate_dispatch.arn
   runtime          = "nodejs24.x"
@@ -87,11 +96,18 @@ resource "aws_lambda_function" "duplicate_dispatch" {
   source_code_hash = data.archive_file.duplicate_dispatch.output_base64sha256
   memory_size      = 256
   timeout          = 30
+  kms_key_arn      = aws_kms_key.app.arn
+  tracing_config { mode = "Active" }
+  dead_letter_config { target_arn = aws_sqs_queue.duplicates_dlq.arn }
+  reserved_concurrent_executions = 2
   environment { variables = { DUPLICATE_QUEUE_URL = aws_sqs_queue.duplicates.url, DYNAMO_TABLE = aws_dynamodb_table.app.name, METRICS_NAMESPACE = "${local.name_prefix}-duplicates" } }
   depends_on = [aws_iam_role_policy.duplicate_dispatch, aws_cloudwatch_log_group.duplicates]
   tags       = var.tags
 }
 resource "aws_lambda_function" "duplicate_worker" {
+  #checkov:skip=CKV_AWS_115:SQS event-source maximum_concurrency=2 bounds comparisons independently; reserved concurrency can throttle queue deliveries into the DLQ.
+  #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
+  #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-worker"
   role             = aws_iam_role.duplicate_worker.arn
   runtime          = "nodejs24.x"
@@ -100,6 +116,9 @@ resource "aws_lambda_function" "duplicate_worker" {
   source_code_hash = data.archive_file.duplicate_worker.output_base64sha256
   memory_size      = 1024
   timeout          = 900
+  kms_key_arn      = aws_kms_key.app.arn
+  tracing_config { mode = "Active" }
+  dead_letter_config { target_arn = aws_sqs_queue.duplicates_dlq.arn }
   environment { variables = {
     METRICS_NAMESPACE                     = "${local.name_prefix}-duplicates"
     DYNAMO_TABLE                          = aws_dynamodb_table.app.name

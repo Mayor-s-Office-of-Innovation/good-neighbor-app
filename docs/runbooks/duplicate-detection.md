@@ -46,6 +46,14 @@ that observation automatically. The original's completed action remains intact.
 condition-level diagnostics. Product grouping uses the batch endpoint's validated
 condition-to-task mapping, including the earliest valid original's short ID.
 
+## Comparison key rotation
+
+Rotate the comparison key manually in coordination with the analyzer service,
+then update the app’s `duplicate-analyzer-key` secret out of band and verify a
+comparison succeeds. Never record either key in logs, tickets, or Terraform.
+Automatic rotation is not configured because the analyzer and app must agree
+on the same credential.
+
 ## CloudWatch
 
 Dashboard: `<app-prefix>-duplicates`. Metric namespace: `<app-prefix>-duplicates`.
