@@ -55,6 +55,15 @@ const shared = {
 
 const entries = [
   {
+    name: "duplicate-dispatch",
+    entry: resolve(backendRoot, "src/lambda/duplicate-dispatch.js"),
+  },
+  {
+    name: "duplicate-worker",
+    entry: resolve(backendRoot, "src/lambda/duplicate-worker.js"),
+    external: ["sharp"],
+  },
+  {
     name: "api",
     entry: resolve(backendRoot, "src/lambda/api.js"),
     // Native addons can't be bundled — keep the import as a runtime require
@@ -131,7 +140,7 @@ for (const { name, entry, external } of entries) {
 // and each platform package self-describes its os/cpu, so extras are inert.
 // The wasm32 fallback (~9 MB) is what sharp loads if no native binary matches,
 // so it doubles as insurance against an os/cpu mismatch in the zip.
-const sharpTargets = ["api", "worker"];
+const sharpTargets = ["api", "worker", "duplicate-worker"];
 const roots = [resolve(backendRoot, ".."), backendRoot];
 const findPkg = (pkg) =>
   roots.map((root) => resolve(root, "node_modules", pkg)).find(existsSync);

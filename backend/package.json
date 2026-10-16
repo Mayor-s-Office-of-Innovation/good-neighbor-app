@@ -19,6 +19,7 @@
     "policy:diff": "node scripts/policy-diff.mjs",
     "policy:import": "node scripts/policy-import.mjs",
     "policy:validate": "node scripts/policy-validate.mjs",
+    "duplicates:evaluate": "node scripts/evaluate-duplicates.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "local:ddb": "node scripts/local-ddb.mjs",
@@ -31,8 +32,10 @@
     "local:worker": "node --env-file=../.env.local scripts/local-worker.mjs",
     "db:gui": "DYNAMO_ENDPOINT=http://localhost:8000 AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local dynamodb-admin",
     "analyze:smoke": "node --env-file=.env scripts/analyze-smoke.mjs",
-    "dev": "concurrently -k -n svc,sf311,api,worker \"npm:local:services\" \"npm:local:sf311\" \"npm:local:api\" \"npm:local:worker\"",
-    "local:seed:admin": "node --env-file=../.env.local scripts/seed-local-site-admin.mjs"
+    "dev": "concurrently -k -n svc,sf311,api,worker,duplicates \"npm:local:services\" \"npm:local:sf311\" \"npm:local:api\" \"npm:local:worker\" \"npm:local:duplicates\"",
+    "local:seed:admin": "node --env-file=../.env.local scripts/seed-local-site-admin.mjs",
+    "duplicates:images": "node --env-file=.env.duplicates scripts/evaluate-image-duplicates.mjs",
+    "local:duplicates": "node --env-file=../.env.local scripts/local-duplicates.mjs"
   },
   "dependencies": {
     "@aws-crypto/client-node": "^4.2.1",

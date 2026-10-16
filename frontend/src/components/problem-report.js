@@ -1,3 +1,4 @@
+import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
@@ -461,6 +462,10 @@ class ProblemReport extends HTMLElement {
         if (!card) return;
         const action = target.getAttribute("data-analysis-action");
         const problem = this._problemFromCard(card);
+        if (action === "duplicate") {
+          openSessionDuplicate(target, this);
+          return;
+        }
         if (action === "delete") {
           this._openDeleteProblem(problem);
         } else if (action === "edit") {

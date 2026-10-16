@@ -268,7 +268,11 @@ describe("site admin", () => {
       },
     });
     const response = await /** @type {any} */ (getSite)(event("site-1"));
-    expect(body(response).site).toEqual({ siteId: "site-1", name: "Mission" });
+    expect(body(response).site).toEqual({
+      siteId: "site-1",
+      name: "Mission",
+      featureFlags: { duplicateDetection: false },
+    });
   });
 
   it("denies general-access devices without reading site data", async () => {
@@ -470,5 +474,46 @@ describe("site admin", () => {
       siteName: "New Name",
       searchText: "new name provider one",
     });
+  });
+});
+
+describe("duplicate UI display policy", () => {
+  it("reads the site rollout flag independently of enabled backend matching", async () => {
+    vi.stubEnv("DUPLICATE_DETECTION_ENABLED", "true");
+    send.mockResolvedValue({
+      Item: { siteId: "site-1", featureFlags: { duplicateDetection: true } },
+    });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(true);
+  });
+  it("defaults off unless the stored site flag is explicitly true", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-2",
+          featureFlags: { duplicateDetection: false },
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-3",
+          featureFlags: { duplicateDetection: "true" },
+        },
+      });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-2"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-3"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
   });
 });

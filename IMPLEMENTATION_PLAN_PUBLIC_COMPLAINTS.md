@@ -1,7 +1,9 @@
 # Home actions and public complaints — implementation plan
 
-**Status:** implemented on the current feature branches; ready for review  
-**Date:** 2026-10-14  
+**Status:** implemented on the current feature branches; ready for review
+
+**Date:** 2026-10-14
+
 **Scope:** provider-facing web app, app API/worker, DynamoDB/S3, analyzer integration, Terraform, tests, and reference documentation
 
 ## 1. Outcome and scope

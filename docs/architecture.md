@@ -297,6 +297,22 @@ worker** — full offline queue-and-replay is deferred (tracked on the issue
 tracker) —
 but the idempotency contract is already in place for when it lands.
 
+### Duplicate issue links (feature-gated; not yet deployed)
+
+A separate DynamoDB stream dispatcher and SQS/Lambda worker perform duplicate
+assessment without calling or delaying the normal analysis worker. Only the
+analyzer's isolated comparison function invokes Bedrock. Matching uses same-Site,
+same-category issues generated within the preceding 72 hours, all available images,
+and issue descriptions; text-only evidence is supported conservatively.
+
+Confirmed condition links map through current guidance pointers to tasks. The app
+retains individual observations and uses the earliest valid original for shared
+actions and the in-progress/history card. Separate frontend polling updates cards
+incrementally. A durable human override restores an independent actionable report
+without reversing the group's action. Details and deployment/retention controls:
+[ADR 0017](adr/0017-duplicate-issue-links.md),
+[duplicate operations](runbooks/duplicate-detection.md).
+
 ## Proactive care work logs
 
 All devices bound to a Site can create and read that Site's proactive care logs

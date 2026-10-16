@@ -142,6 +142,8 @@ class TicketDetailDialog extends HTMLElement {
         ...(page.updates || []).filter(
           (update) =>
             update.type === "note_photo_update" ||
+            update.type === "duplicate_detected" ||
+            update.type === "duplicate_separated" ||
             update.type?.startsWith("additional_action"),
         ),
       ];

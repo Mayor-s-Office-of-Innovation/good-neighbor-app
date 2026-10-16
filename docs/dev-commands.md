@@ -27,7 +27,8 @@ frontend, tests, lint, and typecheck do **not** need Java.
 
 | Command | Does |
 |---|---|
-| `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
+| `npm run dev -w frontend` | Run the field app locally (Vite dev server) against the local backend harness |
+| `npm run dev:remote` | Same dev server, API proxied to the **deployed dev** environment (`API_PROXY_TARGET=https://dev.goodneighborsf.org`). No backend, JVM, MinIO, or analyzer key needed. Presigned uploads are forwarded through the dev server (`frontend/scripts/vite-remote-api.mjs`) so S3 CORS is untouched. See the [designer quickstart](./quickstart-design.md). |
 
 ### Theme toggle (dark/light)
 

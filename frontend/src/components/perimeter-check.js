@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
 import { loadStartingGuidance } from "../services/capture-guidance.js";
 import { captureLabels } from "./capture-analysis.templates.js";
@@ -316,6 +317,10 @@ class PerimeterCheck extends HTMLElement {
     if (!button) return;
     const action = button.getAttribute("data-analysis-action");
 
+    if (action === "duplicate") {
+      openSessionDuplicate(button, this);
+      return;
+    }
     if (action === "retry") {
       const card = button.closest(".analysis-card");
       const itemId = card?.getAttribute("data-item-id") || "";

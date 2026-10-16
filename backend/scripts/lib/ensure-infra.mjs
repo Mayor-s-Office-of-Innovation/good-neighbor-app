@@ -214,6 +214,19 @@ export async function ensureLocalInfra() {
     }
   }
 
+  if (process.env.DUPLICATE_QUEUE_URL) {
+    if (process.env.DUPLICATE_QUEUE_URL === queueUrl)
+      throw new Error("Duplicate queue must be separate from normal analysis");
+    await sqs.send(
+      new CreateQueueCommand({
+        QueueName: process.env.DUPLICATE_QUEUE_URL.split("/")
+          .filter(Boolean)
+          .pop(),
+        Attributes: { VisibilityTimeout: "900" },
+      }),
+    );
+  }
+
   // S3 (MinIO): only when the local S3 endpoint is set — otherwise the client
   // would point at real AWS and creating a bucket there is not what "local
   // bootstrap" means. Just an idempotent bucket create; CORS for the browser's

@@ -76,6 +76,16 @@ export const getSite = async (event) => {
   ]) {
     delete publicSite[field];
   }
+  const storedFeatureFlags =
+    site.featureFlags && typeof site.featureFlags === "object"
+      ? /** @type {Record<string, unknown>} */ (site.featureFlags)
+      : {};
+  publicSite.featureFlags = {
+    // Presentation rollout is site-owned runtime configuration. Backend
+    // matching remains independently controlled by the deployed
+    // `enable_duplicate_detection` infrastructure flag.
+    duplicateDetection: storedFeatureFlags.duplicateDetection === true,
+  };
   return jsonResponse(200, { site: publicSite });
 };
 

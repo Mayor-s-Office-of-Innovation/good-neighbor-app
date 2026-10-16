@@ -171,7 +171,7 @@ as task update events and every GSI sort key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period or tier. `perimeter` is a plain-text description (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
+| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default false), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period or tier. `perimeter` is a plain-text description (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; the JWT usually makes the lookup unnecessary |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | Compatibility projection for authorization and refresh: label, physical-device ID, lastSeenAt, lifecycle/expiry fields, `tokenGeneration`, `refreshJti`, and canonical `accessLevel` (`general` or `manager`). |
 | Legacy code/master contact | `SITE#<siteId>` | `CODE_CONTACT#<emailHash>` / `MASTER_CONTACT#<emailHash>` | Retired. Master contacts are migrated to Site manager memberships in dev; these records no longer authorize setup-code requests. |
@@ -623,6 +623,32 @@ both revisions have an explicit condition ID (`explicitConditionId`), the same l
 and the same policy, category, severity, and description. Empty evidence lists alone do
 not prove two conditions are the same. Tasks are retired only after the guidance publish
 succeeds. An analyzer amendment on its own no longer retires tasks.
+
+### Duplicate issue records (feature-gated)
+
+All keys below use the authenticated `pk=SITE#<siteId>` partition. No new GSI or
+media bytes are stored in these records. Issue identity is
+`(checkId, artifactId, conditionId, analysisRevision)`; readable short IDs are
+resolved from current guidance/tasks rather than treated as identity.
+
+| Sort-key prefix | Meaning |
+| --- | --- |
+| `DUP_OBSERVATION#<generatedAt>#<checkId>:<artifactId>` | Current revision, condition/category descriptions, immutable media reference and optional derived hashes. Generation time, not capture time, indexes the 72-hour lookup. |
+| `DUP_COVERAGE` | Earliest completely indexed generation time for this Site. |
+| `DUP_RESULT#<observationId>#<revision>` | Pending/final evaluation, per-condition results, safe timing diagnostics and target revisions. |
+| `DUP_ISSUE#<observationId>#<revision>#<conditionId>` | Incrementally published high-confidence explicit link with revision/lifecycle validation keys. |
+| `DUP_COMPARISON#<requestDigest>` | Comparison response cache, including matcher/request version; five-day TTL and no image bytes. |
+| `DUP_LINK#<taskId>` | Idempotently materialized original-task link and its duplicate-detection timeline event ID. |
+| `DUP_OVERRIDE#<JSON check/artifact/condition tuple>` | Durable human separation, actor/time and original-task reference; prevents automatic relinking of that observation. |
+
+Duplicate detections and separations use existing `TASK#…#UPDATE#…` timeline keys
+with `duplicate_detected` / `duplicate_separated` types. UI copy comes from the
+translation catalogs. Raw observations and prior action records are retained.
+If separation follows an action performed before matching, a fresh open task
+identity supersedes the old task under the same condition/short ID. The original
+retains the group's action; new external-action idempotency is scoped to the new
+task identity. Conditional transactions guard revisions, membership and action
+leases. Existing groups remain effective when new detection is disabled.
 
 ## Proactive care work records
 

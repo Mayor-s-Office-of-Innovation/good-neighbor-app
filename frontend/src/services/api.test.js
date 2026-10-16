@@ -6,6 +6,7 @@ import {
   getSiteSettings,
   getCaptureGuidance,
   rejectAnalysisCondition,
+  toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
 } from "./api.js";
@@ -311,5 +312,47 @@ describe("capture guidance requests", () => {
       }),
     ).rejects.toBe(aborted);
     expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+});
+
+describe("toDevUploadUrl (dev-server S3 upload proxy)", () => {
+  const presigned =
+    "https://good-neighbor-app-dev-uploads-2026.s3.us-west-2.amazonaws.com/sites/city-hall/checks/c1/a1.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc&X-Amz-SignedHeaders=host%3Bcontent-type";
+
+  it("is a no-op when the proxy is disabled (production, local harness)", () => {
+    expect(toDevUploadUrl(presigned, false)).toBe(presigned);
+  });
+
+  it("defaults to disabled outside a dev server with a remote API target", () => {
+    // No `__S3_UPLOAD_PROXY__` define under vitest → the guarded read is false.
+    expect(toDevUploadUrl(presigned)).toBe(presigned);
+  });
+
+  it("rewrites a virtual-hosted S3 URL onto /__s3/<host>, keeping path + query", () => {
+    expect(toDevUploadUrl(presigned, true)).toBe(
+      "/__s3/good-neighbor-app-dev-uploads-2026.s3.us-west-2.amazonaws.com/sites/city-hall/checks/c1/a1.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc&X-Amz-SignedHeaders=host%3Bcontent-type",
+    );
+  });
+
+  it("leaves non-S3 hosts alone even when enabled", () => {
+    const minio = "http://localhost:9000/gnp-local-uploads/k?X-Amz-Signature=x";
+    expect(toDevUploadUrl(minio, true)).toBe(minio);
+    const other = "https://evil.example.com/s3.us-west-2.amazonaws.com/k";
+    expect(toDevUploadUrl(other, true)).toBe(other);
+    const lookalike =
+      "https://bucket.s3.us-west-2.amazonaws.com.evil.example/k";
+    expect(toDevUploadUrl(lookalike, true)).toBe(lookalike);
+  });
+
+  it("requires https", () => {
+    const plain = "http://bucket.s3.us-west-2.amazonaws.com/k?sig=1";
+    expect(toDevUploadUrl(plain, true)).toBe(plain);
+  });
+
+  it("returns unparseable input unchanged", () => {
+    expect(toDevUploadUrl("not a url", true)).toBe("not a url");
+    expect(toDevUploadUrl("/already/relative?x=1", true)).toBe(
+      "/already/relative?x=1",
+    );
   });
 });

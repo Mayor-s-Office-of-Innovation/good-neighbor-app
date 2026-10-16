@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { setDuplicateUiSite } from "../services/feature-flags.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
@@ -1190,32 +1191,108 @@ describe("card redesign", () => {
   });
 });
 
-it("renders responsive phone controls only for a phone action with an explicit number", () => {
-  const task = {
-    taskId: "phone",
-    kind: "non_actionable_escalation",
-    phoneNumber: "415-553-0123",
-    policyVersion: "actions-escalations-v7",
-    buttons: ["Call SFPD: 415-553-0123"],
-    status: "open",
-  };
-  const render = (value) =>
-    taskAnalysisCard({
-      task: value,
+describe("duplicate card presentation", () => {
+  beforeEach(() =>
+    setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
+  );
+  afterEach(() => setDuplicateUiSite(null));
+  it("shows duplicate progress below Edit details and removes the ring on completion", () => {
+    const task = {
+      taskId: "duplicate-status-task",
+      status: "open",
+      category: "Litter",
+      createdAt: "2026-10-15T12:00:00Z",
+    };
+    const checking = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "pending" },
+      action: null,
       statusLabel: "",
-      action: { kind: "done", label: t("common.done") },
     });
-  const markup = render(task);
-  expect(markup).toContain('data-phone-number="415-553-0123"');
-  expect(markup).toContain("analysis-card__check--phone");
-  expect(markup).toContain('role="checkbox"');
-  expect(render({ ...task, phoneNumber: "" })).not.toContain(
-    "data-phone-number",
-  );
-  expect(render({ ...task, kind: "action" })).not.toContain(
-    "data-phone-number",
-  );
-  expect(render({ ...task, phoneNumber: '911" onclick="bad' })).not.toContain(
-    "data-phone-number",
-  );
+    expect(checking).toContain(t("duplicate.checking"));
+    expect(checking).toContain('<wa-spinner aria-hidden="true">');
+    expect(checking.indexOf(t("duplicate.checking"))).toBeGreaterThan(
+      checking.indexOf(t("card.editDetails")),
+    );
+    const completed = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "complete" },
+      action: null,
+      statusLabel: "",
+    });
+    expect(completed).toContain(t("duplicate.noMatches"));
+    expect(completed).not.toContain("<wa-spinner");
+    const disabled = taskAnalysisCard({ task, action: null, statusLabel: "" });
+    expect(disabled).not.toContain(t("duplicate.checking"));
+    expect(disabled).not.toContain(t("duplicate.noMatches"));
+  });
+
+  it("links the earlier-issue phrase to the original worklist card", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "repeat",
+        status: "open",
+        category: "Graffiti",
+        duplicate: { original: { taskId: "original-id" } },
+      },
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).toContain('href="/today?issue=original-id"');
+    expect(card).toContain('data-original-task-id="original-id"');
+    expect(card).toContain(t("duplicate.earlierIssue"));
+    expect(card).not.toContain("{issue}");
+  });
+
+  it("hides persisted duplicate presentation and status when display is off", () => {
+    setDuplicateUiSite(null);
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "repeat",
+        status: "open",
+        category: "Graffiti",
+        duplicateCheckState: "pending",
+        duplicate: { compact: true, original: { taskId: "original" } },
+      },
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).not.toContain("duplicate-card__body");
+    expect(card).not.toContain("duplicate-earlier-link");
+    expect(card).not.toContain(t("duplicate.checking"));
+    expect(card).toContain(t("card.editDetails"));
+  });
 });
+
+it.each([false, true])(
+  "renders responsive phone controls with duplicate UI enabled=%s only for a phone action with an explicit number",
+  (enabled) => {
+    setDuplicateUiSite({ featureFlags: { duplicateDetection: enabled } });
+    const task = {
+      taskId: "phone",
+      kind: "non_actionable_escalation",
+      phoneNumber: "415-553-0123",
+      policyVersion: "actions-escalations-v7",
+      buttons: ["Call SFPD: 415-553-0123"],
+      status: "open",
+    };
+    const render = (value) =>
+      taskAnalysisCard({
+        task: value,
+        statusLabel: "",
+        action: { kind: "done", label: t("common.done") },
+      });
+    const markup = render(task);
+    expect(markup).toContain('data-phone-number="415-553-0123"');
+    expect(markup).toContain("analysis-card__check--phone");
+    expect(markup).toContain('role="checkbox"');
+    expect(render({ ...task, phoneNumber: "" })).not.toContain(
+      "data-phone-number",
+    );
+    expect(render({ ...task, kind: "action" })).not.toContain(
+      "data-phone-number",
+    );
+    expect(render({ ...task, phoneNumber: '911" onclick="bad' })).not.toContain(
+      "data-phone-number",
+    );
+    setDuplicateUiSite(null);
+  },
+);

@@ -1390,6 +1390,7 @@ export async function answerCondition(opts) {
  * @param {string} [opts.completionMethod]
  * @param {string} [opts.actorId]
  * @param {Record<string, string | undefined>} [opts.env]
+ * @param {any[]} [opts.duplicateChecks]
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>>}
  */
@@ -1481,6 +1482,7 @@ export async function completeTaskWithAppActions(opts) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(opts.duplicateChecks ?? []),
         {
           Put: {
             TableName: opts.tableName,

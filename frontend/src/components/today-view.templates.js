@@ -1,3 +1,4 @@
+import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 /*
   Presentational templates for <today-view>, the home hub. Pure
   (data) → HTML string functions: state lives in today-view.js, which builds
@@ -383,10 +384,11 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCards: Array<{ markup: string }>,
  *   newTaskCardsMarkup: string,
  *   newTaskCount: number,
+ *   counts?: {newCount:number,duplicateCount:number},
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
  *   hasPendingClearResult: boolean,
  *   historyGrouping?: string,
- *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }>,
+ *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
 export function homeResults({
@@ -400,6 +402,7 @@ export function homeResults({
   newTaskCards,
   newTaskCardsMarkup,
   newTaskCount,
+  counts = { newCount: newTaskCount, duplicateCount: 0 },
   activeClearCheck,
   hasPendingClearResult,
   historyGroups,
@@ -451,7 +454,11 @@ export function homeResults({
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
         : ""}
       ${newTaskCount && !recentItems.length
-        ? newTaskTray({ cards: newTaskCardsMarkup, checkTime: recentCheckTime })
+        ? newTaskTray({
+            cards: newTaskCardsMarkup,
+            checkTime: recentCheckTime,
+            counts,
+          })
         : ""}
       ${historyGroups.length
         ? html`
@@ -469,8 +476,12 @@ export function homeResults({
   `;
 }
 
-/** @param {{ cards: string, checkTime: string }} vm */
-export function newTaskTray({ cards, checkTime }) {
+/** @param {{ cards: string, checkTime: string, counts?: {newCount:number,duplicateCount:number} }} vm */
+export function newTaskTray({
+  cards,
+  checkTime,
+  counts = { newCount: 0, duplicateCount: 0 },
+}) {
   return html`
     <section
       class="analysis-tray analysis-tray--new analysis-tray--recent"
@@ -480,7 +491,7 @@ export function newTaskTray({ cards, checkTime }) {
         <h2 class="analysis-tray__check-title">
           ${escapeHtml(recentCheckTitle(checkTime))}
         </h2>
-        ${cards}
+        ${duplicateCountLabel(counts)} ${cards}
       </div>
     </section>
   `;
@@ -513,9 +524,15 @@ export function clearCheckTray(check, recent = false) {
 /**
  * One past check's tray: its task cards, or the clear-check card when the
  * check found nothing.
- * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }} group
+ * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }} group
  */
-export function historyTray({ checkTime, cards, title = "", compact = false }) {
+export function historyTray({
+  checkTime,
+  cards,
+  title = "",
+  compact = false,
+  counts = null,
+}) {
   return html`
     <section
       class="analysis-tray analysis-tray--history ${compact
@@ -527,6 +544,7 @@ export function historyTray({ checkTime, cards, title = "", compact = false }) {
         <h2 class="analysis-tray__check-title">
           ${escapeHtml(title || historicalCheckTitle(checkTime))}
         </h2>
+        ${counts ? duplicateCountLabel(counts) : ""}
         ${compact
           ? html`<div class="history-card-list">${cards}</div>`
           : cards || clearCheckCard()}
