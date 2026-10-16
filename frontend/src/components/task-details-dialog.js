@@ -108,6 +108,7 @@ export class TaskDetailsDialog extends HTMLElement {
       this._clicked = { ...task, ...(hydratedClicked || details.clicked) };
       this._details = details;
       this._selected = details.selectedRuleId || "";
+      this._customDraft = details.customAction?.text || "";
       this._render();
     } catch (error) {
       console.error("load task details failed", error);

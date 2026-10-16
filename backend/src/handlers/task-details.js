@@ -5,6 +5,11 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
+import {
+  completeTaskWithAppActions,
+  executeTaskCreatedAppActions,
+} from "../analysis/guidance/guidance-store.js";
+import { summarizeAppActionResults } from "../analysis/guidance/app-actions.js";
 import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { getConfig } from "../config.js";
 import { ddb } from "../db.js";
@@ -32,21 +37,26 @@ async function readTask(table, siteId, taskId) {
 
 /** @param {string} table @param {string} siteId @param {string} prefix */
 async function duplicateRows(table, siteId, prefix) {
-  return (
-    (
-      await ddb.send(
-        new QueryCommand({
-          TableName: table,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `SITE#${siteId}`,
-            ":prefix": prefix,
-          },
-          ConsistentRead: true,
-        }),
-      )
-    ).Items ?? []
-  );
+  const items = [];
+  let exclusiveStartKey;
+  do {
+    /** @type {any} */
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": prefix,
+        },
+        ConsistentRead: true,
+        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
+      }),
+    );
+    items.push(...(page.Items ?? []));
+    exclusiveStartKey = page.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+  return items;
 }
 
 /** Resolve a clicked task to the root and every still-linked group member.
@@ -91,20 +101,60 @@ async function groupForTask(table, siteId, clickedTask) {
 function actionOptions(task) {
   const catalog = catalogForPolicyVersion(String(task.policyVersion ?? ""));
   const seen = new Set();
-  return catalog.rules
-    .filter(
-      (rule) => rule.category === task.category && rule.outcome.buttons[0],
-    )
+  const rules = catalog.rules.filter(
+    (rule) => rule.category === task.category && rule.outcome.buttons[0],
+  );
+  /** @param {any} rule */
+  const signature = (rule) =>
+    JSON.stringify({
+      buttons: rule.outcome.buttons,
+      appActions: rule.outcome.appActions,
+      kind: rule.outcome.kind,
+      phoneNumber: rule.outcome.phoneNumber ?? "",
+      category311: rule.outcome.category311 ?? "",
+      canBeInProgress: rule.canBeInProgress,
+      primaryInProgressAgency: rule.primaryInProgressAgency ?? "",
+    });
+  const options = rules
     .filter((rule) => {
-      const signature = rule.outcome.buttons[0];
-      if (seen.has(signature)) return false;
-      seen.add(signature);
+      const value = signature(rule);
+      if (seen.has(value)) return false;
+      seen.add(value);
       return true;
     })
     .map((rule) => ({
       ruleId: rule.ruleId,
       label: rule.outcome.buttons[0],
     }));
+  const selectedRuleId = task.actionOverride?.ruleId ?? task.ruleId;
+  const selected = rules.find((rule) => rule.ruleId === selectedRuleId);
+  const canonical = selected
+    ? rules.find((rule) => signature(rule) === signature(selected))
+    : undefined;
+  return { options, selectedRuleId: canonical?.ruleId ?? selectedRuleId };
+}
+
+/** @param {unknown} error */
+function isConditionalConflict(error) {
+  return (
+    error instanceof Error &&
+    error.name === "TransactionCanceledException" &&
+    /** @type {{CancellationReasons?:Array<{Code?:string}>}} */ (
+      error
+    ).CancellationReasons?.some(
+      (reason) => reason.Code === "ConditionalCheckFailed",
+    )
+  );
+}
+
+/** @param {unknown} results */
+function hasExecutedAction(results) {
+  return (
+    Array.isArray(results) &&
+    results.some((result) =>
+      ["submitted", "recorded", "closed", "partial"].includes(result?.status),
+    )
+  );
 }
 
 /** GET /v1/tasks/{taskId}/details @param {any} event */
@@ -117,12 +167,17 @@ export const getTaskDetails = async (event) => {
   if (!clicked) return jsonResponse(404, { error: "Task not found" });
   const group = await groupForTask(dynamoTable, siteId, clicked);
   if (!group.root) return jsonResponse(409, { error: "Issue group changed" });
+  const selection = actionOptions(group.root);
   return jsonResponse(200, {
     clicked,
     rootTaskId: group.rootTaskId,
     members: group.members,
-    actions: actionOptions(group.root),
-    selectedRuleId: group.root.actionOverride?.ruleId ?? group.root.ruleId,
+    actions: selection.options,
+    selectedRuleId:
+      group.root.actionOverride?.type === "custom"
+        ? "__custom__"
+        : selection.selectedRuleId,
+    customAction: group.root.customAction ?? null,
   });
 };
 
@@ -144,6 +199,8 @@ export const updateTaskAction = async (event) => {
   if (!task) return jsonResponse(404, { error: "Task not found" });
   if (task.status !== "open")
     return jsonResponse(409, { error: "Task is no longer open" });
+  if (hasExecutedAction(task.appActionResults))
+    return jsonResponse(409, { error: "An action has already been taken" });
   const rule = catalogForPolicyVersion(
     String(task.policyVersion ?? ""),
   ).rules.find(
@@ -188,26 +245,37 @@ export const updateTaskAction = async (event) => {
       task.taskId,
     ),
   };
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        ...shared.duplicateChecks,
-        {
-          Put: {
-            TableName: dynamoTable,
-            Item: updated,
-            ConditionExpression: "#status = :open AND updatedAt = :updated",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":open": "open",
-              ":updated": task.updatedAt,
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          ...shared.duplicateChecks,
+          {
+            Put: {
+              TableName: dynamoTable,
+              Item: updated,
+              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":open": "open",
+                ":updated": task.updatedAt,
+              },
             },
           },
-        },
-      ],
-    }),
-  );
-  return jsonResponse(200, { task: updated });
+        ],
+      }),
+    );
+  } catch (error) {
+    if (isConditionalConflict(error))
+      return jsonResponse(409, { error: "Task changed while editing" });
+    throw error;
+  }
+  const [executed] = await executeTaskCreatedAppActions({
+    tableName: dynamoTable,
+    siteId,
+    taskItems: [updated],
+  });
+  return jsonResponse(200, { task: executed });
 };
 
 /** POST /v1/tasks/{taskId}/custom-action @param {any} event */
@@ -233,8 +301,45 @@ export const recordCustomTaskAction = async (event) => {
     return jsonResponse(409, { error: "Task is no longer open" });
   const now = new Date().toISOString();
   const updateId = randomUUID();
-  const status = resolved ? "completed" : "in_progress";
-  const label = resolved ? "Marked as complete" : "Other action taken";
+  if (resolved) {
+    try {
+      const completed = await completeTaskWithAppActions({
+        tableName: dynamoTable,
+        siteId,
+        taskId: task.taskId,
+        completionMethod: "custom_action",
+        actorId: deriveActorId(event),
+        duplicateChecks: shared.duplicateChecks,
+        forceComplete: true,
+        skipUserConfirmedActions: true,
+        taskPatch: {
+          customAction: { text, resolved, recordedAt: now },
+          canBeInProgress: false,
+          appActions: [],
+          actionOverride: {
+            type: "custom",
+            originalRuleId: task.actionOverride?.originalRuleId ?? task.ruleId,
+            selectedAt: now,
+            selectedBy: deriveActorId(event),
+          },
+        },
+        timelineType: "task_completed",
+        timelineLabel: "Marked as complete",
+        timelineText: text,
+        now: new Date(now),
+      });
+      return jsonResponse(200, { task: completed });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ["TerminalConflict", "TaskCompletionInProgress"].includes(error.name)
+      )
+        return jsonResponse(409, { error: "Task changed while editing" });
+      throw error;
+    }
+  }
+  const status = "in_progress";
+  const label = "Other action taken";
   const updated = {
     ...task,
     status,
@@ -247,19 +352,15 @@ export const recordCustomTaskAction = async (event) => {
     },
     canBeInProgress: !resolved,
     appActions: [],
-    appActionStatus: "not_required",
-    appActionResults: [],
+    appActionStatus: summarizeAppActionResults(task.appActionResults ?? []),
+    appActionResults: task.appActionResults ?? [],
     latestUpdateId: updateId,
     latestUpdateLabel: label,
-    ...(resolved
-      ? { completedAt: now, completionMethod: "custom_action" }
-      : {
-          inProgressAt: now,
-          notifiedAt: now,
-          agency: "other",
-          inProgressActionKind: "custom_action",
-          lastAnsweredPresencePeriod: 0,
-        }),
+    inProgressAt: now,
+    notifiedAt: now,
+    agency: "other",
+    inProgressActionKind: "custom_action",
+    lastAnsweredPresencePeriod: 0,
     updatedAt: now,
     ...taskWorklistDateGsi(
       siteId,
@@ -270,43 +371,49 @@ export const recordCustomTaskAction = async (event) => {
       task.taskId,
     ),
   };
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        ...shared.duplicateChecks,
-        {
-          Put: {
-            TableName: dynamoTable,
-            Item: updated,
-            ConditionExpression: "#status = :open AND updatedAt = :updated",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":open": "open",
-              ":updated": task.updatedAt,
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          ...shared.duplicateChecks,
+          {
+            Put: {
+              TableName: dynamoTable,
+              Item: updated,
+              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeValues: {
+                ":open": "open",
+                ":updated": task.updatedAt,
+              },
             },
           },
-        },
-        {
-          Put: {
-            TableName: dynamoTable,
-            Item: {
-              ...taskUpdateKey(siteId, task.taskId, now, updateId),
-              ...taskUpdateTimelineGsi(siteId, now, updateId),
-              entityType: "task_update",
-              taskId: task.taskId,
-              updateId,
-              type: resolved ? "task_completed" : "custom_action_taken",
-              label,
-              text,
-              occurredAt: now,
-              actorId: deriveActorId(event),
-              documentationState: "closed",
+          {
+            Put: {
+              TableName: dynamoTable,
+              Item: {
+                ...taskUpdateKey(siteId, task.taskId, now, updateId),
+                ...taskUpdateTimelineGsi(siteId, now, updateId),
+                entityType: "task_update",
+                taskId: task.taskId,
+                updateId,
+                type: resolved ? "task_completed" : "custom_action_taken",
+                label,
+                text,
+                occurredAt: now,
+                actorId: deriveActorId(event),
+                documentationState: "closed",
+              },
+              ConditionExpression: "attribute_not_exists(sk)",
             },
-            ConditionExpression: "attribute_not_exists(sk)",
           },
-        },
-      ],
-    }),
-  );
+        ],
+      }),
+    );
+  } catch (error) {
+    if (isConditionalConflict(error))
+      return jsonResponse(409, { error: "Task changed while editing" });
+    throw error;
+  }
   return jsonResponse(200, { task: updated });
 };
