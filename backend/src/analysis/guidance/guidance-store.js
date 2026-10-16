@@ -985,7 +985,7 @@ export async function storeEvaluatedAssessment(input, options) {
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>[]>}
  */
-async function executeTaskCreatedAppActions({
+export async function executeTaskCreatedAppActions({
   tableName,
   siteId,
   taskItems,
@@ -1392,6 +1392,12 @@ export async function answerCondition(opts) {
  * @param {Record<string, string | undefined>} [opts.env]
  * @param {any[]} [opts.duplicateChecks]
  * @param {Date} [opts.now]
+ * @param {boolean} [opts.forceComplete]
+ * @param {boolean} [opts.skipUserConfirmedActions]
+ * @param {Record<string, unknown>} [opts.taskPatch]
+ * @param {string} [opts.timelineType]
+ * @param {string} [opts.timelineLabel]
+ * @param {string} [opts.timelineText]
  * @returns {Promise<Record<string, unknown>>}
  */
 export async function completeTaskWithAppActions(opts) {
@@ -1497,7 +1503,7 @@ export async function completeTaskWithAppActions(opts) {
   );
 
   const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
-    existing.Item.appActions ?? []
+    opts.skipUserConfirmedActions ? [] : (existing.Item.appActions ?? [])
   );
   const priorResults =
     /** @type {import("./app-actions.js").AppActionResult[]} */ (
@@ -1513,7 +1519,10 @@ export async function completeTaskWithAppActions(opts) {
     priorResults,
     trigger: "user_confirmed",
   });
-  const canBeInProgress = existing.Item.canBeInProgress === true;
+  const canBeInProgress =
+    opts.forceComplete === true
+      ? false
+      : existing.Item.canBeInProgress === true;
 
   // Informational 311 tickets we filed under our own agency (76) are closed
   // when the site owner marks the underlying work done. The prior filing
@@ -1571,11 +1580,13 @@ export async function completeTaskWithAppActions(opts) {
       !hasSubmitted311ActionResult(executedAppActionResults));
   const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
   const actionUpdateId = !appActionFailed ? randomUUID() : "";
-  const actionLabel = filed311
-    ? "311 ticket filed"
-    : canBeInProgress
-      ? String(existing.Item.buttons?.[0] ?? "Action taken")
-      : "Marked as complete";
+  const actionLabel =
+    opts.timelineLabel ??
+    (filed311
+      ? "311 ticket filed"
+      : canBeInProgress
+        ? String(existing.Item.buttons?.[0] ?? "Action taken")
+        : "Marked as complete");
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1604,12 +1615,15 @@ export async function completeTaskWithAppActions(opts) {
 
   const updated = {
     ...claimed,
+    ...(opts.taskPatch ?? {}),
     status: appActionFailed
       ? "open"
       : canBeInProgress
         ? "in_progress"
         : "completed",
-    ...(appActionFailed || canBeInProgress ? {} : { completedAt: now }),
+    ...(appActionFailed || canBeInProgress
+      ? {}
+      : { completedAt: now, resolvedAt: now }),
     ...(appActionFailed || canBeInProgress
       ? {}
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
@@ -1684,12 +1698,15 @@ export async function completeTaskWithAppActions(opts) {
                     entityType: "task_update",
                     taskId: opts.taskId,
                     updateId: actionUpdateId,
-                    type: filed311
-                      ? "311_ticket_filed"
-                      : canBeInProgress
-                        ? "escalation_action_taken"
-                        : "task_completed",
+                    type:
+                      opts.timelineType ??
+                      (filed311
+                        ? "311_ticket_filed"
+                        : canBeInProgress
+                          ? "escalation_action_taken"
+                          : "task_completed"),
                     label: actionLabel,
+                    ...(opts.timelineText ? { text: opts.timelineText } : {}),
                     occurredAt: now,
                     actorId: opts.actorId ?? "site-team",
                     documentationState:

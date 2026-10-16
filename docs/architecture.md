@@ -221,6 +221,8 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
+  `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,
+  `POST /v1/tasks/{id}/custom-action`,
   `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used
@@ -230,6 +232,14 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   harness page (`frontend/dev/guidance-harness.html` — a standalone entry point outside the app
   build, served only by the dev server) exercises the flow with fixtures against the real local
   API; see [dev-commands.md](./dev-commands.md#guidance-harness-dev-only-page).
+
+Open tasks may replace their card action with any distinct action in the task's
+snapshotted category and policy catalog. The task retains its evaluated `ruleId`;
+`actionOverride` records the selected rule and original rule while the executable
+fields are replaced atomically. Duplicate-group edits resolve to the original task,
+so every linked card shares one action. A free-text custom action either moves that
+root task to `in_progress` or completes it regardless of `canBeInProgress`, and
+appends the entered text to the immutable task timeline.
 
 ## Single-table data model
 

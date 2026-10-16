@@ -60,6 +60,11 @@ import {
   registerTaskUpdateMedia,
 } from "../src/handlers/task-updates.js";
 import {
+  getTaskDetails,
+  recordCustomTaskAction,
+  updateTaskAction,
+} from "../src/handlers/task-details.js";
+import {
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -338,6 +343,9 @@ const routes = [
   route("GET", "/v1/tasks", listTasks),
   route("POST", "/v1/duplicates:batch", getDuplicateLinks),
   route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
+  route("GET", "/v1/tasks/{taskId}/details", getTaskDetails),
+  route("PATCH", "/v1/tasks/{taskId}/action", updateTaskAction),
+  route("POST", "/v1/tasks/{taskId}/custom-action", recordCustomTaskAction),
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),

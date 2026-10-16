@@ -1157,6 +1157,27 @@ export function separateDuplicate(taskId, expected) {
   );
 }
 
+/** @param {string} taskId */
+export function getTaskDetails(taskId) {
+  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/details`);
+}
+
+/** @param {string} taskId @param {string} ruleId */
+export function updateTaskAction(taskId, ruleId) {
+  return request("PATCH", `/v1/tasks/${encodeURIComponent(taskId)}/action`, {
+    body: { ruleId },
+  });
+}
+
+/** @param {string} taskId @param {{text:string,resolved:boolean}} body */
+export function recordCustomTaskAction(taskId, body) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/custom-action`,
+    { body },
+  );
+}
+
 // Proactive care logs are Site-scoped, independent of checks and tasks.
 export function listCareWork(nextToken = "") {
   return request(
