@@ -273,3 +273,11 @@ function configureSmtp() {
   vi.stubEnv("MAIL_MANAGER_SMTP_USERNAME", "inp-example");
   vi.stubEnv("MAIL_MANAGER_SMTP_SECRET_ARN", "arn:aws:secretsmanager:secret");
 }
+
+it("identifies SMTP preparation errors as definitely not submitted", async () => {
+  vi.stubEnv("EMAIL_TRANSPORT", "smtp");
+  await expect(sendEmail(email)).rejects.toMatchObject({
+    emailNotSubmitted: true,
+  });
+  expect(sendMail).not.toHaveBeenCalled();
+});

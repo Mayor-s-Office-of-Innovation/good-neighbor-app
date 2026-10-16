@@ -80,7 +80,20 @@ export async function sendEmail(email) {
  * @returns {Promise<import("nodemailer").SentMessageInfo>}
  */
 async function sendSmtpEmail(email, canRetryAuthentication = true) {
-  const transport = await getSmtpTransport();
+  let transport;
+  try {
+    transport = await getSmtpTransport();
+  } catch (cause) {
+    // No SMTP submission has occurred while preparing credentials/transport.
+    throw Object.assign(
+      cause instanceof Error
+        ? cause
+        : new Error("SMTP preparation failed", { cause }),
+      {
+        emailNotSubmitted: true,
+      },
+    );
+  }
   try {
     return await transport.sendMail({
       from: email.from,
@@ -104,6 +117,14 @@ async function sendSmtpEmail(email, canRetryAuthentication = true) {
     if (isSmtpAuthenticationError(error)) {
       invalidateSmtpTransport();
       if (canRetryAuthentication) return sendSmtpEmail(email, false);
+      throw Object.assign(
+        error instanceof Error
+          ? error
+          : new Error("SMTP authentication rejected", { cause: error }),
+        {
+          emailNotSubmitted: true,
+        },
+      );
     }
     throw error;
   }

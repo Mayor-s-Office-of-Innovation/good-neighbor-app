@@ -105,6 +105,26 @@ export async function deliverComplianceLetter(job, email, letter) {
         }),
       );
     } catch (error) {
+      // Only explicit proof of non-submission permits another attempt.
+      if (
+        !receipt &&
+        error &&
+        typeof error === "object" &&
+        "emailNotSubmitted" in error &&
+        error.emailNotSubmitted === true
+      ) {
+        await ddb.send(
+          new UpdateCommand({
+            TableName,
+            Key,
+            UpdateExpression: "REMOVE deliveryState",
+            ConditionExpression:
+              "deliveryState = :sending AND attribute_not_exists(receipt)",
+            ExpressionAttributeValues: { ":sending": "sending" },
+          }),
+        );
+        throw error;
+      }
       // Do not repeat an external side effect after a timeout or persistence failure.
       await ddb
         .send(

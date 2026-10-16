@@ -470,7 +470,11 @@ export const createSiteTerms = (event) =>
       }
       throw error;
     }
-    return jsonResponse(201, { terms, letterState: "draft_pending" });
+    return jsonResponse(201, {
+      terms,
+      letterState: "draft_pending",
+      jobId: letterJobId,
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */

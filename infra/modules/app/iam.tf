@@ -447,9 +447,9 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    sid       = "WriteComplianceLetters"
+    sid       = "ReadWriteComplianceLetters"
     effect    = "Allow"
-    actions   = ["s3:PutObject"]
+    actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.compliance_letters.arn}/compliance-letters/*"]
   }
 

@@ -1,3 +1,4 @@
+import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 import "@awesome.me/webawesome/dist/styles/layers.css";
@@ -1371,7 +1372,7 @@ class AdminApp extends HTMLElement {
     if (!this.state.site) return false;
     const reasons = selectedComplianceReasons(form);
     const siteId = this.state.site.siteId;
-    await adminApi.createSiteTerms(this.state.site.siteId, {
+    const queued = await adminApi.createSiteTerms(this.state.site.siteId, {
       reasons,
       siteManagerUserId: controlValue(form, "terms-site-manager-id"),
       ...(reasons.includes("6")
@@ -1389,7 +1390,7 @@ class AdminApp extends HTMLElement {
     this.state.siteSaveMessage = t("admin.letters.pending");
     this.render();
     void this.refreshPendingComplianceLetter(siteId);
-    void this.refreshLetterEmails(siteId);
+    void this.refreshLetterEmails(siteId, queued.jobId);
     return true;
   }
 
@@ -1420,34 +1421,28 @@ class AdminApp extends HTMLElement {
     }
   }
 
-  async refreshLetterEmails(siteId) {
-    const originalCount = this.state.letterEmailHistory?.length || 0;
+  async refreshLetterEmails(siteId, jobId) {
     for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       if (this.state.site?.siteId !== siteId) return;
       try {
         const result = await adminApi.getSite(siteId);
-        if (
-          (result.items || []).some(
-            (item) => item.deliveryState === "uncertain",
-          )
-        ) {
-          this.state.letterEmailUncertain = true;
-          this.render();
-          return;
+        const progress = letterEmailProgress(result.items || [], jobId);
+        const changed =
+          progress.history.length !==
+            (this.state.letterEmailHistory?.length || 0) ||
+          progress.uncertain !== Boolean(this.state.letterEmailUncertain);
+        this.state.letterEmailHistory = progress.history;
+        this.state.letterEmailUncertain = progress.uncertain;
+        if (progress.sent) {
+          this.state.siteSaveMessage = t(
+            progress.sent.provider === "local-preview"
+              ? "admin.letters.previewSent"
+              : "admin.letters.sent",
+          );
         }
-        const history = (result.items || []).filter(
-          (item) => item.type === "complianceLetterEmail",
-        );
-        if (history.length <= originalCount) continue;
-        this.state.letterEmailHistory = history;
-        this.state.siteSaveMessage = t(
-          history.some((item) => item.provider === "local-preview")
-            ? "admin.letters.previewSent"
-            : "admin.letters.sent",
-        );
-        this.render();
-        return;
+        if (changed || progress.sent) this.render();
+        if (progress.sent || progress.currentUncertain) return;
       } catch {
         /* Retry reads without repeating the send. */
       }
@@ -2138,7 +2133,10 @@ class AdminApp extends HTMLElement {
           const result = await adminApi.updateMyProfile({
             firstName: formValue(data, "firstName"),
             lastName: formValue(data, "lastName"),
-            phone: formValue(data, "phone"),
+            ...profilePhoneUpdate(
+              formValue(data, "phone"),
+              this.state.profile.phone,
+            ),
           });
           this.state.profile = result.profile;
           const managerId = result.profile.directoryUserId;
@@ -2952,10 +2950,10 @@ class AdminApp extends HTMLElement {
         const requestId = button.dataset.requestId || crypto.randomUUID();
         button.dataset.requestId = requestId;
         try {
-          await adminApi.resendSiteLetter(siteId, requestId);
+          const queued = await adminApi.resendSiteLetter(siteId, requestId);
           this.state.siteSaveMessage = t("admin.letters.resendQueued");
           this.render();
-          void this.refreshLetterEmails(siteId);
+          void this.refreshLetterEmails(siteId, queued.jobId);
         } catch {
           button.disabled = false;
           showFormSaveError(
@@ -3800,7 +3798,7 @@ function myProfileView(state) {
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
       ${formInput("firstName", t("siteAdmin.field.firstName"), profile.firstName, { required: true, maxlength: 100, autocomplete: "given-name" })}
       ${formInput("lastName", t("siteAdmin.field.lastName"), profile.lastName, { required: true, maxlength: 100, autocomplete: "family-name" })}
-      ${formInput("phone", t("siteAdmin.field.phone"), profile.phone, { required: true, type: "tel", autocomplete: "tel" })}
+      ${formInput("phone", t("siteAdmin.field.phone"), profile.phone, { required: Boolean(profile.phone), type: "tel", autocomplete: "tel" })}
       <dl class="profile-email">
         <dt>${escapeHtml(t("siteAdmin.field.email"))}</dt>
         <dd>${escapeHtml(profile.email)}</dd>

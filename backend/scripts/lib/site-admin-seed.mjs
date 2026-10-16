@@ -64,7 +64,19 @@ export async function seedLocalSiteAdmin() {
     "Department of Homelessness and Supportive Housing (HSH)",
     "Department of Public Health (DPH)",
   ]) {
-    await invoke(createOversightOption, event({ type: "department", name }));
+    const response = await createOversightOption(
+      event({ type: "department", name }),
+    );
+    const result = JSON.parse(response.body);
+    if (
+      response.statusCode >= 400 &&
+      !(
+        response.statusCode === 409 &&
+        result.error === "oversight_option_exists"
+      )
+    ) {
+      throw new Error(`Seed department setup failed: ${result.error}`);
+    }
   }
   const preview = await invoke(
     previewSiteImport,

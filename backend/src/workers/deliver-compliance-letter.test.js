@@ -94,3 +94,39 @@ it("does not record a sent email when transport fails", async () => {
   );
   expect(send.mock.calls[0][0]).toBeInstanceOf(UpdateCommand);
 });
+
+it("releases the claim after proven non-submission and allows retry", async () => {
+  mail.mockRejectedValueOnce(
+    Object.assign(new Error("configuration"), { emailNotSubmitted: true }),
+  );
+  await expect(deliverComplianceLetter(job, email, letter)).rejects.toThrow(
+    "configuration",
+  );
+  expect(send.mock.calls[1][0].input).toMatchObject({
+    UpdateExpression: "REMOVE deliveryState",
+    ConditionExpression:
+      "deliveryState = :sending AND attribute_not_exists(receipt)",
+  });
+  await deliverComplianceLetter(job, email, letter);
+  expect(mail).toHaveBeenCalledTimes(2);
+});
+it("preserves uncertainty after a transport timeout", async () => {
+  mail.mockRejectedValueOnce(new Error("timeout"));
+  await expect(deliverComplianceLetter(job, email, letter)).rejects.toThrow();
+  expect(send.mock.calls[1][0].input.ExpressionAttributeValues).toEqual({
+    ":uncertain": "uncertain",
+  });
+});
+it("does not release a claim after receipt persistence fails", async () => {
+  send
+    .mockResolvedValueOnce({})
+    .mockRejectedValueOnce(new Error("database unavailable"));
+  await expect(deliverComplianceLetter(job, email, letter)).rejects.toThrow(
+    "database unavailable",
+  );
+  expect(
+    send.mock.calls.some(
+      ([c]) => c.input.UpdateExpression === "REMOVE deliveryState",
+    ),
+  ).toBe(false);
+});
